@@ -51,7 +51,7 @@ Unknown categories (if any) append after the five known buckets, sorted by `(cat
 - Generate with Python stdlib **`secrets.token_urlsafe(nbytes)`** (OS CSPRNG) — no home-grown crypto ([SECURITY.md](/engineering/SECURITY) §6.4 / AGENTS §5.4).
 - Default `nbytes=16` (~128 bits of entropy); env `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` (allowed **1..64**).
 - Scope: **one nonce per `format()` call** (one assembly). Open tags carry `nonce="{assembly}"`; consumers must only trust tags whose nonce matches this assembly.
-- **Boundary contract:** memory elements are serialized with ``xml.etree.ElementTree`` (stdlib XML serializer escapes attribute values and text). Untrusted content cannot forge `</ibex_memory>` or inject raw markup. The per-assembly nonce on the open tag authenticates genuine delimiters; escaping prevents close-tag / attribute breakout from memory bodies.
+- **Boundary contract:** memory markup is **serialized only** (never parsed) via ``html.escape`` for attribute values (`quote=True`) and body text. Untrusted content cannot forge `</ibex_memory>` or inject raw markup. The per-assembly nonce on the open tag authenticates genuine delimiters; escaping prevents close-tag / attribute breakout from memory bodies. Stdlib ``xml`` / ``defusedxml`` are intentionally unused — XXE applies to parsers, not serializers, and SAST often false-positives on serialize-only ``ElementTree`` imports.
 
 ### 4) Doc supersession
 
@@ -69,3 +69,4 @@ This ADR **supersedes** the stale ARCHITECTURE.md “Format and inject” histor
 2. **Amend ADR-0038** — rejected: mixes gRPC contract with formatting policy; 0038 has no ordering section.
 3. **Nonce alone without body escaping** — rejected for close-tag forgery: raw `</ibex_memory>` in content could terminate the block; escaping is required in addition to the per-assembly open-tag nonce.
 4. **XML-wrap history** — rejected: milestone success signal requires native role messages for trusted history.
+5. **``xml.etree.ElementTree`` / ``defusedxml`` for markup** — rejected for this module: we never parse XML (no XXE surface); ``defusedxml`` does not provide an ``Element`` builder API, and importing stdlib ``xml`` trips serialize-only SAST noise. Prefer ``html.escape`` serialization.

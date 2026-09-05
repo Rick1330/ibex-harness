@@ -30,7 +30,7 @@ CI asserts packing p99 &lt; 5ms at n=70.
 
 - [`app/formatter.py`](app/formatter.py) — `ContextFormatter` / `FormatRequest` / `FormattedContext` / `CATEGORY_ORDER` ([ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce))
 - Locked order: directive → history (`role: content`) → memories by category → optional tool schemas
-- Memories wrapped as `<ibex_memory nonce="...">` via ElementTree serialization + `secrets.token_urlsafe` (`IBEX_CONTEXT_FORMATTER_NONCE_BYTES`, default 16, max 64); bodies/attrs escaped by the XML serializer so content cannot forge delimiters
+- Memories wrapped as `<ibex_memory nonce="...">` via `html.escape` serialization + `secrets.token_urlsafe` (`IBEX_CONTEXT_FORMATTER_NONCE_BYTES`, default 16, max 64); bodies/attrs escaped so content cannot forge delimiters (serialize-only — no XML parser)
 
 gRPC `ContextAssemblyService` remains **out of scope** (milestone **3.5.C.6**).
 
