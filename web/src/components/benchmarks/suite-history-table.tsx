@@ -217,7 +217,12 @@ export function SuiteHistoryTable<T>({
   const filtered = useMemo(
     () =>
       rows.filter((row) =>
-        matchesFilters(row, statusFilter, branchFilter, getStatus, getBranch),
+        matchesFilters(row, {
+          statusFilter,
+          branchFilter,
+          getStatus,
+          getBranch,
+        }),
       ),
     [rows, statusFilter, branchFilter, getStatus, getBranch],
   );
