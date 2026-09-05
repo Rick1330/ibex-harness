@@ -1,8 +1,9 @@
 """Thin pack glue: RetrievalResult + TokenBudget → PackedMemories (3.5.C.4).
 
-Full gRPC AssembleContext orchestration remains 3.5.C.6. This module exists so
-the packer has a tested call site that merges hot/cold hits, applies the interim
-packer score, and packs under ``TokenBudget.usable_budget``.
+Full gRPC AssembleContext orchestration (budget → retrieve → score → pack →
+format via ``ContextFormatter`` / ADR-0070) remains 3.5.C.6. This module exists
+so the packer has a tested call site that merges hot/cold hits, applies the
+interim packer score, and packs under ``TokenBudget.usable_budget``.
 """
 
 from __future__ import annotations

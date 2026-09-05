@@ -1,0 +1,72 @@
+---
+title: "ADR-0070: Context formatting locked ordering and session nonce"
+description: "Architecture decision record 0070 — locked context injection order (directive → history → memories by category → tools), XML-style ibex_memory delimiters, and per-assembly secrets.token_urlsafe nonce."
+adrId: "0070"
+status: "Accepted"
+date: "2026-09-05"
+authors: "IBEX Harness team"
+---
+
+# ADR-0070: Context formatting locked ordering and session nonce
+
+- **Status:** Accepted
+- **Date:** 2026-09-05
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.C.5 Context Formatter](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.5-context-formatter)
+- **Depends on:** [ADR-0069](/docs/adr/0069-context-packer-dp-knapsack) (`PackedMemories` / `ScoredMemory`), [ADR-0038](/docs/adr/0038-context-assembly-service) (proto `assembled_context` string — wiring in 3.5.C.6)
+
+## Context
+
+Track C needs a formatter that turns a resolved directive, recent messages, and packed memories into a single `assembled_context` string. Discovery (main @ post-C.4) found:
+
+- No formatter module existed under `services/context`.
+- Planning sketches incorrectly named **ADR-0042** (self-hosted OpenAI-compatible adapter) as the amend target for ordering — unrelated.
+- [ADR-0038](/docs/adr/0038-context-assembly-service) covers the gRPC contract only and has **no** ordering/delimiter section; Phase 3.5 exit criteria cite it for indexing, not for formatter decisions.
+- [ARCHITECTURE.md](/engineering/ARCHITECTURE) “Format and inject” previously said **History last** (`Directive → Procedural → Declarative → Episodic → Tools → History`), while [phase index](/roadmap/phase-3-5-extraction-assembly) / goals / [blog](/blog/ibex-memory-lifecycle-map) already locked **history at position 2**.
+- [SECURITY.md](/engineering/SECURITY) §7.3 requires memories wrapped as data with a per-session nonce (e.g. `<ibex_memory nonce="...">`).
+
+## Decision
+
+### 1) Locked injection order
+
+```
+1. Directive (plain text + untrusted-data instruction naming the assembly nonce)
+2. Conversation history (native `role: content` lines — not XML-wrapped)
+3. Memories by category: procedural → factual → preference → behavioral → episodic
+4. Tool schemas (optional; omitted when empty)
+```
+
+**History @ 2:** mitigates “lost in the middle” — recent turns stay near the start where attention is reliable; putting history last buried it after memory blocks.
+
+Unknown categories (if any) append after the five known buckets, sorted by `(category, memory_id)`.
+
+### 2) Module
+
+- `services/context/app/formatter.py` — `ContextFormatter`, `FormatRequest`, `FormattedContext`, `CATEGORY_ORDER`
+- Consumes one `FormatRequest` (directive, recent messages, `PackedMemories`, optional tool schemas / injected nonce)
+- Does **not** orchestrate budget → retrieve → pack (3.5.C.6)
+
+### 3) Per-assembly nonce + XML-escaped memory bodies
+
+- Generate with Python stdlib **`secrets.token_urlsafe(nbytes)`** (OS CSPRNG) — no home-grown crypto ([SECURITY.md](/engineering/SECURITY) §6.4 / AGENTS §5.4).
+- Default `nbytes=16` (~128 bits of entropy); env `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` (allowed **1..64**).
+- Scope: **one nonce per `format()` call** (one assembly). Open tags carry `nonce="{assembly}"`; consumers must only trust tags whose nonce matches this assembly.
+- **Boundary contract:** memory markup is **serialized only** (never parsed) via ``html.escape`` for attribute values (`quote=True`) and body text. Untrusted content cannot forge `</ibex_memory>` or inject raw markup. The per-assembly nonce on the open tag authenticates genuine delimiters; escaping prevents close-tag / attribute breakout from memory bodies. Stdlib ``xml`` / ``defusedxml`` are intentionally unused — XXE applies to parsers, not serializers, and SAST often false-positives on serialize-only ``ElementTree`` imports.
+
+### 4) Doc supersession
+
+This ADR **supersedes** the stale ARCHITECTURE.md “Format and inject” history-last ordering. ARCHITECTURE.md is updated to match this decision and links here. Do not amend ADR-0038 or ADR-0042.
+
+## Consequences
+
+- Golden-output and nonce spoof unit tests gate regressions in CI (`context-test`).
+- C.6 can map `FormattedContext.assembled_context` → `AssembleContextResponse.assembled_context`.
+- Proxy / directive injection modes ([ADR-0031](/docs/adr/0031-system-prompt-injection)) remain separate: this ADR formats the assembly string, not the proxy message-array inject strategy.
+
+## Alternatives considered
+
+1. **Amend ADR-0042** — rejected: wrong document (Phase 2.5 self-hosted adapter).
+2. **Amend ADR-0038** — rejected: mixes gRPC contract with formatting policy; 0038 has no ordering section.
+3. **Nonce alone without body escaping** — rejected for close-tag forgery: raw `</ibex_memory>` in content could terminate the block; escaping is required in addition to the per-assembly open-tag nonce.
+4. **XML-wrap history** — rejected: milestone success signal requires native role messages for trusted history.
+5. **``xml.etree.ElementTree`` / ``defusedxml`` for markup** — rejected for this module: we never parse XML (no XXE surface); ``defusedxml`` does not provide an ``Element`` builder API, and importing stdlib ``xml`` trips serialize-only SAST noise. Prefer ``html.escape`` serialization.

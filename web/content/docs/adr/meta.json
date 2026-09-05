@@ -67,6 +67,7 @@
     "0066-extraction-quality-evaluation-harness",
     "0067-context-capability-catalog-generate-and-diff",
     "0068-composite-relevance-gate",
-    "0069-context-packer-dp-knapsack"
+    "0069-context-packer-dp-knapsack",
+    "0070-context-formatter-ordering-nonce"
   ]
 }

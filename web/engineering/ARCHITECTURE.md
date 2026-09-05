@@ -310,8 +310,8 @@ Process:
 2. Allocate budget (priority order):
    - Directive: always included in full (typically 500-2000 tokens)
    - Recent conversation: last N turns until budget consumed
-   - Tool schemas: if applicable
-   - Memories: remaining budget
+   - Memories: remaining budget after reserves
+   - Tool schemas: if applicable (after memories in injection order; see format step)
 
 3. Parallel retrieval (shared 40ms deadline):
    - Directive: Redis lookup (hot path, <1ms)
@@ -335,9 +335,10 @@ Process:
    - Use lightweight compression model (7B local)
    - Trade verbosity for coverage
 
-7. Format and inject:
-   - Order: Directive → Procedural → Declarative → Episodic → Tools → History
-   - Wrap in structured delimiters (XML-style with session nonce)
+7. Format and inject ([ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)):
+   - Order: Directive → Conversation history → Memories by category (procedural → factual → preference → behavioral → episodic) → Tool schemas
+   - Wrap memories in structured delimiters (XML-style `<ibex_memory nonce="...">` with per-assembly nonce)
+   - History as native `role: content` lines (not XML-wrapped)
    - Return complete context string
 ```
 
