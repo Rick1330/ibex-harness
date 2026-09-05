@@ -143,20 +143,36 @@ def _validate_memory_required_keys(row: dict[str, Any], prefix: str) -> list[str
     ]
 
 
-def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str]:
+def _validate_memory_identity(row: dict[str, Any], prefix: str) -> list[str]:
     errors: list[str] = []
-    errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
-    errors.extend(
-        _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
-    )
-    key = str(row.get("content_key", ""))
-    if not key:
+    if not str(row.get("content_key", "")):
         errors.append(f"{prefix} content_key must be non-empty")
     category = row.get("category")
     if not isinstance(category, str):
         errors.append(f"{prefix} category must be a string")
     elif category not in CATEGORIES:
         errors.append(f"{prefix} invalid category {category!r}")
+    return errors
+
+
+def _validate_optional_retrieval_count(row: dict[str, Any], prefix: str) -> list[str]:
+    if "retrieval_count" not in row:
+        return []
+    retrieval_count, rc_errors = _parse_int(
+        row.get("retrieval_count"), "retrieval_count", prefix
+    )
+    if retrieval_count is not None and retrieval_count < 0:
+        rc_errors.append(f"{prefix} retrieval_count must be >= 0")
+    return rc_errors
+
+
+def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str]:
+    errors: list[str] = []
+    errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
+    errors.extend(
+        _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
+    )
+    errors.extend(_validate_memory_identity(row, prefix))
     age, age_errors = _parse_int(row.get("valid_from_days_ago"), "valid_from_days_ago", prefix)
     errors.extend(age_errors)
     if age is not None and not (MIN_AGE_DAYS <= age <= MAX_AGE_DAYS):
@@ -167,13 +183,7 @@ def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str
     errors.extend(hotspot_errors)
     if hotspot is not None and not (0 <= hotspot < EMBEDDING_DIM):
         errors.append(f"{prefix} hotspot {hotspot} out of range")
-    if "retrieval_count" in row:
-        retrieval_count, rc_errors = _parse_int(
-            row.get("retrieval_count"), "retrieval_count", prefix
-        )
-        errors.extend(rc_errors)
-        if retrieval_count is not None and retrieval_count < 0:
-            errors.append(f"{prefix} retrieval_count must be >= 0")
+    errors.extend(_validate_optional_retrieval_count(row, prefix))
     return errors
 
 

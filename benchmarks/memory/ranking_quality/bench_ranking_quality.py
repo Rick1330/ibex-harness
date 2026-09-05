@@ -38,6 +38,7 @@ from metrics import (  # noqa: E402
     precision_at_k,
     recall_at_k,
 )
+from relevance_gate_probe import evaluate_relevance_gate_probe  # noqa: E402
 from seed import GOLD_SET_PATH, GoldSeedResult, load_gold_set, seed_gold_set  # noqa: E402
 from validate_gold_set import validate_gold_set  # noqa: E402
 
@@ -65,64 +66,6 @@ def _async_dsn() -> str:
     if raw.startswith("postgresql://") and "+asyncpg" not in raw.split("://", 1)[0]:
         return "postgresql+asyncpg://" + raw[len("postgresql://") :]
     return raw
-
-
-async def _evaluate_relevance_gate_probe(
-    repo: MemoryReadRepository,
-    ctx: QueryEvalContext,
-) -> dict:
-    """Open retrieval (min_similarity=0.0) so orthogonal bait can reach scoring.
-
-    Gold-set queries use min_similarity=0.5, so floors ≤0.30 never filter them.
-    This probe intentionally opens ANN so the scoring-time floor must exclude
-    ``gold.noise.relevance_gate_bait`` (sim≈0, high confidence/usefulness/frequency).
-    """
-    bait_key = "gold.noise.relevance_gate_bait"
-    relevant_key = "gold.factual.notification_channel"
-    if bait_key not in ctx.mem_by_key:
-        msg = f"gold set missing gate bait memory {bait_key!r}"
-        raise RuntimeError(msg)
-    if relevant_key not in ctx.mem_by_key:
-        msg = f"gold set missing gate probe relevant memory {relevant_key!r}"
-        raise RuntimeError(msg)
-
-    # Hotspot 1 cluster (sim=1.0) + opened retrieval pulls orthogonal bait (sim=0.0).
-    results = await repo.find_similar(
-        FindSimilarQuery(
-            org_id=ctx.seed.org_id,
-            agent_id=ctx.seed.agent_id,
-            query_embedding=zero_embedding(hotspot=1),
-            query_text="notification preferences relevance gate probe",
-            limit=50,
-            min_similarity=0.0,
-        )
-    )
-    ranked_keys = [
-        ctx.id_to_key[str(hit.id)] for hit in results if str(hit.id) in ctx.id_to_key
-    ]
-    bait_excluded = bait_key not in ranked_keys
-    relevant_present = relevant_key in ranked_keys
-    if not bait_excluded:
-        msg = (
-            "relevance gate probe failed: bait "
-            f"{bait_key!r} appeared in ranked results under min_similarity=0.0"
-        )
-        raise RuntimeError(msg)
-    if not relevant_present:
-        msg = (
-            "relevance gate probe failed: expected relevant "
-            f"{relevant_key!r} missing from ranked results"
-        )
-        raise RuntimeError(msg)
-    return {
-        "bait_content_key": bait_key,
-        "relevant_content_key": relevant_key,
-        "min_similarity": 0.0,
-        "limit": 50,
-        "bait_excluded": bait_excluded,
-        "relevant_present": relevant_present,
-        "ranked_count": len(ranked_keys),
-    }
 
 
 async def _evaluate_query(
@@ -237,7 +180,7 @@ async def run_bench(*, gold_path: Path) -> dict:
 
         aggregate = _aggregate_metrics(per_query, top_cat_hits=top_cat_hits)
         _assert_perfect_metrics(per_query)
-        gate_probe = await _evaluate_relevance_gate_probe(repo, eval_ctx)
+        gate_probe = await evaluate_relevance_gate_probe(repo, eval_ctx)
         return {
             "benchmark": "ranking_quality",
             "schema_version": 1,
