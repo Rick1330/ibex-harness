@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import random
 import unittest
+from dataclasses import dataclass
 from uuid import uuid4
 
 from app.capability_catalog import TokenizerFamilyPolicy
 from app.estimate import ESTIMATE_CHARS_DIV_4, estimate_tokens
-from app.packer import BUCKET_SIZE, ContextPacker, ScoredMemory
+from app.packer import BUCKET_SIZE, ContextPacker, ScoredMemory, _FinalizeArgs
 from app.retrieval import MemoryHit
 
 ORG = str(uuid4())
@@ -16,24 +17,26 @@ AGENT = str(uuid4())
 POLICY = TokenizerFamilyPolicy(ESTIMATE_CHARS_DIV_4, 0.02)
 
 
-def _hit(
-    *,
-    content: str,
-    similarity: float = 0.8,
-    confidence: float = 0.8,
-    rank: int = 1,
-    memory_id: str | None = None,
-    category: str = "factual",
-) -> MemoryHit:
+@dataclass(frozen=True, slots=True)
+class _HitSeed:
+    content: str
+    similarity: float = 0.8
+    confidence: float = 0.8
+    rank: int = 1
+    memory_id: str | None = None
+    category: str = "factual"
+
+
+def _hit(seed: _HitSeed) -> MemoryHit:
     return MemoryHit(
-        memory_id=memory_id or str(uuid4()),
+        memory_id=seed.memory_id or str(uuid4()),
         org_id=ORG,
         agent_id=AGENT,
-        content=content,
-        category=category,
-        confidence=confidence,
-        similarity=similarity,
-        rank=rank,
+        content=seed.content,
+        category=seed.category,
+        confidence=seed.confidence,
+        similarity=seed.similarity,
+        rank=seed.rank,
         source="vector",
     )
 
@@ -45,7 +48,7 @@ def _scored(
     memory_id: str | None = None,
 ) -> ScoredMemory:
     return ScoredMemory(
-        hit=_hit(content=content, memory_id=memory_id),
+        hit=_hit(_HitSeed(content=content, memory_id=memory_id)),
         composite_score=score,
     )
 
@@ -269,6 +272,66 @@ class PackerFallbackTests(unittest.TestCase):
         self.assertEqual(item.memory_id, "prop-id")
         self.assertEqual(item.content, _content_for_tokens(4))
         self.assertEqual(item.category, "factual")
+
+
+    def test_finalize_raises_when_tokens_exceed_budget(self) -> None:
+        item = _scored(_content_for_tokens(40), 0.5)
+        packer = _packer()
+        with self.assertRaises(RuntimeError):
+            packer._finalize(
+                _FinalizeArgs(
+                    candidates=[item],
+                    selected=[0],
+                    tokens=[100],
+                    token_budget=50,
+                    path="dp",
+                )
+            )
+
+
+class PackerDeterminismAndRepairTests(unittest.TestCase):
+    def test_default_ceiling_allows_n70_at_100k_budget(self) -> None:
+        from app.config import ContextSettings
+        from app.packer import DEFAULT_DP_CELL_CEILING
+
+        n = 70
+        buckets = 100_000 // BUCKET_SIZE  # 6250
+        cells = n * (buckets + 1)
+        self.assertEqual(DEFAULT_DP_CELL_CEILING, 70 * 6251)
+        self.assertEqual(ContextSettings().packer_dp_cell_ceiling, DEFAULT_DP_CELL_CEILING)
+        self.assertLessEqual(cells, ContextSettings().packer_dp_cell_ceiling)
+
+        items = [
+            _scored(_content_for_tokens(16), 0.5 + (i % 10) * 0.01, memory_id=f"id-{i:03d}")
+            for i in range(n)
+        ]
+        packed = _packer().pack(items, 100_000)
+        self.assertEqual(packed.path, "dp")
+
+    def test_equal_score_selection_stable_under_input_reversal(self) -> None:
+        a = _scored(_content_for_tokens(16), 0.5, memory_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        b = _scored(_content_for_tokens(16), 0.5, memory_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+        # Budget fits exactly one of the equal-score items.
+        forward = _packer().pack([a, b], 16)
+        reverse = _packer().pack([b, a], 16)
+        self.assertEqual(
+            {m.memory_id for m in forward.memories},
+            {m.memory_id for m in reverse.memories},
+        )
+        self.assertEqual(len(forward.memories), 1)
+        self.assertEqual(forward.memories[0].memory_id, a.memory_id)
+
+    def test_repair_refills_after_dropping_oversize_bucket_pick(self) -> None:
+        """DP may pick a 31-token item (bucket weight 1) under a 16-token budget.
+
+        Repair must drop it and refill with the previously rejected exact fit.
+        """
+        oversized = _scored(_content_for_tokens(31), 0.95, memory_id="oversize")
+        exact = _scored(_content_for_tokens(16), 0.40, memory_id="exact-fit")
+        packed = _packer().pack([oversized, exact], 16)
+        self.assertEqual(packed.path, "dp")
+        self.assertEqual([m.memory_id for m in packed.memories], ["exact-fit"])
+        self.assertEqual(packed.total_tokens, 16)
 
 
 class PackerTokenHelperTests(unittest.TestCase):

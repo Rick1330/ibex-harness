@@ -37,7 +37,14 @@ def score_hits(hits: Sequence[MemoryHit]) -> list[ScoredMemory]:
     return [ScoredMemory(hit=hit, composite_score=score_memory_hit(hit)) for hit in hits]
 
 
-def _require_unit(name: str, value: float) -> None:
+def _require_unit(name: str, value: object) -> None:
+    number = _as_finite_float(name, value)
+    if number < 0.0 or number > 1.0:
+        msg = f"{name} must be in [0, 1], got {number!r}"
+        raise ValueError(msg)
+
+
+def _as_finite_float(name: str, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         msg = f"{name} must be a number, got {value!r}"
         raise TypeError(msg)
@@ -45,6 +52,4 @@ def _require_unit(name: str, value: float) -> None:
     if not math.isfinite(number):
         msg = f"{name} must be finite, got {number!r}"
         raise ValueError(msg)
-    if number < 0.0 or number > 1.0:
-        msg = f"{name} must be in [0, 1], got {number!r}"
-        raise ValueError(msg)
+    return number

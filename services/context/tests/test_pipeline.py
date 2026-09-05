@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
 from uuid import uuid4
 
 from app.budget import TokenBudget
@@ -17,25 +18,27 @@ AGENT = uuid4()
 POLICY = TokenizerFamilyPolicy(ESTIMATE_CHARS_DIV_4, 0.02)
 
 
-def _hit(
-    *,
-    memory_id: str,
-    content: str,
-    similarity: float,
-    confidence: float = 0.8,
-    rank: int = 1,
-    source: str = "vector",
-) -> MemoryHit:
+@dataclass(frozen=True, slots=True)
+class _HitSeed:
+    memory_id: str
+    content: str
+    similarity: float
+    confidence: float = 0.8
+    rank: int = 1
+    source: str = "vector"
+
+
+def _hit(seed: _HitSeed) -> MemoryHit:
     return MemoryHit(
-        memory_id=memory_id,
+        memory_id=seed.memory_id,
         org_id=str(ORG),
         agent_id=str(AGENT),
-        content=content,
+        content=seed.content,
         category="factual",
-        confidence=confidence,
-        similarity=similarity,
-        rank=rank,
-        source=source,
+        confidence=seed.confidence,
+        similarity=seed.similarity,
+        rank=seed.rank,
+        source=seed.source,
     )
 
 
@@ -59,7 +62,11 @@ def _result(
 ) -> RetrievalResult:
     ok = BranchOutcome("success", 1.0)
     return RetrievalResult(
-        directive=ResolvedDirective(content="be helpful", injection_mode="system_first", version_id=None),
+        directive=ResolvedDirective(
+            content="be helpful",
+            injection_mode="system_first",
+            version_id=None,
+        ),
         directive_outcome=ok,
         hot_memories=list(hot or []),
         hot_outcome=ok,
@@ -74,18 +81,60 @@ def _result(
 class PackRetrievalTests(unittest.TestCase):
     def test_dedupes_preferring_higher_interim_score(self) -> None:
         mid = str(uuid4())
-        # Same id in hot (lower sim) and cold (higher sim).
-        hot = [_hit(memory_id=mid, content="x" * 40, similarity=0.3, source="hot_cache")]
-        cold = [_hit(memory_id=mid, content="x" * 40, similarity=0.9, source="vector")]
+        hot = [
+            _hit(
+                _HitSeed(
+                    memory_id=mid,
+                    content="x" * 40,
+                    similarity=0.3,
+                    source="hot_cache",
+                )
+            )
+        ]
+        cold = [
+            _hit(_HitSeed(memory_id=mid, content="x" * 40, similarity=0.9, source="vector"))
+        ]
         packer = ContextPacker(POLICY)
         packed = pack_retrieval(_result(hot=hot, cold=cold), _budget(1000), packer=packer)
         self.assertEqual(len(packed.memories), 1)
         self.assertAlmostEqual(packed.memories[0].hit.similarity, 0.9)
 
+    def test_dedupes_equal_score_prefers_lower_rank(self) -> None:
+        mid = str(uuid4())
+        hot = [
+            _hit(
+                _HitSeed(
+                    memory_id=mid,
+                    content="x" * 40,
+                    similarity=0.8,
+                    confidence=0.8,
+                    rank=5,
+                    source="hot_cache",
+                )
+            )
+        ]
+        cold = [
+            _hit(
+                _HitSeed(
+                    memory_id=mid,
+                    content="x" * 40,
+                    similarity=0.8,
+                    confidence=0.8,
+                    rank=1,
+                    source="vector",
+                )
+            )
+        ]
+        packer = ContextPacker(POLICY)
+        packed = pack_retrieval(_result(hot=hot, cold=cold), _budget(1000), packer=packer)
+        self.assertEqual(len(packed.memories), 1)
+        self.assertEqual(packed.memories[0].hit.rank, 1)
+        self.assertEqual(packed.memories[0].hit.source, "vector")
+
     def test_respects_usable_budget(self) -> None:
         hits = [
-            _hit(memory_id=str(uuid4()), content="y" * 400, similarity=0.8),
-            _hit(memory_id=str(uuid4()), content="z" * 400, similarity=0.7),
+            _hit(_HitSeed(memory_id=str(uuid4()), content="y" * 400, similarity=0.8)),
+            _hit(_HitSeed(memory_id=str(uuid4()), content="z" * 400, similarity=0.7)),
         ]
         packer = ContextPacker(POLICY)
         packed = pack_retrieval(_result(hot=hits), _budget(50), packer=packer)

@@ -25,8 +25,8 @@ from app.retrieval import MemoryHit
 logger = logging.getLogger(__name__)
 
 BUCKET_SIZE: Final[int] = 16
-# Default ceiling: n=70 × buckets for ~100k-token budget / 16 ≈ 6250.
-DEFAULT_DP_CELL_CEILING: Final[int] = 70 * 6250
+# Default ceiling: n=70 × (buckets+1) for ~100k-token budget / 16 → buckets=6250.
+DEFAULT_DP_CELL_CEILING: Final[int] = 70 * 6251
 DEFAULT_MAX_CONSECUTIVE_SKIPS: Final[int] = 5
 
 PackPath = Literal["dp", "greedy"]
@@ -68,6 +68,15 @@ class PackedMemories:
     candidates_evaluated: int
 
 
+@dataclass(frozen=True, slots=True)
+class _FinalizeArgs:
+    candidates: list[ScoredMemory]
+    selected: list[int]
+    tokens: list[int]
+    token_budget: int
+    path: PackPath
+
+
 class ContextPacker:
     """Bucketed 0/1 knapsack with greedy fallback."""
 
@@ -103,29 +112,20 @@ class ContextPacker:
         Empty input or non-positive budget yields an empty pack with
         ``was_budget_reached=False``. When at least one candidate is excluded
         for budget reasons, ``was_budget_reached=True``.
+
+        Candidates are sorted by descending score then ``memory_id`` before DP
+        so equal-score ties are independent of caller input order.
         """
-        candidates = list(scored)
+        # Canonical order: equal scores resolve the same regardless of input order.
+        candidates = sorted(
+            scored,
+            key=lambda item: (-item.composite_score, item.memory_id),
+        )
         n = len(candidates)
         if n == 0:
-            return PackedMemories(
-                memories=(),
-                total_tokens=0,
-                total_score=0.0,
-                skipped_count=0,
-                was_budget_reached=False,
-                path="dp",
-                candidates_evaluated=0,
-            )
+            return _empty_pack(path="dp", skipped=0, evaluated=0)
         if token_budget <= 0:
-            return PackedMemories(
-                memories=(),
-                total_tokens=0,
-                total_score=0.0,
-                skipped_count=n,
-                was_budget_reached=True,
-                path="dp",
-                candidates_evaluated=n,
-            )
+            return _empty_pack(path="dp", skipped=n, evaluated=n, was_budget_reached=True)
 
         tokens = [self._tokens(item) for item in candidates]
         buckets = max(1, token_budget // self._bucket_size)
@@ -143,22 +143,21 @@ class ContextPacker:
                 self._dp_cell_ceiling,
             )
             selected = self._greedy_select(candidates, tokens, token_budget)
-            return self._finalize(
-                candidates,
-                selected,
-                tokens,
-                token_budget,
-                path="greedy",
+            path: PackPath = "greedy"
+        else:
+            selected = _dp_select(weights, values, buckets)
+            selected = self._repair_exact_budget(
+                selected, candidates, tokens, token_budget, values
             )
-
-        selected = self._dp_select(weights, values, buckets)
-        selected = self._repair_exact_budget(selected, tokens, token_budget, values)
+            path = "dp"
         return self._finalize(
-            candidates,
-            selected,
-            tokens,
-            token_budget,
-            path="dp",
+            _FinalizeArgs(
+                candidates=candidates,
+                selected=selected,
+                tokens=tokens,
+                token_budget=token_budget,
+                path=path,
+            )
         )
 
     def pack_greedy_only(
@@ -170,78 +169,24 @@ class ContextPacker:
         candidates = list(scored)
         n = len(candidates)
         if n == 0:
-            return PackedMemories(
-                memories=(),
-                total_tokens=0,
-                total_score=0.0,
-                skipped_count=0,
-                was_budget_reached=False,
-                path="greedy",
-                candidates_evaluated=0,
-            )
+            return _empty_pack(path="greedy", skipped=0, evaluated=0)
         if token_budget <= 0:
-            return PackedMemories(
-                memories=(),
-                total_tokens=0,
-                total_score=0.0,
-                skipped_count=n,
-                was_budget_reached=True,
-                path="greedy",
-                candidates_evaluated=n,
-            )
+            return _empty_pack(path="greedy", skipped=n, evaluated=n, was_budget_reached=True)
         tokens = [self._tokens(item) for item in candidates]
         selected = self._greedy_select(candidates, tokens, token_budget)
         return self._finalize(
-            candidates,
-            selected,
-            tokens,
-            token_budget,
-            path="greedy",
+            _FinalizeArgs(
+                candidates=candidates,
+                selected=selected,
+                tokens=tokens,
+                token_budget=token_budget,
+                path="greedy",
+            )
         )
 
     def _tokens(self, item: ScoredMemory) -> int:
         count, _kind = estimate_tokens(item.content, self._policy)
         return int(count)
-
-    def _dp_select(
-        self,
-        weights: list[int],
-        values: list[float],
-        buckets: int,
-    ) -> list[int]:
-        n = len(weights)
-        # Rolling value rows + keep matrix for backtrack.
-        prev = np.zeros(buckets + 1, dtype=np.float64)
-        keep = np.zeros((n + 1, buckets + 1), dtype=bool)
-
-        for i, (w, v) in enumerate(zip(weights, values, strict=True), start=1):
-            curr = prev.copy()
-            if w == 0:
-                # Zero-weight: take if value improves the cell.
-                better = (prev + v) > prev
-                curr = np.where(better, prev + v, prev)
-                keep[i, :] = better
-            elif w <= buckets:
-                # take[b] = prev[b - w] + v for b >= w  ↔  take = prev[:buckets+1-w] + v
-                take = prev[: buckets + 1 - w] + v
-                skip = prev[w:]
-                better = take > skip
-                curr[w:] = np.where(better, take, skip)
-                keep[i, w:] = better
-                # curr[:w] already equals prev[:w] from copy
-            # else w > buckets: cannot take; curr stays prev, keep stays False
-            prev = curr
-
-        selected: list[int] = []
-        b = buckets
-        for i in range(n, 0, -1):
-            if keep[i, b]:
-                selected.append(i - 1)
-                b -= weights[i - 1]
-                if b < 0:
-                    break
-        selected.reverse()
-        return selected
 
     def _greedy_select(
         self,
@@ -262,50 +207,55 @@ class ContextPacker:
                 selected.append(idx)
                 used += cost
                 consecutive_skips = 0
-            else:
-                consecutive_skips += 1
-                if consecutive_skips > self._max_consecutive_skips:
-                    break
+                continue
+            consecutive_skips += 1
+            if consecutive_skips > self._max_consecutive_skips:
+                break
         return selected
 
     def _repair_exact_budget(
         self,
         selected: list[int],
+        candidates: list[ScoredMemory],
         tokens: list[int],
         token_budget: int,
         values: list[float],
     ) -> list[int]:
-        """Drop lowest-score picks until exact token sum fits (bucket rounding)."""
+        """Drop over-budget picks, then refill freed capacity from rejects."""
         chosen = list(selected)
         while chosen and sum(tokens[i] for i in chosen) > token_budget:
-            drop_at = min(range(len(chosen)), key=lambda j: (values[chosen[j]], chosen[j]))
+            drop_at = min(
+                range(len(chosen)),
+                key=lambda j: (values[chosen[j]], candidates[chosen[j]].memory_id),
+            )
             chosen.pop(drop_at)
+
+        used = sum(tokens[i] for i in chosen)
+        chosen_set = set(chosen)
+        for idx in sorted(
+            range(len(candidates)),
+            key=lambda i: (-values[i], candidates[i].memory_id),
+        ):
+            if idx in chosen_set:
+                continue
+            cost = tokens[idx]
+            if cost <= token_budget - used:
+                chosen.append(idx)
+                chosen_set.add(idx)
+                used += cost
         return chosen
 
-    def _finalize(
-        self,
-        candidates: list[ScoredMemory],
-        selected: list[int],
-        tokens: list[int],
-        token_budget: int,
-        *,
-        path: PackPath,
-    ) -> PackedMemories:
-        packed = [candidates[i] for i in selected]
+    def _finalize(self, args: _FinalizeArgs) -> PackedMemories:
+        packed = [args.candidates[i] for i in args.selected]
         packed.sort(key=lambda m: (-m.composite_score, m.memory_id))
-        total_tokens = sum(tokens[i] for i in selected)
-        # Recompute after sort for score sum of packed list.
+        total_tokens = sum(args.tokens[i] for i in args.selected)
         total_score = sum(m.composite_score for m in packed)
-        skipped = len(candidates) - len(packed)
-        # Budget reached when we could not include every candidate under budget.
-        if skipped == 0:
-            was_budget_reached = False
-        else:
-            # True when exclusions are due to fitting (always for non-empty skipped
-            # after a positive budget pack attempt).
-            was_budget_reached = True
-        if total_tokens > token_budget:
-            msg = f"internal packer bug: tokens {total_tokens} > budget {token_budget}"
+        skipped = len(args.candidates) - len(packed)
+        was_budget_reached = skipped > 0
+        if total_tokens > args.token_budget:
+            msg = (
+                f"internal packer bug: tokens {total_tokens} > budget {args.token_budget}"
+            )
             raise RuntimeError(msg)
         return PackedMemories(
             memories=tuple(packed),
@@ -313,9 +263,74 @@ class ContextPacker:
             total_score=total_score,
             skipped_count=skipped,
             was_budget_reached=was_budget_reached,
-            path=path,
-            candidates_evaluated=len(candidates),
+            path=args.path,
+            candidates_evaluated=len(args.candidates),
         )
+
+
+def _empty_pack(
+    *,
+    path: PackPath,
+    skipped: int,
+    evaluated: int,
+    was_budget_reached: bool = False,
+) -> PackedMemories:
+    return PackedMemories(
+        memories=(),
+        total_tokens=0,
+        total_score=0.0,
+        skipped_count=skipped,
+        was_budget_reached=was_budget_reached,
+        path=path,
+        candidates_evaluated=evaluated,
+    )
+
+
+def _dp_select(
+    weights: list[int],
+    values: list[float],
+    buckets: int,
+) -> list[int]:
+    n = len(weights)
+    prev = np.zeros(buckets + 1, dtype=np.float64)
+    keep = np.zeros((n + 1, buckets + 1), dtype=bool)
+    for i, (w, v) in enumerate(zip(weights, values, strict=True), start=1):
+        prev, keep[i] = _dp_row(prev, w, v, buckets)
+    return _dp_backtrack(keep, weights, buckets)
+
+
+def _dp_row(
+    prev: np.ndarray,
+    weight: int,
+    value: float,
+    buckets: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute one DP item row and its keep flags."""
+    curr = prev.copy()
+    keep_row = np.zeros(buckets + 1, dtype=bool)
+    if weight == 0:
+        better = (prev + value) > prev
+        return np.where(better, prev + value, prev), better
+    if weight > buckets:
+        return curr, keep_row
+    take = prev[: buckets + 1 - weight] + value
+    skip = prev[weight:]
+    better = take > skip
+    curr[weight:] = np.where(better, take, skip)
+    keep_row[weight:] = better
+    return curr, keep_row
+
+
+def _dp_backtrack(keep: np.ndarray, weights: list[int], buckets: int) -> list[int]:
+    selected: list[int] = []
+    capacity = buckets
+    for i in range(len(weights), 0, -1):
+        if not keep[i, capacity]:
+            continue
+        selected.append(i - 1)
+        capacity -= weights[i - 1]
+    selected.reverse()
+    return selected
 
 
 def _bucket_weight(token_count: int, bucket_size: int) -> int:

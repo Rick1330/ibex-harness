@@ -35,21 +35,20 @@ class InterimScoreTests(unittest.TestCase):
         self.assertLessEqual(score, 1.0)
 
     def test_rejects_out_of_range(self) -> None:
+        hit = _hit(similarity=1.5, confidence=0.5)
         with self.assertRaises(ValueError):
-            score_memory_hit(_hit(similarity=1.5, confidence=0.5))
+            score_memory_hit(hit)
 
     def test_rejects_non_finite(self) -> None:
+        hit = _hit(similarity=float("nan"), confidence=0.5)
         with self.assertRaises(ValueError):
-            score_memory_hit(_hit(similarity=float("nan"), confidence=0.5))
+            score_memory_hit(hit)
 
     def test_rejects_bool(self) -> None:
         hit = _hit(similarity=0.5, confidence=0.5)
-        object.__setattr__(hit, "similarity", True)  # type: ignore[misc]
-        # MemoryHit is frozen — construct via replace of bad values differently:
+        object.__setattr__(hit, "similarity", True)
         with self.assertRaises(TypeError):
-            from app.scoring import _require_unit
-
-            _require_unit("similarity", True)  # type: ignore[arg-type]
+            score_memory_hit(hit)
 
     def test_score_hits_wraps(self) -> None:
         hits = [_hit(similarity=0.8, confidence=0.6), _hit(similarity=0.2, confidence=0.9)]

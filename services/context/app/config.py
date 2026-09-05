@@ -84,7 +84,7 @@ class ContextSettings(BaseSettings):
         validation_alias=AliasChoices("IBEX_CONTEXT_REDIS_URL", "REDIS_URL"),
     )
     packer_dp_cell_ceiling: int = Field(
-        default=70 * 6250,
+        default=70 * 6251,
         ge=1,
         validation_alias="IBEX_CONTEXT_PACKER_DP_CELL_CEILING",
         description=(
