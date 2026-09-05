@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -15,6 +15,31 @@ from app.read.ranking import (
 )
 from app.scoring.relevance_gate import passes_relevance_floor
 from tests.unit.read_ranking_support import HydratedHitSeed, hydrated_hit
+
+_FIXED_NOW = datetime(2026, 9, 5, tzinfo=UTC)
+
+
+def _rank(
+    *seeds: tuple[UUID, float],
+    floor: float,
+    **hit_kwargs: object,
+) -> list[UUID]:
+    """Rank vector candidates keyed by (memory_id, retrieval_score)."""
+    candidates = [
+        RankedCandidate(memory_id=mid, score=score, source="vector") for mid, score in seeds
+    ]
+    hydrated = {
+        mid: hydrated_hit(
+            HydratedHitSeed(memory_id=mid, similarity=score, **hit_kwargs)  # type: ignore[arg-type]
+        )
+        for mid, score in seeds
+    }
+    return [
+        item.id
+        for item in rank_hydrated_hits(
+            candidates, hydrated, now=_FIXED_NOW, relevance_floor=floor
+        )
+    ]
 
 
 def test_passes_relevance_floor_boundary_inclusive() -> None:
@@ -31,34 +56,14 @@ def test_passes_relevance_floor_rejects_invalid() -> None:
 
 
 def test_rank_excludes_below_floor() -> None:
-    low_id = uuid4()
-    high_id = uuid4()
-    now = datetime(2026, 9, 5, tzinfo=UTC)
-    candidates = [
-        RankedCandidate(memory_id=low_id, score=0.10, source="vector"),
-        RankedCandidate(memory_id=high_id, score=0.80, source="vector"),
-    ]
-    hydrated = {
-        low_id: hydrated_hit(HydratedHitSeed(memory_id=low_id, similarity=0.10)),
-        high_id: hydrated_hit(HydratedHitSeed(memory_id=high_id, similarity=0.80)),
-    }
-    ranked = rank_hydrated_hits(
-        candidates, hydrated, now=now, relevance_floor=0.15
-    )
-    assert [item.id for item in ranked] == [high_id]
+    low_id, high_id = uuid4(), uuid4()
+    ranked = _rank((low_id, 0.10), (high_id, 0.80), floor=0.15)
+    assert ranked == [high_id]
 
 
 def test_rank_includes_exact_floor() -> None:
     mid_id = uuid4()
-    now = datetime(2026, 9, 5, tzinfo=UTC)
-    candidates = [RankedCandidate(memory_id=mid_id, score=0.15, source="vector")]
-    hydrated = {
-        mid_id: hydrated_hit(HydratedHitSeed(memory_id=mid_id, similarity=0.15)),
-    }
-    ranked = rank_hydrated_hits(
-        candidates, hydrated, now=now, relevance_floor=0.15
-    )
-    assert [item.id for item in ranked] == [mid_id]
+    assert _rank((mid_id, 0.15), floor=0.15) == [mid_id]
 
 
 def test_rank_empty_candidates() -> None:
@@ -66,28 +71,14 @@ def test_rank_empty_candidates() -> None:
 
 
 def test_rank_all_below_floor_returns_empty() -> None:
-    a = uuid4()
-    b = uuid4()
-    now = datetime(2026, 9, 5, tzinfo=UTC)
-    candidates = [
-        RankedCandidate(memory_id=a, score=0.05, source="vector"),
-        RankedCandidate(memory_id=b, score=0.10, source="vector"),
-    ]
-    hydrated = {
-        a: hydrated_hit(HydratedHitSeed(memory_id=a, similarity=0.05)),
-        b: hydrated_hit(HydratedHitSeed(memory_id=b, similarity=0.10)),
-    }
-    ranked = rank_hydrated_hits(
-        candidates, hydrated, now=now, relevance_floor=0.15
-    )
-    assert ranked == []
+    a, b = uuid4(), uuid4()
+    assert _rank((a, 0.05), (b, 0.10), floor=0.15) == []
 
 
 def test_fts_sentinel_passes_default_floor() -> None:
     """FTS sentinel 0.5 must remain above the production floor (< 0.5)."""
     assert FTS_COMPOSITE_RELEVANCE > DEFAULT_COMPOSITE_RELEVANCE_FLOOR
     fts_id = uuid4()
-    now = datetime(2026, 9, 5, tzinfo=UTC)
     candidates = [
         RankedCandidate(memory_id=fts_id, score=0.99, source="full_text"),
     ]
@@ -99,7 +90,7 @@ def test_fts_sentinel_passes_default_floor() -> None:
     ranked = rank_hydrated_hits(
         candidates,
         hydrated,
-        now=now,
+        now=_FIXED_NOW,
         relevance_floor=DEFAULT_COMPOSITE_RELEVANCE_FLOOR,
     )
     assert [item.id for item in ranked] == [fts_id]
@@ -109,7 +100,6 @@ def test_gate_blocks_stale_frequent_low_relevance_from_outranking() -> None:
     """Classic bug: low-relevance + high non-relevance components must not be scored."""
     noise_id = uuid4()
     relevant_id = uuid4()
-    now = datetime(2026, 9, 5, tzinfo=UTC)
     candidates = [
         RankedCandidate(memory_id=noise_id, score=0.05, source="vector"),
         RankedCandidate(memory_id=relevant_id, score=0.90, source="vector"),
@@ -128,20 +118,26 @@ def test_gate_blocks_stale_frequent_low_relevance_from_outranking() -> None:
         relevant_id: hydrated_hit(
             HydratedHitSeed(
                 memory_id=relevant_id,
+                category="episodic",
                 similarity=0.90,
-                age_days=30.0,
-                usefulness=0.1,
-                confidence=0.5,
+                age_days=60.0,
+                usefulness=0.0,
+                confidence=0.0,
                 retrieval_count=0,
             )
         ),
     }
-    # Without gate (floor=0), noise can compete; with gate, only relevant remains.
-    ungated = rank_hydrated_hits(
-        candidates, hydrated, now=now, relevance_floor=0.0
-    )
-    gated = rank_hydrated_hits(
-        candidates, hydrated, now=now, relevance_floor=0.15
-    )
-    assert len(ungated) == 2
-    assert [item.id for item in gated] == [relevant_id]
+    ungated = [
+        item.id
+        for item in rank_hydrated_hits(
+            candidates, hydrated, now=_FIXED_NOW, relevance_floor=0.0
+        )
+    ]
+    gated = [
+        item.id
+        for item in rank_hydrated_hits(
+            candidates, hydrated, now=_FIXED_NOW, relevance_floor=0.15
+        )
+    ]
+    assert ungated == [noise_id, relevant_id]
+    assert gated == [relevant_id]

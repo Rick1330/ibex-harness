@@ -27,6 +27,24 @@ def test_composite_relevance_floor_from_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert settings.composite_relevance_floor == pytest.approx(0.20)
 
 
+@pytest.mark.parametrize("value", ["0.5", "0.6", "1.0"])
+def test_composite_relevance_floor_rejects_fts_sentinel_and_above(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setenv("IBEX_COMPOSITE_RELEVANCE_FLOOR", value)
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_composite_relevance_floor_accepts_just_below_fts_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IBEX_COMPOSITE_RELEVANCE_FLOOR", "0.499")
+    settings = Settings()
+    assert settings.composite_relevance_floor == pytest.approx(0.499)
+
+
 def test_empty_database_url_becomes_none() -> None:
     settings = Settings(database_url="  ")
     assert settings.database_url is None

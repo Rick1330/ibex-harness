@@ -43,7 +43,7 @@ Category-conditional half-lives (`CATEGORY_HALF_LIFE_DAYS`) and formula weights 
 
 - Setting: `composite_relevance_floor` (default **0.15**)
 - Env: `IBEX_COMPOSITE_RELEVANCE_FLOOR` / `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`
-- Floor must stay **strictly below** `FTS_COMPOSITE_RELEVANCE` (0.5) so FTS supplemental hits are not mass-excluded
+- Floor must be **&lt; 0.5** (settings reject ≥ FTS sentinel) so FTS supplemental hits are not mass-excluded; gate semantics would only drop FTS when floor **&gt; 0.5**
 
 ### 3) Chosen floor value and evidence
 
@@ -82,5 +82,5 @@ Context assembly consumes already-ranked memory search results. It does not own 
 **Negative / follow-ups:**
 
 - With production `min_similarity=0.70`, the scoring floor is mostly a safety net until retrieval is lowered
-- Operators who raise the floor ≥ 0.5 would exclude all FTS hits — document and keep defaults below 0.5
+- Operators who raise the floor **&gt; 0.5** would exclude all FTS hits — settings reject floor ≥ 0.5 so this cannot be set via env without a code change
 - Live Postgres floor-sweep in CI remains available via `memory-benchmark.yml` when settings change; offline sweep tests cover the neutrality invariant without Docker

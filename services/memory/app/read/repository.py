@@ -91,7 +91,11 @@ class MemoryReadRepository:
         if len(vector_ranked) >= query.limit:
             return filter_pii_blocked_results(vector_ranked[: query.limit])
 
-        fts_candidates = await self._fts_candidates(query, vector_ranked=vector_ranked)
+        fts_candidates = await self._fts_candidates(
+            query,
+            vector_ranked=vector_ranked,
+            vector_candidates=vector_candidates,
+        )
         if not fts_candidates:
             return filter_pii_blocked_results(vector_ranked)
 
@@ -123,6 +127,7 @@ class MemoryReadRepository:
         query: FindSimilarQuery,
         *,
         vector_ranked: list[MemorySearchResult],
+        vector_candidates: list[RankedCandidate],
     ) -> list[RankedCandidate]:
         if not _fts_fallback_enabled(
             self._settings,
@@ -132,8 +137,10 @@ class MemoryReadRepository:
         ):
             return []
 
+        # Exclude every vector ANN hit (including below-floor gated IDs) so FTS cannot
+        # reintroduce them via the 0.5 sentinel or waste slots on duplicates.
         remaining = query.limit - len(vector_ranked)
-        exclude = frozenset(item.id for item in vector_ranked)
+        exclude = frozenset(item.memory_id for item in vector_candidates)
         fts_hits = await full_text_search(
             self._session_factory,
             FullTextSearchQuery(

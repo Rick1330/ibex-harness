@@ -56,14 +56,15 @@ class Settings(BaseSettings):
     composite_relevance_floor: float = Field(
         default=0.15,
         ge=0.0,
-        le=1.0,
+        lt=0.5,
         validation_alias=AliasChoices(
             "IBEX_COMPOSITE_RELEVANCE_FLOOR",
             "IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR",
         ),
         description=(
             "Scoring-time floor on the composite relevance component; candidates below "
-            "are excluded before composite_score (not the ANN min_similarity cutoff)"
+            "are excluded before composite_score (not the ANN min_similarity cutoff). "
+            "Must be < 0.5 (FTS composite relevance sentinel)"
         ),
     )
 

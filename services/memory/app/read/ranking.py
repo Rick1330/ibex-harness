@@ -7,8 +7,9 @@ remains the retrieval metric (cosine or raw ts_rank_cd).
 
 Scoring-time relevance floor (ADR-0068): candidates whose composite relevance component is
 below ``relevance_floor`` are excluded *before* ``composite_score``. This is distinct from
-ADR-0053's retrieval-time ``min_similarity`` ANN cutoff. Keep ``relevance_floor`` strictly
-below ``FTS_COMPOSITE_RELEVANCE`` so FTS hits are not mass-excluded.
+ADR-0053's retrieval-time ``min_similarity`` ANN cutoff. Settings require
+``relevance_floor`` ``< 0.5`` (FTS sentinel); gate semantics exclude FTS only when
+floor ``> 0.5``.
 """
 
 from __future__ import annotations
