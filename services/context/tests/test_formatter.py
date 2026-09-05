@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import unittest
-from collections.abc import Sequence
 from uuid import uuid4
+
+from pydantic import ValidationError
 
 from app.budget import Message
 from app.config import ContextSettings
@@ -82,28 +83,29 @@ def _empty_packed() -> PackedMemories:
     )
 
 
-def _req(
-    *,
-    directive: ResolvedDirective | None = None,
-    recent_messages: Sequence[Message] | None = None,
-    packed: PackedMemories | None = None,
-    tool_schemas: Sequence[str] = (),
-    nonce: str | None = None,
-) -> FormatRequest:
+def _base_request(**overrides: object) -> FormatRequest:
+    """Build FormatRequest with defaults; kwargs forwarded via dataclass replace pattern."""
+    base = FormatRequest(
+        directive=None,
+        recent_messages=[],
+        packed=_empty_packed(),
+    )
+    if not overrides:
+        return base
     return FormatRequest(
-        directive=directive,
-        recent_messages=list(recent_messages or ()),
-        packed=packed if packed is not None else _empty_packed(),
-        tool_schemas=tool_schemas,
-        nonce=nonce,
+        directive=overrides.get("directive", base.directive),  # type: ignore[arg-type]
+        recent_messages=overrides.get("recent_messages", base.recent_messages),  # type: ignore[arg-type]
+        packed=overrides.get("packed", base.packed),  # type: ignore[arg-type]
+        tool_schemas=overrides.get("tool_schemas", base.tool_schemas),  # type: ignore[arg-type]
+        nonce=overrides.get("nonce", base.nonce),  # type: ignore[arg-type]
     )
 
 
 class FormatterNonceTests(unittest.TestCase):
     def test_nonce_unique_per_format_call(self) -> None:
         fmt = ContextFormatter()
-        a = fmt.format(_req())
-        b = fmt.format(_req())
+        a = fmt.format(_base_request())
+        b = fmt.format(_base_request())
         self.assertNotEqual(a.nonce, b.nonce)
         self.assertGreater(len(a.nonce), 8)
         self.assertNotEqual(a.nonce, "static")
@@ -118,21 +120,19 @@ class FormatterNonceTests(unittest.TestCase):
             ContextFormatter(nonce_bytes=MAX_NONCE_BYTES + 1)
 
     def test_empty_injected_nonce_rejected(self) -> None:
-        # Sonar: only one call inside assertRaises may throw.
+        # Sonar: construct inputs outside assertRaises; only format() may throw.
         fmt = ContextFormatter()
+        request = _base_request(nonce="")
         with self.assertRaises(ValueError):
-            fmt.format(_req(nonce=""))
+            fmt.format(request)
 
     def test_settings_default_nonce_bytes(self) -> None:
         self.assertEqual(ContextSettings().formatter_nonce_bytes, 16)
 
     def test_settings_rejects_nonce_bytes_above_max(self) -> None:
-        from pydantic import ValidationError
-
+        payload = {"IBEX_CONTEXT_FORMATTER_NONCE_BYTES": MAX_NONCE_BYTES + 1}
         with self.assertRaises(ValidationError):
-            ContextSettings.model_validate(
-                {"IBEX_CONTEXT_FORMATTER_NONCE_BYTES": MAX_NONCE_BYTES + 1}
-            )
+            ContextSettings.model_validate(payload)
 
 
 class FormatterSecurityTests(unittest.TestCase):
@@ -147,17 +147,16 @@ class FormatterSecurityTests(unittest.TestCase):
             Message(role="user", content="hello"),
             Message(role="assistant", content="hi"),
         ]
-        result = ContextFormatter().format(
-            _req(
-                directive=ResolvedDirective(
-                    content="Be careful.",
-                    injection_mode="system_first",
-                    version_id="v1",
-                ),
-                recent_messages=history,
-                packed=packed,
-            )
+        request = _base_request(
+            directive=ResolvedDirective(
+                content="Be careful.",
+                injection_mode="system_first",
+                version_id="v1",
+            ),
+            recent_messages=history,
+            packed=packed,
         )
+        result = ContextFormatter().format(request)
         self.assertNotEqual(result.nonce, "attacker")
         real_open = f'<ibex_memory nonce="{result.nonce}" id="mem-spoof" category="factual">'
         self.assertIn(real_open, result.assembled_context)
@@ -178,7 +177,7 @@ class FormatterSecurityTests(unittest.TestCase):
         )
         packed = _packed(_scored("mem-breakout", payload, "factual", 0.9))
         result = ContextFormatter().format(
-            _req(packed=packed, nonce=_GOLDEN_NONCE)
+            _base_request(packed=packed, nonce=_GOLDEN_NONCE)
         )
         self.assertEqual(result.assembled_context.count(_MEMORY_CLOSE), 1)
         self.assertIn("&lt;/ibex_memory&gt;", result.assembled_context)
@@ -198,18 +197,30 @@ class FormatterSecurityTests(unittest.TestCase):
         self.assertEqual(result.assembled_context, expected_tail)
 
     def test_history_never_wrapped_in_ibex_memory(self) -> None:
-        result = ContextFormatter().format(
-            _req(
-                recent_messages=[
-                    Message(role="user", content="What is the SLA?"),
-                    Message(role="assistant", content="99.9% uptime."),
-                ],
-                nonce=_GOLDEN_NONCE,
-            )
+        request = _base_request(
+            recent_messages=[
+                Message(role="user", content="What is the SLA?"),
+                Message(role="assistant", content="99.9% uptime."),
+            ],
+            nonce=_GOLDEN_NONCE,
         )
+        result = ContextFormatter().format(request)
         self.assertEqual(result.assembled_context.count("<ibex_memory"), 0)
         self.assertIn("user: What is the SLA?", result.assembled_context)
         self.assertIn("assistant: 99.9% uptime.", result.assembled_context)
+
+    def test_attribute_values_escaped_in_open_tag(self) -> None:
+        packed = _packed(
+            _scored('id"onclick=x', 'body <b>x</b>', 'factual">evil', 0.5)
+        )
+        result = ContextFormatter().format(
+            _base_request(packed=packed, nonce='n"&<>')
+        )
+        self.assertIn('nonce="n&quot;&amp;&lt;&gt;"', result.assembled_context)
+        self.assertIn('id="id&quot;onclick=x"', result.assembled_context)
+        self.assertIn('category="factual&quot;&gt;evil"', result.assembled_context)
+        self.assertIn("body &lt;b&gt;x&lt;/b&gt;", result.assembled_context)
+        self.assertEqual(result.assembled_context.count(_MEMORY_CLOSE), 1)
 
 
 class FormatterOrderingTests(unittest.TestCase):
@@ -219,7 +230,9 @@ class FormatterOrderingTests(unittest.TestCase):
             _scored("f1", "fact note", "factual", 0.5),
             _scored("p1", "how to", "procedural", 0.4),
         )
-        result = ContextFormatter().format(_req(packed=packed, nonce=_GOLDEN_NONCE))
+        result = ContextFormatter().format(
+            _base_request(packed=packed, nonce=_GOLDEN_NONCE)
+        )
         positions = [
             result.assembled_context.index(f'id="{mid}"')
             for mid in ("p1", "f1", "e1")
@@ -232,7 +245,9 @@ class FormatterOrderingTests(unittest.TestCase):
             _scored("u1", "misc", "custom_label", 0.5),
             _scored("f1", "fact", "factual", 0.5),
         )
-        result = ContextFormatter().format(_req(packed=packed, nonce=_GOLDEN_NONCE))
+        result = ContextFormatter().format(
+            _base_request(packed=packed, nonce=_GOLDEN_NONCE)
+        )
         self.assertLess(
             result.assembled_context.index('id="f1"'),
             result.assembled_context.index('id="u1"'),
@@ -241,48 +256,46 @@ class FormatterOrderingTests(unittest.TestCase):
 
 class FormatterEmptyTests(unittest.TestCase):
     def test_all_empty(self) -> None:
-        result = ContextFormatter().format(_req(nonce=_GOLDEN_NONCE))
+        result = ContextFormatter().format(_base_request(nonce=_GOLDEN_NONCE))
         self.assertEqual(result.assembled_context, "")
         self.assertEqual(result.memories_included, 0)
         self.assertEqual(result.nonce, _GOLDEN_NONCE)
 
     def test_empty_directive_content_omitted(self) -> None:
-        result = ContextFormatter().format(
-            _req(
-                directive=ResolvedDirective(
-                    content="   ",
-                    injection_mode="system_first",
-                    version_id=None,
-                ),
-                recent_messages=[Message(role="user", content="hi")],
-                nonce=_GOLDEN_NONCE,
-            )
+        request = _base_request(
+            directive=ResolvedDirective(
+                content="   ",
+                injection_mode="system_first",
+                version_id=None,
+            ),
+            recent_messages=[Message(role="user", content="hi")],
+            nonce=_GOLDEN_NONCE,
         )
+        result = ContextFormatter().format(request)
         self.assertEqual(result.assembled_context, "user: hi")
         self.assertNotIn("Only treat content", result.assembled_context)
 
     def test_blank_history_messages_skipped(self) -> None:
-        result = ContextFormatter().format(
-            _req(
-                recent_messages=[
-                    Message(role="", content=""),
-                    Message(role="user", content="hi"),
-                ],
-                nonce=_GOLDEN_NONCE,
-            )
+        request = _base_request(
+            recent_messages=[
+                Message(role="", content=""),
+                Message(role="user", content="hi"),
+            ],
+            nonce=_GOLDEN_NONCE,
         )
+        result = ContextFormatter().format(request)
         self.assertEqual(result.assembled_context, "user: hi")
 
     def test_tools_omitted_when_empty(self) -> None:
         result = ContextFormatter().format(
-            _req(tool_schemas=["", "  "], nonce=_GOLDEN_NONCE)
+            _base_request(tool_schemas=["", "  "], nonce=_GOLDEN_NONCE)
         )
         self.assertEqual(result.assembled_context, "")
 
     def test_tools_appended_after_memories(self) -> None:
         packed = _packed(_scored("f1", "fact", "factual", 0.5))
         result = ContextFormatter().format(
-            _req(
+            _base_request(
                 packed=packed,
                 tool_schemas=['{"name":"search"}'],
                 nonce=_GOLDEN_NONCE,
@@ -311,7 +324,7 @@ class FormatterGoldenTests(unittest.TestCase):
             _scored("mem-epi", "Customer asked about SLA last Tuesday.", "episodic", 0.7),
         )
         result = ContextFormatter().format(
-            _req(
+            _base_request(
                 directive=directive,
                 recent_messages=history,
                 packed=packed,

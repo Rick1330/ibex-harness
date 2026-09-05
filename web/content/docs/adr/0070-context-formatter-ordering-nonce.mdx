@@ -51,7 +51,7 @@ Unknown categories (if any) append after the five known buckets, sorted by `(cat
 - Generate with Python stdlib **`secrets.token_urlsafe(nbytes)`** (OS CSPRNG) — no home-grown crypto ([SECURITY.md](/engineering/SECURITY) §6.4 / AGENTS §5.4).
 - Default `nbytes=16` (~128 bits of entropy); env `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` (allowed **1..64**).
 - Scope: **one nonce per `format()` call** (one assembly). Open tags carry `nonce="{assembly}"`; consumers must only trust tags whose nonce matches this assembly.
-- **Boundary contract:** memory body text is **XML-escaped** (`&`, `<`, `>` → entities) before emission so untrusted content cannot forge `</ibex_memory>` (or any tag) and prematurely close the authenticated block. The nonce alone does **not** protect against close-tag injection inside raw content — escaping does. The nonce prevents *spoofed open tags* that claim authenticity without the assembly secret.
+- **Boundary contract:** memory body text is **XML/HTML-escaped** via `html.escape` (`&`, `<`, `>` → entities) before emission so untrusted content cannot forge `</ibex_memory>`. Open-tag **attribute** values (`nonce`, `id`, `category`) are escaped with `html.escape(..., quote=True)` before interpolation. The nonce alone does **not** protect against close-tag injection inside raw content — escaping does. The nonce prevents *spoofed open tags* that claim authenticity without the assembly secret.
 
 ### 4) Doc supersession
 
