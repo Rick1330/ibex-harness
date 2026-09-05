@@ -157,6 +157,7 @@ async def _seed_memory_row(
             valid_from=now - timedelta(days=age_days),
             confidence=float(row.get("confidence", 0.85)),
             usefulness_score=float(row.get("usefulness_score", 0.5)),
+            retrieval_count=int(row.get("retrieval_count", 0)),
         ),
     )
     hotspot = int(row.get("embedding_hotspot", 0))

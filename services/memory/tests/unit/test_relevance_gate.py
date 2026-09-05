@@ -112,7 +112,7 @@ def test_gate_blocks_stale_frequent_low_relevance_from_outranking() -> None:
                 age_days=1.0,
                 usefulness=1.0,
                 confidence=1.0,
-                retrieval_count=100,
+                retrieval_count=1000,
             )
         ),
         relevant_id: hydrated_hit(

@@ -49,27 +49,32 @@ Category-conditional half-lives (`CATEGORY_HALF_LIFE_DAYS`) and formula weights 
 
 Candidate floors swept: `{0.10, 0.15, 0.20, 0.25, 0.30}`.
 
-The ranking-quality gold set (`benchmarks/memory/ranking_quality/gold_set_v1.json`) is evaluated with **`min_similarity=0.5`**. Every vector hit that reaches scoring therefore has relevance ≥ 0.5. All candidate floors are strictly below that cutoff (and below the FTS sentinel), so they are **neutral** on gold-set metrics versus floor=`0.0`:
+**Default gold-set queries use `min_similarity=0.5`.** Under that retrieval cutoff every vector hit that reaches scoring already has relevance ≥ 0.5, so floors in `{0.10…0.30}` never filter those candidates. Neutrality of precision@5 / recall@10 / MRR versus floor=`0.0` on the default query loop is therefore **by construction**, not proof that the gate is safe under looser retrieval cutoffs:
 
-| Floor | precision@5 | recall@10 | MRR | Notes |
+| Floor | precision@5 (default queries) | recall@10 | MRR | Notes |
 | --- | --- | --- | --- | --- |
 | 0.0 (baseline) | 1.0 | 1.0 | 1.0 | Committed `baseline.json` |
-| 0.10 … 0.30 | 1.0 | 1.0 | 1.0 | No candidate filtered under gold-set retrieval |
+| 0.10 … 0.30 | 1.0 | 1.0 | 1.0 | No candidate filtered under gold-set `min_similarity=0.5` |
 
-Evidence is encoded in unit tests (`test_relevance_floor_sweep.py`): gold-set-compatible relevances pass every sweep floor; ranking order of a gold-set-like slate is identical across the sweep; floor **0.15** excludes classic low-relevance noise when retrieval is opened.
+To exercise the gate inside the ranking-quality harness, gold set v1 includes synthetic bait `gold.noise.relevance_gate_bait` (orthogonal hotspot, confidence=1.0, usefulness=1.0, retrieval_count=1000). `bench_ranking_quality.py` runs a separate **relevance_gate_probe** with `min_similarity=0.0` / `limit=50` and fails closed unless the bait is excluded while a same-hotspot relevant memory remains. Unit coverage additionally lives in `test_relevance_gate.py` / `test_relevance_floor_sweep.py`.
 
-**Chosen default: 0.15** — highest practical pick among neutrals that (a) stays well below the FTS sentinel, (b) filters near-zero noise in the open-retrieval regime where the classic bug appears, (c) matches the milestone’s intended invariant without regressing gold-set precision/recall.
+**Chosen default: 0.15** — below the FTS sentinel, filters near-zero noise when retrieval is opened, and preserves gold-set default-query metrics.
 
 ### 4) Why not `services/context`
 
 Context assembly consumes already-ranked memory search results. It does not own composite scoring. No scoring module or proto changes under `services/context/`.
 
-### 5) Explicit non-goals
+### 5) `AssemblyOptions` weight fields (not wired yet)
+
+`packages/proto/.../context.proto` defines `AssemblyOptions` weight fields (`recency_weight`, `relevance_weight`, …). Those fields are **unconsumed today**: no Python/Go path applies them to `composite_score` or `rank_hydrated_hits`. Track C Non-Goals for this milestone exclude proto wire-contract changes. When **3.5.C.6** connects `AssemblyOptions` to composite scoring, per-request weight overrides must apply **after** the relevance gate (callers must not bypass exclusion by reweighting). Until that wiring exists, this is a forward-looking contract — not current runtime behavior.
+
+### 6) Explicit non-goals
 
 - Do not change `CATEGORY_HALF_LIFE_DAYS` or `recency_decay`
 - Do not change `RankWeights` defaults
 - Do not reuse ADR-0040
 - Do not invent a context-side `MemoryScorer`
+- Do not change the context assembly proto in this milestone
 
 ## Consequences
 
@@ -78,9 +83,10 @@ Context assembly consumes already-ranked memory search results. It does not own 
 - Irrelevant candidates never enter the weighted sum when below the floor
 - Retrieval and scoring cutoffs remain independently tunable
 - Hot-cache write path and pure scorer unit tests stay stable
+- Ranking-quality harness probes the gate under opened retrieval, not only under `min_similarity=0.5`
 
 **Negative / follow-ups:**
 
 - With production `min_similarity=0.70`, the scoring floor is mostly a safety net until retrieval is lowered
 - Operators who raise the floor **&gt; 0.5** would exclude all FTS hits — settings reject floor ≥ 0.5 so this cannot be set via env without a code change
-- Live Postgres floor-sweep in CI remains available via `memory-benchmark.yml` when settings change; offline sweep tests cover the neutrality invariant without Docker
+- `AssemblyOptions` weight overrides remain deferred to 3.5.C.6

@@ -42,7 +42,16 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("placeholder" in e for e in errors))
 
-    def test_rejects_missing_decay_query(self) -> None:
+    def test_rejects_missing_relevance_gate_bait(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["memories"] = [
+            m
+            for m in payload["memories"]
+            if m["content_key"] != validate_mod.RELEVANCE_GATE_BAIT_KEY
+        ]
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("relevance-gate bait" in e for e in errors))
+
         payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
         payload["queries"] = [
             q for q in payload["queries"] if q["query_id"] != "q_pref_theme_decay"

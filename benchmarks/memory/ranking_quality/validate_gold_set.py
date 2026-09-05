@@ -28,6 +28,7 @@ DECAY_QUERY_IDS = frozenset(
         "q_confidence_tie_break",
     }
 )
+RELEVANCE_GATE_BAIT_KEY = "gold.noise.relevance_gate_bait"
 MIN_MEMORIES = 30
 MAX_MEMORIES = 55
 MIN_QUERIES = 15
@@ -166,6 +167,13 @@ def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str
     errors.extend(hotspot_errors)
     if hotspot is not None and not (0 <= hotspot < EMBEDDING_DIM):
         errors.append(f"{prefix} hotspot {hotspot} out of range")
+    if "retrieval_count" in row:
+        retrieval_count, rc_errors = _parse_int(
+            row.get("retrieval_count"), "retrieval_count", prefix
+        )
+        errors.extend(rc_errors)
+        if retrieval_count is not None and retrieval_count < 0:
+            errors.append(f"{prefix} retrieval_count must be >= 0")
     return errors
 
 
@@ -417,6 +425,12 @@ def validate_gold_set(payload: object) -> list[str]:
     missing_decay = DECAY_QUERY_IDS - decay_found
     if missing_decay:
         errors.append(f"missing decay queries: {sorted(missing_decay)}")
+
+    if RELEVANCE_GATE_BAIT_KEY not in mem_by_key:
+        errors.append(
+            f"missing relevance-gate bait memory {RELEVANCE_GATE_BAIT_KEY!r} "
+            "(required for opened-retrieval gate probe)"
+        )
 
     return errors
 

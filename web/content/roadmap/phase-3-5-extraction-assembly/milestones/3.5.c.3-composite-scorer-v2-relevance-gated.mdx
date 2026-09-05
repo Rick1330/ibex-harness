@@ -78,7 +78,7 @@ Floor must be **&lt; 0.5** (settings enforce this). Gate semantics: FTS sentinel
 
 ## Empirical floor choice
 
-Swept `{0.10, 0.15, 0.20, 0.25, 0.30}` against gold-set retrieval semantics (`min_similarity=0.5` in `bench_ranking_quality.py`). All floors are neutral on precision@5 / recall@10 / MRR versus baseline **1.0** (committed `baseline.json`) because gold-set hits already have relevance ≥ 0.5. Default **0.15** chosen as the safety-net value that still excludes classic low-relevance noise when retrieval is opened — see [ADR-0068](/docs/adr/0068-composite-relevance-gate).
+Swept `{0.10, 0.15, 0.20, 0.25, 0.30}` against gold-set **default** retrieval semantics (`min_similarity=0.5` in `bench_ranking_quality.py`). Neutrality of precision@5 / recall@10 / MRR versus baseline **1.0** under that cutoff is **by construction** (hits already have relevance ≥ 0.5). The gold set also includes `gold.noise.relevance_gate_bait`; the bench runs a separate opened-retrieval **relevance_gate_probe** (`min_similarity=0.0`) that fails unless the bait is excluded — see [ADR-0068](/docs/adr/0068-composite-relevance-gate). Default floor **0.15**.
 
 ---
 
@@ -86,6 +86,7 @@ Swept `{0.10, 0.15, 0.20, 0.25, 0.30}` against gold-set retrieval semantics (`mi
 
 - [x] Relevance floor gate unit-tested: below excluded; at/above scored; empty / all-below → `[]`
 - [x] Classic noise case (similarity≈0.05, high non-relevance components) excluded, not merely ranked low
-- [x] Gold-set metrics preserved (precision@5 / recall@10 / MRR = 1.0; floor sweep neutral)
+- [x] Gold-set metrics preserved on default queries (precision@5 / recall@10 / MRR = 1.0); opened-retrieval gate probe excludes synthetic bait
 - [x] ADR-0068 accepted and linked; half-lives / weights untouched
 - [x] No scoring or proto changes under `services/context/`
+- [x] AssemblyOptions weight overrides documented as unwired until 3.5.C.6 (apply after the gate when connected)
