@@ -30,7 +30,8 @@ def _rank(
     ]
     hydrated = {
         mid: hydrated_hit(
-            HydratedHitSeed(memory_id=mid, similarity=score, **hit_kwargs)  # type: ignore[arg-type]
+            HydratedHitSeed(memory_id=mid, similarity=score, **hit_kwargs),  # type: ignore[arg-type]
+            now=_FIXED_NOW,
         )
         for mid, score in seeds
     }
@@ -90,7 +91,8 @@ def test_fts_sentinel_passes_default_floor() -> None:
     ]
     hydrated = {
         fts_id: hydrated_hit(
-            HydratedHitSeed(memory_id=fts_id, similarity=0.99, source="full_text")
+            HydratedHitSeed(memory_id=fts_id, similarity=0.99, source="full_text"),
+            now=_FIXED_NOW,
         ),
     }
     ranked = rank_hydrated_hits(
@@ -119,7 +121,8 @@ def test_gate_blocks_stale_frequent_low_relevance_from_outranking() -> None:
                 usefulness=1.0,
                 confidence=1.0,
                 retrieval_count=1000,
-            )
+            ),
+            now=_FIXED_NOW,
         ),
         relevant_id: hydrated_hit(
             HydratedHitSeed(
@@ -130,7 +133,8 @@ def test_gate_blocks_stale_frequent_low_relevance_from_outranking() -> None:
                 usefulness=0.0,
                 confidence=0.0,
                 retrieval_count=0,
-            )
+            ),
+            now=_FIXED_NOW,
         ),
     }
     ungated = [

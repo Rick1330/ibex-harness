@@ -52,7 +52,8 @@ def test_floor_sweep_neutral_on_gold_set_like_candidate_set() -> None:
     ]
     hydrated = {
         mid: hydrated_hit(
-            HydratedHitSeed(memory_id=mid, similarity=rel, age_days=1.0 + i)
+            HydratedHitSeed(memory_id=mid, similarity=rel, age_days=1.0 + i),
+            now=now,
         )
         for i, (mid, rel) in enumerate(zip(ids, relevances, strict=True))
     }
@@ -86,9 +87,10 @@ def test_chosen_floor_excludes_noise_when_retrieval_opened() -> None:
                 usefulness=1.0,
                 confidence=1.0,
                 retrieval_count=100,
-            )
+            ),
+            now=now,
         ),
-        keep: hydrated_hit(HydratedHitSeed(memory_id=keep, similarity=0.80)),
+        keep: hydrated_hit(HydratedHitSeed(memory_id=keep, similarity=0.80), now=now),
     }
     ungated = [
         item.id

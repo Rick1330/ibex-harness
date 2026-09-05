@@ -47,7 +47,8 @@ def _build_ranking_fixture(candidate_count: int) -> tuple[list[RankedCandidate],
                 usefulness=0.4 + (index % 5) * 0.1,
                 confidence=0.7 + (index % 3) * 0.05,
                 retrieval_count=index % 10,
-            )
+            ),
+            now=fixed_now,
         )
     return candidates, hydrated, fixed_now
 

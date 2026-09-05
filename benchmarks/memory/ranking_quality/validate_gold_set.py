@@ -438,33 +438,37 @@ def validate_gold_set(payload: object) -> list[str]:
     if missing_decay:
         errors.append(f"missing decay queries: {sorted(missing_decay)}")
 
+    errors.extend(_validate_relevance_gate_bait(mem_by_key))
+    return errors
+
+
+def _validate_relevance_gate_bait(mem_by_key: dict[str, dict[str, Any]]) -> list[str]:
+    """Require the opened-retrieval bait row with saturated retrieval_count."""
     if RELEVANCE_GATE_BAIT_KEY not in mem_by_key:
-        errors.append(
+        return [
             f"missing relevance-gate bait memory {RELEVANCE_GATE_BAIT_KEY!r} "
             "(required for opened-retrieval gate probe)"
-        )
-    else:
-        bait = mem_by_key[RELEVANCE_GATE_BAIT_KEY]
-        prefix = f"memory[{RELEVANCE_GATE_BAIT_KEY}]"
-        if "retrieval_count" not in bait:
-            errors.append(
-                f"{prefix} missing retrieval_count "
-                f"(must be >= {RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT})"
-            )
-        else:
-            retrieval_count, rc_errors = _parse_int(
-                bait.get("retrieval_count"), "retrieval_count", prefix
-            )
-            errors.extend(rc_errors)
-            if (
-                retrieval_count is not None
-                and retrieval_count < RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT
-            ):
-                errors.append(
-                    f"{prefix} retrieval_count {retrieval_count} below probe minimum "
-                    f"{RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT}"
-                )
+        ]
 
+    bait = mem_by_key[RELEVANCE_GATE_BAIT_KEY]
+    prefix = f"memory[{RELEVANCE_GATE_BAIT_KEY}]"
+    if "retrieval_count" not in bait:
+        return [
+            f"{prefix} missing retrieval_count "
+            f"(must be >= {RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT})"
+        ]
+
+    retrieval_count, errors = _parse_int(
+        bait.get("retrieval_count"), "retrieval_count", prefix
+    )
+    if (
+        retrieval_count is not None
+        and retrieval_count < RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT
+    ):
+        errors.append(
+            f"{prefix} retrieval_count {retrieval_count} below probe minimum "
+            f"{RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT}"
+        )
     return errors
 
 
