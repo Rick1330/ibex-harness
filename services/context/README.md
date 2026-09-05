@@ -17,6 +17,15 @@ Phase **3.5 Track C** context-assembly building blocks.
 History is **not** a fourth I/O branch: use `AssembleContextRequest.recent_messages` and
 `BudgetCalculator` for `history_tokens`. Cold search embeds server-side in memory service.
 
+## Milestone 3.5.C.4 — Packer v2 (bounded DP knapsack)
+
+- [`app/packer.py`](app/packer.py) — `ContextPacker` / `ScoredMemory` / `PackedMemories` (numpy DP + greedy fallback)
+- [`app/scoring.py`](app/scoring.py) — **interim** packer score from `similarity`/`confidence` only (not memory-service `composite_score`; see [ADR-0069](/docs/adr/0069-context-packer-dp-knapsack))
+- [`app/pipeline.py`](app/pipeline.py) — `pack_retrieval(RetrievalResult, TokenBudget, packer=...)` thin glue (no gRPC)
+
+Pack under `TokenBudget.usable_budget`. Path indicator `PackedMemories.path` is `"dp"` or `"greedy"`.
+CI asserts packing p99 &lt; 5ms at n=70.
+
 gRPC `ContextAssemblyService` remains **out of scope** (milestone **3.5.C.6** / ADR-0067).
 
 ### Regenerate the catalog JSON (Go source of truth)

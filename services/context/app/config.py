@@ -1,4 +1,4 @@
-"""Context assembly settings (milestone 3.5.C.2)."""
+"""Context assembly settings (milestones 3.5.C.2 / 3.5.C.4)."""
 
 from __future__ import annotations
 
@@ -82,6 +82,21 @@ class ContextSettings(BaseSettings):
     redis_url: str = Field(
         default="",
         validation_alias=AliasChoices("IBEX_CONTEXT_REDIS_URL", "REDIS_URL"),
+    )
+    packer_dp_cell_ceiling: int = Field(
+        default=70 * 6250,
+        ge=1,
+        validation_alias="IBEX_CONTEXT_PACKER_DP_CELL_CEILING",
+        description=(
+            "If n * (buckets+1) exceeds this, ContextPacker falls back to greedy "
+            "(ADR-0069)."
+        ),
+    )
+    packer_max_consecutive_skips: int = Field(
+        default=5,
+        ge=0,
+        validation_alias="IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS",
+        description="Greedy fallback consecutive-skip limit before stopping.",
     )
 
     @field_validator(

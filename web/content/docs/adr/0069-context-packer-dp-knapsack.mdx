@@ -1,0 +1,73 @@
+---
+title: "ADR-0069: Context packer bounded DP knapsack"
+description: "Architecture decision record 0069 — bucketed 0/1 knapsack DP with greedy fallback for context memory packing; interim packer score until memory HTTP exposes composite."
+adrId: "0069"
+status: "Accepted"
+date: "2026-09-05"
+authors: "IBEX Harness team"
+---
+
+# ADR-0069: Context packer bounded DP knapsack
+
+- **Status:** Accepted
+- **Date:** 2026-09-05
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.C.4 Packer v2 — Bounded DP Knapsack](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.4-packer-v2-dp-knapsack)
+- **Depends on:** [ADR-0067](/docs/adr/0067-context-capability-catalog-generate-and-diff) (token estimates), [ADR-0068](/docs/adr/0068-composite-relevance-gate) (memory-side composite + gate — not wired into context HTTP)
+
+## Context
+
+Track C needs a packing stage under `services/context` that selects memories within `TokenBudget.usable_budget`. Discovery confirmed:
+
+- No packer existed before this milestone.
+- Memory HTTP search/hot responses expose `similarity` / `confidence` / `rank` only — **not** `composite_score`.
+- Memory ranks with full `composite_score` (recency / usefulness / frequency) internally ([ADR-0068](/docs/adr/0068-composite-relevance-gate)), but that value never reaches context.
+- Token counting must reuse `estimate_tokens` + capability-catalog family policy ([ADR-0067](/docs/adr/0067-context-capability-catalog-generate-and-diff)).
+- Latency docs disagree: [PERFORMANCE.md](/engineering/PERFORMANCE) states **Ranking + packing ≤ 15ms (100 candidates)**; [ARCHITECTURE.md](/engineering/ARCHITECTURE) and the C.4 milestone state **packing &lt; 5ms at n=70**.
+
+## Decision
+
+### 1) Bucketed 0/1 knapsack DP with greedy fallback
+
+- Module: `services/context/app/packer.py` (`ContextPacker`)
+- Discretize budget into buckets of `BUCKET_SIZE=16`
+- Numpy-vectorized DP for the default path; if `n * (buckets+1)` exceeds `IBEX_CONTEXT_PACKER_DP_CELL_CEILING`, fall back to score-descending greedy with consecutive-skip limit
+- After DP selection, **repair** so exact `estimate_tokens` sums never exceed the token budget
+- Packed order: descending interim score, then `memory_id` (deterministic)
+
+### 2) Interim packer score (labeled, not memory composite)
+
+Until memory HTTP carries the real composite:
+
+```
+interim = 0.85 * similarity + 0.15 * confidence
+```
+
+Implemented in `services/context/app/scoring.py`. Field name on `ScoredMemory` is `composite_score` for formatter/proto alignment, but module docs and this ADR state it is **not** `services/memory/app/scoring/composite.py`. Follow-up: expose real composite on search/hot responses and delete the interim formula.
+
+### 3) Thin pipeline glue only
+
+`pack_retrieval(RetrievalResult, TokenBudget, packer=...)` merges hot+cold (dedupe by `memory_id`), scores, and packs under `usable_budget`. No gRPC / AssembleContext (3.5.C.6).
+
+### 4) Latency gate for CI
+
+Packing-only unit latency test asserts **p99 &lt; 5ms at n=70**. That matches ARCHITECTURE.md’s packing line and the milestone success signal.
+
+**Follow-up (doc reconciliation):** align PERFORMANCE.md’s combined ranking+packing ≤15ms@100 with ARCHITECTURE.md’s packing &lt;5ms / ranking &lt;10ms split so contributors have one authoritative table. Not blocking this ADR.
+
+### 5) Dependency
+
+`numpy>=2.0.0` in `services/context/pyproject.toml` (same floor as embedder).
+
+## Consequences
+
+- Context can pack without calling memory’s scoring internals or changing the proto
+- Packer quality is limited by interim scores until the HTTP composite field lands
+- Pathological DP sizes degrade to greedy with a structured warning log
+- Formatter (3.5.C.5) consumes `PackedMemories` (content via embedded `MemoryHit`)
+
+## Alternatives considered
+
+1. **Extend memory HTTP with `composite_score` in this milestone** — correct long-term, but expands scope into memory schemas/clients and is not required to ship a correct packer algorithm.
+2. **Pure-Python DP only** — discovery microbenches showed ~20ms+ at n=70 / ~6250 buckets; misses the &lt;5ms packing gate at the sketch’s worst-case table size.
+3. **Copy the milestone MDX sketch verbatim** — rejected: sketch numpy slicing is incorrect for edge weights.
