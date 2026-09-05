@@ -20,7 +20,12 @@ def pack_retrieval(
     *,
     packer: ContextPacker,
 ) -> PackedMemories:
-    """Dedupe hot+cold by ``memory_id``, score, and pack under usable budget."""
+    """Dedupe hot+cold by ``memory_id``, score, and pack under usable budget.
+
+    Preference when IDs collide: higher interim score, then lower ``rank``.
+    Packs against ``budget.usable_budget`` (may be zero when the window is
+    constrained). Does not format or populate gRPC metrics — that is 3.5.C.6.
+    """
     merged = _dedupe_hits(result.hot_memories + result.cold_memories)
     scored = score_hits(merged)
     return packer.pack(scored, budget.usable_budget)
@@ -40,6 +45,7 @@ def _dedupe_hits(hits: list[MemoryHit]) -> list[MemoryHit]:
 
 
 def _prefer(candidate: MemoryHit, incumbent: MemoryHit) -> bool:
+    """Return True when ``candidate`` should replace ``incumbent`` in dedupe."""
     cand_score = score_memory_hit(candidate)
     inc_score = score_memory_hit(incumbent)
     if cand_score != inc_score:

@@ -21,7 +21,9 @@ from app.budget import Message
 from app.packer import PackedMemories, ScoredMemory
 from app.retrieval import ResolvedDirective
 
-# Locked category priority (index.mdx / milestone Final Locked Ordering).
+# Locked category priority for memory block emission (index.mdx / milestone
+# Final Locked Ordering). Unknown categories append after these, sorted by
+# (category, memory_id).
 CATEGORY_ORDER: Final[tuple[str, ...]] = (
     "procedural",
     "factual",
@@ -40,7 +42,13 @@ _MEMORY_CLOSE: Final[str] = "</ibex_memory>"
 
 @dataclass(frozen=True, slots=True)
 class FormattedContext:
-    """Formatter output — maps to AssembleContextResponse.assembled_context (+ nonce)."""
+    """Result of one format call — maps toward AssembleContextResponse fields.
+
+    ``assembled_context`` is the full injection string. ``nonce`` authenticates
+    genuine ``<ibex_memory>`` open tags for this assembly. ``memories_included``
+    counts packed memories (not sections). Timing fields for ``AssemblyMetrics``
+    are owned by the future C.6 orchestrator, not this type.
+    """
 
     assembled_context: str
     nonce: str
@@ -49,7 +57,13 @@ class FormattedContext:
 
 @dataclass(frozen=True, slots=True)
 class FormatRequest:
-    """Inputs for one assembly format call (single public arg for CodeScene arity)."""
+    """Inputs for one assembly format call (single public arg for CodeScene arity).
+
+    ``packed`` supplies already-selected memories (from ``ContextPacker`` /
+    ``pack_retrieval``). ``tool_schemas`` are optional trailing schema strings.
+    When ``nonce`` is None, ``ContextFormatter`` generates one via
+    ``secrets.token_urlsafe``.
+    """
 
     directive: ResolvedDirective | None
     recent_messages: Sequence[Message]
@@ -59,9 +73,15 @@ class FormatRequest:
 
 
 class ContextFormatter:
-    """Build directive → history → memories-by-category → tools context text."""
+    """Build directive → history → memories-by-category → tools context text.
+
+    Ordering is locked by ADR-0070. Memory bodies/attrs are ``html.escape``'d so
+    untrusted content cannot forge delimiters; the per-assembly nonce marks
+    authentic open tags. Does not call budget, retrieval, or packing.
+    """
 
     def __init__(self, *, nonce_bytes: int = DEFAULT_NONCE_BYTES) -> None:
+        """Bind nonce entropy length (allowed ``1..MAX_NONCE_BYTES``)."""
         if nonce_bytes < 1 or nonce_bytes > MAX_NONCE_BYTES:
             msg = (
                 f"nonce_bytes must be in 1..{MAX_NONCE_BYTES}, got {nonce_bytes}"
@@ -103,6 +123,7 @@ class ContextFormatter:
         )
 
     def _generate_nonce(self) -> str:
+        """Return a URL-safe nonce for this assembly's memory delimiters."""
         return secrets.token_urlsafe(self._nonce_bytes)
 
 

@@ -34,9 +34,12 @@ PackPath = Literal["dp", "greedy"]
 
 @dataclass(frozen=True, slots=True)
 class ScoredMemory:
-    """Candidate for packing. ``composite_score`` is the *interim* packer score.
+    """One packing candidate: a retrieval hit plus its interim packer score.
 
-    See ``app.scoring`` — this is not memory-service ``composite_score``.
+    ``composite_score`` is the *interim* context-local score from ``app.scoring``
+    (``0.85×similarity + 0.15×confidence``). It is **not** the memory-service
+    ``composite_score`` (recency / usefulness / frequency) until that value is
+    exposed on the HTTP search/hot wire.
     """
 
     hit: MemoryHit
@@ -44,20 +47,30 @@ class ScoredMemory:
 
     @property
     def memory_id(self) -> str:
+        """Stable memory UUID from the underlying hit."""
         return self.hit.memory_id
 
     @property
     def content(self) -> str:
+        """Raw memory body text used for token estimation and formatting."""
         return self.hit.content
 
     @property
     def category(self) -> str:
+        """Memory category label (e.g. factual / episodic) from the hit."""
         return self.hit.category
 
 
 @dataclass(frozen=True, slots=True)
 class PackedMemories:
-    """Packer result handed to the future formatter / metrics (3.5.C.5 / C.6)."""
+    """Subset selected under a token budget for the formatter / future metrics.
+
+    Handed to ``ContextFormatter`` (3.5.C.5) and eventually ``AssemblyMetrics``
+    / ``AssembleContextResponse`` (3.5.C.6). ``path`` records whether the DP
+    knapsack or the greedy fallback ran. ``was_budget_reached`` is True when at
+    least one candidate was excluded because it would not fit the budget
+    (including a non-positive budget with candidates present).
+    """
 
     memories: tuple[ScoredMemory, ...]
     total_tokens: int
@@ -87,7 +100,13 @@ class _RepairArgs:
 
 
 class ContextPacker:
-    """Bucketed 0/1 knapsack with greedy fallback."""
+    """Select a score-maximizing memory subset under a token budget (ADR-0069).
+
+    Default path: numpy-vectorized bucketed 0/1 knapsack (bucket size 16) with
+    exact-token repair after DP. When ``n * (buckets+1)`` exceeds
+    ``dp_cell_ceiling``, falls back to score-descending greedy with a
+    consecutive-skip limit so pathological table sizes cannot blow latency.
+    """
 
     def __init__(
         self,
@@ -97,6 +116,7 @@ class ContextPacker:
         dp_cell_ceiling: int = DEFAULT_DP_CELL_CEILING,
         max_consecutive_skips: int = DEFAULT_MAX_CONSECUTIVE_SKIPS,
     ) -> None:
+        """Validate knobs and bind the tokenizer policy used for estimates."""
         if bucket_size < 1:
             msg = f"bucket_size must be >= 1, got {bucket_size}"
             raise ValueError(msg)
@@ -118,9 +138,16 @@ class ContextPacker:
     ) -> PackedMemories:
         """Select memories under ``token_budget`` using DP or greedy fallback.
 
-        Empty input or non-positive budget yields an empty pack with
-        ``was_budget_reached=False``. When at least one candidate is excluded
-        for budget reasons, ``was_budget_reached=True``.
+        Semantics for ``was_budget_reached``:
+
+        - Empty candidate list → empty pack, ``was_budget_reached=False``
+          (nothing was truncated).
+        - ``token_budget <= 0`` with one or more candidates → empty pack,
+          ``was_budget_reached=True`` (budget exhausted / unusable; every
+          candidate is excluded for budget reasons). Zero and negative share
+          this branch so bucket math never sees a non-positive capacity.
+        - Positive budget that excludes at least one candidate → ``True``.
+        - Positive budget that fits every candidate → ``False``.
 
         Candidates are sorted by descending score then ``memory_id`` before DP
         so equal-score ties are independent of caller input order.
@@ -180,7 +207,11 @@ class ContextPacker:
         scored: Sequence[ScoredMemory],
         token_budget: int,
     ) -> PackedMemories:
-        """Expose greedy packing for adversarial / fallback comparison tests."""
+        """Run only the greedy path (tests / adversarial baselines).
+
+        Same ``was_budget_reached`` semantics as :meth:`pack` for empty input
+        and ``token_budget <= 0``. Always sets ``path="greedy"``.
+        """
         candidates = list(scored)
         n = len(candidates)
         if n == 0:
