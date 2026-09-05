@@ -42,8 +42,8 @@ Unknown categories (if any) append after the five known buckets, sorted by `(cat
 
 ### 2) Module
 
-- `services/context/app/formatter.py` — `ContextFormatter`, `FormattedContext`, `CATEGORY_ORDER`
-- Consumes `ResolvedDirective | None`, `Sequence[Message]`, `PackedMemories`, optional `tool_schemas`
+- `services/context/app/formatter.py` — `ContextFormatter`, `FormatRequest`, `FormattedContext`, `CATEGORY_ORDER`
+- Consumes one `FormatRequest` (directive, recent messages, `PackedMemories`, optional tool schemas / injected nonce)
 - Does **not** orchestrate budget → retrieve → pack (3.5.C.6)
 
 ### 3) Per-assembly nonce + XML-escaped memory bodies

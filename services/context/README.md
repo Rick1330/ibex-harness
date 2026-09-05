@@ -28,7 +28,7 @@ CI asserts packing p99 &lt; 5ms at n=70.
 
 ## Milestone 3.5.C.5 — Context formatter
 
-- [`app/formatter.py`](app/formatter.py) — `ContextFormatter` / `FormattedContext` / `CATEGORY_ORDER` ([ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce))
+- [`app/formatter.py`](app/formatter.py) — `ContextFormatter` / `FormatRequest` / `FormattedContext` / `CATEGORY_ORDER` ([ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce))
 - Locked order: directive → history (`role: content`) → memories by category → optional tool schemas
 - Memories wrapped as `<ibex_memory nonce="...">` via `secrets.token_urlsafe` (`IBEX_CONTEXT_FORMATTER_NONCE_BYTES`, default 16, max 64); memory bodies are XML-escaped so content cannot forge `</ibex_memory>`
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final
 
 from app.budget import Message
@@ -43,14 +43,14 @@ class FormattedContext:
 
 
 @dataclass(frozen=True, slots=True)
-class _FormatInput:
-    """Bundles format() inputs (keeps public arity within CodeScene limits)."""
+class FormatRequest:
+    """Inputs for one assembly format call (single public arg for CodeScene arity)."""
 
     directive: ResolvedDirective | None
     recent_messages: Sequence[Message]
     packed: PackedMemories
-    tool_schemas: Sequence[str]
-    nonce: str | None
+    tool_schemas: Sequence[str] = field(default_factory=tuple)
+    nonce: str | None = None
 
 
 class ContextFormatter:
@@ -64,54 +64,37 @@ class ContextFormatter:
             raise ValueError(msg)
         self._nonce_bytes = nonce_bytes
 
-    def format(
-        self,
-        *,
-        directive: ResolvedDirective | None,
-        recent_messages: Sequence[Message],
-        packed: PackedMemories,
-        tool_schemas: Sequence[str] = (),
-        nonce: str | None = None,
-    ) -> FormattedContext:
+    def format(self, request: FormatRequest) -> FormattedContext:
         """Assemble context sections. Empty inputs omit their sections (never error)."""
-        return self._format(
-            _FormatInput(
-                directive=directive,
-                recent_messages=recent_messages,
-                packed=packed,
-                tool_schemas=tool_schemas,
-                nonce=nonce,
-            )
+        assembly_nonce = (
+            request.nonce if request.nonce is not None else self._generate_nonce()
         )
-
-    def _format(self, args: _FormatInput) -> FormattedContext:
-        assembly_nonce = args.nonce if args.nonce is not None else self._generate_nonce()
         if not assembly_nonce:
             msg = "nonce must be a non-empty string"
             raise ValueError(msg)
 
         sections: list[str] = []
 
-        directive_block = _format_directive(args.directive, assembly_nonce)
+        directive_block = _format_directive(request.directive, assembly_nonce)
         if directive_block is not None:
             sections.append(directive_block)
 
-        history_block = _format_history(args.recent_messages)
+        history_block = _format_history(request.recent_messages)
         if history_block is not None:
             sections.append(history_block)
 
-        memory_block = _format_memories(args.packed.memories, assembly_nonce)
+        memory_block = _format_memories(request.packed.memories, assembly_nonce)
         if memory_block is not None:
             sections.append(memory_block)
 
-        tools_block = _format_tools(args.tool_schemas)
+        tools_block = _format_tools(request.tool_schemas)
         if tools_block is not None:
             sections.append(tools_block)
 
         return FormattedContext(
             assembled_context="\n\n".join(sections),
             nonce=assembly_nonce,
-            memories_included=len(args.packed.memories),
+            memories_included=len(request.packed.memories),
         )
 
     def _generate_nonce(self) -> str:
