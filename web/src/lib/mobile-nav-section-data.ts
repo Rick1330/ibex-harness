@@ -1,10 +1,13 @@
 import type { MobileNavData, MobileNavNode } from "@/lib/mobile-nav-data";
 
+export type MobileTreeDataKey = "docsTree" | "roadmapTree" | "benchmarkTree";
+
 export function getSectionTree(
   data: MobileNavData,
-  dataKey: "docsTree" | "roadmapTree",
+  dataKey: MobileTreeDataKey,
 ): MobileNavNode[] {
   if (dataKey === "docsTree") return data.docsTree;
+  if (dataKey === "benchmarkTree") return data.benchmarkTree;
   return data.roadmapTree;
 }
 

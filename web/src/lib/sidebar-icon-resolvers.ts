@@ -10,6 +10,7 @@ import {
   ROADMAP_PHASE_ICONS,
   ROADMAP_SECTION_ICONS,
   ROADMAP_PAGE_ICONS,
+  BENCHMARK_FOLDER_ICONS,
   BENCHMARK_PAGE_ICONS,
   SECTION_ICONS,
   SLUG_ICONS,
@@ -263,6 +264,10 @@ export function getBenchmarkIconForUrl(url: NavUrl): LucideIcon {
   return BENCHMARK_PAGE_ICONS[url as string] ?? Gauge;
 }
 
+export function getBenchmarkFolderIconForName(name: string): LucideIcon {
+  return BENCHMARK_FOLDER_ICONS[name] ?? Gauge;
+}
+
 export function getNavIconForUrl(url: NavUrl): LucideIcon {
   const baseUrl = baseUrlFromPathname(url);
   if (baseUrl === "/benchmarks") {
@@ -292,9 +297,28 @@ export function getSectionIconForSlug(
   if (baseUrl === "/roadmap") {
     return ROADMAP_SECTION_ICON_LOOKUP[slug] ?? Map;
   }
+  if (baseUrl === "/benchmarks") {
+    // Collapsed rail / section headers — prefer folder (suite/group) icons.
+    if (slug === "memory") {
+      return BENCHMARK_FOLDER_ICONS.Memory ?? Gauge;
+    }
+    if (slug === "extraction-quality") {
+      return BENCHMARK_FOLDER_ICONS["Extraction quality"] ?? Gauge;
+    }
+    if (slug === "" || slug === "benchmarks") {
+      return BENCHMARK_PAGE_ICONS["/benchmarks"] ?? Gauge;
+    }
+    return (
+      BENCHMARK_FOLDER_ICONS.Proxy ??
+      BENCHMARK_PAGE_ICONS[`/benchmarks/${slug}`] ??
+      Gauge
+    );
+  }
 
-  return SiteNavIconService.docs.resolve({
-    url: brand<NavUrl>(`/docs/${slug}`),
-  });
+  return (
+    SiteNavIconService.docs.resolve({
+      url: brand<NavUrl>(`/docs/${slug}`),
+    }) ?? BookOpen
+  );
 }
 

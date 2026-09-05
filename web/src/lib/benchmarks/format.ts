@@ -41,6 +41,11 @@ export function formatPercent(rate: number): string {
   return `${(rate * 100).toFixed(2)}%`;
 }
 
+/** One-decimal percent for suite KPI / compare tables. */
+export function formatSuitePct(value: number): string {
+  return `${(value * 100).toFixed(1)}%`;
+}
+
 export function formatReqPerSec(value: number): string {
   return `${value.toLocaleString("en-US", { maximumFractionDigits: 0 })} req/s`;
 }

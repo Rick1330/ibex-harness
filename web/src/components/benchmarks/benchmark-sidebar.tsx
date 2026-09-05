@@ -2,25 +2,26 @@
 
 import type { PageTree } from "fumadocs-core/server";
 import { SidebarItem } from "fumadocs-ui/layouts/docs/sidebar";
-import { createElement } from "react";
+import { usePathname } from "next/navigation";
 
 import { docsSidebarItemClassName } from "@/components/layout/docs-sidebar";
-import { BENCHMARK_PAGE_ICONS } from "@/lib/sidebar-icon-maps";
-import { SidebarIcon } from "@/lib/sidebar-icons";
+import { resolveLeafNavIcon } from "@/lib/sidebar-page-icon";
+import { baseUrlFromPathname, toNavUrl } from "@/lib/sidebar-icons";
 
 type BenchmarkSidebarItemProps = Readonly<{
   item: PageTree.Item;
 }>;
 
 export function BenchmarkSidebarItem({ item }: BenchmarkSidebarItemProps) {
-  const Icon = BENCHMARK_PAGE_ICONS[item.url] ?? BENCHMARK_PAGE_ICONS["/benchmarks"];
+  const pathname = usePathname();
+  const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
 
   return (
     <SidebarItem
       className={docsSidebarItemClassName()}
       external={item.external}
       href={item.url}
-      icon={Icon ? createElement(SidebarIcon, { icon: Icon }) : undefined}
+      icon={resolveLeafNavIcon(item.url, baseUrl)}
     >
       <span className="sidebar-nav-item-label min-w-0 flex-1">{item.name}</span>
     </SidebarItem>

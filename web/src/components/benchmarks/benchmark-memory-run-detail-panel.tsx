@@ -72,7 +72,7 @@ export function BenchmarkMemoryRunDetailPanel({
       <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">Cells</h2>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-left">
+          <table className="w-max min-w-full text-left">
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="py-2 font-medium">Corpus</th>

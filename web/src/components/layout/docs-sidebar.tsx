@@ -76,11 +76,11 @@ export function DocsSidebarFolder({
   item,
   level,
   children,
-}: {
+}: Readonly<{
   item: PageTree.Folder;
   level: number;
   children: ReactNode;
-}) {
+}>) {
   const pathname = usePathname();
   const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
   const sectionSlug = resolveFolderSectionSlug(item, baseUrl);
