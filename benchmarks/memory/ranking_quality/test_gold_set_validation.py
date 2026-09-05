@@ -52,6 +52,7 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("relevance-gate bait" in e for e in errors))
 
+    def test_rejects_missing_decay_query(self) -> None:
         payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
         payload["queries"] = [
             q for q in payload["queries"] if q["query_id"] != "q_pref_theme_decay"
@@ -59,7 +60,68 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("decay" in e for e in errors))
 
-    def test_rejects_missing_confidence(self) -> None:
+    def test_rejects_bait_missing_retrieval_count(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        for index, row in enumerate(payload["memories"]):
+            if row["content_key"] != validate_mod.RELEVANCE_GATE_BAIT_KEY:
+                continue
+            mutated = dict(row)
+            del mutated["retrieval_count"]
+            payload["memories"][index] = mutated
+            break
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(
+            any("missing retrieval_count" in e for e in errors),
+            "\n".join(errors),
+        )
+
+    def test_rejects_bait_retrieval_count_below_threshold(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        for index, row in enumerate(payload["memories"]):
+            if row["content_key"] != validate_mod.RELEVANCE_GATE_BAIT_KEY:
+                continue
+            payload["memories"][index] = {**row, "retrieval_count": 10}
+            break
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(
+            any("below probe minimum" in e for e in errors),
+            "\n".join(errors),
+        )
+
+    def test_optional_retrieval_count_validation(self) -> None:
+        prefix = "memory[test]"
+        self.assertEqual(
+            validate_mod._validate_optional_retrieval_count({}, prefix),
+            [],
+        )
+        self.assertEqual(
+            validate_mod._validate_optional_retrieval_count(
+                {"retrieval_count": 0}, prefix
+            ),
+            [],
+        )
+        self.assertEqual(
+            validate_mod._validate_optional_retrieval_count(
+                {"retrieval_count": 1000}, prefix
+            ),
+            [],
+        )
+        self.assertTrue(
+            any(
+                "must be >= 0" in e
+                for e in validate_mod._validate_optional_retrieval_count(
+                    {"retrieval_count": -1}, prefix
+                )
+            )
+        )
+        for bad in (True, 1.5, "x"):
+            errors = validate_mod._validate_optional_retrieval_count(
+                {"retrieval_count": bad}, prefix
+            )
+            self.assertTrue(
+                any("retrieval_count" in e for e in errors),
+                f"expected error for {bad!r}, got {errors}",
+            )
         payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
         row = dict(payload["memories"][0])
         del row["confidence"]

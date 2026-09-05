@@ -29,6 +29,8 @@ DECAY_QUERY_IDS = frozenset(
     }
 )
 RELEVANCE_GATE_BAIT_KEY = "gold.noise.relevance_gate_bait"
+# Must saturate access-frequency cap in composite scoring (retrieval_count / 10).
+RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT = 1000
 MIN_MEMORIES = 30
 MAX_MEMORIES = 55
 MIN_QUERIES = 15
@@ -441,6 +443,27 @@ def validate_gold_set(payload: object) -> list[str]:
             f"missing relevance-gate bait memory {RELEVANCE_GATE_BAIT_KEY!r} "
             "(required for opened-retrieval gate probe)"
         )
+    else:
+        bait = mem_by_key[RELEVANCE_GATE_BAIT_KEY]
+        prefix = f"memory[{RELEVANCE_GATE_BAIT_KEY}]"
+        if "retrieval_count" not in bait:
+            errors.append(
+                f"{prefix} missing retrieval_count "
+                f"(must be >= {RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT})"
+            )
+        else:
+            retrieval_count, rc_errors = _parse_int(
+                bait.get("retrieval_count"), "retrieval_count", prefix
+            )
+            errors.extend(rc_errors)
+            if (
+                retrieval_count is not None
+                and retrieval_count < RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT
+            ):
+                errors.append(
+                    f"{prefix} retrieval_count {retrieval_count} below probe minimum "
+                    f"{RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT}"
+                )
 
     return errors
 

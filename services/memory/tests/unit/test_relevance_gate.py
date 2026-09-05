@@ -49,10 +49,16 @@ def test_passes_relevance_floor_boundary_inclusive() -> None:
 
 
 def test_passes_relevance_floor_rejects_invalid() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="relevance must be finite"):
         passes_relevance_floor(float("nan"), 0.15)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="floor must be finite"):
+        passes_relevance_floor(0.5, float("nan"))
+    with pytest.raises(ValueError, match="floor must be finite"):
+        passes_relevance_floor(0.5, float("inf"))
+    with pytest.raises(ValueError, match="floor must be in"):
         passes_relevance_floor(0.5, 1.5)
+    with pytest.raises(ValueError, match="floor must be in"):
+        passes_relevance_floor(0.5, -0.01)
 
 
 def test_rank_excludes_below_floor() -> None:
