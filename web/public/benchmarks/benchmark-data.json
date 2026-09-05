@@ -3,6 +3,194 @@
   "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
   "runs": [
     {
+      "sha": "4f9339187564dcc4d42278afab4b8d57bb67e30e",
+      "short_sha": "4f93391",
+      "timestamp": "2026-09-05T05:14:47.718852+00:00",
+      "branch": "main",
+      "pr_number": null,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/33946547644",
+      "status": "pass",
+      "regression_vs_baseline_pct": -95.643911,
+      "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
+      "profile": "fast",
+      "run_number": 923,
+      "go_version": "1.25.13",
+      "runner_os": "Linux",
+      "runner_cpu": "x86_64",
+      "runner_vcpus": 2,
+      "runner_ram_gb": 7,
+      "k6_version": "0.53.0",
+      "k6": {
+        "vus": 100,
+        "duration_s": 120.0,
+        "p50_ms": 0.22205,
+        "p95_ms": 0.45523699999999967,
+        "p99_ms": 0.8712177999999992,
+        "p999_ms": 1.615467464000002,
+        "req_per_s": 2280.3979898503644,
+        "error_rate": 0.0,
+        "check_rate": 1.0,
+        "throughput_series": [
+          {
+            "t_s": 0.0,
+            "req_per_s": 0.0
+          },
+          {
+            "t_s": 10.0,
+            "req_per_s": 1329.18
+          },
+          {
+            "t_s": 20.0,
+            "req_per_s": 2108.1
+          },
+          {
+            "t_s": 30.0,
+            "req_per_s": 1955.26
+          },
+          {
+            "t_s": 40.0,
+            "req_per_s": 2279.06
+          },
+          {
+            "t_s": 50.0,
+            "req_per_s": 2348.46
+          },
+          {
+            "t_s": 60.0,
+            "req_per_s": 2006.78
+          },
+          {
+            "t_s": 70.0,
+            "req_per_s": 2025.42
+          },
+          {
+            "t_s": 80.0,
+            "req_per_s": 2362.3
+          },
+          {
+            "t_s": 90.0,
+            "req_per_s": 2256.85
+          },
+          {
+            "t_s": 100.0,
+            "req_per_s": 1947.14
+          },
+          {
+            "t_s": 110.0,
+            "req_per_s": 2132.4
+          },
+          {
+            "t_s": 120.0,
+            "req_per_s": 2394.37
+          }
+        ]
+      },
+      "stages": {
+        "auth_lru_p50_ms": 0.000127,
+        "auth_lru_p95_ms": 0.000196,
+        "auth_lru_p99_ms": 0.000231,
+        "auth_lru_p999_ms": 0.000311,
+        "auth_grpc_p50_ms": 5.4e-05,
+        "auth_grpc_p95_ms": 8.4e-05,
+        "auth_grpc_p99_ms": 9.9e-05,
+        "auth_grpc_p999_ms": 0.000133,
+        "rate_limit_p50_ms": 0.040986,
+        "rate_limit_p95_ms": 0.063342,
+        "rate_limit_p99_ms": 0.07452,
+        "rate_limit_p999_ms": 0.100602,
+        "directive_resolve_p50_ms": 0.018472,
+        "directive_resolve_p95_ms": 0.028547,
+        "directive_resolve_p99_ms": 0.033585,
+        "directive_resolve_p999_ms": 0.04534,
+        "prompt_inject_p50_ms": 1.4e-05,
+        "prompt_inject_p95_ms": 2.2e-05,
+        "prompt_inject_p99_ms": 2.6e-05,
+        "prompt_inject_p999_ms": 3.5e-05,
+        "total_overhead_p50_ms": 0.064216,
+        "total_overhead_p95_ms": 0.099243,
+        "total_overhead_p99_ms": 0.116757,
+        "total_overhead_p999_ms": 0.157622
+      },
+      "metric_deltas": {
+        "k6.p99_ms": -95.643911
+      },
+      "go_benchmarks": {
+        "BenchmarkStageAuth": {
+          "ns_per_op": 329.4,
+          "allocs_per_op": 3.0,
+          "bytes_per_op": 240.0,
+          "samples": 5,
+          "ci_95_low": 312.92999999999995,
+          "ci_95_high": 345.87,
+          "geomean_ns": 329.4
+        },
+        "BenchmarkStageRateLimit": {
+          "ns_per_op": 74520.0,
+          "allocs_per_op": 746.0,
+          "bytes_per_op": 186092.0,
+          "samples": 5,
+          "ci_95_low": 70794.0,
+          "ci_95_high": 78246.0,
+          "geomean_ns": 74520.0
+        },
+        "BenchmarkStageDirectiveResolve": {
+          "ns_per_op": 33585.0,
+          "allocs_per_op": 38.0,
+          "bytes_per_op": 1568.0,
+          "samples": 5,
+          "ci_95_low": 31905.75,
+          "ci_95_high": 35264.25,
+          "geomean_ns": 33585.0
+        },
+        "BenchmarkStagePromptInject": {
+          "ns_per_op": 26.15,
+          "allocs_per_op": 1.0,
+          "bytes_per_op": 96.0,
+          "samples": 5,
+          "ci_95_low": 24.842499999999998,
+          "ci_95_high": 27.4575,
+          "geomean_ns": 26.15
+        },
+        "BenchmarkProxyOverhead": {
+          "ns_per_op": 116757.0,
+          "allocs_per_op": 787.0,
+          "bytes_per_op": 187997.0,
+          "samples": 5,
+          "ci_95_low": 110919.15,
+          "ci_95_high": 122594.85,
+          "geomean_ns": 116757.0
+        },
+        "BenchmarkProxyChatOverhead": {
+          "ns_per_op": 158935.0,
+          "allocs_per_op": 991.0,
+          "bytes_per_op": 209208.0,
+          "samples": 5,
+          "ci_95_low": 150988.25,
+          "ci_95_high": 166881.75,
+          "geomean_ns": 158935.0
+        },
+        "BenchmarkProxyChatOverheadParallel": {
+          "ns_per_op": 66139.0,
+          "allocs_per_op": 992.0,
+          "bytes_per_op": 209228.0,
+          "samples": 5,
+          "ci_95_low": 62832.049999999996,
+          "ci_95_high": 69445.95,
+          "geomean_ns": 66139.0
+        },
+        "BenchmarkProxyHealth": {
+          "ns_per_op": 3096.0,
+          "allocs_per_op": 44.0,
+          "bytes_per_op": 4344.0,
+          "samples": 5,
+          "ci_95_low": 2941.2,
+          "ci_95_high": 3250.8,
+          "geomean_ns": 3096.0
+        }
+      },
+      "stage_model": "go_microbench_warm_path"
+    },
+    {
       "sha": "c60091ead883520882d574973f98772864ac5da4",
       "short_sha": "c60091e",
       "timestamp": "2026-09-04T15:36:21.716635+00:00",
