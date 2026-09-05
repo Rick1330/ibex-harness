@@ -93,6 +93,41 @@ class PackerEdgeTests(unittest.TestCase):
         self.assertEqual(packed.skipped_count, 1)
         self.assertTrue(packed.was_budget_reached)
 
+    def test_negative_budget_same_as_zero(self) -> None:
+        """Negative budgets share the ``token_budget <= 0`` branch (no crash)."""
+        items = [
+            _scored(_content_for_tokens(10), 1.0, memory_id="neg-a"),
+            _scored(_content_for_tokens(20), 0.5, memory_id="neg-b"),
+        ]
+        packed = _packer().pack(items, -5)
+        self.assertEqual(packed.memories, ())
+        self.assertEqual(packed.total_tokens, 0)
+        self.assertEqual(packed.skipped_count, 2)
+        self.assertEqual(packed.candidates_evaluated, 2)
+        self.assertTrue(packed.was_budget_reached)
+        self.assertEqual(packed.path, "dp")
+
+    def test_was_budget_reached_semantics_non_positive(self) -> None:
+        """Option A: candidates present + budget <= 0 → was_budget_reached=True.
+
+        Signals truncation / exhausted budget for future AssemblyMetrics, not
+        "false because nothing was packed." Empty candidates stay False.
+        """
+        items = [_scored(_content_for_tokens(16), 0.9)]
+        for budget in (0, -1, -5):
+            with self.subTest(budget=budget):
+                packed = _packer().pack(items, budget)
+                self.assertEqual(len(packed.memories), 0)
+                self.assertTrue(packed.was_budget_reached)
+                greedy = _packer().pack_greedy_only(items, budget)
+                self.assertEqual(len(greedy.memories), 0)
+                self.assertTrue(greedy.was_budget_reached)
+
+        empty_zero = _packer().pack([], 0)
+        self.assertFalse(empty_zero.was_budget_reached)
+        empty_neg = _packer().pack([], -5)
+        self.assertFalse(empty_neg.was_budget_reached)
+
     def test_single_item_too_large(self) -> None:
         items = [_scored(_content_for_tokens(100), 1.0)]
         packed = _packer().pack(items, 50)

@@ -26,14 +26,22 @@ _CONFIDENCE_WEIGHT = 0.15
 
 
 def score_memory_hit(hit: MemoryHit) -> float:
-    """Return the interim packer score for one hit (finite, in approximately [0, 1])."""
+    """Return the interim packer score for one hit.
+
+    Formula: ``0.85 * similarity + 0.15 * confidence``. Both inputs must be
+    finite and in ``[0, 1]``. This is intentionally **not** memory-service
+    ``composite_score`` (see module docstring / ADR-0069).
+    """
     _require_unit("similarity", hit.similarity)
     _require_unit("confidence", hit.confidence)
     return _SIMILARITY_WEIGHT * hit.similarity + _CONFIDENCE_WEIGHT * hit.confidence
 
 
 def score_hits(hits: Sequence[MemoryHit]) -> list[ScoredMemory]:
-    """Wrap each hit with its interim packer score."""
+    """Wrap each hit with its interim packer score as a ``ScoredMemory``.
+
+    Preserves input order; the packer re-sorts by score / ``memory_id`` before DP.
+    """
     return [ScoredMemory(hit=hit, composite_score=score_memory_hit(hit)) for hit in hits]
 
 
