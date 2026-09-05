@@ -1,8 +1,8 @@
 ---
-title: "3.5.C.5 Context formatter"
-description: "XML-style delimited context formatter with locked ordering (directive → history → memories by category → tools), resolving the three-way ordering conflict across goals.mdx, ARCHITECTURE.md, and blog."
-summary: "XML-style delimited context formatter with locked ordering (directive → history → memories by category → tools), resolving the three-way ordering conflict across goals.mdx, ARCHITECTURE.md, and blog."
-status: "planned"
+title: "3.5.C.5 Context Formatter"
+description: "XML-style delimited context formatter with locked ordering (directive → history → memories by category → tools) and per-assembly session nonce (ADR-0070)."
+summary: "XML-style delimited context formatter with locked ordering (directive → history → memories by category → tools) and per-assembly session nonce (ADR-0070)."
+status: "completed"
 milestoneId: "3.5.C.5"
 track: "C"
 trackTitle: "Context Assembly Engine"
@@ -15,25 +15,41 @@ fullTitle: "Milestone 3.5.C.5 — Context Formatter"
 
 # Milestone 3.5.C.5 — Context Formatter
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
 **Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
-**Depends on:** Milestone 3.5.C.4 (packer v2)
+**Depends on:** [3.5.C.4](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.4-packer-v2-dp-knapsack) (packer v2)  
+**ADR:** [ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce)
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
 ## Why This Milestone Exists
 
-The existing formatter design is good: XML-style delimiters, category grouping, session nonce to prevent prompt-injection via fake `<memory>` tags. However, three source-of-truth documents disagree on where conversation history goes in the ordering. This milestone locks a single ordering and captures it in an ADR.
+Memories are untrusted input and must be wrapped as data with a per-assembly nonce ([SECURITY.md](/engineering/SECURITY) §7.3). Conversation history is trusted and must stay as native role messages. Planning docs disagreed on history position; this milestone locks order in code + ADR and corrects ARCHITECTURE.md’s stale “history last” line.
+
+---
+
+## Non-Goals
+
+- Full AssembleContext orchestrator (budget → retrieve → score → pack → format) — **3.5.C.6**
+- gRPC / proto changes
+- Amending ADR-0038 (gRPC contract) or ADR-0042 (self-hosted LLM adapter)
+
+---
+
+## File layout (as shipped)
+
+```
+services/context/app/formatter.py   # ContextFormatter, FormattedContext, CATEGORY_ORDER
+services/context/app/config.py      # IBEX_CONTEXT_FORMATTER_NONCE_BYTES
+services/context/tests/test_formatter.py
+```
+
+Settings / env:
+
+- `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` (default `16`) — `secrets.token_urlsafe` nbytes
 
 ---
 
@@ -41,45 +57,28 @@ The existing formatter design is good: XML-style delimiters, category grouping, 
 
 ```
 1. Directive (always first — sets behavior before any content)
-2. Conversation history (recent turns — benefits from recency-in-context positioning)
+2. Conversation history (native role: content lines — not XML-wrapped)
 3. Memories by category (procedural → factual → preference → behavioral → episodic)
 4. Tool schemas (if applicable)
 ```
 
-**Rationale for History in position 2:** the "lost in the middle" phenomenon means LLMs attend most strongly to the start and end of context. Conversation history is what the current turn is about — it needs to be positioned where attention is reliably high. Putting it last would bury the most immediately relevant content in the "middle" once memories are injected.
+**Rationale for History in position 2:** “lost in the middle” — history stays near the start where attention is reliable.
+
+Memory wrap:
+
+```text
+<ibex_memory nonce="{nonce}" id="{memory_id}" category="{category}">
+{content}
+</ibex_memory>
+```
 
 ---
 
-## Orientation (indicative)
-
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
-
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Context assembly service
-- Tokenizer registry / counting
-
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] `CATEGORY_ORDER` unchanged from original design (already correct)
-- [ ] History injected as position 2, formatted as native `role: user/assistant` messages (not XML-wrapped)
-- [ ] ADR-0042 amended with the final locked ordering and explicit rationale, superseding the conflicting statements
-- [ ] Golden-output test: fixed input (directive + 2 history turns + 3 memories across categories) → exact expected formatted output, committed as a regression fixture
-- [ ] Repo guards / CI checks still pass
-
-## Prerequisites
-
-- Milestone 3.5.C.4 (packer v2)
-
+- [x] `CATEGORY_ORDER` = procedural → factual → preference → behavioral → episodic
+- [x] History at position 2 as native `role: content` (not XML-wrapped)
+- [x] [ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce) accepted (new ADR; not ADR-0042)
+- [x] Golden-output exact-match fixture (directive + 2 history turns + 3 memories)
+- [x] Nonce uniqueness + spoofed-tag neutralization tests
+- [x] ARCHITECTURE.md format/budget order aligned with locked ordering

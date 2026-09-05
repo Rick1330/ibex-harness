@@ -1,4 +1,4 @@
-"""Context assembly settings (milestones 3.5.C.2 / 3.5.C.4)."""
+"""Context assembly settings (milestones 3.5.C.2 / 3.5.C.4 / 3.5.C.5)."""
 
 from __future__ import annotations
 
@@ -97,6 +97,15 @@ class ContextSettings(BaseSettings):
         ge=0,
         validation_alias="IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS",
         description="Greedy fallback consecutive-skip limit before stopping.",
+    )
+    formatter_nonce_bytes: int = Field(
+        default=16,
+        ge=1,
+        validation_alias="IBEX_CONTEXT_FORMATTER_NONCE_BYTES",
+        description=(
+            "Byte length for secrets.token_urlsafe session nonce on memory "
+            "delimiters (ADR-0070)."
+        ),
     )
 
     @field_validator(
