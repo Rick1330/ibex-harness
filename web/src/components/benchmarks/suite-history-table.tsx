@@ -28,13 +28,17 @@ function uniqueSorted(values: Iterable<string>): string[] {
 
 function matchesFilters<T>(
   row: T,
-  statusFilter: string,
-  branchFilter: string,
-  getStatus: (row: T) => string,
-  getBranch: (row: T) => string,
+  filters: Readonly<{
+    statusFilter: string;
+    branchFilter: string;
+    getStatus: (row: T) => string;
+    getBranch: (row: T) => string;
+  }>,
 ): boolean {
-  const statusOk = statusFilter === "all" || getStatus(row) === statusFilter;
-  const branchOk = branchFilter === "all" || getBranch(row) === branchFilter;
+  const statusOk =
+    filters.statusFilter === "all" || filters.getStatus(row) === filters.statusFilter;
+  const branchOk =
+    filters.branchFilter === "all" || filters.getBranch(row) === filters.branchFilter;
   return statusOk && branchOk;
 }
 

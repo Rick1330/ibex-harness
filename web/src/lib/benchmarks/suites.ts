@@ -263,22 +263,27 @@ export function buildBenchmarkNavPages(): readonly SuiteNavPage[] {
   return pages;
 }
 
+function collectLeafPageIcons(): Record<string, LucideIcon> {
+  const icons: Record<string, LucideIcon> = {};
+  for (const suite of BENCHMARK_SUITES) {
+    for (const page of suite.navPages) {
+      icons[page.url] = page.icon;
+    }
+  }
+  return icons;
+}
+
 /**
  * Leaf-page icons only. Folder headers use {@link buildBenchmarkFolderIcons}
  * so Overview (LayoutDashboard) does not overwrite suite/group folder icons.
+ * Hub icon is applied last so it wins over any leaf that shares `/benchmarks`.
  */
 export function buildBenchmarkPageIcons(): Record<string, LucideIcon> {
-  const icons: Record<string, LucideIcon> = {
+  return {
+    ...collectLeafPageIcons(),
     [CROSS_SUITE_COMPARE_PAGE.url]: CROSS_SUITE_COMPARE_PAGE.icon,
     [BENCHMARK_HUB_PAGE.url]: BENCHMARK_HUB_PAGE.icon,
   };
-  const leafPages = BENCHMARK_SUITES.flatMap((suite) => suite.navPages).filter(
-    (page) => page.url !== BENCHMARK_HUB_PAGE.url,
-  );
-  for (const page of leafPages) {
-    icons[page.url] = page.icon;
-  }
-  return icons;
 }
 
 /** Folder-header icons keyed by sidebar folder display name. */
