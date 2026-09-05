@@ -170,6 +170,44 @@ class PackerCorrectnessTests(unittest.TestCase):
                 places=9,
             )
 
+    def test_dp_backtrack_selects_hand_computed_optimal_subset(self) -> None:
+        """Hand-worked 0/1 knapsack (bucket-aligned); assert exact selected IDs.
+
+        Tokens are multiples of BUCKET_SIZE=16 so bucket weight = tokens/16 and
+        repair cannot change the DP pick. Budget = 5 buckets = 80 tokens.
+
+          id | buckets | score | tokens
+          A  | 3       | 5.0   | 48
+          B  | 2       | 4.0   | 32
+          C  | 4       | 6.0   | 64
+          D  | 1       | 1.0   | 16
+
+        Feasible subsets by total score (capacity 5):
+          {A,B}=9  {C,D}=7  {A,D}=6  {C}=6  {A}=5  {B,D}=5  {B}=4  {D}=1
+          {A,B,D}=6 buckets — infeasible; {C,A}/{C,B} — infeasible.
+
+        Unique optimum: {A,B} with score 9.0 (tokens 80).
+
+        Packer sorts candidates by (-score, id) before DP → order C, A, B, D.
+        Value table at capacity 5 ends at 9; backtrack must keep B then A and
+        skip C/D. A wrong keep-row off-by-one (or greedily taking C then D)
+        yields {C,D} score 7 or {C} score 6 — not {A,B}.
+        """
+        items = [
+            _scored(_content_for_tokens(48), 5.0, memory_id="item-a"),
+            _scored(_content_for_tokens(32), 4.0, memory_id="item-b"),
+            _scored(_content_for_tokens(64), 6.0, memory_id="item-c"),
+            _scored(_content_for_tokens(16), 1.0, memory_id="item-d"),
+        ]
+        budget = 5 * BUCKET_SIZE  # 80
+        packed = _packer().pack(items, budget)
+
+        self.assertEqual(packed.path, "dp")
+        self.assertEqual({m.memory_id for m in packed.memories}, {"item-a", "item-b"})
+        self.assertAlmostEqual(packed.total_score, 9.0, places=9)
+        self.assertEqual(packed.total_tokens, 80)
+        self.assertLessEqual(packed.total_tokens, budget)
+
     def test_invariants_seeded(self) -> None:
         rng = random.Random(7)
         packer = _packer()
@@ -220,6 +258,36 @@ class PackerAdversarialTests(unittest.TestCase):
         self.assertEqual(dp.path, "dp")
         self.assertEqual(greedy.path, "greedy")
         self.assertGreater(dp.total_score, greedy.total_score)
+
+    def test_dp_does_not_regress_when_greedy_already_optimal(self) -> None:
+        """Non-stranding fixture: score-descending greedy fills optimally.
+
+        Budget 80; items sorted by score fit without remainder stranding:
+          high 48 tok @ 0.90 → mid 32 tok @ 0.80 → low 32 tok @ 0.70 (rejected).
+        Greedy takes {high, mid} score 1.70. Alternatives {mid, low}=1.50 or
+        {high}=0.90 are worse, so greedy is already optimal. DP must not score
+        below greedy and should select the same set.
+        """
+        high = _scored(_content_for_tokens(48), 0.90, memory_id="high")
+        mid = _scored(_content_for_tokens(32), 0.80, memory_id="mid")
+        low = _scored(_content_for_tokens(32), 0.70, memory_id="low")
+        items = [high, mid, low]
+        budget = 80
+        packer = _packer()
+        dp = packer.pack(items, budget)
+        greedy = packer.pack_greedy_only(items, budget)
+
+        self.assertEqual(dp.path, "dp")
+        self.assertEqual(greedy.path, "greedy")
+        self.assertGreaterEqual(dp.total_score, greedy.total_score)
+        self.assertAlmostEqual(dp.total_score, greedy.total_score, places=9)
+        self.assertEqual(
+            {m.memory_id for m in dp.memories},
+            {m.memory_id for m in greedy.memories},
+        )
+        self.assertEqual({m.memory_id for m in dp.memories}, {"high", "mid"})
+        self.assertLessEqual(dp.total_tokens, budget)
+        self.assertLessEqual(greedy.total_tokens, budget)
 
 
 class PackerFallbackTests(unittest.TestCase):
