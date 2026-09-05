@@ -38,6 +38,19 @@ function serializePageNode(node: PageTree.Item): MobileNavPage {
   };
 }
 
+function isDuplicateFolderIndex(
+  child: MobileNavNode,
+  indexUrl: string | undefined,
+): boolean {
+  if (child.kind !== "page") {
+    return false;
+  }
+  if (indexUrl === undefined) {
+    return false;
+  }
+  return child.url === indexUrl;
+}
+
 function serializeFolderNode(node: PageTree.Folder): MobileNavFolder {
   const children: MobileNavNode[] = [];
   const indexUrl = node.index?.url;
@@ -47,9 +60,7 @@ function serializeFolderNode(node: PageTree.Folder): MobileNavFolder {
   }
 
   for (const child of serializeNodes(node.children)) {
-    const isDupIndex =
-      child.kind === "page" && indexUrl !== undefined && child.url === indexUrl;
-    if (isDupIndex) {
+    if (isDuplicateFolderIndex(child, indexUrl)) {
       continue;
     }
     children.push(child);

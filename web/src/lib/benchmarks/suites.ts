@@ -270,15 +270,14 @@ export function buildBenchmarkNavPages(): readonly SuiteNavPage[] {
 export function buildBenchmarkPageIcons(): Record<string, LucideIcon> {
   const icons: Record<string, LucideIcon> = {
     [CROSS_SUITE_COMPARE_PAGE.url]: CROSS_SUITE_COMPARE_PAGE.icon,
+    [BENCHMARK_HUB_PAGE.url]: BENCHMARK_HUB_PAGE.icon,
   };
-  for (const suite of BENCHMARK_SUITES) {
-    for (const page of suite.navPages) {
-      if (page.url !== BENCHMARK_HUB_PAGE.url) {
-        icons[page.url] = page.icon;
-      }
-    }
+  const leafPages = BENCHMARK_SUITES.flatMap((suite) => suite.navPages).filter(
+    (page) => page.url !== BENCHMARK_HUB_PAGE.url,
+  );
+  for (const page of leafPages) {
+    icons[page.url] = page.icon;
   }
-  icons[BENCHMARK_HUB_PAGE.url] = BENCHMARK_HUB_PAGE.icon;
   return icons;
 }
 

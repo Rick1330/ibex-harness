@@ -26,6 +26,29 @@ function uniqueSorted(values: Iterable<string>): string[] {
   return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
 }
 
+function matchesFilters<T>(
+  row: T,
+  statusFilter: string,
+  branchFilter: string,
+  getStatus: (row: T) => string,
+  getBranch: (row: T) => string,
+): boolean {
+  const statusOk = statusFilter === "all" || getStatus(row) === statusFilter;
+  const branchOk = branchFilter === "all" || getBranch(row) === branchFilter;
+  return statusOk && branchOk;
+}
+
+function csvCellValue<T>(column: SuiteHistoryColumn<T>, row: T): string | number {
+  if (column.csv) {
+    return column.csv(row);
+  }
+  const value = column.cell(row);
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  return "";
+}
+
 function HistoryFilters({
   statuses,
   branches,
@@ -94,11 +117,14 @@ function HistoryPagination({
   onPrev: () => void;
   onNext: () => void;
 }>) {
+  const runLabel = filteredCount === 1 ? "run" : "runs";
+  const filteredNote =
+    filteredCount !== totalCount ? ` (filtered from ${totalCount})` : "";
   return (
     <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
       <p>
-        {filteredCount} run{filteredCount === 1 ? "" : "s"}
-        {filteredCount !== totalCount ? ` (filtered from ${totalCount})` : ""}
+        {filteredCount} {runLabel}
+        {filteredNote}
       </p>
       <div className="flex items-center gap-2">
         <button
@@ -125,6 +151,45 @@ function HistoryPagination({
   );
 }
 
+function HistoryTableBody<T>({
+  columns,
+  pageRows,
+  rowKey,
+}: Readonly<{
+  columns: readonly SuiteHistoryColumn<T>[];
+  pageRows: readonly T[];
+  rowKey: (row: T) => string | number;
+}>) {
+  if (pageRows.length === 0) {
+    return (
+      <tr>
+        <td
+          colSpan={columns.length}
+          className="px-4 py-8 text-center text-sm text-muted-foreground"
+        >
+          No runs match the selected filters.
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <>
+      {pageRows.map((row) => (
+        <tr key={rowKey(row)} className="border-b border-border/70 last:border-0">
+          {columns.map((column) => (
+            <td
+              key={column.header}
+              className={column.className ?? "px-4 py-3 font-mono text-sm"}
+            >
+              {column.cell(row)}
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
 export function SuiteHistoryTable<T>({
   rows,
   rowKey,
@@ -133,8 +198,8 @@ export function SuiteHistoryTable<T>({
   getBranch,
   csvFilename,
 }: SuiteHistoryTableProps<T>) {
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [branchFilter, setBranchFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [branchFilter, setBranchFilter] = useState("all");
   const [page, setPage] = useState(1);
 
   const statuses = useMemo(
@@ -145,33 +210,19 @@ export function SuiteHistoryTable<T>({
     () => ["all", ...uniqueSorted(rows.map((row) => getBranch(row)))],
     [rows, getBranch],
   );
-
-  const filtered = useMemo(() => {
-    return rows.filter((row) => {
-      if (statusFilter !== "all" && getStatus(row) !== statusFilter) {
-        return false;
-      }
-      if (branchFilter !== "all" && getBranch(row) !== branchFilter) {
-        return false;
-      }
-      return true;
-    });
-  }, [rows, statusFilter, branchFilter, getStatus, getBranch]);
+  const filtered = useMemo(
+    () =>
+      rows.filter((row) =>
+        matchesFilters(row, statusFilter, branchFilter, getStatus, getBranch),
+      ),
+    [rows, statusFilter, branchFilter, getStatus, getBranch],
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-
   const csvHeaders = columns.map((column) => column.header);
-  const csvRows = filtered.map((row) =>
-    columns.map((column) => {
-      if (column.csv) {
-        return column.csv(row);
-      }
-      const value = column.cell(row);
-      return typeof value === "string" || typeof value === "number" ? value : "";
-    }),
-  );
+  const csvRows = filtered.map((row) => columns.map((column) => csvCellValue(column, row)));
 
   return (
     <div className="space-y-4">
@@ -190,13 +241,8 @@ export function SuiteHistoryTable<T>({
             setPage(1);
           }}
         />
-        <SuiteExportCsvButton
-          filename={csvFilename}
-          headers={csvHeaders}
-          rows={csvRows}
-        />
+        <SuiteExportCsvButton filename={csvFilename} headers={csvHeaders} rows={csvRows} />
       </div>
-
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-muted/40">
@@ -212,33 +258,10 @@ export function SuiteHistoryTable<T>({
             </tr>
           </thead>
           <tbody>
-            {pageRows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={columns.length}
-                  className="px-4 py-8 text-center text-sm text-muted-foreground"
-                >
-                  No runs match the selected filters.
-                </td>
-              </tr>
-            ) : (
-              pageRows.map((row) => (
-                <tr key={rowKey(row)} className="border-b border-border/70 last:border-0">
-                  {columns.map((column) => (
-                    <td
-                      key={column.header}
-                      className={column.className ?? "px-4 py-3 font-mono text-sm"}
-                    >
-                      {column.cell(row)}
-                    </td>
-                  ))}
-                </tr>
-              ))
-            )}
+            <HistoryTableBody columns={columns} pageRows={pageRows} rowKey={rowKey} />
           </tbody>
         </table>
       </div>
-
       <HistoryPagination
         currentPage={currentPage}
         totalPages={totalPages}
