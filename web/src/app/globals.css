@@ -2127,6 +2127,37 @@ html {
   max-width: min(70rem, 100%) !important;
 }
 
+@media (max-width: 767px) {
+  #nd-docs-layout:has(.benchmark-section) #nd-page main > article,
+  #nd-docs-layout:has(.benchmark-section) .nd-page main > article {
+    max-width: 100% !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+
+  .benchmark-docs-layout #nd-page,
+  .benchmark-docs-layout #nd-page main {
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .benchmark-section {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .benchmark-section .grid {
+    min-width: 0;
+  }
+
+  .benchmark-section [class*="ChartContainer"],
+  .benchmark-section [aria-label$="chart"],
+  .benchmark-section svg {
+    max-width: 100%;
+  }
+}
+
 @media (max-width: 1023px) {
   #nd-page main > article,
   .nd-page main > article {

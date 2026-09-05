@@ -66,9 +66,9 @@ const MOBILE_SECTION_META: Record<
     iconId: "docs",
   },
   "/benchmarks": {
-    kind: "list",
-    dataKey: "benchmarkPages",
-    hub: { href: "/benchmarks", label: "Overview" },
+    kind: "tree",
+    dataKey: "benchmarkTree",
+    baseUrl: "/benchmarks",
     description: "Proxy and memory performance suites",
     iconId: "benchmarks",
   },

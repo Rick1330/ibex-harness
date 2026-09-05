@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
 import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
 import { KpiCard } from "@/components/benchmarks/kpi-card";
 import { SlaGauge } from "@/components/benchmarks/sla-gauge";
+import { SuiteExportCsvButton } from "@/components/benchmarks/suite-export-csv-button";
+import { SuiteOverviewLayout } from "@/components/benchmarks/suite-overview-layout";
+import { SuiteStatusBadge } from "@/components/benchmarks/suite-status-badge";
+import { SuiteTrendChart } from "@/components/benchmarks/suite-trend-chart";
+import { TimeRangePicker } from "@/components/benchmarks/time-range-picker";
 import { ChartSkeleton } from "@/components/benchmarks/skeleton";
+import { BenchmarkWorkflowRunLink } from "@/components/benchmarks/benchmark-workflow-run-link";
 import { HNSW_SLA_TARGETS } from "@/lib/benchmarks/constants";
 import {
   corpusSizeLabel,
@@ -14,9 +22,16 @@ import {
   largestCorpusResult,
 } from "@/lib/benchmarks/hnsw-runs";
 import type { HnswBenchmarkRun, HnswSizeResult } from "@/lib/benchmarks/hnsw-schema";
+import { parseTimeRange } from "@/lib/benchmarks/plot";
+import {
+  deltaPctVsPrevious,
+  filterSuiteRunsByRange,
+  suiteRunsToTrendData,
+  toRunStatus,
+} from "@/lib/benchmarks/suite-trend";
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
-function ResultRow({ result }: { readonly result: HnswSizeResult }) {
+function ResultRow({ result }: Readonly<{ result: HnswSizeResult }>) {
   return (
     <tr className="border-b border-border/60">
       <td className="py-2 font-mono text-sm">{corpusSizeLabel(result.corpus_size)}</td>
@@ -41,8 +56,10 @@ function SlaSection({
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold tracking-tight">Track B / Track E SLAs</h2>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        Track B / Track E SLAs
+      </h2>
+      <div className="grid gap-4">
         <SlaGauge
           label="Worst recall@10 (target ≥ 98%)"
           value={1 - worstRecall}
@@ -71,18 +88,20 @@ function SlaSection({
 function ResultsTable({ latest }: { readonly latest: HnswBenchmarkRun }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold tracking-tight">Per-size results</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[40rem] text-left">
+      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+        Per-size results
+      </h2>
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-max min-w-full text-left">
           <thead>
             <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-              <th className="py-2 font-medium">Corpus</th>
-              <th className="py-2 font-medium">Queries</th>
-              <th className="py-2 font-medium">Recall@10</th>
-              <th className="py-2 font-medium">p50 ms</th>
-              <th className="py-2 font-medium">p95 ms</th>
-              <th className="py-2 font-medium">p99 ms</th>
-              <th className="py-2 font-medium">ef</th>
+              <th className="px-4 py-2 font-medium">Corpus</th>
+              <th className="px-4 py-2 font-medium">Queries</th>
+              <th className="px-4 py-2 font-medium">Recall@10</th>
+              <th className="px-4 py-2 font-medium">p50 ms</th>
+              <th className="px-4 py-2 font-medium">p95 ms</th>
+              <th className="px-4 py-2 font-medium">p99 ms</th>
+              <th className="px-4 py-2 font-medium">ef</th>
             </tr>
           </thead>
           <tbody>
@@ -95,25 +114,16 @@ function ResultsTable({ latest }: { readonly latest: HnswBenchmarkRun }) {
           </tbody>
         </table>
       </div>
-      <p className="text-sm text-muted-foreground">
-        {String(latest.methodology.recall ?? "Planted near-neighbor recall@10")} ·{" "}
-        {String(latest.methodology.index ?? "pgvector HNSW")}
-        {latest.run_url ? (
-          <>
-            {" "}
-            ·{" "}
-            <a className="underline underline-offset-2" href={latest.run_url}>
-              run details
-            </a>
-          </>
-        ) : null}
-      </p>
     </section>
   );
 }
 
-export function BenchmarkMemoryPanel() {
+function MemoryOverviewContent() {
   const { latest, runs, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
+  const searchParams = useSearchParams();
+  const range = parseTimeRange(searchParams.get("range"));
+  const filtered = filterSuiteRunsByRange(runs, range);
+  const previous = runs[1];
 
   if (isLoading) {
     return <ChartSkeleton className="h-[240px]" />;
@@ -136,62 +146,89 @@ export function BenchmarkMemoryPanel() {
 
   const at1m = latest.results.find((r) => r.corpus_size >= 1_000_000);
   const worstRecall = Math.min(...latest.results.map((r) => r.recall_at_10));
-  const status = latest.status ?? "unknown";
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="rounded-md border border-border px-2 py-1 font-mono uppercase">
-          {status}
-        </span>
-        <Link
-          href="/benchmarks/memory/history"
-          className="text-muted-foreground underline-offset-2 hover:underline"
-        >
-          History
-        </Link>
-        <Link
-          href="/benchmarks/memory/compare"
-          className="text-muted-foreground underline-offset-2 hover:underline"
-        >
-          Compare
-        </Link>
-        <Link
-          href="/benchmarks/memory/latency"
-          className="text-muted-foreground underline-offset-2 hover:underline"
-        >
-          Latency trends
-        </Link>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard label="Latest short SHA" value={latest.short_sha} hint={latest.branch} />
-        <KpiCard
-          label="Mean recall@10"
-          value={formatRecallPct(latest.mean_recall_at_10)}
-          hint={`${latest.results.length} corpus sizes`}
-          higherIsBetter
+    <SuiteOverviewLayout
+      status={
+        <SuiteStatusBadge
+          status={toRunStatus(latest.status)}
+          runNumber={latest.run_number}
+          shortSha={latest.short_sha}
+          branch={latest.branch}
+          timestamp={latest.timestamp}
+          detail={
+            <span className="flex flex-wrap gap-3">
+              <Link href="/benchmarks/memory/latency" className="underline underline-offset-2">
+                Latency detail
+              </Link>
+              <Link href="/benchmarks/memory/history" className="underline underline-offset-2">
+                History
+              </Link>
+              <Link href="/benchmarks/memory/compare" className="underline underline-offset-2">
+                Compare
+              </Link>
+              <BenchmarkWorkflowRunLink runUrl={latest.run_url} />
+            </span>
+          }
         />
-        <KpiCard
-          label="Sizes measured"
-          value={latest.results.map((r) => corpusSizeLabel(r.corpus_size)).join(" · ")}
-        />
-        <KpiCard label="Run #" value={String(latest.run_number)} hint={latest.timestamp} />
-      </div>
+      }
+      kpis={
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <KpiCard
+            label="Mean recall@10"
+            value={formatRecallPct(latest.mean_recall_at_10)}
+            deltaPct={deltaPctVsPrevious(
+              latest.mean_recall_at_10,
+              previous?.mean_recall_at_10,
+            )}
+            higherIsBetter
+          />
+          <KpiCard
+            label="Sizes measured"
+            value={latest.results.map((r) => corpusSizeLabel(r.corpus_size)).join(" · ")}
+          />
+          <KpiCard label="Latest short SHA" value={latest.short_sha} hint={latest.branch} />
+          <KpiCard label="Run #" value={String(latest.run_number)} hint={latest.timestamp} />
+        </div>
+      }
+      sla={<SlaSection worstRecall={worstRecall} at1m={at1m} />}
+      trend={
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Mean recall@10 trend
+            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <TimeRangePicker />
+              <SuiteExportCsvButton
+                filename={`hnsw-overview-${range}.csv`}
+                headers={["run_number", "short_sha", "status", "mean_recall_at_10", "timestamp"]}
+                rows={filtered.map((run) => [
+                  run.run_number,
+                  run.short_sha,
+                  run.status ?? "unknown",
+                  run.mean_recall_at_10,
+                  run.timestamp,
+                ])}
+              />
+            </div>
+          </div>
+          <SuiteTrendChart
+            data={suiteRunsToTrendData(filtered, (run) => run.mean_recall_at_10)}
+            yTickFormat={(value) => `${(value * 100).toFixed(0)}%`}
+          />
+        </section>
+      }
+      extras={<ResultsTable latest={latest} />}
+    />
+  );
+}
 
-      <SlaSection worstRecall={worstRecall} at1m={at1m} />
-      <ResultsTable latest={latest} />
-
-      {runs.length > 1 ? (
-        <p className="text-sm text-muted-foreground">
-          {runs.length} published runs — see{" "}
-          <Link href="/benchmarks/memory/history" className="underline underline-offset-2">
-            History
-          </Link>{" "}
-          for the full table.
-        </p>
-      ) : null}
-    </div>
+export function BenchmarkMemoryPanel() {
+  return (
+    <Suspense fallback={<ChartSkeleton className="h-[240px]" />}>
+      <MemoryOverviewContent />
+    </Suspense>
   );
 }
 

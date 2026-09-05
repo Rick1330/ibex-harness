@@ -35,6 +35,7 @@ vi.mock("@/components/mobile-drawer-section", () => ({
 const mobileNavData: MobileNavData = {
   docsTree: [],
   roadmapTree: [],
+  benchmarkTree: [],
   blogPosts: [],
   releasePages: [],
   benchmarkPages: [],

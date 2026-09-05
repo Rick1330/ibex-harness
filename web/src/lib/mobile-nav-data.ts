@@ -1,6 +1,6 @@
 import type { PageTree } from "fumadocs-core/server";
 
-import { BENCHMARK_NAV_PAGES } from "@/lib/benchmark-page-tree";
+import { BENCHMARK_NAV_PAGES, benchmarkPageTree } from "@/lib/benchmark-page-tree";
 import { pageTreeLabel } from "@/lib/page-tree-label";
 import { blogSource, roadmapSource, source } from "@/lib/source";
 
@@ -22,8 +22,10 @@ export type MobileNavNode = MobileNavPage | MobileNavFolder;
 export type MobileNavData = Readonly<{
   docsTree: MobileNavNode[];
   roadmapTree: MobileNavNode[];
+  benchmarkTree: MobileNavNode[];
   blogPosts: ReadonlyArray<{ url: string; title: string }>;
   releasePages: ReadonlyArray<{ url: string; title: string }>;
+  /** Flat leaf list kept for sitemap / legacy callers. */
   benchmarkPages: ReadonlyArray<{ url: string; title: string }>;
 }>;
 
@@ -36,14 +38,33 @@ function serializePageNode(node: PageTree.Item): MobileNavPage {
   };
 }
 
+function isDuplicateFolderIndex(
+  child: MobileNavNode,
+  indexUrl: string | undefined,
+): boolean {
+  if (child.kind !== "page") {
+    return false;
+  }
+  if (indexUrl === undefined) {
+    return false;
+  }
+  return child.url === indexUrl;
+}
+
 function serializeFolderNode(node: PageTree.Folder): MobileNavFolder {
   const children: MobileNavNode[] = [];
+  const indexUrl = node.index?.url;
 
   if (node.index) {
     children.push(serializePageNode(node.index));
   }
 
-  children.push(...serializeNodes(node.children));
+  for (const child of serializeNodes(node.children)) {
+    if (isDuplicateFolderIndex(child, indexUrl)) {
+      continue;
+    }
+    children.push(child);
+  }
 
   return {
     kind: "folder",
@@ -98,6 +119,7 @@ export function getMobileNavData(): MobileNavData {
   cachedMobileNavData = {
     docsTree: serializeNodes(source.getPageTree().children),
     roadmapTree: serializeNodes(roadmapSource.getPageTree().children),
+    benchmarkTree: serializeNodes(benchmarkPageTree.children),
     blogPosts,
     releasePages,
     benchmarkPages: BENCHMARK_NAV_PAGES.map((page) => ({

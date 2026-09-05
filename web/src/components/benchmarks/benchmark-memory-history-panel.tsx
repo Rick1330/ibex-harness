@@ -5,12 +5,25 @@ import Link from "next/link";
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
 import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
 import { ChartSkeleton } from "@/components/benchmarks/skeleton";
+import { SuiteHistoryTable } from "@/components/benchmarks/suite-history-table";
 import {
   corpusSizeLabel,
   formatRecallPct,
   largestCorpusResult,
 } from "@/lib/benchmarks/hnsw-runs";
+import type { HnswBenchmarkRun } from "@/lib/benchmarks/hnsw-schema";
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
+
+function HnswHistoryRunLink({ run }: Readonly<{ run: HnswBenchmarkRun }>) {
+  return (
+    <Link
+      href={`/benchmarks/memory/history/${run.run_number}`}
+      className="underline-offset-2 hover:underline"
+    >
+      {run.run_number}
+    </Link>
+  );
+}
 
 export function BenchmarkMemoryHistoryPanel() {
   const { runs, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
@@ -35,51 +48,50 @@ export function BenchmarkMemoryHistoryPanel() {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[40rem] text-left">
-        <thead>
-          <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-            <th className="py-2 font-medium">Run #</th>
-            <th className="py-2 font-medium">SHA</th>
-            <th className="py-2 font-medium">Branch</th>
-            <th className="py-2 font-medium">Status</th>
-            <th className="py-2 font-medium">Mean recall</th>
-            <th className="py-2 font-medium">Largest p95</th>
-            <th className="py-2 font-medium">Sizes</th>
-            <th className="py-2 font-medium">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => {
+    <SuiteHistoryTable
+      rows={runs}
+      rowKey={(run) => run.run_number}
+      getStatus={(run) => run.status ?? "unknown"}
+      getBranch={(run) => run.branch}
+      csvFilename="hnsw-history.csv"
+      columns={[
+        {
+          header: "Run #",
+          cell: (run) => <HnswHistoryRunLink run={run} />,
+          csv: (run) => run.run_number,
+        },
+        { header: "SHA", cell: (run) => run.short_sha, csv: (run) => run.short_sha },
+        { header: "Branch", cell: (run) => run.branch, csv: (run) => run.branch },
+        {
+          header: "Status",
+          cell: (run) => (run.status ?? "unknown").toUpperCase(),
+          csv: (run) => run.status ?? "unknown",
+        },
+        {
+          header: "Mean recall",
+          cell: (run) => formatRecallPct(run.mean_recall_at_10),
+          csv: (run) => run.mean_recall_at_10,
+        },
+        {
+          header: "Largest p95",
+          cell: (run) => {
             const largest = largestCorpusResult(run);
-            return (
-              <tr key={run.run_number} className="border-b border-border/60">
-                <td className="py-2 font-mono text-sm tabular-nums">
-                  <Link
-                    href={`/benchmarks/memory/history/${run.run_number}`}
-                    className="underline-offset-2 hover:underline"
-                  >
-                    {run.run_number}
-                  </Link>
-                </td>
-                <td className="py-2 font-mono text-sm">{run.short_sha}</td>
-                <td className="py-2 font-mono text-sm">{run.branch}</td>
-                <td className="py-2 font-mono text-sm uppercase">{run.status ?? "unknown"}</td>
-                <td className="py-2 font-mono text-sm tabular-nums">
-                  {formatRecallPct(run.mean_recall_at_10)}
-                </td>
-                <td className="py-2 font-mono text-sm tabular-nums">
-                  {largest ? `${largest.latency_ms_p95.toFixed(2)} ms` : "—"}
-                </td>
-                <td className="py-2 font-mono text-sm">
-                  {run.results.map((r) => corpusSizeLabel(r.corpus_size)).join(" · ")}
-                </td>
-                <td className="py-2 font-mono text-xs text-muted-foreground">{run.timestamp}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+            return largest ? `${largest.latency_ms_p95.toFixed(2)} ms` : "—";
+          },
+          csv: (run) => largestCorpusResult(run)?.latency_ms_p95 ?? "",
+        },
+        {
+          header: "Sizes",
+          cell: (run) => run.results.map((r) => corpusSizeLabel(r.corpus_size)).join(" · "),
+          csv: (run) => run.results.map((r) => r.corpus_size).join("|"),
+        },
+        {
+          header: "When",
+          cell: (run) => run.timestamp,
+          csv: (run) => run.timestamp,
+          className: "px-4 py-3 font-mono text-xs text-muted-foreground",
+        },
+      ]}
+    />
   );
 }
