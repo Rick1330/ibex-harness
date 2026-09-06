@@ -42,7 +42,9 @@ func TestUnit_ApplyContextOrDirective_SkipMemoryNoAssembleCall(t *testing.T) {
 	ctx := directiveCtx(contextTestAuthCtx(t))
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 	req.Header.Set(validation.HeaderSkipMemory, "true")
-	assertNoAssembleAttempt(t, h, fake, ctx, req, "Skip-Memory")
+	assertNoAssembleAttempt(t, noAssembleAttemptCheck{
+		h: h, fake: fake, ctx: ctx, req: req, reason: "Skip-Memory",
+	})
 }
 
 func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testing.T) {
@@ -51,26 +53,30 @@ func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testi
 	h := contextHandler(true, fake)
 	ctx := directiveCtx(context.Background())
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	out := assertNoAssembleAttempt(t, h, fake, ctx, req, "tenant IDs missing")
+	out := assertNoAssembleAttempt(t, noAssembleAttemptCheck{
+		h: h, fake: fake, ctx: ctx, req: req, reason: "tenant IDs missing",
+	})
 	assertDirectiveOnly(t, out.Messages)
 }
 
-// assertNoAssembleAttempt checks Skip-Memory / missing-tenant style gates: no RPC, Attempted=false.
-func assertNoAssembleAttempt(
-	t *testing.T,
-	h chatCompletionHandler,
-	fake *fakeContextAssembler,
-	ctx context.Context,
-	req *http.Request,
-	reason string,
-) messageInjectionOutcome {
+// noAssembleAttemptCheck groups inputs for Skip-Memory / missing-tenant gates.
+type noAssembleAttemptCheck struct {
+	h      chatCompletionHandler
+	fake   *fakeContextAssembler
+	ctx    context.Context
+	req    *http.Request
+	reason string
+}
+
+// assertNoAssembleAttempt checks gates that skip Assemble: no RPC, Attempted=false.
+func assertNoAssembleAttempt(t *testing.T, in noAssembleAttemptCheck) messageInjectionOutcome {
 	t.Helper()
-	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", []provider.Message{{Role: "user", Content: "hi"}})
-	if fake.calls.Load() != 0 {
-		t.Fatalf("Assemble calls=%d want 0 (%s)", fake.calls.Load(), reason)
+	out := in.h.applyContextOrDirectiveInjection(in.ctx, in.req, "gpt-4o", []provider.Message{{Role: "user", Content: "hi"}})
+	if in.fake.calls.Load() != 0 {
+		t.Fatalf("Assemble calls=%d want 0 (%s)", in.fake.calls.Load(), in.reason)
 	}
 	if out.Meta.Attempted {
-		t.Fatalf("Attempted should be false when %s", reason)
+		t.Fatalf("Attempted should be false when %s", in.reason)
 	}
 	return out
 }
