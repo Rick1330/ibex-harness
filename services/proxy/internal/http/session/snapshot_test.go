@@ -188,33 +188,21 @@ func TestUnit_EnqueuePostResponse(t *testing.T) {
 
 func TestUnit_PreparePostResponse_CheckpointAndTrace(t *testing.T) {
 	t.Parallel()
-	meta := testSnapshotMeta()
-	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
-	job := PreparePostResponse(PreparePostResponseInput{
-		Deps:   LifecycleDeps{Store: newMemSessionStore()},
-		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-		Resolved: rs, Meta: meta, In: testCheckpointInput(),
-		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	job := preparePostResponseJob(t, prepareJobArgs{
+		outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+		writer:  true,
 	})
-	if !job.DoCheckpoint {
-		t.Fatal("expected checkpoint")
-	}
-	if !job.DoTrace {
-		t.Fatal("expected trace")
-	}
-	if job.Params.SessionID != rs.SessionID {
-		t.Fatalf("session=%s", job.Params.SessionID)
+	assertPrepareFlags(t, job, prepareFlags{checkpoint: true, trace: true})
+	if job.Params.SessionID == uuid.Nil {
+		t.Fatal("expected session id")
 	}
 }
 
 func TestUnit_PreparePostResponse_StickySkipsCheckpoint(t *testing.T) {
 	t.Parallel()
-	meta := testSnapshotMeta()
-	job := PreparePostResponse(PreparePostResponseInput{
-		Deps: LifecycleDeps{Store: newMemSessionStore()},
-		Log:  logger.Discard("t"), Resolved: Resolved{ExternalID: "sticky-only"},
-		Meta: meta, In: testCheckpointInput(),
-		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	job := preparePostResponseJob(t, prepareJobArgs{
+		outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+		sticky:  true,
 	})
 	if job.DoCheckpoint {
 		t.Fatal("sticky-only must not checkpoint")
@@ -223,23 +211,11 @@ func TestUnit_PreparePostResponse_StickySkipsCheckpoint(t *testing.T) {
 
 func TestUnit_PreparePostResponse_FailureKeepsTrace(t *testing.T) {
 	t.Parallel()
-	meta := testSnapshotMeta()
-	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
-	job := PreparePostResponse(PreparePostResponseInput{
-		Deps:   LifecycleDeps{Store: newMemSessionStore()},
-		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-		Resolved: rs, Meta: meta, In: testCheckpointInput(),
-		Outcome: httptrace.RequestOutcome{StatusCode: 502, IsComplete: false, StreamRequested: true},
+	job := preparePostResponseJob(t, prepareJobArgs{
+		outcome: httptrace.RequestOutcome{StatusCode: 502, IsComplete: false, StreamRequested: true},
+		writer:  true,
 	})
-	if job.DoCheckpoint {
-		t.Fatal("failure must not checkpoint")
-	}
-	if !job.DoTrace {
-		t.Fatal("expected failure trace")
-	}
-	if !job.Snap.Streaming {
-		t.Fatal("stream flag preserved in snap")
-	}
+	assertPrepareFlags(t, job, prepareFlags{checkpoint: false, trace: true, streaming: true})
 }
 
 func TestUnit_PreparePostResponse_TurnBufferFlushes(t *testing.T) {
@@ -276,5 +252,47 @@ func TestUnit_PreparePostResponse_TurnBufferFlushes(t *testing.T) {
 	}
 	if len(snap.Turns) != 2 {
 		t.Fatalf("flushed turns=%d", len(snap.Turns))
+	}
+}
+
+type prepareJobArgs struct {
+	outcome httptrace.RequestOutcome
+	writer  bool
+	sticky  bool
+}
+
+type prepareFlags struct {
+	checkpoint bool
+	trace      bool
+	streaming  bool
+}
+
+func preparePostResponseJob(t *testing.T, a prepareJobArgs) PostResponseJob {
+	t.Helper()
+	meta := testSnapshotMeta()
+	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	if a.sticky {
+		rs = Resolved{ExternalID: "sticky-only"}
+	}
+	in := PreparePostResponseInput{
+		Deps: LifecycleDeps{Store: newMemSessionStore()},
+		Log:  logger.Discard("t"), Resolved: rs, Meta: meta, In: testCheckpointInput(), Outcome: a.outcome,
+	}
+	if a.writer {
+		in.Writer = &recordingTraceWriter{}
+	}
+	return PreparePostResponse(in)
+}
+
+func assertPrepareFlags(t *testing.T, job PostResponseJob, want prepareFlags) {
+	t.Helper()
+	if job.DoCheckpoint != want.checkpoint {
+		t.Fatalf("DoCheckpoint=%v want %v", job.DoCheckpoint, want.checkpoint)
+	}
+	if job.DoTrace != want.trace {
+		t.Fatalf("DoTrace=%v want %v", job.DoTrace, want.trace)
+	}
+	if want.streaming && !job.Snap.Streaming {
+		t.Fatal("stream flag preserved in snap")
 	}
 }

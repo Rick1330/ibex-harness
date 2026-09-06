@@ -14,15 +14,35 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestUnit_SessionTerminate_NotFound(t *testing.T) {
+type terminateErrorCase struct {
+	name  string
+	want  int
+	build func(t *testing.T) (sessionTerminateHandler, *http.Request)
+}
+
+func TestUnit_SessionTerminate_ErrorPaths(t *testing.T) {
 	t.Parallel()
-	h := sessionTerminateHandler{
-		store: &terminateStoreFake{result: session.CompleteNotFound},
-		log:   logger.Discard("t"),
+	for _, tc := range terminateErrorCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, req := tc.build(t)
+			assertTerminateCode(t, h, req, tc.want)
+		})
 	}
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: uuid.New(), agent: uuid.New(), externalID: "missing", body: `{"status":"completed"}`,
-	}), http.StatusNotFound)
+}
+
+func terminateErrorCases() []terminateErrorCase {
+	return []terminateErrorCase{
+		{name: "not_found", want: http.StatusNotFound, build: buildNotFound},
+		{name: "missing_session_id", want: http.StatusBadRequest, build: buildMissingSessionID},
+		{name: "missing_auth", want: http.StatusInternalServerError, build: buildMissingAuth},
+		{name: "missing_agent", want: http.StatusInternalServerError, build: buildMissingAgent},
+		{name: "bad_status", want: http.StatusBadRequest, build: buildBadStatus},
+		{name: "bad_json", want: http.StatusBadRequest, build: buildBadJSON},
+		{name: "nil_store", want: http.StatusServiceUnavailable, build: buildNilStore},
+		{name: "store_error", want: http.StatusServiceUnavailable, build: buildStoreError},
+	}
 }
 
 func TestUnit_SessionTerminate_BadMethod(t *testing.T) {
@@ -37,28 +57,39 @@ func TestUnit_SessionTerminate_BadMethod(t *testing.T) {
 	}
 }
 
-func TestUnit_SessionTerminate_MissingSessionID(t *testing.T) {
-	t.Parallel()
+func buildNotFound(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
+	h := sessionTerminateHandler{
+		store: &terminateStoreFake{result: session.CompleteNotFound},
+		log:   logger.Discard("t"),
+	}
+	return h, terminateAuthedRequest(t, terminateReqParams{
+		org: uuid.New(), agent: uuid.New(), externalID: "missing", body: `{"status":"completed"}`,
+	})
+}
+
+func buildMissingSessionID(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	org, agent := uuid.New(), uuid.New()
 	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
 	req := terminateAuthedRequest(t, terminateReqParams{
 		org: org, agent: agent, externalID: "x", body: `{"status":"completed"}`,
 	})
 	req.SetPathValue("session_id", "")
-	assertTerminateCode(t, h, req, http.StatusBadRequest)
+	return h, req
 }
 
-func TestUnit_SessionTerminate_MissingAuth(t *testing.T) {
-	t.Parallel()
+func buildMissingAuth(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/e/terminate", bytes.NewBufferString(`{"status":"completed"}`))
 	req.SetPathValue("session_id", "e")
 	req.Header.Set("Content-Type", "application/json")
-	assertTerminateCode(t, h, req, http.StatusInternalServerError)
+	return h, req
 }
 
-func TestUnit_SessionTerminate_MissingAgent(t *testing.T) {
-	t.Parallel()
+func buildMissingAgent(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	org := uuid.New()
 	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/e/terminate", bytes.NewBufferString(`{"status":"completed"}`))
@@ -67,44 +98,43 @@ func TestUnit_SessionTerminate_MissingAgent(t *testing.T) {
 	ctx := auth.WithContext(req.Context(), &auth.ValidateResult{
 		OrgID: org, Permissions: int64(permissions.SessionTerminate),
 	})
-	assertTerminateCode(t, h, req.WithContext(ctx), http.StatusInternalServerError)
+	return h, req.WithContext(ctx)
 }
 
-func TestUnit_SessionTerminate_BadStatus(t *testing.T) {
-	t.Parallel()
+func buildBadStatus(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	org, agent := uuid.New(), uuid.New()
 	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+	return h, terminateAuthedRequest(t, terminateReqParams{
 		org: org, agent: agent, externalID: "e", body: `{"status":"active"}`,
-	}), http.StatusBadRequest)
+	})
 }
 
-func TestUnit_SessionTerminate_BadJSON(t *testing.T) {
-	t.Parallel()
+func buildBadJSON(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	org, agent := uuid.New(), uuid.New()
 	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+	return h, terminateAuthedRequest(t, terminateReqParams{
 		org: org, agent: agent, externalID: "e", body: `{`,
-	}), http.StatusBadRequest)
+	})
 }
 
-func TestUnit_SessionTerminate_NilStore(t *testing.T) {
-	t.Parallel()
+func buildNilStore(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	org, agent := uuid.New(), uuid.New()
-	h := sessionTerminateHandler{log: logger.Discard("t")}
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+	return sessionTerminateHandler{log: logger.Discard("t")}, terminateAuthedRequest(t, terminateReqParams{
 		org: org, agent: agent, externalID: "e", body: `{"status":"completed"}`,
-	}), http.StatusServiceUnavailable)
+	})
 }
 
-func TestUnit_SessionTerminate_StoreError(t *testing.T) {
-	t.Parallel()
+func buildStoreError(t *testing.T) (sessionTerminateHandler, *http.Request) {
+	t.Helper()
 	org, agent := uuid.New(), uuid.New()
 	h := sessionTerminateHandler{
 		store: &terminateStoreFake{err: context.DeadlineExceeded},
 		log:   logger.Discard("t"),
 	}
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+	return h, terminateAuthedRequest(t, terminateReqParams{
 		org: org, agent: agent, externalID: "e", body: `{"status":"completed"}`,
-	}), http.StatusServiceUnavailable)
+	})
 }

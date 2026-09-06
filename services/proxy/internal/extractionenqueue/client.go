@@ -84,26 +84,46 @@ func (c *Client) Enqueue(ctx context.Context, req Request) error {
 }
 
 func (c *Client) newEnqueueHTTPRequest(ctx context.Context, req Request) (*http.Request, error) {
-	if !c.Enabled() {
-		return nil, fmt.Errorf("extractionenqueue: disabled")
+	if err := c.validateEnqueue(req); err != nil {
+		return nil, err
 	}
-	if len(req.Turns) == 0 {
-		return nil, fmt.Errorf("extractionenqueue: turns required")
-	}
-	body, err := json.Marshal(req)
+	body, err := marshalEnqueue(req)
 	if err != nil {
-		return nil, fmt.Errorf("extractionenqueue: marshal: %w", err)
+		return nil, err
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+enqueuePath, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("extractionenqueue: request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.token)
-	if req.SessionID != uuid.Nil {
-		httpReq.Header.Set("Idempotency-Key", req.SessionID.String())
-	}
+	setEnqueueHeaders(httpReq, c.token, req.SessionID)
 	return httpReq, nil
+}
+
+func (c *Client) validateEnqueue(req Request) error {
+	if !c.Enabled() {
+		return fmt.Errorf("extractionenqueue: disabled")
+	}
+	if len(req.Turns) == 0 {
+		return fmt.Errorf("extractionenqueue: turns required")
+	}
+	return nil
+}
+
+func marshalEnqueue(req Request) ([]byte, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("extractionenqueue: marshal: %w", err)
+	}
+	return body, nil
+}
+
+func setEnqueueHeaders(httpReq *http.Request, token string, sessionID uuid.UUID) {
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	if sessionID == uuid.Nil {
+		return
+	}
+	httpReq.Header.Set("Idempotency-Key", sessionID.String())
 }
 
 func (c *Client) doEnqueue(httpReq *http.Request) error {
@@ -113,8 +133,12 @@ func (c *Client) doEnqueue(httpReq *http.Request) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("extractionenqueue: status %d", resp.StatusCode)
+	return enqueueStatusErr(resp.StatusCode)
+}
+
+func enqueueStatusErr(code int) error {
+	if code >= 200 && code < 300 {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("extractionenqueue: status %d", code)
 }
