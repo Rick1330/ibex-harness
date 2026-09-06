@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import math
+from typing import Final
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Hard cap for AssembleContextRequest.options.max_memories (0 = unlimited).
+MAX_ASSEMBLY_OPTION_MEMORIES: Final[int] = 100
 
 
 def _parse_timeout_ms(value: object) -> float:
@@ -37,7 +41,9 @@ class ContextSettings(BaseSettings):
     45ms). ``IBEX_CONTEXT_DEADLINE_MS`` (default 40) is the server-side
     retrieval wall used by AssembleContext so pack/format keep headroom under
     the proxy's 45ms client timeout (ADR-0071). Effective retrieval wait is
-    ``min(timeout_ms, deadline_ms)``.
+    ``min(timeout_ms, deadline_ms)`` via ``retrieval_wall_ms`` — ParallelRetriever
+    consumes that property (not ``timeout_ms`` alone), so a 40ms deadline still
+    cancels slow branches when timeout remains 45ms.
     """
 
     model_config = SettingsConfigDict(extra="ignore")
@@ -97,7 +103,10 @@ class ContextSettings(BaseSettings):
     grpc_addr: str = Field(
         default="127.0.0.1:9092",
         validation_alias="IBEX_CONTEXT_GRPC_ADDR",
-        description="Bind address for ContextAssemblyService (host:port).",
+        description=(
+            "Bind address for ContextAssemblyService (host:port). "
+            "Non-loopback binds log a WARNING until 3.5.D.1 auth (ADR-0071)."
+        ),
     )
     packer_dp_cell_ceiling: int = Field(
         default=70 * 6251,
@@ -127,7 +136,7 @@ class ContextSettings(BaseSettings):
 
     @property
     def retrieval_wall_ms(self) -> float:
-        """Effective outer parallel-retrieval deadline."""
+        """Effective outer parallel-retrieval deadline consumed by ParallelRetriever."""
         return min(self.timeout_ms, self.deadline_ms)
 
     @field_validator(

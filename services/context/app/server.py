@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 import grpc
@@ -24,7 +27,7 @@ from app.assemble import (
 from app.budget import Message
 from app.clients.directive import EmptyDirectiveLookup, RedisDirectiveLookup
 from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
-from app.config import ContextSettings
+from app.config import MAX_ASSEMBLY_OPTION_MEMORIES, ContextSettings
 from app.retrieval import ParallelRetriever
 
 logger = logging.getLogger(__name__)
@@ -33,6 +36,7 @@ _SERVICE_NAME = "ibex.context.v1.ContextAssemblyService"
 _ASSEMBLE = "AssembleContext"
 _SEARCH = "SearchMemories"
 _FEEDBACK = "RecordMemoryFeedback"
+_SHUTDOWN_GRACE_S = 5.0
 
 # Request-field bounds (AGENTS.md §5.2); transport limits remain defense in depth.
 _MAX_QUERY_CHARS = 8_192
@@ -71,11 +75,13 @@ class ContextAssemblyServicer:
         pb2 = self._pb2
         if context.cancelled():
             await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "cancelled")
+            raise AssertionError("unreachable")  # pragma: no cover
 
         try:
             domain = _request_from_proto(request)
         except ValueError as exc:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            raise AssertionError("unreachable")  # pragma: no cover
 
         try:
             result = await self._assembler.assemble(domain)
@@ -84,6 +90,7 @@ class ContextAssemblyServicer:
             raise
         if context.cancelled():
             await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "cancelled")
+            raise AssertionError("unreachable")  # pragma: no cover
 
         return _response_to_proto(pb2, result)
 
@@ -111,6 +118,25 @@ async def _abort_unimplemented(
         f"{method} deferred — ADR-0038",
     )
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _is_loopback_addr(addr: str) -> bool:
+    host = (addr or "").rsplit(":", 1)[0].strip().lower()
+    if host.startswith("["):
+        host = host.strip("[]")
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _warn_non_loopback_bind(addr: str) -> None:
+    if _is_loopback_addr(addr):
+        return
+    logger.warning(
+        "context_assembly_grpc_non_loopback_bind addr=%s "
+        "auth_interceptor=absent "
+        "risk=request_org_agent_ids_trusted_without_caller_auth "
+        "deferred_to=milestone_3.5.D.1 adr=ADR-0071",
+        addr,
+    )
 
 
 def build_server(
@@ -149,12 +175,29 @@ def build_server(
     if addr is None:
         cfg = settings or ContextSettings()
         addr = cfg.grpc_addr
+    _warn_non_loopback_bind(addr)
     port = server.add_insecure_port(addr)
     return server, int(port)
 
 
-def build_assembler_from_settings(settings: ContextSettings) -> ContextAssembler:
-    """Wire HTTP memory + optional Redis directive from settings."""
+@dataclass(slots=True)
+class AssemblyRuntime:
+    """Assembler plus closable I/O clients owned by ``serve_forever``."""
+
+    assembler: ContextAssembler
+    memory: MemoryHttpClient
+    redis_client: Any | None = None
+
+    async def aclose(self) -> None:
+        await self.memory.aclose()
+        if self.redis_client is not None:
+            close = getattr(self.redis_client, "aclose", None)
+            if close is not None:
+                await close()
+
+
+def build_runtime_from_settings(settings: ContextSettings) -> AssemblyRuntime:
+    """Wire HTTP memory + optional Redis directive; caller must ``aclose``."""
     if not settings.memory_base_url.strip():
         msg = "IBEX_CONTEXT_MEMORY_BASE_URL / MEMORY_BASE_URL is required"
         raise ValueError(msg)
@@ -164,25 +207,35 @@ def build_assembler_from_settings(settings: ContextSettings) -> ContextAssembler
             token=settings.memory_api_token,
         )
     )
-    directive = EmptyDirectiveLookup()
+    redis_client: Any | None = None
+    directive: EmptyDirectiveLookup | RedisDirectiveLookup = EmptyDirectiveLookup()
     if settings.redis_url.strip():
         import redis.asyncio as redis_async
 
-        client = redis_async.from_url(settings.redis_url)
-        directive = RedisDirectiveLookup(client)
+        redis_client = redis_async.from_url(settings.redis_url)
+        directive = RedisDirectiveLookup(redis_client)
     retriever = ParallelRetriever(
         settings=settings,
         memory=memory,
         directive=directive,
     )
-    return ContextAssembler(settings=settings, retriever=retriever)
+    return AssemblyRuntime(
+        assembler=ContextAssembler(settings=settings, retriever=retriever),
+        memory=memory,
+        redis_client=redis_client,
+    )
+
+
+def build_assembler_from_settings(settings: ContextSettings) -> ContextAssembler:
+    """Wire HTTP memory + optional Redis directive from settings."""
+    return build_runtime_from_settings(settings).assembler
 
 
 async def serve_forever(settings: ContextSettings | None = None) -> None:
     """Entrypoint: build dependencies, start server, wait for termination."""
     cfg = settings or ContextSettings()
-    assembler = build_assembler_from_settings(cfg)
-    server, port = build_server(assembler, settings=cfg)
+    runtime = build_runtime_from_settings(cfg)
+    server, port = build_server(runtime.assembler, settings=cfg)
     await server.start()
     logger.info(
         "context_assembly_grpc_listening addr=%s port=%s retrieval_wall_ms=%s",
@@ -190,7 +243,43 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
         port,
         cfg.retrieval_wall_ms,
     )
-    await server.wait_for_termination()
+
+    loop = asyncio.get_running_loop()
+    shutdown = asyncio.Event()
+
+    def _request_shutdown() -> None:
+        shutdown.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown)
+        except (NotImplementedError, RuntimeError):  # pragma: no cover - platform
+            pass
+
+    wait_termination = asyncio.create_task(server.wait_for_termination())
+    wait_signal = asyncio.create_task(shutdown.wait())
+    try:
+        done, pending = await asyncio.wait(
+            {wait_termination, wait_signal},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if wait_signal in done and not wait_termination.done():
+            await server.stop(grace=_SHUTDOWN_GRACE_S)
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if wait_termination in done:
+            await wait_termination
+    finally:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.remove_signal_handler(sig)
+            except (NotImplementedError, RuntimeError):  # pragma: no cover
+                pass
+        await runtime.aclose()
 
 
 def _request_from_proto(request: object) -> AssembleRequest:
@@ -239,10 +328,16 @@ def _bounded_text(
 def _options_from_proto(options_msg: object | None) -> AssemblyOptions:
     if options_msg is None:
         return AssemblyOptions()
+    max_memories = int(getattr(options_msg, "max_memories", 0) or 0)
+    if max_memories < 0 or max_memories > MAX_ASSEMBLY_OPTION_MEMORIES:
+        raise ValueError(
+            f"max_memories must be in 0..{MAX_ASSEMBLY_OPTION_MEMORIES}, "
+            f"got {max_memories}"
+        )
     return AssemblyOptions(
         skip_cold_memories=bool(getattr(options_msg, "skip_cold_memories", False)),
         skip_hot_memories=bool(getattr(options_msg, "skip_hot_memories", False)),
-        max_memories=int(getattr(options_msg, "max_memories", 0) or 0),
+        max_memories=max_memories,
     )
 
 
