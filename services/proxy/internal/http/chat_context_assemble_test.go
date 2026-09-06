@@ -19,6 +19,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
+	dto "github.com/prometheus/client_model/go"
 )
 
 type fakeContextAssembler struct {
@@ -318,24 +319,8 @@ func TestUnit_ForwardChat_AssembleSuccess_HeadersAndMessages(t *testing.T) {
 		AssembledContext: "assembled blob", TokensUsed: 11, MemoriesIncluded: 2,
 	}}
 	rec, last := runForwardChat(t, contextHandler(true, fake), false, false)
-	assertAssembledProviderMessages(t, last.Messages)
+	assertAssembledMessages(t, last.Messages)
 	assertContextHeaders(t, rec.Header(), wantContextHeaders{memories: "2", tokens: "11", fallback: "false"})
-}
-
-func assertAssembledProviderMessages(t *testing.T, msgs []provider.Message) {
-	t.Helper()
-	if len(msgs) != 3 {
-		t.Fatalf("messages=%+v", msgs)
-	}
-	if msgs[0].Content != "assembled blob" {
-		t.Fatalf("first=%+v", msgs[0])
-	}
-	if msgs[1].Content != "client system" {
-		t.Fatalf("system=%+v", msgs[1])
-	}
-	if msgs[2].Content != "hello" {
-		t.Fatalf("user=%+v", msgs[2])
-	}
 }
 
 func TestUnit_ForwardChat_AssembleFallback_HeadersAndDirective(t *testing.T) {
@@ -561,26 +546,49 @@ func TestUnit_ForwardChat_EmptyAssembled_FallbackHeaderAndMetric(t *testing.T) {
 
 func assertAssembleFallbackMetric(t *testing.T, reg *metrics.ProxyRegistry, reason string, want float64) {
 	t.Helper()
+	got := assembleFallbackCounterValue(t, reg, reason)
+	if got != want {
+		t.Fatalf("fallback metric reason=%q got=%v want=%v", reason, got, want)
+	}
+}
+
+func assembleFallbackCounterValue(t *testing.T, reg *metrics.ProxyRegistry, reason string) float64 {
+	t.Helper()
 	mfs, err := reg.Gatherer().Gather()
 	if err != nil {
 		t.Fatalf("gather: %v", err)
 	}
-	var got float64
+	return counterValueForReasonLabel(mfs, "ibex_proxy_context_assemble_fallback_total", reason)
+}
+
+func counterValueForReasonLabel(mfs []*dto.MetricFamily, name, reason string) float64 {
 	for _, mf := range mfs {
-		if mf.GetName() != "ibex_proxy_context_assemble_fallback_total" {
+		if mf.GetName() != name {
 			continue
 		}
-		for _, m := range mf.GetMetric() {
-			for _, lp := range m.GetLabel() {
-				if lp.GetName() == "reason" && lp.GetValue() == reason {
-					got = m.GetCounter().GetValue()
-				}
-			}
+		if v, ok := counterWithReason(mf.GetMetric(), reason); ok {
+			return v
 		}
 	}
-	if got != want {
-		t.Fatalf("fallback metric reason=%q got=%v want=%v", reason, got, want)
+	return 0
+}
+
+func counterWithReason(samples []*dto.Metric, reason string) (float64, bool) {
+	for _, m := range samples {
+		if metricHasLabelValue(m, "reason", reason) {
+			return m.GetCounter().GetValue(), true
+		}
 	}
+	return 0, false
+}
+
+func metricHasLabelValue(m *dto.Metric, name, value string) bool {
+	for _, lp := range m.GetLabel() {
+		if lp.GetName() == name && lp.GetValue() == value {
+			return true
+		}
+	}
+	return false
 }
 
 func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testing.T) {
