@@ -76,7 +76,8 @@ services:
     container_name: ibex-dev-worker
     ports:
       - "${IBEX_WORKER_METRICS_PORT:-8006}:8006"
-      - "${IBEX_WORKER_ENQUEUE_PORT:-8007}:8007"
+      # Host loopback only; non-loopback publish needs an explicit compose override + token.
+      - "127.0.0.1:${IBEX_WORKER_ENQUEUE_PORT:-8007}:8007"
     environment:
       REDIS_URL: redis://redis:6379/0
       REDIS_DB_QUEUE: "1"

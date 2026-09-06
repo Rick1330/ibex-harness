@@ -30,6 +30,7 @@ type authWriteCtx struct {
 }
 
 const authUnavailableMsg = "Authentication service unavailable"
+const insufficientPermsMsg = "Insufficient permissions"
 
 // AuthMiddleware validates bearer tokens and attaches auth context.
 func AuthMiddleware(validator TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
@@ -133,19 +134,19 @@ func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOp
 	}
 	if opts.PathOrgID != "" && res.OrgID.String() != opts.PathOrgID {
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
-			"Insufficient permissions", awc.requestID,
+			insufficientPermsMsg, awc.requestID,
 			apierror.WriteOpts{Detail: "organization scope mismatch", DocsBase: awc.docsBase})
 		return false
 	}
 	if opts.RequireProxyChatCompletion && !permissions.Has(res.Permissions, permissions.ProxyChatCompletion) {
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
-			"Insufficient permissions", awc.requestID,
+			insufficientPermsMsg, awc.requestID,
 			apierror.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: awc.docsBase})
 		return false
 	}
 	if opts.RequireSessionTerminate && !permissions.Has(res.Permissions, permissions.SessionTerminate) {
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
-			"Insufficient permissions", awc.requestID,
+			insufficientPermsMsg, awc.requestID,
 			apierror.WriteOpts{Detail: "token lacks session:terminate permission", DocsBase: awc.docsBase})
 		return false
 	}

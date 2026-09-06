@@ -18,7 +18,21 @@ const (
 	MaxBatchContentBytes = 500_000
 	maxRoleLen           = 32
 	maxContentLen        = 100_000
+	appendMaxRetries     = 8
 )
+
+// compare-and-set: only SET when the current value matches expected (empty = missing).
+var appendCASLua = redis.NewScript(`
+local cur = redis.call("GET", KEYS[1])
+if cur == false then
+  cur = ""
+end
+if cur ~= ARGV[1] then
+  return 0
+end
+redis.call("SET", KEYS[1], ARGV[2], "PX", ARGV[3])
+return 1
+`)
 
 // Turn is one extraction payload element (role + content + index).
 type Turn struct {
@@ -34,9 +48,9 @@ type LookupKey struct {
 	ExternalID string
 }
 
-// Key returns session:{org_id}:{agent_id}:{external_id}:extraction_turns.
+// Key returns {org_id}:session:{agent_id}:{external_id}:extraction_turns.
 func Key(k LookupKey) string {
-	return fmt.Sprintf("session:%s:%s:%s:extraction_turns",
+	return fmt.Sprintf("%s:session:%s:%s:extraction_turns",
 		k.OrgID.String(), k.AgentID.String(), k.ExternalID)
 }
 
@@ -67,52 +81,103 @@ const (
 	AppendRedisErr AppendOutcome = "redis_error"
 )
 
+func (b *Buffer) usable(k LookupKey) bool {
+	return b != nil && b.client != nil && k.ExternalID != ""
+}
+
 // Append adds turns to the buffer. Empty role/content entries are dropped.
-// Failures never surface as errors to callers (outcome + optional err for logs).
+// Concurrent appends merge via compare-and-set retries (no lost turns).
+// Failures never surface as hard errors to callers (outcome + optional err for logs).
 func (b *Buffer) Append(ctx context.Context, k LookupKey, turns []Turn) (AppendOutcome, error) {
-	if b == nil || b.client == nil || k.ExternalID == "" {
+	if !b.usable(k) {
 		return AppendSkipped, nil
 	}
 	clean := sanitizeTurns(turns)
 	if len(clean) == 0 {
 		return AppendSkipped, nil
 	}
-
-	raw, err := b.client.Get(ctx, Key(k)).Bytes()
-	existing := []Turn{}
-	if err == nil {
-		_ = json.Unmarshal(raw, &existing)
-	} else if err != redis.Nil {
-		return AppendRedisErr, err
-	}
-
-	merged, capped := mergeTurns(existing, clean)
-	payload, err := json.Marshal(merged)
-	if err != nil {
-		return AppendRedisErr, err
-	}
-	if err := b.client.Set(ctx, Key(k), payload, b.ttl).Err(); err != nil {
-		return AppendRedisErr, err
-	}
-	if capped {
-		return AppendCap, nil
-	}
-	return AppendOK, nil
+	return b.appendCAS(ctx, k, clean)
 }
 
-// Take clears and returns buffered turns (GETDEL semantics). Missing key → empty.
-func (b *Buffer) Take(ctx context.Context, k LookupKey) ([]Turn, error) {
-	if b == nil || b.client == nil || k.ExternalID == "" {
+func (b *Buffer) appendCAS(ctx context.Context, k LookupKey, clean []Turn) (AppendOutcome, error) {
+	key := Key(k)
+	ttlMs := b.ttl.Milliseconds()
+	if ttlMs < 1 {
+		ttlMs = 1
+	}
+	var lastCap bool
+	for attempt := 0; attempt < appendMaxRetries; attempt++ {
+		raw, err := b.client.Get(ctx, key).Bytes()
+		expected := ""
+		var existing []Turn
+		if err == nil {
+			expected = string(raw)
+			_ = json.Unmarshal(raw, &existing)
+		} else if err != redis.Nil {
+			return AppendRedisErr, err
+		}
+		merged, capped := mergeTurns(existing, clean)
+		lastCap = capped
+		payload, err := json.Marshal(merged)
+		if err != nil {
+			return AppendRedisErr, err
+		}
+		ok, err := appendCASLua.Run(ctx, b.client, []string{key}, expected, string(payload), ttlMs).Int()
+		if err != nil {
+			return AppendRedisErr, err
+		}
+		if ok == 1 {
+			if capped {
+				return AppendCap, nil
+			}
+			return AppendOK, nil
+		}
+	}
+	if lastCap {
+		return AppendCap, fmt.Errorf("extractionbuffer: append CAS retries exhausted")
+	}
+	return AppendRedisErr, fmt.Errorf("extractionbuffer: append CAS retries exhausted")
+}
+
+// Peek returns buffered turns without clearing the key.
+func (b *Buffer) Peek(ctx context.Context, k LookupKey) ([]Turn, error) {
+	if !b.usable(k) {
 		return nil, nil
 	}
-	key := Key(k)
-	raw, err := b.client.GetDel(ctx, key).Bytes()
+	raw, err := b.client.Get(ctx, Key(k)).Bytes()
 	if err == redis.Nil {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	return decodeTurns(raw)
+}
+
+// Ack deletes the buffer after a successful enqueue accept.
+func (b *Buffer) Ack(ctx context.Context, k LookupKey) error {
+	if !b.usable(k) {
+		return nil
+	}
+	return b.client.Del(ctx, Key(k)).Err()
+}
+
+// Take clears and returns buffered turns (GETDEL semantics). Missing key → empty.
+func (b *Buffer) Take(ctx context.Context, k LookupKey) ([]Turn, error) {
+	if !b.usable(k) {
+		return nil, nil
+	}
+	raw, err := b.client.GetDel(ctx, Key(k)).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeTurns(raw)
+}
+
+func decodeTurns(raw []byte) ([]Turn, error) {
 	var turns []Turn
 	if err := json.Unmarshal(raw, &turns); err != nil {
 		return nil, fmt.Errorf("extractionbuffer: decode: %w", err)
@@ -123,32 +188,45 @@ func (b *Buffer) Take(ctx context.Context, k LookupKey) ([]Turn, error) {
 func sanitizeTurns(in []Turn) []Turn {
 	out := make([]Turn, 0, len(in))
 	for _, t := range in {
-		role := truncateRunes(t.Role, maxRoleLen)
-		content := truncateRunes(t.Content, maxContentLen)
-		if role == "" || content == "" || t.TurnIndex < 0 {
-			continue
+		if turn, ok := sanitizeOne(t); ok {
+			out = append(out, turn)
 		}
-		out = append(out, Turn{TurnIndex: t.TurnIndex, Role: role, Content: content})
 	}
 	return out
+}
+
+func sanitizeOne(t Turn) (Turn, bool) {
+	role := truncateRunes(t.Role, maxRoleLen)
+	content := truncateRunes(t.Content, maxContentLen)
+	if role == "" || content == "" || t.TurnIndex < 0 {
+		return Turn{}, false
+	}
+	return Turn{TurnIndex: t.TurnIndex, Role: role, Content: content}, true
 }
 
 func mergeTurns(existing, add []Turn) ([]Turn, bool) {
 	merged := append([]Turn{}, existing...)
 	capped := false
 	for _, t := range add {
-		if len(merged) >= MaxTurnsPerBatch {
+		next, ok := tryAppendTurn(merged, t)
+		if !ok {
 			capped = true
 			break
 		}
-		trial := append(merged, t)
-		if serializedBytes(trial) > MaxBatchContentBytes {
-			capped = true
-			break
-		}
-		merged = trial
+		merged = next
 	}
 	return merged, capped
+}
+
+func tryAppendTurn(merged []Turn, t Turn) ([]Turn, bool) {
+	if len(merged) >= MaxTurnsPerBatch {
+		return merged, false
+	}
+	trial := append(merged, t)
+	if serializedBytes(trial) > MaxBatchContentBytes {
+		return merged, false
+	}
+	return trial, true
 }
 
 func serializedBytes(turns []Turn) int {

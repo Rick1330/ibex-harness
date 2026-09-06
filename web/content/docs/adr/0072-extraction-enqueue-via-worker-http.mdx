@@ -41,7 +41,7 @@ Authenticate proxy→worker with `IBEX_WORKER_ENQUEUE_API_TOKEN` and `hmac.compa
 
 ### 4) Transient Redis turn buffer
 
-Proxy appends turn role/content to Redis after successful chat completions (`session:{org}:{agent}:{external_id}:extraction_turns`, TTL-bound). Terminate reads/clears the buffer to populate `turns`. Empty/expired buffer → skip enqueue (log + metric); never fabricate turns. Buffer write failures are fail-open on the chat path.
+Proxy appends turn role/content to Redis after successful chat completions (`{org_id}:session:{agent}:{external_id}:extraction_turns`, TTL-bound) synchronously before the chat handler returns (checkpoint/trace stay async). Terminate peeks the buffer to populate `turns` and deletes only after the worker accepts enqueue. Empty/expired buffer → skip enqueue (log + metric); never fabricate turns. Buffer write failures are fail-open on the chat path.
 
 ### 5) Non-goals
 

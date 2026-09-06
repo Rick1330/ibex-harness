@@ -229,7 +229,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
 | `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
-| `IBEX_EXTRACTION_TURNS_TTL` | No | same as idle timeout | Redis TTL for `session:{org}:{agent}:{external_id}:extraction_turns` | Fail-open on chat path; ADR-0072 |
+| `IBEX_EXTRACTION_TURNS_TTL` | No | same as idle timeout | Redis TTL for `{org_id}:session:{agent}:{external_id}:extraction_turns` | Fail-open on chat path; ADR-0072 |
 | `IBEX_WORKER_ENQUEUE_BASE_URL` | No | (empty) | Worker enqueue HTTP origin (e.g. `http://worker:8007`) | Empty disables proxy enqueue |
 | `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional | (empty) | Shared Bearer with worker `IBEX_WORKER_ENQUEUE_API_TOKEN` | Required with base URL |
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |

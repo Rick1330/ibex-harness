@@ -161,17 +161,34 @@ func TestStore_Complete_ConcurrentRace(t *testing.T) {
 	ids := setupStore(t)
 	sess := mustCreate(t, ids, "ext-complete-race")
 	const workers = 8
-	errs := make(chan error, workers)
+	type outcome struct {
+		res session.CompleteResult
+		err error
+	}
+	out := make(chan outcome, workers)
 	for i := 0; i < workers; i++ {
 		go func() {
-			_, err := ids.store.Complete(context.Background(), sess.ID, ids.orgID)
-			errs <- err
+			res, err := ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+			out <- outcome{res: res, err: err}
 		}()
 	}
+	var okCount, noopCount int
 	for i := 0; i < workers; i++ {
-		if err := <-errs; err != nil {
-			t.Fatalf("worker: %v", err)
+		o := <-out
+		if o.err != nil {
+			t.Fatalf("worker: %v", o.err)
 		}
+		switch o.res {
+		case session.CompleteOK:
+			okCount++
+		case session.CompleteNoop:
+			noopCount++
+		default:
+			t.Fatalf("unexpected result %v", o.res)
+		}
+	}
+	if okCount != 1 || noopCount != workers-1 {
+		t.Fatalf("ok=%d noop=%d want 1/%d", okCount, noopCount, workers-1)
 	}
 	got := mustReload(t, ids, "ext-complete-race")
 	if got.Status != session.StatusCompleted {
@@ -277,13 +294,21 @@ func TestStore_CompleteByExternalID(t *testing.T) {
 
 func TestStore_CompleteByExternalID_NotFoundAndEmpty(t *testing.T) {
 	ids := setupStore(t)
-	res, id, err := ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, "missing")
-	if err != nil || res != session.CompleteNotFound || id != uuid.Nil {
-		t.Fatalf("missing: res=%v id=%s err=%v", res, id, err)
+	assertCompleteNotFound(t, ids, "missing")
+	assertCompleteNotFound(t, ids, "")
+}
+
+func assertCompleteNotFound(t *testing.T, ids storeIDs, externalID string) {
+	t.Helper()
+	res, id, err := ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, externalID)
+	if err != nil {
+		t.Fatalf("external_id=%q err=%v", externalID, err)
 	}
-	res, id, err = ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, "")
-	if err != nil || res != session.CompleteNotFound || id != uuid.Nil {
-		t.Fatalf("empty: res=%v id=%s err=%v", res, id, err)
+	if res != session.CompleteNotFound {
+		t.Fatalf("external_id=%q res=%v", externalID, res)
+	}
+	if id != uuid.Nil {
+		t.Fatalf("external_id=%q id=%s", externalID, id)
 	}
 }
 

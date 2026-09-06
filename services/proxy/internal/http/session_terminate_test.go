@@ -63,7 +63,9 @@ func TestUnit_SessionTerminate_OKEnqueues(t *testing.T) {
 		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
 		log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test"),
 	}
-	req := terminateAuthedRequest(t, org, agent, "ext-ok", `{"status":"completed"}`)
+	req := terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: "ext-ok", body: `{"status":"completed"}`,
+	})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -87,7 +89,9 @@ func TestUnit_SessionTerminate_NoopNoEnqueue(t *testing.T) {
 		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
 		log:     logger.Discard("t"),
 	}
-	req := terminateAuthedRequest(t, org, agent, "ext-noop", `{"status":"completed"}`)
+	req := terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: "ext-noop", body: `{"status":"completed"}`,
+	})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -103,12 +107,44 @@ func TestUnit_SessionTerminate_NotFound(t *testing.T) {
 	t.Parallel()
 	store := &terminateStoreFake{result: session.CompleteNotFound}
 	h := sessionTerminateHandler{store: store, log: logger.Discard("t")}
-	req := terminateAuthedRequest(t, uuid.New(), uuid.New(), "missing", `{"status":"completed"}`)
+	req := terminateAuthedRequest(t, terminateReqParams{
+		org: uuid.New(), agent: uuid.New(), externalID: "missing", body: `{"status":"completed"}`,
+	})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status=%d", rec.Code)
 	}
+}
+
+func TestUnit_SessionTerminate_EnqueueFailRetainsBuffer(t *testing.T) {
+	t.Parallel()
+	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
+	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
+	buf, _ := terminateBufferAndEnqueue(t, org, agent, "ext-fail")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	h := sessionTerminateHandler{
+		store: store, buffer: buf,
+		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
+		log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-fail"),
+	}
+	req := terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: "ext-fail", body: `{"status":"completed"}`,
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	waitFor(t, func() bool {
+		turns, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
+			OrgID: org, AgentID: agent, ExternalID: "ext-fail",
+		})
+		return err == nil && len(turns) == 1
+	})
 }
 
 func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
@@ -133,7 +169,9 @@ func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
 		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
 		log:     logger.Discard("t"), metrics: reg,
 	}
-	req := terminateAuthedRequest(t, org, agent, "ext-empty", `{"status":"completed"}`)
+	req := terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: "ext-empty", body: `{"status":"completed"}`,
+	})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -146,16 +184,22 @@ func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
 	}
 }
 
-func terminateAuthedRequest(t *testing.T, org, agent uuid.UUID, externalID, body string) *http.Request {
+func terminateAuthedRequest(t *testing.T, p terminateReqParams) *http.Request {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+externalID+"/terminate", bytes.NewBufferString(body))
-	req.SetPathValue("session_id", externalID)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+p.externalID+"/terminate", bytes.NewBufferString(p.body))
+	req.SetPathValue("session_id", p.externalID)
 	req.Header.Set("Content-Type", "application/json")
 	ctx := auth.WithContext(req.Context(), &auth.ValidateResult{
-		OrgID: org, Permissions: int64(permissions.SessionTerminate | permissions.Admin),
+		OrgID: p.org, Permissions: int64(permissions.SessionTerminate | permissions.Admin),
 	})
-	ctx = WithAgent(ctx, auth.AgentRecord{ID: agent, OrgID: org, Status: "active"})
+	ctx = WithAgent(ctx, auth.AgentRecord{ID: p.agent, OrgID: p.org, Status: "active"})
 	return req.WithContext(ctx)
+}
+
+type terminateReqParams struct {
+	org, agent uuid.UUID
+	externalID string
+	body       string
 }
 
 func terminateBufferAndEnqueue(t *testing.T, org, agent uuid.UUID, ext string) (*extractionbuffer.Buffer, *httptest.Server) {

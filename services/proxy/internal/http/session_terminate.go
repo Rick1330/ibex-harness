@@ -63,7 +63,11 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 	writeTerminateOK(w, id.externalID)
 	if result == session.CompleteOK {
-		go h.afterCompleteOK(id.orgID, id.agentID, sessionID, id.externalID, id.requestID)
+		bg := context.WithoutCancel(r.Context())
+		go h.afterCompleteOK(bg, terminateEnqueueJob{
+			orgID: id.orgID, agentID: id.agentID, sessionID: sessionID,
+			externalID: id.externalID, requestID: id.requestID,
+		})
 	}
 }
 
@@ -168,53 +172,92 @@ func writeTerminateOK(w http.ResponseWriter, externalID string) {
 	})
 }
 
-func (h sessionTerminateHandler) afterCompleteOK(
-	orgID, agentID, sessionID uuid.UUID, externalID, requestID string,
-) {
-	ctx, cancel := context.WithTimeout(context.Background(), extractionenqueue.DefaultTimeout+time.Second)
-	defer cancel()
-	if requestID != "" {
-		ctx = reqid.WithRequestID(ctx, requestID)
-	}
+type terminateEnqueueJob struct {
+	orgID      uuid.UUID
+	agentID    uuid.UUID
+	sessionID  uuid.UUID
+	externalID string
+	requestID  string
+}
 
-	turns, err := h.takeTurns(ctx, orgID, agentID, externalID)
+func (h sessionTerminateHandler) afterCompleteOK(parent context.Context, job terminateEnqueueJob) {
+	ctx, cancel := context.WithTimeout(parent, extractionenqueue.DefaultTimeout+time.Second)
+	defer cancel()
+	if job.requestID != "" {
+		ctx = reqid.WithRequestID(ctx, job.requestID)
+	}
+	turns, ok := h.loadEnqueueTurns(ctx, job)
+	if !ok {
+		return
+	}
+	h.dispatchEnqueue(ctx, job, turns)
+}
+
+func (h sessionTerminateHandler) loadEnqueueTurns(
+	ctx context.Context, job terminateEnqueueJob,
+) ([]extractionbuffer.Turn, bool) {
+	turns, err := h.peekTurns(ctx, job)
 	if err != nil {
 		h.recordEnqueue("failed", "buffer_read")
 		if h.log != nil {
-			h.log.WarnCtx(ctx, "extraction buffer take failed", "error", err, "external_id", externalID)
+			h.log.WarnCtx(ctx, "extraction buffer peek failed", "error", err, "external_id", job.externalID)
 		}
-		return
+		return nil, false
 	}
 	if len(turns) == 0 {
 		h.recordEnqueue("skipped", "empty_buffer")
-		return
+		return nil, false
 	}
+	return turns, true
+}
+
+func (h sessionTerminateHandler) dispatchEnqueue(
+	ctx context.Context, job terminateEnqueueJob, turns []extractionbuffer.Turn,
+) {
 	if h.enqueue == nil || !h.enqueue.Enabled() {
 		h.recordEnqueue("skipped", "disabled")
 		return
 	}
 	req := extractionenqueue.Request{
-		OrgID: orgID, AgentID: agentID, SessionID: sessionID,
+		OrgID: job.orgID, AgentID: job.agentID, SessionID: job.sessionID,
 		Turns: toEnqueueTurns(turns),
 	}
-	if err := h.enqueue.Enqueue(ctx, req); err != nil {
+	err := h.enqueue.Enqueue(ctx, req)
+	if err != nil && enqueueTransient(err) {
+		err = h.enqueue.Enqueue(ctx, req)
+	}
+	if err != nil {
 		h.recordEnqueue("failed", "http")
 		if h.log != nil {
-			h.log.WarnCtx(ctx, "extraction enqueue failed", "error", err, "session_id", sessionID.String())
+			h.log.WarnCtx(ctx, "extraction enqueue failed; buffer retained",
+				"error", err, "session_id", job.sessionID.String())
 		}
 		return
+	}
+	if err := h.ackTurns(ctx, job); err != nil && h.log != nil {
+		h.log.WarnCtx(ctx, "extraction buffer ack failed after enqueue",
+			"error", err, "external_id", job.externalID)
 	}
 	h.recordEnqueue("success", "ok")
 }
 
-func (h sessionTerminateHandler) takeTurns(
-	ctx context.Context, orgID, agentID uuid.UUID, externalID string,
+func (h sessionTerminateHandler) peekTurns(
+	ctx context.Context, job terminateEnqueueJob,
 ) ([]extractionbuffer.Turn, error) {
 	if h.buffer == nil {
 		return nil, nil
 	}
-	return h.buffer.Take(ctx, extractionbuffer.LookupKey{
-		OrgID: orgID, AgentID: agentID, ExternalID: externalID,
+	return h.buffer.Peek(ctx, extractionbuffer.LookupKey{
+		OrgID: job.orgID, AgentID: job.agentID, ExternalID: job.externalID,
+	})
+}
+
+func (h sessionTerminateHandler) ackTurns(ctx context.Context, job terminateEnqueueJob) error {
+	if h.buffer == nil {
+		return nil
+	}
+	return h.buffer.Ack(ctx, extractionbuffer.LookupKey{
+		OrgID: job.orgID, AgentID: job.agentID, ExternalID: job.externalID,
 	})
 }
 
@@ -230,4 +273,13 @@ func toEnqueueTurns(in []extractionbuffer.Turn) []extractionenqueue.Turn {
 		out[i] = extractionenqueue.Turn{TurnIndex: t.TurnIndex, Role: t.Role, Content: t.Content}
 	}
 	return out
+}
+
+func enqueueTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// Do not retry client/auth/validation responses (4xx).
+	return !strings.Contains(msg, "status 4")
 }

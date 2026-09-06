@@ -286,6 +286,16 @@ class Settings(BaseSettings):
         return redis_url_with_db(self.redis_url, self.redis_db_results)
 
     @model_validator(mode="after")
+    def _enqueue_metrics_ports_differ(self) -> Settings:
+        token = self.enqueue_api_token
+        if token is None or not token.get_secret_value().strip():
+            return self
+        if self.enqueue_port == self.metrics_port:
+            msg = "enqueue_port and metrics_port must differ when enqueue API token is set"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def _production_requires_redis(self) -> Settings:
         if self.env.lower() != "production":
             return self

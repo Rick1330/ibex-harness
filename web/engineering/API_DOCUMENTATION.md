@@ -1179,6 +1179,18 @@ extraction.
 
 `data.session_id` echoes the sticky external_id from the path.
 
+**Response: 404 Not Found** (missing, soft-deleted, or wrong org/agent scope — no existence leak)
+
+```json
+{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Session not found",
+    "request_id": "req_..."
+  }
+}
+```
+
 ---
 
 ### GET /v1/sessions/{session_id}/replay

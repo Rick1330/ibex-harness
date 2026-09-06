@@ -2,6 +2,7 @@ package extractionbuffer_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestUnit_Key(t *testing.T) {
 	t.Parallel()
 	org, agent := uuid.MustParse("11111111-1111-1111-1111-111111111111"), uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	got := extractionbuffer.Key(extractionbuffer.LookupKey{OrgID: org, AgentID: agent, ExternalID: "ext-1"})
-	want := "session:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222:ext-1:extraction_turns"
+	want := "11111111-1111-1111-1111-111111111111:session:22222222-2222-2222-2222-222222222222:ext-1:extraction_turns"
 	if got != want {
 		t.Fatalf("key=%q want %q", got, want)
 	}
@@ -81,8 +82,48 @@ func TestUnit_AppendFailOpenClosedClient(t *testing.T) {
 func TestUnit_TurnsFromChat(t *testing.T) {
 	t.Parallel()
 	got := extractionbuffer.TurnsFromChat(3, "u2", "a")
-	if len(got) != 2 || got[0].TurnIndex != 6 || got[0].Content != "u2" || got[1].TurnIndex != 7 {
-		t.Fatalf("%#v", got)
+	if len(got) != 2 {
+		t.Fatalf("len=%d %#v", len(got), got)
+	}
+	if got[0].TurnIndex != 6 || got[0].Content != "u2" {
+		t.Fatalf("user turn %#v", got[0])
+	}
+	if got[1].TurnIndex != 7 {
+		t.Fatalf("assistant turn %#v", got[1])
+	}
+}
+
+func TestUnit_AppendConcurrentNoLostTurns(t *testing.T) {
+	t.Parallel()
+	b, _ := testBuffer(t)
+	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "race"}
+	const workers = 20
+	done := make(chan struct{}, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer func() { done <- struct{}{} }()
+			_, _ = b.Append(context.Background(), k, []extractionbuffer.Turn{
+				{TurnIndex: i, Role: "user", Content: fmt.Sprintf("m-%d", i)},
+			})
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		<-done
+	}
+	turns, err := b.Peek(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != workers {
+		t.Fatalf("lost turns: got %d want %d", len(turns), workers)
+	}
+	if err := b.Ack(context.Background(), k); err != nil {
+		t.Fatal(err)
+	}
+	turns, err = b.Peek(context.Background(), k)
+	if err != nil || len(turns) != 0 {
+		t.Fatalf("after ack: %#v err=%v", turns, err)
 	}
 }
 

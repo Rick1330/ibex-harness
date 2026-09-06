@@ -118,7 +118,9 @@ func (s *PostgresStore) completeByExternalID(
 		return 0, uuid.Nil, err
 	}
 
-	sessionID, err := loadSessionIDByExternal(ctx, tx, orgID, agentID, externalID)
+	sessionID, err := loadSessionIDByExternal(ctx, tx, externalLookup{
+		orgID: orgID, agentID: agentID, externalID: externalID,
+	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return CompleteNotFound, uuid.Nil, nil
@@ -139,10 +141,7 @@ func (s *PostgresStore) completeByExternalID(
 func completeInTx(ctx context.Context, tx *sql.Tx, sessionID, orgID uuid.UUID) (CompleteResult, error) {
 	status, err := loadSessionStatus(ctx, tx, sessionID, orgID)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return CompleteNotFound, nil
-		}
-		return 0, err
+		return mapNotFound(err)
 	}
 	if status != StatusActive {
 		return CompleteNoop, nil
@@ -151,33 +150,52 @@ func completeInTx(ctx context.Context, tx *sql.Tx, sessionID, orgID uuid.UUID) (
 	if err == nil {
 		return CompleteOK, nil
 	}
-	if !errors.Is(err, ErrNotFound) {
-		return 0, err
-	}
-	// Concurrent Complete may have won the row lock; treat terminal as noop.
-	st, loadErr := loadSessionStatus(ctx, tx, sessionID, orgID)
-	if loadErr != nil {
-		if errors.Is(loadErr, ErrNotFound) {
-			return CompleteNotFound, nil
-		}
-		return 0, loadErr
-	}
-	if st != StatusActive {
-		return CompleteNoop, nil
+	return resolveCompleteRace(ctx, tx, sessionRef{id: sessionID, orgID: orgID}, err)
+}
+
+func mapNotFound(err error) (CompleteResult, error) {
+	if errors.Is(err, ErrNotFound) {
+		return CompleteNotFound, nil
 	}
 	return 0, err
 }
 
-func loadSessionIDByExternal(
-	ctx context.Context, tx *sql.Tx, orgID, agentID uuid.UUID, externalID string,
-) (uuid.UUID, error) {
+type sessionRef struct {
+	id    uuid.UUID
+	orgID uuid.UUID
+}
+
+func resolveCompleteRace(
+	ctx context.Context, tx *sql.Tx, ref sessionRef, markErr error,
+) (CompleteResult, error) {
+	if !errors.Is(markErr, ErrNotFound) {
+		return 0, markErr
+	}
+	// Concurrent Complete may have won the row lock; treat terminal as noop.
+	st, loadErr := loadSessionStatus(ctx, tx, ref.id, ref.orgID)
+	if loadErr != nil {
+		return mapNotFound(loadErr)
+	}
+	if st != StatusActive {
+		return CompleteNoop, nil
+	}
+	return 0, markErr
+}
+
+type externalLookup struct {
+	orgID      uuid.UUID
+	agentID    uuid.UUID
+	externalID string
+}
+
+func loadSessionIDByExternal(ctx context.Context, tx *sql.Tx, p externalLookup) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := tx.QueryRowContext(ctx, selectSessionIDByExternalSQL, orgID, agentID, externalID).Scan(&id)
+	err := tx.QueryRowContext(ctx, selectSessionIDByExternalSQL, p.orgID, p.agentID, p.externalID).Scan(&id)
 	if err == sql.ErrNoRows {
 		return uuid.Nil, ErrNotFound
 	}
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("session: load by external_id org_id=%s agent_id=%s: %w", orgID, agentID, err)
+		return uuid.Nil, fmt.Errorf("session: load by external_id org_id=%s agent_id=%s: %w", p.orgID, p.agentID, err)
 	}
 	return id, nil
 }

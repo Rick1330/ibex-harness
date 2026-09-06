@@ -102,17 +102,19 @@ func EmitTrace(w httptrace.TraceWriter, log *logger.Logger, snap httptrace.Assem
 	)
 }
 
-// EnqueuePostResponse runs optional checkpoint + turn buffer + trace emit on the bounded pool.
+// EnqueuePostResponse runs optional checkpoint + turn buffer + trace emit.
+// Buffer append runs synchronously so terminate cannot race an empty drain;
+// checkpoint and trace remain on the bounded pool.
 func EnqueuePostResponse(job PostResponseJob) {
-	if !job.DoCheckpoint && !job.DoTrace && !job.DoBuffer {
+	if job.DoBuffer {
+		job.Deps.appendExtractionTurns(job.BufferKey, job.BufferTurns)
+	}
+	if !job.DoCheckpoint && !job.DoTrace {
 		return
 	}
 	run := func() {
 		if job.DoCheckpoint {
 			job.Deps.RunCheckpoint(job.Params, job.ExternalID)
-		}
-		if job.DoBuffer {
-			job.Deps.appendExtractionTurns(job.BufferKey, job.BufferTurns)
 		}
 		if job.DoTrace {
 			EmitTrace(job.TraceWriter, job.Log, job.Snap)
