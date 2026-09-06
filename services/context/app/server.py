@@ -275,5 +275,5 @@ def main() -> None:
     asyncio.run(serve_forever())
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - exercised via python -m app
     main()
