@@ -17,7 +17,7 @@ authors: "IBEX Harness team"
 
 ## Context
 
-Track C needed a single `AssembleContext` entrypoint that orchestrates budget → retrieve → score → pack → format, with an explicit degradation ladder. Planning sketches proposed new proto fields (`fallback`, `was_truncated`) and a separate `RETRIEVAL_INTERNAL_DEADLINE_MS` name. Discovery against main found:
+Track C needed a single `AssembleContext` entrypoint that orchestrates retrieve → budget → score → pack → format, with an explicit degradation ladder. Planning sketches proposed new proto fields (`fallback`, `was_truncated`) and a separate `RETRIEVAL_INTERNAL_DEADLINE_MS` name. Discovery against main found:
 
 - [`context.proto`](https://github.com/Rick1330/ibex-harness/blob/main/packages/proto/proto/ibex/context/v1/context.proto) already defines `AssemblyMetrics` with stage timings — no degradation enum.
 - `IBEX_CONTEXT_DEADLINE_MS` (default 40) is already documented in ENVIRONMENT_VARIABLES; proxy client timeout remains 45ms.
@@ -34,9 +34,9 @@ Do **not** add `fallback` / `was_truncated` (or similar) to `AssembleContextResp
 
 | Level | Trigger | Behavior |
 |---|---|---|
-| **L0** | Hot + cold usable (or intentional skips via `AssemblyOptions`) | Full pack/format path |
-| **L1** | Cold timeout/error (or skip_cold with hot usable) | Pack hot-only; INFO log with ids only |
-| **L2** | Hot and cold both non-success | Format directive (+ history) only; empty packed memories |
+| **L0** | Hot and cold both usable (success, not skipped) | Full pack/format path |
+| **L1** | Exactly one memory source usable | Pack the usable side; INFO log with ids only |
+| **L2** | No memory source usable (failures and/or skips) | Format directive (+ history) only; empty packed memories |
 | **L3** | Caller cancel / gRPC deadline | Server returns `DEADLINE_EXCEEDED` without inventing partial context — **proxy** fail-open (3.5.D.1) |
 
 ### 3) Retrieval wall: `IBEX_CONTEXT_DEADLINE_MS`

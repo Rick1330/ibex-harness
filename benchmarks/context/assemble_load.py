@@ -8,6 +8,9 @@ Live profile: point ``--addr`` at a running ContextAssemblyService backed by a
 100K-memory corpus (seed via ``benchmarks/memory`` HNSW tooling). Live runs do
 not fail the process on p99; they print percentiles for PR documentation.
 
+Scheduling launches RPCs on a monotonic interval (open-loop) so measured RPS
+tracks ``--rps`` even when individual calls exceed the inter-arrival gap.
+
 Examples::
 
   PYTHONPATH=packages/proto/gen/python:services/context \\
@@ -24,6 +27,8 @@ import asyncio
 import statistics
 import sys
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -61,31 +66,34 @@ class _StubDirective:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _HitSpec:
+    content: str
+    category: str
+    source: str
+    confidence: float
+    similarity: float
+
+
 class _StubMemory:
     async def get_hot_memories(self, *_args, **_kwargs):
-        return [_hit("hot preference " + ("x" * 64), "preference", "hot_cache", 0.9, 0.85)]
+        return [_hit(_HitSpec("hot preference " + ("x" * 64), "preference", "hot_cache", 0.9, 0.85))]
 
     async def search_memories(self, *_args, **_kwargs):
-        return [_hit("cold fact " + ("y" * 64), "factual", "vector", 0.8, 0.75)]
+        return [_hit(_HitSpec("cold fact " + ("y" * 64), "factual", "vector", 0.8, 0.75))]
 
 
-def _hit(
-    content: str,
-    category: str,
-    source: str,
-    confidence: float,
-    similarity: float,
-) -> MemoryHitPayload:
+def _hit(spec: _HitSpec) -> MemoryHitPayload:
     return MemoryHitPayload(
         memory_id=str(uuid4()),
         org_id=str(ORG),
         agent_id=str(AGENT),
-        content=content,
-        category=category,
-        confidence=confidence,
-        similarity=similarity,
+        content=spec.content,
+        category=spec.category,
+        confidence=spec.confidence,
+        similarity=spec.similarity,
         rank=1,
-        source=source,
+        source=spec.source,
     )
 
 
@@ -95,6 +103,60 @@ def _percentile(samples: list[float], pct: float) -> float:
     ordered = sorted(samples)
     index = min(len(ordered) - 1, max(0, int(len(ordered) * pct) - 1))
     return ordered[index]
+
+
+def _assemble_request(pb2: object) -> object:
+    return pb2.AssembleContextRequest(  # type: ignore[attr-defined]
+        org_id=str(ORG),
+        agent_id=str(AGENT),
+        query="theme",
+        model=MODEL,
+        recent_messages=[pb2.Message(role="user", content="hello")],  # type: ignore[attr-defined]
+    )
+
+
+async def _one_call(
+    stub: Callable[..., Awaitable[object]],
+    req: object,
+    *,
+    record_errors: bool,
+) -> float | None:
+    t0 = time.perf_counter()
+    try:
+        await stub(req, timeout=1.0)
+    except grpc.aio.AioRpcError as exc:
+        if record_errors:
+            print(f"rpc_error code={exc.code()} details={exc.details()}", flush=True)
+        return None
+    return (time.perf_counter() - t0) * 1000.0
+
+
+async def _drive_open_loop(
+    stub: Callable[..., Awaitable[object]],
+    req: object,
+    *,
+    duration_s: float,
+    target_rps: int,
+    record_errors: bool,
+) -> list[float]:
+    """Launch RPCs on a fixed interval; await outstanding work after the window."""
+    interval = 1.0 / max(1, target_rps)
+    start = time.perf_counter()
+    deadline = start + duration_s
+    next_launch = start
+    tasks: list[asyncio.Task[float | None]] = []
+    while time.perf_counter() < deadline:
+        now = time.perf_counter()
+        if now < next_launch:
+            await asyncio.sleep(next_launch - now)
+        tasks.append(
+            asyncio.create_task(
+                _one_call(stub, req, record_errors=record_errors),
+            )
+        )
+        next_launch += interval
+    results = await asyncio.gather(*tasks)
+    return [ms for ms in results if ms is not None]
 
 
 async def _run_stub(duration_s: float, target_rps: int) -> list[float]:
@@ -119,7 +181,6 @@ async def _run_stub(duration_s: float, target_rps: int) -> list[float]:
     assembler = ContextAssembler(settings=settings, retriever=retriever)
     server, port = build_server(assembler, listen_addr="127.0.0.1:0")
     await server.start()
-    samples: list[float] = []
     try:
         async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
             stub = channel.unary_unary(
@@ -127,59 +188,33 @@ async def _run_stub(duration_s: float, target_rps: int) -> list[float]:
                 request_serializer=pb2.AssembleContextRequest.SerializeToString,
                 response_deserializer=pb2.AssembleContextResponse.FromString,
             )
-            req = pb2.AssembleContextRequest(
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                query="theme",
-                model=MODEL,
-                recent_messages=[pb2.Message(role="user", content="hello")],
+            return await _drive_open_loop(
+                stub,
+                _assemble_request(pb2),
+                duration_s=duration_s,
+                target_rps=target_rps,
+                record_errors=False,
             )
-            interval = 1.0 / max(1, target_rps)
-            deadline = time.perf_counter() + duration_s
-            while time.perf_counter() < deadline:
-                loop_start = time.perf_counter()
-                t0 = time.perf_counter()
-                await stub(req, timeout=1.0)
-                samples.append((time.perf_counter() - t0) * 1000.0)
-                sleep_for = interval - (time.perf_counter() - loop_start)
-                if sleep_for > 0:
-                    await asyncio.sleep(sleep_for)
     finally:
         await server.stop(grace=None)
-    return samples
 
 
 async def _run_live(addr: str, duration_s: float, target_rps: int) -> list[float]:
     from ibex.context.v1 import context_pb2 as pb2
 
-    samples: list[float] = []
     async with grpc_aio.insecure_channel(addr) as channel:
         stub = channel.unary_unary(
             f"/{_SERVICE_NAME}/AssembleContext",
             request_serializer=pb2.AssembleContextRequest.SerializeToString,
             response_deserializer=pb2.AssembleContextResponse.FromString,
         )
-        req = pb2.AssembleContextRequest(
-            org_id=str(ORG),
-            agent_id=str(AGENT),
-            query="theme",
-            model=MODEL,
-            recent_messages=[pb2.Message(role="user", content="hello")],
+        return await _drive_open_loop(
+            stub,
+            _assemble_request(pb2),
+            duration_s=duration_s,
+            target_rps=target_rps,
+            record_errors=True,
         )
-        interval = 1.0 / max(1, target_rps)
-        deadline = time.perf_counter() + duration_s
-        while time.perf_counter() < deadline:
-            loop_start = time.perf_counter()
-            t0 = time.perf_counter()
-            try:
-                await stub(req, timeout=1.0)
-                samples.append((time.perf_counter() - t0) * 1000.0)
-            except grpc.aio.AioRpcError as exc:
-                print(f"rpc_error code={exc.code()} details={exc.details()}", flush=True)
-            sleep_for = interval - (time.perf_counter() - loop_start)
-            if sleep_for > 0:
-                await asyncio.sleep(sleep_for)
-    return samples
 
 
 def main() -> int:

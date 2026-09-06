@@ -204,6 +204,30 @@ async def test_assemble_skip_hot_and_cold_intentional_l2() -> None:
 
 
 @pytest.mark.asyncio
+async def test_assemble_skip_hot_cold_fail_is_l2() -> None:
+    result = await _assembler(
+        memory=_StubMemory(
+            hot=[_hit(content="ignored")],
+            cold=MemoryHttpTimeout("cold down"),
+        )
+    ).assemble(_req(options=AssemblyOptions(skip_hot_memories=True)))
+    assert result.degradation_level == "L2"
+    assert result.formatted.memories_included == 0
+
+
+@pytest.mark.asyncio
+async def test_assemble_skip_cold_hot_fail_is_l2() -> None:
+    result = await _assembler(
+        memory=_StubMemory(
+            hot=MemoryHttpError("hot down"),
+            cold=[_hit(source="vector", content="ignored")],
+        )
+    ).assemble(_req(options=AssemblyOptions(skip_cold_memories=True)))
+    assert result.degradation_level == "L2"
+    assert result.formatted.memories_included == 0
+
+
+@pytest.mark.asyncio
 async def test_assemble_max_memories_caps_scored() -> None:
     hot = MemoryHitPayload(
         memory_id=str(uuid4()),

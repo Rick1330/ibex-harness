@@ -6,6 +6,10 @@ Python async gRPC load script for `ContextAssemblyService.AssembleContext`.
 
 In-process server + memory stubs. Asserts **p99 < 50ms** at the configured RPS.
 
+Launches are **open-loop**: RPCs are scheduled on a monotonic interval so in-flight
+concurrency rises when individual calls exceed the inter-arrival gap (true 500 RPS
+issuance, not serial await-per-call).
+
 ```bash
 # from repo root
 bash infra/scripts/context-proto-gen.sh

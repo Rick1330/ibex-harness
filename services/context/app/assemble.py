@@ -1,6 +1,6 @@
 """AssembleContext orchestration (milestone 3.5.C.6 / ADR-0071).
 
-Wires budget → retrieve → score → pack → format with L0–L2 degradation
+Wires retrieve → budget → score → pack → format with L0–L2 degradation
 classification from ``BranchOutcome``. Does not own the gRPC transport — see
 ``app.server``. L3 (proxy fail-open on DEADLINE_EXCEEDED) is outside this module.
 """
@@ -102,7 +102,7 @@ class _AssemblerDeps:
 
 
 class ContextAssembler:
-    """Budget → retrieve → pack → format with degradation classification."""
+    """Retrieve → budget → score → pack → format with degradation classification."""
 
     def __init__(
         self,
@@ -152,13 +152,16 @@ class ContextAssembler:
         )
         formatting_ms = _elapsed_ms(t_fmt)
 
-        metrics = _build_metrics(
-            retrieval,
+        stages = _StageTimings(
             budget_ms=budget_ms,
             ranking_ms=ranking_ms,
             packing_ms=packing_ms,
             formatting_ms=formatting_ms,
             total_ms=_elapsed_ms(started),
+        )
+        metrics = _build_metrics(
+            retrieval,
+            stages,
             candidates_evaluated=packed.candidates_evaluated,
         )
         logger.debug(
@@ -228,25 +231,30 @@ def _score_candidates(
     return scored, _elapsed_ms(t_rank)
 
 
+@dataclass(frozen=True, slots=True)
+class _StageTimings:
+    budget_ms: int
+    ranking_ms: int
+    packing_ms: int
+    formatting_ms: int
+    total_ms: int
+
+
 def _build_metrics(
     retrieval: RetrievalResult,
+    stages: _StageTimings,
     *,
-    budget_ms: int,
-    ranking_ms: int,
-    packing_ms: int,
-    formatting_ms: int,
-    total_ms: int,
     candidates_evaluated: int,
 ) -> AssemblyMetricsSnapshot:
     return AssemblyMetricsSnapshot(
-        budget_calculation_ms=budget_ms,
+        budget_calculation_ms=stages.budget_ms,
         directive_load_ms=_outcome_ms(retrieval.directive_outcome.latency_ms),
         hot_memory_retrieval_ms=_outcome_ms(retrieval.hot_outcome.latency_ms),
         cold_memory_retrieval_ms=_outcome_ms(retrieval.cold_outcome.latency_ms),
-        ranking_ms=ranking_ms,
-        packing_ms=packing_ms,
-        formatting_ms=formatting_ms,
-        total_ms=total_ms,
+        ranking_ms=stages.ranking_ms,
+        packing_ms=stages.packing_ms,
+        formatting_ms=stages.formatting_ms,
+        total_ms=stages.total_ms,
         candidates_evaluated=candidates_evaluated,
     )
 
@@ -293,8 +301,9 @@ def _apply_skip_options(
     )
 
 
-def _branch_ok(*, skipped: bool, status: str) -> bool:
-    return skipped or status == "success"
+def _source_usable(*, skipped: bool, status: str) -> bool:
+    """True when the branch produced memories (skip does not count as usable)."""
+    return (not skipped) and status == "success"
 
 
 def _classify_degradation(
@@ -303,26 +312,23 @@ def _classify_degradation(
 ) -> tuple[DegradationLevel, bool]:
     """Return (level, intentional_skip).
 
-    Intentional skips via AssemblyOptions are L1/L2-shaped but logged as
-    intentional rather than dependency failure.
+    Usable = non-skipped branch with ``success``. Intentional skips are flagged
+    separately for logs; they never inflate L0 when the other side is empty.
     """
-    hot_ok = _branch_ok(
+    hot_usable = _source_usable(
         skipped=options.skip_hot_memories,
         status=retrieval.hot_outcome.status,
     )
-    cold_ok = _branch_ok(
+    cold_usable = _source_usable(
         skipped=options.skip_cold_memories,
         status=retrieval.cold_outcome.status,
     )
     intentional = options.skip_hot_memories or options.skip_cold_memories
 
-    if not hot_ok and not cold_ok:
-        return "L2", intentional
-    if hot_ok and cold_ok and not intentional:
+    if hot_usable and cold_usable:
         return "L0", False
-    if options.skip_hot_memories and options.skip_cold_memories:
-        return "L2", True
-    # One side skipped or one side failed while the other is usable.
+    if not hot_usable and not cold_usable:
+        return "L2", intentional
     return "L1", intentional
 
 
