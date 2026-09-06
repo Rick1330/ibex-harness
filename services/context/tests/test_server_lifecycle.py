@@ -7,84 +7,18 @@ import logging
 import runpy
 import sys
 import types
-from uuid import uuid4
 
 import pytest
+from server_test_support import assembler as _assembler
+from server_test_support import settings as _settings
 
 from app.assemble import ContextAssembler
-from app.clients.directive import DirectivePayload
-from app.clients.memory import MemoryHitPayload
-from app.config import ContextSettings
-from app.retrieval import ParallelRetriever
 from app.server import (
     AssemblyRuntime,
     _is_loopback_addr,
     build_assembler_from_settings,
     build_server,
 )
-
-ORG = uuid4()
-AGENT = uuid4()
-
-
-def _settings(**overrides: object) -> ContextSettings:
-    base: dict[str, object] = {
-        "timeout_ms": 45.0,
-        "deadline_ms": 40.0,
-        "directive_timeout_ms": 5.0,
-        "hot_timeout_ms": 15.0,
-        "cold_timeout_ms": 45.0,
-        "formatter_nonce_bytes": 16,
-        "packer_dp_cell_ceiling": 70 * 6251,
-        "packer_max_consecutive_skips": 5,
-        "grpc_addr": "127.0.0.1:0",
-        "memory_base_url": "",
-        "memory_api_token": "",
-        "redis_url": "",
-    }
-    base.update(overrides)
-    return ContextSettings.model_construct(**base)
-
-
-class _StubDirective:
-    async def lookup(self, org_id, agent_id) -> DirectivePayload:
-        return DirectivePayload(
-            content="Be careful.",
-            injection_mode="system_first",
-            version_id=None,
-        )
-
-
-class _StubMemory:
-    async def get_hot_memories(self, *_args, **_kwargs):
-        return [
-            MemoryHitPayload(
-                memory_id=str(uuid4()),
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content="prefers dark mode",
-                category="preference",
-                confidence=0.9,
-                similarity=0.8,
-                rank=1,
-                source="hot_cache",
-            )
-        ]
-
-    async def search_memories(self, *_args, **_kwargs):
-        return []
-
-
-def _assembler() -> ContextAssembler:
-    settings = _settings()
-    return ContextAssembler(
-        settings=settings,
-        retriever=ParallelRetriever(
-            settings=settings,
-            memory=_StubMemory(),  # type: ignore[arg-type]
-            directive=_StubDirective(),
-        ),
-    )
 
 
 @pytest.mark.asyncio
@@ -120,16 +54,16 @@ async def test_build_server_warns_non_loopback_without_auth(
 
 
 def test_build_assembler_requires_memory_base_url() -> None:
-    settings = _settings()
+    cfg = _settings()
     with pytest.raises(ValueError, match="MEMORY_BASE_URL"):
-        build_assembler_from_settings(settings)
+        build_assembler_from_settings(cfg)
 
 
 def test_build_assembler_from_settings_ok() -> None:
-    assembler = build_assembler_from_settings(
+    result = build_assembler_from_settings(
         _settings(memory_base_url="http://memory.test", memory_api_token="tok")
     )
-    assert isinstance(assembler, ContextAssembler)
+    assert isinstance(result, ContextAssembler)
 
 
 def test_build_assembler_with_redis(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,14 +71,14 @@ def test_build_assembler_with_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     redis_async.from_url = lambda url: object()  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "redis", types.ModuleType("redis"))
     monkeypatch.setitem(sys.modules, "redis.asyncio", redis_async)
-    assembler = build_assembler_from_settings(
+    result = build_assembler_from_settings(
         _settings(
             memory_base_url="http://memory.test",
             memory_api_token="tok",
             redis_url="redis://localhost:6379/0",
         )
     )
-    assert isinstance(assembler, ContextAssembler)
+    assert isinstance(result, ContextAssembler)
 
 
 @pytest.mark.asyncio

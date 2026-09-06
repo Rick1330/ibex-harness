@@ -12,11 +12,22 @@ from uuid import uuid4
 import grpc
 import pytest
 from grpc import aio as grpc_aio
+from server_test_support import (
+    AGENT,
+    MODEL,
+    ORG,
+    StubDirective,
+    StubMemory,
+)
+from server_test_support import (
+    assembler as _assembler,
+)
+from server_test_support import (
+    settings as _settings,
+)
 
 from app.assemble import ContextAssembler
-from app.clients.directive import DirectivePayload
-from app.clients.memory import MemoryHitPayload
-from app.config import MAX_ASSEMBLY_OPTION_MEMORIES, ContextSettings
+from app.config import MAX_ASSEMBLY_OPTION_MEMORIES
 from app.retrieval import ParallelRetriever
 from app.server import (
     _SERVICE_NAME,
@@ -25,85 +36,6 @@ from app.server import (
     build_server,
 )
 
-ORG = uuid4()
-AGENT = uuid4()
-MODEL = "gpt-4o-mini"
-
-
-def _settings(**overrides: object) -> ContextSettings:
-    base: dict[str, object] = {
-        "timeout_ms": 45.0,
-        "deadline_ms": 40.0,
-        "directive_timeout_ms": 5.0,
-        "hot_timeout_ms": 15.0,
-        "cold_timeout_ms": 45.0,
-        "formatter_nonce_bytes": 16,
-        "packer_dp_cell_ceiling": 70 * 6251,
-        "packer_max_consecutive_skips": 5,
-        "grpc_addr": "127.0.0.1:0",
-        "memory_base_url": "",
-        "memory_api_token": "",
-        "redis_url": "",
-    }
-    base.update(overrides)
-    return ContextSettings.model_construct(**base)
-
-
-class _StubDirective:
-    async def lookup(self, org_id, agent_id) -> DirectivePayload:
-        return DirectivePayload(
-            content="Be careful.",
-            injection_mode="system_first",
-            version_id=None,
-        )
-
-
-class _StubMemory:
-    """Optional per-path delays so cold can outlive deadline_ms but not timeout_ms."""
-
-    def __init__(
-        self,
-        *,
-        delay_s: float = 0.0,
-        hot_delay_s: float | None = None,
-        cold_delay_s: float | None = None,
-    ) -> None:
-        self._hot_delay_s = delay_s if hot_delay_s is None else hot_delay_s
-        self._cold_delay_s = delay_s if cold_delay_s is None else cold_delay_s
-        self._hit = MemoryHitPayload(
-            memory_id=str(uuid4()),
-            org_id=str(ORG),
-            agent_id=str(AGENT),
-            content="prefers dark mode",
-            category="preference",
-            confidence=0.9,
-            similarity=0.8,
-            rank=1,
-            source="hot_cache",
-        )
-
-    async def get_hot_memories(self, *_args, **_kwargs):
-        if self._hot_delay_s:
-            await asyncio.sleep(self._hot_delay_s)
-        return [self._hit]
-
-    async def search_memories(self, *_args, **_kwargs):
-        if self._cold_delay_s:
-            await asyncio.sleep(self._cold_delay_s)
-        return [
-            MemoryHitPayload(
-                memory_id=str(uuid4()),
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content="cold fact",
-                category="factual",
-                confidence=0.8,
-                similarity=0.7,
-                rank=1,
-                source="vector",
-            )
-        ]
-
 
 class _SlowAssembler(ContextAssembler):
     """Assembler that sleeps long enough to trip a short client deadline."""
@@ -111,21 +43,6 @@ class _SlowAssembler(ContextAssembler):
     async def assemble(self, request):  # type: ignore[no-untyped-def]
         await asyncio.sleep(0.2)
         return await super().assemble(request)
-
-
-def _assembler(
-    *,
-    delay_s: float = 0.0,
-    settings: ContextSettings | None = None,
-    memory: _StubMemory | None = None,
-) -> ContextAssembler:
-    cfg = settings or _settings()
-    retriever = ParallelRetriever(
-        settings=cfg,
-        memory=memory or _StubMemory(delay_s=delay_s),  # type: ignore[arg-type]
-        directive=_StubDirective(),
-    )
-    return ContextAssembler(settings=cfg, retriever=retriever)
 
 
 @pytest.fixture
@@ -182,6 +99,18 @@ async def _rpc_raises(
     return exc_info.value
 
 
+async def _assert_assemble_invalid(pb2, **fields) -> None:
+    async with _rpc_channel() as channel:
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+        req = _assemble_req(pb2, **fields)
+
+        async def _call() -> object:
+            return await stub(req, timeout=2.0)
+
+        err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
 class _AbortCtx:
     def __init__(self, *, cancelled: bool = False) -> None:
         self._cancelled = cancelled
@@ -231,8 +160,8 @@ async def test_assemble_rpc_deadline_ms_decouples_from_timeout_ms(pb2) -> None:
         cold_timeout_ms=500.0,
     )
     assembler = _assembler(
-        settings=settings,
-        memory=_StubMemory(hot_delay_s=0.0, cold_delay_s=0.5),
+        settings_obj=settings,
+        memory=StubMemory(hot_delay_s=0.0, cold_delay_s=0.5),
     )
     async with _rpc_channel(assembler) as channel:
         stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
@@ -261,8 +190,8 @@ async def test_assemble_context_l3_deadline_exceeded(pb2) -> None:
         settings=settings,
         retriever=ParallelRetriever(
             settings=settings,
-            memory=_StubMemory(),  # type: ignore[arg-type]
-            directive=_StubDirective(),
+            memory=StubMemory(),  # type: ignore[arg-type]
+            directive=StubDirective(),
         ),
     )
     async with _rpc_channel(assembler) as channel:
@@ -317,41 +246,34 @@ async def test_unimplemented_rpcs(pb2, method, codec_factory, request_factory) -
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "fields",
+    "fields_factory",
     [
-        {"org_id": "not-a-uuid"},
-        {"org_id": ""},
-        {"model": ""},
-        {"query": "x" * 9000},
+        lambda pb2: {"org_id": "not-a-uuid"},
+        lambda pb2: {"org_id": ""},
+        lambda pb2: {"model": ""},
+        lambda pb2: {"query": "x" * 9000},
+        lambda pb2: {"options": pb2.AssemblyOptions(max_memories=-1)},
+        lambda pb2: {
+            "options": pb2.AssemblyOptions(
+                max_memories=MAX_ASSEMBLY_OPTION_MEMORIES + 1
+            )
+        },
+        lambda pb2: {
+            "recent_messages": [
+                pb2.Message(role="user", content="hi") for _ in range(101)
+            ]
+        },
+        lambda pb2: {
+            "recent_messages": [pb2.Message(role="user", content="y" * 40_000)]
+        },
+        lambda pb2: {"model": "m" * 300},
+        lambda pb2: {
+            "recent_messages": [pb2.Message(role="r" * 80, content="hi")]
+        },
     ],
 )
-async def test_assemble_invalid_argument(pb2, fields) -> None:
-    async with _rpc_channel() as channel:
-        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
-        req = _assemble_req(pb2, **fields)
-
-        async def _call() -> object:
-            return await stub(req, timeout=2.0)
-
-        err = await _rpc_raises(_call)
-        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("max_memories", [-1, MAX_ASSEMBLY_OPTION_MEMORIES + 1])
-async def test_assemble_rejects_out_of_range_max_memories(pb2, max_memories) -> None:
-    async with _rpc_channel() as channel:
-        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
-        req = _assemble_req(
-            pb2,
-            options=pb2.AssemblyOptions(max_memories=max_memories),
-        )
-
-        async def _call() -> object:
-            return await stub(req, timeout=2.0)
-
-        err = await _rpc_raises(_call)
-        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+async def test_assemble_rejects_invalid_argument(pb2, fields_factory) -> None:
+    await _assert_assemble_invalid(pb2, **fields_factory(pb2))
 
 
 def test_options_from_proto_bounds_max_memories(pb2) -> None:
@@ -363,64 +285,6 @@ def test_options_from_proto_bounds_max_memories(pb2) -> None:
     too_large = pb2.AssemblyOptions(max_memories=MAX_ASSEMBLY_OPTION_MEMORIES + 1)
     with pytest.raises(ValueError, match="max_memories"):
         _options_from_proto(too_large)
-
-
-@pytest.mark.asyncio
-async def test_assemble_rejects_oversized_recent_messages(pb2) -> None:
-    async with _rpc_channel() as channel:
-        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
-        req = _assemble_req(
-            pb2,
-            recent_messages=[
-                pb2.Message(role="user", content="hi") for _ in range(101)
-            ],
-        )
-
-        async def _call() -> object:
-            return await stub(req, timeout=2.0)
-
-        err = await _rpc_raises(_call)
-        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-
-@pytest.mark.asyncio
-async def test_assemble_rejects_oversized_message_content(pb2) -> None:
-    async with _rpc_channel() as channel:
-        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
-        req = _assemble_req(
-            pb2,
-            recent_messages=[pb2.Message(role="user", content="y" * 40_000)],
-        )
-
-        async def _call() -> object:
-            return await stub(req, timeout=2.0)
-
-        err = await _rpc_raises(_call)
-        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-
-@pytest.mark.asyncio
-async def test_assemble_rejects_oversized_model_and_role(pb2) -> None:
-    async with _rpc_channel() as channel:
-        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
-
-        async def _call_model() -> object:
-            return await stub(_assemble_req(pb2, model="m" * 300), timeout=2.0)
-
-        err = await _rpc_raises(_call_model)
-        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-        async def _call_role() -> object:
-            return await stub(
-                _assemble_req(
-                    pb2,
-                    recent_messages=[pb2.Message(role="r" * 80, content="hi")],
-                ),
-                timeout=2.0,
-            )
-
-        err = await _rpc_raises(_call_role)
-        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 
 @pytest.mark.asyncio
@@ -506,8 +370,8 @@ async def test_servicer_assemble_cancelled_error(pb2) -> None:
             settings=settings,
             retriever=ParallelRetriever(
                 settings=settings,
-                memory=_StubMemory(),  # type: ignore[arg-type]
-                directive=_StubDirective(),
+                memory=StubMemory(),  # type: ignore[arg-type]
+                directive=StubDirective(),
             ),
         )
     )
