@@ -1,8 +1,8 @@
 ---
 title: "3.5.D.5 Config, feature flags, and env vars"
-description: "Extend the proxy env var table with Phase 3.5 additions: IBEX_CONTEXT_ENABLED, IBEX_CONTEXT_GRPC_ADDR, IBEX_CONTEXT_TIMEOUT, IBEX_CONTEXT_EMBED_METADATA, IBEX_EXTRACTION_REDIS_URL."
-summary: "Extend the proxy env var table with Phase 3.5 additions: IBEX_CONTEXT_ENABLED, IBEX_CONTEXT_GRPC_ADDR, IBEX_CONTEXT_TIMEOUT, IBEX_CONTEXT_EMBED_METADATA, IBEX_EXTRACTION_REDIS_URL."
-status: "planned"
+description: "Audit and document the shipped D.1–D.4 proxy/worker env surface: dial target vs server bind, assemble vs library timeouts, turn-buffer TTL, enqueue URL/token/host/port, and Redis ownership."
+summary: "Audit and document the shipped D.1–D.4 proxy/worker env surface: dial target vs server bind, assemble vs library timeouts, turn-buffer TTL, enqueue URL/token/host/port, and Redis ownership."
+status: "completed"
 milestoneId: "3.5.D.5"
 track: "D"
 trackTitle: "Proxy Integration"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.D.5 — Config, Feature Flags, and Env Vars"
 
 # Milestone 3.5.D.5 — Config, Feature Flags, and Env Vars
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 1 day  
@@ -24,54 +24,55 @@ fullTitle: "Milestone 3.5.D.5 — Config, Feature Flags, and Env Vars"
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
+## Outcome
 
-## Env Var Table
+Consolidation pass only: document the **actual** env vars shipped in D.1–D.4, correct stale planning-sketch names, and record the D.4 security posture for enqueue `/health` and Bearer enablement. No new functional knobs.
+
+Canonical registry: [ENVIRONMENT_VARIABLES.md](/engineering/ENVIRONMENT_VARIABLES) (§9 Proxy, §11 Worker).
+
+## Shipped env surface (D.1–D.4)
+
+### Proxy (`services/proxy`)
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `IBEX_CONTEXT_ENABLED` | No | `false` | Master switch; `false` = pure Phase 2 static-directive behavior |
-| `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target |
-| `IBEX_CONTEXT_TIMEOUT` | No | `45ms` | Client-side deadline |
-| `IBEX_CONTEXT_EMBED_METADATA` | No | `false` | Enables embedded `ibex` JSON block |
-| `IBEX_EXTRACTION_REDIS_URL` | Conditional | (falls back to `REDIS_URL`) | Allows separate Redis for Celery broker |
+| `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch; `false` = Phase 2 directive-only |
+| `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | **Dial** target for ContextAssemblyService (≠ server bind `IBEX_CONTEXT_GRPC_ADDR`) |
+| `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call Assemble budget on the proxy client (≠ library `IBEX_CONTEXT_TIMEOUT`) |
+| `IBEX_CONTEXT_EMBED_METADATA` | No (**3.5.D.3**) | `false` | Embed top-level `ibex` JSON via `IBEXMetadataStage` |
+| `IBEX_EXTRACTION_TURNS_TTL` | No (**3.5.D.4**) | same as idle timeout | Turn-buffer Redis TTL on shared `REDIS_URL` |
+| `IBEX_WORKER_ENQUEUE_BASE_URL` | No (**3.5.D.4**) | (empty) | Worker enqueue origin; empty disables client |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional (**3.5.D.4**) | (empty) | Shared Bearer; empty disables client; no non-empty default |
 
----
+### Worker (`services/worker`)
 
-## Orientation (indicative)
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `IBEX_WORKER_ENQUEUE_HOST` | No (**3.5.D.4**) | `127.0.0.1` | Bind host; compose uses `0.0.0.0` |
+| `IBEX_WORKER_ENQUEUE_PORT` | No (**3.5.D.4**) | `8007` | Enqueue Starlette port |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* (**3.5.D.4**) | (none) | Required to **start** enqueue HTTP; missing → server not started |
+| `IBEX_EXTRACTION_REDIS_URL` | No | falls back to `REDIS_URL` | Worker Redis base alias; **proxy does not read this** |
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+### Related names (not proxy dial/client knobs)
 
-During implementation, expect to:
+| Variable | Owner | Role |
+|---|---|---|
+| `IBEX_CONTEXT_GRPC_ADDR` | Context **server** | Bind address |
+| `IBEX_CONTEXT_TIMEOUT` | Context **library/server** | Outer retrieval deadline |
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+Planning sketches that called ADDR a “target” and TIMEOUT a “client-side deadline” were superseded intentionally in D.1; D.5 documents the rename rather than inventing new names.
 
-Prefer outcomes over matching any particular file tree or command sequence.
+## Security nits (D.4 follow-up)
 
-**Areas that may be involved** (situational — not a checklist):
-
-- Proxy service (HTTP, bootstrap, config)
-- Context assembly service
-- Workers / task runtime
+1. **`GET /health` on the enqueue port** — intentionally unauthenticated (liveness only; no secrets). Mutating `POST /internal/extraction/enqueue` requires Bearer. Matches embedder probe posture.
+2. **Enqueue Bearer default** — already fail-closed: `None`/blank default; enqueue HTTP does not start without an explicit token.
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Env vars follow existing proxy convention (`Required`/`Default`/`Notes`/security column)
-- [ ] Documentation updated
-- [ ] Repo guards / CI checks still pass
+- [x] Env vars follow proxy/worker registry convention (`Required` / `Default` / `Notes` / security annotations)
+- [x] Documentation updated (`ENVIRONMENT_VARIABLES.md`, this milestone, worker README)
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestones 3.5.D.1–3.5.D.4
-

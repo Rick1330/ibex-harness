@@ -74,7 +74,7 @@ phase: "phase-3-5-extraction-assembly"
 - **3.5.D.2 — Handler wiring:** `dispatchProviderCompletion` calls context assembly. `IBEX_CONTEXT_ENABLED=false` reproduces exact Phase 2 behavior. `X-IBEX-Skip-Memory` header honored.
 - **3.5.D.3 — Response headers and metadata:** `X-IBEX-Memories-Injected`, `X-IBEX-Context-Tokens`, `X-IBEX-Context-Fallback`. Optional embedded `ibex` JSON block behind feature flag.
 - **3.5.D.4 — Extraction task enqueue:** Celery-native Redis list semantics (`LPUSH`), triggered on `session.status == 'completed'` only.
-- **3.5.D.5 — Config and env vars:** `IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_ADDR`, `IBEX_CONTEXT_TIMEOUT`, etc.
+- **3.5.D.5 — Config and env vars:** audit/document shipped D.1–D.4 knobs (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_TARGET`, `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`, enqueue/turn-buffer vars); distinct from server bind `IBEX_CONTEXT_GRPC_ADDR` / library `IBEX_CONTEXT_TIMEOUT`.
 - **3.5.D.6 — Integration tests:** Context assembly success/degradation paths, extraction enqueue verification, full Phase 1+2 regression.
 
 **Acceptance criteria:**
