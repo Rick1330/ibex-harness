@@ -64,7 +64,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal, deps bootstrapDeps) int {
 	}
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, server: core.server,
-		grpcConn: core.grpcConn, redisClient: core.redisClient, pgDB: core.pgDB,
+		grpcConns: core.grpcConns, redisClient: core.redisClient, pgDB: core.pgDB,
 		directiveResolver: core.directiveResolver,
 		revSub:            core.revSub, revCancel: core.revCancel,
 		dirSub: core.dirSub, dirCancel: core.dirCancel,

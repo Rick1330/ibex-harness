@@ -229,6 +229,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
 | `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
+| `IBEX_EXTRACTION_TURNS_TTL` | No | same as idle timeout | Redis TTL for `{org_id}:session:{agent}:{external_id}:extraction_turns` | Fail-open on chat path; ADR-0072 |
+| `IBEX_WORKER_ENQUEUE_BASE_URL` | No | (empty) | Worker enqueue HTTP origin (e.g. `http://worker:8007`) | Empty disables proxy enqueue |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional | (empty) | Shared Bearer with worker `IBEX_WORKER_ENQUEUE_API_TOKEN` | Required with base URL |
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
@@ -254,13 +257,14 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SELFHOSTED_READY_POLL` | No | `2s` | Bootstrap probe interval | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | No | `5` | Consecutive Complete failures before self-hosted breaker opens | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
-| `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
-| `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
+| `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open |
+| `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
+| `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
 | `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
 | `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) | Safety valve for pathological DP table sizes |
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No (**3.5.C.4**) | `5` | Greedy fallback consecutive-skip limit before stopping | Used only on greedy path |
 | `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No (**3.5.C.5**) | `16` | Byte length for `secrets.token_urlsafe` **per-assembly** nonce on `<ibex_memory>` delimiters (range 1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)) | One nonce per `ContextFormatter.format()` call; not a secret to log |
-| `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
+| `IBEX_CONTEXT_EMBED_METADATA` | No (**3.5.D.3**) | `false` | Embed top-level `ibex` JSON in non-streaming chat responses via `IBEXMetadataStage` | Off by default; no-op per request when Assemble was not attempted |
 | `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
 | `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir (`o200k_base.tiktoken`, etc.) | Air-gapped friendly; defaults to embedded assets |
@@ -433,6 +437,9 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_BEAT_SCHEDULE_FILE` | No | `/var/lib/ibex/celerybeat/celerybeat-schedule` | Beat persistence path | Writable in container image |
 | `IBEX_WORKER_DATABASE_URL` | Conditional | (none) | Postgres DSN for dead-letter persistence | Alias: `POSTGRES_DSN` |
 | `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
+| `IBEX_WORKER_ENQUEUE_PORT` | No | `8007` | Starlette port for `POST /internal/extraction/enqueue` | Co-located with Celery worker (ADR-0072) |
+| `IBEX_WORKER_ENQUEUE_HOST` | No | `127.0.0.1` | Bind host for enqueue HTTP | Containers set `0.0.0.0` explicitly |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* | — | Static Bearer for proxy→worker enqueue | Required to enable enqueue HTTP; `hmac.compare_digest` |
 | `IBEX_WORKER_EXTRACTION_PROVIDER` | No | `openai` | Extraction LLM backend: `openai` or `vllm` | Alias: `EXTRACTION_PROVIDER`. Fail-closed at first extract if required secrets/URL missing |
 | `OPENAI_API_KEY` | Conditional | (none) | Bearer token for hosted OpenAI extraction | Required when provider=`openai`. Alias: `IBEX_WORKER_OPENAI_API_KEY` |
 | `IBEX_WORKER_EXTRACTION_OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model id | |
@@ -473,7 +480,7 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
 | `IBEX_CONTEXT_SAFETY_BUFFER_RATIO` | No | `0.10` | Buffer to avoid overflow |
 
-Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_ADDR`, …).
+Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_TARGET`, `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`, …).
 
 ### Ranking weights (defaults)
 

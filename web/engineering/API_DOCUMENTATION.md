@@ -1136,13 +1136,24 @@ Content-Type: application/json
 
 **Terminate a session**
 
+Marks an active session `completed` and may enqueue memory extraction from the Redis turn
+buffer (ADR-0072).
+
+**Path parameter:** `{session_id}` is the sticky **external_id** — the same value carried by
+`X-IBEX-Session-ID` on chat completions — **not** the Postgres row UUID `sessions.id`.
+(Earlier examples that looked like opaque row UUIDs were misleading.)
+
 **Required Permission:** `session:terminate`
+
+**Required Header:** `X-IBEX-Agent-ID` (same agent-scoping as chat; sessions are unique on
+`(org_id, agent_id, external_id)`).
 
 **Request:**
 
 ```http
-POST /v1/sessions/7c9e6679-.../terminate
+POST /v1/sessions/sess_client_abc123/terminate
 Authorization: Bearer {token}
+X-IBEX-Agent-ID: 7c9e6679-...
 Content-Type: application/json
 
 {
@@ -1151,21 +1162,33 @@ Content-Type: application/json
 }
 ```
 
+Only `status: "completed"` is supported. Calling terminate again on an already-completed
+session is safe and returns 200 with `final_status: "completed"`. If a previous extraction
+enqueue attempt did not complete, terminate will retry it (retained Redis turns); if enqueue
+already succeeded and the buffer was acknowledged, no additional work is enqueued.
+
 **Response: 200 OK**
 
 ```json
 {
   "data": {
-    "session_id": "7c9e6679-...",
+    "session_id": "sess_client_abc123",
     "final_status": "completed",
-    "terminated_at": "2024-01-20T16:30:00.000Z",
-    "summary": {
-      "total_turns": 47,
-      "total_tokens": 89420,
-      "memories_created": 5,
-      "memories_read": 142,
-      "duration_seconds": 5400
-    }
+    "terminated_at": "2024-01-20T16:30:00.000Z"
+  }
+}
+```
+
+`data.session_id` echoes the sticky external_id from the path.
+
+**Response: 404 Not Found** (missing, soft-deleted, or wrong org/agent scope — no existence leak)
+
+```json
+{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Session not found",
+    "request_id": "req_..."
   }
 }
 ```
@@ -2238,6 +2261,27 @@ X-IBEX-Session-ID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 | `X-IBEX-Skip-Memory` | No | `true` to disable memory injection |
 | `X-IBEX-Skip-Extraction` | No | `true` to disable memory extraction |
 | `X-IBEX-Directive-Override` | No | Override directive version ID |
+
+**IBEX response headers** (chat completions; set when context assembly was attempted):
+
+| Header | When present | Description |
+|--------|--------------|-------------|
+| `X-IBEX-Memories-Injected` | Assemble attempted | Count of memories included in the assembly (`0` on fallback) |
+| `X-IBEX-Context-Tokens` | Assemble attempted | Tokens used by assembled context (`0` on fallback) |
+| `X-IBEX-Context-Fallback` | Assemble attempted | `true` if assembly failed open (RPC/timeout/`empty` blob) and Phase 2 directive injection was used; `false` if assembled context was injected |
+
+These three headers are **omitted** when context assembly was not attempted: `IBEX_CONTEXT_ENABLED=false`, nil context client (empty `IBEX_CONTEXT_GRPC_TARGET`), or request header `X-IBEX-Skip-Memory` truthy.
+
+**Embedded `ibex` JSON** (non-streaming only; Phase 3.5.D.3): when `IBEX_CONTEXT_EMBED_METADATA=true` **and** Assemble was attempted for the request, the response body gains a top-level `ibex` object with the fields below. Omitted entirely (verbatim upstream body) when the flag is off, Assemble was not attempted, or the response is streaming (SSE remains headers-only).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trace_id` | string | OTEL trace id (same source as `X-Trace-ID`); empty when no active span |
+| `session_id` | string | Durable session UUID when available; otherwise sticky `X-IBEX-Session-ID` external id |
+| `memories_injected` | int | Same count as `X-IBEX-Memories-Injected` |
+| `context_tokens_used` | int | Same count as `X-IBEX-Context-Tokens` |
+| `context_assembly_ms` | int | Wall ms for the Assemble RPC on this request (`0` when not measured) |
+| `proxy_overhead_ms` | int | Request wall ms since start minus provider `Complete` duration |
 
 **Response: 200 OK** (non-streaming)
 

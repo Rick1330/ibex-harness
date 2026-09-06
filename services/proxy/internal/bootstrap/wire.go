@@ -8,17 +8,21 @@ import (
 	"time"
 
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
+	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/tokenizer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/redis/go-redis/v9"
@@ -38,7 +42,8 @@ const (
 
 type proxyCore struct {
 	server            *http.Server
-	grpcConn          *grpc.ClientConn
+	grpcConns         []*grpc.ClientConn
+	contextClient     *contextclient.Client
 	redisClient       redis.UniversalClient
 	pgDB              *sql.DB
 	directiveResolver directive.Resolver
@@ -105,8 +110,9 @@ type proxyCoreParts struct {
 
 func finishProxyCore(parts proxyCoreParts) *proxyCore {
 	return &proxyCore{
-		server: parts.assembled.server, grpcConn: parts.assembled.grpcConn,
-		redisClient: parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
+		server: parts.assembled.server, grpcConns: parts.assembled.grpcConns,
+		contextClient: parts.assembled.contextClient,
+		redisClient:   parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
 		directiveResolver: parts.assembled.directiveResolver,
 		revSub:            parts.revSub, revCancel: parts.revCancel,
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
@@ -119,7 +125,8 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 
 type assembledProxyCore struct {
 	server            *http.Server
-	grpcConn          *grpc.ClientConn
+	grpcConns         []*grpc.ClientConn
+	contextClient     *contextclient.Client
 	redisClient       redis.UniversalClient
 	pgDB              *sql.DB
 	validator         auth.TokenValidator
@@ -134,6 +141,7 @@ type proxyInfra struct {
 	redisClient       redis.UniversalClient
 	limiter           ratelimit.Limiter
 	auth              authClients
+	ctxClients        contextClients
 	pgDB              *sql.DB
 	directiveResolver directive.Resolver
 	sessionStack      sessionStack
@@ -170,20 +178,29 @@ func assembleProxyInfra(
 	if err != nil {
 		return proxyInfra{}, fmt.Errorf("auth clients: %w", err)
 	}
+	contextBundle, err := setupContextClient(cfg, log, reg)
+	if err != nil {
+		if authBundle.conn != nil {
+			_ = authBundle.conn.Close() //nolint:errcheck // best-effort cleanup; preserve dial error
+		}
+		return proxyInfra{}, fmt.Errorf("context client: %w", err)
+	}
 	pgDB, directiveResolver, err := setupDirectiveResolver(directiveResolverSetup{
 		Config: cfg, Redis: redisClient, Log: log, Reg: reg, OpenDB: openProxyPostgres,
 	})
 	if err != nil {
+		closeProxyGRPCConns(collectGRPCConns(authBundle.conn, contextBundle.conn))
 		return proxyInfra{}, fmt.Errorf("directive resolver: %w", err)
 	}
 	stack, err := setupSessionStack(sessionStackSetup{
 		DB: pgDB, Redis: redisClient, Config: cfg, Log: log, Reg: reg, Tracer: tracer,
 	})
 	if err != nil {
+		closeProxyGRPCConns(collectGRPCConns(authBundle.conn, contextBundle.conn))
 		return proxyInfra{}, fmt.Errorf("session stack: %w", err)
 	}
 	return proxyInfra{
-		redisClient: redisClient, limiter: limiter, auth: authBundle,
+		redisClient: redisClient, limiter: limiter, auth: authBundle, ctxClients: contextBundle,
 		pgDB: pgDB, directiveResolver: directiveResolver, sessionStack: stack,
 	}, nil
 }
@@ -211,29 +228,70 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
 	}
 	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
-	responsePipeline := buildResponsePipeline(in.log, in.reg)
+	deps := assembledRouterDeps(routerAssembleParts{
+		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
+		idempStore: idempStore, traceWriter: traceWriter,
+	})
+	server, err := newHTTPServer(deps)
+	if err != nil {
+		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
+	}
+	return assembledProxyCore{
+		server: server, grpcConns: collectGRPCConns(in.infra.auth.conn, in.infra.ctxClients.conn),
+		contextClient: in.infra.ctxClients.client,
+		redisClient:   in.infra.redisClient, pgDB: in.infra.pgDB,
+		validator: in.infra.auth.validator, directiveResolver: in.infra.directiveResolver,
+		checkpointPool: in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
+		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
+	}, nil
+}
+
+type routerAssembleParts struct {
+	in           finishAssembledCoreInput
+	providerReg  *provider.Registry
+	tokenizerReg *tokenizer.Registry
+	idempStore   idempotency.Store
+	traceWriter  *ibexch.Writer
+}
+
+func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
+	in := p.in
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
 		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
 		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
-		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, tokenizerReg),
-		ProviderRegistry: providerReg,
-		ResponsePipeline: responsePipeline,
-		IdempotencyStore: idempStore,
+		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
+		ProviderRegistry: p.providerReg,
+		ResponsePipeline: buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
+		IdempotencyStore: p.idempStore,
+		ContextClient:    in.infra.ctxClients.client,
+		TurnBuffer:       in.infra.sessionStack.turnBuffer,
+		ExtractionEnqueue: extractionenqueue.New(extractionenqueue.Config{
+			BaseURL: in.cfg.WorkerEnqueueBaseURL,
+			Token:   in.cfg.WorkerEnqueueAPIToken,
+			Timeout: extractionenqueue.DefaultTimeout,
+		}),
 	}
-	assignTraceWriter(&deps, traceWriter)
-	server, err := newHTTPServer(deps)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
+	assignTraceWriter(&deps, p.traceWriter)
+	return deps
+}
+
+func collectGRPCConns(conns ...*grpc.ClientConn) []*grpc.ClientConn {
+	out := make([]*grpc.ClientConn, 0, len(conns))
+	for _, c := range conns {
+		if c != nil {
+			out = append(out, c)
+		}
 	}
-	return assembledProxyCore{
-		server: server, grpcConn: in.infra.auth.conn, redisClient: in.infra.redisClient, pgDB: in.infra.pgDB,
-		validator: in.infra.auth.validator, directiveResolver: in.infra.directiveResolver,
-		checkpointPool: in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
-		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
-	}, nil
+	return out
+}
+
+func closeProxyGRPCConns(conns []*grpc.ClientConn) {
+	for _, c := range conns {
+		_ = c.Close() //nolint:errcheck // best-effort cleanup on setup failure
+	}
 }
 
 // assignTraceWriter sets TraceWriter only when w is non-nil so a nil *Writer

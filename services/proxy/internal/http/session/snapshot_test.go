@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -9,8 +10,12 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -181,62 +186,170 @@ func TestUnit_EnqueuePostResponse(t *testing.T) {
 	})
 }
 
-func TestUnit_PreparePostResponse(t *testing.T) {
+func TestUnit_PreparePostResponse_CheckpointAndTrace(t *testing.T) {
 	t.Parallel()
+	job := preparePostResponseJob(t, prepareJobArgs{
+		outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+		writer:  true,
+	})
+	assertPrepareFlags(t, job, prepareFlags{checkpoint: true, trace: true})
+	if job.Params.SessionID == uuid.Nil {
+		t.Fatal("expected session id")
+	}
+}
 
+func TestUnit_PreparePostResponse_StickySkipsCheckpoint(t *testing.T) {
+	t.Parallel()
+	job := preparePostResponseJob(t, prepareJobArgs{
+		outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+		sticky:  true,
+	})
+	if job.DoCheckpoint {
+		t.Fatal("sticky-only must not checkpoint")
+	}
+	if job.DoBuffer {
+		t.Fatal("without TurnBuffer, sticky must not buffer")
+	}
+}
+
+func TestUnit_PreparePostResponse_StickyBuffersWithoutCheckpoint(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	buf := newTestTurnBuffer(t)
+	rs := Resolved{ExternalID: "sticky-only"}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:     LifecycleDeps{Store: newMemSessionStore(), TurnBuffer: buf, Log: logger.Discard("t")},
+		Log:      logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: bufferCheckpointInput("sticky-user", "sticky-reply"),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	assertStickyBufferJob(t, job, meta, rs.ExternalID)
+	EnqueuePostResponse(job)
+	assertFlushedTurns(t, buf, job.BufferKey, 2)
+}
+
+func TestUnit_PreparePostResponse_FailureKeepsTrace(t *testing.T) {
+	t.Parallel()
+	job := preparePostResponseJob(t, prepareJobArgs{
+		outcome: httptrace.RequestOutcome{StatusCode: 502, IsComplete: false, StreamRequested: true},
+		writer:  true,
+	})
+	assertPrepareFlags(t, job, prepareFlags{checkpoint: false, trace: true, streaming: true})
+}
+
+func TestUnit_PreparePostResponse_TurnBufferFlushes(t *testing.T) {
+	t.Parallel()
 	meta := testSnapshotMeta()
 	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
-	in := testCheckpointInput()
-	outcome := httptrace.RequestOutcome{StatusCode: 200, IsComplete: true}
-
-	t.Run("checkpoint and trace", func(t *testing.T) {
-		t.Parallel()
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps:   LifecycleDeps{Store: newMemSessionStore()},
-			Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-			Resolved: rs, Meta: meta, In: in, Outcome: outcome,
-		})
-		if !job.DoCheckpoint {
-			t.Fatal("expected checkpoint")
-		}
-		if !job.DoTrace {
-			t.Fatal("expected trace")
-		}
-		if job.Params.SessionID != rs.SessionID {
-			t.Fatalf("session=%s", job.Params.SessionID)
-		}
+	buf := newTestTurnBuffer(t)
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:   LifecycleDeps{Store: newMemSessionStore(), TurnBuffer: buf, Log: logger.Discard("t")},
+		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: bufferCheckpointInput("hello-buf", "reply"),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
+	if !job.DoBuffer {
+		t.Fatal("expected DoBuffer")
+	}
+	if len(job.BufferTurns) != 2 {
+		t.Fatalf("buffer turns=%d", len(job.BufferTurns))
+	}
+	EnqueuePostResponse(job)
+	assertFlushedTurns(t, buf, job.BufferKey, 2)
+}
 
-	t.Run("sticky only skips checkpoint", func(t *testing.T) {
-		t.Parallel()
-		sticky := Resolved{ExternalID: "sticky-only"}
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps: LifecycleDeps{Store: newMemSessionStore()},
-			Log:  logger.Discard("t"), Resolved: sticky, Meta: meta, In: in, Outcome: outcome,
-		})
-		if job.DoCheckpoint {
-			t.Fatal("sticky-only must not checkpoint")
-		}
-	})
+func newTestTurnBuffer(t *testing.T) *extractionbuffer.Buffer {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	buf, err := extractionbuffer.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return buf
+}
 
-	t.Run("failure skips checkpoint keeps trace", func(t *testing.T) {
-		t.Parallel()
-		failOutcome := httptrace.RequestOutcome{
-			StatusCode: 502, IsComplete: false, StreamRequested: true,
-		}
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps:   LifecycleDeps{Store: newMemSessionStore()},
-			Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-			Resolved: rs, Meta: meta, In: in, Outcome: failOutcome,
-		})
-		if job.DoCheckpoint {
-			t.Fatal("failure must not checkpoint")
-		}
-		if !job.DoTrace {
-			t.Fatal("expected failure trace")
-		}
-		if !job.Snap.Streaming {
-			t.Fatal("stream flag preserved in snap")
-		}
-	})
+func bufferCheckpointInput(user, reply string) CheckpointInput {
+	return CheckpointInput{
+		Messages:       []llm.Message{{Role: "user", Content: user}, {Role: "assistant", Content: "ignored"}},
+		CompletionText: reply, Model: "m", Provider: "p",
+	}
+}
+
+func assertStickyBufferJob(t *testing.T, job PostResponseJob, meta SnapshotMeta, ext string) {
+	t.Helper()
+	if job.DoCheckpoint {
+		t.Fatal("sticky-only must not checkpoint")
+	}
+	if !job.DoBuffer {
+		t.Fatal("sticky successful turn must buffer with Meta org/agent")
+	}
+	assertBufferKeyFromMeta(t, job.BufferKey, meta, ext)
+}
+
+func assertBufferKeyFromMeta(t *testing.T, key extractionbuffer.LookupKey, meta SnapshotMeta, ext string) {
+	t.Helper()
+	if key.OrgID != meta.OrgID {
+		t.Fatalf("BufferKey.OrgID=%s want %s", key.OrgID, meta.OrgID)
+	}
+	if key.AgentID != meta.AgentID {
+		t.Fatalf("BufferKey.AgentID=%s want %s", key.AgentID, meta.AgentID)
+	}
+	if key.ExternalID != ext {
+		t.Fatalf("BufferKey.ExternalID=%q want %q", key.ExternalID, ext)
+	}
+}
+
+func assertFlushedTurns(t *testing.T, buf *extractionbuffer.Buffer, key extractionbuffer.LookupKey, want int) {
+	t.Helper()
+	snap, err := buf.Peek(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Turns) != want {
+		t.Fatalf("flushed turns=%d want %d", len(snap.Turns), want)
+	}
+}
+
+type prepareJobArgs struct {
+	outcome httptrace.RequestOutcome
+	writer  bool
+	sticky  bool
+}
+
+type prepareFlags struct {
+	checkpoint bool
+	trace      bool
+	streaming  bool
+}
+
+func preparePostResponseJob(t *testing.T, a prepareJobArgs) PostResponseJob {
+	t.Helper()
+	meta := testSnapshotMeta()
+	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	if a.sticky {
+		rs = Resolved{ExternalID: "sticky-only"}
+	}
+	in := PreparePostResponseInput{
+		Deps: LifecycleDeps{Store: newMemSessionStore()},
+		Log:  logger.Discard("t"), Resolved: rs, Meta: meta, In: testCheckpointInput(), Outcome: a.outcome,
+	}
+	if a.writer {
+		in.Writer = &recordingTraceWriter{}
+	}
+	return PreparePostResponse(in)
+}
+
+func assertPrepareFlags(t *testing.T, job PostResponseJob, want prepareFlags) {
+	t.Helper()
+	if job.DoCheckpoint != want.checkpoint {
+		t.Fatalf("DoCheckpoint=%v want %v", job.DoCheckpoint, want.checkpoint)
+	}
+	if job.DoTrace != want.trace {
+		t.Fatalf("DoTrace=%v want %v", job.DoTrace, want.trace)
+	}
+	if want.streaming && !job.Snap.Streaming {
+		t.Fatal("stream flag preserved in snap")
+	}
 }

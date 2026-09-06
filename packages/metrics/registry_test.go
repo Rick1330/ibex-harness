@@ -169,6 +169,10 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncSessionComplete("nope")
 	reg.IncSessionSweeperMarked("weird")
 	reg.IncSessionSweeperRun("weird")
+	reg.IncExtractionEnqueue("success", "ok")
+	reg.IncExtractionEnqueue("failed", "http")
+	reg.IncExtractionEnqueue("skipped", "empty_buffer")
+	(*ProxyRegistry)(nil).IncExtractionEnqueue("success", "ok")
 	reg.IncClickHouseFlush("ok")
 	reg.IncClickHouseFlush("error")
 	reg.AddClickHouseFlushRows(1)
@@ -204,6 +208,19 @@ func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
 			t.Fatalf("missing required metric %q", name)
 		}
 	}
+}
+
+func TestProxyRegistry_ContextAssembleFallbackRegistered(t *testing.T) {
+	t.Parallel()
+	reg := NewProxy("test-proxy")
+	reg.IncContextAssembleFallback("DeadlineExceeded")
+	reg.IncContextAssembleFallback("")
+	names := gatherMetricNames(t, reg.Gatherer())
+	if _, ok := names["ibex_proxy_context_assemble_fallback_total"]; !ok {
+		t.Fatal("missing ibex_proxy_context_assemble_fallback_total")
+	}
+	var nilReg *ProxyRegistry
+	nilReg.IncContextAssembleFallback("Unavailable")
 }
 
 func TestProxyRegistry_AuthAndProviderDurationRegistered(t *testing.T) {

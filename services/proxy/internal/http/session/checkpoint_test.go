@@ -9,10 +9,13 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestUnit_WantCheckpoint(t *testing.T) {
@@ -128,6 +131,31 @@ func TestUnit_RunCheckpoint_AppendError(t *testing.T) {
 	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
 	assertAppendCount(t, fx, 1)
+}
+
+func TestUnit_AppendExtractionTurns(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	buf, err := extractionbuffer.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := LifecycleDeps{TurnBuffer: buf, Log: logger.Discard("t")}
+	key := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "buf"}
+	deps.appendExtractionTurns(key, nil)
+	deps.appendExtractionTurns(key, []extractionbuffer.Turn{
+		{TurnIndex: 0, Role: "user", Content: "hi"},
+	})
+	snap, err := buf.Peek(context.Background(), key)
+	if err != nil || len(snap.Turns) != 1 {
+		t.Fatalf("turns=%d err=%v", len(snap.Turns), err)
+	}
+	mr.Close()
+	deps.appendExtractionTurns(key, []extractionbuffer.Turn{
+		{TurnIndex: 1, Role: "assistant", Content: "bye"},
+	})
 }
 
 func assertAppendCount(t *testing.T, fx checkpointFixture, want int) {

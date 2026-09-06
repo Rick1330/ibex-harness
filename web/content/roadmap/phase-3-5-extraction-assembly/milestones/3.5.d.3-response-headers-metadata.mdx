@@ -2,7 +2,7 @@
 title: "3.5.D.3 Response headers and metadata"
 description: "Implement both HTTP header surface (X-IBEX-*) and embedded ibex JSON block in non-streaming responses, with metadata surface gated behind IBEX_CONTEXT_EMBED_METADATA flag."
 summary: "Implement both HTTP header surface (X-IBEX-*) and embedded ibex JSON block in non-streaming responses, with metadata surface gated behind IBEX_CONTEXT_EMBED_METADATA flag."
-status: "planned"
+status: "completed"
 milestoneId: "3.5.D.3"
 track: "D"
 trackTitle: "Proxy Integration"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.D.3 — Response Headers and Metadata"
 
 # Milestone 3.5.D.3 — Response Headers and Metadata
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 1 day  
@@ -33,7 +33,7 @@ fullTitle: "Milestone 3.5.D.3 — Response Headers and Metadata"
 
 ## Why This Milestone Exists
 
-Two integration surfaces are documented and must both be honored: plain HTTP headers (`X-IBEX-Memories-Injected`, `X-IBEX-Context-Tokens`, `X-IBEX-Context-Fallback`) and an embedded `ibex` block inside the JSON response body for non-streaming responses. The embedded block requires Phase 2.5's `ResponsePipeline` typed decode and is gated behind a flag since it costs a full response decode.
+Two integration surfaces are documented and must both be honored: plain HTTP headers (`X-IBEX-Memories-Injected`, `X-IBEX-Context-Tokens`, `X-IBEX-Context-Fallback`) and an embedded `ibex` block inside the JSON response body for non-streaming responses. The embedded block requires Phase 2.5's `ResponsePipeline` typed decode and is gated behind a flag since it costs a dirty re-encode when metadata is present.
 
 ---
 
@@ -61,13 +61,12 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Header-only surface works without response decode
-- [ ] Embedded `ibex` JSON block implemented behind `IBEX_CONTEXT_EMBED_METADATA` flag
-- [ ] `IBEXMetadataStage` added to the response pipeline
-- [ ] Repo guards / CI checks still pass
+- [x] Header-only surface works without response decode (shipped in 3.5.D.2)
+- [x] Embedded `ibex` JSON block implemented behind `IBEX_CONTEXT_EMBED_METADATA` flag
+- [x] `IBEXMetadataStage` added to the response pipeline
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.5.D.2 (handler wiring)
 - Phase 2.5 Track C (response pipeline)
-

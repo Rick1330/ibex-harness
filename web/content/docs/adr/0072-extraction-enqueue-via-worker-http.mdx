@@ -1,0 +1,72 @@
+---
+title: "ADR-0072: Extraction enqueue via worker HTTP (not Celery Redis wire format)"
+description: "Architecture decision record 0072 — proxy terminates sticky external_id sessions, buffers turns in Redis, and enqueues extract_session_memories through an internal Starlette endpoint on the worker that calls Celery apply_async."
+adrId: "0072"
+status: "Accepted"
+date: "2026-09-06"
+authors: "IBEX Harness team"
+---
+
+# ADR-0072: Extraction enqueue via worker HTTP (not Celery Redis wire format)
+
+- **Status:** Accepted
+- **Date:** 2026-09-06
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.D.4 Extraction task enqueue](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.d.4-extraction-task-enqueue)
+- **Depends on:** [ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution), [ADR-0065](/docs/adr/0065-extraction-batch-idempotency), [ADR-0032](/docs/adr/0032-session-data-model)
+
+## Context
+
+Milestone 3.5.D.4 originally sketched a Go proxy that `LPUSH`es Celery protocol messages onto Redis broker lists. Discovery against live `main` found:
+
+1. Nothing production-set `sessions.status = 'completed'` — only idle abandon → `abandoned`.
+2. Checkpoints store hashes only; turn text for `extract_session_memories` must be supplied in the Celery kwargs (ADR-0064).
+3. Celery/kombu Redis transport uses priority-separated list keys and protocol v2 envelopes (base64 body of `[args, kwargs, embed]`). A subtly wrong Go envelope enqueues successfully but is never consumed — worse than an HTTP error.
+
+The worker already imports Celery. The proxy must not.
+
+## Decision
+
+### 1) Internal HTTP enqueue on the worker
+
+Expose `POST /internal/extraction/enqueue` on a small Starlette app co-located with the Celery worker process (own port, default `8007`). The handler validates the payload and calls `extract_session_memories.apply_async(kwargs=...)`. The proxy is an HTTP client only.
+
+### 2) Static Bearer auth (embedder pattern)
+
+Authenticate proxy→worker with `IBEX_WORKER_ENQUEUE_API_TOKEN` and `hmac.compare_digest`, matching embedder’s `IBEX_EMBEDDING_API_TOKEN` pattern. Do **not** reuse the worker→memory org-scoped PAT trust boundary.
+
+### 3) Session terminate triggers enqueue on first completion and on recovery
+
+`POST /v1/sessions/{session_id}/terminate` uses sticky **`external_id`** (same value as `X-IBEX-Session-ID`), scoped by `X-IBEX-Agent-ID`. `Store.CompleteByExternalID` returns a typed result:
+
+- **`CompleteOK` (first transition to completed):** peek the Redis turn buffer and enqueue when turns are present.
+- **`CompleteNoop` (already completed):** may still enqueue **if and only if** the buffer still holds unacknowledged turns — that means a prior enqueue attempt never completed (fail-open retention). This is deliberate recovery, not accidental re-work.
+- **After a successful Ack:** the peeked snapshot is deleted; a later `Noop` terminate Peeks empty → skip enqueue (log + metric). Never fabricate turns.
+
+Duplicate `apply_async` submissions (races between concurrent terminate calls, or Noop recovery after a delayed original enqueue already succeeded) are **not** prevented solely by the proxy. They are bounded by:
+
+1. the worker enqueue surface’s in-process `Idempotency-Key` cache (TTL; keyed by session id), and
+2. durable consumer identity idempotency in [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) at the memory-write layer.
+
+### 4) Transient Redis turn buffer
+
+Proxy appends turn role/content to Redis after successful chat completions (`{org_id}:session:{agent}:{external_id}:extraction_turns`, TTL-bound) synchronously before the chat handler returns (checkpoint/trace stay async). Terminate peeks the buffer to populate `turns` and deletes only after the worker accepts enqueue (compare-and-delete Ack). Empty/expired buffer → skip enqueue (log + metric); never fabricate turns. Buffer write failures are fail-open on the chat path.
+
+### 5) Non-goals
+
+- Not a general-purpose Celery task API (this one task shape only).
+- No `abandoned`-session extraction triggering.
+- No long-term turn archival (still missing per ADR-0064 / ADR-0032).
+- No hand-rolled Celery Redis wire protocol in Go.
+
+## Consequences
+
+- Milestone 3.5.D.4 success signals drop “raw LPUSH / Celery wire format” and require HTTP enqueue + terminate + turn buffer.
+- Operators must configure enqueue base URL + shared token on the proxy and worker.
+- Steady-state “no duplicate work after success” is Peek empty after Ack (proxy) plus worker `Idempotency-Key` (process-local TTL) plus [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) durable consumer identity — not “enqueue never runs on `Noop`.”
+
+## Alternatives considered
+
+1. **Hand-rolled Go LPUSH** — rejected due to silent consumption failure risk (priority keys + protocol v2).
+2. **Separate worker-api compose service** — deferred; co-located Starlette on the worker process is enough for this milestone.
+3. **Enqueue on abandoned** — out of scope; worker still requires `status=completed`.

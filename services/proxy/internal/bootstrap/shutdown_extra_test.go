@@ -147,7 +147,7 @@ func TestUnit_ShutdownHelpers_NilResources(t *testing.T) {
 	if err := shutdownTraceWriter(ctx, opts); err != nil {
 		t.Fatal(err)
 	}
-	if err := closeGRPCConn(opts); err != nil {
+	if err := closeGRPCConns(opts); err != nil {
 		t.Fatal(err)
 	}
 	if err := closeRedisClient(opts); err != nil {
@@ -192,6 +192,29 @@ func TestUnit_SetupSessionHotPath_NilRedis(t *testing.T) {
 
 	if parts.cache != nil {
 		t.Fatal("expected nil cache without redis")
+	}
+	if parts.turnBuffer != nil {
+		t.Fatal("expected nil turn buffer without redis")
+	}
+}
+
+func TestUnit_NewExtractionTurnBuffer(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	buf, err := newExtractionTurnBuffer(client, config.Config{ExtractionTurnsTTL: time.Minute})
+	if err != nil || buf == nil {
+		t.Fatalf("buf=%v err=%v", buf, err)
+	}
+	buf2, err := newExtractionTurnBuffer(client, config.Config{SessionIdleTimeout: 2 * time.Minute})
+	if err != nil || buf2 == nil {
+		t.Fatalf("fallback buf=%v err=%v", buf2, err)
+	}
+	nilBuf, err := newExtractionTurnBuffer(nil, config.Config{})
+	if err != nil || nilBuf != nil {
+		t.Fatalf("nil redis: buf=%v err=%v", nilBuf, err)
 	}
 }
 

@@ -40,12 +40,19 @@ func (o proxyPipelineObserver) IncStageFailOpen(stage string) {
 	o.reg.IncResponsePipelineStageFailOpen(stage)
 }
 
-func buildResponsePipeline(log *logger.Logger, reg *metrics.ProxyRegistry) *responsepipeline.Pipeline {
+func buildResponsePipeline(log *logger.Logger, reg *metrics.ProxyRegistry, embedMetadata bool) *responsepipeline.Pipeline {
 	opts := []responsepipeline.PipelineOption{
 		responsepipeline.WithStageLogger(proxyStageLogger{log: log}),
 	}
 	if reg != nil {
 		opts = append(opts, responsepipeline.WithPipelineObserver(proxyPipelineObserver{reg: reg}))
 	}
-	return responsepipeline.NewDefaultPipeline(opts...)
+	stages := []responsepipeline.Stage{responsepipeline.NoopStage{}}
+	// Conditionally register IBEXMetadataStage (3.5.D.3). When the flag is off the
+	// stage is absent entirely so Process is never invoked; when on, the stage
+	// still no-ops per-request if Assemble was not attempted (dirty untouched).
+	if embedMetadata {
+		stages = append(stages, responsepipeline.IBEXMetadataStage{})
+	}
+	return responsepipeline.NewPipeline(stages, opts...)
 }

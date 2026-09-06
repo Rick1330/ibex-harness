@@ -69,10 +69,15 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
-	provReq.Messages = applyDirectiveInjection(ctx, provReq.Messages)
+	inj := h.applyContextOrDirectiveInjection(ctx, p.r, provReq.Model, provReq.Messages)
+	provReq.Messages = inj.Messages
+	ctx = withContextAssembleMeta(ctx, inj.Meta)
+	p.r = p.r.WithContext(ctx)
 	start := time.Now()
-	resp, err := p.prov.Complete(ctx, provReq)
-	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), time.Since(start).Seconds())
+	resp, err := p.prov.Complete(p.r.Context(), provReq)
+	providerElapsed := time.Since(start)
+	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), providerElapsed.Seconds())
+	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerElapsed.Milliseconds()))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -138,7 +143,12 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		})
 		return
 	}
+	h.writeJSONSuccess(p, out)
+}
+
+func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []byte) {
 	setSessionResponseHeader(p.w, p.r.Context())
+	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "application/json")
 	p.w.WriteHeader(p.resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream JSON body; client disconnect is acceptable
@@ -165,6 +175,7 @@ func (h chatCompletionHandler) processResponseBody(ctx context.Context, provider
 	if h.responsePipeline == nil {
 		return body, nil
 	}
+	ctx = attachIbexMetadataForPipeline(ctx)
 	return h.encodePipelineResult(ctx, providerName, chat)
 }
 
@@ -225,6 +236,9 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 		return
 	}
 	logMappedProviderError(h, p.r, p.err, mapped)
+	// Emit assembly headers when Assemble ran (including Fallback); omit otherwise
+	// so Phase 2 failure responses stay header-identical to pre-D.2.
+	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	cw := &capturingWriter{ResponseWriter: p.w, Status: mapped.HTTPStatus}
 	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.

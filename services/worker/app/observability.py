@@ -321,10 +321,14 @@ def _on_worker_ready(**signal_kwargs: Any) -> None:
     del signal_kwargs
     settings = get_settings()
     _start_metrics_server(settings.metrics_port)
+    from app.enqueue_http import start_enqueue_server
+
+    start_enqueue_server(settings)
     logger.info(
         "worker_observability_ready",
         extra={
             "metrics_port": settings.metrics_port,
+            "enqueue_port": settings.enqueue_port,
             "database_configured": bool(settings.database_url),
             "tracer": TRACER_NAME,
         },

@@ -21,7 +21,7 @@ type (
 func (h chatCompletionHandler) lifecycle() httpsession.LifecycleDeps {
 	return httpsession.LifecycleDeps{
 		Store: h.sessionStore, Cache: h.sessionCache, Pool: h.checkpointPool,
-		GetOrCreateTO: h.getOrCreateTimeout, Log: h.log,
+		GetOrCreateTO: h.getOrCreateTimeout, Log: h.log, TurnBuffer: h.turnBuffer,
 	}
 }
 

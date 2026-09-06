@@ -7,6 +7,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
@@ -45,6 +46,7 @@ type LifecycleDeps struct {
 	Pool          *asyncpool.Pool
 	GetOrCreateTO time.Duration
 	Log           *logger.Logger
+	TurnBuffer    *extractionbuffer.Buffer
 }
 
 func (d LifecycleDeps) getOrCreateTimeout() time.Duration {
@@ -95,7 +97,7 @@ type SnapshotMeta struct {
 	RequestedAt time.Time
 }
 
-// PostResponseJob bundles checkpoint/trace work for the bounded pool Submit.
+// PostResponseJob bundles checkpoint/trace/buffer work for the bounded pool Submit.
 type PostResponseJob struct {
 	Deps         LifecycleDeps
 	In           CheckpointInput
@@ -103,6 +105,9 @@ type PostResponseJob struct {
 	SnapOK       bool
 	DoCheckpoint bool
 	DoTrace      bool
+	DoBuffer     bool
+	BufferTurns  []extractionbuffer.Turn
+	BufferKey    extractionbuffer.LookupKey
 	TraceWriter  httptrace.TraceWriter
 	Log          *logger.Logger
 	ExternalID   string

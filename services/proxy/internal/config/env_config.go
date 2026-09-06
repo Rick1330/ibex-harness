@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -19,6 +20,10 @@ type envConfig struct {
 	RedisURL                ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	AuthGRPCAddr            string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
 	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
+	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
+	ContextEnabled          string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
+	ContextEmbedMetadata    string            `env:"IBEX_CONTEXT_EMBED_METADATA" envDefault:"false"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
 	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
@@ -66,6 +71,9 @@ type envConfig struct {
 	ClickHouseFlushMS       int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
 	IdempotencyTTL          time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
 	IdempotencyRedisTO      time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
+	ExtractionTurnsTTL      time.Duration     `env:"IBEX_EXTRACTION_TURNS_TTL"`
+	WorkerEnqueueBaseURL    string            `env:"IBEX_WORKER_ENQUEUE_BASE_URL"`
+	WorkerEnqueueAPIToken   ibexconfig.Secret `env:"IBEX_WORKER_ENQUEUE_API_TOKEN" secret:"true"`
 	TokenizerMode           string            `env:"IBEX_TOKENIZER_MODE" envDefault:"local"`
 	TokenizerAssetDir       string            `env:"IBEX_TOKENIZER_ASSET_DIR"`
 }
@@ -169,15 +177,16 @@ func parseCSVModels(raw string) []string {
 
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 	return Config{
-		Environment:     envCfg.Environment,
-		ServiceName:     envCfg.ServiceName,
-		LogLevel:        level,
-		Port:            envCfg.Port,
-		RedisURL:        envCfg.RedisURL.String(),
-		AuthGRPCAddr:    envCfg.AuthGRPCAddr,
-		RequestIDHeader: envCfg.RequestIDHeader,
-		TraceIDHeader:   envCfg.TraceIDHeader,
-		ErrorDocsBase:   envCfg.ErrorDocsBase,
+		Environment:       envCfg.Environment,
+		ServiceName:       envCfg.ServiceName,
+		LogLevel:          level,
+		Port:              envCfg.Port,
+		RedisURL:          envCfg.RedisURL.String(),
+		AuthGRPCAddr:      envCfg.AuthGRPCAddr,
+		ContextGRPCTarget: envCfg.ContextGRPCTarget,
+		RequestIDHeader:   envCfg.RequestIDHeader,
+		TraceIDHeader:     envCfg.TraceIDHeader,
+		ErrorDocsBase:     envCfg.ErrorDocsBase,
 		RateLimit: RateLimitConfig{
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
@@ -201,12 +210,35 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		ClickHouseFlushMS:       envCfg.ClickHouseFlushMS,
 		IdempotencyTTL:          envCfg.IdempotencyTTL,
 		IdempotencyRedisTimeout: envCfg.IdempotencyRedisTO,
+		ExtractionTurnsTTL:      envCfg.ExtractionTurnsTTL,
+		WorkerEnqueueBaseURL:    strings.TrimSpace(envCfg.WorkerEnqueueBaseURL),
+		WorkerEnqueueAPIToken:   envCfg.WorkerEnqueueAPIToken.String(),
 	}
 }
 
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
+	applyProxyNumericEnv(cfg, envCfg)
+	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyContextEmbedMetadataEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyProxyShutdownEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
+
+func applyProxyNumericEnv(cfg *Config, envCfg envConfig) {
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
+	}
+	if envCfg.ContextAssembleTimeout > 0 {
+		cfg.ContextAssembleTimeout = envCfg.ContextAssembleTimeout
 	}
 	if envCfg.MaxRequestBodyBytes > 0 {
 		cfg.MaxRequestBodyBytes = envCfg.MaxRequestBodyBytes
@@ -214,6 +246,9 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.RateLimitDefaultRPM > 0 {
 		cfg.RateLimit.DefaultRPM = envCfg.RateLimitDefaultRPM
 	}
+}
+
+func applyProxyShutdownEnv(cfg *Config, envCfg envConfig) error {
 	timeout, err := ibexconfig.ParseShutdownTimeout(envCfg.ShutdownTimeoutRaw, 0)
 	if err != nil {
 		return err
@@ -221,10 +256,25 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if timeout > 0 {
 		cfg.ShutdownTimeout = timeout
 	}
-	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
-		return err
+	return nil
+}
+
+func applyContextEnabledEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.ContextEnabled, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
 	}
-	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+	cfg.ContextEnabled = enabled
+	return nil
+}
+
+func applyContextEmbedMetadataEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.ContextEmbedMetadata, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_EMBED_METADATA: %w", err)
+	}
+	cfg.ContextEmbedMetadata = enabled
+	return nil
 }
 
 func applyAuthCacheEnv(cfg *Config, envCfg envConfig) error {
@@ -277,6 +327,7 @@ func applyRateLimitOverrides(cfg *Config, raw string) error {
 
 func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	cfg.ApplyDefaults()
+	applyUnsetContextGRPCTargetDefault(&cfg)
 
 	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
 	if err != nil {
@@ -289,6 +340,17 @@ func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	}
 	ibexconfig.LogDebug(envCfg)
 	return cfg, nil
+}
+
+// applyUnsetContextGRPCTargetDefault sets the dial target only when the env var is
+// absent. An explicitly empty IBEX_CONTEXT_GRPC_TARGET stays empty so dial is skipped.
+func applyUnsetContextGRPCTargetDefault(cfg *Config) {
+	if _, set := os.LookupEnv("IBEX_CONTEXT_GRPC_TARGET"); set {
+		return
+	}
+	if cfg.ContextGRPCTarget == "" {
+		cfg.ContextGRPCTarget = defaultContextGRPCTarget
+	}
 }
 
 func parseLogLevel(value string) (slog.Level, error) {

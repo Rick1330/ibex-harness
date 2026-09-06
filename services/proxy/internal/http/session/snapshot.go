@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/google/uuid"
 )
@@ -101,8 +102,22 @@ func EmitTrace(w httptrace.TraceWriter, log *logger.Logger, snap httptrace.Assem
 	)
 }
 
-// EnqueuePostResponse runs optional checkpoint + trace emit on the bounded pool.
+// EnqueuePostResponse runs optional checkpoint + turn buffer + trace emit.
+// Buffer append runs synchronously so terminate cannot race an empty drain;
+// checkpoint and trace remain on the bounded pool.
 func EnqueuePostResponse(job PostResponseJob) {
+	flushBuffer(job)
+	runDeferredPostResponse(job)
+}
+
+func flushBuffer(job PostResponseJob) {
+	if !job.DoBuffer {
+		return
+	}
+	job.Deps.appendExtractionTurns(job.BufferKey, job.BufferTurns)
+}
+
+func runDeferredPostResponse(job PostResponseJob) {
 	if !job.DoCheckpoint && !job.DoTrace {
 		return
 	}
@@ -132,21 +147,54 @@ type PreparePostResponseInput struct {
 	Outcome  httptrace.RequestOutcome
 }
 
-// PreparePostResponse decides checkpoint/trace work and builds a submit job.
+// PreparePostResponse decides checkpoint/trace/buffer work and builds a submit job.
 func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	snap, snapOK := CaptureTraceSnapshot(CaptureTraceArgs{
 		Meta: in.Meta, In: in.In, Outcome: in.Outcome,
 	})
 	doCheckpoint := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome)
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
+	doBuffer := wantExtractionBuffer(in)
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,
-		DoCheckpoint: doCheckpoint, DoTrace: doTrace,
+		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoBuffer: doBuffer,
 		TraceWriter: in.Writer, Log: in.Log,
 	}
 	if doCheckpoint {
 		job.Params = BuildCheckpointParams(in.Resolved, in.In, in.Meta.RequestID)
 		job.ExternalID = in.Resolved.ExternalID
 	}
+	if doBuffer {
+		job.BufferKey = extractionbuffer.LookupKey{
+			OrgID: in.Meta.OrgID, AgentID: in.Meta.AgentID, ExternalID: in.Resolved.ExternalID,
+		}
+		job.BufferTurns = extractionTurnsFromInput(in.Resolved.TurnIndex, in.In)
+	}
 	return job
+}
+
+// wantExtractionBuffer is true for successful/streaming turns when tenant + sticky
+// ids are present — including sticky-only sessions that skip durable checkpoints.
+func wantExtractionBuffer(in PreparePostResponseInput) bool {
+	if in.Deps.TurnBuffer == nil {
+		return false
+	}
+	if in.Meta.OrgID == uuid.Nil || in.Meta.AgentID == uuid.Nil {
+		return false
+	}
+	if in.Resolved.ExternalID == "" {
+		return false
+	}
+	return in.Outcome.IsComplete || in.In.IsStreaming
+}
+
+func extractionTurnsFromInput(turnIndex int, in CheckpointInput) []extractionbuffer.Turn {
+	lastUser := ""
+	for i := len(in.Messages) - 1; i >= 0; i-- {
+		if in.Messages[i].Role == "user" && in.Messages[i].Content != "" {
+			lastUser = in.Messages[i].Content
+			break
+		}
+	}
+	return extractionbuffer.TurnsFromChat(turnIndex, lastUser, in.CompletionText)
 }

@@ -142,6 +142,33 @@ func (c *ChatResponse) MarkModified() {
 	}
 }
 
+// SetExtra sets a top-level JSON key outside the typed OpenAI ResponseDoc subset.
+// Prefer this for vendor extensions (e.g. `ibex`) instead of adding fields to
+// ResponseDoc — keeps the OpenAI-shaped type stable while encodeModified still
+// merges unknown keys. Marks the response dirty so Bytes() re-encodes. Rejects
+// empty keys and reserved OpenAI field names that belong on ResponseDoc.
+func (c *ChatResponse) SetExtra(key string, value any) error {
+	if c == nil {
+		return fmt.Errorf("%w: nil response", ErrInvalidResponse)
+	}
+	if key == "" {
+		return fmt.Errorf("%w: empty extra key", ErrInvalidResponse)
+	}
+	if _, known := knownTopLevelKeys[key]; known {
+		return fmt.Errorf("%w: reserved top-level key %q", ErrInvalidResponse, key)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal extra %q: %w", key, err)
+	}
+	if c.extra == nil {
+		c.extra = make(map[string]json.RawMessage)
+	}
+	c.extra[key] = raw
+	c.dirty = true
+	return nil
+}
+
 // Bytes returns wire-format JSON for the client. Unmodified responses return upstream
 // bytes verbatim. Callers must not mutate the returned slice.
 func (c *ChatResponse) Bytes() ([]byte, error) {
