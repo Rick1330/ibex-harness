@@ -18,7 +18,6 @@ const (
 	MaxBatchContentBytes = 500_000
 	maxRoleLen           = 32
 	maxContentLen        = 100_000
-	appendMaxRetries     = 8
 )
 
 // compare-and-set: only SET when the current value matches expected (empty = missing).
@@ -54,7 +53,7 @@ func Key(k LookupKey) string {
 		k.OrgID.String(), k.AgentID.String(), k.ExternalID)
 }
 
-// Buffer is a fail-open Redis list of turns for a sticky session.
+// Buffer is a fail-open Redis document of turns for a sticky session.
 type Buffer struct {
 	client redis.UniversalClient
 	ttl    time.Duration
@@ -86,8 +85,7 @@ func (b *Buffer) usable(k LookupKey) bool {
 }
 
 // Append adds turns to the buffer. Empty role/content entries are dropped.
-// Concurrent appends merge via compare-and-set retries (no lost turns).
-// Failures never surface as hard errors to callers (outcome + optional err for logs).
+// Concurrent appends merge via compare-and-set retries (no lost turns while ctx is live).
 func (b *Buffer) Append(ctx context.Context, k LookupKey, turns []Turn) (AppendOutcome, error) {
 	if !b.usable(k) {
 		return AppendSkipped, nil
@@ -96,62 +94,92 @@ func (b *Buffer) Append(ctx context.Context, k LookupKey, turns []Turn) (AppendO
 	if len(clean) == 0 {
 		return AppendSkipped, nil
 	}
-	return b.appendCAS(ctx, k, clean)
+	return b.appendWithCAS(ctx, Key(k), clean)
 }
 
-func (b *Buffer) appendCAS(ctx context.Context, k LookupKey, clean []Turn) (AppendOutcome, error) {
-	key := Key(k)
+func (b *Buffer) appendWithCAS(ctx context.Context, key string, clean []Turn) (AppendOutcome, error) {
+	ttlMs := b.ttlMillis()
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return AppendRedisErr, err
+		}
+		out, conflict, err := b.tryAppendCAS(ctx, key, clean, ttlMs)
+		if err != nil {
+			return AppendRedisErr, err
+		}
+		if !conflict {
+			return out, nil
+		}
+		if err := sleepCASBackoff(ctx, attempt); err != nil {
+			return AppendRedisErr, err
+		}
+	}
+}
+
+func (b *Buffer) ttlMillis() int64 {
 	ttlMs := b.ttl.Milliseconds()
 	if ttlMs < 1 {
-		ttlMs = 1
+		return 1
 	}
-	var lastCap bool
-	for attempt := 0; attempt < appendMaxRetries; attempt++ {
-		raw, err := b.client.Get(ctx, key).Bytes()
-		expected := ""
-		var existing []Turn
-		if err == nil {
-			expected = string(raw)
-			_ = json.Unmarshal(raw, &existing)
-		} else if err != redis.Nil {
-			return AppendRedisErr, err
-		}
-		merged, capped := mergeTurns(existing, clean)
-		lastCap = capped
-		payload, err := json.Marshal(merged)
-		if err != nil {
-			return AppendRedisErr, err
-		}
-		ok, err := appendCASLua.Run(ctx, b.client, []string{key}, expected, string(payload), ttlMs).Int()
-		if err != nil {
-			return AppendRedisErr, err
-		}
-		if ok == 1 {
-			if capped {
-				return AppendCap, nil
-			}
-			return AppendOK, nil
-		}
+	return ttlMs
+}
+
+func (b *Buffer) tryAppendCAS(
+	ctx context.Context, key string, clean []Turn, ttlMs int64,
+) (AppendOutcome, bool, error) {
+	expected, existing, err := b.readExpected(ctx, key)
+	if err != nil {
+		return "", false, err
 	}
-	if lastCap {
-		return AppendCap, fmt.Errorf("extractionbuffer: append CAS retries exhausted")
+	merged, capped := mergeTurns(existing, clean)
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return "", false, err
 	}
-	return AppendRedisErr, fmt.Errorf("extractionbuffer: append CAS retries exhausted")
+	ok, err := appendCASLua.Run(ctx, b.client, []string{key}, expected, string(payload), ttlMs).Int()
+	if err != nil {
+		return "", false, err
+	}
+	if ok != 1 {
+		return "", true, nil
+	}
+	if capped {
+		return AppendCap, false, nil
+	}
+	return AppendOK, false, nil
+}
+
+func (b *Buffer) readExpected(ctx context.Context, key string) (string, []Turn, error) {
+	raw, err := b.client.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return "", nil, nil
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	var existing []Turn
+	_ = json.Unmarshal(raw, &existing)
+	return string(raw), existing, nil
+}
+
+func sleepCASBackoff(ctx context.Context, attempt int) error {
+	n := attempt
+	if n > 32 {
+		n = 32
+	}
+	timer := time.NewTimer(time.Duration(n+1) * 50 * time.Microsecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // Peek returns buffered turns without clearing the key.
 func (b *Buffer) Peek(ctx context.Context, k LookupKey) ([]Turn, error) {
-	if !b.usable(k) {
-		return nil, nil
-	}
-	raw, err := b.client.Get(ctx, Key(k)).Bytes()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return decodeTurns(raw)
+	return b.getTurns(ctx, k, false)
 }
 
 // Ack deletes the buffer after a successful enqueue accept.
@@ -164,10 +192,23 @@ func (b *Buffer) Ack(ctx context.Context, k LookupKey) error {
 
 // Take clears and returns buffered turns (GETDEL semantics). Missing key → empty.
 func (b *Buffer) Take(ctx context.Context, k LookupKey) ([]Turn, error) {
+	return b.getTurns(ctx, k, true)
+}
+
+func (b *Buffer) getTurns(ctx context.Context, k LookupKey, clear bool) ([]Turn, error) {
 	if !b.usable(k) {
 		return nil, nil
 	}
-	raw, err := b.client.GetDel(ctx, Key(k)).Bytes()
+	key := Key(k)
+	var (
+		raw []byte
+		err error
+	)
+	if clear {
+		raw, err = b.client.GetDel(ctx, key).Bytes()
+	} else {
+		raw, err = b.client.Get(ctx, key).Bytes()
+	}
 	if err == redis.Nil {
 		return nil, nil
 	}

@@ -218,14 +218,7 @@ func (h sessionTerminateHandler) dispatchEnqueue(
 		h.recordEnqueue("skipped", "disabled")
 		return
 	}
-	req := extractionenqueue.Request{
-		OrgID: job.orgID, AgentID: job.agentID, SessionID: job.sessionID,
-		Turns: toEnqueueTurns(turns),
-	}
-	err := h.enqueue.Enqueue(ctx, req)
-	if err != nil && enqueueTransient(err) {
-		err = h.enqueue.Enqueue(ctx, req)
-	}
+	err := h.postEnqueue(ctx, job, turns)
 	if err != nil {
 		h.recordEnqueue("failed", "http")
 		if h.log != nil {
@@ -239,6 +232,20 @@ func (h sessionTerminateHandler) dispatchEnqueue(
 			"error", err, "external_id", job.externalID)
 	}
 	h.recordEnqueue("success", "ok")
+}
+
+func (h sessionTerminateHandler) postEnqueue(
+	ctx context.Context, job terminateEnqueueJob, turns []extractionbuffer.Turn,
+) error {
+	req := extractionenqueue.Request{
+		OrgID: job.orgID, AgentID: job.agentID, SessionID: job.sessionID,
+		Turns: toEnqueueTurns(turns),
+	}
+	err := h.enqueue.Enqueue(ctx, req)
+	if err != nil && enqueueTransient(err) {
+		return h.enqueue.Enqueue(ctx, req)
+	}
+	return err
 }
 
 func (h sessionTerminateHandler) peekTurns(

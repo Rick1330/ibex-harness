@@ -150,7 +150,9 @@ func completeInTx(ctx context.Context, tx *sql.Tx, sessionID, orgID uuid.UUID) (
 	if err == nil {
 		return CompleteOK, nil
 	}
-	return resolveCompleteRace(ctx, tx, sessionRef{id: sessionID, orgID: orgID}, err)
+	return resolveCompleteRace(completeRaceInput{
+		ctx: ctx, tx: tx, ref: sessionRef{id: sessionID, orgID: orgID}, markErr: err,
+	})
 }
 
 func mapNotFound(err error) (CompleteResult, error) {
@@ -165,21 +167,25 @@ type sessionRef struct {
 	orgID uuid.UUID
 }
 
-func resolveCompleteRace(
-	ctx context.Context, tx *sql.Tx, ref sessionRef, markErr error,
-) (CompleteResult, error) {
-	if !errors.Is(markErr, ErrNotFound) {
-		return 0, markErr
+type completeRaceInput struct {
+	ctx     context.Context
+	tx      *sql.Tx
+	ref     sessionRef
+	markErr error
+}
+
+func resolveCompleteRace(in completeRaceInput) (CompleteResult, error) {
+	if !errors.Is(in.markErr, ErrNotFound) {
+		return 0, in.markErr
 	}
-	// Concurrent Complete may have won the row lock; treat terminal as noop.
-	st, loadErr := loadSessionStatus(ctx, tx, ref.id, ref.orgID)
+	st, loadErr := loadSessionStatus(in.ctx, in.tx, in.ref.id, in.ref.orgID)
 	if loadErr != nil {
 		return mapNotFound(loadErr)
 	}
 	if st != StatusActive {
 		return CompleteNoop, nil
 	}
-	return 0, markErr
+	return 0, in.markErr
 }
 
 type externalLookup struct {

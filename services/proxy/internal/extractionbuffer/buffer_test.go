@@ -74,8 +74,11 @@ func TestUnit_AppendFailOpenClosedClient(t *testing.T) {
 	out, aerr := b.Append(context.Background(), extractionbuffer.LookupKey{
 		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "e",
 	}, []extractionbuffer.Turn{{TurnIndex: 0, Role: "user", Content: "hi"}})
-	if out != extractionbuffer.AppendRedisErr || aerr == nil {
-		t.Fatalf("want redis_error, got %v %v", out, aerr)
+	if out != extractionbuffer.AppendRedisErr {
+		t.Fatalf("outcome=%v", out)
+	}
+	if aerr == nil {
+		t.Fatal("expected redis error")
 	}
 }
 
@@ -98,18 +101,28 @@ func TestUnit_AppendConcurrentNoLostTurns(t *testing.T) {
 	b, _ := testBuffer(t)
 	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "race"}
 	const workers = 20
-	done := make(chan struct{}, workers)
+	errs := make(chan error, workers)
 	for i := 0; i < workers; i++ {
 		i := i
 		go func() {
-			defer func() { done <- struct{}{} }()
-			_, _ = b.Append(context.Background(), k, []extractionbuffer.Turn{
+			out, err := b.Append(context.Background(), k, []extractionbuffer.Turn{
 				{TurnIndex: i, Role: "user", Content: fmt.Sprintf("m-%d", i)},
 			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if out != extractionbuffer.AppendOK && out != extractionbuffer.AppendCap {
+				errs <- fmt.Errorf("outcome=%s", out)
+				return
+			}
+			errs <- nil
 		}()
 	}
 	for i := 0; i < workers; i++ {
-		<-done
+		if err := <-errs; err != nil {
+			t.Fatalf("append: %v", err)
+		}
 	}
 	turns, err := b.Peek(context.Background(), k)
 	if err != nil {
@@ -122,8 +135,11 @@ func TestUnit_AppendConcurrentNoLostTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	turns, err = b.Peek(context.Background(), k)
-	if err != nil || len(turns) != 0 {
-		t.Fatalf("after ack: %#v err=%v", turns, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("after ack len=%d", len(turns))
 	}
 }
 

@@ -106,9 +106,18 @@ func EmitTrace(w httptrace.TraceWriter, log *logger.Logger, snap httptrace.Assem
 // Buffer append runs synchronously so terminate cannot race an empty drain;
 // checkpoint and trace remain on the bounded pool.
 func EnqueuePostResponse(job PostResponseJob) {
-	if job.DoBuffer {
-		job.Deps.appendExtractionTurns(job.BufferKey, job.BufferTurns)
+	flushBuffer(job)
+	runDeferredPostResponse(job)
+}
+
+func flushBuffer(job PostResponseJob) {
+	if !job.DoBuffer {
+		return
 	}
+	job.Deps.appendExtractionTurns(job.BufferKey, job.BufferTurns)
+}
+
+func runDeferredPostResponse(job PostResponseJob) {
 	if !job.DoCheckpoint && !job.DoTrace {
 		return
 	}

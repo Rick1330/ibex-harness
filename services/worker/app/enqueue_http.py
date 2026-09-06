@@ -74,7 +74,7 @@ def _turns_kwargs(turns: list[TurnPayload]) -> list[dict[str, Any]]:
 
 def _parse_enqueue_body(payload: object) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        raise ValueError("invalid_json")
+        raise TypeError("invalid_json")
     org_id = _parse_uuid(payload.get("org_id"), "org_id")
     agent_id = _parse_uuid(payload.get("agent_id"), "agent_id")
     session_id = _parse_uuid(payload.get("session_id"), "session_id")

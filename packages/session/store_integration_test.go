@@ -161,6 +161,18 @@ func TestStore_Complete_ConcurrentRace(t *testing.T) {
 	ids := setupStore(t)
 	sess := mustCreate(t, ids, "ext-complete-race")
 	const workers = 8
+	okCount, noopCount := fanoutComplete(t, ids, sess.ID, workers)
+	if okCount != 1 || noopCount != workers-1 {
+		t.Fatalf("ok=%d noop=%d want 1/%d", okCount, noopCount, workers-1)
+	}
+	got := mustReload(t, ids, "ext-complete-race")
+	if got.Status != session.StatusCompleted {
+		t.Fatalf("status=%s", got.Status)
+	}
+}
+
+func fanoutComplete(t *testing.T, ids storeIDs, sessionID uuid.UUID, workers int) (okCount, noopCount int) {
+	t.Helper()
 	type outcome struct {
 		res session.CompleteResult
 		err error
@@ -168,11 +180,10 @@ func TestStore_Complete_ConcurrentRace(t *testing.T) {
 	out := make(chan outcome, workers)
 	for i := 0; i < workers; i++ {
 		go func() {
-			res, err := ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+			res, err := ids.store.Complete(context.Background(), sessionID, ids.orgID)
 			out <- outcome{res: res, err: err}
 		}()
 	}
-	var okCount, noopCount int
 	for i := 0; i < workers; i++ {
 		o := <-out
 		if o.err != nil {
@@ -187,13 +198,7 @@ func TestStore_Complete_ConcurrentRace(t *testing.T) {
 			t.Fatalf("unexpected result %v", o.res)
 		}
 	}
-	if okCount != 1 || noopCount != workers-1 {
-		t.Fatalf("ok=%d noop=%d want 1/%d", okCount, noopCount, workers-1)
-	}
-	got := mustReload(t, ids, "ext-complete-race")
-	if got.Status != session.StatusCompleted {
-		t.Fatalf("status=%s", got.Status)
-	}
+	return okCount, noopCount
 }
 
 func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {
