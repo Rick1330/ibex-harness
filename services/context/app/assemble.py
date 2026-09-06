@@ -92,6 +92,15 @@ class AssembleRequest:
     tool_schemas: Sequence[str] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class _AssemblerDeps:
+    """Optional injectable collaborators for ``ContextAssembler``."""
+
+    formatter: ContextFormatter | None = None
+    budget: BudgetCalculator | None = None
+    catalog: CapabilityCatalog | None = None
+
+
 class ContextAssembler:
     """Budget → retrieve → pack → format with degradation classification."""
 
@@ -100,15 +109,14 @@ class ContextAssembler:
         *,
         settings: ContextSettings,
         retriever: ParallelRetriever,
-        formatter: ContextFormatter | None = None,
-        budget: BudgetCalculator | None = None,
-        catalog: CapabilityCatalog | None = None,
+        deps: _AssemblerDeps | None = None,
     ) -> None:
+        resolved = deps or _AssemblerDeps()
         self._settings = settings
         self._retriever = retriever
-        self._catalog = catalog or default_catalog()
-        self._budget = budget or BudgetCalculator(self._catalog)
-        self._formatter = formatter or ContextFormatter(
+        self._catalog = resolved.catalog or default_catalog()
+        self._budget = resolved.budget or BudgetCalculator(self._catalog)
+        self._formatter = resolved.formatter or ContextFormatter(
             nonce_bytes=settings.formatter_nonce_bytes,
         )
 
@@ -116,30 +124,9 @@ class ContextAssembler:
         """Run the full assembly pipeline and classify L0–L2."""
         started = time.perf_counter()
         messages = list(request.recent_messages)
-
-        retrieval_req = RetrievalRequest(
-            org_id=request.org_id,
-            agent_id=request.agent_id,
-            query=request.query,
-            model=request.model,
-            recent_messages=messages,
-        )
-        retrieval = await self._retriever.retrieve(retrieval_req)
-        retrieval = _apply_skip_options(retrieval, request.options)
-
+        retrieval = await self._retrieve(request, messages)
         level, intentional_skip = _classify_degradation(retrieval, request.options)
-        if level != "L0":
-            logger.info(
-                "context_assembly_degraded level=%s intentional_skip=%s "
-                "org_id=%s agent_id=%s hot=%s cold=%s directive=%s",
-                level,
-                intentional_skip,
-                request.org_id,
-                request.agent_id,
-                retrieval.hot_outcome.status,
-                retrieval.cold_outcome.status,
-                retrieval.directive_outcome.status,
-            )
+        _log_degradation(level, intentional_skip, request, retrieval)
 
         directive_text = (
             retrieval.directive.content if retrieval.directive is not None else ""
@@ -148,26 +135,8 @@ class ContextAssembler:
         budget = self._budget.calculate(request.model, messages, directive_text)
         budget_ms = _elapsed_ms(t_budget)
 
-        policy = self._catalog.family_policy(
-            self._catalog.for_model(request.model).tokenizer_family,
-        )
-        packer = ContextPacker(
-            policy,
-            bucket_size=BUCKET_SIZE,
-            dp_cell_ceiling=self._settings.packer_dp_cell_ceiling,
-            max_consecutive_skips=self._settings.packer_max_consecutive_skips,
-        )
-
-        t_rank = time.perf_counter()
-        if level == "L2":
-            scored: list[ScoredMemory] = []
-        else:
-            merged = _dedupe_hits(retrieval.hot_memories + retrieval.cold_memories)
-            scored = score_hits(merged)
-            if request.options.max_memories > 0:
-                scored = scored[: request.options.max_memories]
-        ranking_ms = _elapsed_ms(t_rank)
-
+        packer = self._make_packer(request.model)
+        scored, ranking_ms = _score_candidates(retrieval, request.options, level)
         t_pack = time.perf_counter()
         packed = packer.pack(scored, budget.usable_budget)
         packing_ms = _elapsed_ms(t_pack)
@@ -183,16 +152,13 @@ class ContextAssembler:
         )
         formatting_ms = _elapsed_ms(t_fmt)
 
-        total_ms = _elapsed_ms(started)
-        metrics = AssemblyMetricsSnapshot(
-            budget_calculation_ms=budget_ms,
-            directive_load_ms=_outcome_ms(retrieval.directive_outcome.latency_ms),
-            hot_memory_retrieval_ms=_outcome_ms(retrieval.hot_outcome.latency_ms),
-            cold_memory_retrieval_ms=_outcome_ms(retrieval.cold_outcome.latency_ms),
+        metrics = _build_metrics(
+            retrieval,
+            budget_ms=budget_ms,
             ranking_ms=ranking_ms,
             packing_ms=packing_ms,
             formatting_ms=formatting_ms,
-            total_ms=total_ms,
+            total_ms=_elapsed_ms(started),
             candidates_evaluated=packed.candidates_evaluated,
         )
         logger.debug(
@@ -206,11 +172,6 @@ class ContextAssembler:
             metrics.total_ms,
             metrics.candidates_evaluated,
         )
-
-        memories_used = tuple(_memory_used(item) for item in packed.memories)
-        tokens_used = (
-            budget.directive_tokens + budget.messages_tokens + packed.total_tokens
-        )
         return AssemblyResult(
             formatted=formatted,
             packed=packed,
@@ -218,9 +179,97 @@ class ContextAssembler:
             retrieval=retrieval,
             metrics=metrics,
             degradation_level=level,
-            memories_used=memories_used,
-            tokens_used=tokens_used,
+            memories_used=tuple(_memory_used(item) for item in packed.memories),
+            tokens_used=(
+                budget.directive_tokens + budget.messages_tokens + packed.total_tokens
+            ),
         )
+
+    async def _retrieve(
+        self,
+        request: AssembleRequest,
+        messages: list[Message],
+    ) -> RetrievalResult:
+        retrieval_req = RetrievalRequest(
+            org_id=request.org_id,
+            agent_id=request.agent_id,
+            query=request.query,
+            model=request.model,
+            recent_messages=messages,
+        )
+        retrieval = await self._retriever.retrieve(retrieval_req)
+        return _apply_skip_options(retrieval, request.options)
+
+    def _make_packer(self, model: str) -> ContextPacker:
+        policy = self._catalog.family_policy(
+            self._catalog.for_model(model).tokenizer_family,
+        )
+        return ContextPacker(
+            policy,
+            bucket_size=BUCKET_SIZE,
+            dp_cell_ceiling=self._settings.packer_dp_cell_ceiling,
+            max_consecutive_skips=self._settings.packer_max_consecutive_skips,
+        )
+
+
+def _score_candidates(
+    retrieval: RetrievalResult,
+    options: AssemblyOptions,
+    level: DegradationLevel,
+) -> tuple[list[ScoredMemory], int]:
+    t_rank = time.perf_counter()
+    if level == "L2":
+        scored: list[ScoredMemory] = []
+    else:
+        merged = _dedupe_hits(retrieval.hot_memories + retrieval.cold_memories)
+        scored = score_hits(merged)
+        if options.max_memories > 0:
+            scored = scored[: options.max_memories]
+    return scored, _elapsed_ms(t_rank)
+
+
+def _build_metrics(
+    retrieval: RetrievalResult,
+    *,
+    budget_ms: int,
+    ranking_ms: int,
+    packing_ms: int,
+    formatting_ms: int,
+    total_ms: int,
+    candidates_evaluated: int,
+) -> AssemblyMetricsSnapshot:
+    return AssemblyMetricsSnapshot(
+        budget_calculation_ms=budget_ms,
+        directive_load_ms=_outcome_ms(retrieval.directive_outcome.latency_ms),
+        hot_memory_retrieval_ms=_outcome_ms(retrieval.hot_outcome.latency_ms),
+        cold_memory_retrieval_ms=_outcome_ms(retrieval.cold_outcome.latency_ms),
+        ranking_ms=ranking_ms,
+        packing_ms=packing_ms,
+        formatting_ms=formatting_ms,
+        total_ms=total_ms,
+        candidates_evaluated=candidates_evaluated,
+    )
+
+
+def _log_degradation(
+    level: DegradationLevel,
+    intentional_skip: bool,
+    request: AssembleRequest,
+    retrieval: RetrievalResult,
+) -> None:
+    if level == "L0":
+        return
+    logger.info(
+        "context_assembly_degraded level=%s intentional_skip=%s "
+        "org_id=%s agent_id=%s hot=%s cold=%s directive=%s",
+        level,
+        intentional_skip,
+        request.org_id,
+        request.agent_id,
+        retrieval.hot_outcome.status,
+        retrieval.cold_outcome.status,
+        retrieval.directive_outcome.status,
+    )
 
 
 def _apply_skip_options(
@@ -244,6 +293,10 @@ def _apply_skip_options(
     )
 
 
+def _branch_ok(*, skipped: bool, status: str) -> bool:
+    return skipped or status == "success"
+
+
 def _classify_degradation(
     retrieval: RetrievalResult,
     options: AssemblyOptions,
@@ -253,32 +306,23 @@ def _classify_degradation(
     Intentional skips via AssemblyOptions are L1/L2-shaped but logged as
     intentional rather than dependency failure.
     """
-    hot_ok = (
-        options.skip_hot_memories or retrieval.hot_outcome.status == "success"
+    hot_ok = _branch_ok(
+        skipped=options.skip_hot_memories,
+        status=retrieval.hot_outcome.status,
     )
-    cold_ok = (
-        options.skip_cold_memories or retrieval.cold_outcome.status == "success"
+    cold_ok = _branch_ok(
+        skipped=options.skip_cold_memories,
+        status=retrieval.cold_outcome.status,
     )
     intentional = options.skip_hot_memories or options.skip_cold_memories
 
-    if hot_ok and cold_ok:
-        # Both success, or skipped sides treated as satisfied.
-        if (
-            options.skip_cold_memories
-            and not options.skip_hot_memories
-            and retrieval.hot_outcome.status == "success"
-        ):
-            return "L1", True
-        if options.skip_hot_memories and options.skip_cold_memories:
-            return "L2", True
-        if options.skip_hot_memories and retrieval.cold_outcome.status == "success":
-            return "L1", True
-        return "L0", False
-
     if not hot_ok and not cold_ok:
         return "L2", intentional
-
-    # One memory source usable → L1 (cold-degraded or hot-degraded).
+    if hot_ok and cold_ok and not intentional:
+        return "L0", False
+    if options.skip_hot_memories and options.skip_cold_memories:
+        return "L2", True
+    # One side skipped or one side failed while the other is usable.
     return "L1", intentional
 
 

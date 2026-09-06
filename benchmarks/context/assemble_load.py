@@ -63,34 +63,30 @@ class _StubDirective:
 
 class _StubMemory:
     async def get_hot_memories(self, *_args, **_kwargs):
-        return [
-            MemoryHitPayload(
-                memory_id=str(uuid4()),
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content="hot preference " + ("x" * 64),
-                category="preference",
-                confidence=0.9,
-                similarity=0.85,
-                rank=1,
-                source="hot_cache",
-            )
-        ]
+        return [_hit("hot preference " + ("x" * 64), "preference", "hot_cache", 0.9, 0.85)]
 
     async def search_memories(self, *_args, **_kwargs):
-        return [
-            MemoryHitPayload(
-                memory_id=str(uuid4()),
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content="cold fact " + ("y" * 64),
-                category="factual",
-                confidence=0.8,
-                similarity=0.75,
-                rank=1,
-                source="vector",
-            )
-        ]
+        return [_hit("cold fact " + ("y" * 64), "factual", "vector", 0.8, 0.75)]
+
+
+def _hit(
+    content: str,
+    category: str,
+    source: str,
+    confidence: float,
+    similarity: float,
+) -> MemoryHitPayload:
+    return MemoryHitPayload(
+        memory_id=str(uuid4()),
+        org_id=str(ORG),
+        agent_id=str(AGENT),
+        content=content,
+        category=category,
+        confidence=confidence,
+        similarity=similarity,
+        rank=1,
+        source=source,
+    )
 
 
 def _percentile(samples: list[float], pct: float) -> float:

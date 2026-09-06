@@ -14,7 +14,12 @@ from app.clients.directive import DirectivePayload
 from app.clients.memory import MemoryHitPayload
 from app.config import ContextSettings
 from app.retrieval import ParallelRetriever
-from app.server import _SERVICE_NAME, ContextAssemblyServicer, build_server
+from app.server import (
+    _SERVICE_NAME,
+    ContextAssemblyServicer,
+    build_assembler_from_settings,
+    build_server,
+)
 
 ORG = uuid4()
 AGENT = uuid4()
@@ -228,3 +233,22 @@ async def test_servicer_direct_assemble(pb2) -> None:
     resp = await servicer.AssembleContext(req, _Ctx())  # type: ignore[arg-type]
     assert resp.assembled_context
     assert "user: hi" in resp.assembled_context or resp.memories_included >= 0
+
+
+def test_build_assembler_requires_memory_base_url() -> None:
+    settings = ContextSettings.model_construct(
+        memory_base_url="",
+        memory_api_token="",
+        redis_url="",
+        timeout_ms=45.0,
+        deadline_ms=40.0,
+        directive_timeout_ms=5.0,
+        hot_timeout_ms=15.0,
+        cold_timeout_ms=45.0,
+        formatter_nonce_bytes=16,
+        packer_dp_cell_ceiling=70 * 6251,
+        packer_max_consecutive_skips=5,
+        grpc_addr="127.0.0.1:0",
+    )
+    with pytest.raises(ValueError, match="MEMORY_BASE_URL"):
+        build_assembler_from_settings(settings)

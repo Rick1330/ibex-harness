@@ -85,22 +85,25 @@ class ContextAssemblyServicer:
         request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
-        await context.abort(
-            grpc.StatusCode.UNIMPLEMENTED,
-            "SearchMemories deferred — ADR-0038",
-        )
-        raise AssertionError("unreachable")  # pragma: no cover
+        return await _abort_unimplemented(context, _SEARCH)
 
     async def RecordMemoryFeedback(
         self,
         request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
-        await context.abort(
-            grpc.StatusCode.UNIMPLEMENTED,
-            "RecordMemoryFeedback deferred — ADR-0038",
-        )
-        raise AssertionError("unreachable")  # pragma: no cover
+        return await _abort_unimplemented(context, _FEEDBACK)
+
+
+async def _abort_unimplemented(
+    context: grpc_aio.ServicerContext,
+    method: str,
+) -> object:
+    await context.abort(
+        grpc.StatusCode.UNIMPLEMENTED,
+        f"{method} deferred — ADR-0038",
+    )
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def build_server(

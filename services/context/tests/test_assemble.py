@@ -188,6 +188,54 @@ async def test_assemble_skip_cold_intentional_l1() -> None:
 
 
 @pytest.mark.asyncio
+async def test_assemble_skip_hot_and_cold_intentional_l2() -> None:
+    hot = _hit(content="hot skipped")
+    cold = _hit(source="vector", content="cold skipped")
+    result = await _assembler(memory=_StubMemory(hot=[hot], cold=[cold])).assemble(
+        _req(
+            options=AssemblyOptions(
+                skip_hot_memories=True,
+                skip_cold_memories=True,
+            )
+        )
+    )
+    assert result.degradation_level == "L2"
+    assert result.formatted.memories_included == 0
+
+
+@pytest.mark.asyncio
+async def test_assemble_max_memories_caps_scored() -> None:
+    hot = MemoryHitPayload(
+        memory_id=str(uuid4()),
+        org_id=str(ORG),
+        agent_id=str(AGENT),
+        content="hot-a",
+        category="preference",
+        confidence=0.95,
+        similarity=0.9,
+        rank=1,
+        source="hot_cache",
+    )
+    cold = MemoryHitPayload(
+        memory_id=str(uuid4()),
+        org_id=str(ORG),
+        agent_id=str(AGENT),
+        content="cold-b",
+        category="preference",
+        confidence=0.8,
+        similarity=0.7,
+        rank=2,
+        source="vector",
+    )
+    result = await _assembler(
+        memory=_StubMemory(hot=[hot], cold=[cold]),
+    ).assemble(_req(options=AssemblyOptions(max_memories=1)))
+    assert result.degradation_level == "L0"
+    assert len(result.packed.memories) <= 1
+    assert result.metrics.candidates_evaluated <= 1
+
+
+@pytest.mark.asyncio
 async def test_assemble_deterministic_repeat() -> None:
     hot = _hit(content="same hot")
     cold = _hit(source="vector", content="same cold")
