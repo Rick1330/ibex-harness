@@ -103,20 +103,23 @@ type Config struct {
 	ContextAssembleTimeout time.Duration
 	// ContextEnabled gates Assemble on the chat hot path (3.5.D.2). Default false:
 	// Phase 2 directive-only injection. Independent of ContextGRPCTarget (nil client).
-	ContextEnabled      bool
-	AuthCache           AuthCacheConfig
-	MaxRequestBodyBytes int64
-	RequestIDHeader     string
-	TraceIDHeader       string
-	ErrorDocsBase       string
-	RateLimit           RateLimitConfig
-	ShutdownTimeout     time.Duration
-	Telemetry           telemetry.Config
-	LLMMode             string
-	OpenAI              OpenAIConfig
-	Anthropic           AnthropicConfig
-	SelfHosted          SelfHostedConfig
-	Tokenizer           TokenizerConfig
+	ContextEnabled bool
+	// ContextEmbedMetadata gates embedding the top-level `ibex` JSON block in
+	// non-streaming chat responses (3.5.D.3). Default false: headers-only surface.
+	ContextEmbedMetadata bool
+	AuthCache            AuthCacheConfig
+	MaxRequestBodyBytes  int64
+	RequestIDHeader      string
+	TraceIDHeader        string
+	ErrorDocsBase        string
+	RateLimit            RateLimitConfig
+	ShutdownTimeout      time.Duration
+	Telemetry            telemetry.Config
+	LLMMode              string
+	OpenAI               OpenAIConfig
+	Anthropic            AnthropicConfig
+	SelfHosted           SelfHostedConfig
+	Tokenizer            TokenizerConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
 	// Provider circuit breaker (shared defaults; applied to self-hosted path).

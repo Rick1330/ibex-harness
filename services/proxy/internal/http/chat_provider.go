@@ -71,10 +71,13 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 	provReq := llm.ToProviderRequest(p.parsed)
 	inj := h.applyContextOrDirectiveInjection(ctx, p.r, provReq.Model, provReq.Messages)
 	provReq.Messages = inj.Messages
-	p.r = p.r.WithContext(withContextAssembleMeta(ctx, inj.Meta))
+	ctx = withContextAssembleMeta(ctx, inj.Meta)
+	p.r = p.r.WithContext(ctx)
 	start := time.Now()
 	resp, err := p.prov.Complete(p.r.Context(), provReq)
-	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), time.Since(start).Seconds())
+	providerElapsed := time.Since(start)
+	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), providerElapsed.Seconds())
+	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerElapsed.Milliseconds()))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -172,6 +175,7 @@ func (h chatCompletionHandler) processResponseBody(ctx context.Context, provider
 	if h.responsePipeline == nil {
 		return body, nil
 	}
+	ctx = attachIbexMetadataForPipeline(ctx)
 	return h.encodePipelineResult(ctx, providerName, chat)
 }
 

@@ -53,6 +53,7 @@ See [.env.example](.env.example).
 | `IBEX_AUTH_GRPC_ADDR` | `127.0.0.1:9091` | Auth gRPC target |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget |
 | `IBEX_CONTEXT_ENABLED` | `false` | Master switch for Assemble on chat path; `false` = Phase 2 directive-only |
+| `IBEX_CONTEXT_EMBED_METADATA` | `false` | Embed top-level `ibex` JSON in non-streaming responses (3.5.D.3) |
 | `IBEX_CONTEXT_GRPC_TARGET` | `127.0.0.1:9092` | Context assembly gRPC dial target (empty skips dial) |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | `45ms` | Per-call AssembleContext budget (fail-open) |
 | `IBEX_AUTH_CACHE_ENABLED` | `true` | Bloom + LRU in front of ValidateToken |
@@ -100,16 +101,17 @@ Hot-path wiring is shipped in **3.5.D.2** (`IBEX_CONTEXT_ENABLED` + `contextclie
 fail-open to Phase 2 directive injection when disabled, nil client, Skip-Memory, or Assemble Fallback.
 Response headers `X-IBEX-Memories-Injected` / `X-IBEX-Context-Tokens` / `X-IBEX-Context-Fallback`
 are set when Assemble was attempted (stream and non-stream, including provider failure responses).
-Embedded `ibex` JSON metadata is **3.5.D.3**.
+Embedded `ibex` JSON metadata is shipped in **3.5.D.3** behind `IBEX_CONTEXT_EMBED_METADATA`
+(`IBEXMetadataStage` on the non-streaming response pipeline; streaming remains headers-only).
 
 ## Next (Phase 2.5+) — remaining planning baseline
 
 Anthropic adapter, model capability registry, self-hosted OpenAI-compatible adapter,
 tokenizer registry, non-streaming response pipeline, and context-assembly hot-path wiring
-are shipped (m2.5.G1.M1–M3, m2.5.G2.M1, m2.5.G3.M1 / ADR-0040–0044; m3.5.D.1–D.2). Still planned:
+are shipped (m2.5.G1.M1–M3, m2.5.G2.M1, m2.5.G3.M1 / ADR-0040–0044; m3.5.D.1–D.3). Still planned:
 
 - Streaming response pipeline design (G3.M2)
-- Embedded `ibex` JSON / `IBEX_CONTEXT_EMBED_METADATA` (3.5.D.3)
+- Extraction enqueue after chat (3.5.D.4)
 
 Paths and env names may change during implementation — update this README and `ENVIRONMENT_VARIABLES.md` when they land.
 

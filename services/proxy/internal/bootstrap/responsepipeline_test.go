@@ -15,7 +15,7 @@ import (
 )
 
 func TestUnit_BuildResponsePipeline_DefaultNoop(t *testing.T) {
-	p := buildResponsePipeline(logger.Discard("proxy"), nil)
+	p := buildResponsePipeline(logger.Discard("proxy"), nil, false)
 	require.NotNil(t, p)
 
 	chat, err := responsepipeline.Decode([]byte(mockllm.MockJSONBody()))
@@ -27,9 +27,37 @@ func TestUnit_BuildResponsePipeline_DefaultNoop(t *testing.T) {
 	require.Equal(t, mockllm.MockJSONBody(), string(wire))
 }
 
+func TestUnit_BuildResponsePipeline_EmbedMetadataRegistersStage(t *testing.T) {
+	p := buildResponsePipeline(logger.Discard("proxy"), nil, true)
+	require.NotNil(t, p)
+
+	body := []byte(mockllm.MockJSONBody())
+	chat, err := responsepipeline.Decode(body)
+	require.NoError(t, err)
+	// No metadata on ctx → stage no-op → verbatim bytes (dirty untouched).
+	out, err := p.Run(context.Background(), chat)
+	require.NoError(t, err)
+	wire, err := out.Bytes()
+	require.NoError(t, err)
+	require.Equal(t, body, wire)
+
+	meta := responsepipeline.IbexMetadata{
+		TraceID: "t1", SessionID: "s1", MemoriesInjected: 2,
+		ContextTokensUsed: 10, ContextAssemblyMs: 3, ProxyOverheadMs: 5,
+	}
+	chat2, err := responsepipeline.Decode(body)
+	require.NoError(t, err)
+	out2, err := p.Run(responsepipeline.WithIbexMetadata(context.Background(), meta), chat2)
+	require.NoError(t, err)
+	wire2, err := out2.Bytes()
+	require.NoError(t, err)
+	require.Contains(t, string(wire2), `"ibex"`)
+	require.Contains(t, string(wire2), `"memories_injected":2`)
+}
+
 func TestUnit_BuildResponsePipeline_WiresObserver(t *testing.T) {
 	reg := metrics.NewProxy("response-pipeline-test")
-	p := buildResponsePipeline(logger.Discard("proxy"), reg)
+	p := buildResponsePipeline(logger.Discard("proxy"), reg, false)
 	require.NotNil(t, p)
 
 	chat, err := responsepipeline.Decode([]byte(mockllm.MockJSONBody()))

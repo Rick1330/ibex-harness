@@ -23,6 +23,7 @@ type envConfig struct {
 	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	ContextEnabled          string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
+	ContextEmbedMetadata    string            `env:"IBEX_CONTEXT_EMBED_METADATA" envDefault:"false"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
 	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
@@ -214,6 +215,9 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
 		return err
 	}
+	if err := applyContextEmbedMetadataEnv(cfg, envCfg); err != nil {
+		return err
+	}
 	if err := applyProxyShutdownEnv(cfg, envCfg); err != nil {
 		return err
 	}
@@ -255,6 +259,15 @@ func applyContextEnabledEnv(cfg *Config, envCfg envConfig) error {
 		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
 	}
 	cfg.ContextEnabled = enabled
+	return nil
+}
+
+func applyContextEmbedMetadataEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.ContextEmbedMetadata, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_EMBED_METADATA: %w", err)
+	}
+	cfg.ContextEmbedMetadata = enabled
 	return nil
 }
 
