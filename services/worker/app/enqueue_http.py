@@ -150,6 +150,31 @@ def _idempo_prune_locked(now: float) -> None:
         del _idempo[key]
 
 
+def _idempo_completed(entry: _IdempoEntry | None, now: float) -> bool:
+    return entry is not None and entry.task_id is not None and entry.exp >= now
+
+
+def _idempo_decide(key: str, now: float) -> tuple[str | None, bool, threading.Event | None]:
+    """Decide claim outcome under lock: (task_id, owner, wait_event)."""
+    entry = _idempo.get(key)
+    if _idempo_completed(entry, now) and entry is not None:
+        return entry.task_id, False, None
+    if entry is not None and entry.task_id is None:
+        return None, False, entry.ready
+    ready = threading.Event()
+    _idempo[key] = _IdempoEntry(None, now + _IDEMPOTENCY_TTL_SEC, ready)
+    return None, True, None
+
+
+def _idempo_wait(wait_ev: threading.Event | None, deadline: float) -> bool:
+    if wait_ev is None:
+        return False
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    return wait_ev.wait(timeout=remaining)
+
+
 def _idempo_begin(key: str) -> tuple[str | None, bool]:
     """Reserve or observe an idempotency key.
 
@@ -160,23 +185,13 @@ def _idempo_begin(key: str) -> tuple[str | None, bool]:
     """
     deadline = time.monotonic() + _IDEMPOTENCY_WAIT_SEC
     while True:
-        wait_ev: threading.Event | None = None
         with _idempo_lock:
             now = time.monotonic()
             _idempo_prune_locked(now)
-            entry = _idempo.get(key)
-            if entry is not None and entry.task_id is not None and entry.exp >= now:
-                return entry.task_id, False
-            if entry is not None and entry.task_id is None:
-                wait_ev = entry.ready
-            else:
-                ready = threading.Event()
-                _idempo[key] = _IdempoEntry(None, now + _IDEMPOTENCY_TTL_SEC, ready)
-                return None, True
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or wait_ev is None:
-            return None, False
-        if not wait_ev.wait(timeout=remaining):
+            task_id, owner, wait_ev = _idempo_decide(key, now)
+            if task_id is not None or owner:
+                return task_id, owner
+        if not _idempo_wait(wait_ev, deadline):
             return None, False
 
 
@@ -208,7 +223,7 @@ def _idempo_get(key: str) -> str | None:
         now = time.monotonic()
         _idempo_prune_locked(now)
         entry = _idempo.get(key)
-        if entry is None or entry.task_id is None or entry.exp < now:
+        if not _idempo_completed(entry, now) or entry is None:
             return None
         return entry.task_id
 
@@ -250,6 +265,44 @@ def _idempotency_key(request: Request, kwargs: dict[str, Any]) -> str:
     return str(kwargs.get("session_id") or "")
 
 
+def _unavailable() -> JSONResponse:
+    return JSONResponse({"error": "unavailable"}, status_code=503)
+
+
+async def _admit_idempo(idem_key: str) -> tuple[bool, Response | None]:
+    """Returns (owner, early_response). early_response is set when not dispatching."""
+    if not idem_key:
+        return False, None
+    existing, owner = await asyncio.to_thread(_idempo_begin, idem_key)
+    if existing is not None:
+        return False, JSONResponse({"task_id": existing}, status_code=202)
+    if not owner:
+        return False, _unavailable()
+    return True, None
+
+
+async def _clear_idempo_reservation(owner: bool, idem_key: str) -> None:
+    if owner and idem_key:
+        await asyncio.to_thread(_idempo_fail, idem_key)
+
+
+async def _dispatch_owned(
+    request: Request, kwargs: dict[str, Any], *, owner: bool, idem_key: str
+) -> Response:
+    try:
+        task_id = await _dispatch_extract_bounded(request, kwargs)
+    except DispatchBusyError:
+        await _clear_idempo_reservation(owner, idem_key)
+        return _unavailable()
+    except Exception:
+        await _clear_idempo_reservation(owner, idem_key)
+        logger.exception("worker_enqueue_dispatch_failed")
+        return _unavailable()
+    if owner and idem_key:
+        await asyncio.to_thread(_idempo_complete, idem_key, task_id)
+    return JSONResponse({"task_id": task_id}, status_code=202)
+
+
 async def enqueue_extraction(request: Request) -> Response:
     settings: Settings = request.app.state.settings
     if denied := _authorize(request, settings):
@@ -261,29 +314,10 @@ async def enqueue_extraction(request: Request) -> Response:
         return _bad_request(exc)
 
     idem_key = _idempotency_key(request, kwargs)
-    owner = False
-    if idem_key:
-        existing, owner = await asyncio.to_thread(_idempo_begin, idem_key)
-        if existing is not None:
-            return JSONResponse({"task_id": existing}, status_code=202)
-        if not owner:
-            return JSONResponse({"error": "unavailable"}, status_code=503)
-
-    try:
-        task_id = await _dispatch_extract_bounded(request, kwargs)
-    except DispatchBusyError:
-        if owner and idem_key:
-            await asyncio.to_thread(_idempo_fail, idem_key)
-        return JSONResponse({"error": "unavailable"}, status_code=503)
-    except Exception:
-        if owner and idem_key:
-            await asyncio.to_thread(_idempo_fail, idem_key)
-        logger.exception("worker_enqueue_dispatch_failed")
-        return JSONResponse({"error": "unavailable"}, status_code=503)
-
-    if owner and idem_key:
-        await asyncio.to_thread(_idempo_complete, idem_key, task_id)
-    return JSONResponse({"task_id": task_id}, status_code=202)
+    owner, early = await _admit_idempo(idem_key)
+    if early is not None:
+        return early
+    return await _dispatch_owned(request, kwargs, owner=owner, idem_key=idem_key)
 
 
 def create_enqueue_app(

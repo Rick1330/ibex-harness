@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -48,12 +47,7 @@ func runTerminateCompleteCase(t *testing.T, tc terminateCompleteCase) {
 		org: org, agent: agent, ext: tc.ext, withBuffer: tc.withBuffer,
 	})
 	hits, srv := startEnqueueServer(t)
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + tc.ext),
-		enqueueFlight: newTerminateEnqueueFlight(),
-	}
+	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-"+tc.ext)
 	wg := armEnqueueWait(&h)
 	req := terminateAuthedRequest(t, terminateReqParams{
 		org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
@@ -65,71 +59,16 @@ func runTerminateCompleteCase(t *testing.T, tc terminateCompleteCase) {
 
 func TestUnit_SessionTerminate_EnqueueFailRetainsBuffer(t *testing.T) {
 	t.Parallel()
-	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
-	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
-	buf, _ := terminateBufferAndEnqueue(t, org, agent, "ext-fail")
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(srv.Close)
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-fail"),
-		enqueueFlight: newTerminateEnqueueFlight(),
-	}
-	wg := armEnqueueWait(&h)
-	req := terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-fail", body: `{"status":"completed"}`,
+	runTerminateRetainBufferCase(t, retainBufferCase{
+		ext: "ext-fail", statusCode: http.StatusServiceUnavailable, metric: "proxy-test-fail",
 	})
-	assertTerminateCode(t, h, req, http.StatusOK)
-	waitEnqueueDone(t, wg)
-	assertEnqueueHits(t, &hits, 1)
-	snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: "ext-fail",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Turns) != 1 {
-		t.Fatalf("retained turns=%d want 1", len(snap.Turns))
-	}
 }
 
 func TestUnit_SessionTerminate_NonAcceptedDoesNotAck(t *testing.T) {
 	t.Parallel()
-	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
-	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
-	buf, _ := terminateBufferAndEnqueue(t, org, agent, "ext-200")
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-200"),
-		enqueueFlight: newTerminateEnqueueFlight(),
-	}
-	wg := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-200", body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg)
-	assertEnqueueHits(t, &hits, 1)
-	snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: "ext-200",
+	runTerminateRetainBufferCase(t, retainBufferCase{
+		ext: "ext-200", statusCode: http.StatusOK, metric: "proxy-test-200",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Turns) != 1 {
-		t.Fatalf("non-Accepted must not Ack; turns=%d", len(snap.Turns))
-	}
 }
 
 func TestUnit_SessionTerminate_NoopRetryAfterFail(t *testing.T) {
@@ -147,33 +86,21 @@ func TestUnit_SessionTerminate_NoopRetryAfterFail(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(srv.Close)
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-retry"),
-		enqueueFlight: newTerminateEnqueueFlight(),
-	}
-	wg1 := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-retry", body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg1)
+	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-retry")
+	serveTerminateOnce(t, &h, org, agent, "ext-retry")
 	store.result = session.CompleteNoop
-	wg2 := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-retry", body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg2)
+	serveTerminateOnce(t, &h, org, agent, "ext-retry")
 	assertEnqueueHits(t, &hits, 2)
-	snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: "ext-retry",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Turns) != 0 {
-		t.Fatalf("turns=%d want 0 after successful Ack", len(snap.Turns))
-	}
+	assertBufferTurnCount(t, buf, org, agent, "ext-retry", 0)
+}
+
+func serveTerminateOnce(t *testing.T, h *sessionTerminateHandler, org, agent uuid.UUID, ext string) {
+	t.Helper()
+	wg := armEnqueueWait(h)
+	assertTerminateCode(t, *h, terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
+	}), http.StatusOK)
+	waitEnqueueDone(t, wg)
 }
 
 func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
@@ -192,17 +119,8 @@ func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(srv.Close)
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-empty"),
-		enqueueFlight: newTerminateEnqueueFlight(),
-	}
-	wg := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-empty", body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg)
+	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-empty")
+	serveTerminateOnce(t, &h, org, agent, "ext-empty")
 	assertEnqueueHits(t, &enqueueHits, 0)
 }
 
@@ -216,33 +134,12 @@ func TestUnit_SessionTerminate_OKThenNoopDoesNotReenqueue(t *testing.T) {
 	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
 	buf, _ := terminateBufferAndEnqueue(t, org, agent, ext)
 	hits, srv := startEnqueueServer(t)
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + ext),
-		enqueueFlight: newTerminateEnqueueFlight(),
-	}
-	wg1 := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg1)
+	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-"+ext)
+	serveTerminateOnce(t, &h, org, agent, ext)
 	assertEnqueueHits(t, hits, 1)
-	snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Turns) != 0 {
-		t.Fatalf("turns=%d want 0 after Ack", len(snap.Turns))
-	}
+	assertBufferTurnCount(t, buf, org, agent, ext, 0)
 	store.result = session.CompleteNoop
-	wg2 := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg2)
+	serveTerminateOnce(t, &h, org, agent, ext)
 	assertEnqueueHits(t, hits, 1)
 }
 
@@ -259,35 +156,33 @@ func TestUnit_SessionTerminate_ConcurrentExactlyOneEnqueue(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(srv.Close)
-	flight := newTerminateEnqueueFlight()
 	var done sync.WaitGroup
 	const n = 8
 	done.Add(n)
 	h := sessionTerminateHandler{
 		store: store, buffer: buf,
-		enqueue:       extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:           logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + ext),
-		enqueueFlight: flight,
+		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
+		log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + ext),
+		enqueueFlight: newTerminateEnqueueFlight(),
 		enqueueDone:   done.Done,
 	}
 	var start sync.WaitGroup
 	start.Add(n)
-	errs := make(chan int, n)
+	codes := make(chan int, n)
 	for range n {
 		go func() {
 			start.Done()
 			start.Wait()
 			rec := httptest.NewRecorder()
-			req := terminateAuthedRequest(t, terminateReqParams{
+			h.ServeHTTP(rec, terminateAuthedRequest(t, terminateReqParams{
 				org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
-			})
-			h.ServeHTTP(rec, req)
-			errs <- rec.Code
+			}))
+			codes <- rec.Code
 		}()
 	}
 	waitEnqueueDone(t, &done)
 	for range n {
-		if code := <-errs; code != http.StatusOK {
+		if code := <-codes; code != http.StatusOK {
 			t.Fatalf("status=%d want 200", code)
 		}
 	}

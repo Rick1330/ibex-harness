@@ -215,41 +215,17 @@ func TestUnit_PreparePostResponse_StickySkipsCheckpoint(t *testing.T) {
 func TestUnit_PreparePostResponse_StickyBuffersWithoutCheckpoint(t *testing.T) {
 	t.Parallel()
 	meta := testSnapshotMeta()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	buf, err := extractionbuffer.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
+	buf := newTestTurnBuffer(t)
 	rs := Resolved{ExternalID: "sticky-only"}
-	in := CheckpointInput{
-		Messages:       []llm.Message{{Role: "user", Content: "sticky-user"}, {Role: "assistant", Content: "ignored"}},
-		CompletionText: "sticky-reply", Model: "m", Provider: "p",
-	}
 	job := PreparePostResponse(PreparePostResponseInput{
 		Deps:     LifecycleDeps{Store: newMemSessionStore(), TurnBuffer: buf, Log: logger.Discard("t")},
 		Log:      logger.Discard("t"),
-		Resolved: rs, Meta: meta, In: in,
+		Resolved: rs, Meta: meta, In: bufferCheckpointInput("sticky-user", "sticky-reply"),
 		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
-	if job.DoCheckpoint {
-		t.Fatal("sticky-only must not checkpoint")
-	}
-	if !job.DoBuffer {
-		t.Fatal("sticky successful turn must buffer with Meta org/agent")
-	}
-	if job.BufferKey.OrgID != meta.OrgID || job.BufferKey.AgentID != meta.AgentID || job.BufferKey.ExternalID != rs.ExternalID {
-		t.Fatalf("BufferKey=%+v", job.BufferKey)
-	}
+	assertStickyBufferJob(t, job, meta, rs.ExternalID)
 	EnqueuePostResponse(job)
-	snap, err := buf.Peek(context.Background(), job.BufferKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Turns) != 2 {
-		t.Fatalf("flushed turns=%d want 2", len(snap.Turns))
-	}
+	assertFlushedTurns(t, buf, job.BufferKey, 2)
 }
 
 func TestUnit_PreparePostResponse_FailureKeepsTrace(t *testing.T) {
@@ -265,21 +241,11 @@ func TestUnit_PreparePostResponse_TurnBufferFlushes(t *testing.T) {
 	t.Parallel()
 	meta := testSnapshotMeta()
 	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	buf, err := extractionbuffer.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inWithUser := CheckpointInput{
-		Messages:       []llm.Message{{Role: "user", Content: "hello-buf"}, {Role: "assistant", Content: "ignored"}},
-		CompletionText: "reply", Model: "m", Provider: "p",
-	}
+	buf := newTestTurnBuffer(t)
 	job := PreparePostResponse(PreparePostResponseInput{
 		Deps:   LifecycleDeps{Store: newMemSessionStore(), TurnBuffer: buf, Log: logger.Discard("t")},
 		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-		Resolved: rs, Meta: meta, In: inWithUser,
+		Resolved: rs, Meta: meta, In: bufferCheckpointInput("hello-buf", "reply"),
 		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
 	if !job.DoBuffer {
@@ -289,12 +255,49 @@ func TestUnit_PreparePostResponse_TurnBufferFlushes(t *testing.T) {
 		t.Fatalf("buffer turns=%d", len(job.BufferTurns))
 	}
 	EnqueuePostResponse(job)
-	snap, err := buf.Peek(context.Background(), job.BufferKey)
+	assertFlushedTurns(t, buf, job.BufferKey, 2)
+}
+
+func newTestTurnBuffer(t *testing.T) *extractionbuffer.Buffer {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	buf, err := extractionbuffer.New(client, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snap.Turns) != 2 {
-		t.Fatalf("flushed turns=%d", len(snap.Turns))
+	return buf
+}
+
+func bufferCheckpointInput(user, reply string) CheckpointInput {
+	return CheckpointInput{
+		Messages:       []llm.Message{{Role: "user", Content: user}, {Role: "assistant", Content: "ignored"}},
+		CompletionText: reply, Model: "m", Provider: "p",
+	}
+}
+
+func assertStickyBufferJob(t *testing.T, job PostResponseJob, meta SnapshotMeta, ext string) {
+	t.Helper()
+	if job.DoCheckpoint {
+		t.Fatal("sticky-only must not checkpoint")
+	}
+	if !job.DoBuffer {
+		t.Fatal("sticky successful turn must buffer with Meta org/agent")
+	}
+	if job.BufferKey.OrgID != meta.OrgID || job.BufferKey.AgentID != meta.AgentID || job.BufferKey.ExternalID != ext {
+		t.Fatalf("BufferKey=%+v", job.BufferKey)
+	}
+}
+
+func assertFlushedTurns(t *testing.T, buf *extractionbuffer.Buffer, key extractionbuffer.LookupKey, want int) {
+	t.Helper()
+	snap, err := buf.Peek(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Turns) != want {
+		t.Fatalf("flushed turns=%d want %d", len(snap.Turns), want)
 	}
 }
 

@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -141,18 +144,6 @@ func terminateBufferAndEnqueue(t *testing.T, org, agent uuid.UUID, ext string) (
 	return buf, nil
 }
 
-func waitFor(t *testing.T, ok func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if ok() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("timeout waiting for condition")
-}
-
 func assertTerminateCode(t *testing.T, h sessionTerminateHandler, req *http.Request, want int) {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -160,6 +151,61 @@ func assertTerminateCode(t *testing.T, h sessionTerminateHandler, req *http.Requ
 	if rec.Code != want {
 		t.Fatalf("status=%d want %d body=%s", rec.Code, want, rec.Body.String())
 	}
+}
+
+func newTerminateHandler(
+	t *testing.T,
+	store *terminateStoreFake,
+	buf *extractionbuffer.Buffer,
+	srvURL, metricName string,
+) sessionTerminateHandler {
+	t.Helper()
+	return sessionTerminateHandler{
+		store: store, buffer: buf,
+		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srvURL, Token: "tok"}),
+		log:     logger.Discard("t"), metrics: metrics.NewProxy(metricName),
+		enqueueFlight: newTerminateEnqueueFlight(),
+	}
+}
+
+func assertBufferTurnCount(t *testing.T, buf *extractionbuffer.Buffer, org, agent uuid.UUID, ext string, want int) {
+	t.Helper()
+	snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Turns) != want {
+		t.Fatalf("turns=%d want %d", len(snap.Turns), want)
+	}
+}
+
+type retainBufferCase struct {
+	ext        string
+	statusCode int
+	metric     string
+}
+
+func runTerminateRetainBufferCase(t *testing.T, tc retainBufferCase) {
+	t.Helper()
+	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
+	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
+	buf, _ := terminateBufferAndEnqueue(t, org, agent, tc.ext)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(tc.statusCode)
+	}))
+	t.Cleanup(srv.Close)
+	h := newTerminateHandler(t, store, buf, srv.URL, tc.metric)
+	wg := armEnqueueWait(&h)
+	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
+	}), http.StatusOK)
+	waitEnqueueDone(t, wg)
+	assertEnqueueHits(t, &hits, 1)
+	assertBufferTurnCount(t, buf, org, agent, tc.ext, 1)
 }
 
 func shortTimeoutRedis(t *testing.T, addr string) *redis.Client {
