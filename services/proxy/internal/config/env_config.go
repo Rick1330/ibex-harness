@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ type envConfig struct {
 	RedisURL                ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	AuthGRPCAddr            string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
 	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
-	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET" envDefault:"127.0.0.1:9092"`
+	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
@@ -283,6 +284,7 @@ func applyRateLimitOverrides(cfg *Config, raw string) error {
 
 func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	cfg.ApplyDefaults()
+	applyUnsetContextGRPCTargetDefault(&cfg)
 
 	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
 	if err != nil {
@@ -295,6 +297,17 @@ func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	}
 	ibexconfig.LogDebug(envCfg)
 	return cfg, nil
+}
+
+// applyUnsetContextGRPCTargetDefault sets the dial target only when the env var is
+// absent. An explicitly empty IBEX_CONTEXT_GRPC_TARGET stays empty so dial is skipped.
+func applyUnsetContextGRPCTargetDefault(cfg *Config) {
+	if _, set := os.LookupEnv("IBEX_CONTEXT_GRPC_TARGET"); set {
+		return
+	}
+	if cfg.ContextGRPCTarget == "" {
+		cfg.ContextGRPCTarget = defaultContextGRPCTarget
+	}
 }
 
 func parseLogLevel(value string) (slog.Level, error) {
