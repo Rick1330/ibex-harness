@@ -209,11 +209,11 @@ func TestAssemble_nilResponseFallback(t *testing.T) {
 	assertStringField(t, got.FallbackReason, "nil_response", "FallbackReason")
 }
 
-type countingFallbackMetrics struct {
+type countingFallbackRecorder struct {
 	reasons []string
 }
 
-func (m *countingFallbackMetrics) IncContextAssembleFallback(reason string) {
+func (m *countingFallbackRecorder) RecordAssembleFallback(reason string) {
 	m.reasons = append(m.reasons, reason)
 }
 
@@ -228,8 +228,8 @@ func TestAssemble_recordsFallbackMetric(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &countingFallbackMetrics{}
-	c.SetFallbackMetrics(m)
+	m := &countingFallbackRecorder{}
+	c.SetAssembleFallbackRecorder(m)
 	_ = c.Assemble(context.Background(), AssembleParams{OrgID: "o", AgentID: "a", Model: "m", Query: "q"})
 	if len(m.reasons) != 1 || m.reasons[0] != codes.Unavailable.String() {
 		t.Fatalf("metrics = %#v, want one Unavailable", m.reasons)

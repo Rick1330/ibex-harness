@@ -172,7 +172,7 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.Proxy
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return contextClients{}, fmt.Errorf("context client: %w", err)
 	}
-	client.SetFallbackMetrics(m)
+	client.SetAssembleFallbackRecorder(m)
 	log.InfoCtx(context.Background(), "context grpc client configured",
 		"target", cfg.ContextGRPCTarget,
 		"timeout", cfg.ContextAssembleTimeout.String(),

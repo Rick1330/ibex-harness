@@ -16,9 +16,10 @@ import (
 
 const defaultAssembleTimeout = 45 * time.Millisecond
 
-// FallbackMetrics records Assemble fail-open events. Implementations must tolerate nil receivers.
-type FallbackMetrics interface {
-	IncContextAssembleFallback(reason string)
+// AssembleFallbackRecorder records fail-open Assemble outcomes (stable reason labels only).
+// Single-method interface named with the Go -er convention (Record → Recorder).
+type AssembleFallbackRecorder interface {
+	RecordAssembleFallback(reason string)
 }
 
 // Client wraps ContextAssemblyService.AssembleContext with a per-call deadline and fail-open semantics.
@@ -26,7 +27,7 @@ type Client struct {
 	client  contextv1.ContextAssemblyServiceClient
 	timeout time.Duration
 	log     *logger.Logger
-	metrics FallbackMetrics
+	metrics AssembleFallbackRecorder
 }
 
 // New creates a Client. timeout <= 0 defaults to 45ms (proxy assemble budget under ADR-0071).
@@ -43,8 +44,8 @@ func New(client contextv1.ContextAssemblyServiceClient, timeout time.Duration, l
 	return &Client{client: client, timeout: timeout, log: log}, nil
 }
 
-// SetFallbackMetrics attaches an optional fail-open counter (nil clears). Does not change New/Assemble signatures.
-func (c *Client) SetFallbackMetrics(m FallbackMetrics) {
+// SetAssembleFallbackRecorder attaches an optional fail-open counter (nil clears).
+func (c *Client) SetAssembleFallbackRecorder(m AssembleFallbackRecorder) {
 	if c == nil {
 		return
 	}
@@ -66,7 +67,7 @@ func (c *Client) Assemble(ctx context.Context, req AssembleParams) AssembleResul
 	defer cancel()
 
 	started := time.Now()
-	// TODO(3.5.Dx): optional packages/circuitbreaker around Assemble — deferred from 3.5.D.1
+	// Deferred (3.5.Dx): optional packages/circuitbreaker around Assemble was scoped out of 3.5.D.1
 	// (auth gRPC path has no breaker; provider path uses packages/circuitbreaker separately).
 	resp, err := c.client.AssembleContext(callCtx, toProto(req))
 	elapsed := time.Since(started)
@@ -104,5 +105,5 @@ func (c *Client) recordFallback(reason string) {
 	if c == nil || c.metrics == nil {
 		return
 	}
-	c.metrics.IncContextAssembleFallback(reason)
+	c.metrics.RecordAssembleFallback(reason)
 }

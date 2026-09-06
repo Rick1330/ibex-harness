@@ -21,8 +21,8 @@ type AssembleParams struct {
 	Query          string
 	RecentMessages []Message
 	Options        AssembleOptions
-	// TODO(3.5.D.x): populate SessionID, DirectiveVersionID, AvailableTokens, and score-weight
-	// options when the context server reads those AssembleContextRequest fields.
+	// Deferred (3.5.D.x): SessionID, DirectiveVersionID, AvailableTokens, and score-weight
+	// options stay omitted until the context server reads those AssembleContextRequest fields.
 }
 
 // AssembleResult is the fail-open outcome of Client.Assemble.

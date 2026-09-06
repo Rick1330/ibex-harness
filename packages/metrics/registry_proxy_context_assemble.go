@@ -9,6 +9,16 @@ func (r *ProxyRegistry) initContextAssembleMetrics() {
 	}, []string{"reason"})
 }
 
+// Compile-time check: ProxyRegistry satisfies contextclient.AssembleFallbackRecorder via RecordAssembleFallback.
+var _ interface {
+	RecordAssembleFallback(reason string)
+} = (*ProxyRegistry)(nil)
+
+// RecordAssembleFallback implements contextclient.AssembleFallbackRecorder.
+func (r *ProxyRegistry) RecordAssembleFallback(reason string) {
+	r.IncContextAssembleFallback(reason)
+}
+
 // IncContextAssembleFallback records a fail-open Assemble result.
 // reason is a stable label (gRPC status code name or nil_response); never org/agent/query content.
 func (r *ProxyRegistry) IncContextAssembleFallback(reason string) {
