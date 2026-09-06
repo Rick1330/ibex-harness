@@ -11,7 +11,7 @@ import (
 func TestUnit_SetupContextClient_EmptyTarget(t *testing.T) {
 	t.Parallel()
 
-	got, err := setupContextClient(config.Config{ContextGRPCTarget: ""}, logger.Discard("proxy"))
+	got, err := setupContextClient(config.Config{ContextGRPCTarget: ""}, logger.Discard("proxy"), nil)
 	if err != nil {
 		t.Fatalf("setupContextClient: %v", err)
 	}
@@ -27,7 +27,7 @@ func TestUnit_SetupContextClient_Dials(t *testing.T) {
 		Environment:            "development",
 		ContextGRPCTarget:      "127.0.0.1:9092",
 		ContextAssembleTimeout: 45 * time.Millisecond,
-	}, logger.Discard("proxy"))
+	}, logger.Discard("proxy"), nil)
 	if err != nil {
 		t.Fatalf("setupContextClient: %v", err)
 	}

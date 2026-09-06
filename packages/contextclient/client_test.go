@@ -161,6 +161,7 @@ func TestAssemble_failOpenStatusCodes(t *testing.T) {
 		{name: "unavailable", err: status.Error(codes.Unavailable, "down"), want: codes.Unavailable.String()},
 		{name: "canceled", err: status.Error(codes.Canceled, "bye"), want: codes.Canceled.String()},
 		{name: "invalid_argument", err: status.Error(codes.InvalidArgument, "bad"), want: codes.InvalidArgument.String()},
+		{name: "unimplemented", err: status.Error(codes.Unimplemented, "nope"), want: codes.Unimplemented.String()},
 		{name: "generic", err: errors.New("boom"), want: codes.Unknown.String()},
 	}
 	for _, tc := range cases {
@@ -188,6 +189,51 @@ func assertFailOpen(t *testing.T, rpcErr error, wantReason string) {
 	}
 	assertStringField(t, got.AssembledContext, "", "AssembledContext")
 	assertStringField(t, got.FallbackReason, wantReason, "FallbackReason")
+}
+
+func TestAssemble_nilResponseFallback(t *testing.T) {
+	t.Parallel()
+	mock := &mockContextAssemblyServiceClient{
+		assembleFn: func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
+			return nil, nil
+		},
+	}
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Assemble(context.Background(), AssembleParams{OrgID: "o", AgentID: "a", Model: "m", Query: "q"})
+	if !got.Fallback {
+		t.Fatalf("want Fallback=true for nil response, got %+v", got)
+	}
+	assertStringField(t, got.FallbackReason, "nil_response", "FallbackReason")
+}
+
+type countingFallbackMetrics struct {
+	reasons []string
+}
+
+func (m *countingFallbackMetrics) IncContextAssembleFallback(reason string) {
+	m.reasons = append(m.reasons, reason)
+}
+
+func TestAssemble_recordsFallbackMetric(t *testing.T) {
+	t.Parallel()
+	mock := &mockContextAssemblyServiceClient{
+		assembleFn: func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
+			return nil, status.Error(codes.Unavailable, "down")
+		},
+	}
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &countingFallbackMetrics{}
+	c.SetFallbackMetrics(m)
+	_ = c.Assemble(context.Background(), AssembleParams{OrgID: "o", AgentID: "a", Model: "m", Query: "q"})
+	if len(m.reasons) != 1 || m.reasons[0] != codes.Unavailable.String() {
+		t.Fatalf("metrics = %#v, want one Unavailable", m.reasons)
+	}
 }
 
 func TestAssemble_timeout(t *testing.T) {

@@ -175,7 +175,7 @@ func assembleProxyInfra(
 	if err != nil {
 		return proxyInfra{}, fmt.Errorf("auth clients: %w", err)
 	}
-	contextBundle, err := setupContextClient(cfg, log)
+	contextBundle, err := setupContextClient(cfg, log, reg)
 	if err != nil {
 		if authBundle.conn != nil {
 			_ = authBundle.conn.Close() //nolint:errcheck // best-effort cleanup; preserve dial error

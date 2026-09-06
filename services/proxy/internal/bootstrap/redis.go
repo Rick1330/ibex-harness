@@ -143,18 +143,18 @@ type contextClients struct {
 	conn   *grpc.ClientConn
 }
 
-func setupContextClient(cfg config.Config, log *logger.Logger) (contextClients, error) {
+func setupContextClient(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (contextClients, error) {
 	if strings.TrimSpace(cfg.ContextGRPCTarget) == "" {
 		return contextClients{}, nil
 	}
-	dialed, err := dialContextGRPC(cfg, log)
+	dialed, err := dialContextGRPC(cfg, log, m)
 	if err != nil {
 		return contextClients{}, err
 	}
 	return dialed, nil
 }
 
-func dialContextGRPC(cfg config.Config, log *logger.Logger) (contextClients, error) {
+func dialContextGRPC(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (contextClients, error) {
 	conn, err := grpc.NewClient(cfg.ContextGRPCTarget,
 		// Same env-gated transport as dialAuthGRPC: plaintext only in development.
 		// Staging/production use TLS12. Do not force TLS in development — local auth/context
@@ -172,6 +172,7 @@ func dialContextGRPC(cfg config.Config, log *logger.Logger) (contextClients, err
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return contextClients{}, fmt.Errorf("context client: %w", err)
 	}
+	client.SetFallbackMetrics(m)
 	log.InfoCtx(context.Background(), "context grpc client configured",
 		"target", cfg.ContextGRPCTarget,
 		"timeout", cfg.ContextAssembleTimeout.String(),

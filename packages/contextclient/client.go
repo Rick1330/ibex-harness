@@ -16,11 +16,17 @@ import (
 
 const defaultAssembleTimeout = 45 * time.Millisecond
 
+// FallbackMetrics records Assemble fail-open events. Implementations must tolerate nil receivers.
+type FallbackMetrics interface {
+	IncContextAssembleFallback(reason string)
+}
+
 // Client wraps ContextAssemblyService.AssembleContext with a per-call deadline and fail-open semantics.
 type Client struct {
 	client  contextv1.ContextAssemblyServiceClient
 	timeout time.Duration
 	log     *logger.Logger
+	metrics FallbackMetrics
 }
 
 // New creates a Client. timeout <= 0 defaults to 45ms (proxy assemble budget under ADR-0071).
@@ -35,6 +41,14 @@ func New(client contextv1.ContextAssemblyServiceClient, timeout time.Duration, l
 		timeout = defaultAssembleTimeout
 	}
 	return &Client{client: client, timeout: timeout, log: log}, nil
+}
+
+// SetFallbackMetrics attaches an optional fail-open counter (nil clears). Does not change New/Assemble signatures.
+func (c *Client) SetFallbackMetrics(m FallbackMetrics) {
+	if c == nil {
+		return
+	}
+	c.metrics = m
 }
 
 func isNilContextClient(client contextv1.ContextAssemblyServiceClient) bool {
@@ -59,7 +73,11 @@ func (c *Client) Assemble(ctx context.Context, req AssembleParams) AssembleResul
 	if err != nil {
 		return c.fallback(callCtx, err, elapsed)
 	}
-	return fromProto(resp)
+	out := fromProto(resp)
+	if out.Fallback {
+		c.recordFallback(out.FallbackReason)
+	}
+	return out
 }
 
 func (c *Client) fallback(callCtx context.Context, err error, elapsed time.Duration) AssembleResult {
@@ -78,5 +96,13 @@ func (c *Client) fallback(callCtx context.Context, err error, elapsed time.Durat
 	default:
 		c.log.ErrorCtx(callCtx, "context assemble unexpected failure; fail-open", attrs...)
 	}
+	c.recordFallback(reason)
 	return AssembleResult{Fallback: true, FallbackReason: reason}
+}
+
+func (c *Client) recordFallback(reason string) {
+	if c == nil || c.metrics == nil {
+		return
+	}
+	c.metrics.IncContextAssembleFallback(reason)
 }

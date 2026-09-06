@@ -206,6 +206,19 @@ func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
 	}
 }
 
+func TestProxyRegistry_ContextAssembleFallbackRegistered(t *testing.T) {
+	t.Parallel()
+	reg := NewProxy("test-proxy")
+	reg.IncContextAssembleFallback("DeadlineExceeded")
+	reg.IncContextAssembleFallback("")
+	names := gatherMetricNames(t, reg.Gatherer())
+	if _, ok := names["ibex_proxy_context_assemble_fallback_total"]; !ok {
+		t.Fatal("missing ibex_proxy_context_assemble_fallback_total")
+	}
+	var nilReg *ProxyRegistry
+	nilReg.IncContextAssembleFallback("Unavailable")
+}
+
 func TestProxyRegistry_AuthAndProviderDurationRegistered(t *testing.T) {
 	t.Parallel()
 

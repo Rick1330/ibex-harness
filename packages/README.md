@@ -47,7 +47,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |
 | `circuitbreaker/` | Shared consecutive-failure breaker used by proxy provider paths ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx) family); optional wrap for context Assemble deferred |
-| `contextclient/` | Fail-open gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../web/content/docs/adr/0071-context-grpc-degradation-deadline.mdx)); dial/wire lives in proxy bootstrap |
+| `contextclient/` | Fail-open Go gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../web/content/docs/adr/0071-context-grpc-degradation-deadline.mdx)): `Assemble` never returns a Go `error` (`Fallback` flag); default **45ms** `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`; dial/wire in proxy bootstrap |
 
 ---
 

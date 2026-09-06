@@ -80,7 +80,7 @@ func (c *Client) Assemble(ctx context.Context, req AssembleRequest) AssembleResu
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [x] Fully unit-tested with fault injection for fail-open paths (server L0–L2 classification remains server-side; client covers success + RPC failure → Fallback)
+- [x] Client fail-open paths (timeout, transport error, non-OK gRPC status) unit-tested; L0–L2 degradation-level fault injection is covered server-side in 3.5.C.6, not duplicated client-side — confirmed scope decision, not a gap
 - [x] `Assemble` never returns a Go `error` — always returns `AssembleResult` with `Fallback` flag
 - [x] Default timeout 45ms, independent of server's internal 40ms budget
 - [x] Tests for the new behavior pass
