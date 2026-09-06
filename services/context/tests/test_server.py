@@ -8,6 +8,7 @@ import sys
 import types
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from uuid import uuid4
 
 import grpc
@@ -133,21 +134,32 @@ async def _rpc_channel(assembler: ContextAssembler | None = None):
         await server.stop(grace=None)
 
 
-def _unary_stub(channel, pb2, method: str, req_cls, resp_cls):  # type: ignore[no-untyped-def]
+@dataclass(frozen=True, slots=True)
+class _Codec:
+    request: object
+    response: object
+
+
+def _unary_stub(channel, method: str, codec: _Codec):  # type: ignore[no-untyped-def]
     return channel.unary_unary(
         f"/{_SERVICE_NAME}/{method}",
-        request_serializer=req_cls.SerializeToString,
-        response_deserializer=resp_cls.FromString,
+        request_serializer=codec.request.SerializeToString,
+        response_deserializer=codec.response.FromString,
     )
 
 
-def _assemble_req(pb2, *, org_id: str | None = None, model: str | None = None, **extra):  # type: ignore[no-untyped-def]
-    return pb2.AssembleContextRequest(
-        org_id=str(ORG) if org_id is None else org_id,
-        agent_id=str(AGENT),
-        model=MODEL if model is None else model,
-        **extra,
-    )
+def _assemble_codec(pb2) -> _Codec:  # type: ignore[no-untyped-def]
+    return _Codec(pb2.AssembleContextRequest, pb2.AssembleContextResponse)
+
+
+def _assemble_req(pb2, **fields):  # type: ignore[no-untyped-def]
+    payload = {
+        "org_id": str(ORG),
+        "agent_id": str(AGENT),
+        "model": MODEL,
+    }
+    payload.update(fields)
+    return pb2.AssembleContextRequest(**payload)
 
 
 async def _rpc_raises(
@@ -174,93 +186,101 @@ class _AbortCtx:
 @pytest.mark.asyncio
 async def test_assemble_context_rpc_l0(pb2) -> None:
     async with _rpc_channel() as channel:
-            stub = _unary_stub(
-                channel,
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+        resp = await stub(
+            _assemble_req(
                 pb2,
-                "AssembleContext",
-                pb2.AssembleContextRequest,
-                pb2.AssembleContextResponse,
-            )
-            resp = await stub(
-                _assemble_req(
-                    pb2,
-                    query="theme",
-                    recent_messages=[pb2.Message(role="user", content="hello")],
-                ),
-                timeout=2.0,
-            )
-            assert resp.assembled_context
-            assert resp.memories_included >= 1
-            assert resp.metrics.candidates_evaluated >= 1
-            assert resp.metrics.total_ms >= 0
+                query="theme",
+                recent_messages=[pb2.Message(role="user", content="hello")],
+            ),
+            timeout=2.0,
+        )
+        assert resp.assembled_context
+        assert resp.memories_included >= 1
+        assert resp.metrics.candidates_evaluated >= 1
+        assert resp.metrics.total_ms >= 0
 
 
 @pytest.mark.asyncio
 async def test_assemble_context_l3_deadline_exceeded(pb2) -> None:
     settings = _settings()
-    retriever = ParallelRetriever(
+    assembler = _SlowAssembler(
         settings=settings,
-        memory=_StubMemory(),  # type: ignore[arg-type]
-        directive=_StubDirective(),
+        retriever=ParallelRetriever(
+            settings=settings,
+            memory=_StubMemory(),  # type: ignore[arg-type]
+            directive=_StubDirective(),
+        ),
     )
-    assembler = _SlowAssembler(settings=settings, retriever=retriever)
     async with _rpc_channel(assembler) as channel:
-            stub = _unary_stub(
-                channel,
-                pb2,
-                "AssembleContext",
-                pb2.AssembleContextRequest,
-                pb2.AssembleContextResponse,
-            )
-            req = _assemble_req(
-                pb2,
-                query="theme",
-                recent_messages=[pb2.Message(role="user", content="hello")],
-            )
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+        req = _assemble_req(
+            pb2,
+            query="theme",
+            recent_messages=[pb2.Message(role="user", content="hello")],
+        )
 
-            async def _call() -> object:
-                return await stub(req, timeout=0.05)
+        async def _call() -> object:
+            return await stub(req, timeout=0.05)
 
-            err = await _rpc_raises(_call)
-            assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+        err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
 
 
 @pytest.mark.asyncio
-async def test_search_memories_unimplemented(pb2) -> None:
+@pytest.mark.parametrize(
+    ("method", "codec_factory", "request_factory"),
+    [
+        (
+            "SearchMemories",
+            lambda pb2: _Codec(pb2.SearchMemoriesRequest, pb2.SearchMemoriesResponse),
+            lambda pb2: pb2.SearchMemoriesRequest(org_id=str(ORG), agent_id=str(AGENT)),
+        ),
+        (
+            "RecordMemoryFeedback",
+            lambda pb2: _Codec(
+                pb2.RecordMemoryFeedbackRequest,
+                pb2.RecordMemoryFeedbackResponse,
+            ),
+            lambda pb2: pb2.RecordMemoryFeedbackRequest(
+                org_id=str(ORG),
+                memory_ids=[str(uuid4())],
+                feedback="positive",
+            ),
+        ),
+    ],
+)
+async def test_unimplemented_rpcs(pb2, method, codec_factory, request_factory) -> None:
     async with _rpc_channel() as channel:
-            stub = _unary_stub(
-                channel,
-                pb2,
-                "SearchMemories",
-                pb2.SearchMemoriesRequest,
-                pb2.SearchMemoriesResponse,
-            )
-            req = pb2.SearchMemoriesRequest(org_id=str(ORG), agent_id=str(AGENT))
+        stub = _unary_stub(channel, method, codec_factory(pb2))
+        req = request_factory(pb2)
 
-            async def _call() -> object:
-                return await stub(req)
+        async def _call() -> object:
+            return await stub(req)
 
-            err = await _rpc_raises(_call)
-            assert err.code() == grpc.StatusCode.UNIMPLEMENTED
+        err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.UNIMPLEMENTED
 
 
 @pytest.mark.asyncio
-async def test_invalid_org_id(pb2) -> None:
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"org_id": "not-a-uuid"},
+        {"org_id": ""},
+        {"model": ""},
+    ],
+)
+async def test_assemble_invalid_argument(pb2, fields) -> None:
     async with _rpc_channel() as channel:
-            stub = _unary_stub(
-                channel,
-                pb2,
-                "AssembleContext",
-                pb2.AssembleContextRequest,
-                pb2.AssembleContextResponse,
-            )
-            req = _assemble_req(pb2, org_id="not-a-uuid")
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+        req = _assemble_req(pb2, **fields)
 
-            async def _call() -> object:
-                return await stub(req, timeout=2.0)
+        async def _call() -> object:
+            return await stub(req, timeout=2.0)
 
-            err = await _rpc_raises(_call)
-            assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+        err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 
 @pytest.mark.asyncio
@@ -274,12 +294,14 @@ async def test_servicer_direct_assemble(pb2) -> None:
         async def abort(self, code, details):  # type: ignore[no-untyped-def]
             raise grpc.aio.AioRpcError(code, details=details)
 
-    req = _assemble_req(
-        pb2,
-        query="q",
-        recent_messages=[pb2.Message(role="user", content="hi")],
+    resp = await servicer.assemble_context(
+        _assemble_req(
+            pb2,
+            query="q",
+            recent_messages=[pb2.Message(role="user", content="hi")],
+        ),
+        _Ctx(),  # type: ignore[arg-type]
     )
-    resp = await servicer.assemble_context(req, _Ctx())  # type: ignore[arg-type]
     assert resp.assembled_context
     assert "user: hi" in resp.assembled_context or resp.memories_included >= 0
 
@@ -287,11 +309,10 @@ async def test_servicer_direct_assemble(pb2) -> None:
 @pytest.mark.asyncio
 async def test_servicer_cancelled_before_assemble(pb2) -> None:
     servicer = ContextAssemblyServicer(_assembler())
-    req = _assemble_req(pb2)
     ctx = _AbortCtx(cancelled=True)
 
     async def _call() -> object:
-        return await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
+        return await servicer.assemble_context(_assemble_req(pb2), ctx)  # type: ignore[arg-type]
 
     err = await _rpc_raises(_call)
     assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
@@ -301,7 +322,6 @@ async def test_servicer_cancelled_before_assemble(pb2) -> None:
 @pytest.mark.asyncio
 async def test_servicer_cancelled_after_assemble(pb2) -> None:
     servicer = ContextAssemblyServicer(_assembler())
-    req = _assemble_req(pb2, query="q")
 
     class _FlipCtx(_AbortCtx):
         def __init__(self) -> None:
@@ -315,7 +335,10 @@ async def test_servicer_cancelled_after_assemble(pb2) -> None:
     ctx = _FlipCtx()
 
     async def _call() -> object:
-        return await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
+        return await servicer.assemble_context(
+            _assemble_req(pb2, query="q"),
+            ctx,  # type: ignore[arg-type]
+        )
 
     err = await _rpc_raises(_call)
     assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
@@ -338,42 +361,20 @@ async def test_servicer_assemble_cancelled_error(pb2) -> None:
             self.aborts.append(code)
 
     settings = _settings()
-    retriever = ParallelRetriever(
-        settings=settings,
-        memory=_StubMemory(),  # type: ignore[arg-type]
-        directive=_StubDirective(),
-    )
     servicer = ContextAssemblyServicer(
-        _CancelAssembler(settings=settings, retriever=retriever)
+        _CancelAssembler(
+            settings=settings,
+            retriever=ParallelRetriever(
+                settings=settings,
+                memory=_StubMemory(),  # type: ignore[arg-type]
+                directive=_StubDirective(),
+            ),
+        )
     )
-    req = _assemble_req(pb2)
     ctx = _Ctx()
     with pytest.raises(asyncio.CancelledError):
-        await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
+        await servicer.assemble_context(_assemble_req(pb2), ctx)  # type: ignore[arg-type]
     assert ctx.aborts == [grpc.StatusCode.DEADLINE_EXCEEDED]
-
-
-@pytest.mark.asyncio
-async def test_record_memory_feedback_unimplemented(pb2) -> None:
-    async with _rpc_channel() as channel:
-            stub = _unary_stub(
-                channel,
-                pb2,
-                "RecordMemoryFeedback",
-                pb2.RecordMemoryFeedbackRequest,
-                pb2.RecordMemoryFeedbackResponse,
-            )
-            req = pb2.RecordMemoryFeedbackRequest(
-                org_id=str(ORG),
-                memory_ids=[str(uuid4())],
-                feedback="positive",
-            )
-
-            async def _call() -> object:
-                return await stub(req)
-
-            err = await _rpc_raises(_call)
-            assert err.code() == grpc.StatusCode.UNIMPLEMENTED
 
 
 @pytest.mark.asyncio
@@ -467,41 +468,3 @@ def test_dunder_main_module(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.server.main", _fake_main)
     runpy.run_module("app.__main__", run_name="__main__")
     assert called == [True]
-
-
-@pytest.mark.asyncio
-async def test_missing_model_invalid(pb2) -> None:
-    async with _rpc_channel() as channel:
-            stub = _unary_stub(
-                channel,
-                pb2,
-                "AssembleContext",
-                pb2.AssembleContextRequest,
-                pb2.AssembleContextResponse,
-            )
-            req = _assemble_req(pb2, model="")
-
-            async def _call() -> object:
-                return await stub(req, timeout=2.0)
-
-            err = await _rpc_raises(_call)
-            assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-
-@pytest.mark.asyncio
-async def test_empty_org_id_invalid(pb2) -> None:
-    async with _rpc_channel() as channel:
-            stub = _unary_stub(
-                channel,
-                pb2,
-                "AssembleContext",
-                pb2.AssembleContextRequest,
-                pb2.AssembleContextResponse,
-            )
-            req = _assemble_req(pb2, org_id="")
-
-            async def _call() -> object:
-                return await stub(req, timeout=2.0)
-
-            err = await _rpc_raises(_call)
-            assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
