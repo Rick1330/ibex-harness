@@ -19,6 +19,8 @@ type envConfig struct {
 	RedisURL                ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	AuthGRPCAddr            string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
 	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET" envDefault:"127.0.0.1:9092"`
+	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
 	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
@@ -169,15 +171,16 @@ func parseCSVModels(raw string) []string {
 
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 	return Config{
-		Environment:     envCfg.Environment,
-		ServiceName:     envCfg.ServiceName,
-		LogLevel:        level,
-		Port:            envCfg.Port,
-		RedisURL:        envCfg.RedisURL.String(),
-		AuthGRPCAddr:    envCfg.AuthGRPCAddr,
-		RequestIDHeader: envCfg.RequestIDHeader,
-		TraceIDHeader:   envCfg.TraceIDHeader,
-		ErrorDocsBase:   envCfg.ErrorDocsBase,
+		Environment:       envCfg.Environment,
+		ServiceName:       envCfg.ServiceName,
+		LogLevel:          level,
+		Port:              envCfg.Port,
+		RedisURL:          envCfg.RedisURL.String(),
+		AuthGRPCAddr:      envCfg.AuthGRPCAddr,
+		ContextGRPCTarget: envCfg.ContextGRPCTarget,
+		RequestIDHeader:   envCfg.RequestIDHeader,
+		TraceIDHeader:     envCfg.TraceIDHeader,
+		ErrorDocsBase:     envCfg.ErrorDocsBase,
 		RateLimit: RateLimitConfig{
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
@@ -207,6 +210,9 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
+	}
+	if envCfg.ContextAssembleTimeout > 0 {
+		cfg.ContextAssembleTimeout = envCfg.ContextAssembleTimeout
 	}
 	if envCfg.MaxRequestBodyBytes > 0 {
 		cfg.MaxRequestBodyBytes = envCfg.MaxRequestBodyBytes

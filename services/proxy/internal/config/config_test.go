@@ -9,14 +9,16 @@ import (
 
 func validProxyConfig() Config {
 	cfg := Config{
-		Environment:         "development",
-		ServiceName:         "proxy",
-		Port:                "8080",
-		AuthGRPCAddr:        "127.0.0.1:9091",
-		AuthValidateTimeout: defaultAuthValidateTimeout,
-		MaxRequestBodyBytes: defaultMaxRequestBodyBytes,
-		RequestIDHeader:     defaultRequestIDHeader,
-		TraceIDHeader:       defaultTraceIDHeader,
+		Environment:            "development",
+		ServiceName:            "proxy",
+		Port:                   "8080",
+		AuthGRPCAddr:           "127.0.0.1:9091",
+		AuthValidateTimeout:    defaultAuthValidateTimeout,
+		ContextGRPCTarget:      defaultContextGRPCTarget,
+		ContextAssembleTimeout: defaultContextAssembleTimeout,
+		MaxRequestBodyBytes:    defaultMaxRequestBodyBytes,
+		RequestIDHeader:        defaultRequestIDHeader,
+		TraceIDHeader:          defaultTraceIDHeader,
 	}
 	cfg.ApplyDefaults()
 	return cfg

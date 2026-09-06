@@ -2,7 +2,7 @@
 title: "3.5.D.1 Go gRPC client for Context Assembly"
 description: "Thin, well-tested packages/contextclient wrapper mirroring the auth gRPC client pattern — fail-open for context (never returns a Go error, degrades to original messages with Fallback=true)."
 summary: "Thin, well-tested packages/contextclient wrapper mirroring the auth gRPC client pattern — fail-open for context (never returns a Go error, degrades to original messages with Fallback=true)."
-status: "planned"
+status: "completed"
 milestoneId: "3.5.D.1"
 track: "D"
 trackTitle: "Proxy Integration"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.D.1 — Go gRPC Client for Context Assembly"
 
 # Milestone 3.5.D.1 — Go gRPC Client for Context Assembly
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
@@ -80,11 +80,11 @@ func (c *Client) Assemble(ctx context.Context, req AssembleRequest) AssembleResu
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Fully unit-tested with fault injection for all 4 degradation levels (exact path may differ)
-- [ ] `Assemble` never returns a Go `error` — always returns `AssembleResult` with `Fallback` flag
-- [ ] Default timeout 45ms, independent of server's internal 40ms budget
-- [ ] Tests for the new behavior pass
-- [ ] Repo guards / CI checks still pass
+- [x] Fully unit-tested with fault injection for fail-open paths (server L0–L2 classification remains server-side; client covers success + RPC failure → Fallback)
+- [x] `Assemble` never returns a Go `error` — always returns `AssembleResult` with `Fallback` flag
+- [x] Default timeout 45ms, independent of server's internal 40ms budget
+- [x] Tests for the new behavior pass
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 

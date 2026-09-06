@@ -52,6 +52,8 @@ See [.env.example](.env.example).
 | `REDIS_URL` | (empty) | Required for `/ready` when set |
 | `IBEX_AUTH_GRPC_ADDR` | `127.0.0.1:9091` | Auth gRPC target |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget |
+| `IBEX_CONTEXT_GRPC_TARGET` | `127.0.0.1:9092` | Context assembly gRPC dial target (empty skips dial) |
+| `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | `45ms` | Per-call AssembleContext budget (fail-open) |
 | `IBEX_AUTH_CACHE_ENABLED` | `true` | Bloom + LRU in front of ValidateToken |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | `1048576` | Chat body cap (1 MiB) |
 | `IBEX_REQUEST_ID_HEADER` | `X-Request-ID` | Incoming/outgoing request ID |
@@ -98,7 +100,7 @@ tokenizer registry, and non-streaming response pipeline are shipped (m2.5.G1.M1�
 m2.5.G2.M1, m2.5.G3.M1 / ADR-0040–0044). Still planned:
 
 - Streaming response pipeline design (G3.M2)
-- Later: fail-open context-assembly client (`IBEX_CONTEXT_*`, Phase 3.5)
+- Later: HTTP injection + feature flag for context assembly (`IBEX_CONTEXT_ENABLED`, 3.5.D.2 / D.5); dial client shipped in 3.5.D.1 (`IBEX_CONTEXT_GRPC_TARGET`)
 
 Paths and env names may change during implementation — update this README and `ENVIRONMENT_VARIABLES.md` when they land.
 

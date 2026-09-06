@@ -23,6 +23,11 @@ var invalidProxyConfigCases = []struct {
 	{name: "port too large", mutate: func(c *Config) { c.Port = "70000" }},
 	{name: "empty service name", mutate: func(c *Config) { c.ServiceName = "  " }},
 	{name: "invalid auth grpc addr", mutate: func(c *Config) { c.AuthGRPCAddr = "not-host-port" }},
+	{name: "invalid context grpc target", mutate: func(c *Config) { c.ContextGRPCTarget = "not-host-port" }},
+	{name: "zero context assemble timeout", mutate: func(c *Config) {
+		c.ContextGRPCTarget = "127.0.0.1:9092"
+		c.ContextAssembleTimeout = 0
+	}},
 	{name: "zero rate limit rpm", mutate: func(c *Config) { c.RateLimit.DefaultRPM = 0 }},
 	{
 		name: "auth grpc required outside development",
