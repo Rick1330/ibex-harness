@@ -78,7 +78,12 @@ func (m *memSessionStore) AppendCheckpoint(_ context.Context, p pkgsession.Check
 	return nil
 }
 
-func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) (pkgsession.CompleteResult, error) {
+	return pkgsession.CompleteOK, nil
+}
+func (m *memSessionStore) CompleteByExternalID(context.Context, uuid.UUID, uuid.UUID, string) (pkgsession.CompleteResult, uuid.UUID, error) {
+	return pkgsession.CompleteNotFound, uuid.Nil, nil
+}
 
 func (m *memSessionStore) AbandonIdle(context.Context, pkgsession.AbandonIdleParams) (pkgsession.AbandonIdleResult, error) {
 	return pkgsession.AbandonIdleResult{}, nil

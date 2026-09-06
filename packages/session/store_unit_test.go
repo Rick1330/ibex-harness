@@ -61,7 +61,7 @@ func TestUnit_ClosedDB_SurfaceBeginErrors(t *testing.T) {
 		t.Fatal("AppendCheckpoint: expected begin error")
 	}
 
-	if err := store.Complete(ctx, sessionID, orgID); err == nil {
+	if _, err := store.Complete(ctx, sessionID, orgID); err == nil {
 		t.Fatal("Complete: expected begin error")
 	}
 

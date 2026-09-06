@@ -1136,13 +1136,24 @@ Content-Type: application/json
 
 **Terminate a session**
 
+Marks an active session `completed` and may enqueue memory extraction from the Redis turn
+buffer (ADR-0072).
+
+**Path parameter:** `{session_id}` is the sticky **external_id** — the same value carried by
+`X-IBEX-Session-ID` on chat completions — **not** the Postgres row UUID `sessions.id`.
+(Earlier examples that looked like opaque row UUIDs were misleading.)
+
 **Required Permission:** `session:terminate`
+
+**Required Header:** `X-IBEX-Agent-ID` (same agent-scoping as chat; sessions are unique on
+`(org_id, agent_id, external_id)`).
 
 **Request:**
 
 ```http
-POST /v1/sessions/7c9e6679-.../terminate
+POST /v1/sessions/sess_client_abc123/terminate
 Authorization: Bearer {token}
+X-IBEX-Agent-ID: 7c9e6679-...
 Content-Type: application/json
 
 {
@@ -1151,21 +1162,33 @@ Content-Type: application/json
 }
 ```
 
+Only `status: "completed"` is supported. Calling terminate again on an already-completed
+session is safe and returns 200 with `final_status: "completed"`. If a previous extraction
+enqueue attempt did not complete, terminate will retry it (retained Redis turns); if enqueue
+already succeeded and the buffer was acknowledged, no additional work is enqueued.
+
 **Response: 200 OK**
 
 ```json
 {
   "data": {
-    "session_id": "7c9e6679-...",
+    "session_id": "sess_client_abc123",
     "final_status": "completed",
-    "terminated_at": "2024-01-20T16:30:00.000Z",
-    "summary": {
-      "total_turns": 47,
-      "total_tokens": 89420,
-      "memories_created": 5,
-      "memories_read": 142,
-      "duration_seconds": 5400
-    }
+    "terminated_at": "2024-01-20T16:30:00.000Z"
+  }
+}
+```
+
+`data.session_id` echoes the sticky external_id from the path.
+
+**Response: 404 Not Found** (missing, soft-deleted, or wrong org/agent scope — no existence leak)
+
+```json
+{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Session not found",
+    "request_id": "req_..."
   }
 }
 ```

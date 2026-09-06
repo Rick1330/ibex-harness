@@ -11,15 +11,18 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/tokenizer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/redis/go-redis/v9"
@@ -225,20 +228,10 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
 	}
 	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
-	responsePipeline := buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata)
-	deps := proxyhttp.RouterDeps{
-		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
-		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
-		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
-		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
-		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
-		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, tokenizerReg),
-		ProviderRegistry: providerReg,
-		ResponsePipeline: responsePipeline,
-		IdempotencyStore: idempStore,
-		ContextClient:    in.infra.ctxClients.client,
-	}
-	assignTraceWriter(&deps, traceWriter)
+	deps := assembledRouterDeps(routerAssembleParts{
+		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
+		idempStore: idempStore, traceWriter: traceWriter,
+	})
 	server, err := newHTTPServer(deps)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
@@ -251,6 +244,38 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		checkpointPool: in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
 		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
 	}, nil
+}
+
+type routerAssembleParts struct {
+	in           finishAssembledCoreInput
+	providerReg  *provider.Registry
+	tokenizerReg *tokenizer.Registry
+	idempStore   idempotency.Store
+	traceWriter  *ibexch.Writer
+}
+
+func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
+	in := p.in
+	deps := proxyhttp.RouterDeps{
+		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
+		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
+		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
+		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
+		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
+		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
+		ProviderRegistry: p.providerReg,
+		ResponsePipeline: buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
+		IdempotencyStore: p.idempStore,
+		ContextClient:    in.infra.ctxClients.client,
+		TurnBuffer:       in.infra.sessionStack.turnBuffer,
+		ExtractionEnqueue: extractionenqueue.New(extractionenqueue.Config{
+			BaseURL: in.cfg.WorkerEnqueueBaseURL,
+			Token:   in.cfg.WorkerEnqueueAPIToken,
+			Timeout: extractionenqueue.DefaultTimeout,
+		}),
+	}
+	assignTraceWriter(&deps, p.traceWriter)
+	return deps
 }
 
 func collectGRPCConns(conns ...*grpc.ClientConn) []*grpc.ClientConn {

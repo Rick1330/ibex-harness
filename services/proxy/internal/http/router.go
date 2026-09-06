@@ -22,6 +22,8 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
@@ -57,7 +59,9 @@ type RouterDeps struct {
 	IdempotencyStore   idempotency.Store
 	// ContextClient is the fail-open Assemble client from bootstrap (nil when
 	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
-	ContextClient *contextclient.Client
+	ContextClient     *contextclient.Client
+	TurnBuffer        *extractionbuffer.Buffer
+	ExtractionEnqueue *extractionenqueue.Client
 }
 
 // NewRouter builds the proxy HTTP handler. A non-nil error means the router
@@ -121,6 +125,8 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) pr
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.Config.IdempotencyRedisTimeout),
 		contextClient:            deps.ContextClient,
 		contextEnabled:           deps.Config.ContextEnabled,
+		turnBuffer:               deps.TurnBuffer,
+		extractionEnqueue:        deps.ExtractionEnqueue,
 	}
 }
 
@@ -197,6 +203,7 @@ type chatCompletionHandler struct {
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler
 	contextEnabled           bool
+	turnBuffer               *extractionbuffer.Buffer
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

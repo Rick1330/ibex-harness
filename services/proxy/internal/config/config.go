@@ -138,6 +138,9 @@ type Config struct {
 	ClickHouseFlushMS       int
 	IdempotencyTTL          time.Duration
 	IdempotencyRedisTimeout time.Duration
+	ExtractionTurnsTTL      time.Duration
+	WorkerEnqueueBaseURL    string
+	WorkerEnqueueAPIToken   string
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -225,6 +228,9 @@ func (c *Config) applySessionDefaults() {
 	applyDurationDefault(&c.SessionGetOrCreateTO, defaultSessionGetOrCreateTO)
 	applyDurationDefaultZeroOnly(&c.SessionIdleTimeout, defaultSessionIdleTimeout)
 	applyDurationDefaultZeroOnly(&c.SessionSweepInterval, defaultSessionSweepInterval)
+	if c.ExtractionTurnsTTL <= 0 {
+		c.ExtractionTurnsTTL = c.SessionIdleTimeout
+	}
 }
 
 // applyDurationDefault replaces non-positive durations with def (cache/timeout sanitization).

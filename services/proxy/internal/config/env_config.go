@@ -71,6 +71,9 @@ type envConfig struct {
 	ClickHouseFlushMS       int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
 	IdempotencyTTL          time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
 	IdempotencyRedisTO      time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
+	ExtractionTurnsTTL      time.Duration     `env:"IBEX_EXTRACTION_TURNS_TTL"`
+	WorkerEnqueueBaseURL    string            `env:"IBEX_WORKER_ENQUEUE_BASE_URL"`
+	WorkerEnqueueAPIToken   ibexconfig.Secret `env:"IBEX_WORKER_ENQUEUE_API_TOKEN" secret:"true"`
 	TokenizerMode           string            `env:"IBEX_TOKENIZER_MODE" envDefault:"local"`
 	TokenizerAssetDir       string            `env:"IBEX_TOKENIZER_ASSET_DIR"`
 }
@@ -207,6 +210,9 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		ClickHouseFlushMS:       envCfg.ClickHouseFlushMS,
 		IdempotencyTTL:          envCfg.IdempotencyTTL,
 		IdempotencyRedisTimeout: envCfg.IdempotencyRedisTO,
+		ExtractionTurnsTTL:      envCfg.ExtractionTurnsTTL,
+		WorkerEnqueueBaseURL:    strings.TrimSpace(envCfg.WorkerEnqueueBaseURL),
+		WorkerEnqueueAPIToken:   envCfg.WorkerEnqueueAPIToken.String(),
 	}
 }
 

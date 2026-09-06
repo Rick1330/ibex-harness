@@ -35,7 +35,7 @@ func (r *ProxyRegistry) initSessionMetrics() {
 	for _, result := range []string{"ok", "duplicate", "error"} {
 		r.sessionCheckpoint.WithLabelValues(result)
 	}
-	for _, result := range []string{"ok", "noop", "error"} {
+	for _, result := range []string{"ok", "noop", "not_found", "error"} {
 		r.sessionComplete.WithLabelValues(result)
 	}
 	r.sessionSweeperMarked.WithLabelValues("abandoned")
@@ -60,7 +60,7 @@ func (r *ProxyRegistry) IncSessionCheckpoint(result string) {
 	r.sessionCheckpoint.WithLabelValues(boundSessionResult(result, sessionCheckpointResults)).Inc()
 }
 
-// IncSessionComplete records a Complete outcome (ok|noop|error).
+// IncSessionComplete records a Complete outcome (ok|noop|not_found|error).
 func (r *ProxyRegistry) IncSessionComplete(result string) {
 	r.sessionComplete.WithLabelValues(boundSessionResult(result, sessionCompleteResults)).Inc()
 }
@@ -87,7 +87,7 @@ var (
 		"ok": {}, "duplicate": {}, "error": {},
 	}
 	sessionCompleteResults = map[string]struct{}{
-		"ok": {}, "noop": {}, "error": {},
+		"ok": {}, "noop": {}, "not_found": {}, "error": {},
 	}
 	sessionSweeperMarkedStatuses = map[string]struct{}{
 		"abandoned": {}, "error": {},

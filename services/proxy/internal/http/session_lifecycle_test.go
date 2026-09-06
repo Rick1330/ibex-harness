@@ -90,7 +90,12 @@ func (m *memSessionStore) AppendCheckpoint(_ context.Context, p session.Checkpoi
 	return nil
 }
 
-func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
+	return session.CompleteOK, nil
+}
+func (m *memSessionStore) CompleteByExternalID(context.Context, uuid.UUID, uuid.UUID, string) (session.CompleteResult, uuid.UUID, error) {
+	return session.CompleteNotFound, uuid.Nil, nil
+}
 
 func (m *memSessionStore) AbandonIdle(context.Context, session.AbandonIdleParams) (session.AbandonIdleResult, error) {
 	return session.AbandonIdleResult{}, nil

@@ -139,6 +139,23 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("IBEX_WORKER_METRICS_PORT"),
         description="Prometheus /metrics HTTP port for worker process",
     )
+    enqueue_port: int = Field(
+        default=8007,
+        ge=1024,
+        le=65535,
+        validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_PORT"),
+        description="Internal Starlette port for POST /internal/extraction/enqueue",
+    )
+    enqueue_host: str = Field(
+        default="127.0.0.1",
+        validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_HOST"),
+        description="Bind host for enqueue HTTP (containers set 0.0.0.0 explicitly)",
+    )
+    enqueue_api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_API_TOKEN"),
+        description="Static Bearer token for proxy→worker extraction enqueue",
+    )
     extraction_provider: str = Field(
         default="openai",
         validation_alias=AliasChoices(
@@ -267,6 +284,16 @@ class Settings(BaseSettings):
         if self.result_backend:
             return self.result_backend
         return redis_url_with_db(self.redis_url, self.redis_db_results)
+
+    @model_validator(mode="after")
+    def _enqueue_metrics_ports_differ(self) -> Settings:
+        token = self.enqueue_api_token
+        if token is None or not token.get_secret_value().strip():
+            return self
+        if self.enqueue_port == self.metrics_port:
+            msg = "enqueue_port and metrics_port must differ when enqueue API token is set"
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _production_requires_redis(self) -> Settings:
