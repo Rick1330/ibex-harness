@@ -44,19 +44,21 @@ ibex-harness/
   services/                    # deployable processes — see services/README.md
     proxy/                     # Go — LLM proxy (shipped; grows in 2.5+)
     auth/                      # Go — auth (shipped; grows in 4)
-    embedder/                  # Python — embeddings (planned 2.5)
+    embedder/                  # Python — embeddings (shipped 2.5+)
     tokenizer-service/         # Python — token counts (planned 2.5, situational)
     mcp-memory/                # Python — MCP memory tools (2.5 skeleton → 3.5)
-    memory/                    # Python — memory substrate (planned 3)
-    worker/                    # Python Celery — extraction / jobs (planned 3.5+)
-    context/                   # Python gRPC — context assembly (planned 3.5)
+    memory/                    # Python — memory substrate (shipped Phase 3+)
+    worker/                    # Python Celery — extraction / jobs (shipped 3.5+)
+    context/                   # Python gRPC — context assembly (shipped 3.5.C+)
     api/                       # Python FastAPI — management plane (planned 4)
     dashboard/                 # Next.js — operator UI (planned 4)
 
   packages/                    # shared libraries — see packages/README.md
     proto/                     # protobuf source of truth + codegen
     provider/                  # LLM provider abstraction (extends in 2.5+)
-    # planned: embedder/, contextclient/, circuitbreaker/
+    embedder/                  # embedding interface + registry (shipped)
+    circuitbreaker/            # shared breaker (shipped; provider path)
+    contextclient/             # fail-open AssembleContext client (shipped 3.5.D.1)
     # planned SDKs/CLI: sdk-python/, sdk-typescript/, sdk-go/, cli/
 
   infra/

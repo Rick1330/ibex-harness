@@ -46,15 +46,14 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `embedder/` | Embedding interface + profile registry + stub + geometry validation ([ADR-0046](../web/content/docs/adr/0046-embedder-interface-registry.mdx)); inference in `services/embedder/` |
 | `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |
+| `circuitbreaker/` | Shared consecutive-failure breaker used by proxy provider paths ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx) family); optional wrap for context Assemble deferred |
+| `contextclient/` | Fail-open Go gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../web/content/docs/adr/0071-context-grpc-degradation-deadline.mdx)): `Assemble` never returns a Go `error` (`Fallback` flag); default **45ms** `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`; dial/wire in proxy bootstrap |
 
 ---
 
 ## Planned (redesigned roadmap)
 
-| Directory | Role | Preferred phase | Notes |
-| --- | --- | --- | --- |
-| `contextclient/` | Go — fail-open gRPC client for context assembly | **3.5** | Mirrors the auth gRPC client pattern; never blocks the LLM path on assembly failure |
-| `circuitbreaker/` | Go — shared breaker for providers and context dependencies | **4** | Preferred starting place for per-provider isolation |
+Shared Go libraries previously listed here (`contextclient/`, `circuitbreaker/`) are now under **Shipped**. Remaining planned inventory is client SDKs / CLI below.
 
 ### Client SDKs / CLI (still planned)
 

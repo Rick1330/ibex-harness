@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ type envConfig struct {
 	RedisURL                ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	AuthGRPCAddr            string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
 	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
+	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
 	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
@@ -169,15 +172,16 @@ func parseCSVModels(raw string) []string {
 
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 	return Config{
-		Environment:     envCfg.Environment,
-		ServiceName:     envCfg.ServiceName,
-		LogLevel:        level,
-		Port:            envCfg.Port,
-		RedisURL:        envCfg.RedisURL.String(),
-		AuthGRPCAddr:    envCfg.AuthGRPCAddr,
-		RequestIDHeader: envCfg.RequestIDHeader,
-		TraceIDHeader:   envCfg.TraceIDHeader,
-		ErrorDocsBase:   envCfg.ErrorDocsBase,
+		Environment:       envCfg.Environment,
+		ServiceName:       envCfg.ServiceName,
+		LogLevel:          level,
+		Port:              envCfg.Port,
+		RedisURL:          envCfg.RedisURL.String(),
+		AuthGRPCAddr:      envCfg.AuthGRPCAddr,
+		ContextGRPCTarget: envCfg.ContextGRPCTarget,
+		RequestIDHeader:   envCfg.RequestIDHeader,
+		TraceIDHeader:     envCfg.TraceIDHeader,
+		ErrorDocsBase:     envCfg.ErrorDocsBase,
 		RateLimit: RateLimitConfig{
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
@@ -207,6 +211,9 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
+	}
+	if envCfg.ContextAssembleTimeout > 0 {
+		cfg.ContextAssembleTimeout = envCfg.ContextAssembleTimeout
 	}
 	if envCfg.MaxRequestBodyBytes > 0 {
 		cfg.MaxRequestBodyBytes = envCfg.MaxRequestBodyBytes
@@ -277,6 +284,7 @@ func applyRateLimitOverrides(cfg *Config, raw string) error {
 
 func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	cfg.ApplyDefaults()
+	applyUnsetContextGRPCTargetDefault(&cfg)
 
 	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
 	if err != nil {
@@ -289,6 +297,17 @@ func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	}
 	ibexconfig.LogDebug(envCfg)
 	return cfg, nil
+}
+
+// applyUnsetContextGRPCTargetDefault sets the dial target only when the env var is
+// absent. An explicitly empty IBEX_CONTEXT_GRPC_TARGET stays empty so dial is skipped.
+func applyUnsetContextGRPCTargetDefault(cfg *Config) {
+	if _, set := os.LookupEnv("IBEX_CONTEXT_GRPC_TARGET"); set {
+		return
+	}
+	if cfg.ContextGRPCTarget == "" {
+		cfg.ContextGRPCTarget = defaultContextGRPCTarget
+	}
 }
 
 func parseLogLevel(value string) (slog.Level, error) {

@@ -163,7 +163,7 @@ func (c Config) validateAuthConfig() error {
 		return fmt.Errorf("IBEX_AUTH_GRPC_ADDR is required outside development")
 	}
 	if strings.TrimSpace(c.AuthGRPCAddr) == "" {
-		return nil
+		return c.validateContextGRPCConfig()
 	}
 	if _, _, err := net.SplitHostPort(c.AuthGRPCAddr); err != nil {
 		return fmt.Errorf("IBEX_AUTH_GRPC_ADDR must be host:port: %w", err)
@@ -171,7 +171,25 @@ func (c Config) validateAuthConfig() error {
 	if c.AuthValidateTimeout <= 0 {
 		return fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT must be positive")
 	}
-	return c.validateAuthCache()
+	if err := c.validateAuthCache(); err != nil {
+		return err
+	}
+	return c.validateContextGRPCConfig()
+}
+
+// validateContextGRPCConfig allows an empty target (skip dial until D.5 feature flag).
+// When set, the value must be host:port; timeout must be positive after ApplyDefaults.
+func (c Config) validateContextGRPCConfig() error {
+	if strings.TrimSpace(c.ContextGRPCTarget) == "" {
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(c.ContextGRPCTarget); err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_GRPC_TARGET must be host:port: %w", err)
+	}
+	if c.ContextAssembleTimeout <= 0 {
+		return fmt.Errorf("IBEX_CONTEXT_ASSEMBLE_TIMEOUT must be positive")
+	}
+	return nil
 }
 
 func (c Config) validateAuthCache() error {

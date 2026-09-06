@@ -254,8 +254,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SELFHOSTED_READY_POLL` | No | `2s` | Bootstrap probe interval | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | No | `5` | Consecutive Complete failures before self-hosted breaker opens | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
-| `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
-| `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
+| `IBEX_CONTEXT_ENABLED` | Planned **3.5.D.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
+| `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
+| `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
 | `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
 | `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) | Safety valve for pathological DP table sizes |
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No (**3.5.C.4**) | `5` | Greedy fallback consecutive-skip limit before stopping | Used only on greedy path |
@@ -473,7 +474,7 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
 | `IBEX_CONTEXT_SAFETY_BUFFER_RATIO` | No | `0.10` | Buffer to avoid overflow |
 
-Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_ADDR`, …).
+Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_TARGET`, `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`, …).
 
 ### Ranking weights (defaults)
 

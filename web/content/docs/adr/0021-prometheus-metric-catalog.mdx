@@ -41,6 +41,7 @@ All Prometheus metrics are defined and registered in `packages/metrics`. Service
 | `ibex_proxy_idempotency_duration_seconds` | Histogram | — | proxy |
 | `ibex_proxy_response_pipeline_stage_duration_seconds` | Histogram | `stage`, `result` | proxy |
 | `ibex_proxy_response_pipeline_stage_fail_open_total` | Counter | `stage` | proxy |
+| `ibex_proxy_context_assemble_fallback_total` | Counter | `reason` (gRPC code name or `nil_response`) | proxy |
 | `ibex_auth_validate_token_duration_seconds` | Histogram | `result` (`ok`/`error`/`revoked`) | auth |
 | `ibex_auth_validate_agent_duration_seconds` | Histogram | `result` (`ok`/`error`/`not_found`) | auth |
 | `ibex_auth_grpc_requests_total` | Counter | `method`, `status` | auth |

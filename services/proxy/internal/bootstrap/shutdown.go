@@ -30,7 +30,7 @@ type shutdownOpts struct {
 	logger            *logger.Logger
 	server            *http.Server
 	providers         *telemetry.Providers
-	grpcConn          *grpc.ClientConn
+	grpcConns         []*grpc.ClientConn
 	redisClient       redis.UniversalClient
 	pgDB              *sql.DB
 	directiveResolver directive.Resolver
@@ -114,7 +114,7 @@ func immediateCleanup(opts shutdownOpts) {
 	logImmediateCleanupErr(opts.logger, "checkpoint pool shutdown", shutdownCheckpointPool(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "session sweeper shutdown", shutdownSessionSweeper(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "trace writer shutdown", shutdownTraceWriter(ctx, opts))
-	logImmediateCleanupErr(opts.logger, "grpc conn close", closeGRPCConn(opts))
+	logImmediateCleanupErr(opts.logger, "grpc conn close", closeGRPCConns(opts))
 	logImmediateCleanupErr(opts.logger, "redis client close", closeRedisClient(opts))
 	logImmediateCleanupErr(opts.logger, "postgres close", closePgDB(opts))
 	if opts.providers != nil {
@@ -211,7 +211,7 @@ func registerTraceWriterShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 
 func registerGRPCConnShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		return closeGRPCConn(opts)
+		return closeGRPCConns(opts)
 	})
 }
 
@@ -257,14 +257,17 @@ func shutdownTraceWriter(ctx context.Context, opts shutdownOpts) error {
 	return nil
 }
 
-func closeGRPCConn(opts shutdownOpts) error {
-	if opts.grpcConn == nil {
-		return nil
+func closeGRPCConns(opts shutdownOpts) error {
+	var firstErr error
+	for _, conn := range opts.grpcConns {
+		if conn == nil {
+			continue
+		}
+		if err := conn.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("close grpc conn: %w", err)
+		}
 	}
-	if err := opts.grpcConn.Close(); err != nil {
-		return fmt.Errorf("close grpc conn: %w", err)
-	}
-	return nil
+	return firstErr
 }
 
 func closeRedisClient(opts shutdownOpts) error {

@@ -51,6 +51,7 @@ type ProxyRegistry struct {
 	tokenizerCountSeconds         *prometheus.HistogramVec
 	responsePipelineStageDuration *prometheus.HistogramVec
 	responsePipelineFailOpenTotal *prometheus.CounterVec
+	contextAssembleFallbackTotal  *prometheus.CounterVec
 	processUp                     prometheus.Gauge
 }
 

@@ -147,7 +147,7 @@ func TestUnit_ShutdownHelpers_NilResources(t *testing.T) {
 	if err := shutdownTraceWriter(ctx, opts); err != nil {
 		t.Fatal(err)
 	}
-	if err := closeGRPCConn(opts); err != nil {
+	if err := closeGRPCConns(opts); err != nil {
 		t.Fatal(err)
 	}
 	if err := closeRedisClient(opts); err != nil {

@@ -25,6 +25,22 @@ func loadCases() []loadCase {
 			check: checkHappyPathLoad,
 		},
 		{
+			name: "explicit empty context grpc target skips dial default",
+			env: map[string]string{
+				"IBEX_ENV":                 "development",
+				"IBEX_CONTEXT_GRPC_TARGET": "",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if cfg.ContextGRPCTarget != "" {
+					t.Fatalf("ContextGRPCTarget = %q, want empty so dial is skipped", cfg.ContextGRPCTarget)
+				}
+				if cfg.ContextAssembleTimeout != defaultContextAssembleTimeout {
+					t.Fatalf("ContextAssembleTimeout = %s, want %s", cfg.ContextAssembleTimeout, defaultContextAssembleTimeout)
+				}
+			},
+		},
+		{
 			name:    "invalid log level",
 			env:     map[string]string{"IBEX_LOG_LEVEL": "VERBOSE"},
 			wantErr: true,
@@ -51,6 +67,9 @@ func checkHappyPathLoad(t *testing.T, cfg Config) {
 	}
 	if cfg.RateLimit.DefaultRPM != 500 || len(cfg.RateLimit.OrgOverrides) != 1 {
 		t.Fatalf("rate limit: %+v", cfg.RateLimit)
+	}
+	if cfg.ContextGRPCTarget != defaultContextGRPCTarget {
+		t.Fatalf("ContextGRPCTarget = %q, want default %q", cfg.ContextGRPCTarget, defaultContextGRPCTarget)
 	}
 }
 

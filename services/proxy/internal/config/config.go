@@ -11,40 +11,42 @@ import (
 )
 
 const (
-	defaultEnvironment          = envDevelopment
-	defaultServiceName          = "proxy"
-	defaultLogLevel             = slog.LevelInfo
-	defaultPort                 = "8080"
-	defaultAuthGRPCAddr         = "127.0.0.1:9091"
-	defaultAuthValidateTimeout  = 50 * time.Millisecond
-	defaultRequestIDHeader      = "X-Request-ID"
-	defaultTraceIDHeader        = "X-Trace-ID"
-	defaultMaxRequestBodyBytes  = 1 * 1024 * 1024
-	defaultRateLimitRPM         = 60
-	defaultShutdownTimeout      = 30 * time.Second
-	defaultLLMMode              = envLLMModeMock
-	defaultOpenAIBaseURL        = "https://api.openai.com/v1"
-	defaultOpenAIRequestTimeout = 120 * time.Second
-	defaultOpenAIMaxRetries     = 3
-	defaultOpenAIRetryBaseDelay = 500 * time.Millisecond
-	defaultAnthropicBaseURL     = "https://api.anthropic.com"
-	defaultAnthropicTimeout     = 120 * time.Second
-	defaultAnthropicMaxRetries  = 3
-	defaultAnthropicRetryDelay  = 500 * time.Millisecond
-	defaultAuthCacheLRUCapacity = 5000
-	defaultAuthCacheLRUMaxTTL   = 30 * time.Second
-	defaultAuthCacheBloomItems  = 10000
-	defaultAuthCacheBloomFPRate = 0.001
-	maxAuthCacheLRUMaxTTL       = 30 * time.Second
-	defaultDirectiveCacheTTL    = 60 * time.Second
-	defaultSessionCacheTTL      = 60 * time.Second
-	defaultCheckpointWorkers    = 8
-	defaultCheckpointQueue      = 256
-	defaultSessionGetOrCreateTO = 50 * time.Millisecond
-	defaultSessionIdleTimeout   = 45 * time.Minute
-	defaultSessionSweepInterval = time.Minute
-	defaultIdempotencyTTL       = 24 * time.Hour
-	defaultIdempotencyRedisTO   = 50 * time.Millisecond
+	defaultEnvironment            = envDevelopment
+	defaultServiceName            = "proxy"
+	defaultLogLevel               = slog.LevelInfo
+	defaultPort                   = "8080"
+	defaultAuthGRPCAddr           = "127.0.0.1:9091"
+	defaultAuthValidateTimeout    = 50 * time.Millisecond
+	defaultContextGRPCTarget      = "127.0.0.1:9092"
+	defaultContextAssembleTimeout = 45 * time.Millisecond
+	defaultRequestIDHeader        = "X-Request-ID"
+	defaultTraceIDHeader          = "X-Trace-ID"
+	defaultMaxRequestBodyBytes    = 1 * 1024 * 1024
+	defaultRateLimitRPM           = 60
+	defaultShutdownTimeout        = 30 * time.Second
+	defaultLLMMode                = envLLMModeMock
+	defaultOpenAIBaseURL          = "https://api.openai.com/v1"
+	defaultOpenAIRequestTimeout   = 120 * time.Second
+	defaultOpenAIMaxRetries       = 3
+	defaultOpenAIRetryBaseDelay   = 500 * time.Millisecond
+	defaultAnthropicBaseURL       = "https://api.anthropic.com"
+	defaultAnthropicTimeout       = 120 * time.Second
+	defaultAnthropicMaxRetries    = 3
+	defaultAnthropicRetryDelay    = 500 * time.Millisecond
+	defaultAuthCacheLRUCapacity   = 5000
+	defaultAuthCacheLRUMaxTTL     = 30 * time.Second
+	defaultAuthCacheBloomItems    = 10000
+	defaultAuthCacheBloomFPRate   = 0.001
+	maxAuthCacheLRUMaxTTL         = 30 * time.Second
+	defaultDirectiveCacheTTL      = 60 * time.Second
+	defaultSessionCacheTTL        = 60 * time.Second
+	defaultCheckpointWorkers      = 8
+	defaultCheckpointQueue        = 256
+	defaultSessionGetOrCreateTO   = 50 * time.Millisecond
+	defaultSessionIdleTimeout     = 45 * time.Minute
+	defaultSessionSweepInterval   = time.Minute
+	defaultIdempotencyTTL         = 24 * time.Hour
+	defaultIdempotencyRedisTO     = 50 * time.Millisecond
 
 	envDevelopment = "development"
 	envStaging     = "staging"
@@ -90,26 +92,28 @@ type AnthropicConfig struct {
 }
 
 type Config struct {
-	Environment         string
-	ServiceName         string
-	LogLevel            slog.Level
-	Port                string
-	RedisURL            string
-	AuthGRPCAddr        string
-	AuthValidateTimeout time.Duration
-	AuthCache           AuthCacheConfig
-	MaxRequestBodyBytes int64
-	RequestIDHeader     string
-	TraceIDHeader       string
-	ErrorDocsBase       string
-	RateLimit           RateLimitConfig
-	ShutdownTimeout     time.Duration
-	Telemetry           telemetry.Config
-	LLMMode             string
-	OpenAI              OpenAIConfig
-	Anthropic           AnthropicConfig
-	SelfHosted          SelfHostedConfig
-	Tokenizer           TokenizerConfig
+	Environment            string
+	ServiceName            string
+	LogLevel               slog.Level
+	Port                   string
+	RedisURL               string
+	AuthGRPCAddr           string
+	AuthValidateTimeout    time.Duration
+	ContextGRPCTarget      string
+	ContextAssembleTimeout time.Duration
+	AuthCache              AuthCacheConfig
+	MaxRequestBodyBytes    int64
+	RequestIDHeader        string
+	TraceIDHeader          string
+	ErrorDocsBase          string
+	RateLimit              RateLimitConfig
+	ShutdownTimeout        time.Duration
+	Telemetry              telemetry.Config
+	LLMMode                string
+	OpenAI                 OpenAIConfig
+	Anthropic              AnthropicConfig
+	SelfHosted             SelfHostedConfig
+	Tokenizer              TokenizerConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
 	// Provider circuit breaker (shared defaults; applied to self-hosted path).
@@ -175,6 +179,7 @@ func (c *Config) applyTransportDefaults() {
 	if c.AuthValidateTimeout <= 0 {
 		c.AuthValidateTimeout = defaultAuthValidateTimeout
 	}
+	c.applyContextClientDefaults()
 	if c.MaxRequestBodyBytes < 1 {
 		c.MaxRequestBodyBytes = defaultMaxRequestBodyBytes
 	}
@@ -186,6 +191,14 @@ func (c *Config) applyTransportDefaults() {
 	}
 	if c.ShutdownTimeout <= 0 {
 		c.ShutdownTimeout = defaultShutdownTimeout
+	}
+}
+
+func (c *Config) applyContextClientDefaults() {
+	// ContextGRPCTarget is not defaulted here: Load distinguishes unset (default
+	// 127.0.0.1:9092) from explicitly empty (skip dial) via LookupEnv.
+	if c.ContextAssembleTimeout <= 0 {
+		c.ContextAssembleTimeout = defaultContextAssembleTimeout
 	}
 }
 
