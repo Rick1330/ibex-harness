@@ -706,6 +706,64 @@ async def test_serve_forever_signal_stops_and_closes(
     assert redis.closed is True
 
 
+@pytest.mark.asyncio
+async def test_serve_forever_cancel_stops_before_aclose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If cancelled after start(), stop the server before closing clients."""
+    from app import server as server_mod
+
+    order: list[str] = []
+
+    class _FakeMemory:
+        async def aclose(self) -> None:
+            order.append("aclose")
+
+    class _FakeServer:
+        def __init__(self) -> None:
+            self._hang = asyncio.Event()
+
+        async def start(self) -> None:
+            order.append("start")
+
+        async def wait_for_termination(self) -> None:
+            await self._hang.wait()
+
+        async def stop(self, grace: float | None = None) -> None:
+            del grace
+            order.append("stop")
+            self._hang.set()
+
+    runtime = AssemblyRuntime(
+        assembler=_assembler(),
+        memory=_FakeMemory(),  # type: ignore[arg-type]
+        redis_client=None,
+    )
+    monkeypatch.setattr(
+        server_mod, "build_server", lambda *a, **k: (_FakeServer(), 9092)
+    )
+    monkeypatch.setattr(
+        server_mod,
+        "build_runtime_from_settings",
+        lambda cfg: runtime,
+    )
+
+    serve_task = asyncio.create_task(
+        server_mod.serve_forever(
+            _settings(memory_base_url="http://memory.test", memory_api_token="tok")
+        )
+    )
+    for _ in range(50):
+        if "start" in order:
+            break
+        await asyncio.sleep(0.01)
+    assert "start" in order
+    serve_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await serve_task
+    assert order.index("stop") < order.index("aclose")
+
+
 def test_main_invokes_serve_forever(monkeypatch: pytest.MonkeyPatch) -> None:
     from app import server as server_mod
 

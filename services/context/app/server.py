@@ -252,6 +252,21 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
     """Entrypoint: build dependencies, start server, wait for termination."""
     cfg = settings or ContextSettings()
     runtime = build_runtime_from_settings(cfg)
+    loop = asyncio.get_running_loop()
+    shutdown = asyncio.Event()
+    server: grpc_aio.Server | None = None
+    try:
+        server = await _start_listening(runtime, cfg)
+        _install_shutdown_signals(loop, shutdown)
+        await _run_until_shutdown(server, shutdown)
+    finally:
+        await _shutdown_runtime(loop, server, runtime)
+
+
+async def _start_listening(
+    runtime: AssemblyRuntime,
+    cfg: ContextSettings,
+) -> grpc_aio.Server:
     server, port = build_server(runtime.assembler, settings=cfg)
     await server.start()
     logger.info(
@@ -260,15 +275,18 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
         port,
         cfg.retrieval_wall_ms,
     )
+    return server
 
-    loop = asyncio.get_running_loop()
-    shutdown = asyncio.Event()
-    _install_shutdown_signals(loop, shutdown)
-    try:
-        await _run_until_shutdown(server, shutdown)
-    finally:
-        _clear_shutdown_signals(loop)
-        await runtime.aclose()
+
+async def _shutdown_runtime(
+    loop: asyncio.AbstractEventLoop,
+    server: grpc_aio.Server | None,
+    runtime: AssemblyRuntime,
+) -> None:
+    _clear_shutdown_signals(loop)
+    if server is not None:
+        await server.stop(grace=_SHUTDOWN_GRACE_S)
+    await runtime.aclose()
 
 
 def _install_shutdown_signals(loop: asyncio.AbstractEventLoop, shutdown: asyncio.Event) -> None:

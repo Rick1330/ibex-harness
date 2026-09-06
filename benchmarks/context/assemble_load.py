@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import statistics
 import sys
 import time
@@ -231,6 +232,21 @@ async def _run_live(addr: str, duration_s: float, target_rps: int) -> _DriveStat
         )
 
 
+def _parse_error_rate(raw: str) -> float:
+    """Argparse type for ``--max-error-rate``: finite float in inclusive [0, 1]."""
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"max-error-rate must be a number, got {raw!r}"
+        ) from exc
+    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+        raise argparse.ArgumentTypeError(
+            f"max-error-rate must be a finite number in [0, 1], got {raw!r}"
+        )
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("stub", "live"), default="stub")
@@ -239,9 +255,9 @@ def main() -> int:
     parser.add_argument("--duration", type=float, default=10.0)
     parser.add_argument(
         "--max-error-rate",
-        type=float,
+        type=_parse_error_rate,
         default=0.0,
-        help="Fail when failed/attempted exceeds this fraction (default 0).",
+        help="Fail when failed/attempted exceeds this fraction (default 0; range 0..1).",
     )
     args = parser.parse_args()
 

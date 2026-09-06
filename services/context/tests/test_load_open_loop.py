@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import sys
 import time
@@ -14,7 +15,18 @@ _HARNESS = _ROOT / "benchmarks" / "context"
 if str(_HARNESS) not in sys.path:
     sys.path.insert(0, str(_HARNESS))
 
-from assemble_load import _drive_open_loop, _LoadPlan
+from assemble_load import _drive_open_loop, _LoadPlan, _parse_error_rate
+
+
+@pytest.mark.parametrize("raw", ("0", "0.0", "0.5", "1", "1.0"))
+def test_parse_error_rate_accepts_unit_interval(raw: str) -> None:
+    assert _parse_error_rate(raw) == float(raw)
+
+
+@pytest.mark.parametrize("raw", ("-0.1", "1.01", "nan", "NaN", "inf", "-inf", "abc"))
+def test_parse_error_rate_rejects_invalid(raw: str) -> None:
+    with pytest.raises(argparse.ArgumentTypeError):
+        _parse_error_rate(raw)
 
 
 @pytest.mark.asyncio
