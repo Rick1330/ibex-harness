@@ -89,8 +89,14 @@ func assertContextHeaders(t *testing.T, h http.Header, want wantContextHeaders) 
 
 func assertDirectiveOnly(t *testing.T, msgs []provider.Message) {
 	t.Helper()
-	if len(msgs) != 2 || msgs[0].Content != "org directive" || msgs[1].Content != "hi" {
+	if len(msgs) != 2 {
 		t.Fatalf("messages=%+v", msgs)
+	}
+	if msgs[0].Content != "org directive" {
+		t.Fatalf("directive=%+v", msgs[0])
+	}
+	if msgs[1].Content != "hi" {
+		t.Fatalf("user=%+v", msgs[1])
 	}
 }
 
@@ -99,10 +105,16 @@ func assertPhase2ProviderMessages(t *testing.T, msgs []provider.Message) {
 	if len(msgs) != 3 {
 		t.Fatalf("messages=%+v", msgs)
 	}
-	if msgs[0].Content != "client system" || msgs[2].Content != "hello" {
-		t.Fatalf("history=%+v", msgs)
+	if msgs[0].Content != "client system" {
+		t.Fatalf("first=%+v", msgs[0])
 	}
-	if msgs[1].Role != "system" || msgs[1].Content != "org directive" {
+	if msgs[2].Content != "hello" {
+		t.Fatalf("user=%+v", msgs[2])
+	}
+	if msgs[1].Role != "system" {
+		t.Fatalf("directive role=%+v", msgs[1])
+	}
+	if msgs[1].Content != "org directive" {
 		t.Fatalf("directive=%+v", msgs[1])
 	}
 }
@@ -114,43 +126,52 @@ func runApplyInjection(t *testing.T, h chatCompletionHandler, msgs []provider.Me
 	return h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", msgs)
 }
 
-func runForwardChat(t *testing.T, h chatCompletionHandler, stream bool, skipMemory bool) (*httptest.ResponseRecorder, provider.Request) {
-	t.Helper()
-	return runForwardChatTo(t, h, stream, skipMemory, &captureLLMProvider{})
+type forwardChatOpts struct {
+	h          chatCompletionHandler
+	stream     bool
+	skipMemory bool
+	prov       provider.Provider
 }
 
-func runForwardChatTo(
-	t *testing.T,
-	h chatCompletionHandler,
-	stream bool,
-	skipMemory bool,
-	prov provider.Provider,
-) (*httptest.ResponseRecorder, provider.Request) {
+func runForwardChat(t *testing.T, h chatCompletionHandler, stream bool, skipMemory bool) (*httptest.ResponseRecorder, provider.Request) {
 	t.Helper()
-	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Stream: stream, Messages: baseChatMessages()}
+	return runForwardChatTo(t, forwardChatOpts{
+		h: h, stream: stream, skipMemory: skipMemory, prov: &captureLLMProvider{},
+	})
+}
+
+func runForwardChatTo(t *testing.T, opts forwardChatOpts) (*httptest.ResponseRecorder, provider.Request) {
+	t.Helper()
+	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Stream: opts.stream, Messages: baseChatMessages()}
 	ctx := directiveCtx(contextTestAuthCtx(t))
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	if skipMemory {
+	if opts.skipMemory {
 		req.Header.Set(validation.HeaderSkipMemory, "true")
 	}
-	var w http.ResponseWriter
+	rec, w := forwardChatWriter(opts.stream)
+	opts.h.forwardChatCompletion(chatForwardParams{w: w, r: req, parsed: parsed, prov: opts.prov})
+	return rec, capturedProviderRequest(opts.prov)
+}
+
+func forwardChatWriter(stream bool) (*httptest.ResponseRecorder, http.ResponseWriter) {
 	rec := httptest.NewRecorder()
-	w = rec
-	if stream {
-		fr := newFlushRecorder()
-		w = fr
-		rec = fr.ResponseRecorder
+	if !stream {
+		return rec, rec
 	}
-	h.forwardChatCompletion(chatForwardParams{w: w, r: req, parsed: parsed, prov: prov})
+	fr := newFlushRecorder()
+	return fr.ResponseRecorder, fr
+}
+
+func capturedProviderRequest(prov provider.Provider) provider.Request {
 	switch c := prov.(type) {
 	case *captureLLMProvider:
-		return rec, c.last
+		return c.last
 	case *captureStreamingProvider:
-		return rec, c.last
+		return c.last
 	case *failingLLMProvider:
-		return rec, c.last
+		return c.last
 	default:
-		return rec, provider.Request{}
+		return provider.Request{}
 	}
 }
 
@@ -201,7 +222,10 @@ func TestUnit_ApplyContextOrDirective_FallbackKeepsDirective(t *testing.T) {
 	if fake.calls.Load() != 1 {
 		t.Fatalf("Assemble calls=%d want 1", fake.calls.Load())
 	}
-	if !out.Meta.Attempted || !out.Meta.Fallback {
+	if !out.Meta.Attempted {
+		t.Fatalf("meta=%+v", out.Meta)
+	}
+	if !out.Meta.Fallback {
 		t.Fatalf("meta=%+v", out.Meta)
 	}
 	assertDirectiveOnly(t, out.Messages)
@@ -217,25 +241,55 @@ func TestUnit_ApplyContextOrDirective_SuccessInjectsAdditive(t *testing.T) {
 		{Role: "user", Content: "hello"},
 	}
 	out := runApplyInjection(t, contextHandler(true, fake), msgs)
-	assertSuccessAssembleInjection(t, fake, out)
+	assertAssembleCallOnce(t, fake)
+	assertAssembleParams(t, fake.lastReq)
+	assertAssembledMessages(t, out.Messages)
+	assertAssembleMeta(t, out.Meta)
 }
 
-func assertSuccessAssembleInjection(t *testing.T, fake *fakeContextAssembler, out messageInjectionOutcome) {
+func assertAssembleCallOnce(t *testing.T, fake *fakeContextAssembler) {
 	t.Helper()
 	if fake.calls.Load() != 1 {
 		t.Fatalf("Assemble calls=%d", fake.calls.Load())
 	}
-	if fake.lastReq.Query != "hello" || fake.lastReq.OrgID != testChatOrgID {
-		t.Fatalf("params=%+v", fake.lastReq)
+}
+
+func assertAssembleParams(t *testing.T, got contextclient.AssembleParams) {
+	t.Helper()
+	if got.Query != "hello" {
+		t.Fatalf("query=%q", got.Query)
 	}
-	if len(out.Messages) != 3 || out.Messages[0].Content != "assembled blob" {
-		t.Fatalf("messages=%+v", out.Messages)
+	if got.OrgID != testChatOrgID {
+		t.Fatalf("org=%q", got.OrgID)
 	}
-	if out.Messages[1].Content != "client system" || out.Messages[2].Content != "hello" {
-		t.Fatalf("history altered: %+v", out.Messages)
+}
+
+func assertAssembledMessages(t *testing.T, msgs []provider.Message) {
+	t.Helper()
+	if len(msgs) != 3 {
+		t.Fatalf("messages=%+v", msgs)
 	}
-	if out.Meta.MemoriesInjected != 3 || out.Meta.ContextTokens != 42 || out.Meta.Fallback {
-		t.Fatalf("meta=%+v", out.Meta)
+	if msgs[0].Content != "assembled blob" {
+		t.Fatalf("first=%+v", msgs[0])
+	}
+	if msgs[1].Content != "client system" {
+		t.Fatalf("system=%+v", msgs[1])
+	}
+	if msgs[2].Content != "hello" {
+		t.Fatalf("user=%+v", msgs[2])
+	}
+}
+
+func assertAssembleMeta(t *testing.T, meta contextAssembleMeta) {
+	t.Helper()
+	if meta.MemoriesInjected != 3 {
+		t.Fatalf("memories=%d", meta.MemoriesInjected)
+	}
+	if meta.ContextTokens != 42 {
+		t.Fatalf("tokens=%d", meta.ContextTokens)
+	}
+	if meta.Fallback {
+		t.Fatal("unexpected Fallback")
 	}
 }
 
@@ -263,13 +317,24 @@ func TestUnit_ForwardChat_AssembleSuccess_HeadersAndMessages(t *testing.T) {
 		AssembledContext: "assembled blob", TokensUsed: 11, MemoriesIncluded: 2,
 	}}
 	rec, last := runForwardChat(t, contextHandler(true, fake), false, false)
-	if len(last.Messages) != 3 || last.Messages[0].Content != "assembled blob" {
-		t.Fatalf("messages=%+v", last.Messages)
-	}
-	if last.Messages[1].Content != "client system" || last.Messages[2].Content != "hello" {
-		t.Fatalf("history=%+v", last.Messages)
-	}
+	assertAssembledProviderMessages(t, last.Messages)
 	assertContextHeaders(t, rec.Header(), wantContextHeaders{memories: "2", tokens: "11", fallback: "false"})
+}
+
+func assertAssembledProviderMessages(t *testing.T, msgs []provider.Message) {
+	t.Helper()
+	if len(msgs) != 3 {
+		t.Fatalf("messages=%+v", msgs)
+	}
+	if msgs[0].Content != "assembled blob" {
+		t.Fatalf("first=%+v", msgs[0])
+	}
+	if msgs[1].Content != "client system" {
+		t.Fatalf("system=%+v", msgs[1])
+	}
+	if msgs[2].Content != "hello" {
+		t.Fatalf("user=%+v", msgs[2])
+	}
 }
 
 func TestUnit_ForwardChat_AssembleFallback_HeadersAndDirective(t *testing.T) {
@@ -288,7 +353,9 @@ func TestUnit_ForwardChat_ProviderFailure_EmitsAssembleHeaders(t *testing.T) {
 	fail := &failingLLMProvider{err: &provider.ProviderError{
 		ProviderName: "fail", StatusCode: http.StatusBadGateway, ProviderErrMsg: "upstream",
 	}}
-	rec, _ := runForwardChatTo(t, contextHandler(true, fake), false, false, fail)
+	rec, _ := runForwardChatTo(t, forwardChatOpts{
+		h: contextHandler(true, fake), prov: fail,
+	})
 	if rec.Code < 400 {
 		t.Fatalf("status=%d want error", rec.Code)
 	}
@@ -300,7 +367,9 @@ func TestUnit_ForwardChat_ProviderFailure_OmitsHeadersWhenNotAttempted(t *testin
 	fail := &failingLLMProvider{err: &provider.ProviderError{
 		ProviderName: "fail", StatusCode: http.StatusBadGateway, ProviderErrMsg: "upstream",
 	}}
-	rec, _ := runForwardChatTo(t, contextHandler(false, nil), false, false, fail)
+	rec, _ := runForwardChatTo(t, forwardChatOpts{
+		h: contextHandler(false, nil), prov: fail,
+	})
 	assertNoContextHeaders(t, rec.Header())
 }
 
@@ -362,22 +431,37 @@ func TestUnit_ForwardChat_Streaming_AssembleHeaders(t *testing.T) {
 func runStreamAssembleCase(t *testing.T, tc streamAssembleCase) {
 	t.Helper()
 	cap := &captureStreamingProvider{}
-	rec, last := runForwardChatTo(t, contextHandler(tc.enabled, tc.client), true, tc.skipMemory, cap)
-	var calls int32
-	if fake, ok := tc.client.(*fakeContextAssembler); ok {
-		calls = fake.calls.Load()
-	}
+	rec, last := runForwardChatTo(t, forwardChatOpts{
+		h: contextHandler(tc.enabled, tc.client), stream: true, skipMemory: tc.skipMemory, prov: cap,
+	})
+	assertStreamAssembleCalls(t, tc, last, rec)
+}
+
+func assertStreamAssembleCalls(t *testing.T, tc streamAssembleCase, last provider.Request, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	calls := assembleCallCount(tc.client)
 	if calls != tc.wantAssemble {
 		t.Fatalf("Assemble calls=%d want %d", calls, tc.wantAssemble)
 	}
-	if len(last.Messages) < 1 || last.Messages[0].Content != tc.wantMsgsFirst {
-		t.Fatalf("messages=%+v want first %q", last.Messages, tc.wantMsgsFirst)
+	if len(last.Messages) < 1 {
+		t.Fatalf("messages=%+v", last.Messages)
+	}
+	if last.Messages[0].Content != tc.wantMsgsFirst {
+		t.Fatalf("first=%q want %q", last.Messages[0].Content, tc.wantMsgsFirst)
 	}
 	if tc.wantNoHeaders {
 		assertNoContextHeaders(t, rec.Header())
 		return
 	}
 	assertContextHeaders(t, rec.Header(), tc.want)
+}
+
+func assembleCallCount(client contextAssembler) int32 {
+	fake, ok := client.(*fakeContextAssembler)
+	if !ok {
+		return 0
+	}
+	return fake.calls.Load()
 }
 
 type captureStreamingProvider struct {
@@ -445,7 +529,10 @@ func TestUnit_ApplyContextOrDirective_EmptyAssembledUsesDirective(t *testing.T) 
 		AssembledContext: "   ", TokensUsed: 1,
 	}}
 	out := runApplyInjection(t, contextHandler(true, fake), []provider.Message{{Role: "user", Content: "hi"}})
-	if !out.Meta.Attempted || out.Meta.Fallback {
+	if !out.Meta.Attempted {
+		t.Fatalf("meta=%+v", out.Meta)
+	}
+	if out.Meta.Fallback {
 		t.Fatalf("meta=%+v", out.Meta)
 	}
 	assertDirectiveOnly(t, out.Messages)

@@ -210,14 +210,25 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 }
 
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
+	applyProxyNumericEnv(cfg, envCfg)
+	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyProxyShutdownEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
+
+func applyProxyNumericEnv(cfg *Config, envCfg envConfig) {
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
 	}
 	if envCfg.ContextAssembleTimeout > 0 {
 		cfg.ContextAssembleTimeout = envCfg.ContextAssembleTimeout
-	}
-	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
-		return err
 	}
 	if envCfg.MaxRequestBodyBytes > 0 {
 		cfg.MaxRequestBodyBytes = envCfg.MaxRequestBodyBytes
@@ -225,6 +236,9 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.RateLimitDefaultRPM > 0 {
 		cfg.RateLimit.DefaultRPM = envCfg.RateLimitDefaultRPM
 	}
+}
+
+func applyProxyShutdownEnv(cfg *Config, envCfg envConfig) error {
 	timeout, err := ibexconfig.ParseShutdownTimeout(envCfg.ShutdownTimeoutRaw, 0)
 	if err != nil {
 		return err
@@ -232,10 +246,7 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if timeout > 0 {
 		cfg.ShutdownTimeout = timeout
 	}
-	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
-		return err
-	}
-	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+	return nil
 }
 
 func applyContextEnabledEnv(cfg *Config, envCfg envConfig) error {
