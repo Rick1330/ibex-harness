@@ -100,20 +100,42 @@ func (b *Buffer) Append(ctx context.Context, k LookupKey, turns []Turn) (AppendO
 func (b *Buffer) appendWithCAS(ctx context.Context, key string, clean []Turn) (AppendOutcome, error) {
 	ttlMs := b.ttlMillis()
 	for attempt := 0; ; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return AppendRedisErr, err
-		}
-		out, conflict, err := b.tryAppendCAS(ctx, key, clean, ttlMs)
-		if err != nil {
-			return AppendRedisErr, err
-		}
-		if !conflict {
+		out, err := b.appendCASAttempt(ctx, key, clean, ttlMs, attempt)
+		if err == nil {
 			return out, nil
 		}
-		if err := sleepCASBackoff(ctx, attempt); err != nil {
+		if !isCASConflict(err) {
 			return AppendRedisErr, err
 		}
 	}
+}
+
+type casConflictError struct{}
+
+func (casConflictError) Error() string { return "extractionbuffer: cas conflict" }
+
+func isCASConflict(err error) bool {
+	_, ok := err.(casConflictError)
+	return ok
+}
+
+func (b *Buffer) appendCASAttempt(
+	ctx context.Context, key string, clean []Turn, ttlMs int64, attempt int,
+) (AppendOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return AppendRedisErr, err
+	}
+	out, conflict, err := b.tryAppendCAS(ctx, key, clean, ttlMs)
+	if err != nil {
+		return AppendRedisErr, err
+	}
+	if !conflict {
+		return out, nil
+	}
+	if err := sleepCASBackoff(ctx, attempt); err != nil {
+		return AppendRedisErr, err
+	}
+	return "", casConflictError{}
 }
 
 func (b *Buffer) ttlMillis() int64 {
@@ -124,29 +146,43 @@ func (b *Buffer) ttlMillis() int64 {
 	return ttlMs
 }
 
+type casWrite struct {
+	expected string
+	payload  string
+	capped   bool
+}
+
 func (b *Buffer) tryAppendCAS(
 	ctx context.Context, key string, clean []Turn, ttlMs int64,
 ) (AppendOutcome, bool, error) {
-	expected, existing, err := b.readExpected(ctx, key)
+	write, err := b.prepareCASWrite(ctx, key, clean)
 	if err != nil {
 		return "", false, err
 	}
-	merged, capped := mergeTurns(existing, clean)
-	payload, err := json.Marshal(merged)
-	if err != nil {
-		return "", false, err
-	}
-	ok, err := appendCASLua.Run(ctx, b.client, []string{key}, expected, string(payload), ttlMs).Int()
+	ok, err := appendCASLua.Run(ctx, b.client, []string{key}, write.expected, write.payload, ttlMs).Int()
 	if err != nil {
 		return "", false, err
 	}
 	if ok != 1 {
 		return "", true, nil
 	}
-	if capped {
+	if write.capped {
 		return AppendCap, false, nil
 	}
 	return AppendOK, false, nil
+}
+
+func (b *Buffer) prepareCASWrite(ctx context.Context, key string, clean []Turn) (casWrite, error) {
+	expected, existing, err := b.readExpected(ctx, key)
+	if err != nil {
+		return casWrite{}, err
+	}
+	merged, capped := mergeTurns(existing, clean)
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return casWrite{}, err
+	}
+	return casWrite{expected: expected, payload: string(payload), capped: capped}, nil
 }
 
 func (b *Buffer) readExpected(ctx context.Context, key string) (string, []Turn, error) {
@@ -179,7 +215,7 @@ func sleepCASBackoff(ctx context.Context, attempt int) error {
 
 // Peek returns buffered turns without clearing the key.
 func (b *Buffer) Peek(ctx context.Context, k LookupKey) ([]Turn, error) {
-	return b.getTurns(ctx, k, false)
+	return b.fetchTurns(ctx, k)
 }
 
 // Ack deletes the buffer after a successful enqueue accept.
@@ -192,23 +228,24 @@ func (b *Buffer) Ack(ctx context.Context, k LookupKey) error {
 
 // Take clears and returns buffered turns (GETDEL semantics). Missing key → empty.
 func (b *Buffer) Take(ctx context.Context, k LookupKey) ([]Turn, error) {
-	return b.getTurns(ctx, k, true)
-}
-
-func (b *Buffer) getTurns(ctx context.Context, k LookupKey, clear bool) ([]Turn, error) {
 	if !b.usable(k) {
 		return nil, nil
 	}
-	key := Key(k)
-	var (
-		raw []byte
-		err error
-	)
-	if clear {
-		raw, err = b.client.GetDel(ctx, key).Bytes()
-	} else {
-		raw, err = b.client.Get(ctx, key).Bytes()
+	raw, err := b.client.GetDel(ctx, Key(k)).Bytes()
+	if err == redis.Nil {
+		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeTurns(raw)
+}
+
+func (b *Buffer) fetchTurns(ctx context.Context, k LookupKey) ([]Turn, error) {
+	if !b.usable(k) {
+		return nil, nil
+	}
+	raw, err := b.client.Get(ctx, Key(k)).Bytes()
 	if err == redis.Nil {
 		return nil, nil
 	}
@@ -239,10 +276,20 @@ func sanitizeTurns(in []Turn) []Turn {
 func sanitizeOne(t Turn) (Turn, bool) {
 	role := truncateRunes(t.Role, maxRoleLen)
 	content := truncateRunes(t.Content, maxContentLen)
-	if role == "" || content == "" || t.TurnIndex < 0 {
+	if !turnFieldsOK(role, content, t.TurnIndex) {
 		return Turn{}, false
 	}
 	return Turn{TurnIndex: t.TurnIndex, Role: role, Content: content}, true
+}
+
+func turnFieldsOK(role, content string, turnIndex int) bool {
+	if role == "" {
+		return false
+	}
+	if content == "" {
+		return false
+	}
+	return turnIndex >= 0
 }
 
 func mergeTurns(existing, add []Turn) ([]Turn, bool) {
@@ -279,7 +326,10 @@ func serializedBytes(turns []Turn) int {
 }
 
 func truncateRunes(s string, max int) string {
-	if max <= 0 || s == "" {
+	if max <= 0 {
+		return ""
+	}
+	if s == "" {
 		return ""
 	}
 	if utf8.RuneCountInString(s) <= max {

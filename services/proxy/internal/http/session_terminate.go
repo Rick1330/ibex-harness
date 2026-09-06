@@ -218,15 +218,22 @@ func (h sessionTerminateHandler) dispatchEnqueue(
 		h.recordEnqueue("skipped", "disabled")
 		return
 	}
-	err := h.postEnqueue(ctx, job, turns)
-	if err != nil {
-		h.recordEnqueue("failed", "http")
-		if h.log != nil {
-			h.log.WarnCtx(ctx, "extraction enqueue failed; buffer retained",
-				"error", err, "session_id", job.sessionID.String())
-		}
+	if err := h.postEnqueue(ctx, job, turns); err != nil {
+		h.failEnqueue(ctx, job, err)
 		return
 	}
+	h.ackAfterSuccess(ctx, job)
+}
+
+func (h sessionTerminateHandler) failEnqueue(ctx context.Context, job terminateEnqueueJob, err error) {
+	h.recordEnqueue("failed", "http")
+	if h.log != nil {
+		h.log.WarnCtx(ctx, "extraction enqueue failed; buffer retained",
+			"error", err, "session_id", job.sessionID.String())
+	}
+}
+
+func (h sessionTerminateHandler) ackAfterSuccess(ctx context.Context, job terminateEnqueueJob) {
 	if err := h.ackTurns(ctx, job); err != nil && h.log != nil {
 		h.log.WarnCtx(ctx, "extraction buffer ack failed after enqueue",
 			"error", err, "external_id", job.externalID)
@@ -248,24 +255,26 @@ func (h sessionTerminateHandler) postEnqueue(
 	return err
 }
 
+func (h sessionTerminateHandler) bufferKey(job terminateEnqueueJob) extractionbuffer.LookupKey {
+	return extractionbuffer.LookupKey{
+		OrgID: job.orgID, AgentID: job.agentID, ExternalID: job.externalID,
+	}
+}
+
 func (h sessionTerminateHandler) peekTurns(
 	ctx context.Context, job terminateEnqueueJob,
 ) ([]extractionbuffer.Turn, error) {
 	if h.buffer == nil {
 		return nil, nil
 	}
-	return h.buffer.Peek(ctx, extractionbuffer.LookupKey{
-		OrgID: job.orgID, AgentID: job.agentID, ExternalID: job.externalID,
-	})
+	return h.buffer.Peek(ctx, h.bufferKey(job))
 }
 
 func (h sessionTerminateHandler) ackTurns(ctx context.Context, job terminateEnqueueJob) error {
 	if h.buffer == nil {
 		return nil
 	}
-	return h.buffer.Ack(ctx, extractionbuffer.LookupKey{
-		OrgID: job.orgID, AgentID: job.agentID, ExternalID: job.externalID,
-	})
+	return h.buffer.Ack(ctx, h.bufferKey(job))
 }
 
 func (h sessionTerminateHandler) recordEnqueue(result, reason string) {

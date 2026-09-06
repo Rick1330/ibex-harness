@@ -228,7 +228,10 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
 	}
 	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
-	deps := assembledRouterDeps(in, providerReg, tokenizerReg, idempStore, traceWriter)
+	deps := assembledRouterDeps(routerAssembleParts{
+		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
+		idempStore: idempStore, traceWriter: traceWriter,
+	})
 	server, err := newHTTPServer(deps)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
@@ -243,23 +246,26 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 	}, nil
 }
 
-func assembledRouterDeps(
-	in finishAssembledCoreInput,
-	providerReg *provider.Registry,
-	tokenizerReg *tokenizer.Registry,
-	idempStore idempotency.Store,
-	traceWriter *ibexch.Writer,
-) proxyhttp.RouterDeps {
+type routerAssembleParts struct {
+	in           finishAssembledCoreInput
+	providerReg  *provider.Registry
+	tokenizerReg *tokenizer.Registry
+	idempStore   idempotency.Store
+	traceWriter  *ibexch.Writer
+}
+
+func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
+	in := p.in
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
 		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
 		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
-		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, tokenizerReg),
-		ProviderRegistry: providerReg,
+		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
+		ProviderRegistry: p.providerReg,
 		ResponsePipeline: buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
-		IdempotencyStore: idempStore,
+		IdempotencyStore: p.idempStore,
 		ContextClient:    in.infra.ctxClients.client,
 		TurnBuffer:       in.infra.sessionStack.turnBuffer,
 		ExtractionEnqueue: extractionenqueue.New(extractionenqueue.Config{
@@ -268,7 +274,7 @@ func assembledRouterDeps(
 			Timeout: extractionenqueue.DefaultTimeout,
 		}),
 	}
-	assignTraceWriter(&deps, traceWriter)
+	assignTraceWriter(&deps, p.traceWriter)
 	return deps
 }
 
