@@ -137,7 +137,7 @@ func (c *Client) doEnqueue(httpReq *http.Request) error {
 }
 
 func enqueueStatusErr(code int) error {
-	if code >= 200 && code < 300 {
+	if code == http.StatusAccepted {
 		return nil
 	}
 	return fmt.Errorf("extractionenqueue: status %d", code)

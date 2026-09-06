@@ -147,14 +147,14 @@ type PreparePostResponseInput struct {
 	Outcome  httptrace.RequestOutcome
 }
 
-// PreparePostResponse decides checkpoint/trace work and builds a submit job.
+// PreparePostResponse decides checkpoint/trace/buffer work and builds a submit job.
 func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	snap, snapOK := CaptureTraceSnapshot(CaptureTraceArgs{
 		Meta: in.Meta, In: in.In, Outcome: in.Outcome,
 	})
 	doCheckpoint := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome)
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
-	doBuffer := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome) && in.Deps.TurnBuffer != nil
+	doBuffer := wantExtractionBuffer(in)
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,
 		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoBuffer: doBuffer,
@@ -166,11 +166,26 @@ func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	}
 	if doBuffer {
 		job.BufferKey = extractionbuffer.LookupKey{
-			OrgID: in.Resolved.OrgID, AgentID: in.Resolved.AgentID, ExternalID: in.Resolved.ExternalID,
+			OrgID: in.Meta.OrgID, AgentID: in.Meta.AgentID, ExternalID: in.Resolved.ExternalID,
 		}
 		job.BufferTurns = extractionTurnsFromInput(in.Resolved.TurnIndex, in.In)
 	}
 	return job
+}
+
+// wantExtractionBuffer is true for successful/streaming turns when tenant + sticky
+// ids are present — including sticky-only sessions that skip durable checkpoints.
+func wantExtractionBuffer(in PreparePostResponseInput) bool {
+	if in.Deps.TurnBuffer == nil {
+		return false
+	}
+	if in.Meta.OrgID == uuid.Nil || in.Meta.AgentID == uuid.Nil {
+		return false
+	}
+	if in.Resolved.ExternalID == "" {
+		return false
+	}
+	return in.Outcome.IsComplete || in.In.IsStreaming
 }
 
 func extractionTurnsFromInput(turnIndex int, in CheckpointInput) []extractionbuffer.Turn {

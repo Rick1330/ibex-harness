@@ -207,6 +207,49 @@ func TestUnit_PreparePostResponse_StickySkipsCheckpoint(t *testing.T) {
 	if job.DoCheckpoint {
 		t.Fatal("sticky-only must not checkpoint")
 	}
+	if job.DoBuffer {
+		t.Fatal("without TurnBuffer, sticky must not buffer")
+	}
+}
+
+func TestUnit_PreparePostResponse_StickyBuffersWithoutCheckpoint(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	buf, err := extractionbuffer.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := Resolved{ExternalID: "sticky-only"}
+	in := CheckpointInput{
+		Messages:       []llm.Message{{Role: "user", Content: "sticky-user"}, {Role: "assistant", Content: "ignored"}},
+		CompletionText: "sticky-reply", Model: "m", Provider: "p",
+	}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:     LifecycleDeps{Store: newMemSessionStore(), TurnBuffer: buf, Log: logger.Discard("t")},
+		Log:      logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: in,
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if job.DoCheckpoint {
+		t.Fatal("sticky-only must not checkpoint")
+	}
+	if !job.DoBuffer {
+		t.Fatal("sticky successful turn must buffer with Meta org/agent")
+	}
+	if job.BufferKey.OrgID != meta.OrgID || job.BufferKey.AgentID != meta.AgentID || job.BufferKey.ExternalID != rs.ExternalID {
+		t.Fatalf("BufferKey=%+v", job.BufferKey)
+	}
+	EnqueuePostResponse(job)
+	snap, err := buf.Peek(context.Background(), job.BufferKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Turns) != 2 {
+		t.Fatalf("flushed turns=%d want 2", len(snap.Turns))
+	}
 }
 
 func TestUnit_PreparePostResponse_FailureKeepsTrace(t *testing.T) {

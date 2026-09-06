@@ -27,12 +27,25 @@ logger = logging.getLogger(__name__)
 MAX_ENQUEUE_BODY_BYTES = 600_000
 _DISPATCH_CONCURRENCY = 32
 _IDEMPOTENCY_TTL_SEC = 600.0
+_IDEMPOTENCY_WAIT_SEC = 30.0
+_MAX_IDEMPO_ENTRIES = 10_000
 
 _enqueue_started = False
 _enqueue_lock = threading.Lock()
 _dispatch_sem = threading.Semaphore(_DISPATCH_CONCURRENCY)
 _idempo_lock = threading.Lock()
-_idempo: dict[str, tuple[str, float]] = {}
+_idempo: dict[str, _IdempoEntry] = {}
+
+
+class _IdempoEntry:
+    """In-flight (task_id is None) or completed cache entry with waiter event."""
+
+    __slots__ = ("exp", "ready", "task_id")
+
+    def __init__(self, task_id: str | None, exp: float, ready: threading.Event) -> None:
+        self.task_id = task_id
+        self.exp = exp
+        self.ready = ready
 
 
 class DispatchBusyError(RuntimeError):
@@ -122,22 +135,87 @@ async def _read_json_limited(request: Request) -> object:
         raise ValueError("invalid_json") from exc
 
 
-def _idempo_get(key: str) -> str | None:
-    now = time.monotonic()
+def _idempo_prune_locked(now: float) -> None:
+    expired = [k for k, e in _idempo.items() if e.task_id is not None and e.exp < now]
+    for key in expired:
+        del _idempo[key]
+    overflow = len(_idempo) - _MAX_IDEMPO_ENTRIES
+    if overflow <= 0:
+        return
+    completed = sorted(
+        ((k, e) for k, e in _idempo.items() if e.task_id is not None),
+        key=lambda item: item[1].exp,
+    )
+    for key, _ in completed[:overflow]:
+        del _idempo[key]
+
+
+def _idempo_begin(key: str) -> tuple[str | None, bool]:
+    """Reserve or observe an idempotency key.
+
+    Returns:
+      (task_id, False) when a completed entry is ready to return.
+      (None, True) when this caller owns dispatch and must complete/fail.
+      (None, False) when waiters timed out — caller should return 503.
+    """
+    deadline = time.monotonic() + _IDEMPOTENCY_WAIT_SEC
+    while True:
+        wait_ev: threading.Event | None = None
+        with _idempo_lock:
+            now = time.monotonic()
+            _idempo_prune_locked(now)
+            entry = _idempo.get(key)
+            if entry is not None and entry.task_id is not None and entry.exp >= now:
+                return entry.task_id, False
+            if entry is not None and entry.task_id is None:
+                wait_ev = entry.ready
+            else:
+                ready = threading.Event()
+                _idempo[key] = _IdempoEntry(None, now + _IDEMPOTENCY_TTL_SEC, ready)
+                return None, True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or wait_ev is None:
+            return None, False
+        if not wait_ev.wait(timeout=remaining):
+            return None, False
+
+
+def _idempo_complete(key: str, task_id: str) -> None:
     with _idempo_lock:
+        now = time.monotonic()
         entry = _idempo.get(key)
         if entry is None:
+            ready = threading.Event()
+            ready.set()
+            _idempo[key] = _IdempoEntry(task_id, now + _IDEMPOTENCY_TTL_SEC, ready)
+        else:
+            entry.task_id = task_id
+            entry.exp = now + _IDEMPOTENCY_TTL_SEC
+            entry.ready.set()
+        _idempo_prune_locked(now)
+
+
+def _idempo_fail(key: str) -> None:
+    with _idempo_lock:
+        entry = _idempo.pop(key, None)
+        if entry is not None:
+            entry.ready.set()
+
+
+def _idempo_get(key: str) -> str | None:
+    """Return a completed cached task id, if present (test/helper)."""
+    with _idempo_lock:
+        now = time.monotonic()
+        _idempo_prune_locked(now)
+        entry = _idempo.get(key)
+        if entry is None or entry.task_id is None or entry.exp < now:
             return None
-        task_id, exp = entry
-        if exp < now:
-            del _idempo[key]
-            return None
-        return task_id
+        return entry.task_id
 
 
 def _idempo_put(key: str, task_id: str) -> None:
-    with _idempo_lock:
-        _idempo[key] = (task_id, time.monotonic() + _IDEMPOTENCY_TTL_SEC)
+    """Store a completed task id (test/helper; refreshes TTL)."""
+    _idempo_complete(key, task_id)
 
 
 def _dispatch_extract(request: Request, kwargs: dict[str, Any]) -> str:
@@ -183,19 +261,28 @@ async def enqueue_extraction(request: Request) -> Response:
         return _bad_request(exc)
 
     idem_key = _idempotency_key(request, kwargs)
-    if idem_key and (existing := _idempo_get(idem_key)):
-        return JSONResponse({"task_id": existing}, status_code=202)
+    owner = False
+    if idem_key:
+        existing, owner = await asyncio.to_thread(_idempo_begin, idem_key)
+        if existing is not None:
+            return JSONResponse({"task_id": existing}, status_code=202)
+        if not owner:
+            return JSONResponse({"error": "unavailable"}, status_code=503)
 
     try:
         task_id = await _dispatch_extract_bounded(request, kwargs)
     except DispatchBusyError:
+        if owner and idem_key:
+            await asyncio.to_thread(_idempo_fail, idem_key)
         return JSONResponse({"error": "unavailable"}, status_code=503)
     except Exception:
+        if owner and idem_key:
+            await asyncio.to_thread(_idempo_fail, idem_key)
         logger.exception("worker_enqueue_dispatch_failed")
         return JSONResponse({"error": "unavailable"}, status_code=503)
 
-    if idem_key:
-        _idempo_put(idem_key, task_id)
+    if owner and idem_key:
+        await asyncio.to_thread(_idempo_complete, idem_key, task_id)
     return JSONResponse({"task_id": task_id}, status_code=202)
 
 

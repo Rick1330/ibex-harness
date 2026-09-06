@@ -215,6 +215,93 @@ def test_idempo_expired_entry_is_ignored(monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(calls) == 2
 
 
+def test_idempo_prunes_expired_on_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    from app import enqueue_http as mod
+
+    monkeypatch.setattr(mod, "_IDEMPOTENCY_TTL_SEC", 0.05)
+    for i in range(25):
+        mod._idempo_complete(f"k{i}", f"t{i}")
+    assert len(mod._idempo) == 25
+    time.sleep(0.08)
+    mod._idempo_complete("fresh", "t-fresh")
+    assert list(mod._idempo.keys()) == ["fresh"]
+    assert mod._idempo_get("fresh") == "t-fresh"
+
+
+def test_idempo_enforces_max_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import enqueue_http as mod
+
+    monkeypatch.setattr(mod, "_MAX_IDEMPO_ENTRIES", 5)
+    for i in range(8):
+        mod._idempo_complete(f"k{i}", f"t{i}")
+    assert len(mod._idempo) <= 5
+    assert mod._idempo_get("k7") == "t7"
+
+
+def test_enqueue_concurrent_idempotent_replay() -> None:
+    import threading
+    import time
+
+    calls: list[dict] = []
+    lock = threading.Lock()
+
+    def slow_capture(kwargs: dict) -> SimpleNamespace:
+        with lock:
+            calls.append(kwargs)
+        time.sleep(0.15)
+        return SimpleNamespace(id="task-shared")
+
+    client = _client(apply_async=slow_capture)
+    body = _valid_body()
+    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "concurrent-sess"}
+    barrier = threading.Barrier(8)
+    results: list[int] = []
+    task_ids: list[str] = []
+    out_lock = threading.Lock()
+
+    def worker() -> None:
+        barrier.wait()
+        resp = client.post("/internal/extraction/enqueue", headers=headers, json=body)
+        with out_lock:
+            results.append(resp.status_code)
+            task_ids.append(resp.json().get("task_id", ""))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout=5)
+        assert not th.is_alive()
+    assert results == [202] * 8
+    assert task_ids == ["task-shared"] * 8
+    assert len(calls) == 1
+
+
+def test_enqueue_dispatch_fail_clears_idempo_reservation() -> None:
+    calls = {"n": 0}
+
+    def boom(_kwargs: dict) -> SimpleNamespace:
+        calls["n"] += 1
+        raise RuntimeError("broker down")
+
+    client = _client(apply_async=boom)
+    body = _valid_body()
+    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "fail-clear"}
+    assert client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 503
+
+    def ok(kwargs: dict) -> SimpleNamespace:
+        calls["n"] += 1
+        return SimpleNamespace(id="recovered")
+
+    client2 = _client(apply_async=ok)
+    resp = client2.post("/internal/extraction/enqueue", headers=headers, json=body)
+    assert resp.status_code == 202
+    assert resp.json()["task_id"] == "recovered"
+    assert calls["n"] == 2
+
+
 def test_run_uvicorn_builds_server(monkeypatch: pytest.MonkeyPatch) -> None:
     from app import enqueue_http as mod
 

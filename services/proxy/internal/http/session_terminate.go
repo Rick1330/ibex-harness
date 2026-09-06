@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
@@ -31,12 +32,54 @@ type terminateResponseData struct {
 }
 
 type sessionTerminateHandler struct {
-	store    session.Store
-	buffer   *extractionbuffer.Buffer
-	enqueue  *extractionenqueue.Client
-	log      *logger.Logger
-	metrics  *metrics.ProxyRegistry
-	docsBase string
+	store         session.Store
+	buffer        *extractionbuffer.Buffer
+	enqueue       *extractionenqueue.Client
+	log           *logger.Logger
+	metrics       *metrics.ProxyRegistry
+	docsBase      string
+	enqueueFlight *terminateEnqueueFlight // optional; defaults to process-wide gate
+	enqueueDone   func()                  // test hook: every afterTerminateEnqueue exit
+}
+
+// terminateEnqueueFlight coalesces in-flight terminate→enqueue work per session so
+// concurrent CompleteOK/CompleteNoop paths cannot dispatch duplicate Celery tasks.
+// After the owner finishes (success or failure), waiters re-claim so transient
+// failures remain retryable and a successful Ack leaves followers with an empty peek.
+type terminateEnqueueFlight struct {
+	mu sync.Mutex
+	m  map[string]*sync.WaitGroup
+}
+
+func newTerminateEnqueueFlight() *terminateEnqueueFlight {
+	return &terminateEnqueueFlight{m: make(map[string]*sync.WaitGroup)}
+}
+
+var defaultTerminateEnqueueFlight = newTerminateEnqueueFlight()
+
+func (f *terminateEnqueueFlight) Do(key string, fn func()) {
+	for {
+		f.mu.Lock()
+		if wg, ok := f.m[key]; ok {
+			f.mu.Unlock()
+			wg.Wait()
+			continue
+		}
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		f.m[key] = wg
+		f.mu.Unlock()
+		func() {
+			defer func() {
+				wg.Done()
+				f.mu.Lock()
+				delete(f.m, key)
+				f.mu.Unlock()
+			}()
+			fn()
+		}()
+		return
+	}
 }
 
 type terminateIdentity struct {
@@ -182,6 +225,29 @@ type terminateEnqueueJob struct {
 }
 
 func (h sessionTerminateHandler) afterTerminateEnqueue(parent context.Context, job terminateEnqueueJob) {
+	defer h.signalEnqueueDone()
+	run := func() { h.runAfterTerminateEnqueue(parent, job) }
+	if job.sessionID == uuid.Nil {
+		run()
+		return
+	}
+	h.flight().Do(job.sessionID.String(), run)
+}
+
+func (h sessionTerminateHandler) signalEnqueueDone() {
+	if h.enqueueDone != nil {
+		h.enqueueDone()
+	}
+}
+
+func (h sessionTerminateHandler) flight() *terminateEnqueueFlight {
+	if h.enqueueFlight != nil {
+		return h.enqueueFlight
+	}
+	return defaultTerminateEnqueueFlight
+}
+
+func (h sessionTerminateHandler) runAfterTerminateEnqueue(parent context.Context, job terminateEnqueueJob) {
 	ctx, cancel := context.WithTimeout(parent, extractionenqueue.DefaultTimeout+time.Second)
 	defer cancel()
 	if job.requestID != "" {

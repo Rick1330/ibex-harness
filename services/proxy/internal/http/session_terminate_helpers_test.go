@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -81,16 +82,34 @@ func startEnqueueServer(t *testing.T) (*atomic.Int32, *httptest.Server) {
 	return hits, srv
 }
 
+// armEnqueueWait registers a completion signal fired on every afterTerminateEnqueue exit
+// (including skip and error paths). Call before ServeHTTP; then waitEnqueueDone.
+func armEnqueueWait(h *sessionTerminateHandler) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	h.enqueueDone = wg.Done
+	return &wg
+}
+
+func waitEnqueueDone(t *testing.T, wg *sync.WaitGroup) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for enqueue goroutine")
+	}
+}
+
 func assertEnqueueHits(t *testing.T, hits *atomic.Int32, want int32) {
 	t.Helper()
-	if want == 0 {
-		time.Sleep(50 * time.Millisecond)
-		if hits.Load() != 0 {
-			t.Fatalf("expected no enqueue")
-		}
-		return
+	if got := hits.Load(); got != want {
+		t.Fatalf("enqueue hits=%d want %d", got, want)
 	}
-	waitFor(t, func() bool { return hits.Load() == want })
 }
 
 func terminateAuthedRequest(t *testing.T, p terminateReqParams) *http.Request {

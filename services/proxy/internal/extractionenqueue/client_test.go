@@ -52,6 +52,28 @@ func TestUnit_ClientEnqueueOK(t *testing.T) {
 	}
 }
 
+func TestUnit_ClientEnqueueNonAccepted2xx(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{http.StatusOK, http.StatusNoContent} {
+		code := code
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(code)
+			}))
+			t.Cleanup(srv.Close)
+			c := extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "t"})
+			err := c.Enqueue(context.Background(), extractionenqueue.Request{
+				OrgID: uuid.New(), AgentID: uuid.New(), SessionID: uuid.New(),
+				Turns: []extractionenqueue.Turn{{TurnIndex: 0, Role: "user", Content: "hi"}},
+			})
+			if err == nil {
+				t.Fatalf("status %d must be treated as failure", code)
+			}
+		})
+	}
+}
+
 func TestUnit_ClientEnqueueHTTPError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
