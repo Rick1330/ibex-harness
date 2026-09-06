@@ -92,6 +92,9 @@ func (c *Client) Enqueue(ctx context.Context, req Request) error {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	if req.SessionID != uuid.Nil {
+		httpReq.Header.Set("Idempotency-Key", req.SessionID.String())
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {

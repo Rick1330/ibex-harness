@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import threading
+import time
 from typing import Any
 from uuid import UUID
 
@@ -25,10 +26,17 @@ logger = logging.getLogger(__name__)
 # Slightly above MAX_BATCH_CONTENT_BYTES to allow JSON framing.
 MAX_ENQUEUE_BODY_BYTES = 600_000
 _DISPATCH_CONCURRENCY = 32
+_IDEMPOTENCY_TTL_SEC = 600.0
 
 _enqueue_started = False
 _enqueue_lock = threading.Lock()
 _dispatch_sem = threading.Semaphore(_DISPATCH_CONCURRENCY)
+_idempo_lock = threading.Lock()
+_idempo: dict[str, tuple[str, float]] = {}
+
+
+class DispatchBusyError(RuntimeError):
+    """Raised when enqueue dispatch concurrency is exhausted."""
 
 
 def _bearer_matches(provided: str, expected: str) -> bool:
@@ -114,6 +122,24 @@ async def _read_json_limited(request: Request) -> object:
         raise ValueError("invalid_json") from exc
 
 
+def _idempo_get(key: str) -> str | None:
+    now = time.monotonic()
+    with _idempo_lock:
+        entry = _idempo.get(key)
+        if entry is None:
+            return None
+        task_id, exp = entry
+        if exp < now:
+            del _idempo[key]
+            return None
+        return task_id
+
+
+def _idempo_put(key: str, task_id: str) -> None:
+    with _idempo_lock:
+        _idempo[key] = (task_id, time.monotonic() + _IDEMPOTENCY_TTL_SEC)
+
+
 def _dispatch_extract(request: Request, kwargs: dict[str, Any]) -> str:
     apply_async = getattr(request.app.state, "apply_async", None)
     if apply_async is None:
@@ -124,11 +150,12 @@ def _dispatch_extract(request: Request, kwargs: dict[str, Any]) -> str:
 
 
 async def _dispatch_extract_bounded(request: Request, kwargs: dict[str, Any]) -> str:
-    def run() -> str:
-        with _dispatch_sem:
-            return _dispatch_extract(request, kwargs)
-
-    return await asyncio.to_thread(run)
+    if not _dispatch_sem.acquire(blocking=False):
+        raise DispatchBusyError("dispatch_busy")
+    try:
+        return await asyncio.to_thread(_dispatch_extract, request, kwargs)
+    finally:
+        _dispatch_sem.release()
 
 
 def _bad_request(exc: Exception) -> JSONResponse:
@@ -136,6 +163,13 @@ def _bad_request(exc: Exception) -> JSONResponse:
     if msg in {"invalid_json", "payload_too_large", "invalid_content_length"}:
         return JSONResponse({"error": msg}, status_code=400)
     return JSONResponse({"error": msg}, status_code=400)
+
+
+def _idempotency_key(request: Request, kwargs: dict[str, Any]) -> str:
+    header = (request.headers.get("idempotency-key") or "").strip()
+    if header:
+        return header
+    return str(kwargs.get("session_id") or "")
 
 
 async def enqueue_extraction(request: Request) -> Response:
@@ -148,11 +182,20 @@ async def enqueue_extraction(request: Request) -> Response:
     except (ValueError, TypeError) as exc:
         return _bad_request(exc)
 
+    idem_key = _idempotency_key(request, kwargs)
+    if idem_key and (existing := _idempo_get(idem_key)):
+        return JSONResponse({"task_id": existing}, status_code=202)
+
     try:
         task_id = await _dispatch_extract_bounded(request, kwargs)
+    except DispatchBusyError:
+        return JSONResponse({"error": "unavailable"}, status_code=503)
     except Exception:
         logger.exception("worker_enqueue_dispatch_failed")
         return JSONResponse({"error": "unavailable"}, status_code=503)
+
+    if idem_key:
+        _idempo_put(idem_key, task_id)
     return JSONResponse({"task_id": task_id}, status_code=202)
 
 
@@ -218,3 +261,5 @@ def reset_enqueue_http_for_tests() -> None:
     global _enqueue_started
     with _enqueue_lock:
         _enqueue_started = False
+    with _idempo_lock:
+        _idempo.clear()

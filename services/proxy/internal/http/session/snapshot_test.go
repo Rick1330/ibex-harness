@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -9,8 +10,12 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -237,6 +242,41 @@ func TestUnit_PreparePostResponse(t *testing.T) {
 		}
 		if !job.Snap.Streaming {
 			t.Fatal("stream flag preserved in snap")
+		}
+	})
+
+	t.Run("turn buffer prepares and flushes", func(t *testing.T) {
+		t.Parallel()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = client.Close() })
+		buf, err := extractionbuffer.New(client, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store := newMemSessionStore()
+		inWithUser := CheckpointInput{
+			Messages:       []llm.Message{{Role: "user", Content: "hello-buf"}, {Role: "assistant", Content: "ignored"}},
+			CompletionText: "reply", Model: "m", Provider: "p",
+		}
+		job := PreparePostResponse(PreparePostResponseInput{
+			Deps:   LifecycleDeps{Store: store, TurnBuffer: buf, Log: logger.Discard("t")},
+			Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
+			Resolved: rs, Meta: meta, In: inWithUser, Outcome: outcome,
+		})
+		if !job.DoBuffer {
+			t.Fatal("expected DoBuffer")
+		}
+		if len(job.BufferTurns) != 2 {
+			t.Fatalf("buffer turns=%d", len(job.BufferTurns))
+		}
+		EnqueuePostResponse(job)
+		snap, err := buf.Peek(context.Background(), job.BufferKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snap.Turns) != 2 {
+			t.Fatalf("flushed turns=%d", len(snap.Turns))
 		}
 	})
 }

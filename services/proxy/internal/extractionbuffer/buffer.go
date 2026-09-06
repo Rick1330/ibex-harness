@@ -33,6 +33,19 @@ redis.call("SET", KEYS[1], ARGV[2], "PX", ARGV[3])
 return 1
 `)
 
+// delete only when the stored value still matches the peeked snapshot.
+var ackIfMatchLua = redis.NewScript(`
+local cur = redis.call("GET", KEYS[1])
+if cur == false then
+  return 0
+end
+if cur ~= ARGV[1] then
+  return 0
+end
+redis.call("DEL", KEYS[1])
+return 1
+`)
+
 // Turn is one extraction payload element (role + content + index).
 type Turn struct {
 	TurnIndex int    `json:"turn_index"`
@@ -224,17 +237,39 @@ func sleepCASBackoff(ctx context.Context, attempt int) error {
 	}
 }
 
-// Peek returns buffered turns without clearing the key.
-func (b *Buffer) Peek(ctx context.Context, k LookupKey) ([]Turn, error) {
-	return b.fetchTurns(ctx, k)
+// Snapshot is a peeked buffer value: Turns plus the exact Redis payload for Ack.
+type Snapshot struct {
+	Turns []Turn
+	Raw   string
 }
 
-// Ack deletes the buffer after a successful enqueue accept.
-func (b *Buffer) Ack(ctx context.Context, k LookupKey) error {
+// Peek returns buffered turns without clearing the key.
+func (b *Buffer) Peek(ctx context.Context, k LookupKey) (Snapshot, error) {
 	if !b.usable(k) {
+		return Snapshot{}, nil
+	}
+	raw, err := b.client.Get(ctx, Key(k)).Bytes()
+	if err == redis.Nil {
+		return Snapshot{}, nil
+	}
+	if err != nil {
+		return Snapshot{}, err
+	}
+	turns, err := decodeTurns(raw)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{Turns: turns, Raw: string(raw)}, nil
+}
+
+// Ack deletes the buffer only when it still matches expectedRaw from Peek.
+// If a newer append landed, the key is left intact (return nil).
+func (b *Buffer) Ack(ctx context.Context, k LookupKey, expectedRaw string) error {
+	if !b.usable(k) || expectedRaw == "" {
 		return nil
 	}
-	return b.client.Del(ctx, Key(k)).Err()
+	_, err := ackIfMatchLua.Run(ctx, b.client, []string{Key(k)}, expectedRaw).Int()
+	return err
 }
 
 // Take clears and returns buffered turns (GETDEL semantics). Missing key → empty.
@@ -243,20 +278,6 @@ func (b *Buffer) Take(ctx context.Context, k LookupKey) ([]Turn, error) {
 		return nil, nil
 	}
 	raw, err := b.client.GetDel(ctx, Key(k)).Bytes()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return decodeTurns(raw)
-}
-
-func (b *Buffer) fetchTurns(ctx context.Context, k LookupKey) ([]Turn, error) {
-	if !b.usable(k) {
-		return nil, nil
-	}
-	raw, err := b.client.Get(ctx, Key(k)).Bytes()
 	if err == redis.Nil {
 		return nil, nil
 	}

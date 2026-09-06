@@ -103,6 +103,56 @@ def test_enqueue_accepts_valid_payload() -> None:
     assert captured[0]["turns"][0]["role"] == "user"
 
 
+def test_enqueue_idempotent_replay_same_task_id() -> None:
+    calls: list[dict] = []
+
+    def capture(kwargs: dict) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(id="task-once")
+
+    client = _client(apply_async=capture)
+    body = _valid_body()
+    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "sess-1"}
+    r1 = client.post("/internal/extraction/enqueue", headers=headers, json=body)
+    r2 = client.post("/internal/extraction/enqueue", headers=headers, json=body)
+    assert r1.status_code == 202
+    assert r2.status_code == 202
+    assert r1.json()["task_id"] == r2.json()["task_id"] == "task-once"
+    assert len(calls) == 1
+
+
+def test_enqueue_idempotent_defaults_to_session_id() -> None:
+    calls: list[dict] = []
+
+    def capture(kwargs: dict) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(id="task-sid")
+
+    client = _client(apply_async=capture)
+    body = _valid_body()
+    r1 = _post_enqueue(client, body)
+    r2 = _post_enqueue(client, body)
+    assert r1.json()["task_id"] == r2.json()["task_id"] == "task-sid"
+    assert len(calls) == 1
+
+
+def test_enqueue_dispatch_busy_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import enqueue_http as mod
+
+    class _BusySem:
+        def acquire(self, blocking: bool = True) -> bool:
+            assert blocking is False
+            return False
+
+        def release(self) -> None:
+            raise AssertionError("release must not run when admit fails")
+
+    monkeypatch.setattr(mod, "_dispatch_sem", _BusySem())
+    resp = _post_enqueue(_client(apply_async=lambda kwargs: SimpleNamespace(id="x")), _valid_body())
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "unavailable"
+
+
 def test_enqueue_broker_failure_returns_unavailable() -> None:
     def boom(_kwargs: dict) -> SimpleNamespace:
         raise RuntimeError("broker down")
@@ -110,6 +160,112 @@ def test_enqueue_broker_failure_returns_unavailable() -> None:
     resp = _post_enqueue(_client(apply_async=boom), _valid_body())
     assert resp.status_code == 503
     assert resp.json()["error"] == "unavailable"
+
+
+def test_enqueue_rejects_invalid_content_length() -> None:
+    client = _client(apply_async=lambda kwargs: SimpleNamespace(id="t1"))
+    headers = {
+        "Authorization": "Bearer sekrit",
+        "Content-Type": "application/json",
+        "Content-Length": "not-an-int",
+    }
+    resp = client.post("/internal/extraction/enqueue", headers=headers, content=b"{}")
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_content_length"
+
+
+def test_enqueue_rejects_empty_and_bad_json_body() -> None:
+    client = _client(apply_async=lambda kwargs: SimpleNamespace(id="t1"))
+    empty = client.post(
+        "/internal/extraction/enqueue",
+        headers={"Authorization": "Bearer sekrit", "Content-Type": "application/json"},
+        content=b"",
+    )
+    assert empty.status_code == 400
+    bad = _post_enqueue(client, b"{not-json", raw=True)
+    assert bad.status_code == 400
+    assert bad.json()["error"] == "invalid_json"
+
+
+def test_enqueue_rejects_missing_org_id() -> None:
+    body = _valid_body()
+    del body["org_id"]
+    resp = _post_enqueue(_client(apply_async=lambda kwargs: SimpleNamespace(id="t1")), body)
+    assert resp.status_code == 400
+
+
+def test_idempo_expired_entry_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import enqueue_http as mod
+
+    calls: list[dict] = []
+
+    def capture(kwargs: dict) -> SimpleNamespace:
+        calls.append(kwargs)
+        return SimpleNamespace(id=f"task-{len(calls)}")
+
+    monkeypatch.setattr(mod, "_IDEMPOTENCY_TTL_SEC", 0.01)
+    client = _client(apply_async=capture)
+    body = _valid_body()
+    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "expire-me"}
+    assert client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
+    import time
+
+    time.sleep(0.05)
+    assert client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
+    assert len(calls) == 2
+
+
+def test_run_uvicorn_builds_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import enqueue_http as mod
+
+    ran = {"n": 0}
+
+    class _FakeServer:
+        def __init__(self, _config: object) -> None:
+            ran["n"] += 1
+
+        def run(self) -> None:
+            return None
+
+    monkeypatch.setattr(mod, "uvicorn", SimpleNamespace(Config=lambda *a, **k: object(), Server=_FakeServer), raising=False)
+    # Patch inside function via module after import uvicorn — call with stubbed import.
+    import types
+
+    fake_uv = types.SimpleNamespace(
+        Config=lambda *a, **k: object(),
+        Server=_FakeServer,
+    )
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", fake_uv)
+    mod._run_uvicorn(_settings(port=18099))
+    assert ran["n"] == 1
+
+
+def test_bearer_length_mismatch_and_empty_expected() -> None:
+    from app.enqueue_http import _bearer_matches
+
+    assert _bearer_matches("a", "") is False
+    assert _bearer_matches("ab", "a") is False
+    assert _bearer_matches("same", "same") is True
+
+
+@pytest.mark.asyncio
+async def test_read_json_limited_stream_cap_and_no_content_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    from starlette.requests import Request
+
+    from app import enqueue_http as mod
+
+    monkeypatch.setattr(mod, "MAX_ENQUEUE_BODY_BYTES", 8)
+
+    async def receive():
+        return {"type": "http.request", "body": b"{\"a\":1,\"pad\":true}", "more_body": False}
+
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": "/", "raw_path": b"/", "query_string": b"", "headers": [], "client": ("127.0.0.1", 1),
+             "server": ("127.0.0.1", 80)}
+    req = Request(scope, receive)
+    mod._check_content_length(req)
+    with pytest.raises(ValueError, match="payload_too_large"):
+        await mod._read_json_limited(req)
 
 
 def test_enqueue_uses_celery_when_no_inject() -> None:

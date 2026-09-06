@@ -194,3 +194,33 @@ func TestAuthMiddlewareNilOrgIDFailsClosed(t *testing.T) {
 		t.Fatalf("body: %s", rec.Body.String())
 	}
 }
+
+func TestAuthMiddlewareSessionTerminatePermission(t *testing.T) {
+	t.Parallel()
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{
+		OrgID: authMiddlewareOrgID, Permissions: int64(permissions.ProxyChatCompletion),
+	}}, logger.Discard("proxy"), AuthOptions{RequireSessionTerminate: true})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/ext/terminate", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_x")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "session:terminate") {
+		t.Fatalf("body: %s", rec.Body.String())
+	}
+
+	okHandler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{
+		OrgID: authMiddlewareOrgID, Permissions: int64(permissions.SessionTerminate),
+	}}, logger.Discard("proxy"), AuthOptions{RequireSessionTerminate: true})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	rec2 := httptest.NewRecorder()
+	okHandler.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("status: %d", rec2.Code)
+	}
+}

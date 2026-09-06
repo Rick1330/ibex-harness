@@ -62,9 +62,10 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeTerminateOK(w, id.externalID)
-	if result == session.CompleteOK {
+	// OK: first completion. Noop: recover retained turns after a prior failed enqueue.
+	if result == session.CompleteOK || result == session.CompleteNoop {
 		bg := context.WithoutCancel(r.Context())
-		go h.afterCompleteOK(bg, terminateEnqueueJob{
+		go h.afterTerminateEnqueue(bg, terminateEnqueueJob{
 			orgID: id.orgID, agentID: id.agentID, sessionID: sessionID,
 			externalID: id.externalID, requestID: id.requestID,
 		})
@@ -180,49 +181,49 @@ type terminateEnqueueJob struct {
 	requestID  string
 }
 
-func (h sessionTerminateHandler) afterCompleteOK(parent context.Context, job terminateEnqueueJob) {
+func (h sessionTerminateHandler) afterTerminateEnqueue(parent context.Context, job terminateEnqueueJob) {
 	ctx, cancel := context.WithTimeout(parent, extractionenqueue.DefaultTimeout+time.Second)
 	defer cancel()
 	if job.requestID != "" {
 		ctx = reqid.WithRequestID(ctx, job.requestID)
 	}
-	turns, ok := h.loadEnqueueTurns(ctx, job)
+	snap, ok := h.loadEnqueueSnapshot(ctx, job)
 	if !ok {
 		return
 	}
-	h.dispatchEnqueue(ctx, job, turns)
+	h.dispatchEnqueue(ctx, job, snap)
 }
 
-func (h sessionTerminateHandler) loadEnqueueTurns(
+func (h sessionTerminateHandler) loadEnqueueSnapshot(
 	ctx context.Context, job terminateEnqueueJob,
-) ([]extractionbuffer.Turn, bool) {
-	turns, err := h.peekTurns(ctx, job)
+) (extractionbuffer.Snapshot, bool) {
+	snap, err := h.peekSnapshot(ctx, job)
 	if err != nil {
 		h.recordEnqueue("failed", "buffer_read")
 		if h.log != nil {
 			h.log.WarnCtx(ctx, "extraction buffer peek failed", "error", err, "external_id", job.externalID)
 		}
-		return nil, false
+		return extractionbuffer.Snapshot{}, false
 	}
-	if len(turns) == 0 {
+	if len(snap.Turns) == 0 {
 		h.recordEnqueue("skipped", "empty_buffer")
-		return nil, false
+		return extractionbuffer.Snapshot{}, false
 	}
-	return turns, true
+	return snap, true
 }
 
 func (h sessionTerminateHandler) dispatchEnqueue(
-	ctx context.Context, job terminateEnqueueJob, turns []extractionbuffer.Turn,
+	ctx context.Context, job terminateEnqueueJob, snap extractionbuffer.Snapshot,
 ) {
 	if !h.enqueueReady() {
 		h.recordEnqueue("skipped", "disabled")
 		return
 	}
-	if err := h.postEnqueue(ctx, job, turns); err != nil {
+	if err := h.postEnqueue(ctx, job, snap.Turns); err != nil {
 		h.failEnqueue(ctx, job, err)
 		return
 	}
-	h.ackAfterSuccess(ctx, job)
+	h.ackAfterSuccess(ctx, job, snap.Raw)
 }
 
 func (h sessionTerminateHandler) enqueueReady() bool {
@@ -241,8 +242,8 @@ func (h sessionTerminateHandler) failEnqueue(ctx context.Context, job terminateE
 		"error", err, "session_id", job.sessionID.String())
 }
 
-func (h sessionTerminateHandler) ackAfterSuccess(ctx context.Context, job terminateEnqueueJob) {
-	err := h.ackTurns(ctx, job)
+func (h sessionTerminateHandler) ackAfterSuccess(ctx context.Context, job terminateEnqueueJob, raw string) {
+	err := h.ackSnapshot(ctx, job, raw)
 	if err != nil {
 		h.warnAck(ctx, job, err)
 	}
@@ -260,15 +261,12 @@ func (h sessionTerminateHandler) warnAck(ctx context.Context, job terminateEnque
 func (h sessionTerminateHandler) postEnqueue(
 	ctx context.Context, job terminateEnqueueJob, turns []extractionbuffer.Turn,
 ) error {
-	req := extractionenqueue.Request{
+	// Single attempt: worker dedupes via Idempotency-Key=session_id. Blind retries risk
+	// double-dispatch when the first call was accepted but the response was lost.
+	return h.enqueue.Enqueue(ctx, extractionenqueue.Request{
 		OrgID: job.orgID, AgentID: job.agentID, SessionID: job.sessionID,
 		Turns: toEnqueueTurns(turns),
-	}
-	err := h.enqueue.Enqueue(ctx, req)
-	if err != nil && enqueueTransient(err) {
-		return h.enqueue.Enqueue(ctx, req)
-	}
-	return err
+	})
 }
 
 func (h sessionTerminateHandler) bufferKey(job terminateEnqueueJob) extractionbuffer.LookupKey {
@@ -277,20 +275,20 @@ func (h sessionTerminateHandler) bufferKey(job terminateEnqueueJob) extractionbu
 	}
 }
 
-func (h sessionTerminateHandler) peekTurns(
+func (h sessionTerminateHandler) peekSnapshot(
 	ctx context.Context, job terminateEnqueueJob,
-) ([]extractionbuffer.Turn, error) {
+) (extractionbuffer.Snapshot, error) {
 	if h.buffer == nil {
-		return nil, nil
+		return extractionbuffer.Snapshot{}, nil
 	}
 	return h.buffer.Peek(ctx, h.bufferKey(job))
 }
 
-func (h sessionTerminateHandler) ackTurns(ctx context.Context, job terminateEnqueueJob) error {
+func (h sessionTerminateHandler) ackSnapshot(ctx context.Context, job terminateEnqueueJob, raw string) error {
 	if h.buffer == nil {
 		return nil
 	}
-	return h.buffer.Ack(ctx, h.bufferKey(job))
+	return h.buffer.Ack(ctx, h.bufferKey(job), raw)
 }
 
 func (h sessionTerminateHandler) recordEnqueue(result, reason string) {
@@ -305,13 +303,4 @@ func toEnqueueTurns(in []extractionbuffer.Turn) []extractionenqueue.Turn {
 		out[i] = extractionenqueue.Turn{TurnIndex: t.TurnIndex, Role: t.Role, Content: t.Content}
 	}
 	return out
-}
-
-func enqueueTransient(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	// Do not retry client/auth/validation responses (4xx).
-	return !strings.Contains(msg, "status 4")
 }

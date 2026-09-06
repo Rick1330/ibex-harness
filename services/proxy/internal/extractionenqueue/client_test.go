@@ -67,3 +67,48 @@ func TestUnit_ClientEnqueueHTTPError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestUnit_ClientEnqueueIdempotencyKey(t *testing.T) {
+	t.Parallel()
+	sid := uuid.New()
+	var gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("Idempotency-Key")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(srv.Close)
+	c := extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "t"})
+	if err := c.Enqueue(context.Background(), extractionenqueue.Request{
+		OrgID: uuid.New(), AgentID: uuid.New(), SessionID: sid,
+		Turns: []extractionenqueue.Turn{{TurnIndex: 0, Role: "user", Content: "hi"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != sid.String() {
+		t.Fatalf("Idempotency-Key=%q want %s", gotKey, sid)
+	}
+}
+
+func TestUnit_ClientEnqueueGuards(t *testing.T) {
+	t.Parallel()
+	c := extractionenqueue.New(extractionenqueue.Config{})
+	if err := c.Enqueue(context.Background(), extractionenqueue.Request{
+		Turns: []extractionenqueue.Turn{{TurnIndex: 0, Role: "user", Content: "hi"}},
+	}); err == nil {
+		t.Fatal("expected disabled error")
+	}
+	ok := extractionenqueue.New(extractionenqueue.Config{BaseURL: "http://127.0.0.1:9", Token: "t"})
+	if err := ok.Enqueue(context.Background(), extractionenqueue.Request{
+		OrgID: uuid.New(), AgentID: uuid.New(), SessionID: uuid.New(),
+	}); err == nil {
+		t.Fatal("expected turns required")
+	}
+}
+
+func TestUnit_ClientDefaultTimeout(t *testing.T) {
+	t.Parallel()
+	c := extractionenqueue.New(extractionenqueue.Config{BaseURL: "http://example.invalid", Token: "t", Timeout: 0})
+	if !c.Enabled() {
+		t.Fatal("expected enabled")
+	}
+}

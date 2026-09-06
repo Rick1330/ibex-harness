@@ -3,6 +3,7 @@ package extractionbuffer_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,104 @@ func TestUnit_TurnsFromChat(t *testing.T) {
 	assertTurn(t, got, turnWant{idx: 1, turnIndex: 7, content: "a"})
 }
 
+func TestUnit_NewGuards(t *testing.T) {
+	t.Parallel()
+	if _, err := extractionbuffer.New(nil, time.Minute); err == nil {
+		t.Fatal("expected nil client error")
+	}
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := extractionbuffer.New(client, 0); err == nil {
+		t.Fatal("expected ttl error")
+	}
+}
+
+func TestUnit_AppendSkippedAndSanitize(t *testing.T) {
+	t.Parallel()
+	b, _ := testBuffer(t)
+	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: ""}
+	out, err := b.Append(context.Background(), k, []extractionbuffer.Turn{
+		{TurnIndex: 0, Role: "user", Content: "x"},
+	})
+	if err != nil || out != extractionbuffer.AppendSkipped {
+		t.Fatalf("empty external: out=%v err=%v", out, err)
+	}
+	k.ExternalID = "sanitize"
+	out, err = b.Append(context.Background(), k, []extractionbuffer.Turn{
+		{TurnIndex: -1, Role: "user", Content: "bad-idx"},
+		{TurnIndex: 0, Role: "", Content: "norole"},
+		{TurnIndex: 1, Role: "user", Content: ""},
+		{TurnIndex: 2, Role: "user", Content: "ok"},
+	})
+	if err != nil || out != extractionbuffer.AppendOK {
+		t.Fatalf("sanitize: out=%v err=%v", out, err)
+	}
+	assertPeekLen(t, b, k, 1)
+	longRole := strings.Repeat("r", 40)
+	longContent := strings.Repeat("c", 100_050)
+	mustAppendOK(t, b, k, []extractionbuffer.Turn{
+		{TurnIndex: 3, Role: longRole, Content: longContent},
+	})
+	snap, err := b.Peek(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := snap.Turns[len(snap.Turns)-1]
+	if len([]rune(last.Role)) > 32 {
+		t.Fatalf("role not truncated: %d", len([]rune(last.Role)))
+	}
+	if len([]rune(last.Content)) > 100_000 {
+		t.Fatalf("content not truncated: %d", len([]rune(last.Content)))
+	}
+}
+
+func TestUnit_PeekAckUsableAndDecode(t *testing.T) {
+	t.Parallel()
+	b, mr := testBuffer(t)
+	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "peek"}
+	snap, err := b.Peek(context.Background(), k)
+	if err != nil || len(snap.Turns) != 0 || snap.Raw != "" {
+		t.Fatalf("empty peek: %+v err=%v", snap, err)
+	}
+	if err := b.Ack(context.Background(), k, ""); err != nil {
+		t.Fatal(err)
+	}
+	mustAppendOK(t, b, k, []extractionbuffer.Turn{{TurnIndex: 0, Role: "user", Content: "a"}})
+	key := extractionbuffer.Key(k)
+	if err := mr.Set(key, "{not-json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Peek(context.Background(), k); err == nil {
+		t.Fatal("expected decode error")
+	}
+	unused := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New()}
+	if _, err := b.Take(context.Background(), unused); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnit_CASConflictErrorString(t *testing.T) {
+	t.Parallel()
+	b, _ := testBuffer(t)
+	// Exercise nil-receiver / empty-client usable paths without panicking.
+	var nilBuf *extractionbuffer.Buffer
+	out, err := nilBuf.Append(context.Background(), extractionbuffer.LookupKey{
+		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "x",
+	}, []extractionbuffer.Turn{{TurnIndex: 0, Role: "user", Content: "y"}})
+	if err != nil || out != extractionbuffer.AppendSkipped {
+		t.Fatalf("nil buffer: out=%v err=%v", out, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out, err = b.Append(ctx, extractionbuffer.LookupKey{
+		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "canceled",
+	}, []extractionbuffer.Turn{{TurnIndex: 0, Role: "user", Content: "y"}})
+	if out != extractionbuffer.AppendRedisErr || err == nil {
+		t.Fatalf("canceled ctx: out=%v err=%v", out, err)
+	}
+}
+
 func TestUnit_AppendConcurrentNoLostTurns(t *testing.T) {
 	t.Parallel()
 	b, _ := testBuffer(t)
@@ -87,7 +186,47 @@ func TestUnit_AppendConcurrentNoLostTurns(t *testing.T) {
 	const workers = 20
 	fanoutAppend(t, b, k, workers)
 	assertPeekLen(t, b, k, workers)
-	if err := b.Ack(context.Background(), k); err != nil {
+	snap, err := b.Peek(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Ack(context.Background(), k, snap.Raw); err != nil {
+		t.Fatal(err)
+	}
+	assertPeekLen(t, b, k, 0)
+}
+
+func TestUnit_AckPreservesNewerAppend(t *testing.T) {
+	t.Parallel()
+	b, _ := testBuffer(t)
+	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "ack-race"}
+	mustAppendOK(t, b, k, []extractionbuffer.Turn{
+		{TurnIndex: 0, Role: "user", Content: "first"},
+	})
+	peeked, err := b.Peek(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peeked.Turns) != 1 || peeked.Raw == "" {
+		t.Fatalf("peek turns=%d raw_empty=%v", len(peeked.Turns), peeked.Raw == "")
+	}
+	mustAppendOK(t, b, k, []extractionbuffer.Turn{
+		{TurnIndex: 1, Role: "assistant", Content: "second"},
+	})
+	if err := b.Ack(context.Background(), k, peeked.Raw); err != nil {
+		t.Fatal(err)
+	}
+	after, err := b.Peek(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Turns) != 2 {
+		t.Fatalf("ack deleted newer snapshot: len=%d want 2", len(after.Turns))
+	}
+	if after.Raw == peeked.Raw {
+		t.Fatal("expected newer raw after append")
+	}
+	if err := b.Ack(context.Background(), k, after.Raw); err != nil {
 		t.Fatal(err)
 	}
 	assertPeekLen(t, b, k, 0)
@@ -152,20 +291,22 @@ type lenCheck struct {
 
 func assertLen(t *testing.T, c lenCheck) {
 	t.Helper()
-	var (
-		turns []extractionbuffer.Turn
-		err   error
-	)
+	var n int
 	if c.take {
-		turns, err = c.b.Take(context.Background(), c.k)
+		turns, err := c.b.Take(context.Background(), c.k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n = len(turns)
 	} else {
-		turns, err = c.b.Peek(context.Background(), c.k)
+		snap, err := c.b.Peek(context.Background(), c.k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n = len(snap.Turns)
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(turns) != c.want {
-		t.Fatalf("len=%d want %d", len(turns), c.want)
+	if n != c.want {
+		t.Fatalf("len=%d want %d", n, c.want)
 	}
 }
 
