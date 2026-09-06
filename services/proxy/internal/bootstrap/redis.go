@@ -156,7 +156,10 @@ func setupContextClient(cfg config.Config, log *logger.Logger) (contextClients, 
 
 func dialContextGRPC(cfg config.Config, log *logger.Logger) (contextClients, error) {
 	conn, err := grpc.NewClient(cfg.ContextGRPCTarget,
-		grpc.WithTransportCredentials(authTransportCredentials(cfg.Environment)),
+		// Same env-gated transport as dialAuthGRPC: plaintext only in development.
+		// Staging/production use TLS12. Do not force TLS in development — local auth/context
+		// stacks run without certs (acceptable risk; mirrors auth client).
+		grpc.WithTransportCredentials(authTransportCredentials(cfg.Environment)), // nosemgrep: go.grpc.tls.grpc-client-new-insecure-connection.grpc-client-new-insecure-connection
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)

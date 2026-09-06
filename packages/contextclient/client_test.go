@@ -65,8 +65,7 @@ func TestAssemble_success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := c.Assemble(context.Background(), successAssembleParams())
-	assertSuccessAssembleResult(t, got)
+	assertSuccessAssembleResult(t, c.Assemble(context.Background(), successAssembleParams()))
 }
 
 func successAssembleParams() AssembleParams {
@@ -93,27 +92,41 @@ func successAssembleResponse() *contextv1.AssembleContextResponse {
 	}
 }
 
+func assertStringField(t *testing.T, got, want, field string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %q, want %q", field, got, want)
+	}
+}
+
 func assertSuccessAssembleRequest(t *testing.T, req *contextv1.AssembleContextRequest) {
 	t.Helper()
-	if req.GetOrgId() != "org-1" {
-		t.Fatalf("org_id = %q", req.GetOrgId())
+	assertStringField(t, req.GetOrgId(), "org-1", "org_id")
+	assertStringField(t, req.GetAgentId(), "agent-1", "agent_id")
+	assertStringField(t, req.GetModel(), "gpt-4o", "model")
+	assertStringField(t, req.GetQuery(), "hello", "query")
+	assertSuccessRecentMessages(t, req.GetRecentMessages())
+	assertSuccessOptions(t, req.GetOptions())
+}
+
+func assertSuccessRecentMessages(t *testing.T, msgs []*contextv1.Message) {
+	t.Helper()
+	if len(msgs) != 1 {
+		t.Fatalf("recent_messages len = %d, want 1", len(msgs))
 	}
-	if req.GetAgentId() != "agent-1" {
-		t.Fatalf("agent_id = %q", req.GetAgentId())
+	assertStringField(t, msgs[0].GetContent(), "hi", "recent_messages[0].content")
+}
+
+func assertSuccessOptions(t *testing.T, opts *contextv1.AssemblyOptions) {
+	t.Helper()
+	if opts == nil {
+		t.Fatal("options is nil")
 	}
-	if req.GetModel() != "gpt-4o" {
-		t.Fatalf("model = %q", req.GetModel())
+	if !opts.GetSkipColdMemories() {
+		t.Fatal("SkipColdMemories = false, want true")
 	}
-	if req.GetQuery() != "hello" {
-		t.Fatalf("query = %q", req.GetQuery())
-	}
-	msgs := req.GetRecentMessages()
-	if len(msgs) != 1 || msgs[0].GetContent() != "hi" {
-		t.Fatalf("recent_messages = %+v", msgs)
-	}
-	opts := req.GetOptions()
-	if opts == nil || !opts.GetSkipColdMemories() || opts.GetMaxMemories() != 3 {
-		t.Fatalf("options = %+v", opts)
+	if opts.GetMaxMemories() != 3 {
+		t.Fatalf("MaxMemories = %d, want 3", opts.GetMaxMemories())
 	}
 }
 
@@ -122,14 +135,18 @@ func assertSuccessAssembleResult(t *testing.T, got AssembleResult) {
 	if got.Fallback {
 		t.Fatalf("unexpected fallback: %+v", got)
 	}
-	if got.AssembledContext != "assembled" {
-		t.Fatalf("AssembledContext = %q", got.AssembledContext)
-	}
-	if got.TokensUsed != 10 || got.MemoriesIncluded != 2 {
-		t.Fatalf("tokens/memories = %+v", got)
-	}
-	if got.DirectiveTokens != 3 || got.HistoryTokens != 4 || got.MemoryTokens != 5 {
-		t.Fatalf("token counters = %+v", got)
+	assertStringField(t, got.AssembledContext, "assembled", "AssembledContext")
+	assertInt32Field(t, got.TokensUsed, 10, "TokensUsed")
+	assertInt32Field(t, got.MemoriesIncluded, 2, "MemoriesIncluded")
+	assertInt32Field(t, got.DirectiveTokens, 3, "DirectiveTokens")
+	assertInt32Field(t, got.HistoryTokens, 4, "HistoryTokens")
+	assertInt32Field(t, got.MemoryTokens, 5, "MemoryTokens")
+}
+
+func assertInt32Field(t *testing.T, got, want int32, field string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %d, want %d", field, got, want)
 	}
 }
 
@@ -169,12 +186,8 @@ func assertFailOpen(t *testing.T, rpcErr error, wantReason string) {
 	if !got.Fallback {
 		t.Fatalf("want Fallback=true, got %+v", got)
 	}
-	if got.AssembledContext != "" {
-		t.Fatalf("want empty assembled context on fallback, got %q", got.AssembledContext)
-	}
-	if got.FallbackReason != wantReason {
-		t.Fatalf("FallbackReason = %q, want %q", got.FallbackReason, wantReason)
-	}
+	assertStringField(t, got.AssembledContext, "", "AssembledContext")
+	assertStringField(t, got.FallbackReason, wantReason, "FallbackReason")
 }
 
 func TestAssemble_timeout(t *testing.T) {

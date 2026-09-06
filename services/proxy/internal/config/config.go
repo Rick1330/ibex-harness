@@ -195,9 +195,9 @@ func (c *Config) applyTransportDefaults() {
 }
 
 func (c *Config) applyContextClientDefaults() {
-	if strings.TrimSpace(c.ContextGRPCTarget) == "" {
-		c.ContextGRPCTarget = defaultContextGRPCTarget
-	}
+	// Do not default ContextGRPCTarget here: an explicitly empty
+	// IBEX_CONTEXT_GRPC_TARGET must remain empty so setupContextClient skips dial.
+	// Unset env still gets 127.0.0.1:9092 via envDefault on load.
 	if c.ContextAssembleTimeout <= 0 {
 		c.ContextAssembleTimeout = defaultContextAssembleTimeout
 	}
