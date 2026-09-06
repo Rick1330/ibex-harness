@@ -146,6 +146,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_PORT"),
         description="Internal Starlette port for POST /internal/extraction/enqueue",
     )
+    enqueue_host: str = Field(
+        default="127.0.0.1",
+        validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_HOST"),
+        description="Bind host for enqueue HTTP (containers set 0.0.0.0 explicitly)",
+    )
     enqueue_api_token: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_API_TOKEN"),

@@ -84,6 +84,7 @@ services:
       POSTGRES_DSN: ${IBEX_WORKER_DATABASE_URL:-postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:-ibex}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable}
       IBEX_WORKER_METRICS_PORT: "8006"
       IBEX_WORKER_ENQUEUE_PORT: "8007"
+      IBEX_WORKER_ENQUEUE_HOST: "0.0.0.0"
       IBEX_WORKER_ENQUEUE_API_TOKEN: ${IBEX_WORKER_ENQUEUE_API_TOKEN:-dev-enqueue-token}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
     depends_on:

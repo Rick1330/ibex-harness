@@ -72,6 +72,7 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 | `IBEX_WORKER_DATABASE_URL` / `POSTGRES_DSN` | (none) | Postgres DSN for dead-letter persistence |
 | `IBEX_WORKER_METRICS_PORT` | `8006` | Prometheus `/metrics` HTTP port |
 | `IBEX_WORKER_ENQUEUE_PORT` | `8007` | Starlette port for `POST /internal/extraction/enqueue` ([ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http)) |
+| `IBEX_WORKER_ENQUEUE_HOST` | `127.0.0.1` | Bind host; compose sets `0.0.0.0` |
 | `IBEX_WORKER_ENQUEUE_API_TOKEN` | (none) | Static Bearer; required to enable enqueue HTTP |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (none) | OTLP gRPC collector (optional) |
 | `OTEL_SAMPLE_RATIO` | `0.01` | Trace sampling ratio |

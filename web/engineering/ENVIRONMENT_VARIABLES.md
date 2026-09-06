@@ -438,6 +438,7 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_DATABASE_URL` | Conditional | (none) | Postgres DSN for dead-letter persistence | Alias: `POSTGRES_DSN` |
 | `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
 | `IBEX_WORKER_ENQUEUE_PORT` | No | `8007` | Starlette port for `POST /internal/extraction/enqueue` | Co-located with Celery worker (ADR-0072) |
+| `IBEX_WORKER_ENQUEUE_HOST` | No | `127.0.0.1` | Bind host for enqueue HTTP | Containers set `0.0.0.0` explicitly |
 | `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* | — | Static Bearer for proxy→worker enqueue | Required to enable enqueue HTTP; `hmac.compare_digest` |
 | `IBEX_WORKER_EXTRACTION_PROVIDER` | No | `openai` | Extraction LLM backend: `openai` or `vllm` | Alias: `EXTRACTION_PROVIDER`. Fail-closed at first extract if required secrets/URL missing |
 | `OPENAI_API_KEY` | Conditional | (none) | Bearer token for hosted OpenAI extraction | Required when provider=`openai`. Alias: `IBEX_WORKER_OPENAI_API_KEY` |

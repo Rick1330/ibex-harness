@@ -134,7 +134,7 @@ def start_enqueue_server(settings: Settings) -> None:
         app = create_enqueue_app(settings)
         config = uvicorn.Config(
             app,
-            host="0.0.0.0",
+            host=settings.enqueue_host,
             port=settings.enqueue_port,
             log_level="warning",
             access_log=False,
