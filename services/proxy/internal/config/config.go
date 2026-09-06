@@ -179,12 +179,7 @@ func (c *Config) applyTransportDefaults() {
 	if c.AuthValidateTimeout <= 0 {
 		c.AuthValidateTimeout = defaultAuthValidateTimeout
 	}
-	if strings.TrimSpace(c.ContextGRPCTarget) == "" {
-		c.ContextGRPCTarget = defaultContextGRPCTarget
-	}
-	if c.ContextAssembleTimeout <= 0 {
-		c.ContextAssembleTimeout = defaultContextAssembleTimeout
-	}
+	c.applyContextClientDefaults()
 	if c.MaxRequestBodyBytes < 1 {
 		c.MaxRequestBodyBytes = defaultMaxRequestBodyBytes
 	}
@@ -196,6 +191,15 @@ func (c *Config) applyTransportDefaults() {
 	}
 	if c.ShutdownTimeout <= 0 {
 		c.ShutdownTimeout = defaultShutdownTimeout
+	}
+}
+
+func (c *Config) applyContextClientDefaults() {
+	if strings.TrimSpace(c.ContextGRPCTarget) == "" {
+		c.ContextGRPCTarget = defaultContextGRPCTarget
+	}
+	if c.ContextAssembleTimeout <= 0 {
+		c.ContextAssembleTimeout = defaultContextAssembleTimeout
 	}
 }
 

@@ -57,34 +57,20 @@ func TestAssemble_success(t *testing.T) {
 	t.Parallel()
 	mock := &mockContextAssemblyServiceClient{
 		assembleFn: func(_ context.Context, req *contextv1.AssembleContextRequest, _ ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
-			if req.GetOrgId() != "org-1" || req.GetAgentId() != "agent-1" {
-				t.Fatalf("unexpected ids: org=%q agent=%q", req.GetOrgId(), req.GetAgentId())
-			}
-			if req.GetModel() != "gpt-4o" || req.GetQuery() != "hello" {
-				t.Fatalf("unexpected model/query")
-			}
-			if len(req.GetRecentMessages()) != 1 || req.GetRecentMessages()[0].GetContent() != "hi" {
-				t.Fatalf("unexpected messages: %+v", req.GetRecentMessages())
-			}
-			opts := req.GetOptions()
-			if opts == nil || !opts.GetSkipColdMemories() || opts.GetMaxMemories() != 3 {
-				t.Fatalf("unexpected options: %+v", opts)
-			}
-			return &contextv1.AssembleContextResponse{
-				AssembledContext: "assembled",
-				TokensUsed:       10,
-				MemoriesIncluded: 2,
-				DirectiveTokens:  3,
-				HistoryTokens:    4,
-				MemoryTokens:     5,
-			}, nil
+			assertSuccessAssembleRequest(t, req)
+			return successAssembleResponse(), nil
 		},
 	}
 	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := c.Assemble(context.Background(), AssembleParams{
+	got := c.Assemble(context.Background(), successAssembleParams())
+	assertSuccessAssembleResult(t, got)
+}
+
+func successAssembleParams() AssembleParams {
+	return AssembleParams{
 		OrgID:   "org-1",
 		AgentID: "agent-1",
 		Model:   "gpt-4o",
@@ -93,15 +79,57 @@ func TestAssemble_success(t *testing.T) {
 			{Role: "user", Content: "hi"},
 		},
 		Options: AssembleOptions{SkipColdMemories: true, MaxMemories: 3},
-	})
+	}
+}
+
+func successAssembleResponse() *contextv1.AssembleContextResponse {
+	return &contextv1.AssembleContextResponse{
+		AssembledContext: "assembled",
+		TokensUsed:       10,
+		MemoriesIncluded: 2,
+		DirectiveTokens:  3,
+		HistoryTokens:    4,
+		MemoryTokens:     5,
+	}
+}
+
+func assertSuccessAssembleRequest(t *testing.T, req *contextv1.AssembleContextRequest) {
+	t.Helper()
+	if req.GetOrgId() != "org-1" {
+		t.Fatalf("org_id = %q", req.GetOrgId())
+	}
+	if req.GetAgentId() != "agent-1" {
+		t.Fatalf("agent_id = %q", req.GetAgentId())
+	}
+	if req.GetModel() != "gpt-4o" {
+		t.Fatalf("model = %q", req.GetModel())
+	}
+	if req.GetQuery() != "hello" {
+		t.Fatalf("query = %q", req.GetQuery())
+	}
+	msgs := req.GetRecentMessages()
+	if len(msgs) != 1 || msgs[0].GetContent() != "hi" {
+		t.Fatalf("recent_messages = %+v", msgs)
+	}
+	opts := req.GetOptions()
+	if opts == nil || !opts.GetSkipColdMemories() || opts.GetMaxMemories() != 3 {
+		t.Fatalf("options = %+v", opts)
+	}
+}
+
+func assertSuccessAssembleResult(t *testing.T, got AssembleResult) {
+	t.Helper()
 	if got.Fallback {
 		t.Fatalf("unexpected fallback: %+v", got)
 	}
-	if got.AssembledContext != "assembled" || got.TokensUsed != 10 || got.MemoriesIncluded != 2 {
-		t.Fatalf("mapped fields: %+v", got)
+	if got.AssembledContext != "assembled" {
+		t.Fatalf("AssembledContext = %q", got.AssembledContext)
+	}
+	if got.TokensUsed != 10 || got.MemoriesIncluded != 2 {
+		t.Fatalf("tokens/memories = %+v", got)
 	}
 	if got.DirectiveTokens != 3 || got.HistoryTokens != 4 || got.MemoryTokens != 5 {
-		t.Fatalf("token counters: %+v", got)
+		t.Fatalf("token counters = %+v", got)
 	}
 }
 
@@ -121,26 +149,31 @@ func TestAssemble_failOpenStatusCodes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			mock := &mockContextAssemblyServiceClient{
-				assembleFn: func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
-					return nil, tc.err
-				},
-			}
-			c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := c.Assemble(context.Background(), AssembleParams{OrgID: "o", AgentID: "a", Model: "m", Query: "q"})
-			if !got.Fallback {
-				t.Fatalf("want Fallback=true, got %+v", got)
-			}
-			if got.AssembledContext != "" {
-				t.Fatalf("want empty assembled context on fallback, got %q", got.AssembledContext)
-			}
-			if got.FallbackReason != tc.want {
-				t.Fatalf("FallbackReason = %q, want %q", got.FallbackReason, tc.want)
-			}
+			assertFailOpen(t, tc.err, tc.want)
 		})
+	}
+}
+
+func assertFailOpen(t *testing.T, rpcErr error, wantReason string) {
+	t.Helper()
+	mock := &mockContextAssemblyServiceClient{
+		assembleFn: func(context.Context, *contextv1.AssembleContextRequest, ...grpc.CallOption) (*contextv1.AssembleContextResponse, error) {
+			return nil, rpcErr
+		},
+	}
+	c, err := New(mock, 50*time.Millisecond, logger.Discard("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Assemble(context.Background(), AssembleParams{OrgID: "o", AgentID: "a", Model: "m", Query: "q"})
+	if !got.Fallback {
+		t.Fatalf("want Fallback=true, got %+v", got)
+	}
+	if got.AssembledContext != "" {
+		t.Fatalf("want empty assembled context on fallback, got %q", got.AssembledContext)
+	}
+	if got.FallbackReason != wantReason {
+		t.Fatalf("FallbackReason = %q, want %q", got.FallbackReason, wantReason)
 	}
 }
 
