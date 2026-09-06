@@ -214,7 +214,7 @@ func (h sessionTerminateHandler) loadEnqueueTurns(
 func (h sessionTerminateHandler) dispatchEnqueue(
 	ctx context.Context, job terminateEnqueueJob, turns []extractionbuffer.Turn,
 ) {
-	if h.enqueue == nil || !h.enqueue.Enabled() {
+	if !h.enqueueReady() {
 		h.recordEnqueue("skipped", "disabled")
 		return
 	}
@@ -225,20 +225,36 @@ func (h sessionTerminateHandler) dispatchEnqueue(
 	h.ackAfterSuccess(ctx, job)
 }
 
+func (h sessionTerminateHandler) enqueueReady() bool {
+	if h.enqueue == nil {
+		return false
+	}
+	return h.enqueue.Enabled()
+}
+
 func (h sessionTerminateHandler) failEnqueue(ctx context.Context, job terminateEnqueueJob, err error) {
 	h.recordEnqueue("failed", "http")
-	if h.log != nil {
-		h.log.WarnCtx(ctx, "extraction enqueue failed; buffer retained",
-			"error", err, "session_id", job.sessionID.String())
+	if h.log == nil {
+		return
 	}
+	h.log.WarnCtx(ctx, "extraction enqueue failed; buffer retained",
+		"error", err, "session_id", job.sessionID.String())
 }
 
 func (h sessionTerminateHandler) ackAfterSuccess(ctx context.Context, job terminateEnqueueJob) {
-	if err := h.ackTurns(ctx, job); err != nil && h.log != nil {
-		h.log.WarnCtx(ctx, "extraction buffer ack failed after enqueue",
-			"error", err, "external_id", job.externalID)
+	err := h.ackTurns(ctx, job)
+	if err != nil {
+		h.warnAck(ctx, job, err)
 	}
 	h.recordEnqueue("success", "ok")
+}
+
+func (h sessionTerminateHandler) warnAck(ctx context.Context, job terminateEnqueueJob, err error) {
+	if h.log == nil {
+		return
+	}
+	h.log.WarnCtx(ctx, "extraction buffer ack failed after enqueue",
+		"error", err, "external_id", job.externalID)
 }
 
 func (h sessionTerminateHandler) postEnqueue(

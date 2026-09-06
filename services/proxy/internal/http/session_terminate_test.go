@@ -45,57 +45,81 @@ func (f *terminateStoreFake) AbandonIdle(context.Context, session.AbandonIdlePar
 	return session.AbandonIdleResult{}, nil
 }
 
-func TestUnit_SessionTerminate_CompleteResults(t *testing.T) {
+func TestUnit_SessionTerminate_OKEnqueues(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name       string
-		result     session.CompleteResult
-		wantHits   int32
-		withBuffer bool
-		ext        string
-	}{
-		{name: "ok_enqueues", result: session.CompleteOK, wantHits: 1, withBuffer: true, ext: "ext-ok"},
-		{name: "noop_skips", result: session.CompleteNoop, wantHits: 0, withBuffer: false, ext: "ext-noop"},
+	runTerminateCompleteCase(t, terminateCompleteCase{
+		result: session.CompleteOK, wantHits: 1, withBuffer: true, ext: "ext-ok",
+	})
+}
+
+func TestUnit_SessionTerminate_NoopSkips(t *testing.T) {
+	t.Parallel()
+	runTerminateCompleteCase(t, terminateCompleteCase{
+		result: session.CompleteNoop, wantHits: 0, withBuffer: false, ext: "ext-noop",
+	})
+}
+
+type terminateCompleteCase struct {
+	result     session.CompleteResult
+	wantHits   int32
+	withBuffer bool
+	ext        string
+}
+
+func runTerminateCompleteCase(t *testing.T, tc terminateCompleteCase) {
+	t.Helper()
+	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
+	store := &terminateStoreFake{result: tc.result, sessionID: sid}
+	buf := optionalTerminateBuffer(t, org, agent, tc.ext, tc.withBuffer)
+	hits, srv := startEnqueueServer(t)
+	h := sessionTerminateHandler{
+		store: store, buffer: buf,
+		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
+		log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + tc.ext),
 	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			org, agent, sid := uuid.New(), uuid.New(), uuid.New()
-			store := &terminateStoreFake{result: tc.result, sessionID: sid}
-			var buf *extractionbuffer.Buffer
-			if tc.withBuffer {
-				buf, _ = terminateBufferAndEnqueue(t, org, agent, tc.ext)
-			}
-			var enqueueHits atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				enqueueHits.Add(1)
-				w.WriteHeader(http.StatusAccepted)
-			}))
-			t.Cleanup(srv.Close)
-			h := sessionTerminateHandler{
-				store: store, buffer: buf,
-				enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-				log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + tc.name),
-			}
-			req := terminateAuthedRequest(t, terminateReqParams{
-				org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
-			})
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-			}
-			if tc.wantHits == 0 {
-				time.Sleep(50 * time.Millisecond)
-				if enqueueHits.Load() != 0 {
-					t.Fatalf("expected no enqueue")
-				}
-				return
-			}
-			waitFor(t, func() bool { return enqueueHits.Load() == tc.wantHits })
-		})
+	req := terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
+	})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	assertEnqueueHits(t, hits, tc.wantHits)
+}
+
+func optionalTerminateBuffer(
+	t *testing.T, org, agent uuid.UUID, ext string, withBuffer bool,
+) *extractionbuffer.Buffer {
+	t.Helper()
+	if !withBuffer {
+		return nil
+	}
+	buf, _ := terminateBufferAndEnqueue(t, org, agent, ext)
+	return buf
+}
+
+func startEnqueueServer(t *testing.T) (*atomic.Int32, *httptest.Server) {
+	t.Helper()
+	hits := &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(srv.Close)
+	return hits, srv
+}
+
+func assertEnqueueHits(t *testing.T, hits *atomic.Int32, want int32) {
+	t.Helper()
+	if want == 0 {
+		time.Sleep(50 * time.Millisecond)
+		if hits.Load() != 0 {
+			t.Fatalf("expected no enqueue")
+		}
+		return
+	}
+	waitFor(t, func() bool { return hits.Load() == want })
 }
 
 func TestUnit_SessionTerminate_NotFound(t *testing.T) {

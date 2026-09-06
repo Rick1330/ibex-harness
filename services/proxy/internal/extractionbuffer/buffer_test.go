@@ -135,30 +135,37 @@ func mustAppendOK(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.L
 
 func assertTakeLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int) {
 	t.Helper()
-	assertLen(t, b, k, want, true)
+	assertLen(t, lenCheck{b: b, k: k, want: want, take: true})
 }
 
 func assertPeekLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int) {
 	t.Helper()
-	assertLen(t, b, k, want, false)
+	assertLen(t, lenCheck{b: b, k: k, want: want, take: false})
 }
 
-func assertLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int, take bool) {
+type lenCheck struct {
+	b    *extractionbuffer.Buffer
+	k    extractionbuffer.LookupKey
+	want int
+	take bool
+}
+
+func assertLen(t *testing.T, c lenCheck) {
 	t.Helper()
 	var (
 		turns []extractionbuffer.Turn
 		err   error
 	)
-	if take {
-		turns, err = b.Take(context.Background(), k)
+	if c.take {
+		turns, err = c.b.Take(context.Background(), c.k)
 	} else {
-		turns, err = b.Peek(context.Background(), k)
+		turns, err = c.b.Peek(context.Background(), c.k)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(turns) != want {
-		t.Fatalf("len=%d want %d", len(turns), want)
+	if len(turns) != c.want {
+		t.Fatalf("len=%d want %d", len(turns), c.want)
 	}
 }
 
