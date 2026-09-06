@@ -15,6 +15,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 )
 
@@ -40,6 +42,8 @@ type protectedRouteDeps struct {
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler
 	contextEnabled           bool
+	turnBuffer               *extractionbuffer.Buffer
+	extractionEnqueue        *extractionenqueue.Client
 }
 
 type routeMiddleware = func(http.Handler) http.Handler
@@ -48,6 +52,25 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 	rateLimit, agentVerify := protectedAuthWrappers(deps)
 	registerAuthProbeRoutes(deps, rateLimit, agentVerify)
 	registerChatCompletionsRoute(deps, rateLimit, agentVerify)
+	registerSessionTerminateRoute(deps, rateLimit, agentVerify)
+}
+
+func registerSessionTerminateRoute(deps protectedRouteDeps, rateLimit, agentVerify routeMiddleware) {
+	termChain := chain(
+		BodySizeLimitMiddleware(deps.cfg.MaxRequestBodyBytes, deps.docsBase),
+		ContentTypeMiddleware(deps.docsBase),
+		AuthMiddleware(deps.validator, deps.logger, AuthOptions{
+			RequireSessionTerminate: true,
+			Metrics:                 deps.reg,
+		}),
+		agentVerify,
+		rateLimit,
+	)
+	h := sessionTerminateHandler{
+		store: deps.sessionStore, buffer: deps.turnBuffer, enqueue: deps.extractionEnqueue,
+		log: deps.logger, metrics: deps.reg, docsBase: deps.docsBase,
+	}
+	deps.mux.Handle("/v1/sessions/{session_id}/terminate", termChain(h))
 }
 
 func protectedAuthWrappers(deps protectedRouteDeps) (rateLimit, agentVerify routeMiddleware) {
@@ -128,5 +151,6 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.idempotencyTimeout),
 		contextClient:            deps.contextClient,
 		contextEnabled:           deps.contextEnabled,
+		turnBuffer:               deps.turnBuffer,
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/google/uuid"
 )
@@ -101,14 +102,17 @@ func EmitTrace(w httptrace.TraceWriter, log *logger.Logger, snap httptrace.Assem
 	)
 }
 
-// EnqueuePostResponse runs optional checkpoint + trace emit on the bounded pool.
+// EnqueuePostResponse runs optional checkpoint + turn buffer + trace emit on the bounded pool.
 func EnqueuePostResponse(job PostResponseJob) {
-	if !job.DoCheckpoint && !job.DoTrace {
+	if !job.DoCheckpoint && !job.DoTrace && !job.DoBuffer {
 		return
 	}
 	run := func() {
 		if job.DoCheckpoint {
 			job.Deps.RunCheckpoint(job.Params, job.ExternalID)
+		}
+		if job.DoBuffer {
+			job.Deps.appendExtractionTurns(job.BufferKey, job.BufferTurns)
 		}
 		if job.DoTrace {
 			EmitTrace(job.TraceWriter, job.Log, job.Snap)
@@ -139,14 +143,32 @@ func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	})
 	doCheckpoint := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome)
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
+	doBuffer := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome) && in.Deps.TurnBuffer != nil
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,
-		DoCheckpoint: doCheckpoint, DoTrace: doTrace,
+		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoBuffer: doBuffer,
 		TraceWriter: in.Writer, Log: in.Log,
 	}
 	if doCheckpoint {
 		job.Params = BuildCheckpointParams(in.Resolved, in.In, in.Meta.RequestID)
 		job.ExternalID = in.Resolved.ExternalID
 	}
+	if doBuffer {
+		job.BufferKey = extractionbuffer.LookupKey{
+			OrgID: in.Resolved.OrgID, AgentID: in.Resolved.AgentID, ExternalID: in.Resolved.ExternalID,
+		}
+		job.BufferTurns = extractionTurnsFromInput(in.Resolved.TurnIndex, in.In)
+	}
 	return job
+}
+
+func extractionTurnsFromInput(turnIndex int, in CheckpointInput) []extractionbuffer.Turn {
+	lastUser := ""
+	for i := len(in.Messages) - 1; i >= 0; i-- {
+		if in.Messages[i].Role == "user" && in.Messages[i].Content != "" {
+			lastUser = in.Messages[i].Content
+			break
+		}
+	}
+	return extractionbuffer.TurnsFromChat(turnIndex, lastUser, in.CompletionText)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
@@ -115,4 +116,24 @@ func (d LifecycleDeps) warnCheckpoint(ctx context.Context, params pkgsession.Che
 		"session_id", params.SessionID.String(),
 		"turn_index", params.TurnIndex,
 	)
+}
+
+func (d LifecycleDeps) appendExtractionTurns(key extractionbuffer.LookupKey, turns []extractionbuffer.Turn) {
+	if d.TurnBuffer == nil || len(turns) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), CheckpointTaskTimeout)
+	defer cancel()
+	out, err := d.TurnBuffer.Append(ctx, key, turns)
+	if out == extractionbuffer.AppendOK || out == extractionbuffer.AppendSkipped {
+		return
+	}
+	if d.Log == nil {
+		return
+	}
+	fields := []any{"outcome", string(out), "external_id", key.ExternalID}
+	if err != nil {
+		fields = append(fields, "error", err.Error())
+	}
+	d.Log.WarnCtx(ctx, "extraction turn buffer append failed", fields...)
 }

@@ -1136,13 +1136,23 @@ Content-Type: application/json
 
 **Terminate a session**
 
+Marks an active session `completed` and (on first transition) may enqueue memory extraction.
+
+**Path parameter:** `{session_id}` is the sticky **external_id** — the same value carried by
+`X-IBEX-Session-ID` on chat completions — **not** the Postgres row UUID `sessions.id`.
+(Earlier examples that looked like opaque row UUIDs were misleading.)
+
 **Required Permission:** `session:terminate`
+
+**Required Header:** `X-IBEX-Agent-ID` (same agent-scoping as chat; sessions are unique on
+`(org_id, agent_id, external_id)`).
 
 **Request:**
 
 ```http
-POST /v1/sessions/7c9e6679-.../terminate
+POST /v1/sessions/sess_client_abc123/terminate
 Authorization: Bearer {token}
+X-IBEX-Agent-ID: 7c9e6679-...
 Content-Type: application/json
 
 {
@@ -1151,24 +1161,23 @@ Content-Type: application/json
 }
 ```
 
+Only `status: "completed"` is supported. The call is idempotent: repeating terminate on an
+already-completed session returns 200 with `final_status: "completed"` without re-enqueueing
+extraction.
+
 **Response: 200 OK**
 
 ```json
 {
   "data": {
-    "session_id": "7c9e6679-...",
+    "session_id": "sess_client_abc123",
     "final_status": "completed",
-    "terminated_at": "2024-01-20T16:30:00.000Z",
-    "summary": {
-      "total_turns": 47,
-      "total_tokens": 89420,
-      "memories_created": 5,
-      "memories_read": 142,
-      "duration_seconds": 5400
-    }
+    "terminated_at": "2024-01-20T16:30:00.000Z"
   }
 }
 ```
+
+`data.session_id` echoes the sticky external_id from the path.
 
 ---
 

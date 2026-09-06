@@ -18,6 +18,7 @@ import (
 // AuthOptions configures auth middleware behavior per route.
 type AuthOptions struct {
 	RequireProxyChatCompletion bool
+	RequireSessionTerminate    bool
 	PathOrgID                  string
 	Metrics                    *metrics.ProxyRegistry
 }
@@ -140,6 +141,12 @@ func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOp
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
 			"Insufficient permissions", awc.requestID,
 			apierror.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: awc.docsBase})
+		return false
+	}
+	if opts.RequireSessionTerminate && !permissions.Has(res.Permissions, permissions.SessionTerminate) {
+		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
+			"Insufficient permissions", awc.requestID,
+			apierror.WriteOpts{Detail: "token lacks session:terminate permission", DocsBase: awc.docsBase})
 		return false
 	}
 	return true

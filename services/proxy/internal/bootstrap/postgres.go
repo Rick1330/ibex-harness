@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/redis/go-redis/v9"
@@ -93,8 +94,9 @@ func newCheckpointPool(cfg config.Config, reg *ibexmetrics.ProxyRegistry) (*asyn
 }
 
 type sessionHotPath struct {
-	cache *sessioncache.Cache
-	pool  *asyncpool.Pool
+	cache      *sessioncache.Cache
+	pool       *asyncpool.Pool
+	turnBuffer *extractionbuffer.Buffer
 }
 
 type sessionStackSetup struct {
@@ -107,10 +109,11 @@ type sessionStackSetup struct {
 }
 
 type sessionStack struct {
-	store   session.Store
-	cache   *sessioncache.Cache
-	pool    *asyncpool.Pool
-	sweeper *sessionsweeper.Sweeper
+	store      session.Store
+	cache      *sessioncache.Cache
+	pool       *asyncpool.Pool
+	turnBuffer *extractionbuffer.Buffer
+	sweeper    *sessionsweeper.Sweeper
 }
 
 func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
@@ -128,7 +131,10 @@ func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
 	if err != nil {
 		return sessionStack{}, err
 	}
-	return sessionStack{store: store, cache: parts.cache, pool: parts.pool, sweeper: sweeper}, nil
+	return sessionStack{
+		store: store, cache: parts.cache, pool: parts.pool,
+		turnBuffer: parts.turnBuffer, sweeper: sweeper,
+	}, nil
 }
 
 func setupSessionHotPath(
@@ -144,7 +150,22 @@ func setupSessionHotPath(
 	if err != nil {
 		return sessionHotPath{}, fmt.Errorf("checkpoint pool: %w", err)
 	}
-	return sessionHotPath{cache: cache, pool: pool}, nil
+	turnBuffer, err := newExtractionTurnBuffer(redisClient, cfg)
+	if err != nil {
+		return sessionHotPath{}, fmt.Errorf("extraction turn buffer: %w", err)
+	}
+	return sessionHotPath{cache: cache, pool: pool, turnBuffer: turnBuffer}, nil
+}
+
+func newExtractionTurnBuffer(redisClient redis.UniversalClient, cfg config.Config) (*extractionbuffer.Buffer, error) {
+	if redisClient == nil {
+		return nil, nil
+	}
+	ttl := cfg.ExtractionTurnsTTL
+	if ttl <= 0 {
+		ttl = cfg.SessionIdleTimeout
+	}
+	return extractionbuffer.New(redisClient, ttl)
 }
 
 type sessionSweeperSetup struct {

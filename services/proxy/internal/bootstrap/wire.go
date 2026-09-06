@@ -20,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/redis/go-redis/v9"
@@ -237,6 +238,12 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		ResponsePipeline: responsePipeline,
 		IdempotencyStore: idempStore,
 		ContextClient:    in.infra.ctxClients.client,
+		TurnBuffer:       in.infra.sessionStack.turnBuffer,
+		ExtractionEnqueue: extractionenqueue.New(extractionenqueue.Config{
+			BaseURL: in.cfg.WorkerEnqueueBaseURL,
+			Token:   in.cfg.WorkerEnqueueAPIToken,
+			Timeout: extractionenqueue.DefaultTimeout,
+		}),
 	}
 	assignTraceWriter(&deps, traceWriter)
 	server, err := newHTTPServer(deps)

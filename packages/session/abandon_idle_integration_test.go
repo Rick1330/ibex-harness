@@ -60,7 +60,7 @@ func TestStore_AbandonIdle_SkipsCompleted(t *testing.T) {
 	sess := mustCreate(t, ids, "ext-done-idle")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := ids.store.Complete(ctx, sess.ID, ids.orgID); err != nil {
+	if _, err := ids.store.Complete(ctx, sess.ID, ids.orgID); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	backdateSessionUpdatedAt(t, ids.db, sess.ID, time.Now().UTC().Add(-2*time.Hour))

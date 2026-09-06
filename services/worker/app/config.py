@@ -139,6 +139,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("IBEX_WORKER_METRICS_PORT"),
         description="Prometheus /metrics HTTP port for worker process",
     )
+    enqueue_port: int = Field(
+        default=8007,
+        ge=1024,
+        le=65535,
+        validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_PORT"),
+        description="Internal Starlette port for POST /internal/extraction/enqueue",
+    )
+    enqueue_api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_WORKER_ENQUEUE_API_TOKEN"),
+        description="Static Bearer token for proxy→worker extraction enqueue",
+    )
     extraction_provider: str = Field(
         default="openai",
         validation_alias=AliasChoices(

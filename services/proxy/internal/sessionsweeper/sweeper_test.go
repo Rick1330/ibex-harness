@@ -31,8 +31,11 @@ func (f *fakeStore) GetOrCreate(context.Context, session.GetOrCreateParams) (*se
 func (f *fakeStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
 	return errors.New("unused")
 }
-func (f *fakeStore) Complete(context.Context, uuid.UUID, uuid.UUID) error {
-	return errors.New("unused")
+func (f *fakeStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
+	return session.CompleteOK, errors.New("unused")
+}
+func (f *fakeStore) CompleteByExternalID(context.Context, uuid.UUID, uuid.UUID, string) (session.CompleteResult, uuid.UUID, error) {
+	return session.CompleteNotFound, uuid.Nil, errors.New("unused")
 }
 func (f *fakeStore) AbandonIdle(_ context.Context, p session.AbandonIdleParams) (session.AbandonIdleResult, error) {
 	f.mu.Lock()
@@ -239,8 +242,11 @@ func (b *blockingStore) GetOrCreate(context.Context, session.GetOrCreateParams) 
 func (b *blockingStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
 	return errors.New("unused")
 }
-func (b *blockingStore) Complete(context.Context, uuid.UUID, uuid.UUID) error {
-	return errors.New("unused")
+func (b *blockingStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
+	return session.CompleteOK, errors.New("unused")
+}
+func (b *blockingStore) CompleteByExternalID(context.Context, uuid.UUID, uuid.UUID, string) (session.CompleteResult, uuid.UUID, error) {
+	return session.CompleteNotFound, uuid.Nil, errors.New("unused")
 }
 func (b *blockingStore) AbandonIdle(context.Context, session.AbandonIdleParams) (session.AbandonIdleResult, error) {
 	select {

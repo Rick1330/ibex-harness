@@ -229,6 +229,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
 | `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
+| `IBEX_EXTRACTION_TURNS_TTL` | No | same as idle timeout | Redis TTL for `session:{org}:{agent}:{external_id}:extraction_turns` | Fail-open on chat path; ADR-0072 |
+| `IBEX_WORKER_ENQUEUE_BASE_URL` | No | (empty) | Worker enqueue HTTP origin (e.g. `http://worker:8007`) | Empty disables proxy enqueue |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional | (empty) | Shared Bearer with worker `IBEX_WORKER_ENQUEUE_API_TOKEN` | Required with base URL |
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
@@ -434,6 +437,8 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_BEAT_SCHEDULE_FILE` | No | `/var/lib/ibex/celerybeat/celerybeat-schedule` | Beat persistence path | Writable in container image |
 | `IBEX_WORKER_DATABASE_URL` | Conditional | (none) | Postgres DSN for dead-letter persistence | Alias: `POSTGRES_DSN` |
 | `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
+| `IBEX_WORKER_ENQUEUE_PORT` | No | `8007` | Starlette port for `POST /internal/extraction/enqueue` | Co-located with Celery worker (ADR-0072) |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* | — | Static Bearer for proxy→worker enqueue | Required to enable enqueue HTTP; `hmac.compare_digest` |
 | `IBEX_WORKER_EXTRACTION_PROVIDER` | No | `openai` | Extraction LLM backend: `openai` or `vllm` | Alias: `EXTRACTION_PROVIDER`. Fail-closed at first extract if required secrets/URL missing |
 | `OPENAI_API_KEY` | Conditional | (none) | Bearer token for hosted OpenAI extraction | Required when provider=`openai`. Alias: `IBEX_WORKER_OPENAI_API_KEY` |
 | `IBEX_WORKER_EXTRACTION_OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model id | |

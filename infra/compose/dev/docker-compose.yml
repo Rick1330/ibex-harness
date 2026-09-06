@@ -76,12 +76,15 @@ services:
     container_name: ibex-dev-worker
     ports:
       - "${IBEX_WORKER_METRICS_PORT:-8006}:8006"
+      - "${IBEX_WORKER_ENQUEUE_PORT:-8007}:8007"
     environment:
       REDIS_URL: redis://redis:6379/0
       REDIS_DB_QUEUE: "1"
       REDIS_DB_RESULTS: "3"
       POSTGRES_DSN: ${IBEX_WORKER_DATABASE_URL:-postgres://${POSTGRES_USER:-ibex}:${POSTGRES_PASSWORD:-ibex}@postgres:5432/${POSTGRES_DB:-ibex}?sslmode=disable}
       IBEX_WORKER_METRICS_PORT: "8006"
+      IBEX_WORKER_ENQUEUE_PORT: "8007"
+      IBEX_WORKER_ENQUEUE_API_TOKEN: ${IBEX_WORKER_ENQUEUE_API_TOKEN:-dev-enqueue-token}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://host.docker.internal:4317}
     depends_on:
       redis:

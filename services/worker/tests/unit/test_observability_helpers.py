@@ -155,9 +155,11 @@ def test_on_worker_ready_starts_metrics_only(monkeypatch: pytest.MonkeyPatch) ->
         patch("app.observability.init_tracing") as init_tracing,
         patch("app.observability._start_metrics_server") as start_metrics,
         patch("app.observability._init_database") as init_db,
+        patch("app.enqueue_http.start_enqueue_server") as start_enqueue,
     ):
         _on_worker_ready()
     get_settings.cache_clear()
     init_tracing.assert_not_called()
     init_db.assert_not_called()
     start_metrics.assert_called_once_with(18006)
+    start_enqueue.assert_called_once()

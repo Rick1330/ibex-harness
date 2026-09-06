@@ -1,8 +1,8 @@
 ---
 title: "3.5.D.4 Extraction task enqueue"
-description: "Add Redis LPUSH extraction enqueue to the post-response path using Celery-native broker format, triggered only on session status='completed'."
-summary: "Add Redis LPUSH extraction enqueue to the post-response path using Celery-native broker format, triggered only on session status='completed'."
-status: "planned"
+description: "Terminate sticky sessions, buffer turns in Redis, and enqueue extract_session_memories via an internal worker HTTP endpoint (Celery apply_async)."
+summary: "Terminate sticky sessions, buffer turns in Redis, and enqueue extract_session_memories via an internal worker HTTP endpoint (Celery apply_async)."
+status: "completed"
 milestoneId: "3.5.D.4"
 track: "D"
 trackTitle: "Proxy Integration"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.D.4 — Extraction Task Enqueue"
 
 # Milestone 3.5.D.4 — Extraction Task Enqueue
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 1 day  
@@ -33,7 +33,14 @@ fullTitle: "Milestone 3.5.D.4 — Extraction Task Enqueue"
 
 ## Why This Milestone Exists
 
-The proxy needs to trigger memory extraction after a completed session. This uses Celery-native Redis list semantics (`LPUSH`/`BRPOP`), not Redis Streams — reconciling the ARCHITECTURE.md/milestone doc conflict. The proxy never imports Celery; it speaks the broker's wire protocol directly.
+The proxy needs to mark sessions completed and trigger memory extraction once per completed
+session. Checkpoints store hashes only (ADR-0032 / ADR-0064), so turn text is buffered
+transiently in Redis on the chat path and read at terminate time.
+
+Transport decision: the proxy does **not** speak Celery’s Redis wire protocol. It calls an
+internal worker HTTP endpoint that runs `extract_session_memories.apply_async` in Python.
+See [ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http) (supersedes the earlier
+LPUSH sketch on this page).
 
 ---
 
@@ -53,21 +60,22 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 **Areas that may be involved** (situational — not a checklist):
 
-- Proxy service (HTTP, bootstrap, config)
-- Context assembly service
-- Workers / task runtime
+- Proxy service (HTTP terminate, turn buffer, enqueue client)
+- Session store (`CompleteByExternalID`)
+- Worker Starlette enqueue surface + Celery task
 
 ## Success signals
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Extraction enqueue fires exactly once per completed session, never on `active` status
-- [ ] Uses Celery-native Redis list semantics (`LPUSH`)
-- [ ] Proxy does not import Celery — raw Redis `LPUSH` with Celery wire format
-- [ ] Repo guards / CI checks still pass
+- [x] `POST /v1/sessions/{external_id}/terminate` sets `status=completed` (sticky id + agent scope)
+- [x] Extraction enqueue fires exactly once per first completion (`OK`), never on idempotent `Noop` / `active`
+- [x] Proxy enqueues via worker HTTP (`apply_async` in Python) — no hand-rolled Celery Redis envelope in Go
+- [x] Turn text comes from the Redis turn buffer (or enqueue is skipped if empty) — never fabricated
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.5.D.2 (handler wiring)
 - Phase 3.5 Track A (worker skeleton)
-
+- [ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http)

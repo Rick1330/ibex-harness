@@ -477,8 +477,11 @@ func (stubSessionStore) GetOrCreate(context.Context, session.GetOrCreateParams) 
 func (stubSessionStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
 	return errors.New("unused")
 }
-func (stubSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) error {
-	return errors.New("unused")
+func (stubSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
+	return session.CompleteOK, errors.New("unused")
+}
+func (stubSessionStore) CompleteByExternalID(context.Context, uuid.UUID, uuid.UUID, string) (session.CompleteResult, uuid.UUID, error) {
+	return session.CompleteNotFound, uuid.Nil, errors.New("unused")
 }
 func (stubSessionStore) AbandonIdle(context.Context, session.AbandonIdleParams) (session.AbandonIdleResult, error) {
 	return session.AbandonIdleResult{SkippedLock: true}, nil

@@ -95,15 +95,23 @@ func TestStore_AppendCheckpoint_DuplicateTurn(t *testing.T) {
 func TestStore_Complete(t *testing.T) {
 	ids := setupStore(t)
 	sess := mustCreate(t, ids, "ext-done")
-	if err := ids.store.Complete(context.Background(), sess.ID, ids.orgID); err != nil {
+	res, err := ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+	if err != nil {
 		t.Fatalf("complete: %v", err)
+	}
+	if res != session.CompleteOK {
+		t.Fatalf("result=%v want OK", res)
 	}
 	got := mustReload(t, ids, "ext-done")
 	if got.Status != session.StatusCompleted {
 		t.Fatalf("status=%s", got.Status)
 	}
-	if err := ids.store.Complete(context.Background(), sess.ID, ids.orgID); err != nil {
+	res, err = ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+	if err != nil {
 		t.Fatalf("noop complete: %v", err)
+	}
+	if res != session.CompleteNoop {
+		t.Fatalf("result=%v want Noop", res)
 	}
 }
 
@@ -111,8 +119,12 @@ func TestStore_Complete_TerminalNoop(t *testing.T) {
 	ids := setupStore(t)
 	sess := mustCreate(t, ids, "ext-abandon")
 	forceStatus(t, ids, sess.ID, session.StatusAbandoned)
-	if err := ids.store.Complete(context.Background(), sess.ID, ids.orgID); err != nil {
+	res, err := ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+	if err != nil {
 		t.Fatalf("complete abandoned: %v", err)
+	}
+	if res != session.CompleteNoop {
+		t.Fatalf("result=%v want Noop", res)
 	}
 	got := mustReload(t, ids, "ext-abandon")
 	if got.Status != session.StatusAbandoned {
@@ -136,9 +148,12 @@ func TestStore_AppendCheckpoint_MissingSession(t *testing.T) {
 
 func TestStore_Complete_NotFound(t *testing.T) {
 	ids := setupStore(t)
-	err := ids.store.Complete(context.Background(), uuid.New(), ids.orgID)
-	if !errors.Is(err, session.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+	res, err := ids.store.Complete(context.Background(), uuid.New(), ids.orgID)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res != session.CompleteNotFound {
+		t.Fatalf("result=%v want NotFound", res)
 	}
 }
 
@@ -149,7 +164,8 @@ func TestStore_Complete_ConcurrentRace(t *testing.T) {
 	errs := make(chan error, workers)
 	for i := 0; i < workers; i++ {
 		go func() {
-			errs <- ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+			_, err := ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+			errs <- err
 		}()
 	}
 	for i := 0; i < workers; i++ {
@@ -231,9 +247,62 @@ func TestStore_RLS_CrossOrg(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected cross-org append to fail")
 	}
-	err = store.Complete(context.Background(), sess.ID, orgB)
-	if !errors.Is(err, session.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+	res, err := store.Complete(context.Background(), sess.ID, orgB)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if res != session.CompleteNotFound {
+		t.Fatalf("expected CompleteNotFound, got %v", res)
+	}
+}
+
+func TestStore_CompleteByExternalID(t *testing.T) {
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-by-ext")
+	res, gotID, err := ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, "ext-by-ext")
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if res != session.CompleteOK || gotID != sess.ID {
+		t.Fatalf("res=%v id=%s want OK/%s", res, gotID, sess.ID)
+	}
+	res, gotID, err = ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, "ext-by-ext")
+	if err != nil {
+		t.Fatalf("noop: %v", err)
+	}
+	if res != session.CompleteNoop || gotID != sess.ID {
+		t.Fatalf("res=%v id=%s want Noop/%s", res, gotID, sess.ID)
+	}
+}
+
+func TestStore_CompleteByExternalID_NotFoundAndEmpty(t *testing.T) {
+	ids := setupStore(t)
+	res, id, err := ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, "missing")
+	if err != nil || res != session.CompleteNotFound || id != uuid.Nil {
+		t.Fatalf("missing: res=%v id=%s err=%v", res, id, err)
+	}
+	res, id, err = ids.store.CompleteByExternalID(context.Background(), ids.orgID, ids.agentID, "")
+	if err != nil || res != session.CompleteNotFound || id != uuid.Nil {
+		t.Fatalf("empty: res=%v id=%s err=%v", res, id, err)
+	}
+}
+
+func TestStore_CompleteByExternalID_CrossAgentIsolation(t *testing.T) {
+	db, store := openStore(t)
+	orgID, agentA := seedOrgAgent(t, db, "Org Iso", "org-iso-"+uuid.NewString()[:8])
+	_, agentB := seedOrgAgentSameOrg(t, db, orgID, "agent-b-"+uuid.NewString()[:8])
+	idsA := storeIDs{db: db, store: store, orgID: orgID, agentID: agentA}
+	mustCreate(t, idsA, "shared-ext")
+	res, _, err := store.CompleteByExternalID(context.Background(), orgID, agentB, "shared-ext")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if res != session.CompleteNotFound {
+		t.Fatalf("agent B must not see agent A session, got %v", res)
+	}
+	got := mustReload(t, idsA, "shared-ext")
+	if got.Status != session.StatusActive {
+		t.Fatalf("status=%s want active", got.Status)
 	}
 }
 
@@ -316,6 +385,24 @@ func seedOrgAgent(t *testing.T, db *sql.DB, name, slug string) (uuid.UUID, uuid.
 		t.Fatalf("seed: %v", err)
 	}
 	return uuid.MustParse(orgID), uuid.MustParse(agentID)
+}
+
+func seedOrgAgentSameOrg(t *testing.T, db *sql.DB, orgID uuid.UUID, agentSlug string) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	email := agentSlug + "@example.com"
+	agentName := "Agent " + agentSlug
+	var userID, agentID string
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, seedInsertUserSQL, orgID.String(), email, agentName).Scan(&userID); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, seedInsertAgentSQL, orgID.String(), userID, agentName, agentSlug).Scan(&agentID)
+	})
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	return orgID, uuid.MustParse(agentID)
 }
 
 func withServiceAccount(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
