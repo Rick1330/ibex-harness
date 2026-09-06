@@ -70,7 +70,9 @@ func runTerminateCompleteCase(t *testing.T, tc terminateCompleteCase) {
 	t.Helper()
 	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
 	store := &terminateStoreFake{result: tc.result, sessionID: sid}
-	buf := optionalTerminateBuffer(t, org, agent, tc.ext, tc.withBuffer)
+	buf := optionalTerminateBuffer(t, optionalBufArgs{
+		org: org, agent: agent, ext: tc.ext, withBuffer: tc.withBuffer,
+	})
 	hits, srv := startEnqueueServer(t)
 	h := sessionTerminateHandler{
 		store: store, buffer: buf,
@@ -88,14 +90,18 @@ func runTerminateCompleteCase(t *testing.T, tc terminateCompleteCase) {
 	assertEnqueueHits(t, hits, tc.wantHits)
 }
 
-func optionalTerminateBuffer(
-	t *testing.T, org, agent uuid.UUID, ext string, withBuffer bool,
-) *extractionbuffer.Buffer {
+type optionalBufArgs struct {
+	org, agent uuid.UUID
+	ext        string
+	withBuffer bool
+}
+
+func optionalTerminateBuffer(t *testing.T, a optionalBufArgs) *extractionbuffer.Buffer {
 	t.Helper()
-	if !withBuffer {
+	if !a.withBuffer {
 		return nil
 	}
-	buf, _ := terminateBufferAndEnqueue(t, org, agent, ext)
+	buf, _ := terminateBufferAndEnqueue(t, a.org, a.agent, a.ext)
 	return buf
 }
 
