@@ -12,6 +12,32 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.6](https://github.com/Rick1330/ibex-harness/compare/v0.1.5...v0.1.6) (2026-09-06)
+
+
+### Features
+
+* **context:** assemble context gRPC with L0-L2 degradation (m3.5.C.6) ([#712](https://github.com/Rick1330/ibex-harness/issues/712)) ([22267de](https://github.com/Rick1330/ibex-harness/commit/22267de5d396e791ba022c409f6c7ddfd097d354))
+* **context:** context formatter with locked ordering and session nonce (m3.5.C.5) ([#707](https://github.com/Rick1330/ibex-harness/issues/707)) ([c780834](https://github.com/Rick1330/ibex-harness/commit/c78083463f1afe8234b6d025fa5b2412024fc49a))
+* **context:** packer v2 — bounded DP knapsack (m3.5.C.4) ([#706](https://github.com/Rick1330/ibex-harness/issues/706)) ([621947d](https://github.com/Rick1330/ibex-harness/commit/621947d274607eab68d248a7ce09a1de59c16f35))
+* **context:** parallel retrieval orchestration with three-way concurrency (m3.5.C.2) ([#696](https://github.com/Rick1330/ibex-harness/issues/696)) ([649fb61](https://github.com/Rick1330/ibex-harness/commit/649fb61aadbb87067eaf93ea4e8d7e123d4074c7))
+* **context:** token budget calculator via generate-and-diff catalog (m3.5.C.1) ([#691](https://github.com/Rick1330/ibex-harness/issues/691)) ([c60091e](https://github.com/Rick1330/ibex-harness/commit/c60091ead883520882d574973f98772864ac5da4))
+* **memory:** relevance-gated composite scoring (m3.5.C.3) ([#704](https://github.com/Rick1330/ibex-harness/issues/704)) ([38a52b8](https://github.com/Rick1330/ibex-harness/commit/38a52b868d2fa4eac7c81567651ecabf494a53f7))
+* **proxy:** fail-open Go contextclient for AssembleContext (m3.5.D.1) ([#715](https://github.com/Rick1330/ibex-harness/issues/715)) ([f2b8e30](https://github.com/Rick1330/ibex-harness/commit/f2b8e30d3a78248a249b72b0094b5bfa5389c6f4))
+* **proxy:** wire Assemble into dispatchProviderCompletion (m3.5.D.2) ([#717](https://github.com/Rick1330/ibex-harness/issues/717)) ([d6ada1e](https://github.com/Rick1330/ibex-harness/commit/d6ada1ea1519e2bf3251b9d339a131d3a8030d5e))
+* **web:** benchmarks suite UI parity and nested nav ([#700](https://github.com/Rick1330/ibex-harness/issues/700)) ([ad63f87](https://github.com/Rick1330/ibex-harness/commit/ad63f87bfcaec0617fd1a3dd9c6d691808770a37))
+* **worker:** cost-tiered provider-agnostic extraction execution (m3.5.B.2) ([#684](https://github.com/Rick1330/ibex-harness/issues/684)) ([9dcefa8](https://github.com/Rick1330/ibex-harness/commit/9dcefa8d475ac52f7b7a6994d5643608bb5222bf))
+* **worker:** extraction prompt v2 and structured output schema (m3.5.B.1) ([#680](https://github.com/Rick1330/ibex-harness/issues/680)) ([078d837](https://github.com/Rick1330/ibex-harness/commit/078d837de2d4ffcd269e67187e673980cd58e722))
+* **worker:** extraction quality evaluation harness with gold-set (m3.5.B.4) ([#689](https://github.com/Rick1330/ibex-harness/issues/689)) ([7ac8595](https://github.com/Rick1330/ibex-harness/commit/7ac8595c21577438b63bfd7b660a1955f6b0c5b5))
+* **worker:** incremental turn tracking and idempotency for batch extraction (m3.5.B.3) ([#686](https://github.com/Rick1330/ibex-harness/issues/686)) ([d14407d](https://github.com/Rick1330/ibex-harness/commit/d14407d3b7fbd914d0ce42a2f1b892a157700da5))
+
+
+### Bug Fixes
+
+* **ci:** restore tagged release docker permissions and workflow_call secrets ([#677](https://github.com/Rick1330/ibex-harness/issues/677)) ([e869eb9](https://github.com/Rick1330/ibex-harness/commit/e869eb912a36afe436863efc73f2ada4f856dc04))
+* **ci:** scope memory-integration to memory path filter ([#694](https://github.com/Rick1330/ibex-harness/issues/694)) ([47cc66e](https://github.com/Rick1330/ibex-harness/commit/47cc66e5ba0d7473c8caddc3122e0254e7e7cfce))
+* **context:** close C.4/C.5 packer and formatter follow-up gaps ([#710](https://github.com/Rick1330/ibex-harness/issues/710)) ([4d479ad](https://github.com/Rick1330/ibex-harness/commit/4d479ad76aaf62285d5abf1c690d616e6ee9ee8f))
+
 ## [0.1.5](https://github.com/Rick1330/ibex-harness/compare/v0.1.4...v0.1.5) (2026-09-02)
 
 
