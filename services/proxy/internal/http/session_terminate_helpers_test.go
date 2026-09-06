@@ -153,32 +153,53 @@ func assertTerminateCode(t *testing.T, h sessionTerminateHandler, req *http.Requ
 	}
 }
 
-func newTerminateHandler(
-	t *testing.T,
-	store *terminateStoreFake,
-	buf *extractionbuffer.Buffer,
-	srvURL, metricName string,
-) sessionTerminateHandler {
+type terminateHandlerArgs struct {
+	store  *terminateStoreFake
+	buf    *extractionbuffer.Buffer
+	srvURL string
+	metric string
+}
+
+func newTerminateHandler(t *testing.T, a terminateHandlerArgs) sessionTerminateHandler {
 	t.Helper()
 	return sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srvURL, Token: "tok"}),
-		log:     logger.Discard("t"), metrics: metrics.NewProxy(metricName),
+		store: a.store, buffer: a.buf,
+		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: a.srvURL, Token: "tok"}),
+		log:     logger.Discard("t"), metrics: metrics.NewProxy(a.metric),
 		enqueueFlight: newTerminateEnqueueFlight(),
 	}
 }
 
-func assertBufferTurnCount(t *testing.T, buf *extractionbuffer.Buffer, org, agent uuid.UUID, ext string, want int) {
+type bufferCountArgs struct {
+	buf  *extractionbuffer.Buffer
+	key  extractionbuffer.LookupKey
+	want int
+}
+
+func assertBufferTurnCount(t *testing.T, a bufferCountArgs) {
 	t.Helper()
-	snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
-	})
+	snap, err := a.buf.Peek(context.Background(), a.key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snap.Turns) != want {
-		t.Fatalf("turns=%d want %d", len(snap.Turns), want)
+	if len(snap.Turns) != a.want {
+		t.Fatalf("turns=%d want %d", len(snap.Turns), a.want)
 	}
+}
+
+type serveOnceArgs struct {
+	h          *sessionTerminateHandler
+	org, agent uuid.UUID
+	ext        string
+}
+
+func serveTerminateOnce(t *testing.T, a serveOnceArgs) {
+	t.Helper()
+	wg := armEnqueueWait(a.h)
+	assertTerminateCode(t, *a.h, terminateAuthedRequest(t, terminateReqParams{
+		org: a.org, agent: a.agent, externalID: a.ext, body: `{"status":"completed"}`,
+	}), http.StatusOK)
+	waitEnqueueDone(t, wg)
 }
 
 type retainBufferCase struct {
@@ -198,14 +219,14 @@ func runTerminateRetainBufferCase(t *testing.T, tc retainBufferCase) {
 		w.WriteHeader(tc.statusCode)
 	}))
 	t.Cleanup(srv.Close)
-	h := newTerminateHandler(t, store, buf, srv.URL, tc.metric)
-	wg := armEnqueueWait(&h)
-	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg)
+	h := newTerminateHandler(t, terminateHandlerArgs{
+		store: store, buf: buf, srvURL: srv.URL, metric: tc.metric,
+	})
+	serveTerminateOnce(t, serveOnceArgs{h: &h, org: org, agent: agent, ext: tc.ext})
 	assertEnqueueHits(t, &hits, 1)
-	assertBufferTurnCount(t, buf, org, agent, tc.ext, 1)
+	assertBufferTurnCount(t, bufferCountArgs{
+		buf: buf, key: extractionbuffer.LookupKey{OrgID: org, AgentID: agent, ExternalID: tc.ext}, want: 1,
+	})
 }
 
 func shortTimeoutRedis(t *testing.T, addr string) *redis.Client {

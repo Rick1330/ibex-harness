@@ -47,13 +47,10 @@ func runTerminateCompleteCase(t *testing.T, tc terminateCompleteCase) {
 		org: org, agent: agent, ext: tc.ext, withBuffer: tc.withBuffer,
 	})
 	hits, srv := startEnqueueServer(t)
-	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-"+tc.ext)
-	wg := armEnqueueWait(&h)
-	req := terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
+	h := newTerminateHandler(t, terminateHandlerArgs{
+		store: store, buf: buf, srvURL: srv.URL, metric: "proxy-test-" + tc.ext,
 	})
-	assertTerminateCode(t, h, req, http.StatusOK)
-	waitEnqueueDone(t, wg)
+	serveTerminateOnce(t, serveOnceArgs{h: &h, org: org, agent: agent, ext: tc.ext})
 	assertEnqueueHits(t, hits, tc.wantHits)
 }
 
@@ -86,21 +83,17 @@ func TestUnit_SessionTerminate_NoopRetryAfterFail(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(srv.Close)
-	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-retry")
-	serveTerminateOnce(t, &h, org, agent, "ext-retry")
+	h := newTerminateHandler(t, terminateHandlerArgs{
+		store: store, buf: buf, srvURL: srv.URL, metric: "proxy-test-retry",
+	})
+	once := serveOnceArgs{h: &h, org: org, agent: agent, ext: "ext-retry"}
+	serveTerminateOnce(t, once)
 	store.result = session.CompleteNoop
-	serveTerminateOnce(t, &h, org, agent, "ext-retry")
+	serveTerminateOnce(t, once)
 	assertEnqueueHits(t, &hits, 2)
-	assertBufferTurnCount(t, buf, org, agent, "ext-retry", 0)
-}
-
-func serveTerminateOnce(t *testing.T, h *sessionTerminateHandler, org, agent uuid.UUID, ext string) {
-	t.Helper()
-	wg := armEnqueueWait(h)
-	assertTerminateCode(t, *h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
-	}), http.StatusOK)
-	waitEnqueueDone(t, wg)
+	assertBufferTurnCount(t, bufferCountArgs{
+		buf: buf, key: extractionbuffer.LookupKey{OrgID: org, AgentID: agent, ExternalID: "ext-retry"}, want: 0,
+	})
 }
 
 func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
@@ -119,8 +112,10 @@ func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	t.Cleanup(srv.Close)
-	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-empty")
-	serveTerminateOnce(t, &h, org, agent, "ext-empty")
+	h := newTerminateHandler(t, terminateHandlerArgs{
+		store: store, buf: buf, srvURL: srv.URL, metric: "proxy-test-empty",
+	})
+	serveTerminateOnce(t, serveOnceArgs{h: &h, org: org, agent: agent, ext: "ext-empty"})
 	assertEnqueueHits(t, &enqueueHits, 0)
 }
 
@@ -134,12 +129,17 @@ func TestUnit_SessionTerminate_OKThenNoopDoesNotReenqueue(t *testing.T) {
 	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
 	buf, _ := terminateBufferAndEnqueue(t, org, agent, ext)
 	hits, srv := startEnqueueServer(t)
-	h := newTerminateHandler(t, store, buf, srv.URL, "proxy-test-"+ext)
-	serveTerminateOnce(t, &h, org, agent, ext)
+	h := newTerminateHandler(t, terminateHandlerArgs{
+		store: store, buf: buf, srvURL: srv.URL, metric: "proxy-test-" + ext,
+	})
+	once := serveOnceArgs{h: &h, org: org, agent: agent, ext: ext}
+	serveTerminateOnce(t, once)
 	assertEnqueueHits(t, hits, 1)
-	assertBufferTurnCount(t, buf, org, agent, ext, 0)
+	assertBufferTurnCount(t, bufferCountArgs{
+		buf: buf, key: extractionbuffer.LookupKey{OrgID: org, AgentID: agent, ExternalID: ext}, want: 0,
+	})
 	store.result = session.CompleteNoop
-	serveTerminateOnce(t, &h, org, agent, ext)
+	serveTerminateOnce(t, once)
 	assertEnqueueHits(t, hits, 1)
 }
 

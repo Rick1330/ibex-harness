@@ -285,8 +285,19 @@ func assertStickyBufferJob(t *testing.T, job PostResponseJob, meta SnapshotMeta,
 	if !job.DoBuffer {
 		t.Fatal("sticky successful turn must buffer with Meta org/agent")
 	}
-	if job.BufferKey.OrgID != meta.OrgID || job.BufferKey.AgentID != meta.AgentID || job.BufferKey.ExternalID != ext {
-		t.Fatalf("BufferKey=%+v", job.BufferKey)
+	assertBufferKeyFromMeta(t, job.BufferKey, meta, ext)
+}
+
+func assertBufferKeyFromMeta(t *testing.T, key extractionbuffer.LookupKey, meta SnapshotMeta, ext string) {
+	t.Helper()
+	if key.OrgID != meta.OrgID {
+		t.Fatalf("BufferKey.OrgID=%s want %s", key.OrgID, meta.OrgID)
+	}
+	if key.AgentID != meta.AgentID {
+		t.Fatalf("BufferKey.AgentID=%s want %s", key.AgentID, meta.AgentID)
+	}
+	if key.ExternalID != ext {
+		t.Fatalf("BufferKey.ExternalID=%q want %q", key.ExternalID, ext)
 	}
 }
 
