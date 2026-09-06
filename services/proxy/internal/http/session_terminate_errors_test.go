@@ -14,34 +14,41 @@ import (
 	"github.com/google/uuid"
 )
 
-type terminateErrorCase struct {
-	name  string
-	want  int
-	build func(t *testing.T) (sessionTerminateHandler, *http.Request)
+type terminateErrorSpec struct {
+	name       string
+	want       int
+	body       string
+	externalID string
+	clearPath  bool
+	nilStore   bool
+	storeErr   error
+	notFound   bool
+	noAuth     bool
+	authOnly   bool
 }
 
 func TestUnit_SessionTerminate_ErrorPaths(t *testing.T) {
 	t.Parallel()
-	for _, tc := range terminateErrorCases() {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
+	for _, spec := range terminateErrorSpecs() {
+		spec := spec
+		t.Run(spec.name, func(t *testing.T) {
 			t.Parallel()
-			h, req := tc.build(t)
-			assertTerminateCode(t, h, req, tc.want)
+			h, req := buildTerminateError(t, spec)
+			assertTerminateCode(t, h, req, spec.want)
 		})
 	}
 }
 
-func terminateErrorCases() []terminateErrorCase {
-	return []terminateErrorCase{
-		{name: "not_found", want: http.StatusNotFound, build: buildNotFound},
-		{name: "missing_session_id", want: http.StatusBadRequest, build: buildMissingSessionID},
-		{name: "missing_auth", want: http.StatusInternalServerError, build: buildMissingAuth},
-		{name: "missing_agent", want: http.StatusInternalServerError, build: buildMissingAgent},
-		{name: "bad_status", want: http.StatusBadRequest, build: buildBadStatus},
-		{name: "bad_json", want: http.StatusBadRequest, build: buildBadJSON},
-		{name: "nil_store", want: http.StatusServiceUnavailable, build: buildNilStore},
-		{name: "store_error", want: http.StatusServiceUnavailable, build: buildStoreError},
+func terminateErrorSpecs() []terminateErrorSpec {
+	return []terminateErrorSpec{
+		{name: "not_found", want: http.StatusNotFound, body: `{"status":"completed"}`, externalID: "missing", notFound: true},
+		{name: "missing_session_id", want: http.StatusBadRequest, body: `{"status":"completed"}`, externalID: "x", clearPath: true},
+		{name: "missing_auth", want: http.StatusInternalServerError, body: `{"status":"completed"}`, externalID: "e", noAuth: true},
+		{name: "missing_agent", want: http.StatusInternalServerError, body: `{"status":"completed"}`, externalID: "e", authOnly: true},
+		{name: "bad_status", want: http.StatusBadRequest, body: `{"status":"active"}`, externalID: "e"},
+		{name: "bad_json", want: http.StatusBadRequest, body: `{`, externalID: "e"},
+		{name: "nil_store", want: http.StatusServiceUnavailable, body: `{"status":"completed"}`, externalID: "e", nilStore: true},
+		{name: "store_error", want: http.StatusServiceUnavailable, body: `{"status":"completed"}`, externalID: "e", storeErr: context.DeadlineExceeded},
 	}
 }
 
@@ -57,84 +64,42 @@ func TestUnit_SessionTerminate_BadMethod(t *testing.T) {
 	}
 }
 
-func buildNotFound(t *testing.T) (sessionTerminateHandler, *http.Request) {
+func buildTerminateError(t *testing.T, spec terminateErrorSpec) (sessionTerminateHandler, *http.Request) {
 	t.Helper()
-	h := sessionTerminateHandler{
-		store: &terminateStoreFake{result: session.CompleteNotFound},
-		log:   logger.Discard("t"),
+	h := terminateErrorHandler(spec)
+	if spec.noAuth || spec.authOnly {
+		return h, terminateUnauthedRequest(t, spec)
 	}
-	return h, terminateAuthedRequest(t, terminateReqParams{
-		org: uuid.New(), agent: uuid.New(), externalID: "missing", body: `{"status":"completed"}`,
-	})
-}
-
-func buildMissingSessionID(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	org, agent := uuid.New(), uuid.New()
-	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
 	req := terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "x", body: `{"status":"completed"}`,
+		org: uuid.New(), agent: uuid.New(), externalID: spec.externalID, body: spec.body,
 	})
-	req.SetPathValue("session_id", "")
-	return h, req
-}
-
-func buildMissingAuth(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/e/terminate", bytes.NewBufferString(`{"status":"completed"}`))
-	req.SetPathValue("session_id", "e")
-	req.Header.Set("Content-Type", "application/json")
-	return h, req
-}
-
-func buildMissingAgent(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	org := uuid.New()
-	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/e/terminate", bytes.NewBufferString(`{"status":"completed"}`))
-	req.SetPathValue("session_id", "e")
-	req.Header.Set("Content-Type", "application/json")
-	ctx := auth.WithContext(req.Context(), &auth.ValidateResult{
-		OrgID: org, Permissions: int64(permissions.SessionTerminate),
-	})
-	return h, req.WithContext(ctx)
-}
-
-func buildBadStatus(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	org, agent := uuid.New(), uuid.New()
-	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
-	return h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "e", body: `{"status":"active"}`,
-	})
-}
-
-func buildBadJSON(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	org, agent := uuid.New(), uuid.New()
-	h := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteOK}, log: logger.Discard("t")}
-	return h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "e", body: `{`,
-	})
-}
-
-func buildNilStore(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	org, agent := uuid.New(), uuid.New()
-	return sessionTerminateHandler{log: logger.Discard("t")}, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "e", body: `{"status":"completed"}`,
-	})
-}
-
-func buildStoreError(t *testing.T) (sessionTerminateHandler, *http.Request) {
-	t.Helper()
-	org, agent := uuid.New(), uuid.New()
-	h := sessionTerminateHandler{
-		store: &terminateStoreFake{err: context.DeadlineExceeded},
-		log:   logger.Discard("t"),
+	if spec.clearPath {
+		req.SetPathValue("session_id", "")
 	}
-	return h, terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "e", body: `{"status":"completed"}`,
+	return h, req
+}
+
+func terminateErrorHandler(spec terminateErrorSpec) sessionTerminateHandler {
+	if spec.nilStore {
+		return sessionTerminateHandler{log: logger.Discard("t")}
+	}
+	store := &terminateStoreFake{result: session.CompleteOK, err: spec.storeErr}
+	if spec.notFound {
+		store.result = session.CompleteNotFound
+	}
+	return sessionTerminateHandler{store: store, log: logger.Discard("t")}
+}
+
+func terminateUnauthedRequest(t *testing.T, spec terminateErrorSpec) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+spec.externalID+"/terminate", bytes.NewBufferString(spec.body))
+	req.SetPathValue("session_id", spec.externalID)
+	req.Header.Set("Content-Type", "application/json")
+	if !spec.authOnly {
+		return req
+	}
+	ctx := auth.WithContext(req.Context(), &auth.ValidateResult{
+		OrgID: uuid.New(), Permissions: int64(permissions.SessionTerminate),
 	})
+	return req.WithContext(ctx)
 }
