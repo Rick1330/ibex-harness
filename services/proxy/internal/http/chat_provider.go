@@ -69,9 +69,11 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
-	provReq.Messages = applyDirectiveInjection(ctx, provReq.Messages)
+	inj := h.applyContextOrDirectiveInjection(ctx, p.r, provReq.Model, provReq.Messages)
+	provReq.Messages = inj.Messages
+	p.r = p.r.WithContext(withContextAssembleMeta(ctx, inj.Meta))
 	start := time.Now()
-	resp, err := p.prov.Complete(ctx, provReq)
+	resp, err := p.prov.Complete(p.r.Context(), provReq)
 	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), time.Since(start).Seconds())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -139,6 +141,7 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		return
 	}
 	setSessionResponseHeader(p.w, p.r.Context())
+	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "application/json")
 	p.w.WriteHeader(p.resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream JSON body; client disconnect is acceptable

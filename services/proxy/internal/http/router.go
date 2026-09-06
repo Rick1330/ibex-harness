@@ -8,6 +8,7 @@ import (
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
@@ -54,6 +55,9 @@ type RouterDeps struct {
 	ResponsePipeline   *responsepipeline.Pipeline
 	TraceWriter        TraceWriter
 	IdempotencyStore   idempotency.Store
+	// ContextClient is the fail-open Assemble client from bootstrap (nil when
+	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
+	ContextClient *contextclient.Client
 }
 
 // NewRouter builds the proxy HTTP handler. A non-nil error means the router
@@ -115,6 +119,8 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) pr
 		idempotencyStore:         deps.IdempotencyStore,
 		idempotencyTimeout:       deps.Config.IdempotencyRedisTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.Config.IdempotencyRedisTimeout),
+		contextClient:            deps.ContextClient,
+		contextEnabled:           deps.Config.ContextEnabled,
 	}
 }
 
@@ -189,6 +195,8 @@ type chatCompletionHandler struct {
 	idempotencyStore         idempotency.Store
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
+	contextClient            contextAssembler
+	contextEnabled           bool
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

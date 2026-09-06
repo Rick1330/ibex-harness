@@ -22,6 +22,7 @@ type envConfig struct {
 	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
 	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
+	ContextEnabled          string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
 	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
@@ -215,6 +216,11 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.ContextAssembleTimeout > 0 {
 		cfg.ContextAssembleTimeout = envCfg.ContextAssembleTimeout
 	}
+	contextEnabled, err := parseEnabledFlag(envCfg.ContextEnabled, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
+	}
+	cfg.ContextEnabled = contextEnabled
 	if envCfg.MaxRequestBodyBytes > 0 {
 		cfg.MaxRequestBodyBytes = envCfg.MaxRequestBodyBytes
 	}

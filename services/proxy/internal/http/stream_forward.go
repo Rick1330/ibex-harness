@@ -93,6 +93,7 @@ func clearSSEWriteDeadline(ctx context.Context, w http.ResponseWriter, log *logg
 
 func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *openaicompatible.StreamAccumulator) string {
 	setSessionResponseHeader(p.w, p.r.Context())
+	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "text/event-stream")
 	p.w.Header().Set("Cache-Control", "no-cache")
 	p.w.Header().Set("X-Accel-Buffering", "no")
