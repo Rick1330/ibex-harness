@@ -64,6 +64,12 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 		Fallback:         result.Fallback,
 	}
 	if result.Fallback || strings.TrimSpace(result.AssembledContext) == "" {
+		// Empty assembled text is operationally a fallback: Phase 2 directive only.
+		// Promote Fallback so headers/metrics match (D.1 client only records RPC Fallback).
+		if !meta.Fallback {
+			meta.Fallback = true
+			h.recordAssembleFallback(emptyAssembleFallbackReason)
+		}
 		return messageInjectionOutcome{
 			Messages: applyDirectiveInjection(ctx, messages),
 			Meta:     meta,
@@ -73,6 +79,17 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	// Inject as system_first so the blob is additive; leave client history intact.
 	injected := injection.Inject(messages, result.AssembledContext, injection.ModeSystemFirst)
 	return messageInjectionOutcome{Messages: injected, Meta: meta}
+}
+
+// emptyAssembleFallbackReason labels handler-side empty AssembledContext fail-open
+// (distinct from gRPC status reasons recorded inside packages/contextclient).
+const emptyAssembleFallbackReason = "empty"
+
+func (h chatCompletionHandler) recordAssembleFallback(reason string) {
+	if h.metrics == nil {
+		return
+	}
+	h.metrics.IncContextAssembleFallback(reason)
 }
 
 func (h chatCompletionHandler) shouldAssemble(r *http.Request) bool {

@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
@@ -528,14 +529,58 @@ func TestUnit_ApplyContextOrDirective_EmptyAssembledUsesDirective(t *testing.T) 
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
 		AssembledContext: "   ", TokensUsed: 1,
 	}}
-	out := runApplyInjection(t, contextHandler(true, fake), []provider.Message{{Role: "user", Content: "hi"}})
+	reg := metrics.NewProxy("empty-assemble-test")
+	h := contextHandler(true, fake)
+	h.metrics = reg
+	out := runApplyInjection(t, h, []provider.Message{{Role: "user", Content: "hi"}})
 	if !out.Meta.Attempted {
 		t.Fatalf("meta=%+v", out.Meta)
 	}
-	if out.Meta.Fallback {
-		t.Fatalf("meta=%+v", out.Meta)
+	if !out.Meta.Fallback {
+		t.Fatalf("empty AssembledContext must set Fallback=true, meta=%+v", out.Meta)
 	}
 	assertDirectiveOnly(t, out.Messages)
+	assertAssembleFallbackMetric(t, reg, emptyAssembleFallbackReason, 1)
+}
+
+func TestUnit_ForwardChat_EmptyAssembled_FallbackHeaderAndMetric(t *testing.T) {
+	t.Parallel()
+	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
+		AssembledContext: "", TokensUsed: 0, MemoriesIncluded: 0,
+	}}
+	reg := metrics.NewProxy("empty-assemble-forward-test")
+	h := contextHandler(true, fake)
+	h.metrics = reg
+	rec, last := runForwardChat(t, h, false, false)
+	assertPhase2ProviderMessages(t, last.Messages)
+	assertContextHeaders(t, rec.Header(), wantContextHeaders{
+		memories: "0", tokens: "0", fallback: "true",
+	})
+	assertAssembleFallbackMetric(t, reg, emptyAssembleFallbackReason, 1)
+}
+
+func assertAssembleFallbackMetric(t *testing.T, reg *metrics.ProxyRegistry, reason string, want float64) {
+	t.Helper()
+	mfs, err := reg.Gatherer().Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	var got float64
+	for _, mf := range mfs {
+		if mf.GetName() != "ibex_proxy_context_assemble_fallback_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == "reason" && lp.GetValue() == reason {
+					got = m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	if got != want {
+		t.Fatalf("fallback metric reason=%q got=%v want=%v", reason, got, want)
+	}
 }
 
 func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testing.T) {
