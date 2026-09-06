@@ -72,27 +72,22 @@ class ContextAssemblyServicer:
         request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
-        pb2 = self._pb2
-        if context.cancelled():
-            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "cancelled")
-            raise AssertionError("unreachable")  # pragma: no cover
+        await _abort_if_cancelled(context)
+        domain = await _parse_assemble_request(request, context)
+        result = await self._assemble_or_deadline(domain, context)
+        await _abort_if_cancelled(context)
+        return _response_to_proto(self._pb2, result)
 
+    async def _assemble_or_deadline(
+        self,
+        domain: AssembleRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> AssemblyResult:
         try:
-            domain = _request_from_proto(request)
-        except ValueError as exc:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
-            raise AssertionError("unreachable")  # pragma: no cover
-
-        try:
-            result = await self._assembler.assemble(domain)
+            return await self._assembler.assemble(domain)
         except asyncio.CancelledError:
             await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "deadline exceeded")
             raise
-        if context.cancelled():
-            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "cancelled")
-            raise AssertionError("unreachable")  # pragma: no cover
-
-        return _response_to_proto(pb2, result)
 
     async def search_memories(
         self,
@@ -107,6 +102,28 @@ class ContextAssemblyServicer:
         context: grpc_aio.ServicerContext,
     ) -> object:
         return await _abort_unimplemented(context, _FEEDBACK)
+
+
+async def _abort_if_cancelled(
+    context: grpc_aio.ServicerContext,
+    *,
+    details: str = "cancelled",
+) -> None:
+    if not context.cancelled():
+        return
+    await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, details)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+async def _parse_assemble_request(
+    request: object,
+    context: grpc_aio.ServicerContext,
+) -> AssembleRequest:
+    try:
+        return _request_from_proto(request)
+    except ValueError as exc:
+        await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+        raise AssertionError("unreachable")  # pragma: no cover
 
 
 async def _abort_unimplemented(
@@ -246,7 +263,15 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
 
     loop = asyncio.get_running_loop()
     shutdown = asyncio.Event()
+    _install_shutdown_signals(loop, shutdown)
+    try:
+        await _run_until_shutdown(server, shutdown)
+    finally:
+        _clear_shutdown_signals(loop)
+        await runtime.aclose()
 
+
+def _install_shutdown_signals(loop: asyncio.AbstractEventLoop, shutdown: asyncio.Event) -> None:
     def _request_shutdown() -> None:
         shutdown.set()
 
@@ -256,29 +281,51 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
         except RuntimeError:  # pragma: no cover - platform (covers NotImplementedError)
             pass
 
+
+def _clear_shutdown_signals(loop: asyncio.AbstractEventLoop) -> None:
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.remove_signal_handler(sig)
+        except RuntimeError:  # pragma: no cover - platform
+            pass
+
+
+async def _run_until_shutdown(
+    server: grpc_aio.Server,
+    shutdown: asyncio.Event,
+) -> None:
     wait_termination = asyncio.create_task(server.wait_for_termination())
     wait_signal = asyncio.create_task(shutdown.wait())
-    try:
-        done, pending = await asyncio.wait(
-            {wait_termination, wait_signal},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if wait_signal in done and not wait_termination.done():
-            await server.stop(grace=_SHUTDOWN_GRACE_S)
-        for task in pending:
-            task.cancel()
-        if pending:
-            # Absorb cancel outcomes without catching CancelledError (python:S7497).
-            await asyncio.gather(*pending, return_exceptions=True)
-        if wait_termination in done:
-            await wait_termination
-    finally:
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            try:
-                loop.remove_signal_handler(sig)
-            except RuntimeError:  # pragma: no cover - platform
-                pass
-        await runtime.aclose()
+    done, pending = await asyncio.wait(
+        {wait_termination, wait_signal},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    await _stop_server_on_signal(server, wait_termination, wait_signal, done)
+    await _cancel_tasks(pending)
+    if wait_termination in done:
+        await wait_termination
+
+
+async def _stop_server_on_signal(
+    server: grpc_aio.Server,
+    wait_termination: asyncio.Task[Any],
+    wait_signal: asyncio.Task[Any],
+    done: set[asyncio.Task[Any]],
+) -> None:
+    if wait_signal not in done:
+        return
+    if wait_termination.done():
+        return
+    await server.stop(grace=_SHUTDOWN_GRACE_S)
+
+
+async def _cancel_tasks(tasks: set[asyncio.Task[Any]]) -> None:
+    for task in tasks:
+        task.cancel()
+    if not tasks:
+        return
+    # Absorb cancel outcomes without catching CancelledError (python:S7497).
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _request_from_proto(request: object) -> AssembleRequest:
