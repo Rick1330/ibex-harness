@@ -196,45 +196,71 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
 def _request_from_proto(request: object) -> AssembleRequest:
     org_id = _parse_uuid(getattr(request, "org_id", ""), "org_id")
     agent_id = _parse_uuid(getattr(request, "agent_id", ""), "agent_id")
-    model = str(getattr(request, "model", "") or "").strip()
-    if not model:
-        raise ValueError("model is required")
-    if len(model) > _MAX_MODEL_CHARS:
-        raise ValueError(f"model exceeds {_MAX_MODEL_CHARS} characters")
-    query = str(getattr(request, "query", "") or "")
-    if len(query) > _MAX_QUERY_CHARS:
-        raise ValueError(f"query exceeds {_MAX_QUERY_CHARS} characters")
+    model = _bounded_text(
+        getattr(request, "model", ""),
+        label="model",
+        max_chars=_MAX_MODEL_CHARS,
+        required=True,
+    )
+    query = _bounded_text(
+        getattr(request, "query", ""),
+        label="query",
+        max_chars=_MAX_QUERY_CHARS,
+        required=False,
+    )
     raw_messages = getattr(request, "recent_messages", ()) or ()
     if len(raw_messages) > _MAX_RECENT_MESSAGES:
         raise ValueError(f"recent_messages exceeds {_MAX_RECENT_MESSAGES} items")
-    messages = _messages_from_proto(raw_messages)
-    options_msg = getattr(request, "options", None)
-    options = AssemblyOptions()
-    if options_msg is not None:
-        options = AssemblyOptions(
-            skip_cold_memories=bool(getattr(options_msg, "skip_cold_memories", False)),
-            skip_hot_memories=bool(getattr(options_msg, "skip_hot_memories", False)),
-            max_memories=int(getattr(options_msg, "max_memories", 0) or 0),
-        )
     return AssembleRequest(
         org_id=org_id,
         agent_id=agent_id,
         query=query,
         model=model,
-        recent_messages=messages,
-        options=options,
+        recent_messages=_messages_from_proto(raw_messages),
+        options=_options_from_proto(getattr(request, "options", None)),
+    )
+
+
+def _bounded_text(
+    raw: object,
+    *,
+    label: str,
+    max_chars: int,
+    required: bool,
+) -> str:
+    text = str(raw or "").strip() if required else str(raw or "")
+    if required and not text:
+        raise ValueError(f"{label} is required")
+    if len(text) > max_chars:
+        raise ValueError(f"{label} exceeds {max_chars} characters")
+    return text
+
+
+def _options_from_proto(options_msg: object | None) -> AssemblyOptions:
+    if options_msg is None:
+        return AssemblyOptions()
+    return AssemblyOptions(
+        skip_cold_memories=bool(getattr(options_msg, "skip_cold_memories", False)),
+        skip_hot_memories=bool(getattr(options_msg, "skip_hot_memories", False)),
+        max_memories=int(getattr(options_msg, "max_memories", 0) or 0),
     )
 
 
 def _messages_from_proto(raw: Sequence[object]) -> list[Message]:
     out: list[Message] = []
     for item in raw:
-        role = str(getattr(item, "role", "") or "")
-        content = str(getattr(item, "content", "") or "")
-        if len(role) > _MAX_ROLE_CHARS:
-            raise ValueError(f"message.role exceeds {_MAX_ROLE_CHARS} characters")
-        if len(content) > _MAX_CONTENT_CHARS:
-            raise ValueError(f"message.content exceeds {_MAX_CONTENT_CHARS} characters")
+        role = _bounded_text(
+            getattr(item, "role", ""),
+            label="message.role",
+            max_chars=_MAX_ROLE_CHARS,
+            required=False,
+        )
+        content = _bounded_text(
+            getattr(item, "content", ""),
+            label="message.content",
+            max_chars=_MAX_CONTENT_CHARS,
+            required=False,
+        )
         out.append(Message(role=role, content=content))
     return out
 
