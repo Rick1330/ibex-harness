@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,12 @@ func (f *fakeContextAssembler) Assemble(_ context.Context, req contextclient.Ass
 	return f.result
 }
 
+type wantContextHeaders struct {
+	memories string
+	tokens   string
+	fallback string
+}
+
 func contextTestAuthCtx(t *testing.T) context.Context {
 	t.Helper()
 	org := uuid.MustParse(testChatOrgID)
@@ -52,6 +59,12 @@ func directiveCtx(ctx context.Context) context.Context {
 	})
 }
 
+func contextHandler(enabled bool, client contextAssembler) chatCompletionHandler {
+	return chatCompletionHandler{
+		log: logger.Discard("proxy"), contextEnabled: enabled, contextClient: client,
+	}
+}
+
 func assertNoContextHeaders(t *testing.T, h http.Header) {
 	t.Helper()
 	for _, name := range []string{headerMemoriesInjected, headerContextTokens, headerContextFallback} {
@@ -61,38 +74,94 @@ func assertNoContextHeaders(t *testing.T, h http.Header) {
 	}
 }
 
-func assertContextHeaders(t *testing.T, h http.Header, memories, tokens, fallback string) {
+func assertContextHeaders(t *testing.T, h http.Header, want wantContextHeaders) {
 	t.Helper()
-	if got := h.Get(headerMemoriesInjected); got != memories {
-		t.Fatalf("%s=%q want %q", headerMemoriesInjected, got, memories)
+	if got := h.Get(headerMemoriesInjected); got != want.memories {
+		t.Fatalf("%s=%q want %q", headerMemoriesInjected, got, want.memories)
 	}
-	if got := h.Get(headerContextTokens); got != tokens {
-		t.Fatalf("%s=%q want %q", headerContextTokens, got, tokens)
+	if got := h.Get(headerContextTokens); got != want.tokens {
+		t.Fatalf("%s=%q want %q", headerContextTokens, got, want.tokens)
 	}
-	if got := h.Get(headerContextFallback); got != fallback {
-		t.Fatalf("%s=%q want %q", headerContextFallback, got, fallback)
+	if got := h.Get(headerContextFallback); got != want.fallback {
+		t.Fatalf("%s=%q want %q", headerContextFallback, got, want.fallback)
+	}
+}
+
+func assertDirectiveOnly(t *testing.T, msgs []provider.Message) {
+	t.Helper()
+	if len(msgs) != 2 || msgs[0].Content != "org directive" || msgs[1].Content != "hi" {
+		t.Fatalf("messages=%+v", msgs)
+	}
+}
+
+func assertPhase2ProviderMessages(t *testing.T, msgs []provider.Message) {
+	t.Helper()
+	if len(msgs) != 3 {
+		t.Fatalf("messages=%+v", msgs)
+	}
+	if msgs[0].Content != "client system" || msgs[2].Content != "hello" {
+		t.Fatalf("history=%+v", msgs)
+	}
+	if msgs[1].Role != "system" || msgs[1].Content != "org directive" {
+		t.Fatalf("directive=%+v", msgs[1])
+	}
+}
+
+func runApplyInjection(t *testing.T, h chatCompletionHandler, msgs []provider.Message) messageInjectionOutcome {
+	t.Helper()
+	ctx := directiveCtx(contextTestAuthCtx(t))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	return h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", msgs)
+}
+
+func runForwardChat(t *testing.T, h chatCompletionHandler, stream bool, skipMemory bool) (*httptest.ResponseRecorder, provider.Request) {
+	t.Helper()
+	return runForwardChatTo(t, h, stream, skipMemory, &captureLLMProvider{})
+}
+
+func runForwardChatTo(
+	t *testing.T,
+	h chatCompletionHandler,
+	stream bool,
+	skipMemory bool,
+	prov provider.Provider,
+) (*httptest.ResponseRecorder, provider.Request) {
+	t.Helper()
+	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Stream: stream, Messages: baseChatMessages()}
+	ctx := directiveCtx(contextTestAuthCtx(t))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	if skipMemory {
+		req.Header.Set(validation.HeaderSkipMemory, "true")
+	}
+	var w http.ResponseWriter
+	rec := httptest.NewRecorder()
+	w = rec
+	if stream {
+		fr := newFlushRecorder()
+		w = fr
+		rec = fr.ResponseRecorder
+	}
+	h.forwardChatCompletion(chatForwardParams{w: w, r: req, parsed: parsed, prov: prov})
+	switch c := prov.(type) {
+	case *captureLLMProvider:
+		return rec, c.last
+	case *captureStreamingProvider:
+		return rec, c.last
+	case *failingLLMProvider:
+		return rec, c.last
+	default:
+		return rec, provider.Request{}
 	}
 }
 
 func TestUnit_ApplyContextOrDirective_DisabledNoAssembleCall(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "should-not-inject"}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: false, contextClient: fake,
-	}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	msgs := []provider.Message{{Role: "user", Content: "hi"}}
-	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", msgs)
+	out := runApplyInjection(t, contextHandler(false, fake), []provider.Message{{Role: "user", Content: "hi"}})
 	if fake.calls.Load() != 0 {
 		t.Fatalf("Assemble calls=%d want 0", fake.calls.Load())
 	}
-	if len(out.Messages) != 2 || out.Messages[1].Content != "hi" {
-		t.Fatalf("messages=%+v", out.Messages)
-	}
-	if out.Messages[0].Content != "org directive" {
-		t.Fatalf("directive=%+v", out.Messages[0])
-	}
+	assertDirectiveOnly(t, out.Messages)
 	if out.Meta.Attempted {
 		t.Fatal("Attempted should be false when disabled")
 	}
@@ -100,25 +169,17 @@ func TestUnit_ApplyContextOrDirective_DisabledNoAssembleCall(t *testing.T) {
 
 func TestUnit_ApplyContextOrDirective_NilClientNoAssembleCall(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{log: logger.Discard("proxy"), contextEnabled: true, contextClient: nil}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	msgs := []provider.Message{{Role: "user", Content: "hi"}}
-	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", msgs)
+	out := runApplyInjection(t, contextHandler(true, nil), []provider.Message{{Role: "user", Content: "hi"}})
 	if out.Meta.Attempted {
 		t.Fatal("Attempted should be false when client nil")
 	}
-	if len(out.Messages) != 2 || out.Messages[0].Content != "org directive" {
-		t.Fatalf("messages=%+v", out.Messages)
-	}
+	assertDirectiveOnly(t, out.Messages)
 }
 
 func TestUnit_ApplyContextOrDirective_SkipMemoryNoAssembleCall(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
-	}
+	h := contextHandler(true, fake)
 	ctx := directiveCtx(contextTestAuthCtx(t))
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 	req.Header.Set(validation.HeaderSkipMemory, "true")
@@ -134,24 +195,16 @@ func TestUnit_ApplyContextOrDirective_SkipMemoryNoAssembleCall(t *testing.T) {
 func TestUnit_ApplyContextOrDirective_FallbackKeepsDirective(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
-		Fallback: true, FallbackReason: "DeadlineExceeded", TokensUsed: 0,
+		Fallback: true, FallbackReason: "DeadlineExceeded",
 	}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
-	}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	msgs := []provider.Message{{Role: "user", Content: "hi"}}
-	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", msgs)
+	out := runApplyInjection(t, contextHandler(true, fake), []provider.Message{{Role: "user", Content: "hi"}})
 	if fake.calls.Load() != 1 {
 		t.Fatalf("Assemble calls=%d want 1", fake.calls.Load())
 	}
 	if !out.Meta.Attempted || !out.Meta.Fallback {
 		t.Fatalf("meta=%+v", out.Meta)
 	}
-	if len(out.Messages) != 2 || out.Messages[0].Content != "org directive" {
-		t.Fatalf("messages=%+v", out.Messages)
-	}
+	assertDirectiveOnly(t, out.Messages)
 }
 
 func TestUnit_ApplyContextOrDirective_SuccessInjectsAdditive(t *testing.T) {
@@ -159,27 +212,24 @@ func TestUnit_ApplyContextOrDirective_SuccessInjectsAdditive(t *testing.T) {
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
 		AssembledContext: "assembled blob", TokensUsed: 42, MemoriesIncluded: 3,
 	}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
-	}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 	msgs := []provider.Message{
 		{Role: "system", Content: "client system"},
 		{Role: "user", Content: "hello"},
 	}
-	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", msgs)
+	out := runApplyInjection(t, contextHandler(true, fake), msgs)
+	assertSuccessAssembleInjection(t, fake, out)
+}
+
+func assertSuccessAssembleInjection(t *testing.T, fake *fakeContextAssembler, out messageInjectionOutcome) {
+	t.Helper()
 	if fake.calls.Load() != 1 {
 		t.Fatalf("Assemble calls=%d", fake.calls.Load())
 	}
 	if fake.lastReq.Query != "hello" || fake.lastReq.OrgID != testChatOrgID {
 		t.Fatalf("params=%+v", fake.lastReq)
 	}
-	if len(out.Messages) != 3 {
-		t.Fatalf("len=%d messages=%+v", len(out.Messages), out.Messages)
-	}
-	if out.Messages[0].Role != "system" || out.Messages[0].Content != "assembled blob" {
-		t.Fatalf("first=%+v", out.Messages[0])
+	if len(out.Messages) != 3 || out.Messages[0].Content != "assembled blob" {
+		t.Fatalf("messages=%+v", out.Messages)
 	}
 	if out.Messages[1].Content != "client system" || out.Messages[2].Content != "hello" {
 		t.Fatalf("history altered: %+v", out.Messages)
@@ -192,50 +242,19 @@ func TestUnit_ApplyContextOrDirective_SuccessInjectsAdditive(t *testing.T) {
 func TestUnit_ForwardChat_ContextDisabled_Phase2Regression(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
-	cap := &captureLLMProvider{}
-	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Messages: baseChatMessages()}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: false, contextClient: fake,
-	}
-	h.forwardChatCompletion(chatForwardParams{w: rec, r: req, parsed: parsed, prov: cap})
+	rec, last := runForwardChat(t, contextHandler(false, fake), false, false)
 	if fake.calls.Load() != 0 {
 		t.Fatalf("Assemble calls=%d want 0", fake.calls.Load())
 	}
-	assertPhase2ProviderMessages(t, cap.last.Messages)
+	assertPhase2ProviderMessages(t, last.Messages)
 	assertNoContextHeaders(t, rec.Header())
 }
 
 func TestUnit_ForwardChat_NilClient_Phase2Regression(t *testing.T) {
 	t.Parallel()
-	cap := &captureLLMProvider{}
-	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Messages: baseChatMessages()}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	h := chatCompletionHandler{log: logger.Discard("proxy"), contextEnabled: true}
-	h.forwardChatCompletion(chatForwardParams{w: rec, r: req, parsed: parsed, prov: cap})
-	assertPhase2ProviderMessages(t, cap.last.Messages)
+	rec, last := runForwardChat(t, contextHandler(true, nil), false, false)
+	assertPhase2ProviderMessages(t, last.Messages)
 	assertNoContextHeaders(t, rec.Header())
-}
-
-func assertPhase2ProviderMessages(t *testing.T, msgs []provider.Message) {
-	t.Helper()
-	// Matches TestUnit_ForwardChatCompletion_InjectsBeforeComplete (system_append).
-	if len(msgs) != 3 {
-		t.Fatalf("messages=%+v", msgs)
-	}
-	if msgs[0].Content != "client system" {
-		t.Fatalf("first=%+v", msgs[0])
-	}
-	if msgs[1].Role != "system" || msgs[1].Content != "org directive" {
-		t.Fatalf("directive=%+v", msgs[1])
-	}
-	if msgs[2].Content != "hello" {
-		t.Fatalf("user=%+v", msgs[2])
-	}
 }
 
 func TestUnit_ForwardChat_AssembleSuccess_HeadersAndMessages(t *testing.T) {
@@ -243,57 +262,61 @@ func TestUnit_ForwardChat_AssembleSuccess_HeadersAndMessages(t *testing.T) {
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
 		AssembledContext: "assembled blob", TokensUsed: 11, MemoriesIncluded: 2,
 	}}
-	cap := &captureLLMProvider{}
-	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Messages: baseChatMessages()}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
+	rec, last := runForwardChat(t, contextHandler(true, fake), false, false)
+	if len(last.Messages) != 3 || last.Messages[0].Content != "assembled blob" {
+		t.Fatalf("messages=%+v", last.Messages)
 	}
-	h.forwardChatCompletion(chatForwardParams{w: rec, r: req, parsed: parsed, prov: cap})
-	if len(cap.last.Messages) != 3 {
-		t.Fatalf("messages=%+v", cap.last.Messages)
+	if last.Messages[1].Content != "client system" || last.Messages[2].Content != "hello" {
+		t.Fatalf("history=%+v", last.Messages)
 	}
-	if cap.last.Messages[0].Content != "assembled blob" {
-		t.Fatalf("first=%+v", cap.last.Messages[0])
-	}
-	if cap.last.Messages[1].Content != "client system" || cap.last.Messages[2].Content != "hello" {
-		t.Fatalf("history=%+v", cap.last.Messages)
-	}
-	assertContextHeaders(t, rec.Header(), "2", "11", "false")
+	assertContextHeaders(t, rec.Header(), wantContextHeaders{memories: "2", tokens: "11", fallback: "false"})
 }
 
 func TestUnit_ForwardChat_AssembleFallback_HeadersAndDirective(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{Fallback: true}}
-	cap := &captureLLMProvider{}
-	parsed := &llm.ChatCompletionRequest{Model: "gpt-4o", Messages: baseChatMessages()}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
-	}
-	h.forwardChatCompletion(chatForwardParams{w: rec, r: req, parsed: parsed, prov: cap})
-	assertPhase2ProviderMessages(t, cap.last.Messages)
-	assertContextHeaders(t, rec.Header(), "0", "0", "true")
+	rec, last := runForwardChat(t, contextHandler(true, fake), false, false)
+	assertPhase2ProviderMessages(t, last.Messages)
+	assertContextHeaders(t, rec.Header(), wantContextHeaders{memories: "0", tokens: "0", fallback: "true"})
 }
 
-func TestUnit_ForwardChat_Streaming_AssembleHeaders(t *testing.T) {
+func TestUnit_ForwardChat_ProviderFailure_EmitsAssembleHeaders(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name          string
-		enabled       bool
-		client        contextAssembler
-		skipMemory    bool
-		wantAssemble  int32
-		wantMsgsFirst string
-		wantNoHeaders bool
-		wantMemories  string
-		wantTokens    string
-		wantFallback  string
-	}{
+	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
+		AssembledContext: "assembled", TokensUsed: 5, MemoriesIncluded: 1,
+	}}
+	fail := &failingLLMProvider{err: &provider.ProviderError{
+		ProviderName: "fail", StatusCode: http.StatusBadGateway, ProviderErrMsg: "upstream",
+	}}
+	rec, _ := runForwardChatTo(t, contextHandler(true, fake), false, false, fail)
+	if rec.Code < 400 {
+		t.Fatalf("status=%d want error", rec.Code)
+	}
+	assertContextHeaders(t, rec.Header(), wantContextHeaders{memories: "1", tokens: "5", fallback: "false"})
+}
+
+func TestUnit_ForwardChat_ProviderFailure_OmitsHeadersWhenNotAttempted(t *testing.T) {
+	t.Parallel()
+	fail := &failingLLMProvider{err: &provider.ProviderError{
+		ProviderName: "fail", StatusCode: http.StatusBadGateway, ProviderErrMsg: "upstream",
+	}}
+	rec, _ := runForwardChatTo(t, contextHandler(false, nil), false, false, fail)
+	assertNoContextHeaders(t, rec.Header())
+}
+
+type streamAssembleCase struct {
+	name          string
+	enabled       bool
+	client        contextAssembler
+	skipMemory    bool
+	wantAssemble  int32
+	wantMsgsFirst string
+	wantNoHeaders bool
+	want          wantContextHeaders
+}
+
+func streamAssembleCases() []streamAssembleCase {
+	return []streamAssembleCase{
 		{
 			name: "disabled", enabled: false,
 			client:        &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "x"}},
@@ -312,7 +335,7 @@ func TestUnit_ForwardChat_Streaming_AssembleHeaders(t *testing.T) {
 			name: "fallback", enabled: true,
 			client:       &fakeContextAssembler{result: contextclient.AssembleResult{Fallback: true}},
 			wantAssemble: 1, wantMsgsFirst: "client system",
-			wantMemories: "0", wantTokens: "0", wantFallback: "true",
+			want: wantContextHeaders{memories: "0", tokens: "0", fallback: "true"},
 		},
 		{
 			name: "success", enabled: true,
@@ -320,44 +343,41 @@ func TestUnit_ForwardChat_Streaming_AssembleHeaders(t *testing.T) {
 				AssembledContext: "assembled blob", TokensUsed: 7, MemoriesIncluded: 1,
 			}},
 			wantAssemble: 1, wantMsgsFirst: "assembled blob",
-			wantMemories: "1", wantTokens: "7", wantFallback: "false",
+			want: wantContextHeaders{memories: "1", tokens: "7", fallback: "false"},
 		},
 	}
-	for _, tc := range cases {
+}
+
+func TestUnit_ForwardChat_Streaming_AssembleHeaders(t *testing.T) {
+	t.Parallel()
+	for _, tc := range streamAssembleCases() {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cap := &captureStreamingProvider{}
-			parsed := &llm.ChatCompletionRequest{
-				Model: "gpt-4o", Stream: true, Messages: baseChatMessages(),
-			}
-			ctx := directiveCtx(contextTestAuthCtx(t))
-			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-			if tc.skipMemory {
-				req.Header.Set(validation.HeaderSkipMemory, "true")
-			}
-			rec := newFlushRecorder()
-			h := chatCompletionHandler{
-				log: logger.Discard("proxy"), contextEnabled: tc.enabled, contextClient: tc.client,
-			}
-			h.forwardChatCompletion(chatForwardParams{w: rec, r: req, parsed: parsed, prov: cap})
-			var calls int32
-			if fake, ok := tc.client.(*fakeContextAssembler); ok {
-				calls = fake.calls.Load()
-			}
-			if calls != tc.wantAssemble {
-				t.Fatalf("Assemble calls=%d want %d", calls, tc.wantAssemble)
-			}
-			if len(cap.last.Messages) < 1 || cap.last.Messages[0].Content != tc.wantMsgsFirst {
-				t.Fatalf("messages=%+v want first %q", cap.last.Messages, tc.wantMsgsFirst)
-			}
-			if tc.wantNoHeaders {
-				assertNoContextHeaders(t, rec.Header())
-				return
-			}
-			assertContextHeaders(t, rec.Header(), tc.wantMemories, tc.wantTokens, tc.wantFallback)
+			runStreamAssembleCase(t, tc)
 		})
 	}
+}
+
+func runStreamAssembleCase(t *testing.T, tc streamAssembleCase) {
+	t.Helper()
+	cap := &captureStreamingProvider{}
+	rec, last := runForwardChatTo(t, contextHandler(tc.enabled, tc.client), true, tc.skipMemory, cap)
+	var calls int32
+	if fake, ok := tc.client.(*fakeContextAssembler); ok {
+		calls = fake.calls.Load()
+	}
+	if calls != tc.wantAssemble {
+		t.Fatalf("Assemble calls=%d want %d", calls, tc.wantAssemble)
+	}
+	if len(last.Messages) < 1 || last.Messages[0].Content != tc.wantMsgsFirst {
+		t.Fatalf("messages=%+v want first %q", last.Messages, tc.wantMsgsFirst)
+	}
+	if tc.wantNoHeaders {
+		assertNoContextHeaders(t, rec.Header())
+		return
+	}
+	assertContextHeaders(t, rec.Header(), tc.want)
 }
 
 type captureStreamingProvider struct {
@@ -376,6 +396,23 @@ func (c *captureStreamingProvider) Complete(_ context.Context, req provider.Requ
 func (c *captureStreamingProvider) Name() string { return "capture-stream" }
 
 func (c *captureStreamingProvider) SupportedModels() []string { return []string{"gpt-4o"} }
+
+type failingLLMProvider struct {
+	last provider.Request
+	err  error
+}
+
+func (f *failingLLMProvider) Complete(_ context.Context, req provider.Request) (provider.Response, error) {
+	f.last = req
+	if f.err != nil {
+		return provider.Response{}, f.err
+	}
+	return provider.Response{}, errors.New("provider failed")
+}
+
+func (f *failingLLMProvider) Name() string { return "fail" }
+
+func (f *failingLLMProvider) SupportedModels() []string { return []string{"gpt-4o"} }
 
 func TestUnit_SetContextAssembleResponseHeaders_OmitWhenNotAttempted(t *testing.T) {
 	t.Parallel()
@@ -405,29 +442,20 @@ func TestUnit_LastUserQuery_EmptyWhenNoUser(t *testing.T) {
 func TestUnit_ApplyContextOrDirective_EmptyAssembledUsesDirective(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{
-		AssembledContext: "   ", TokensUsed: 1, MemoriesIncluded: 0,
+		AssembledContext: "   ", TokensUsed: 1,
 	}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
-	}
-	ctx := directiveCtx(contextTestAuthCtx(t))
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
-	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", []provider.Message{{Role: "user", Content: "hi"}})
+	out := runApplyInjection(t, contextHandler(true, fake), []provider.Message{{Role: "user", Content: "hi"}})
 	if !out.Meta.Attempted || out.Meta.Fallback {
 		t.Fatalf("meta=%+v", out.Meta)
 	}
-	if len(out.Messages) != 2 || out.Messages[0].Content != "org directive" {
-		t.Fatalf("messages=%+v", out.Messages)
-	}
+	assertDirectiveOnly(t, out.Messages)
 }
 
 func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testing.T) {
 	t.Parallel()
 	fake := &fakeContextAssembler{result: contextclient.AssembleResult{AssembledContext: "assembled"}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), contextEnabled: true, contextClient: fake,
-	}
-	ctx := directiveCtx(context.Background()) // no auth/agent
+	h := contextHandler(true, fake)
+	ctx := directiveCtx(context.Background())
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
 	out := h.applyContextOrDirectiveInjection(ctx, req, "gpt-4o", []provider.Message{{Role: "user", Content: "hi"}})
 	if fake.calls.Load() != 0 {
@@ -436,7 +464,5 @@ func TestUnit_ApplyContextOrDirective_MissingTenantFallsBackToDirective(t *testi
 	if out.Meta.Attempted {
 		t.Fatal("Attempted should be false when tenant IDs missing")
 	}
-	if len(out.Messages) != 2 || out.Messages[0].Content != "org directive" {
-		t.Fatalf("messages=%+v", out.Messages)
-	}
+	assertDirectiveOnly(t, out.Messages)
 }

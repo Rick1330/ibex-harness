@@ -216,11 +216,9 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.ContextAssembleTimeout > 0 {
 		cfg.ContextAssembleTimeout = envCfg.ContextAssembleTimeout
 	}
-	contextEnabled, err := parseEnabledFlag(envCfg.ContextEnabled, false)
-	if err != nil {
-		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
+	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
+		return err
 	}
-	cfg.ContextEnabled = contextEnabled
 	if envCfg.MaxRequestBodyBytes > 0 {
 		cfg.MaxRequestBodyBytes = envCfg.MaxRequestBodyBytes
 	}
@@ -238,6 +236,15 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 		return err
 	}
 	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
+
+func applyContextEnabledEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.ContextEnabled, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
+	}
+	cfg.ContextEnabled = enabled
+	return nil
 }
 
 func applyAuthCacheEnv(cfg *Config, envCfg envConfig) error {

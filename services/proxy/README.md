@@ -94,17 +94,22 @@ See [.env.example](.env.example).
 
 Full registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
 
+## Context assembly (3.5.D)
+
+Hot-path wiring is shipped in **3.5.D.2** (`IBEX_CONTEXT_ENABLED` + `contextclient.Assemble`):
+fail-open to Phase 2 directive injection when disabled, nil client, Skip-Memory, or Assemble Fallback.
+Response headers `X-IBEX-Memories-Injected` / `X-IBEX-Context-Tokens` / `X-IBEX-Context-Fallback`
+are set when Assemble was attempted (stream and non-stream, including provider failure responses).
+Embedded `ibex` JSON metadata is **3.5.D.3**.
+
 ## Next (Phase 2.5+) — remaining planning baseline
 
 Anthropic adapter, model capability registry, self-hosted OpenAI-compatible adapter,
-tokenizer registry, and non-streaming response pipeline are shipped (m2.5.G1.M1–M3,
-m2.5.G2.M1, m2.5.G3.M1 / ADR-0040–0044). Still planned:
+tokenizer registry, non-streaming response pipeline, and context-assembly hot-path wiring
+are shipped (m2.5.G1.M1–M3, m2.5.G2.M1, m2.5.G3.M1 / ADR-0040–0044; m3.5.D.1–D.2). Still planned:
 
 - Streaming response pipeline design (G3.M2)
-- Context assembly hot-path wiring shipped in 3.5.D.2 (`IBEX_CONTEXT_ENABLED` + `contextclient.Assemble`);
-  fail-open to Phase 2 directive injection when disabled, nil client, Skip-Memory, or Assemble Fallback.
-  Response headers `X-IBEX-Memories-Injected` / `X-IBEX-Context-Tokens` / `X-IBEX-Context-Fallback`
-  (embedded `ibex` JSON is 3.5.D.3).
+- Embedded `ibex` JSON / `IBEX_CONTEXT_EMBED_METADATA` (3.5.D.3)
 
 Paths and env names may change during implementation — update this README and `ENVIRONMENT_VARIABLES.md` when they land.
 

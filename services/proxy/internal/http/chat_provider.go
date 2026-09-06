@@ -140,6 +140,10 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		})
 		return
 	}
+	h.writeJSONSuccess(p, out)
+}
+
+func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []byte) {
 	setSessionResponseHeader(p.w, p.r.Context())
 	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "application/json")
@@ -228,6 +232,9 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 		return
 	}
 	logMappedProviderError(h, p.r, p.err, mapped)
+	// Emit assembly headers when Assemble ran (including Fallback); omit otherwise
+	// so Phase 2 failure responses stay header-identical to pre-D.2.
+	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	cw := &capturingWriter{ResponseWriter: p.w, Status: mapped.HTTPStatus}
 	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
