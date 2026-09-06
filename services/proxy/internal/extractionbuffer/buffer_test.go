@@ -133,25 +133,41 @@ func TestUnit_AppendSkippedAndSanitize(t *testing.T) {
 	}
 }
 
-func TestUnit_PeekAckUsableAndDecode(t *testing.T) {
+func TestUnit_PeekEmptyAndAckEmptyRaw(t *testing.T) {
 	t.Parallel()
-	b, mr := testBuffer(t)
+	b, _ := testBuffer(t)
 	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "peek"}
 	snap, err := b.Peek(context.Background(), k)
-	if err != nil || len(snap.Turns) != 0 || snap.Raw != "" {
-		t.Fatalf("empty peek: %+v err=%v", snap, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Turns) != 0 {
+		t.Fatalf("turns=%d", len(snap.Turns))
+	}
+	if snap.Raw != "" {
+		t.Fatalf("raw=%q", snap.Raw)
 	}
 	if err := b.Ack(context.Background(), k, ""); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestUnit_PeekDecodeError(t *testing.T) {
+	t.Parallel()
+	b, mr := testBuffer(t)
+	k := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "peek"}
 	mustAppendOK(t, b, k, []extractionbuffer.Turn{{TurnIndex: 0, Role: "user", Content: "a"}})
-	key := extractionbuffer.Key(k)
-	if err := mr.Set(key, "{not-json"); err != nil {
+	if err := mr.Set(extractionbuffer.Key(k), "{not-json"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := b.Peek(context.Background(), k); err == nil {
 		t.Fatal("expected decode error")
 	}
+}
+
+func TestUnit_TakeUnusedKey(t *testing.T) {
+	t.Parallel()
+	b, _ := testBuffer(t)
 	unused := extractionbuffer.LookupKey{OrgID: uuid.New(), AgentID: uuid.New()}
 	if _, err := b.Take(context.Background(), unused); err != nil {
 		t.Fatal(err)
@@ -203,33 +219,49 @@ func TestUnit_AckPreservesNewerAppend(t *testing.T) {
 	mustAppendOK(t, b, k, []extractionbuffer.Turn{
 		{TurnIndex: 0, Role: "user", Content: "first"},
 	})
-	peeked, err := b.Peek(context.Background(), k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(peeked.Turns) != 1 || peeked.Raw == "" {
-		t.Fatalf("peek turns=%d raw_empty=%v", len(peeked.Turns), peeked.Raw == "")
-	}
+	peeked := mustPeek(t, b, k)
+	requirePeekOne(t, peeked)
 	mustAppendOK(t, b, k, []extractionbuffer.Turn{
 		{TurnIndex: 1, Role: "assistant", Content: "second"},
 	})
 	if err := b.Ack(context.Background(), k, peeked.Raw); err != nil {
 		t.Fatal(err)
 	}
-	after, err := b.Peek(context.Background(), k)
+	after := mustPeek(t, b, k)
+	requireNewerPreserved(t, peeked, after)
+	if err := b.Ack(context.Background(), k, after.Raw); err != nil {
+		t.Fatal(err)
+	}
+	assertPeekLen(t, b, k, 0)
+}
+
+func mustPeek(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey) extractionbuffer.Snapshot {
+	t.Helper()
+	snap, err := b.Peek(context.Background(), k)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return snap
+}
+
+func requirePeekOne(t *testing.T, peeked extractionbuffer.Snapshot) {
+	t.Helper()
+	if len(peeked.Turns) != 1 {
+		t.Fatalf("peek turns=%d", len(peeked.Turns))
+	}
+	if peeked.Raw == "" {
+		t.Fatal("expected non-empty raw")
+	}
+}
+
+func requireNewerPreserved(t *testing.T, peeked, after extractionbuffer.Snapshot) {
+	t.Helper()
 	if len(after.Turns) != 2 {
 		t.Fatalf("ack deleted newer snapshot: len=%d want 2", len(after.Turns))
 	}
 	if after.Raw == peeked.Raw {
 		t.Fatal("expected newer raw after append")
 	}
-	if err := b.Ack(context.Background(), k, after.Raw); err != nil {
-		t.Fatal(err)
-	}
-	assertPeekLen(t, b, k, 0)
 }
 
 func fanoutAppend(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, workers int) {
@@ -274,39 +306,23 @@ func mustAppendOK(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.L
 
 func assertTakeLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int) {
 	t.Helper()
-	assertLen(t, lenCheck{b: b, k: k, want: want, take: true})
+	turns, err := b.Take(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != want {
+		t.Fatalf("len=%d want %d", len(turns), want)
+	}
 }
 
 func assertPeekLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int) {
 	t.Helper()
-	assertLen(t, lenCheck{b: b, k: k, want: want, take: false})
-}
-
-type lenCheck struct {
-	b    *extractionbuffer.Buffer
-	k    extractionbuffer.LookupKey
-	want int
-	take bool
-}
-
-func assertLen(t *testing.T, c lenCheck) {
-	t.Helper()
-	var n int
-	if c.take {
-		turns, err := c.b.Take(context.Background(), c.k)
-		if err != nil {
-			t.Fatal(err)
-		}
-		n = len(turns)
-	} else {
-		snap, err := c.b.Peek(context.Background(), c.k)
-		if err != nil {
-			t.Fatal(err)
-		}
-		n = len(snap.Turns)
+	snap, err := b.Peek(context.Background(), k)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n != c.want {
-		t.Fatalf("len=%d want %d", n, c.want)
+	if len(snap.Turns) != want {
+		t.Fatalf("len=%d want %d", len(snap.Turns), want)
 	}
 }
 

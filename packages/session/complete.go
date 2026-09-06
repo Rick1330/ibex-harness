@@ -150,8 +150,8 @@ func completeInTx(ctx context.Context, tx *sql.Tx, sessionID, orgID uuid.UUID) (
 	if err == nil {
 		return CompleteOK, nil
 	}
-	return resolveCompleteRace(completeRaceInput{
-		ctx: ctx, tx: tx, ref: sessionRef{id: sessionID, orgID: orgID}, markErr: err,
+	return resolveCompleteRace(ctx, completeRaceInput{
+		tx: tx, ref: sessionRef{id: sessionID, orgID: orgID}, markErr: err,
 	})
 }
 
@@ -168,17 +168,16 @@ type sessionRef struct {
 }
 
 type completeRaceInput struct {
-	ctx     context.Context
 	tx      *sql.Tx
 	ref     sessionRef
 	markErr error
 }
 
-func resolveCompleteRace(in completeRaceInput) (CompleteResult, error) {
+func resolveCompleteRace(ctx context.Context, in completeRaceInput) (CompleteResult, error) {
 	if !errors.Is(in.markErr, ErrNotFound) {
 		return 0, in.markErr
 	}
-	st, loadErr := loadSessionStatus(in.ctx, in.tx, in.ref.id, in.ref.orgID)
+	st, loadErr := loadSessionStatus(ctx, in.tx, in.ref.id, in.ref.orgID)
 	if loadErr != nil {
 		return mapNotFound(loadErr)
 	}

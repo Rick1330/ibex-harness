@@ -76,26 +76,37 @@ func (c *Client) Enabled() bool {
 
 // Enqueue posts the task; errors are for metrics/logging only (fail-open).
 func (c *Client) Enqueue(ctx context.Context, req Request) error {
+	httpReq, err := c.newEnqueueHTTPRequest(ctx, req)
+	if err != nil {
+		return err
+	}
+	return c.doEnqueue(httpReq)
+}
+
+func (c *Client) newEnqueueHTTPRequest(ctx context.Context, req Request) (*http.Request, error) {
 	if !c.Enabled() {
-		return fmt.Errorf("extractionenqueue: disabled")
+		return nil, fmt.Errorf("extractionenqueue: disabled")
 	}
 	if len(req.Turns) == 0 {
-		return fmt.Errorf("extractionenqueue: turns required")
+		return nil, fmt.Errorf("extractionenqueue: turns required")
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("extractionenqueue: marshal: %w", err)
+		return nil, fmt.Errorf("extractionenqueue: marshal: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+enqueuePath, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("extractionenqueue: request: %w", err)
+		return nil, fmt.Errorf("extractionenqueue: request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.token)
 	if req.SessionID != uuid.Nil {
 		httpReq.Header.Set("Idempotency-Key", req.SessionID.String())
 	}
+	return httpReq, nil
+}
 
+func (c *Client) doEnqueue(httpReq *http.Request) error {
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("extractionenqueue: do: %w", err)

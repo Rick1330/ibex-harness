@@ -186,97 +186,95 @@ func TestUnit_EnqueuePostResponse(t *testing.T) {
 	})
 }
 
-func TestUnit_PreparePostResponse(t *testing.T) {
+func TestUnit_PreparePostResponse_CheckpointAndTrace(t *testing.T) {
 	t.Parallel()
-
 	meta := testSnapshotMeta()
 	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
-	in := testCheckpointInput()
-	outcome := httptrace.RequestOutcome{StatusCode: 200, IsComplete: true}
-
-	t.Run("checkpoint and trace", func(t *testing.T) {
-		t.Parallel()
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps:   LifecycleDeps{Store: newMemSessionStore()},
-			Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-			Resolved: rs, Meta: meta, In: in, Outcome: outcome,
-		})
-		if !job.DoCheckpoint {
-			t.Fatal("expected checkpoint")
-		}
-		if !job.DoTrace {
-			t.Fatal("expected trace")
-		}
-		if job.Params.SessionID != rs.SessionID {
-			t.Fatalf("session=%s", job.Params.SessionID)
-		}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:   LifecycleDeps{Store: newMemSessionStore()},
+		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
+	if !job.DoCheckpoint {
+		t.Fatal("expected checkpoint")
+	}
+	if !job.DoTrace {
+		t.Fatal("expected trace")
+	}
+	if job.Params.SessionID != rs.SessionID {
+		t.Fatalf("session=%s", job.Params.SessionID)
+	}
+}
 
-	t.Run("sticky only skips checkpoint", func(t *testing.T) {
-		t.Parallel()
-		sticky := Resolved{ExternalID: "sticky-only"}
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps: LifecycleDeps{Store: newMemSessionStore()},
-			Log:  logger.Discard("t"), Resolved: sticky, Meta: meta, In: in, Outcome: outcome,
-		})
-		if job.DoCheckpoint {
-			t.Fatal("sticky-only must not checkpoint")
-		}
+func TestUnit_PreparePostResponse_StickySkipsCheckpoint(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps: LifecycleDeps{Store: newMemSessionStore()},
+		Log:  logger.Discard("t"), Resolved: Resolved{ExternalID: "sticky-only"},
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
+	if job.DoCheckpoint {
+		t.Fatal("sticky-only must not checkpoint")
+	}
+}
 
-	t.Run("failure skips checkpoint keeps trace", func(t *testing.T) {
-		t.Parallel()
-		failOutcome := httptrace.RequestOutcome{
-			StatusCode: 502, IsComplete: false, StreamRequested: true,
-		}
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps:   LifecycleDeps{Store: newMemSessionStore()},
-			Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-			Resolved: rs, Meta: meta, In: in, Outcome: failOutcome,
-		})
-		if job.DoCheckpoint {
-			t.Fatal("failure must not checkpoint")
-		}
-		if !job.DoTrace {
-			t.Fatal("expected failure trace")
-		}
-		if !job.Snap.Streaming {
-			t.Fatal("stream flag preserved in snap")
-		}
+func TestUnit_PreparePostResponse_FailureKeepsTrace(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:   LifecycleDeps{Store: newMemSessionStore()},
+		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 502, IsComplete: false, StreamRequested: true},
 	})
+	if job.DoCheckpoint {
+		t.Fatal("failure must not checkpoint")
+	}
+	if !job.DoTrace {
+		t.Fatal("expected failure trace")
+	}
+	if !job.Snap.Streaming {
+		t.Fatal("stream flag preserved in snap")
+	}
+}
 
-	t.Run("turn buffer prepares and flushes", func(t *testing.T) {
-		t.Parallel()
-		mr := miniredis.RunT(t)
-		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-		t.Cleanup(func() { _ = client.Close() })
-		buf, err := extractionbuffer.New(client, time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-		store := newMemSessionStore()
-		inWithUser := CheckpointInput{
-			Messages:       []llm.Message{{Role: "user", Content: "hello-buf"}, {Role: "assistant", Content: "ignored"}},
-			CompletionText: "reply", Model: "m", Provider: "p",
-		}
-		job := PreparePostResponse(PreparePostResponseInput{
-			Deps:   LifecycleDeps{Store: store, TurnBuffer: buf, Log: logger.Discard("t")},
-			Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
-			Resolved: rs, Meta: meta, In: inWithUser, Outcome: outcome,
-		})
-		if !job.DoBuffer {
-			t.Fatal("expected DoBuffer")
-		}
-		if len(job.BufferTurns) != 2 {
-			t.Fatalf("buffer turns=%d", len(job.BufferTurns))
-		}
-		EnqueuePostResponse(job)
-		snap, err := buf.Peek(context.Background(), job.BufferKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(snap.Turns) != 2 {
-			t.Fatalf("flushed turns=%d", len(snap.Turns))
-		}
+func TestUnit_PreparePostResponse_TurnBufferFlushes(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	buf, err := extractionbuffer.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inWithUser := CheckpointInput{
+		Messages:       []llm.Message{{Role: "user", Content: "hello-buf"}, {Role: "assistant", Content: "ignored"}},
+		CompletionText: "reply", Model: "m", Provider: "p",
+	}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:   LifecycleDeps{Store: newMemSessionStore(), TurnBuffer: buf, Log: logger.Discard("t")},
+		Writer: &recordingTraceWriter{}, Log: logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: inWithUser,
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
+	if !job.DoBuffer {
+		t.Fatal("expected DoBuffer")
+	}
+	if len(job.BufferTurns) != 2 {
+		t.Fatalf("buffer turns=%d", len(job.BufferTurns))
+	}
+	EnqueuePostResponse(job)
+	snap, err := buf.Peek(context.Background(), job.BufferKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Turns) != 2 {
+		t.Fatalf("flushed turns=%d", len(snap.Turns))
+	}
 }
