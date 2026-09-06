@@ -240,11 +240,19 @@ def _parse_error_rate(raw: str) -> float:
         raise argparse.ArgumentTypeError(
             f"max-error-rate must be a number, got {raw!r}"
         ) from exc
-    if not math.isfinite(value) or value < 0.0 or value > 1.0:
-        raise argparse.ArgumentTypeError(
-            f"max-error-rate must be a finite number in [0, 1], got {raw!r}"
-        )
+    if not math.isfinite(value):
+        _raise_error_rate_range(raw)
+    if value < 0.0:
+        _raise_error_rate_range(raw)
+    if value > 1.0:
+        _raise_error_rate_range(raw)
     return value
+
+
+def _raise_error_rate_range(raw: str) -> None:
+    raise argparse.ArgumentTypeError(
+        f"max-error-rate must be a finite number in [0, 1], got {raw!r}"
+    )
 
 
 def main() -> int:
