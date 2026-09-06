@@ -55,7 +55,7 @@ phase: "phase-3-5-extraction-assembly"
 - **3.5.C.3 — Composite scorer v2 (relevance-gated):** Scoring-time `composite_relevance_floor` (default 0.15) in memory `rank_hydrated_hits` ([ADR-0068](/docs/adr/0068-composite-relevance-gate)); distinct from retrieval `min_similarity`. Half-lives already shipped in 3.D.2.
 - **3.5.C.4 — Packer v2 (bounded DP knapsack):** Discretized to 16-token buckets. numpy-vectorized. Fallback to greedy on pathological input size.
 - **3.5.C.5 — Context formatter:** XML-style delimiters, session nonce, locked ordering (directive → history → memories → tools). [ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce).
-- **3.5.C.6 — gRPC service skeleton and degradation contract:** `ContextAssemblyService` with four degradation levels (L0–L3), each independently testable. 500 RPS load test target.
+- **3.5.C.6 — gRPC service skeleton and degradation contract:** `ContextAssemblyService` with L0–L2 in-service degradation + L3 `DEADLINE_EXCEEDED` for proxy fail-open ([ADR-0071](/docs/adr/0071-context-grpc-degradation-deadline)). 500 RPS load harness.
 
 **Acceptance criteria:**
 - Relevance gate: a memory with similarity=0.05 and confidence=1.0 must be excluded

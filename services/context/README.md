@@ -32,7 +32,19 @@ CI asserts packing p99 &lt; 5ms at n=70.
 - Locked order: directive → history (`role: content`) → memories by category → optional tool schemas
 - Memories wrapped as `<ibex_memory nonce="...">` via `html.escape` serialization + `secrets.token_urlsafe` (`IBEX_CONTEXT_FORMATTER_NONCE_BYTES`, default 16, max 64); bodies/attrs escaped so content cannot forge delimiters (serialize-only — no XML parser)
 
-gRPC `ContextAssemblyService` remains **out of scope** (milestone **3.5.C.6**).
+## Milestone 3.5.C.6 — gRPC service + degradation
+
+- [`app/assemble.py`](app/assemble.py) — `ContextAssembler` (retrieve → budget → score → pack → format; L0–L2)
+- [`app/server.py`](app/server.py) — `grpc.aio` `AssembleContext`; `SearchMemories` / `RecordMemoryFeedback` → `UNIMPLEMENTED`
+- [`app/config.py`](app/config.py) — `IBEX_CONTEXT_DEADLINE_MS` (default 40), `IBEX_CONTEXT_GRPC_ADDR`
+- Load: [`benchmarks/context/assemble_load.py`](../../benchmarks/context/assemble_load.py) ([ADR-0071](/docs/adr/0071-context-grpc-degradation-deadline))
+
+```bash
+# stubs for local pb2 (gitignored)
+bash infra/scripts/context-proto-gen.sh
+cd services/context && bash ../../infra/scripts/context-uv-sync.sh
+PYTHONPATH=../../packages/proto/gen/python .venv/bin/python -m app
+```
 
 ### Regenerate the catalog JSON (Go source of truth)
 
