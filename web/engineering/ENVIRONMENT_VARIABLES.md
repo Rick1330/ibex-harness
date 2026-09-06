@@ -466,7 +466,8 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_MEMORY_BASE_URL` | Conditional | (none) | Memory service base URL for hot/cold HTTP |
 | `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
 | `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
-| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side assembly budget (future gRPC service) |
+| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side retrieval wall for AssembleContext; effective wait `min(IBEX_CONTEXT_TIMEOUT, deadline)` ([ADR-0071](../content/docs/adr/0071-context-grpc-degradation-deadline)) |
+| `IBEX_CONTEXT_GRPC_ADDR` | No | `127.0.0.1:9092` | ContextAssemblyService bind address (`python -m app`) |
 | `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
 | `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |

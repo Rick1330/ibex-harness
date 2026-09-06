@@ -1,0 +1,84 @@
+---
+title: "ADR-0071: Context assembly gRPC degradation ladder and retrieval deadline"
+description: "Architecture decision record 0071 — AssembleContext orchestrator, L0–L2 degradation observability without proto field adds, IBEX_CONTEXT_DEADLINE_MS (40ms) retrieval wall, L3 proxy-owned, AssemblyMetrics field mapping."
+adrId: "0071"
+status: "Accepted"
+date: "2026-09-06"
+authors: "IBEX Harness team"
+---
+
+# ADR-0071: Context assembly gRPC degradation ladder and retrieval deadline
+
+- **Status:** Accepted
+- **Date:** 2026-09-06
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.C.6 gRPC service + degradation contract](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.6-grpc-service-degradation-contract)
+- **Depends on:** [ADR-0038](/docs/adr/0038-context-assembly-service) (gRPC contract), [ADR-0069](/docs/adr/0069-context-packer-dp-knapsack), [ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce)
+
+## Context
+
+Track C needed a single `AssembleContext` entrypoint that orchestrates budget → retrieve → score → pack → format, with an explicit degradation ladder. Planning sketches proposed new proto fields (`fallback`, `was_truncated`) and a separate `RETRIEVAL_INTERNAL_DEADLINE_MS` name. Discovery against main found:
+
+- [`context.proto`](https://github.com/Rick1330/ibex-harness/blob/main/packages/proto/proto/ibex/context/v1/context.proto) already defines `AssemblyMetrics` with stage timings — no degradation enum.
+- `IBEX_CONTEXT_DEADLINE_MS` (default 40) is already documented in ENVIRONMENT_VARIABLES; proxy client timeout remains 45ms.
+- L3 (proxy fail-open / `X-IBEX-Context-Fallback`) belongs to **3.5.D.1**, not the context service.
+- Repo k6 scripts are HTTP-only; gRPC load belongs in a Python harness.
+
+## Decision
+
+### 1) No proto message changes
+
+Do **not** add `fallback` / `was_truncated` (or similar) to `AssembleContextResponse`. Infer L0–L2 from response shape plus structured logs (`degradation_level`). Keep `packages/proto/**` unchanged for this milestone.
+
+### 2) Degradation ladder (context service)
+
+| Level | Trigger | Behavior |
+|---|---|---|
+| **L0** | Hot + cold usable (or intentional skips via `AssemblyOptions`) | Full pack/format path |
+| **L1** | Cold timeout/error (or skip_cold with hot usable) | Pack hot-only; INFO log with ids only |
+| **L2** | Hot and cold both non-success | Format directive (+ history) only; empty packed memories |
+| **L3** | Caller cancel / gRPC deadline | Server returns `DEADLINE_EXCEEDED` without inventing partial context — **proxy** fail-open (3.5.D.1) |
+
+### 3) Retrieval wall: `IBEX_CONTEXT_DEADLINE_MS`
+
+Wire documented `IBEX_CONTEXT_DEADLINE_MS` (default **40**) into `ContextSettings.deadline_ms`. Effective outer parallel-retrieval wait is `min(timeout_ms, deadline_ms)`. Pack + format run in remaining headroom under the proxy’s ~45ms client timeout.
+
+### 4) Metrics mapping
+
+Populate existing `AssemblyMetrics` fields:
+
+| Stage | Proto field |
+|---|---|
+| Budget | `budget_calculation_ms` |
+| Directive branch | `directive_load_ms` |
+| Hot / cold | `hot_memory_retrieval_ms` / `cold_memory_retrieval_ms` |
+| Score | `ranking_ms` |
+| Pack | `packing_ms` |
+| Format | `formatting_ms` |
+| End-to-end | `total_ms` |
+| Pack input size | `candidates_evaluated` |
+
+### 5) Interim `MemoryUsed` scores
+
+Until scoring exposes per-component weights on the wire, set `relevance` / `recency` / `usefulness` to `0.0` and put the interim packer score in `composite_score` (same interim rule as ADR-0069).
+
+### 6) Server registration
+
+`grpc.aio` generic handlers + generated `context_pb2` (local `buf generate`; gitignored `gen/`). `SearchMemories` / `RecordMemoryFeedback` return `UNIMPLEMENTED` per ADR-0038.
+
+### 7) Load harness
+
+`benchmarks/context/assemble_load.py` — async gRPC client; stub profile gates p99 &lt; 50ms; live 100K corpus documented separately (do not fake success).
+
+## Consequences
+
+- Context service is runnable via `python -m app` (`IBEX_CONTEXT_GRPC_ADDR`).
+- Proxy wiring and `X-IBEX-Context-Fallback` remain **3.5.D.1**.
+- Operators observe L1/L2 via logs + empty/hot-only memories, not new response flags.
+
+## Alternatives considered
+
+1. **Add proto degradation fields** — rejected: expands contract surface for observability already available via metrics + logs; defers unnecessary buf churn.
+2. **Implement L3 inside context as directive-only invent** — rejected: milestone table and ADR-0038 treat full timeout as proxy fail-open.
+3. **New env name `RETRIEVAL_INTERNAL_DEADLINE_MS`** — rejected: docs already specify `IBEX_CONTEXT_DEADLINE_MS`.
+4. **k6 gRPC script** — rejected: repo k6 is HTTP-only; Python async client matches ADR-0034-style percentile reporting.

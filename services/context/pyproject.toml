@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ibex-context"
 version = "0.1.0"
-description = "IBEX Harness context assembly library (budget + retrieval + packer + formatter — m3.5.C.1–C.5)"
+description = "IBEX Harness context assembly library (budget + retrieval + packer + formatter + gRPC — m3.5.C.1–C.6)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,6 +14,8 @@ dependencies = [
   "httpx>=0.27.0",
   "redis>=5.0.0",
   "numpy>=2.0.0",
+  "grpcio>=1.62.0",
+  "protobuf>=5.0.0",
 ]
 
 [project.optional-dependencies]

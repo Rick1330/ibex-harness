@@ -1,4 +1,4 @@
-"""Context assembly settings (milestones 3.5.C.2 / 3.5.C.4 / 3.5.C.5)."""
+"""Context assembly settings (milestones 3.5.C.2 / 3.5.C.4 / 3.5.C.5 / 3.5.C.6)."""
 
 from __future__ import annotations
 
@@ -31,12 +31,13 @@ def _parse_timeout_text(text: str) -> float:
 
 
 class ContextSettings(BaseSettings):
-    """Env-backed knobs for parallel retrieval.
+    """Env-backed knobs for parallel retrieval and the gRPC assembly server.
 
-    ``IBEX_CONTEXT_TIMEOUT`` is the outer wall-clock budget (default 45ms per
-    ENVIRONMENT_VARIABLES.md). Per-branch timeouts are tighter for cheap paths
-    (directive Redis GET, hot HTTP) and equal to the outer budget for cold
-    search, which embeds server-side and often exceeds 45ms — fail-open.
+    ``IBEX_CONTEXT_TIMEOUT`` is the historical outer retrieval budget (default
+    45ms). ``IBEX_CONTEXT_DEADLINE_MS`` (default 40) is the server-side
+    retrieval wall used by AssembleContext so pack/format keep headroom under
+    the proxy's 45ms client timeout (ADR-0071). Effective retrieval wait is
+    ``min(timeout_ms, deadline_ms)``.
     """
 
     model_config = SettingsConfigDict(extra="ignore")
@@ -46,6 +47,16 @@ class ContextSettings(BaseSettings):
         gt=0,
         allow_inf_nan=False,
         validation_alias=AliasChoices("IBEX_CONTEXT_TIMEOUT", "IBEX_CONTEXT_TIMEOUT_MS"),
+    )
+    deadline_ms: float = Field(
+        default=40.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="IBEX_CONTEXT_DEADLINE_MS",
+        description=(
+            "Server-side retrieval wall for AssembleContext (ADR-0071). "
+            "Effective outer wait is min(timeout_ms, deadline_ms)."
+        ),
     )
     directive_timeout_ms: float = Field(
         default=5.0,
@@ -83,6 +94,11 @@ class ContextSettings(BaseSettings):
         default="",
         validation_alias=AliasChoices("IBEX_CONTEXT_REDIS_URL", "REDIS_URL"),
     )
+    grpc_addr: str = Field(
+        default="127.0.0.1:9092",
+        validation_alias="IBEX_CONTEXT_GRPC_ADDR",
+        description="Bind address for ContextAssemblyService (host:port).",
+    )
     packer_dp_cell_ceiling: int = Field(
         default=70 * 6251,
         ge=1,
@@ -109,8 +125,14 @@ class ContextSettings(BaseSettings):
         ),
     )
 
+    @property
+    def retrieval_wall_ms(self) -> float:
+        """Effective outer parallel-retrieval deadline."""
+        return min(self.timeout_ms, self.deadline_ms)
+
     @field_validator(
         "timeout_ms",
+        "deadline_ms",
         "directive_timeout_ms",
         "hot_timeout_ms",
         "cold_timeout_ms",

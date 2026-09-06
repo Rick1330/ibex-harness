@@ -1,0 +1,276 @@
+"""asyncio gRPC ContextAssemblyService (milestone 3.5.C.6 / ADR-0071).
+
+Registers generic handlers against ``ibex.context.v1`` message types from
+``packages/proto/gen/python`` (local ``buf generate``; not committed).
+``SearchMemories`` / ``RecordMemoryFeedback`` return UNIMPLEMENTED (ADR-0038).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Sequence
+from uuid import UUID
+
+import grpc
+from grpc import aio as grpc_aio
+
+from app.assemble import (
+    AssembleRequest,
+    AssemblyOptions,
+    AssemblyResult,
+    ContextAssembler,
+)
+from app.budget import Message
+from app.clients.directive import EmptyDirectiveLookup, RedisDirectiveLookup
+from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
+from app.config import ContextSettings
+from app.retrieval import ParallelRetriever
+
+logger = logging.getLogger(__name__)
+
+_SERVICE_NAME = "ibex.context.v1.ContextAssemblyService"
+_ASSEMBLE = "AssembleContext"
+_SEARCH = "SearchMemories"
+_FEEDBACK = "RecordMemoryFeedback"
+
+
+def _load_pb2():
+    """Import generated protobuf module (requires ``make proto-gen`` / CI script)."""
+    try:
+        from ibex.context.v1 import context_pb2 as pb2
+    except ImportError as exc:  # pragma: no cover - env misconfig
+        msg = (
+            "ibex.context.v1.context_pb2 not found — run "
+            "`bash infra/scripts/context-proto-gen.sh` (or `make proto-gen`) "
+            "and ensure packages/proto/gen/python is on PYTHONPATH"
+        )
+        raise ImportError(msg) from exc
+    return pb2
+
+
+class ContextAssemblyServicer:
+    """RPC handlers backed by ``ContextAssembler``."""
+
+    def __init__(self, assembler: ContextAssembler) -> None:
+        self._assembler = assembler
+        self._pb2 = _load_pb2()
+
+    async def AssembleContext(
+        self,
+        request: object,
+        context: grpc_aio.ServicerContext,
+    ) -> object:
+        pb2 = self._pb2
+        if context.cancelled():
+            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "cancelled")
+
+        try:
+            domain = _request_from_proto(request)
+        except ValueError as exc:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+
+        try:
+            result = await self._assembler.assemble(domain)
+        except asyncio.CancelledError:
+            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "deadline exceeded")
+            raise
+        if context.cancelled():
+            await context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, "cancelled")
+
+        return _response_to_proto(pb2, result)
+
+    async def SearchMemories(
+        self,
+        request: object,
+        context: grpc_aio.ServicerContext,
+    ) -> object:
+        await context.abort(
+            grpc.StatusCode.UNIMPLEMENTED,
+            "SearchMemories deferred — ADR-0038",
+        )
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def RecordMemoryFeedback(
+        self,
+        request: object,
+        context: grpc_aio.ServicerContext,
+    ) -> object:
+        await context.abort(
+            grpc.StatusCode.UNIMPLEMENTED,
+            "RecordMemoryFeedback deferred — ADR-0038",
+        )
+        raise AssertionError("unreachable")  # pragma: no cover
+
+
+def build_server(
+    assembler: ContextAssembler,
+    *,
+    listen_addr: str | None = None,
+    settings: ContextSettings | None = None,
+) -> tuple[grpc_aio.Server, int]:
+    """Create an aio server with ContextAssemblyService registered.
+
+    Returns ``(server, bound_port)``.
+    """
+    pb2 = _load_pb2()
+    servicer = ContextAssemblyServicer(assembler)
+    server = grpc_aio.server()
+    handlers = {
+        _ASSEMBLE: grpc.unary_unary_rpc_method_handler(
+            servicer.AssembleContext,
+            request_deserializer=pb2.AssembleContextRequest.FromString,
+            response_serializer=pb2.AssembleContextResponse.SerializeToString,
+        ),
+        _SEARCH: grpc.unary_unary_rpc_method_handler(
+            servicer.SearchMemories,
+            request_deserializer=pb2.SearchMemoriesRequest.FromString,
+            response_serializer=pb2.SearchMemoriesResponse.SerializeToString,
+        ),
+        _FEEDBACK: grpc.unary_unary_rpc_method_handler(
+            servicer.RecordMemoryFeedback,
+            request_deserializer=pb2.RecordMemoryFeedbackRequest.FromString,
+            response_serializer=pb2.RecordMemoryFeedbackResponse.SerializeToString,
+        ),
+    }
+    generic = grpc.method_handlers_generic_handler(_SERVICE_NAME, handlers)
+    server.add_generic_rpc_handlers((generic,))
+    addr = listen_addr
+    if addr is None:
+        cfg = settings or ContextSettings()
+        addr = cfg.grpc_addr
+    port = server.add_insecure_port(addr)
+    return server, int(port)
+
+
+def build_assembler_from_settings(settings: ContextSettings) -> ContextAssembler:
+    """Wire HTTP memory + optional Redis directive from settings."""
+    if not settings.memory_base_url.strip():
+        msg = "IBEX_CONTEXT_MEMORY_BASE_URL / MEMORY_BASE_URL is required"
+        raise ValueError(msg)
+    memory = MemoryHttpClient(
+        MemoryHttpConfig(
+            base_url=settings.memory_base_url,
+            token=settings.memory_api_token,
+        )
+    )
+    directive = EmptyDirectiveLookup()
+    if settings.redis_url.strip():
+        import redis.asyncio as redis_async
+
+        client = redis_async.from_url(settings.redis_url)
+        directive = RedisDirectiveLookup(client)
+    retriever = ParallelRetriever(
+        settings=settings,
+        memory=memory,
+        directive=directive,
+    )
+    return ContextAssembler(settings=settings, retriever=retriever)
+
+
+async def serve_forever(settings: ContextSettings | None = None) -> None:
+    """Entrypoint: build dependencies, start server, wait for termination."""
+    cfg = settings or ContextSettings()
+    assembler = build_assembler_from_settings(cfg)
+    server, port = build_server(assembler, settings=cfg)
+    await server.start()
+    logger.info(
+        "context_assembly_grpc_listening addr=%s port=%s retrieval_wall_ms=%s",
+        cfg.grpc_addr,
+        port,
+        cfg.retrieval_wall_ms,
+    )
+    await server.wait_for_termination()
+
+
+def _request_from_proto(request: object) -> AssembleRequest:
+    org_id = _parse_uuid(getattr(request, "org_id", ""), "org_id")
+    agent_id = _parse_uuid(getattr(request, "agent_id", ""), "agent_id")
+    model = str(getattr(request, "model", "") or "").strip()
+    if not model:
+        raise ValueError("model is required")
+    query = str(getattr(request, "query", "") or "")
+    messages = _messages_from_proto(getattr(request, "recent_messages", ()))
+    options_msg = getattr(request, "options", None)
+    options = AssemblyOptions()
+    if options_msg is not None:
+        options = AssemblyOptions(
+            skip_cold_memories=bool(getattr(options_msg, "skip_cold_memories", False)),
+            skip_hot_memories=bool(getattr(options_msg, "skip_hot_memories", False)),
+            max_memories=int(getattr(options_msg, "max_memories", 0) or 0),
+        )
+    return AssembleRequest(
+        org_id=org_id,
+        agent_id=agent_id,
+        query=query,
+        model=model,
+        recent_messages=messages,
+        options=options,
+    )
+
+
+def _messages_from_proto(raw: Sequence[object]) -> list[Message]:
+    out: list[Message] = []
+    for item in raw:
+        out.append(
+            Message(
+                role=str(getattr(item, "role", "") or ""),
+                content=str(getattr(item, "content", "") or ""),
+            )
+        )
+    return out
+
+
+def _response_to_proto(pb2: object, result: AssemblyResult) -> object:
+    metrics = result.metrics
+    memories = [
+        pb2.MemoryUsed(  # type: ignore[attr-defined]
+            memory_id=m.memory_id,
+            composite_score=m.composite_score,
+            relevance_score=m.relevance_score,
+            recency_score=m.recency_score,
+            usefulness_score=m.usefulness_score,
+            rank=m.rank,
+            category=m.category,
+        )
+        for m in result.memories_used
+    ]
+    return pb2.AssembleContextResponse(  # type: ignore[attr-defined]
+        assembled_context=result.formatted.assembled_context,
+        tokens_used=int(result.tokens_used),
+        memories_included=int(result.formatted.memories_included),
+        memories_used=memories,
+        directive_tokens=int(result.budget.directive_tokens),
+        history_tokens=int(result.budget.messages_tokens),
+        memory_tokens=int(result.packed.total_tokens),
+        metrics=pb2.AssemblyMetrics(  # type: ignore[attr-defined]
+            budget_calculation_ms=metrics.budget_calculation_ms,
+            directive_load_ms=metrics.directive_load_ms,
+            hot_memory_retrieval_ms=metrics.hot_memory_retrieval_ms,
+            cold_memory_retrieval_ms=metrics.cold_memory_retrieval_ms,
+            ranking_ms=metrics.ranking_ms,
+            packing_ms=metrics.packing_ms,
+            formatting_ms=metrics.formatting_ms,
+            total_ms=metrics.total_ms,
+            candidates_evaluated=metrics.candidates_evaluated,
+        ),
+    )
+
+
+def _parse_uuid(raw: str, label: str) -> UUID:
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError(f"{label} is required")
+    try:
+        return UUID(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a UUID") from exc
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(serve_forever())
+
+
+if __name__ == "__main__":
+    main()

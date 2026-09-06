@@ -158,9 +158,13 @@ class ParallelRetriever:
             ("cold", asyncio.create_task(self._cold_branch(request))),
         )
         tasks = {task: name for name, task in named}
-        done = await _wait_with_cancel(set(tasks.keys()), self._settings.timeout_ms / 1000.0)
+        done = await _wait_with_cancel(
+            set(tasks.keys()),
+            self._settings.retrieval_wall_ms / 1000.0,
+        )
+        wall_ms = self._settings.retrieval_wall_ms
         results = {
-            name: _result_for_task(name, task, done, self._settings.timeout_ms)
+            name: _result_for_task(name, task, done, wall_ms)
             for task, name in tasks.items()
         }
         return (results["directive"], results["hot"], results["cold"])
