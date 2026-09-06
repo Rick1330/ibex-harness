@@ -75,9 +75,9 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 	p.r = p.r.WithContext(ctx)
 	start := time.Now()
 	resp, err := p.prov.Complete(p.r.Context(), provReq)
-	providerMs := time.Since(start).Milliseconds()
-	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), float64(providerMs)/1000)
-	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerMs))
+	providerElapsed := time.Since(start)
+	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), providerElapsed.Seconds())
+	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerElapsed.Milliseconds()))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
