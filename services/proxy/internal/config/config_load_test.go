@@ -38,7 +38,28 @@ func loadCases() []loadCase {
 				if cfg.ContextAssembleTimeout != defaultContextAssembleTimeout {
 					t.Fatalf("ContextAssembleTimeout = %s, want %s", cfg.ContextAssembleTimeout, defaultContextAssembleTimeout)
 				}
+				if cfg.ContextEnabled {
+					t.Fatal("ContextEnabled default must be false")
+				}
 			},
+		},
+		{
+			name: "context enabled true",
+			env: map[string]string{
+				"IBEX_ENV":             "development",
+				"IBEX_CONTEXT_ENABLED": "true",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if !cfg.ContextEnabled {
+					t.Fatal("ContextEnabled = false, want true")
+				}
+			},
+		},
+		{
+			name:    "invalid context enabled",
+			env:     map[string]string{"IBEX_CONTEXT_ENABLED": "maybe"},
+			wantErr: true,
 		},
 		{
 			name:    "invalid log level",

@@ -22,6 +22,7 @@ type envConfig struct {
 	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
 	ContextGRPCTarget       string            `env:"IBEX_CONTEXT_GRPC_TARGET"`
 	ContextAssembleTimeout  time.Duration     `env:"IBEX_CONTEXT_ASSEMBLE_TIMEOUT"`
+	ContextEnabled          string            `env:"IBEX_CONTEXT_ENABLED" envDefault:"false"`
 	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
 	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
 	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
@@ -209,6 +210,20 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 }
 
 func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
+	applyProxyNumericEnv(cfg, envCfg)
+	if err := applyContextEnabledEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyProxyShutdownEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
+		return err
+	}
+	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
+
+func applyProxyNumericEnv(cfg *Config, envCfg envConfig) {
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
 	}
@@ -221,6 +236,9 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.RateLimitDefaultRPM > 0 {
 		cfg.RateLimit.DefaultRPM = envCfg.RateLimitDefaultRPM
 	}
+}
+
+func applyProxyShutdownEnv(cfg *Config, envCfg envConfig) error {
 	timeout, err := ibexconfig.ParseShutdownTimeout(envCfg.ShutdownTimeoutRaw, 0)
 	if err != nil {
 		return err
@@ -228,10 +246,16 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if timeout > 0 {
 		cfg.ShutdownTimeout = timeout
 	}
-	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
-		return err
+	return nil
+}
+
+func applyContextEnabledEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.ContextEnabled, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_CONTEXT_ENABLED: %w", err)
 	}
-	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+	cfg.ContextEnabled = enabled
+	return nil
 }
 
 func applyAuthCacheEnv(cfg *Config, envCfg envConfig) error {

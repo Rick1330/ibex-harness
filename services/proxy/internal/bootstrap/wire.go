@@ -236,6 +236,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		ProviderRegistry: providerReg,
 		ResponsePipeline: responsePipeline,
 		IdempotencyStore: idempStore,
+		ContextClient:    in.infra.ctxClients.client,
 	}
 	assignTraceWriter(&deps, traceWriter)
 	server, err := newHTTPServer(deps)

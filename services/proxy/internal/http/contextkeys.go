@@ -21,6 +21,7 @@ const (
 	ctxKeyResolvedSession
 	ctxKeyAuthLatencyMs
 	ctxKeyDirectiveLatencyMs
+	ctxKeyContextAssembleMeta
 )
 
 // WithRequestID stores the request ID on the context.
@@ -133,4 +134,13 @@ func WithDirectiveLatencyMs(ctx context.Context, ms uint16) context.Context {
 func DirectiveLatencyMsFromContext(ctx context.Context) uint16 {
 	ms, _ := ctx.Value(ctxKeyDirectiveLatencyMs).(uint16)
 	return ms
+}
+
+func withContextAssembleMeta(ctx context.Context, meta contextAssembleMeta) context.Context {
+	return context.WithValue(ctx, ctxKeyContextAssembleMeta, meta)
+}
+
+func contextAssembleMetaFromContext(ctx context.Context) (contextAssembleMeta, bool) {
+	meta, ok := ctx.Value(ctxKeyContextAssembleMeta).(contextAssembleMeta)
+	return meta, ok
 }

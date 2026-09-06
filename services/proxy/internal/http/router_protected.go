@@ -38,6 +38,8 @@ type protectedRouteDeps struct {
 	idempotencyStore         idempotency.Store
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
+	contextClient            contextAssembler
+	contextEnabled           bool
 }
 
 type routeMiddleware = func(http.Handler) http.Handler
@@ -124,5 +126,7 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		idempotencyStore:         deps.idempotencyStore,
 		idempotencyTimeout:       deps.idempotencyTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.idempotencyTimeout),
+		contextClient:            deps.contextClient,
+		contextEnabled:           deps.contextEnabled,
 	}
 }

@@ -10,6 +10,10 @@ import (
 // HeaderAgentID is the required agent identity header on protected proxy routes.
 const HeaderAgentID = "X-IBEX-Agent-ID"
 
+// HeaderSkipMemory opts out of context-assembly gRPC (3.5.D.2); Phase 2 directive
+// injection still applies. Truthy values: 1, true, yes, on (case-insensitive).
+const HeaderSkipMemory = "X-IBEX-Skip-Memory"
+
 // ValidateChatHeaders validates optional IBEX session header for chat completions.
 // Agent ID is verified by AgentVerificationMiddleware before the handler runs.
 func ValidateChatHeaders(h http.Header) []apierror.FieldError {

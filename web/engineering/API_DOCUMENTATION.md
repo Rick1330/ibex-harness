@@ -2239,6 +2239,16 @@ X-IBEX-Session-ID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 | `X-IBEX-Skip-Extraction` | No | `true` to disable memory extraction |
 | `X-IBEX-Directive-Override` | No | Override directive version ID |
 
+**IBEX response headers** (chat completions; set when context assembly was attempted):
+
+| Header | When present | Description |
+|--------|--------------|-------------|
+| `X-IBEX-Memories-Injected` | Assemble attempted | Count of memories included in the assembly (`0` on fallback) |
+| `X-IBEX-Context-Tokens` | Assemble attempted | Tokens used by assembled context (`0` on fallback) |
+| `X-IBEX-Context-Fallback` | Assemble attempted | `true` if assembly failed open (RPC/timeout/`empty` blob) and Phase 2 directive injection was used; `false` if assembled context was injected |
+
+These three headers are **omitted** when context assembly was not attempted: `IBEX_CONTEXT_ENABLED=false`, nil context client (empty `IBEX_CONTEXT_GRPC_TARGET`), or request header `X-IBEX-Skip-Memory` truthy. Embedded `ibex` JSON in the response body is separate (Phase 3.5.D.3).
+
 **Response: 200 OK** (non-streaming)
 
 ```json
