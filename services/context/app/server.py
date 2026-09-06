@@ -253,7 +253,7 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, _request_shutdown)
-        except (NotImplementedError, RuntimeError):  # pragma: no cover - platform
+        except RuntimeError:  # pragma: no cover - platform (covers NotImplementedError)
             pass
 
     wait_termination = asyncio.create_task(server.wait_for_termination())
@@ -267,17 +267,16 @@ async def serve_forever(settings: ContextSettings | None = None) -> None:
             await server.stop(grace=_SHUTDOWN_GRACE_S)
         for task in pending:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        if pending:
+            # Absorb cancel outcomes without catching CancelledError (python:S7497).
+            await asyncio.gather(*pending, return_exceptions=True)
         if wait_termination in done:
             await wait_termination
     finally:
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.remove_signal_handler(sig)
-            except (NotImplementedError, RuntimeError):  # pragma: no cover
+            except RuntimeError:  # pragma: no cover - platform
                 pass
         await runtime.aclose()
 

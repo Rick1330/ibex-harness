@@ -364,12 +364,12 @@ async def test_assemble_rejects_out_of_range_max_memories(pb2, max_memories) -> 
 def test_options_from_proto_bounds_max_memories(pb2) -> None:
     ok = _options_from_proto(pb2.AssemblyOptions(max_memories=10))
     assert ok.max_memories == 10
+    negative = pb2.AssemblyOptions(max_memories=-1)
     with pytest.raises(ValueError, match="max_memories"):
-        _options_from_proto(pb2.AssemblyOptions(max_memories=-1))
+        _options_from_proto(negative)
+    too_large = pb2.AssemblyOptions(max_memories=MAX_ASSEMBLY_OPTION_MEMORIES + 1)
     with pytest.raises(ValueError, match="max_memories"):
-        _options_from_proto(
-            pb2.AssemblyOptions(max_memories=MAX_ASSEMBLY_OPTION_MEMORIES + 1)
-        )
+        _options_from_proto(too_large)
 
 
 @pytest.mark.asyncio
@@ -519,8 +519,9 @@ async def test_servicer_assemble_cancelled_error(pb2) -> None:
         )
     )
     ctx = _Ctx()
+    req = _assemble_req(pb2)
     with pytest.raises(asyncio.CancelledError):
-        await servicer.assemble_context(_assemble_req(pb2), ctx)  # type: ignore[arg-type]
+        await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
     assert ctx.aborts == [grpc.StatusCode.DEADLINE_EXCEEDED]
 
 
@@ -557,8 +558,9 @@ async def test_build_server_warns_non_loopback_without_auth(
 
 
 def test_build_assembler_requires_memory_base_url() -> None:
+    settings = _settings()
     with pytest.raises(ValueError, match="MEMORY_BASE_URL"):
-        build_assembler_from_settings(_settings())
+        build_assembler_from_settings(settings)
 
 
 def test_build_assembler_from_settings_ok() -> None:
