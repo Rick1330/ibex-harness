@@ -41,5 +41,8 @@ fi
 
 cd "$PROTO_DIR"
 buf generate
-test -f "$MARKER"
+if [[ ! -f "$MARKER" ]]; then
+  echo "expected generated stub missing: $MARKER" >&2
+  exit 1
+fi
 echo "generated $MARKER"

@@ -58,7 +58,8 @@ _P99_BUDGET_MS = 50.0
 
 
 class _StubDirective:
-    async def lookup(self, org_id, agent_id) -> DirectivePayload:
+    async def lookup(self, _org_id, _agent_id) -> DirectivePayload:
+        await asyncio.sleep(0)
         return DirectivePayload(
             content="Be careful.",
             injection_mode="system_first",
@@ -77,9 +78,11 @@ class _HitSpec:
 
 class _StubMemory:
     async def get_hot_memories(self, *_args, **_kwargs):
+        await asyncio.sleep(0)
         return [_hit(_HitSpec("hot preference " + ("x" * 64), "preference", "hot_cache", 0.9, 0.85))]
 
     async def search_memories(self, *_args, **_kwargs):
+        await asyncio.sleep(0)
         return [_hit(_HitSpec("cold fact " + ("y" * 64), "factual", "vector", 0.8, 0.75))]
 
 
@@ -131,18 +134,22 @@ async def _one_call(
     return (time.perf_counter() - t0) * 1000.0
 
 
+@dataclass(frozen=True, slots=True)
+class _LoadPlan:
+    duration_s: float
+    target_rps: int
+    record_errors: bool
+
+
 async def _drive_open_loop(
     stub: Callable[..., Awaitable[object]],
     req: object,
-    *,
-    duration_s: float,
-    target_rps: int,
-    record_errors: bool,
+    plan: _LoadPlan,
 ) -> list[float]:
     """Launch RPCs on a fixed interval; await outstanding work after the window."""
-    interval = 1.0 / max(1, target_rps)
+    interval = 1.0 / max(1, plan.target_rps)
     start = time.perf_counter()
-    deadline = start + duration_s
+    deadline = start + plan.duration_s
     next_launch = start
     tasks: list[asyncio.Task[float | None]] = []
     while time.perf_counter() < deadline:
@@ -151,7 +158,7 @@ async def _drive_open_loop(
             await asyncio.sleep(next_launch - now)
         tasks.append(
             asyncio.create_task(
-                _one_call(stub, req, record_errors=record_errors),
+                _one_call(stub, req, record_errors=plan.record_errors),
             )
         )
         next_launch += interval
@@ -191,9 +198,7 @@ async def _run_stub(duration_s: float, target_rps: int) -> list[float]:
             return await _drive_open_loop(
                 stub,
                 _assemble_request(pb2),
-                duration_s=duration_s,
-                target_rps=target_rps,
-                record_errors=False,
+                _LoadPlan(duration_s, target_rps, False),
             )
     finally:
         await server.stop(grace=None)
@@ -211,9 +216,7 @@ async def _run_live(addr: str, duration_s: float, target_rps: int) -> list[float
         return await _drive_open_loop(
             stub,
             _assemble_request(pb2),
-            duration_s=duration_s,
-            target_rps=target_rps,
-            record_errors=True,
+            _LoadPlan(duration_s, target_rps, True),
         )
 
 

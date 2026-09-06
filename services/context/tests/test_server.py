@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import runpy
+import sys
+import types
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 import grpc
@@ -26,18 +31,23 @@ AGENT = uuid4()
 MODEL = "gpt-4o-mini"
 
 
-def _settings() -> ContextSettings:
-    return ContextSettings.model_construct(
-        timeout_ms=45.0,
-        deadline_ms=40.0,
-        directive_timeout_ms=5.0,
-        hot_timeout_ms=15.0,
-        cold_timeout_ms=45.0,
-        formatter_nonce_bytes=16,
-        packer_dp_cell_ceiling=70 * 6251,
-        packer_max_consecutive_skips=5,
-        grpc_addr="127.0.0.1:0",
-    )
+def _settings(**overrides: object) -> ContextSettings:
+    base: dict[str, object] = {
+        "timeout_ms": 45.0,
+        "deadline_ms": 40.0,
+        "directive_timeout_ms": 5.0,
+        "hot_timeout_ms": 15.0,
+        "cold_timeout_ms": 45.0,
+        "formatter_nonce_bytes": 16,
+        "packer_dp_cell_ceiling": 70 * 6251,
+        "packer_max_consecutive_skips": 5,
+        "grpc_addr": "127.0.0.1:0",
+        "memory_base_url": "",
+        "memory_api_token": "",
+        "redis_url": "",
+    }
+    base.update(overrides)
+    return ContextSettings.model_construct(**base)
 
 
 class _StubDirective:
@@ -112,127 +122,40 @@ def pb2():
     return context_pb2
 
 
-@pytest.mark.asyncio
-async def test_assemble_context_rpc_l0(pb2) -> None:
-    server, port = build_server(_assembler(), listen_addr="127.0.0.1:0")
+@asynccontextmanager
+async def _rpc_channel(assembler: ContextAssembler | None = None):
+    server, port = build_server(assembler or _assembler(), listen_addr="127.0.0.1:0")
     await server.start()
     try:
         async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/AssembleContext",
-                request_serializer=pb2.AssembleContextRequest.SerializeToString,
-                response_deserializer=pb2.AssembleContextResponse.FromString,
-            )
-            req = pb2.AssembleContextRequest(
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                query="theme",
-                model=MODEL,
-                recent_messages=[pb2.Message(role="user", content="hello")],
-            )
-            resp = await stub(req, timeout=2.0)
-            assert resp.assembled_context
-            assert resp.memories_included >= 1
-            assert resp.metrics.candidates_evaluated >= 1
-            assert resp.metrics.total_ms >= 0
+            yield channel
     finally:
         await server.stop(grace=None)
 
 
-@pytest.mark.asyncio
-async def test_assemble_context_l3_deadline_exceeded(pb2) -> None:
-    settings = _settings()
-    retriever = ParallelRetriever(
-        settings=settings,
-        memory=_StubMemory(),  # type: ignore[arg-type]
-        directive=_StubDirective(),
+def _unary_stub(channel, pb2, method: str, req_cls, resp_cls):  # type: ignore[no-untyped-def]
+    return channel.unary_unary(
+        f"/{_SERVICE_NAME}/{method}",
+        request_serializer=req_cls.SerializeToString,
+        response_deserializer=resp_cls.FromString,
     )
-    assembler = _SlowAssembler(settings=settings, retriever=retriever)
-    server, port = build_server(assembler, listen_addr="127.0.0.1:0")
-    await server.start()
-    try:
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/AssembleContext",
-                request_serializer=pb2.AssembleContextRequest.SerializeToString,
-                response_deserializer=pb2.AssembleContextResponse.FromString,
-            )
-            req = pb2.AssembleContextRequest(
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                query="theme",
-                model=MODEL,
-                recent_messages=[pb2.Message(role="user", content="hello")],
-            )
-            with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(req, timeout=0.05)
-            assert exc_info.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
-    finally:
-        await server.stop(grace=None)
 
 
-@pytest.mark.asyncio
-async def test_search_memories_unimplemented(pb2) -> None:
-    server, port = build_server(_assembler(), listen_addr="127.0.0.1:0")
-    await server.start()
-    try:
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/SearchMemories",
-                request_serializer=pb2.SearchMemoriesRequest.SerializeToString,
-                response_deserializer=pb2.SearchMemoriesResponse.FromString,
-            )
-            with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(pb2.SearchMemoriesRequest(org_id=str(ORG), agent_id=str(AGENT)))
-            assert exc_info.value.code() == grpc.StatusCode.UNIMPLEMENTED
-    finally:
-        await server.stop(grace=None)
-
-
-@pytest.mark.asyncio
-async def test_invalid_org_id(pb2) -> None:
-    server, port = build_server(_assembler(), listen_addr="127.0.0.1:0")
-    await server.start()
-    try:
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/AssembleContext",
-                request_serializer=pb2.AssembleContextRequest.SerializeToString,
-                response_deserializer=pb2.AssembleContextResponse.FromString,
-            )
-            req = pb2.AssembleContextRequest(
-                org_id="not-a-uuid",
-                agent_id=str(AGENT),
-                model=MODEL,
-            )
-            with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(req, timeout=2.0)
-            assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    finally:
-        await server.stop(grace=None)
-
-
-@pytest.mark.asyncio
-async def test_servicer_direct_assemble(pb2) -> None:
-    servicer = ContextAssemblyServicer(_assembler())
-
-    class _Ctx:
-        def cancelled(self) -> bool:
-            return False
-
-        async def abort(self, code, details):  # type: ignore[no-untyped-def]
-            raise grpc.aio.AioRpcError(code, details=details)
-
-    req = pb2.AssembleContextRequest(
-        org_id=str(ORG),
+def _assemble_req(pb2, *, org_id: str | None = None, model: str | None = None, **extra):  # type: ignore[no-untyped-def]
+    return pb2.AssembleContextRequest(
+        org_id=str(ORG) if org_id is None else org_id,
         agent_id=str(AGENT),
-        query="q",
-        model=MODEL,
-        recent_messages=[pb2.Message(role="user", content="hi")],
+        model=MODEL if model is None else model,
+        **extra,
     )
-    resp = await servicer.AssembleContext(req, _Ctx())  # type: ignore[arg-type]
-    assert resp.assembled_context
-    assert "user: hi" in resp.assembled_context or resp.memories_included >= 0
+
+
+async def _rpc_raises(
+    call: Callable[[], Awaitable[object]],
+) -> grpc.aio.AioRpcError:
+    with pytest.raises(grpc.aio.AioRpcError) as exc_info:
+        await call()
+    return exc_info.value
 
 
 class _AbortCtx:
@@ -249,29 +172,136 @@ class _AbortCtx:
 
 
 @pytest.mark.asyncio
+async def test_assemble_context_rpc_l0(pb2) -> None:
+    async with _rpc_channel() as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "AssembleContext",
+                pb2.AssembleContextRequest,
+                pb2.AssembleContextResponse,
+            )
+            resp = await stub(
+                _assemble_req(
+                    pb2,
+                    query="theme",
+                    recent_messages=[pb2.Message(role="user", content="hello")],
+                ),
+                timeout=2.0,
+            )
+            assert resp.assembled_context
+            assert resp.memories_included >= 1
+            assert resp.metrics.candidates_evaluated >= 1
+            assert resp.metrics.total_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_assemble_context_l3_deadline_exceeded(pb2) -> None:
+    settings = _settings()
+    retriever = ParallelRetriever(
+        settings=settings,
+        memory=_StubMemory(),  # type: ignore[arg-type]
+        directive=_StubDirective(),
+    )
+    assembler = _SlowAssembler(settings=settings, retriever=retriever)
+    async with _rpc_channel(assembler) as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "AssembleContext",
+                pb2.AssembleContextRequest,
+                pb2.AssembleContextResponse,
+            )
+            req = _assemble_req(
+                pb2,
+                query="theme",
+                recent_messages=[pb2.Message(role="user", content="hello")],
+            )
+
+            async def _call() -> object:
+                return await stub(req, timeout=0.05)
+
+            err = await _rpc_raises(_call)
+            assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_search_memories_unimplemented(pb2) -> None:
+    async with _rpc_channel() as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "SearchMemories",
+                pb2.SearchMemoriesRequest,
+                pb2.SearchMemoriesResponse,
+            )
+            req = pb2.SearchMemoriesRequest(org_id=str(ORG), agent_id=str(AGENT))
+
+            async def _call() -> object:
+                return await stub(req)
+
+            err = await _rpc_raises(_call)
+            assert err.code() == grpc.StatusCode.UNIMPLEMENTED
+
+
+@pytest.mark.asyncio
+async def test_invalid_org_id(pb2) -> None:
+    async with _rpc_channel() as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "AssembleContext",
+                pb2.AssembleContextRequest,
+                pb2.AssembleContextResponse,
+            )
+            req = _assemble_req(pb2, org_id="not-a-uuid")
+
+            async def _call() -> object:
+                return await stub(req, timeout=2.0)
+
+            err = await _rpc_raises(_call)
+            assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.asyncio
+async def test_servicer_direct_assemble(pb2) -> None:
+    servicer = ContextAssemblyServicer(_assembler())
+
+    class _Ctx:
+        def cancelled(self) -> bool:
+            return False
+
+        async def abort(self, code, details):  # type: ignore[no-untyped-def]
+            raise grpc.aio.AioRpcError(code, details=details)
+
+    req = _assemble_req(
+        pb2,
+        query="q",
+        recent_messages=[pb2.Message(role="user", content="hi")],
+    )
+    resp = await servicer.assemble_context(req, _Ctx())  # type: ignore[arg-type]
+    assert resp.assembled_context
+    assert "user: hi" in resp.assembled_context or resp.memories_included >= 0
+
+
+@pytest.mark.asyncio
 async def test_servicer_cancelled_before_assemble(pb2) -> None:
     servicer = ContextAssemblyServicer(_assembler())
-    req = pb2.AssembleContextRequest(
-        org_id=str(ORG),
-        agent_id=str(AGENT),
-        model=MODEL,
-    )
+    req = _assemble_req(pb2)
     ctx = _AbortCtx(cancelled=True)
-    with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-        await servicer.AssembleContext(req, ctx)  # type: ignore[arg-type]
-    assert exc_info.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+
+    async def _call() -> object:
+        return await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
+
+    err = await _rpc_raises(_call)
+    assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
     assert ctx.aborts[0][0] == grpc.StatusCode.DEADLINE_EXCEEDED
 
 
 @pytest.mark.asyncio
 async def test_servicer_cancelled_after_assemble(pb2) -> None:
     servicer = ContextAssemblyServicer(_assembler())
-    req = pb2.AssembleContextRequest(
-        org_id=str(ORG),
-        agent_id=str(AGENT),
-        query="q",
-        model=MODEL,
-    )
+    req = _assemble_req(pb2, query="q")
 
     class _FlipCtx(_AbortCtx):
         def __init__(self) -> None:
@@ -280,13 +310,15 @@ async def test_servicer_cancelled_after_assemble(pb2) -> None:
 
         def cancelled(self) -> bool:
             self._n += 1
-            # First check (pre-assemble) false; second (post-assemble) true.
             return self._n > 1
 
     ctx = _FlipCtx()
-    with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-        await servicer.AssembleContext(req, ctx)  # type: ignore[arg-type]
-    assert exc_info.value.code() == grpc.StatusCode.DEADLINE_EXCEEDED
+
+    async def _call() -> object:
+        return await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
+
+    err = await _rpc_raises(_call)
+    assert err.code() == grpc.StatusCode.DEADLINE_EXCEEDED
 
 
 @pytest.mark.asyncio
@@ -304,7 +336,6 @@ async def test_servicer_assemble_cancelled_error(pb2) -> None:
 
         async def abort(self, code, details):  # type: ignore[no-untyped-def]
             self.aborts.append(code)
-            # Match grpc abort: set status but do not raise; caller re-raises CancelledError.
 
     settings = _settings()
     retriever = ParallelRetriever(
@@ -315,55 +346,39 @@ async def test_servicer_assemble_cancelled_error(pb2) -> None:
     servicer = ContextAssemblyServicer(
         _CancelAssembler(settings=settings, retriever=retriever)
     )
-    req = pb2.AssembleContextRequest(
-        org_id=str(ORG),
-        agent_id=str(AGENT),
-        model=MODEL,
-    )
+    req = _assemble_req(pb2)
     ctx = _Ctx()
     with pytest.raises(asyncio.CancelledError):
-        await servicer.AssembleContext(req, ctx)  # type: ignore[arg-type]
+        await servicer.assemble_context(req, ctx)  # type: ignore[arg-type]
     assert ctx.aborts == [grpc.StatusCode.DEADLINE_EXCEEDED]
 
 
 @pytest.mark.asyncio
 async def test_record_memory_feedback_unimplemented(pb2) -> None:
-    server, port = build_server(_assembler(), listen_addr="127.0.0.1:0")
-    await server.start()
-    try:
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/RecordMemoryFeedback",
-                request_serializer=pb2.RecordMemoryFeedbackRequest.SerializeToString,
-                response_deserializer=pb2.RecordMemoryFeedbackResponse.FromString,
+    async with _rpc_channel() as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "RecordMemoryFeedback",
+                pb2.RecordMemoryFeedbackRequest,
+                pb2.RecordMemoryFeedbackResponse,
             )
-            with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(
-                    pb2.RecordMemoryFeedbackRequest(
-                        org_id=str(ORG),
-                        memory_ids=[str(uuid4())],
-                        feedback="positive",
-                    )
-                )
-            assert exc_info.value.code() == grpc.StatusCode.UNIMPLEMENTED
-    finally:
-        await server.stop(grace=None)
+            req = pb2.RecordMemoryFeedbackRequest(
+                org_id=str(ORG),
+                memory_ids=[str(uuid4())],
+                feedback="positive",
+            )
+
+            async def _call() -> object:
+                return await stub(req)
+
+            err = await _rpc_raises(_call)
+            assert err.code() == grpc.StatusCode.UNIMPLEMENTED
 
 
 @pytest.mark.asyncio
 async def test_build_server_uses_settings_grpc_addr() -> None:
-    settings = ContextSettings.model_construct(
-        timeout_ms=45.0,
-        deadline_ms=40.0,
-        directive_timeout_ms=5.0,
-        hot_timeout_ms=15.0,
-        cold_timeout_ms=45.0,
-        formatter_nonce_bytes=16,
-        packer_dp_cell_ceiling=70 * 6251,
-        packer_max_consecutive_skips=5,
-        grpc_addr="127.0.0.1:0",
-    )
-    server, port = build_server(_assembler(), settings=settings)
+    server, port = build_server(_assembler(), settings=_settings())
     assert isinstance(port, int)
     assert port >= 0
     assert server is not None
@@ -371,68 +386,29 @@ async def test_build_server_uses_settings_grpc_addr() -> None:
 
 
 def test_build_assembler_requires_memory_base_url() -> None:
-    settings = ContextSettings.model_construct(
-        memory_base_url="",
-        memory_api_token="",
-        redis_url="",
-        timeout_ms=45.0,
-        deadline_ms=40.0,
-        directive_timeout_ms=5.0,
-        hot_timeout_ms=15.0,
-        cold_timeout_ms=45.0,
-        formatter_nonce_bytes=16,
-        packer_dp_cell_ceiling=70 * 6251,
-        packer_max_consecutive_skips=5,
-        grpc_addr="127.0.0.1:0",
-    )
     with pytest.raises(ValueError, match="MEMORY_BASE_URL"):
-        build_assembler_from_settings(settings)
+        build_assembler_from_settings(_settings())
 
 
 def test_build_assembler_from_settings_ok() -> None:
-    settings = ContextSettings.model_construct(
-        memory_base_url="http://memory.test",
-        memory_api_token="tok",
-        redis_url="",
-        timeout_ms=45.0,
-        deadline_ms=40.0,
-        directive_timeout_ms=5.0,
-        hot_timeout_ms=15.0,
-        cold_timeout_ms=45.0,
-        formatter_nonce_bytes=16,
-        packer_dp_cell_ceiling=70 * 6251,
-        packer_max_consecutive_skips=5,
-        grpc_addr="127.0.0.1:0",
+    assembler = build_assembler_from_settings(
+        _settings(memory_base_url="http://memory.test", memory_api_token="tok")
     )
-    assembler = build_assembler_from_settings(settings)
     assert isinstance(assembler, ContextAssembler)
 
 
 def test_build_assembler_with_redis(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-    import types
-
     redis_async = types.ModuleType("redis.asyncio")
     redis_async.from_url = lambda url: object()  # type: ignore[attr-defined]
-    redis_mod = types.ModuleType("redis")
-    monkeypatch.setitem(sys.modules, "redis", redis_mod)
+    monkeypatch.setitem(sys.modules, "redis", types.ModuleType("redis"))
     monkeypatch.setitem(sys.modules, "redis.asyncio", redis_async)
-
-    settings = ContextSettings.model_construct(
-        memory_base_url="http://memory.test",
-        memory_api_token="tok",
-        redis_url="redis://localhost:6379/0",
-        timeout_ms=45.0,
-        deadline_ms=40.0,
-        directive_timeout_ms=5.0,
-        hot_timeout_ms=15.0,
-        cold_timeout_ms=45.0,
-        formatter_nonce_bytes=16,
-        packer_dp_cell_ceiling=70 * 6251,
-        packer_max_consecutive_skips=5,
-        grpc_addr="127.0.0.1:0",
+    assembler = build_assembler_from_settings(
+        _settings(
+            memory_base_url="http://memory.test",
+            memory_api_token="tok",
+            redis_url="redis://localhost:6379/0",
+        )
     )
-    assembler = build_assembler_from_settings(settings)
     assert isinstance(assembler, ContextAssembler)
 
 
@@ -441,21 +417,6 @@ async def test_serve_forever_starts_and_stops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app import server as server_mod
-
-    settings = ContextSettings.model_construct(
-        memory_base_url="http://memory.test",
-        memory_api_token="tok",
-        redis_url="",
-        timeout_ms=45.0,
-        deadline_ms=40.0,
-        directive_timeout_ms=5.0,
-        hot_timeout_ms=15.0,
-        cold_timeout_ms=45.0,
-        formatter_nonce_bytes=16,
-        packer_dp_cell_ceiling=70 * 6251,
-        packer_max_consecutive_skips=5,
-        grpc_addr="127.0.0.1:0",
-    )
 
     class _FakeServer:
         def __init__(self) -> None:
@@ -469,17 +430,15 @@ async def test_serve_forever_starts_and_stops(
             self.stopped = True
 
     fake = _FakeServer()
-
-    def _fake_build(assembler, *, listen_addr=None, settings=None):  # type: ignore[no-untyped-def]
-        return fake, 9092
-
-    monkeypatch.setattr(server_mod, "build_server", _fake_build)
+    monkeypatch.setattr(server_mod, "build_server", lambda *a, **k: (fake, 9092))
     monkeypatch.setattr(
         server_mod,
         "build_assembler_from_settings",
         lambda cfg: _assembler(),
     )
-    await server_mod.serve_forever(settings)
+    await server_mod.serve_forever(
+        _settings(memory_base_url="http://memory.test", memory_api_token="tok")
+    )
     assert fake.started is True
     assert fake.stopped is True
 
@@ -499,15 +458,11 @@ def test_main_invokes_serve_forever(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_dunder_main_module(monkeypatch: pytest.MonkeyPatch) -> None:
-    import runpy
-    import sys
-
     called: list[bool] = []
 
     def _fake_main() -> None:
         called.append(True)
 
-    # Force a clean reload of __main__ so it binds the patched main.
     sys.modules.pop("app.__main__", None)
     monkeypatch.setattr("app.server.main", _fake_main)
     runpy.run_module("app.__main__", run_name="__main__")
@@ -516,45 +471,37 @@ def test_dunder_main_module(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_missing_model_invalid(pb2) -> None:
-    server, port = build_server(_assembler(), listen_addr="127.0.0.1:0")
-    await server.start()
-    try:
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/AssembleContext",
-                request_serializer=pb2.AssembleContextRequest.SerializeToString,
-                response_deserializer=pb2.AssembleContextResponse.FromString,
+    async with _rpc_channel() as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "AssembleContext",
+                pb2.AssembleContextRequest,
+                pb2.AssembleContextResponse,
             )
-            req = pb2.AssembleContextRequest(
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                model="",
-            )
-            with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(req, timeout=2.0)
-            assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    finally:
-        await server.stop(grace=None)
+            req = _assemble_req(pb2, model="")
+
+            async def _call() -> object:
+                return await stub(req, timeout=2.0)
+
+            err = await _rpc_raises(_call)
+            assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 
 @pytest.mark.asyncio
 async def test_empty_org_id_invalid(pb2) -> None:
-    server, port = build_server(_assembler(), listen_addr="127.0.0.1:0")
-    await server.start()
-    try:
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = channel.unary_unary(
-                f"/{_SERVICE_NAME}/AssembleContext",
-                request_serializer=pb2.AssembleContextRequest.SerializeToString,
-                response_deserializer=pb2.AssembleContextResponse.FromString,
+    async with _rpc_channel() as channel:
+            stub = _unary_stub(
+                channel,
+                pb2,
+                "AssembleContext",
+                pb2.AssembleContextRequest,
+                pb2.AssembleContextResponse,
             )
-            req = pb2.AssembleContextRequest(
-                org_id="",
-                agent_id=str(AGENT),
-                model=MODEL,
-            )
-            with pytest.raises(grpc.aio.AioRpcError) as exc_info:
-                await stub(req, timeout=2.0)
-            assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    finally:
-        await server.stop(grace=None)
+            req = _assemble_req(pb2, org_id="")
+
+            async def _call() -> object:
+                return await stub(req, timeout=2.0)
+
+            err = await _rpc_raises(_call)
+            assert err.code() == grpc.StatusCode.INVALID_ARGUMENT

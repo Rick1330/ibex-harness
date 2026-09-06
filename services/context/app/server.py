@@ -56,7 +56,7 @@ class ContextAssemblyServicer:
         self._assembler = assembler
         self._pb2 = _load_pb2()
 
-    async def AssembleContext(
+    async def assemble_context(
         self,
         request: object,
         context: grpc_aio.ServicerContext,
@@ -80,16 +80,16 @@ class ContextAssemblyServicer:
 
         return _response_to_proto(pb2, result)
 
-    async def SearchMemories(
+    async def search_memories(
         self,
-        request: object,
+        _request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
         return await _abort_unimplemented(context, _SEARCH)
 
-    async def RecordMemoryFeedback(
+    async def record_memory_feedback(
         self,
-        request: object,
+        _request: object,
         context: grpc_aio.ServicerContext,
     ) -> object:
         return await _abort_unimplemented(context, _FEEDBACK)
@@ -121,17 +121,17 @@ def build_server(
     server = grpc_aio.server()
     handlers = {
         _ASSEMBLE: grpc.unary_unary_rpc_method_handler(
-            servicer.AssembleContext,
+            servicer.assemble_context,
             request_deserializer=pb2.AssembleContextRequest.FromString,
             response_serializer=pb2.AssembleContextResponse.SerializeToString,
         ),
         _SEARCH: grpc.unary_unary_rpc_method_handler(
-            servicer.SearchMemories,
+            servicer.search_memories,
             request_deserializer=pb2.SearchMemoriesRequest.FromString,
             response_serializer=pb2.SearchMemoriesResponse.SerializeToString,
         ),
         _FEEDBACK: grpc.unary_unary_rpc_method_handler(
-            servicer.RecordMemoryFeedback,
+            servicer.record_memory_feedback,
             request_deserializer=pb2.RecordMemoryFeedbackRequest.FromString,
             response_serializer=pb2.RecordMemoryFeedbackResponse.SerializeToString,
         ),

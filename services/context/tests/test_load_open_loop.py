@@ -14,7 +14,7 @@ _HARNESS = _ROOT / "benchmarks" / "context"
 if str(_HARNESS) not in sys.path:
     sys.path.insert(0, str(_HARNESS))
 
-from assemble_load import _drive_open_loop
+from assemble_load import _drive_open_loop, _LoadPlan
 
 
 @pytest.mark.asyncio
@@ -39,9 +39,7 @@ async def test_open_loop_keeps_requests_in_flight() -> None:
     samples = await _drive_open_loop(
         slow_stub,
         object(),
-        duration_s=0.12,
-        target_rps=100,  # 10ms interval; each call 50ms → several in flight
-        record_errors=False,
+        _LoadPlan(duration_s=0.12, target_rps=100, record_errors=False),
     )
     elapsed = time.perf_counter() - started
     assert samples
