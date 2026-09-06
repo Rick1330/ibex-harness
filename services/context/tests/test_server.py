@@ -269,6 +269,7 @@ async def test_unimplemented_rpcs(pb2, method, codec_factory, request_factory) -
         {"org_id": "not-a-uuid"},
         {"org_id": ""},
         {"model": ""},
+        {"query": "x" * 9000},
     ],
 )
 async def test_assemble_invalid_argument(pb2, fields) -> None:
@@ -280,6 +281,64 @@ async def test_assemble_invalid_argument(pb2, fields) -> None:
             return await stub(req, timeout=2.0)
 
         err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.asyncio
+async def test_assemble_rejects_oversized_recent_messages(pb2) -> None:
+    async with _rpc_channel() as channel:
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+        req = _assemble_req(
+            pb2,
+            recent_messages=[
+                pb2.Message(role="user", content="hi") for _ in range(101)
+            ],
+        )
+
+        async def _call() -> object:
+            return await stub(req, timeout=2.0)
+
+        err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.asyncio
+async def test_assemble_rejects_oversized_message_content(pb2) -> None:
+    async with _rpc_channel() as channel:
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+        req = _assemble_req(
+            pb2,
+            recent_messages=[pb2.Message(role="user", content="y" * 40_000)],
+        )
+
+        async def _call() -> object:
+            return await stub(req, timeout=2.0)
+
+        err = await _rpc_raises(_call)
+        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.asyncio
+async def test_assemble_rejects_oversized_model_and_role(pb2) -> None:
+    async with _rpc_channel() as channel:
+        stub = _unary_stub(channel, "AssembleContext", _assemble_codec(pb2))
+
+        async def _call_model() -> object:
+            return await stub(_assemble_req(pb2, model="m" * 300), timeout=2.0)
+
+        err = await _rpc_raises(_call_model)
+        assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+        async def _call_role() -> object:
+            return await stub(
+                _assemble_req(
+                    pb2,
+                    recent_messages=[pb2.Message(role="r" * 80, content="hi")],
+                ),
+                timeout=2.0,
+            )
+
+        err = await _rpc_raises(_call_role)
         assert err.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 

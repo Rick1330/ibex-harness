@@ -34,6 +34,13 @@ _ASSEMBLE = "AssembleContext"
 _SEARCH = "SearchMemories"
 _FEEDBACK = "RecordMemoryFeedback"
 
+# Request-field bounds (AGENTS.md §5.2); transport limits remain defense in depth.
+_MAX_QUERY_CHARS = 8_192
+_MAX_MODEL_CHARS = 256
+_MAX_RECENT_MESSAGES = 100
+_MAX_ROLE_CHARS = 64
+_MAX_CONTENT_CHARS = 32_768
+
 
 def _load_pb2():
     """Import generated protobuf module (requires ``make proto-gen`` / CI script)."""
@@ -192,8 +199,15 @@ def _request_from_proto(request: object) -> AssembleRequest:
     model = str(getattr(request, "model", "") or "").strip()
     if not model:
         raise ValueError("model is required")
+    if len(model) > _MAX_MODEL_CHARS:
+        raise ValueError(f"model exceeds {_MAX_MODEL_CHARS} characters")
     query = str(getattr(request, "query", "") or "")
-    messages = _messages_from_proto(getattr(request, "recent_messages", ()))
+    if len(query) > _MAX_QUERY_CHARS:
+        raise ValueError(f"query exceeds {_MAX_QUERY_CHARS} characters")
+    raw_messages = getattr(request, "recent_messages", ()) or ()
+    if len(raw_messages) > _MAX_RECENT_MESSAGES:
+        raise ValueError(f"recent_messages exceeds {_MAX_RECENT_MESSAGES} items")
+    messages = _messages_from_proto(raw_messages)
     options_msg = getattr(request, "options", None)
     options = AssemblyOptions()
     if options_msg is not None:
@@ -215,12 +229,13 @@ def _request_from_proto(request: object) -> AssembleRequest:
 def _messages_from_proto(raw: Sequence[object]) -> list[Message]:
     out: list[Message] = []
     for item in raw:
-        out.append(
-            Message(
-                role=str(getattr(item, "role", "") or ""),
-                content=str(getattr(item, "content", "") or ""),
-            )
-        )
+        role = str(getattr(item, "role", "") or "")
+        content = str(getattr(item, "content", "") or "")
+        if len(role) > _MAX_ROLE_CHARS:
+            raise ValueError(f"message.role exceeds {_MAX_ROLE_CHARS} characters")
+        if len(content) > _MAX_CONTENT_CHARS:
+            raise ValueError(f"message.content exceeds {_MAX_CONTENT_CHARS} characters")
+        out.append(Message(role=role, content=content))
     return out
 
 

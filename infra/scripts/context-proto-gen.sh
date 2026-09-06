@@ -13,29 +13,45 @@ if [[ -f "$MARKER" ]]; then
   exit 0
 fi
 
+_verify_sha256() {
+  local expected="$1"
+  local file="$2"
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "${expected}  ${file}" | sha256sum -c -
+  elif command -v shasum >/dev/null 2>&1; then
+    echo "${expected}  ${file}" | shasum -a 256 -c -
+  else
+    echo "neither sha256sum nor shasum found" >&2
+    exit 1
+  fi
+}
+
 if ! command -v buf >/dev/null 2>&1; then
+  # Auto-install only the pinned version; checksums come from that release's sha256.txt.
   BUF_VERSION="${BUF_VERSION:-1.47.2}"
-  # Pin checksums for the official GitHub release binaries (v1.47.2 sha256.txt).
-  case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) BUF_SHA256="9043df6e64c012d0e4165a1f8eff3cd87e858435c04c10731be2a4cd3cd6e016" ;;
-    Darwin-x86_64) BUF_SHA256="84b964979a73ac3db2a6e18ef9f685628ace60f63b3d1d8b1b39f4ea66fc18fe" ;;
-    Linux-aarch64) BUF_SHA256="47ddd7ac0bb2a29f8c92aa420dd113bed3b6857190976402eec93ab9847270b4" ;;
-    Linux-x86_64) BUF_SHA256="3a0c4da8d46eea8136affa63db202c76a44f8112384160b73c3fffb1cf14b5d8" ;;
-    *)
-      echo "unsupported platform for auto-install of buf; install Buf ${BUF_VERSION} manually" >&2
-      exit 1
-      ;;
-  esac
+  PINNED_BUF_VERSION="1.47.2"
+  if [[ "${BUF_VERSION}" != "${PINNED_BUF_VERSION}" ]]; then
+    echo "auto-install supports Buf ${PINNED_BUF_VERSION} only; install ${BUF_VERSION} manually" >&2
+    exit 1
+  fi
   ARTIFACT="buf-$(uname -s)-$(uname -m)"
-  URL="https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/${ARTIFACT}"
+  BASE_URL="https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}"
   echo "buf not found — installing Buf CLI ${BUF_VERSION} to \$HOME/.local/bin"
   mkdir -p "$HOME/.local/bin"
   TMP="$(mktemp)"
+  SUMS="$(mktemp)"
   # Fail closed on HTTP errors; do not follow redirects off HTTPS.
-  curl --proto '=https' --tlsv1.2 -fsSL "$URL" -o "$TMP"
-  echo "${BUF_SHA256}  ${TMP}" | sha256sum -c -
+  curl --proto '=https' --tlsv1.2 -fsSL "${BASE_URL}/sha256.txt" -o "$SUMS"
+  curl --proto '=https' --tlsv1.2 -fsSL "${BASE_URL}/${ARTIFACT}" -o "$TMP"
+  BUF_SHA256="$(awk -v artifact="${ARTIFACT}" '$2 == artifact { print $1; exit }' "$SUMS")"
+  if [[ -z "${BUF_SHA256}" ]]; then
+    echo "no checksum for ${ARTIFACT} in Buf ${BUF_VERSION} sha256.txt" >&2
+    rm -f "$TMP" "$SUMS"
+    exit 1
+  fi
+  _verify_sha256 "${BUF_SHA256}" "${TMP}"
   install -m 0755 "$TMP" "$HOME/.local/bin/buf"
-  rm -f "$TMP"
+  rm -f "$TMP" "$SUMS"
   export PATH="$HOME/.local/bin:$PATH"
 fi
 

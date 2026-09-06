@@ -121,15 +121,12 @@ def _assemble_request(pb2: object) -> object:
 async def _one_call(
     stub: Callable[..., Awaitable[object]],
     req: object,
-    *,
-    record_errors: bool,
 ) -> float | None:
+    """Return latency_ms on success, None on RPC error."""
     t0 = time.perf_counter()
     try:
         await stub(req, timeout=1.0)
-    except grpc.aio.AioRpcError as exc:
-        if record_errors:
-            print(f"rpc_error code={exc.code()} details={exc.details()}", flush=True)
+    except grpc.aio.AioRpcError:
         return None
     return (time.perf_counter() - t0) * 1000.0
 
@@ -138,14 +135,21 @@ async def _one_call(
 class _LoadPlan:
     duration_s: float
     target_rps: int
-    record_errors: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _DriveStats:
+    latencies_ms: tuple[float, ...]
+    attempted: int
+    succeeded: int
+    failed: int
 
 
 async def _drive_open_loop(
     stub: Callable[..., Awaitable[object]],
     req: object,
     plan: _LoadPlan,
-) -> list[float]:
+) -> _DriveStats:
     """Launch RPCs on a fixed interval; await outstanding work after the window."""
     interval = 1.0 / max(1, plan.target_rps)
     start = time.perf_counter()
@@ -156,17 +160,24 @@ async def _drive_open_loop(
         now = time.perf_counter()
         if now < next_launch:
             await asyncio.sleep(next_launch - now)
-        tasks.append(
-            asyncio.create_task(
-                _one_call(stub, req, record_errors=plan.record_errors),
-            )
-        )
+            # Do not schedule past the measurement window after waking.
+            if time.perf_counter() >= deadline:
+                break
+        tasks.append(asyncio.create_task(_one_call(stub, req)))
         next_launch += interval
     results = await asyncio.gather(*tasks)
-    return [ms for ms in results if ms is not None]
+    latencies = tuple(ms for ms in results if ms is not None)
+    attempted = len(results)
+    succeeded = len(latencies)
+    return _DriveStats(
+        latencies_ms=latencies,
+        attempted=attempted,
+        succeeded=succeeded,
+        failed=attempted - succeeded,
+    )
 
 
-async def _run_stub(duration_s: float, target_rps: int) -> list[float]:
+async def _run_stub(duration_s: float, target_rps: int) -> _DriveStats:
     from ibex.context.v1 import context_pb2 as pb2
 
     settings = ContextSettings.model_construct(
@@ -198,13 +209,13 @@ async def _run_stub(duration_s: float, target_rps: int) -> list[float]:
             return await _drive_open_loop(
                 stub,
                 _assemble_request(pb2),
-                _LoadPlan(duration_s, target_rps, False),
+                _LoadPlan(duration_s, target_rps),
             )
     finally:
         await server.stop(grace=None)
 
 
-async def _run_live(addr: str, duration_s: float, target_rps: int) -> list[float]:
+async def _run_live(addr: str, duration_s: float, target_rps: int) -> _DriveStats:
     from ibex.context.v1 import context_pb2 as pb2
 
     async with grpc_aio.insecure_channel(addr) as channel:
@@ -216,7 +227,7 @@ async def _run_live(addr: str, duration_s: float, target_rps: int) -> list[float
         return await _drive_open_loop(
             stub,
             _assemble_request(pb2),
-            _LoadPlan(duration_s, target_rps, True),
+            _LoadPlan(duration_s, target_rps),
         )
 
 
@@ -226,13 +237,29 @@ def main() -> int:
     parser.add_argument("--addr", default="127.0.0.1:9092")
     parser.add_argument("--rps", type=int, default=500)
     parser.add_argument("--duration", type=float, default=10.0)
+    parser.add_argument(
+        "--max-error-rate",
+        type=float,
+        default=0.0,
+        help="Fail when failed/attempted exceeds this fraction (default 0).",
+    )
     args = parser.parse_args()
 
     if args.profile == "stub":
-        samples = asyncio.run(_run_stub(args.duration, args.rps))
+        stats = asyncio.run(_run_stub(args.duration, args.rps))
     else:
-        samples = asyncio.run(_run_live(args.addr, args.duration, args.rps))
+        stats = asyncio.run(_run_live(args.addr, args.duration, args.rps))
 
+    samples = list(stats.latencies_ms)
+    error_rate = (
+        (stats.failed / stats.attempted) if stats.attempted else 1.0
+    )
+    print(
+        f"context_assemble_load profile={args.profile} rps={args.rps} "
+        f"duration_s={args.duration} attempted={stats.attempted} "
+        f"succeeded={stats.succeeded} failed={stats.failed} "
+        f"error_rate={error_rate:.4f}"
+    )
     if not samples:
         print("no successful samples", file=sys.stderr)
         return 2
@@ -242,10 +269,15 @@ def main() -> int:
     p99 = _percentile(samples, 0.99)
     mean = statistics.fmean(samples)
     print(
-        f"context_assemble_load profile={args.profile} rps={args.rps} "
-        f"duration_s={args.duration} n={len(samples)} "
-        f"mean_ms={mean:.3f} p50_ms={p50:.3f} p95_ms={p95:.3f} p99_ms={p99:.3f}"
+        f"latencies mean_ms={mean:.3f} p50_ms={p50:.3f} "
+        f"p95_ms={p95:.3f} p99_ms={p99:.3f}"
     )
+    if error_rate > args.max_error_rate:
+        print(
+            f"FAIL: error_rate {error_rate:.4f} exceeds max {args.max_error_rate:.4f}",
+            file=sys.stderr,
+        )
+        return 1
     if args.profile == "stub" and p99 >= _P99_BUDGET_MS:
         print(
             f"FAIL: stub p99 {p99:.3f}ms exceeds {_P99_BUDGET_MS}ms",

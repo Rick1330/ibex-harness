@@ -36,13 +36,14 @@ async def test_open_loop_keeps_requests_in_flight() -> None:
         return object()
 
     started = time.perf_counter()
-    samples = await _drive_open_loop(
+    stats = await _drive_open_loop(
         slow_stub,
         object(),
-        _LoadPlan(duration_s=0.12, target_rps=100, record_errors=False),
+        _LoadPlan(duration_s=0.12, target_rps=100),
     )
     elapsed = time.perf_counter() - started
-    assert samples
+    assert stats.latencies_ms
+    assert stats.attempted == stats.succeeded
     assert peak >= 2
     # Open-loop should finish the window without serializing all sleeps.
-    assert elapsed < 0.12 + 0.05 * len(samples)
+    assert elapsed < 0.12 + 0.05 * len(stats.latencies_ms)
