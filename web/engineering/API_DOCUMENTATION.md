@@ -1136,7 +1136,8 @@ Content-Type: application/json
 
 **Terminate a session**
 
-Marks an active session `completed` and (on first transition) may enqueue memory extraction.
+Marks an active session `completed` and may enqueue memory extraction from the Redis turn
+buffer (ADR-0072).
 
 **Path parameter:** `{session_id}` is the sticky **external_id** — the same value carried by
 `X-IBEX-Session-ID` on chat completions — **not** the Postgres row UUID `sessions.id`.
@@ -1161,9 +1162,10 @@ Content-Type: application/json
 }
 ```
 
-Only `status: "completed"` is supported. The call is idempotent: repeating terminate on an
-already-completed session returns 200 with `final_status: "completed"` without re-enqueueing
-extraction.
+Only `status: "completed"` is supported. Calling terminate again on an already-completed
+session is safe and returns 200 with `final_status: "completed"`. If a previous extraction
+enqueue attempt did not complete, terminate will retry it (retained Redis turns); if enqueue
+already succeeded and the buffer was acknowledged, no additional work is enqueued.
 
 **Response: 200 OK**
 

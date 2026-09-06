@@ -35,13 +35,22 @@ Expose `POST /internal/extraction/enqueue` on a small Starlette app co-located w
 
 Authenticate proxy→worker with `IBEX_WORKER_ENQUEUE_API_TOKEN` and `hmac.compare_digest`, matching embedder’s `IBEX_EMBEDDING_API_TOKEN` pattern. Do **not** reuse the worker→memory org-scoped PAT trust boundary.
 
-### 3) Session terminate triggers enqueue once
+### 3) Session terminate triggers enqueue on first completion and on recovery
 
-`POST /v1/sessions/{session_id}/terminate` uses sticky **`external_id`** (same value as `X-IBEX-Session-ID`), scoped by `X-IBEX-Agent-ID`. `Store.CompleteByExternalID` returns a typed result; enqueue runs only on first transition (`OK`), not on idempotent `Noop`.
+`POST /v1/sessions/{session_id}/terminate` uses sticky **`external_id`** (same value as `X-IBEX-Session-ID`), scoped by `X-IBEX-Agent-ID`. `Store.CompleteByExternalID` returns a typed result:
+
+- **`CompleteOK` (first transition to completed):** peek the Redis turn buffer and enqueue when turns are present.
+- **`CompleteNoop` (already completed):** may still enqueue **if and only if** the buffer still holds unacknowledged turns — that means a prior enqueue attempt never completed (fail-open retention). This is deliberate recovery, not accidental re-work.
+- **After a successful Ack:** the peeked snapshot is deleted; a later `Noop` terminate Peeks empty → skip enqueue (log + metric). Never fabricate turns.
+
+Duplicate `apply_async` submissions (races between concurrent terminate calls, or Noop recovery after a delayed original enqueue already succeeded) are **not** prevented solely by the proxy. They are bounded by:
+
+1. the worker enqueue surface’s in-process `Idempotency-Key` cache (TTL; keyed by session id), and
+2. durable consumer identity idempotency in [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) at the memory-write layer.
 
 ### 4) Transient Redis turn buffer
 
-Proxy appends turn role/content to Redis after successful chat completions (`{org_id}:session:{agent}:{external_id}:extraction_turns`, TTL-bound) synchronously before the chat handler returns (checkpoint/trace stay async). Terminate peeks the buffer to populate `turns` and deletes only after the worker accepts enqueue. Empty/expired buffer → skip enqueue (log + metric); never fabricate turns. Buffer write failures are fail-open on the chat path.
+Proxy appends turn role/content to Redis after successful chat completions (`{org_id}:session:{agent}:{external_id}:extraction_turns`, TTL-bound) synchronously before the chat handler returns (checkpoint/trace stay async). Terminate peeks the buffer to populate `turns` and deletes only after the worker accepts enqueue (compare-and-delete Ack). Empty/expired buffer → skip enqueue (log + metric); never fabricate turns. Buffer write failures are fail-open on the chat path.
 
 ### 5) Non-goals
 
@@ -54,7 +63,7 @@ Proxy appends turn role/content to Redis after successful chat completions (`{or
 
 - Milestone 3.5.D.4 success signals drop “raw LPUSH / Celery wire format” and require HTTP enqueue + terminate + turn buffer.
 - Operators must configure enqueue base URL + shared token on the proxy and worker.
-- Consumer idempotency remains ADR-0065 (`last_extracted_turn`); producer avoids double-enqueue via Complete `OK` vs `Noop`.
+- Steady-state “no duplicate work after success” is Peek empty after Ack (proxy) plus worker `Idempotency-Key` (process-local TTL) plus [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) durable consumer identity — not “enqueue never runs on `Noop`.”
 
 ## Alternatives considered
 

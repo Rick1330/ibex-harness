@@ -158,3 +158,38 @@ func TestUnit_SessionTerminate_EmptyBufferSkips(t *testing.T) {
 		t.Fatal("empty buffer must skip enqueue")
 	}
 }
+
+// TestUnit_SessionTerminate_OKThenNoopDoesNotReenqueue proves steady-state no-duplicate-work:
+// CompleteOK with buffered turns enqueues once and Acks; a later CompleteNoop with empty
+// buffer must not call the worker again.
+func TestUnit_SessionTerminate_OKThenNoopDoesNotReenqueue(t *testing.T) {
+	t.Parallel()
+	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
+	const ext = "ext-ok-then-noop"
+	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
+	buf, _ := terminateBufferAndEnqueue(t, org, agent, ext)
+	hits, srv := startEnqueueServer(t)
+	h := sessionTerminateHandler{
+		store: store, buffer: buf,
+		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
+		log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + ext),
+	}
+	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
+	}), http.StatusOK)
+	waitFor(t, func() bool { return hits.Load() == 1 })
+	waitFor(t, func() bool {
+		snap, err := buf.Peek(context.Background(), extractionbuffer.LookupKey{
+			OrgID: org, AgentID: agent, ExternalID: ext,
+		})
+		return err == nil && len(snap.Turns) == 0
+	})
+	store.result = session.CompleteNoop
+	assertTerminateCode(t, h, terminateAuthedRequest(t, terminateReqParams{
+		org: org, agent: agent, externalID: ext, body: `{"status":"completed"}`,
+	}), http.StatusOK)
+	time.Sleep(80 * time.Millisecond)
+	if hits.Load() != 1 {
+		t.Fatalf("worker hits=%d want 1 after successful Ack then Noop", hits.Load())
+	}
+}
