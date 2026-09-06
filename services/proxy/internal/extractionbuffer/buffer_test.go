@@ -76,8 +76,8 @@ func TestUnit_AppendFailOpenClosedClient(t *testing.T) {
 func TestUnit_TurnsFromChat(t *testing.T) {
 	t.Parallel()
 	got := extractionbuffer.TurnsFromChat(3, "u2", "a")
-	assertTurn(t, got, 0, 6, "u2")
-	assertTurn(t, got, 1, 7, "a")
+	assertTurn(t, got, turnWant{idx: 0, turnIndex: 6, content: "u2"})
+	assertTurn(t, got, turnWant{idx: 1, turnIndex: 7, content: "a"})
 }
 
 func TestUnit_AppendConcurrentNoLostTurns(t *testing.T) {
@@ -135,37 +135,51 @@ func mustAppendOK(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.L
 
 func assertTakeLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int) {
 	t.Helper()
-	turns, err := b.Take(context.Background(), k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(turns) != want {
-		t.Fatalf("take len=%d want %d", len(turns), want)
-	}
+	assertLen(t, b, k, want, true)
 }
 
 func assertPeekLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int) {
 	t.Helper()
-	turns, err := b.Peek(context.Background(), k)
+	assertLen(t, b, k, want, false)
+}
+
+func assertLen(t *testing.T, b *extractionbuffer.Buffer, k extractionbuffer.LookupKey, want int, take bool) {
+	t.Helper()
+	var (
+		turns []extractionbuffer.Turn
+		err   error
+	)
+	if take {
+		turns, err = b.Take(context.Background(), k)
+	} else {
+		turns, err = b.Peek(context.Background(), k)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(turns) != want {
-		t.Fatalf("peek len=%d want %d", len(turns), want)
+		t.Fatalf("len=%d want %d", len(turns), want)
 	}
 }
 
-func assertTurn(t *testing.T, got []extractionbuffer.Turn, idx, turnIndex int, content string) {
+func assertTurn(t *testing.T, got []extractionbuffer.Turn, want turnWant) {
 	t.Helper()
-	if idx >= len(got) {
-		t.Fatalf("missing turn idx=%d", idx)
+	if want.idx >= len(got) {
+		t.Fatalf("missing turn idx=%d", want.idx)
 	}
-	if got[idx].TurnIndex != turnIndex {
-		t.Fatalf("turn_index=%d want %d", got[idx].TurnIndex, turnIndex)
+	tr := got[want.idx]
+	if tr.TurnIndex != want.turnIndex {
+		t.Fatalf("turn_index=%d want %d", tr.TurnIndex, want.turnIndex)
 	}
-	if got[idx].Content != content {
-		t.Fatalf("content=%q want %q", got[idx].Content, content)
+	if tr.Content != want.content {
+		t.Fatalf("content=%q want %q", tr.Content, want.content)
 	}
+}
+
+type turnWant struct {
+	idx       int
+	turnIndex int
+	content   string
 }
 
 func testBuffer(t *testing.T) (*extractionbuffer.Buffer, *miniredis.Miniredis) {

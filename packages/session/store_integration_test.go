@@ -171,34 +171,42 @@ func TestStore_Complete_ConcurrentRace(t *testing.T) {
 	}
 }
 
+type completeOutcome struct {
+	res session.CompleteResult
+	err error
+}
+
 func fanoutComplete(t *testing.T, ids storeIDs, sessionID uuid.UUID, workers int) (okCount, noopCount int) {
 	t.Helper()
-	type outcome struct {
-		res session.CompleteResult
-		err error
-	}
-	out := make(chan outcome, workers)
+	out := make(chan completeOutcome, workers)
 	for i := 0; i < workers; i++ {
 		go func() {
 			res, err := ids.store.Complete(context.Background(), sessionID, ids.orgID)
-			out <- outcome{res: res, err: err}
+			out <- completeOutcome{res: res, err: err}
 		}()
 	}
 	for i := 0; i < workers; i++ {
-		o := <-out
-		if o.err != nil {
-			t.Fatalf("worker: %v", o.err)
-		}
-		switch o.res {
-		case session.CompleteOK:
-			okCount++
-		case session.CompleteNoop:
-			noopCount++
-		default:
-			t.Fatalf("unexpected result %v", o.res)
-		}
+		okDelta, noopDelta := consumeCompleteOutcome(t, <-out)
+		okCount += okDelta
+		noopCount += noopDelta
 	}
 	return okCount, noopCount
+}
+
+func consumeCompleteOutcome(t *testing.T, o completeOutcome) (okDelta, noopDelta int) {
+	t.Helper()
+	if o.err != nil {
+		t.Fatalf("worker: %v", o.err)
+	}
+	switch o.res {
+	case session.CompleteOK:
+		return 1, 0
+	case session.CompleteNoop:
+		return 0, 1
+	default:
+		t.Fatalf("unexpected result %v", o.res)
+		return 0, 0
+	}
 }
 
 func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {

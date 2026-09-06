@@ -81,7 +81,13 @@ const (
 )
 
 func (b *Buffer) usable(k LookupKey) bool {
-	return b != nil && b.client != nil && k.ExternalID != ""
+	if b == nil {
+		return false
+	}
+	if b.client == nil {
+		return false
+	}
+	return k.ExternalID != ""
 }
 
 // Append adds turns to the buffer. Empty role/content entries are dropped.
@@ -100,7 +106,7 @@ func (b *Buffer) Append(ctx context.Context, k LookupKey, turns []Turn) (AppendO
 func (b *Buffer) appendWithCAS(ctx context.Context, key string, clean []Turn) (AppendOutcome, error) {
 	ttlMs := b.ttlMillis()
 	for attempt := 0; ; attempt++ {
-		out, err := b.appendCASAttempt(ctx, key, clean, ttlMs, attempt)
+		out, err := b.appendCASAttempt(ctx, casAttempt{key: key, clean: clean, ttlMs: ttlMs, attempt: attempt})
 		if err == nil {
 			return out, nil
 		}
@@ -119,20 +125,25 @@ func isCASConflict(err error) bool {
 	return ok
 }
 
-func (b *Buffer) appendCASAttempt(
-	ctx context.Context, key string, clean []Turn, ttlMs int64, attempt int,
-) (AppendOutcome, error) {
+type casAttempt struct {
+	key     string
+	clean   []Turn
+	ttlMs   int64
+	attempt int
+}
+
+func (b *Buffer) appendCASAttempt(ctx context.Context, a casAttempt) (AppendOutcome, error) {
 	if err := ctx.Err(); err != nil {
 		return AppendRedisErr, err
 	}
-	out, conflict, err := b.tryAppendCAS(ctx, key, clean, ttlMs)
+	out, conflict, err := b.tryAppendCAS(ctx, a.key, a.clean, a.ttlMs)
 	if err != nil {
 		return AppendRedisErr, err
 	}
 	if !conflict {
 		return out, nil
 	}
-	if err := sleepCASBackoff(ctx, attempt); err != nil {
+	if err := sleepCASBackoff(ctx, a.attempt); err != nil {
 		return AppendRedisErr, err
 	}
 	return "", casConflictError{}

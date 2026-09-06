@@ -45,61 +45,56 @@ func (f *terminateStoreFake) AbandonIdle(context.Context, session.AbandonIdlePar
 	return session.AbandonIdleResult{}, nil
 }
 
-func TestUnit_SessionTerminate_OKEnqueues(t *testing.T) {
+func TestUnit_SessionTerminate_CompleteResults(t *testing.T) {
 	t.Parallel()
-	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
-	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
-	buf, enqueueSrv := terminateBufferAndEnqueue(t, org, agent, "ext-ok")
-	var enqueueHits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		enqueueHits.Add(1)
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	t.Cleanup(srv.Close)
-	_ = enqueueSrv
-
-	h := sessionTerminateHandler{
-		store: store, buffer: buf,
-		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test"),
+	cases := []struct {
+		name       string
+		result     session.CompleteResult
+		wantHits   int32
+		withBuffer bool
+		ext        string
+	}{
+		{name: "ok_enqueues", result: session.CompleteOK, wantHits: 1, withBuffer: true, ext: "ext-ok"},
+		{name: "noop_skips", result: session.CompleteNoop, wantHits: 0, withBuffer: false, ext: "ext-noop"},
 	}
-	req := terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-ok", body: `{"status":"completed"}`,
-	})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	waitFor(t, func() bool { return enqueueHits.Load() == 1 })
-}
-
-func TestUnit_SessionTerminate_NoopNoEnqueue(t *testing.T) {
-	t.Parallel()
-	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
-	store := &terminateStoreFake{result: session.CompleteNoop, sessionID: sid}
-	var enqueueHits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		enqueueHits.Add(1)
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	t.Cleanup(srv.Close)
-	h := sessionTerminateHandler{
-		store:   store,
-		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
-		log:     logger.Discard("t"),
-	}
-	req := terminateAuthedRequest(t, terminateReqParams{
-		org: org, agent: agent, externalID: "ext-noop", body: `{"status":"completed"}`,
-	})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d", rec.Code)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if enqueueHits.Load() != 0 {
-		t.Fatalf("noop must not enqueue")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			org, agent, sid := uuid.New(), uuid.New(), uuid.New()
+			store := &terminateStoreFake{result: tc.result, sessionID: sid}
+			var buf *extractionbuffer.Buffer
+			if tc.withBuffer {
+				buf, _ = terminateBufferAndEnqueue(t, org, agent, tc.ext)
+			}
+			var enqueueHits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				enqueueHits.Add(1)
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			t.Cleanup(srv.Close)
+			h := sessionTerminateHandler{
+				store: store, buffer: buf,
+				enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: srv.URL, Token: "tok"}),
+				log:     logger.Discard("t"), metrics: metrics.NewProxy("proxy-test-" + tc.name),
+			}
+			req := terminateAuthedRequest(t, terminateReqParams{
+				org: org, agent: agent, externalID: tc.ext, body: `{"status":"completed"}`,
+			})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if tc.wantHits == 0 {
+				time.Sleep(50 * time.Millisecond)
+				if enqueueHits.Load() != 0 {
+					t.Fatalf("expected no enqueue")
+				}
+				return
+			}
+			waitFor(t, func() bool { return enqueueHits.Load() == tc.wantHits })
+		})
 	}
 }
 
