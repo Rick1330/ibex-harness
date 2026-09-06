@@ -42,7 +42,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../web/content/docs/adr/0022-health-check-contract.mdx)) |
 | `provider/` | LLM provider abstraction and registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)); OpenAI + Anthropic adapters ([ADR-0040](../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)); capability registry; self-hosted adapter |
 | `tokenizer/` | Per-family token counting registry ([ADR-0043](../web/content/docs/adr/0043-tokenizer-registry.mdx)); tiktoken OpenAI families + claude estimate |
-| `responsepipeline/` | Non-streaming chat response decode / stage pipeline / re-encode ([ADR-0044](../web/content/docs/adr/0044-response-pipeline-non-streaming.mdx)); noop default, fail-open stages |
+| `responsepipeline/` | Non-streaming chat response decode / stage pipeline / re-encode ([ADR-0044](../web/content/docs/adr/0044-response-pipeline-non-streaming.mdx)); noop default, fail-open stages; optional `IBEXMetadataStage` embeds top-level `ibex` JSON (3.5.D.3) |
 | `embedder/` | Embedding interface + profile registry + stub + geometry validation ([ADR-0046](../web/content/docs/adr/0046-embedder-interface-registry.mdx)); inference in `services/embedder/` |
 | `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |

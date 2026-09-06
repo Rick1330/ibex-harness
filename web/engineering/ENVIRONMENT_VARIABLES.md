@@ -261,7 +261,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) | Safety valve for pathological DP table sizes |
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No (**3.5.C.4**) | `5` | Greedy fallback consecutive-skip limit before stopping | Used only on greedy path |
 | `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No (**3.5.C.5**) | `16` | Byte length for `secrets.token_urlsafe` **per-assembly** nonce on `<ibex_memory>` delimiters (range 1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)) | One nonce per `ContextFormatter.format()` call; not a secret to log |
-| `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
+| `IBEX_CONTEXT_EMBED_METADATA` | No (**3.5.D.3**) | `false` | Embed top-level `ibex` JSON in non-streaming chat responses via `IBEXMetadataStage` | Off by default; no-op per request when Assemble was not attempted |
 | `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
 | `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir (`o200k_base.tiktoken`, etc.) | Air-gapped friendly; defaults to embedded assets |

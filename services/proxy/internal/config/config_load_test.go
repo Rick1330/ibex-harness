@@ -41,6 +41,9 @@ func loadCases() []loadCase {
 				if cfg.ContextEnabled {
 					t.Fatal("ContextEnabled default must be false")
 				}
+				if cfg.ContextEmbedMetadata {
+					t.Fatal("ContextEmbedMetadata default must be false")
+				}
 			},
 		},
 		{
@@ -57,8 +60,26 @@ func loadCases() []loadCase {
 			},
 		},
 		{
+			name: "context embed metadata true",
+			env: map[string]string{
+				"IBEX_ENV":                     "development",
+				"IBEX_CONTEXT_EMBED_METADATA":  "true",
+			},
+			check: func(t *testing.T, cfg Config) {
+				t.Helper()
+				if !cfg.ContextEmbedMetadata {
+					t.Fatal("ContextEmbedMetadata = false, want true")
+				}
+			},
+		},
+		{
 			name:    "invalid context enabled",
 			env:     map[string]string{"IBEX_CONTEXT_ENABLED": "maybe"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid context embed metadata",
+			env:     map[string]string{"IBEX_CONTEXT_EMBED_METADATA": "maybe"},
 			wantErr: true,
 		},
 		{

@@ -2247,7 +2247,18 @@ X-IBEX-Session-ID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
 | `X-IBEX-Context-Tokens` | Assemble attempted | Tokens used by assembled context (`0` on fallback) |
 | `X-IBEX-Context-Fallback` | Assemble attempted | `true` if assembly failed open (RPC/timeout/`empty` blob) and Phase 2 directive injection was used; `false` if assembled context was injected |
 
-These three headers are **omitted** when context assembly was not attempted: `IBEX_CONTEXT_ENABLED=false`, nil context client (empty `IBEX_CONTEXT_GRPC_TARGET`), or request header `X-IBEX-Skip-Memory` truthy. Embedded `ibex` JSON in the response body is separate (Phase 3.5.D.3).
+These three headers are **omitted** when context assembly was not attempted: `IBEX_CONTEXT_ENABLED=false`, nil context client (empty `IBEX_CONTEXT_GRPC_TARGET`), or request header `X-IBEX-Skip-Memory` truthy.
+
+**Embedded `ibex` JSON** (non-streaming only; Phase 3.5.D.3): when `IBEX_CONTEXT_EMBED_METADATA=true` **and** Assemble was attempted for the request, the response body gains a top-level `ibex` object with the fields below. Omitted entirely (verbatim upstream body) when the flag is off, Assemble was not attempted, or the response is streaming (SSE remains headers-only).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trace_id` | string | OTEL trace id (same source as `X-Trace-ID`); empty when no active span |
+| `session_id` | string | Durable session UUID when available; otherwise sticky `X-IBEX-Session-ID` external id |
+| `memories_injected` | int | Same count as `X-IBEX-Memories-Injected` |
+| `context_tokens_used` | int | Same count as `X-IBEX-Context-Tokens` |
+| `context_assembly_ms` | int | Wall ms for the Assemble RPC on this request (`0` when not measured) |
+| `proxy_overhead_ms` | int | Request wall ms since start minus provider `Complete` duration |
 
 **Response: 200 OK** (non-streaming)
 
