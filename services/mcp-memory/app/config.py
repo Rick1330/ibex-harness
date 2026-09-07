@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     auth_timeout_ms: int = Field(default=50, ge=1, le=5000)
     clickhouse_url: str = Field(default="")
     audit_queue_size: int = Field(default=1024, ge=1, le=100_000)
+    # Memory HTTP for 3.5.E.2 tools (search/write). Empty → tool calls fail closed.
+    memory_http_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("IBEX_MEMORY_HTTP_URL", "IBEX_MCP_MEMORY_HTTP_URL"),
+    )
+    memory_timeout_ms: int = Field(
+        default=5000,
+        ge=1,
+        le=60_000,
+        validation_alias=AliasChoices("IBEX_MCP_MEMORY_TIMEOUT_MS", "IBEX_MEMORY_TIMEOUT_MS"),
+    )
 
     @field_validator("transport")
     @classmethod

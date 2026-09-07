@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
+from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.config import Settings, get_settings
 from app.main import create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
@@ -22,6 +24,7 @@ from app.protocol import (
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 ORG_B = UUID("22222222-2222-2222-2222-222222222222")
+AGENT = UUID("33333333-3333-3333-3333-333333333333")
 TOKEN_A = "tok-org-a"
 TOKEN_B = "tok-org-b"
 TOKEN_READ_ONLY = "tok-read"
@@ -34,6 +37,34 @@ def _clear_settings() -> None:
     get_settings.cache_clear()
 
 
+def _mock_memory_client() -> MemoryHttpClient:
+    mid = str(uuid4())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"data": {"results": []}})
+        return httpx.Response(
+            201,
+            json={
+                "data": {
+                    "id": mid,
+                    "agent_id": str(AGENT),
+                    "org_id": str(ORG),
+                    "category": "factual",
+                    "confidence": 0.6,
+                    "source": "user_provided",
+                    "status": "active",
+                    "metadata": {"mcp_source": "mcp_explicit"},
+                }
+            },
+        )
+
+    return MemoryHttpClient(
+        MemoryHttpConfig(base_url="http://memory.test", timeout_seconds=1.0),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
 def _app() -> tuple[TestClient, MemoryAuditSink]:
     settings = Settings(
         transport="streamable_http",
@@ -43,13 +74,24 @@ def _app() -> tuple[TestClient, MemoryAuditSink]:
     )
     validator = StaticTokenValidator(
         {
-            TOKEN_A: ValidateResult(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE),
-            TOKEN_B: ValidateResult(org_id=ORG_B, permissions=MEMORY_READ | MEMORY_WRITE),
-            TOKEN_READ_ONLY: ValidateResult(org_id=ORG, permissions=MEMORY_READ),
+            TOKEN_A: ValidateResult(
+                org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT
+            ),
+            TOKEN_B: ValidateResult(
+                org_id=ORG_B, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT
+            ),
+            TOKEN_READ_ONLY: ValidateResult(
+                org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT
+            ),
         }
     )
     sink = MemoryAuditSink()
-    application = create_app(settings=settings, validator=validator, audit_sink=sink)
+    application = create_app(
+        settings=settings,
+        validator=validator,
+        audit_sink=sink,
+        memory_client=_mock_memory_client(),
+    )
     return TestClient(application), sink
 
 
@@ -197,7 +239,8 @@ def test_mcp_initialize_negotiates_protocol_version(protocol_version: str) -> No
             },
         )
         assert called.status_code in (200, 202), called.text
-        assert "stub" in called.text or "search_memory" in called.text or "mcp_stub" in called.text
+        assert "results" in called.text or "search_memory" in called.text
+        assert "isError" not in called.text or '"isError":false' in called.text.replace(" ", "")
 
 
 def test_mcp_initialize_and_tools_list() -> None:

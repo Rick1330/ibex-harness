@@ -2,42 +2,78 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
+from app.access_token import set_access_token
 from app.audit import AsyncAuditEmitter, MemoryAuditSink
+from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, set_principal
 from app.server import build_mcp_server
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
+AGENT = UUID("22222222-2222-2222-2222-222222222222")
+TOKEN = "tok-fastmcp"
+
+
+def _memory_client(handler) -> MemoryHttpClient:
+    return MemoryHttpClient(
+        MemoryHttpConfig(base_url="http://memory.test", timeout_seconds=1.0),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
 
 
 @pytest.mark.asyncio
 async def test_fastmcp_call_tools() -> None:
+    mid = str(uuid4())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/search"):
+            return httpx.Response(200, json={"data": {"results": []}})
+        return httpx.Response(
+            201,
+            json={
+                "data": {
+                    "id": mid,
+                    "agent_id": str(AGENT),
+                    "org_id": str(ORG),
+                    "category": "factual",
+                    "confidence": 0.7,
+                    "source": "user_provided",
+                    "status": "active",
+                    "metadata": {"mcp_source": "mcp_explicit"},
+                }
+            },
+        )
+
+    client = _memory_client(handler)
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=16)
     audit.start()
-    mcp = build_mcp_server(audit)
-    set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE))
+    mcp = build_mcp_server(audit, client)
+    set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT))
+    set_access_token(TOKEN)
     try:
         search = await mcp.call_tool(
             "search_memory",
-            {"query": "q", "limit": 3, "agent_id": str(ORG)},
+            {"query": "q", "limit": 3},
         )
         write = await mcp.call_tool(
             "write_memory",
             {
                 "content": "c",
-                "category": "fact",
+                "category": "factual",
                 "confidence": 0.7,
-                "agent_id": str(ORG),
             },
         )
     finally:
         set_principal(None)
+        set_access_token(None)
         await audit.aclose()
+        await client.aclose()
     assert search is not None
     assert write is not None
 
@@ -46,7 +82,7 @@ async def test_fastmcp_call_tools() -> None:
 async def test_tools_list_schemas_advertise_constraints() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=4)
-    mcp = build_mcp_server(audit)
+    mcp = build_mcp_server(audit, None)
     tools = await mcp.list_tools()
     by_name = {t.name: t for t in tools}
     assert set(by_name) == {"search_memory", "write_memory"}
@@ -69,11 +105,11 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     assert content.get("maxLength") == 8000
     category = write["properties"]["category"]
     assert set(category.get("enum", [])) == {
-        "fact",
+        "factual",
         "preference",
-        "procedure",
-        "context",
-        "other",
+        "behavioral",
+        "episodic",
+        "procedural",
     }
     confidence = write["properties"]["confidence"]
     assert confidence.get("minimum") == 0.0
@@ -85,8 +121,8 @@ async def test_unknown_tool_argument_rejected_before_execution() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=4)
     audit.start()
-    mcp = build_mcp_server(audit)
-    set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE))
+    mcp = build_mcp_server(audit, None)
+    set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT))
     try:
         with pytest.raises(Exception, match="[Ee]xtra|limti|validation"):
             await mcp.call_tool("search_memory", {"query": "q", "limti": 3})

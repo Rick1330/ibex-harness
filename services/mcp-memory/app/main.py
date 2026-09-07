@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from app.audit import AsyncAuditEmitter, AuditSink, build_audit_sink
 from app.auth import GRPCTokenValidator, TokenValidator
+from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.config import Settings, get_settings
 from app.http_metrics import HTTPMetricsMiddleware
 from app.middleware import BearerAuthMiddleware
@@ -25,12 +26,29 @@ def create_app(
     settings: Settings | None = None,
     validator: TokenValidator | None = None,
     audit_sink: AuditSink | None = None,
+    memory_client: MemoryHttpClient | None = None,
 ) -> FastAPI:
     cfg = settings or get_settings()
     state = AppState()
     sink = audit_sink or build_audit_sink(cfg.clickhouse_url)
     audit = AsyncAuditEmitter(sink, maxsize=cfg.audit_queue_size)
-    mcp = build_mcp_server(audit, allow_test_hosts=cfg.env != "production")
+    owned_memory = False
+    if memory_client is not None:
+        mem = memory_client
+    elif cfg.memory_http_url.strip():
+        mem = MemoryHttpClient(
+            MemoryHttpConfig(
+                base_url=cfg.memory_http_url,
+                timeout_seconds=cfg.memory_timeout_ms / 1000.0,
+            )
+        )
+        owned_memory = True
+    else:
+        mem = None
+        logger.warning(
+            "IBEX_MEMORY_HTTP_URL unset — search_memory/write_memory will fail closed"
+        )
+    mcp = build_mcp_server(audit, mem, allow_test_hosts=cfg.env != "production")
     # Lazily creates session_manager; must happen before lifespan uses it.
     mcp_asgi = mcp.streamable_http_app()
 
@@ -42,6 +60,7 @@ def create_app(
         )
         state.validator = auth
         state.audit = audit
+        state.memory_client = mem
         state.mcp_app = mcp
         audit.start()
         try:
@@ -52,6 +71,8 @@ def create_app(
             state.ready = False
             await audit.aclose()
             await auth.aclose()
+            if owned_memory and mem is not None:
+                await mem.aclose()
             logger.info("mcp-memory shutdown complete")
 
     application = FastAPI(
@@ -83,9 +104,10 @@ async def _mark_readiness(state: AppState, auth: TokenValidator, cfg: Settings) 
     state.ready = True
     state.ready_error = None
     logger.info(
-        "mcp-memory ready transport=%s auth_grpc=%s",
+        "mcp-memory ready transport=%s auth_grpc=%s memory_http=%s",
         cfg.transport,
         cfg.auth_grpc_addr,
+        "configured" if cfg.memory_http_url.strip() else "unset",
     )
 
 

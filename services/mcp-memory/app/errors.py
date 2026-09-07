@@ -28,3 +28,17 @@ class PermissionDeniedError(MCPServiceError):
 class SchemaError(MCPServiceError):
     def __init__(self, message: str = "invalid tool arguments") -> None:
         super().__init__("invalid_params", message)
+
+
+class BackendUnavailableError(MCPServiceError):
+    """Memory (or other) dependency timeout / 5xx / transport — fail closed."""
+
+    def __init__(self, message: str = "memory service unavailable") -> None:
+        super().__init__("backend_unavailable", message)
+
+
+class BackendRejectedError(MCPServiceError):
+    """Memory returned a non-success client/server error that is not auth-shaped."""
+
+    def __init__(self, message: str, *, code: str = "backend_error") -> None:
+        super().__init__(code, message)

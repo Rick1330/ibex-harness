@@ -1,8 +1,8 @@
 ---
 title: "3.5.E.2 search_memory and write_memory tools"
-description: "Two core MCP tools with explicit hand-declared JSON schemas — search_memory calls ContextAssemblyService.SearchMemories gRPC, write_memory goes through the full 9-step write pipeline with source='mcp_explicit'."
-summary: "Two core MCP tools with explicit hand-declared JSON schemas — search_memory calls ContextAssemblyService.SearchMemories gRPC, write_memory goes through the full 9-step write pipeline with source='mcp_explicit'."
-status: "planned"
+description: "Real search_memory / write_memory MCP tools over memory HTTP — metadata.mcp_source=mcp_explicit, fail-closed backend errors, MEMORY_WRITE only."
+summary: "Wire search_memory and write_memory to memory service HTTP with forwarded bearer auth, metadata mcp_explicit provenance, and fail-closed outages."
+status: "in-progress"
 milestoneId: "3.5.E.2"
 track: "E"
 trackTitle: "MCP Tool Surface"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.E.2 — search_memory and write_memory Tools"
 
 # Milestone 3.5.E.2 — search_memory and write_memory Tools
 
-**Status:** Planned  
+**Status:** In progress  
 **Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 3 days  
@@ -31,9 +31,25 @@ fullTitle: "Milestone 3.5.E.2 — search_memory and write_memory Tools"
   make a better shape clear. Prefer outcomes over matching any particular file tree.
 </Callout>
 
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: both tools call the **memory service over HTTP**
+  (`POST /v1/memories/search`, `POST /v1/memories`) with the caller's forwarded Bearer token —
+  not `ContextAssemblyService.SearchMemories` gRPC (that RPC remains `UNIMPLEMENTED` per
+  ADR-0038; a follow-up tracks converging SearchMemories as a thin wrapper later). Provenance
+  is `metadata.mcp_source = "mcp_explicit"`; the DB `source` column stays `user_provided` (CHECK
+  does not allow `mcp_explicit`). Tool `category` enum matches the memory API
+  (`factual|preference|behavioral|episodic|procedural`). Gate writes on existing `MEMORY_WRITE`
+  only — sketch `memory:write:trusted` was never a real permission bit and is dropped. Backend
+  timeouts/5xx/transport fail closed as MCP tool errors (`isError=true`), not empty success.
+</Callout>
+
 ## Why This Milestone Exists
 
-Expose the two core memory operations as MCP tools with explicit, hand-declared JSON schemas. `search_memory` calls the same `ContextAssemblyService.SearchMemories` gRPC RPC the proxy uses — identical ranking/scoring logic. `write_memory` goes through the identical 9-step write pipeline with `source="mcp_explicit"`, not a shortcut ([ADR-0050](/docs/adr/0050-mcp-server-skeleton) stub contracts; real pipeline ADR when writers land).
+Expose the two core memory operations as MCP tools with explicit, hand-declared JSON schemas.
+`search_memory` and `write_memory` call the memory service HTTP API so authz and the 9-step write
+pipeline stay single-sourced. Provenance for MCP writes is recorded as
+`metadata.mcp_source="mcp_explicit"` ([ADR-0050](/docs/adr/0050-mcp-server-skeleton) stub
+contracts; real pipeline is the memory service).
 
 ---
 
@@ -53,12 +69,14 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 **Areas that may be involved** (situational — not a checklist):
 
-- MCP server surface
-- Memory service / repositories
+- MCP server surface (`services/mcp-memory/`)
+- Memory service HTTP (`POST /v1/memories`, `POST /v1/memories/search`)
 
 ## Design Decision: MCP Writes Use the Standard Pipeline
 
-`write_memory` via MCP is not a fast-path insert. It goes through validate → PII → dedup → embed → near-dup → conflict → DB → cache → index. Confidence defaults to 0.6 (below extraction's typical 0.7+) unless the caller has `memory:write:trusted` permission.
+`write_memory` via MCP is not a fast-path insert. It goes through validate → PII → dedup → embed →
+near-dup → conflict → DB → cache → index via memory HTTP. Confidence defaults to 0.6. Write
+authorization is the existing `MEMORY_WRITE` permission bit only.
 
 ---
 
@@ -66,15 +84,13 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `search_memory` and `write_memory` both pass through existing pipelines with no duplicated logic
-- [ ] Explicit JSON schemas committed, unit-tested against valid and malformed inputs
-- [ ] `source="mcp_explicit"` visible in `memories.metadata`, verified by test
-- [ ] Confidence-default and trusted-permission-bit behavior unit tested
+- [x] `search_memory` and `write_memory` call memory HTTP (no duplicated write/search pipeline logic)
+- [x] Explicit JSON schemas committed, unit-tested against valid and malformed inputs
+- [x] `metadata.mcp_source="mcp_explicit"` on create payload, verified by test
+- [x] Confidence default 0.6 and `MEMORY_WRITE` gating unit tested
 - [ ] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.5.E.1 (MCP server skeleton)
-- Phase 3 memory service (write pipeline)
-- Phase 3.5 Track C (context assembly — for SearchMemories)
-
+- Phase 3 memory service (write + search HTTP)
