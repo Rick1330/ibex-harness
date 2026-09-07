@@ -133,35 +133,31 @@ def _transport_handler(_request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_search_requires_memory_read() -> None:
-    principal = Principal(org_id=ORG_A, permissions=0, agent_id=AGENT)
-    args = parse_search_args({"query": "q"})
-    calls = {"n": 0}
+@pytest.mark.parametrize(
+    ("tool", "permissions", "raw"),
+    [
+        ("search", 0, {"query": "q"}),
+        ("write", MEMORY_READ, {"content": "c"}),
+    ],
+)
+async def test_local_permission_gate_skips_http(
+    tool: str, permissions: int, raw: dict
+) -> None:
+    principal = Principal(org_id=ORG_A, permissions=permissions, agent_id=AGENT)
+    hits = {"n": 0}
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        calls["n"] += 1
+    def counting(_request: httpx.Request) -> httpx.Response:
+        hits["n"] += 1
         return httpx.Response(200, json={"data": {"results": []}})
 
-    client = memory_client_for(handler)
+    client = memory_client_for(counting)
+    if tool == "search":
+        coro = search_memory(principal, parse_search_args(raw), client)
+    else:
+        coro = write_memory(principal, parse_write_args(raw), client)
     with pytest.raises(PermissionDeniedError):
-        await search_memory(principal, args, client)
-    assert calls["n"] == 0
-
-
-@pytest.mark.asyncio
-async def test_write_requires_memory_write() -> None:
-    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
-    args = parse_write_args({"content": "c"})
-    calls = {"n": 0}
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        calls["n"] += 1
-        return httpx.Response(201, json={"data": {}})
-
-    client = memory_client_for(handler)
-    with pytest.raises(PermissionDeniedError):
-        await write_memory(principal, args, client)
-    assert calls["n"] == 0
+        await coro
+    assert hits["n"] == 0
 
 
 @pytest.mark.asyncio
@@ -258,38 +254,39 @@ async def test_search_backend_fail_closed(
 
 
 @pytest.mark.asyncio
-async def test_search_unconfigured_client() -> None:
-    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
-    args = parse_search_args({"query": "q"})
+@pytest.mark.parametrize(
+    ("tool", "mode", "match"),
+    [
+        ("search", "unset", "IBEX_MEMORY_HTTP_URL"),
+        ("write", "unset", None),
+        ("write", "timeout", None),
+    ],
+)
+async def test_tool_dependency_unavailable(
+    tool: str, mode: str, match: str | None
+) -> None:
+    """Unset URL and write-path timeouts fail closed without inventing success."""
+    client = None if mode == "unset" else memory_client_for(_timeout_handler)
     set_access_token(TOKEN)
     try:
-        with pytest.raises(BackendUnavailableError, match="IBEX_MEMORY_HTTP_URL"):
-            await search_memory(principal, args, None)
-    finally:
-        set_access_token(None)
-
-
-@pytest.mark.asyncio
-async def test_write_unconfigured_client() -> None:
-    principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
-    args = parse_write_args({"content": "c"})
-    set_access_token(TOKEN)
-    try:
-        with pytest.raises(BackendUnavailableError):
-            await write_memory(principal, args, None)
-    finally:
-        set_access_token(None)
-
-
-@pytest.mark.asyncio
-async def test_write_timeout_fail_closed() -> None:
-    principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
-    args = parse_write_args({"content": "c"})
-    client = memory_client_for(_timeout_handler)
-    set_access_token(TOKEN)
-    try:
-        with pytest.raises(BackendUnavailableError):
-            await write_memory(principal, args, client)
+        if tool == "search":
+            call = search_memory(
+                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+                parse_search_args({"query": "q"}),
+                client,
+            )
+        else:
+            call = write_memory(
+                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+                parse_write_args({"content": "c"}),
+                client,
+            )
+        if match is None:
+            with pytest.raises(BackendUnavailableError):
+                await call
+        else:
+            with pytest.raises(BackendUnavailableError, match=match):
+                await call
     finally:
         set_access_token(None)
 
