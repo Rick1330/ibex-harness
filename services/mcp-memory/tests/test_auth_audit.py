@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
-from app.main import create_app
+from app.main import CreateAppDeps, create_app
 from app.middleware import AUTH_AUDIT_ORG_UNKNOWN
 from app.permissions import MEMORY_READ
 from tests.memory_fixtures import AGENT, ORG
@@ -33,8 +33,7 @@ def test_auth_401_emits_audit() -> None:
     sink = MemoryAuditSink()
     application = create_app(
         settings=settings,
-        validator=StaticTokenValidator({}),
-        audit_sink=sink,
+        deps=CreateAppDeps(validator=StaticTokenValidator({}), audit_sink=sink),
     )
     with TestClient(application) as client:
         resp = client.post(
@@ -69,8 +68,7 @@ def test_auth_503_emits_audit() -> None:
     )
     application = create_app(
         settings=settings,
-        validator=validator,
-        audit_sink=sink,
+        deps=CreateAppDeps(validator=validator, audit_sink=sink),
     )
     with TestClient(application) as client:
         # Trip breaker (N=5) then still 503
@@ -97,11 +95,15 @@ def test_config_rejects_bad_overrides() -> None:
         )
 
 
-def test_settings_rate_limit_defaults() -> None:
+def test_settings_rate_limit_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    # REDIS_URL is a shared alias; CI runners may export it — pin empty for default assert.
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("IBEX_MCP_REDIS_URL", raising=False)
     settings = Settings(
         transport="streamable_http",
         resource_url="http://testserver/mcp",
         auth_server_url="http://auth.test",
+        redis_url="",
     )
     assert settings.rate_limit_rpm == 120
     assert settings.redis_url == ""

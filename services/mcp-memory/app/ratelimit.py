@@ -52,9 +52,6 @@ class McpRateLimiter(ABC):
     async def check(self, org_id: UUID) -> RateLimitResult:
         raise NotImplementedError
 
-    async def aclose(self) -> None:
-        return None
-
 
 class NoopMcpLimiter(McpRateLimiter):
     """Always allow — used when IBEX_MCP_REDIS_URL is unset."""
@@ -169,25 +166,29 @@ def parse_org_rpm_overrides(raw: str) -> dict[UUID, int]:
     if not text:
         return out
     for pair in text.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        org_s, sep, rpm_s = pair.partition("=")
-        if not sep:
-            msg = f"invalid pair {pair!r} (expected uuid=rpm)"
-            raise ValueError(msg)
-        try:
-            org_id = UUID(org_s.strip())
-        except ValueError as exc:
-            msg = f"invalid org UUID in {pair!r}"
-            raise ValueError(msg) from exc
-        try:
-            rpm = int(rpm_s.strip())
-        except ValueError as exc:
-            msg = f"invalid RPM in {pair!r}"
-            raise ValueError(msg) from exc
-        if rpm < 1:
-            msg = f"invalid RPM in {pair!r}"
-            raise ValueError(msg)
-        out[org_id] = rpm
+        stripped = pair.strip()
+        if stripped:
+            org_id, rpm = _parse_org_rpm_pair(stripped)
+            out[org_id] = rpm
     return out
+
+
+def _parse_org_rpm_pair(pair: str) -> tuple[UUID, int]:
+    org_s, sep, rpm_s = pair.partition("=")
+    if not sep:
+        msg = f"invalid pair {pair!r} (expected uuid=rpm)"
+        raise ValueError(msg)
+    try:
+        org_id = UUID(org_s.strip())
+    except ValueError as exc:
+        msg = f"invalid org UUID in {pair!r}"
+        raise ValueError(msg) from exc
+    try:
+        rpm = int(rpm_s.strip())
+    except ValueError as exc:
+        msg = f"invalid RPM in {pair!r}"
+        raise ValueError(msg) from exc
+    if rpm < 1:
+        msg = f"invalid RPM in {pair!r}"
+        raise ValueError(msg)
+    return org_id, rpm

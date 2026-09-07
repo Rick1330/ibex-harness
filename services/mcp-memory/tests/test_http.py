@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
-from app.main import create_app
+from app.main import CreateAppDeps, create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.probes import build_protected_resource_metadata
 from app.protocol import (
@@ -67,10 +67,12 @@ def _app(*, memory_client=None) -> tuple[TestClient, MemoryAuditSink]:
     sink = MemoryAuditSink()
     application = create_app(
         settings=settings,
-        validator=validator,
-        audit_sink=sink,
-        memory_client=memory_client
-        or stub_memory_client(org_id=ORG, agent_id=AGENT),
+        deps=CreateAppDeps(
+            validator=validator,
+            audit_sink=sink,
+            memory_client=memory_client
+            or stub_memory_client(org_id=ORG, agent_id=AGENT),
+        ),
     )
     return TestClient(application), sink
 
@@ -167,7 +169,10 @@ def test_mcp_invalid_token() -> None:
 def test_auth_unavailable_fail_closed() -> None:
     settings = Settings(resource_url="http://testserver/mcp")
     validator = StaticTokenValidator({}, available=False)
-    application = create_app(settings=settings, validator=validator, audit_sink=MemoryAuditSink())
+    application = create_app(
+        settings=settings,
+        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink()),
+    )
     with TestClient(application) as client:
         resp = client.post(
             "/mcp",

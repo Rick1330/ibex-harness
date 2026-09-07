@@ -3,11 +3,15 @@
 Closed → Open after N consecutive AuthUnavailableError → cooldown →
 half-open single probe → closed on success / open on failure.
 Wraps TokenValidator.validate only; ready() bypasses the breaker.
+
+Half-open allows exactly one in-flight Auth probe; concurrent callers are
+rejected with AuthUnavailableError until that probe completes.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from enum import StrEnum
 
@@ -67,6 +71,9 @@ class BreakingTokenValidator(TokenValidator):
         self._state = BreakerState.CLOSED
         self._consecutive_failures = 0
         self._opened_at = 0.0
+        self._probe_inflight = False
+        # threading.Lock: never held across await (avoids asyncio loop/lock coupling).
+        self._lock = threading.Lock()
         BREAKER_STATE.set(_STATE_GAUGE[BreakerState.CLOSED])
 
     @property
@@ -74,24 +81,54 @@ class BreakingTokenValidator(TokenValidator):
         return self._state
 
     async def validate(self, access_token: str) -> ValidateResult:
-        now = time.monotonic()
-        if self._state == BreakerState.OPEN:
-            if now - self._opened_at < self._cooldown_seconds:
-                raise AuthUnavailableError()
-            self._transition(BreakerState.HALF_OPEN)
-
+        is_probe = self._reserve_or_reject()
         try:
             result = await self._inner.validate(access_token)
         except AuthFailedError:
             # Invalid token is not an upstream outage — do not trip the breaker.
-            self._on_success()
+            self._record_outcome(success=True)
             raise
         except AuthUnavailableError:
-            self._on_unavailable()
+            self._record_outcome(success=False)
             raise
+        except Exception:
+            with self._lock:
+                if self._state == BreakerState.HALF_OPEN:
+                    self._trip_open()
+            raise
+        else:
+            self._record_outcome(success=True)
+            return result
+        finally:
+            if is_probe:
+                self._release_probe_reservation()
 
-        self._on_success()
-        return result
+    def _reserve_or_reject(self) -> bool:
+        """Return True when this caller owns the half-open Auth probe."""
+        with self._lock:
+            now = time.monotonic()
+            if self._state == BreakerState.OPEN:
+                if now - self._opened_at < self._cooldown_seconds:
+                    raise AuthUnavailableError()
+                if self._probe_inflight:
+                    raise AuthUnavailableError()
+                self._probe_inflight = True
+                self._transition(BreakerState.HALF_OPEN)
+                return True
+            if self._state == BreakerState.HALF_OPEN:
+                raise AuthUnavailableError()
+            return False
+
+    def _record_outcome(self, *, success: bool) -> None:
+        with self._lock:
+            if success:
+                self._on_success()
+            else:
+                self._on_unavailable()
+
+    def _release_probe_reservation(self) -> None:
+        with self._lock:
+            self._probe_inflight = False
 
     async def ready(self) -> bool:
         # Bypass breaker so readiness probes do not poison or get short-circuited.

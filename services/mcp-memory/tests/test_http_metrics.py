@@ -13,7 +13,7 @@ from starlette.responses import StreamingResponse
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
-from app.main import create_app
+from app.main import CreateAppDeps, create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 
 
@@ -109,7 +109,10 @@ def test_unauthorized_request_increments_metrics() -> None:
             )
         }
     )
-    application = create_app(settings=settings, validator=validator, audit_sink=MemoryAuditSink())
+    application = create_app(
+        settings=settings,
+        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink()),
+    )
     before = _counter_value(
         "ibex_mcp_http_requests_total",
         {"method": "POST", "route": "/mcp", "status": "401"},

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
-from app.main import create_app
+from app.main import CreateAppDeps, create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.protocol import MCP_PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION_LATEST
 from app.ratelimit import McpRateLimiter, RateLimitResult
@@ -45,21 +46,26 @@ def test_tools_call_rate_limited_is_error_not_http_429() -> None:
         resource_url="http://testserver/mcp",
         auth_server_url="http://auth.test",
         auth_grpc_addr="127.0.0.1:1",
+        redis_url="",
     )
     sink = MemoryAuditSink()
     limiter = _DenyAfter(remaining_allows=0)
     application = create_app(
         settings=settings,
-        validator=StaticTokenValidator(
-            {
-                TOKEN: ValidateResult(
-                    org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT
-                )
-            }
+        deps=CreateAppDeps(
+            validator=StaticTokenValidator(
+                {
+                    TOKEN: ValidateResult(
+                        org_id=ORG,
+                        permissions=MEMORY_READ | MEMORY_WRITE,
+                        agent_id=AGENT,
+                    )
+                }
+            ),
+            audit_sink=sink,
+            memory_client=stub_memory_client(org_id=ORG, agent_id=AGENT),
+            rate_limiter=limiter,
         ),
-        audit_sink=sink,
-        memory_client=stub_memory_client(org_id=ORG, agent_id=AGENT),
-        rate_limiter=limiter,
     )
     headers = {
         "Authorization": f"Bearer {TOKEN}",
@@ -103,5 +109,6 @@ def test_tools_call_rate_limited_is_error_not_http_429() -> None:
         )
     assert resp.status_code != 429
     assert resp.status_code in (200, 202), resp.text
-    assert "isError" in resp.text
+    body = json.loads(resp.text)
+    assert body["result"]["isError"] is True
     assert any(e.error_code == "rate_limited" for e in sink.events)

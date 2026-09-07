@@ -32,11 +32,33 @@ AUTH_AUDIT_ORG_UNKNOWN = UUID("00000000-0000-0000-0000-000000000000")
 
 
 @dataclass(frozen=True, slots=True)
+class BearerAuthConfig:
+    settings: Settings
+    get_validator: ValidatorProvider
+    get_audit: AuditProvider | None = None
+    protected_prefixes: tuple[str, ...] = ("/mcp",)
+
+
+@dataclass(frozen=True, slots=True)
 class _AuthError:
     status: int
     code: str
     message: str
     www_authenticate: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AsgiCall:
+    scope: Scope
+    receive: Receive
+    send: Send
+
+
+@dataclass(frozen=True, slots=True)
+class _RejectRequest:
+    call: _AsgiCall
+    error: _AuthError
+    started: float
 
 
 class BearerAuthMiddleware:
@@ -46,22 +68,15 @@ class BearerAuthMiddleware:
     reconstructing middleware on every request.
     """
 
-    def __init__(
-        self,
-        app: ASGIApp,
-        *,
-        settings: Settings,
-        get_validator: ValidatorProvider,
-        get_audit: AuditProvider | None = None,
-        protected_prefixes: tuple[str, ...] = ("/mcp",),
-    ) -> None:
+    def __init__(self, app: ASGIApp, config: BearerAuthConfig) -> None:
         self.app = app
-        self.settings = settings
-        self.get_validator = get_validator
-        self.get_audit = get_audit or (lambda: None)
-        self.protected_prefixes = protected_prefixes
+        self.settings = config.settings
+        self.get_validator = config.get_validator
+        self.get_audit = config.get_audit or (lambda: None)
+        self.protected_prefixes = config.protected_prefixes
         self._metadata_url = (
-            _origin_from_resource(settings.resource_url) + "/.well-known/oauth-protected-resource"
+            _origin_from_resource(config.settings.resource_url)
+            + "/.well-known/oauth-protected-resource"
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -74,19 +89,20 @@ class BearerAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        call = _AsgiCall(scope=scope, receive=receive, send=send)
         started = time.perf_counter()
         validator = self.get_validator()
         if validator is None:
             await self._reject(
-                scope,
-                receive,
-                send,
-                _AuthError(
-                    status=503,
-                    code="auth_unavailable",
-                    message="authentication service unavailable",
-                ),
-                started=started,
+                _RejectRequest(
+                    call=call,
+                    error=_AuthError(
+                        status=503,
+                        code="auth_unavailable",
+                        message="authentication service unavailable",
+                    ),
+                    started=started,
+                )
             )
             return
 
@@ -98,25 +114,27 @@ class BearerAuthMiddleware:
             set_access_token(token)
         except AuthFailedError as exc:
             await self._reject(
-                scope,
-                receive,
-                send,
-                _AuthError(
-                    status=401,
-                    code=exc.code,
-                    message=exc.message,
-                    www_authenticate=_WWW_AUTHENTICATE.format(metadata_url=self._metadata_url),
-                ),
-                started=started,
+                _RejectRequest(
+                    call=call,
+                    error=_AuthError(
+                        status=401,
+                        code=exc.code,
+                        message=exc.message,
+                        www_authenticate=_WWW_AUTHENTICATE.format(
+                            metadata_url=self._metadata_url
+                        ),
+                    ),
+                    started=started,
+                )
             )
             return
         except AuthUnavailableError as exc:
             await self._reject(
-                scope,
-                receive,
-                send,
-                _AuthError(status=503, code=exc.code, message=exc.message),
-                started=started,
+                _RejectRequest(
+                    call=call,
+                    error=_AuthError(status=503, code=exc.code, message=exc.message),
+                    started=started,
+                )
             )
             return
 
@@ -126,19 +144,11 @@ class BearerAuthMiddleware:
             set_principal(None)
             set_access_token(None)
 
-    async def _reject(
-        self,
-        scope: Scope,
-        receive: Receive,
-        send: Send,
-        error: _AuthError,
-        *,
-        started: float,
-    ) -> None:
-        self._emit_auth_audit(error, started=started)
-        await _send_error(scope, receive, send, error)
+    async def _reject(self, req: _RejectRequest) -> None:
+        self._emit_auth_audit(req.error.code, started=req.started)
+        await _send_error(req.call, req.error)
 
-    def _emit_auth_audit(self, error: _AuthError, *, started: float) -> None:
+    def _emit_auth_audit(self, error_code: str, *, started: float) -> None:
         audit = self.get_audit()
         if audit is None:
             return
@@ -150,7 +160,7 @@ class BearerAuthMiddleware:
                 tool_name="auth",
                 latency_ms=latency_ms,
                 success=False,
-                error_code=error.code,
+                error_code=error_code,
             )
         )
 
@@ -173,12 +183,7 @@ def _origin_from_resource(resource_url: str) -> str:
     return url
 
 
-async def _send_error(
-    scope: Scope,
-    receive: Receive,
-    send: Send,
-    error: _AuthError,
-) -> None:
+async def _send_error(call: _AsgiCall, error: _AuthError) -> None:
     headers: dict[str, str] = {"content-type": "application/json"}
     if error.www_authenticate is not None:
         headers["www-authenticate"] = error.www_authenticate
@@ -187,4 +192,4 @@ async def _send_error(
         content={"error": {"code": error.code, "message": error.message}},
         headers=headers,
     )
-    await response(scope, receive, send)
+    await response(call.scope, call.receive, call.send)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 
 from fastapi import FastAPI
 
@@ -18,29 +19,37 @@ from app.auth_breaker import (
 from app.clients.memory import MemoryHttpClient, build_memory_client
 from app.config import Settings, get_settings
 from app.http_metrics import HTTPMetricsMiddleware
-from app.middleware import BearerAuthMiddleware
+from app.middleware import BearerAuthConfig, BearerAuthMiddleware
 from app.probes import probe_router
-from app.ratelimit import McpRateLimiter, build_mcp_rate_limiter
+from app.ratelimit import McpRateLimiter, RedisMcpLimiter, build_mcp_rate_limiter
 from app.server import build_mcp_server
 from app.state import AppState
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class CreateAppDeps:
+    """Optional test/production injections (keeps create_app under CodeScene arity)."""
+
+    validator: TokenValidator | None = None
+    audit_sink: AuditSink | None = None
+    memory_client: MemoryHttpClient | None = None
+    rate_limiter: McpRateLimiter | None = None
+
+
 def create_app(
     *,
     settings: Settings | None = None,
-    validator: TokenValidator | None = None,
-    audit_sink: AuditSink | None = None,
-    memory_client: MemoryHttpClient | None = None,
-    rate_limiter: McpRateLimiter | None = None,
+    deps: CreateAppDeps | None = None,
 ) -> FastAPI:
     cfg = settings or get_settings()
+    injected = deps or CreateAppDeps()
     state = AppState()
-    sink = audit_sink or build_audit_sink(cfg.clickhouse_url)
+    sink = injected.audit_sink or build_audit_sink(cfg.clickhouse_url)
     audit = AsyncAuditEmitter(sink, maxsize=cfg.audit_queue_size)
-    mem, owned_memory = _resolve_memory_client(cfg, memory_client)
-    limiter, owned_limiter = _resolve_rate_limiter(cfg, rate_limiter)
+    mem, owned_memory = _resolve_memory_client(cfg, injected.memory_client)
+    limiter, owned_limiter = _resolve_rate_limiter(cfg, injected.rate_limiter)
     mcp = build_mcp_server(
         audit,
         mem,
@@ -52,7 +61,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
-        inner = validator or GRPCTokenValidator(
+        inner = injected.validator or GRPCTokenValidator(
             cfg.auth_grpc_addr,
             timeout_seconds=cfg.auth_timeout_ms / 1000.0,
         )
@@ -73,7 +82,7 @@ def create_app(
             await auth.aclose()
             if owned_memory and mem is not None:
                 await mem.aclose()
-            if owned_limiter:
+            if owned_limiter and isinstance(limiter, RedisMcpLimiter):
                 await limiter.aclose()
             logger.info("mcp-memory shutdown complete")
 
@@ -90,9 +99,11 @@ def create_app(
     # Inner auth first, then metrics outermost so 401s are counted.
     application.add_middleware(
         BearerAuthMiddleware,
-        settings=cfg,
-        get_validator=lambda: state.validator or validator,
-        get_audit=lambda: state.audit,
+        config=BearerAuthConfig(
+            settings=cfg,
+            get_validator=lambda: state.validator or injected.validator,
+            get_audit=lambda: state.audit,
+        ),
     )
     application.add_middleware(HTTPMetricsMiddleware)
     return application

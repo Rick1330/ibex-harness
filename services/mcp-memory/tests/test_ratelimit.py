@@ -11,7 +11,9 @@ from redis.exceptions import RedisError
 from app.ratelimit import (
     INCR_EXPIRE_LUA,
     KEY_TTL_SECONDS,
+    McpRateLimiter,
     NoopMcpLimiter,
+    RateLimitResult,
     RedisMcpLimiter,
     build_mcp_rate_limiter,
     parse_org_rpm_overrides,
@@ -33,6 +35,12 @@ def test_parse_org_rpm_overrides_rejects_bad() -> None:
         parse_org_rpm_overrides("nope=10")
     with pytest.raises(ValueError, match="invalid RPM"):
         parse_org_rpm_overrides(f"{ORG}=0")
+    with pytest.raises(ValueError, match="invalid RPM"):
+        parse_org_rpm_overrides(f"{ORG}=not-int")
+
+
+def test_parse_skips_blank_pairs() -> None:
+    assert parse_org_rpm_overrides(f" , {ORG}=7, ") == {ORG: 7}
 
 
 def test_lua_script_mirrors_go_semantics() -> None:
@@ -113,3 +121,13 @@ async def test_build_redis_when_url_set() -> None:
     )
     assert isinstance(limiter, RedisMcpLimiter)
     await limiter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_abc_check_raises_not_implemented() -> None:
+    class _Stub(McpRateLimiter):
+        async def check(self, org_id: UUID) -> RateLimitResult:
+            return await McpRateLimiter.check(self, org_id)
+
+    with pytest.raises(NotImplementedError):
+        await _Stub().check(ORG)

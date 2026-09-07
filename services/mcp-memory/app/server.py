@@ -7,6 +7,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -37,6 +38,20 @@ from app.tools import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolRequest:
+    tool_name: str
+    raw: dict[str, Any]
+    runner: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolCall:
+    audit: AsyncAuditEmitter
+    rate_limiter: McpRateLimiter
+    request: _ToolRequest
 
 
 def build_mcp_server(
@@ -84,11 +99,15 @@ def _register_search_tool(
         agent_id: UUID | None = None,
     ) -> str:
         return await _invoke_tool(
-            audit=audit,
-            rate_limiter=limiter,
-            tool_name="search_memory",
-            raw=_optional_agent({"query": query, "limit": limit}, agent_id),
-            runner=lambda raw: _run_search(raw, memory_client),
+            _ToolCall(
+                audit=audit,
+                rate_limiter=limiter,
+                request=_ToolRequest(
+                    tool_name="search_memory",
+                    raw=_optional_agent({"query": query, "limit": limit}, agent_id),
+                    runner=lambda raw: _run_search(raw, memory_client),
+                ),
+            )
         )
 
 
@@ -112,14 +131,22 @@ def _register_write_tool(
         agent_id: UUID | None = None,
     ) -> str:
         return await _invoke_tool(
-            audit=audit,
-            rate_limiter=limiter,
-            tool_name="write_memory",
-            raw=_optional_agent(
-                {"content": content, "category": category, "confidence": confidence},
-                agent_id,
-            ),
-            runner=lambda raw: _run_write(raw, memory_client),
+            _ToolCall(
+                audit=audit,
+                rate_limiter=limiter,
+                request=_ToolRequest(
+                    tool_name="write_memory",
+                    raw=_optional_agent(
+                        {
+                            "content": content,
+                            "category": category,
+                            "confidence": confidence,
+                        },
+                        agent_id,
+                    ),
+                    runner=lambda raw: _run_write(raw, memory_client),
+                ),
+            )
         )
 
 
@@ -151,11 +178,15 @@ def _register_feedback_tool(
         if notes is not None:
             raw["notes"] = notes
         return await _invoke_tool(
-            audit=audit,
-            rate_limiter=limiter,
-            tool_name="record_feedback",
-            raw=raw,
-            runner=lambda payload: _run_feedback(payload, memory_client),
+            _ToolCall(
+                audit=audit,
+                rate_limiter=limiter,
+                request=_ToolRequest(
+                    tool_name="record_feedback",
+                    raw=raw,
+                    runner=lambda payload: _run_feedback(payload, memory_client),
+                ),
+            )
         )
 
 
@@ -218,24 +249,18 @@ async def _run_feedback(
     )
 
 
-async def _invoke_tool(
-    *,
-    audit: AsyncAuditEmitter,
-    rate_limiter: McpRateLimiter,
-    tool_name: str,
-    raw: dict[str, Any],
-    runner: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
-) -> str:
+async def _invoke_tool(call: _ToolCall) -> str:
     started = time.perf_counter()
     request_id = str(uuid.uuid4())
     principal = require_principal()
     success = False
     error_code = ""
+    tool_name = call.request.tool_name
     try:
-        decision = await rate_limiter.check(principal.org_id)
+        decision = await call.rate_limiter.check(principal.org_id)
         if not decision.allowed:
             raise RateLimitedError()
-        result = await runner(raw)
+        result = await call.request.runner(call.request.raw)
         success = True
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
     except MCPServiceError as exc:
@@ -257,7 +282,7 @@ async def _invoke_tool(
         raise
     finally:
         latency_ms = int((time.perf_counter() - started) * 1000)
-        audit.emit(
+        call.audit.emit(
             ToolCallAuditEvent(
                 request_id=request_id,
                 org_id=principal.org_id,
