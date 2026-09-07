@@ -31,8 +31,10 @@ from app.clients.memory import (
     SearchHit,
 )
 from app.errors import (
+    AuthFailedError,
     BackendRejectedError,
     BackendUnavailableError,
+    MCPServiceError,
     PermissionDeniedError,
     SchemaError,
 )
@@ -217,9 +219,11 @@ def _hit_dict(hit: SearchHit) -> dict[str, Any]:
     }
 
 
-def _map_memory_http_error(exc: MemoryHttpError) -> Exception:
+def _map_memory_http_error(exc: MemoryHttpError) -> MCPServiceError:
     status = exc.status_code
-    if status in (401, 403):
+    if status == 401:
+        return AuthFailedError(str(exc))
+    if status == 403:
         return PermissionDeniedError(str(exc))
     if status is not None and status >= 500:
         return BackendUnavailableError(str(exc))

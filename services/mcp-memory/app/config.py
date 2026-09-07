@@ -74,6 +74,9 @@ class Settings(BaseSettings):
             return self
         self._require_public_https("IBEX_MCP_RESOURCE_URL", self.resource_url)
         self._require_public_https("IBEX_MCP_AUTH_SERVER_URL", self.auth_server_url)
+        # Empty memory URL remains allowed (tools fail closed); non-empty must be public HTTPS.
+        if self.memory_http_url.strip():
+            self._require_public_https("IBEX_MEMORY_HTTP_URL", self.memory_http_url)
         return self
 
     @staticmethod

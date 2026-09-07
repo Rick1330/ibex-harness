@@ -215,7 +215,7 @@ async def test_search_empty_hits_is_success() -> None:
     [
         (503, BackendUnavailableError),
         (403, PermissionDeniedError),
-        (401, PermissionDeniedError),
+        (401, AuthFailedError),
         (409, BackendRejectedError),
     ],
 )
