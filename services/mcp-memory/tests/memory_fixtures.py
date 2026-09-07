@@ -87,6 +87,20 @@ def feedback_response(spec: FeedbackResultSpec | None = None) -> httpx.Response:
     )
 
 
+def _feedback_memory_id(path: str) -> str | None:
+    """Return memory_id for `/v1/memories/{id}/feedback`, else None."""
+    prefix = "/v1/memories/"
+    suffix = "/feedback"
+    if not path.startswith(prefix):
+        return None
+    if not path.endswith(suffix):
+        return None
+    memory_id = path.removeprefix(prefix).removesuffix(suffix)
+    if not memory_id or "/" in memory_id:
+        return None
+    return memory_id
+
+
 def stub_memory_handler(
     *,
     org_id: UUID = ORG,
@@ -98,13 +112,13 @@ def stub_memory_handler(
         path = request.url.path
         if path.endswith("/search"):
             return empty_search_response()
-        if request.method == "POST" and path.startswith("/v1/memories/") and path.endswith(
-            "/feedback"
-        ):
-            # /v1/memories/{memory_id}/feedback — echo the requested ID
-            memory_id = path.removeprefix("/v1/memories/").removesuffix("/feedback")
-            if memory_id and "/" not in memory_id:
-                return feedback_response(FeedbackResultSpec(memory_id=memory_id))
+        if request.method != "POST":
+            return create_memory_response(
+                CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
+            )
+        memory_id = _feedback_memory_id(path)
+        if memory_id is not None:
+            return feedback_response(FeedbackResultSpec(memory_id=memory_id))
         return create_memory_response(
             CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
         )
