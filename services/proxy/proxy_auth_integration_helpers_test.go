@@ -54,10 +54,14 @@ type proxyAuthFixture struct {
 }
 
 func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
-	return setupProxyAuthFixtureWithProviders(t, nil)
+	return setupProxyAuthFixtureWithOpts(t, proxyServerOpts{})
 }
 
 func setupProxyAuthFixtureWithProviders(t *testing.T, providers []provider.Provider) proxyAuthFixture {
+	return setupProxyAuthFixtureWithOpts(t, proxyServerOpts{providers: providers})
+}
+
+func setupProxyAuthFixtureWithOpts(t *testing.T, opts proxyServerOpts) proxyAuthFixture {
 	t.Helper()
 	dsn, cleanup := testutil.SetupPostgres(t)
 	t.Cleanup(cleanup)
@@ -81,7 +85,7 @@ func setupProxyAuthFixtureWithProviders(t *testing.T, providers []provider.Provi
 	orgBBearer, _ := testutil.SeedToken(t, db, orgB, 42)
 	lowPermsBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ReadOnly)
 
-	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{providers: providers})
+	srv := startProxyServer(t, authFx.Addr, opts)
 	t.Cleanup(srv.Close)
 
 	return proxyAuthFixture{

@@ -10,14 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/permissions"
 	contextv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
-	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -90,19 +86,16 @@ func (s *configurableContextServer) AssembleContext(
 }
 
 type capturingMockProvider struct {
+	mockForwardingProvider
 	mu   sync.Mutex
 	last provider.Request
 }
-
-func (p *capturingMockProvider) Name() string { return "mock" }
-
-func (p *capturingMockProvider) SupportedModels() []string { return []string{"gpt-4o"} }
 
 func (p *capturingMockProvider) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
 	p.mu.Lock()
 	p.last = req
 	p.mu.Unlock()
-	return mockForwardingProvider{}.Complete(ctx, req)
+	return p.mockForwardingProvider.Complete(ctx, req)
 }
 
 func (p *capturingMockProvider) lastRequest() provider.Request {
@@ -155,33 +148,17 @@ func startBufconnContextClient(t *testing.T, timeout time.Duration) (*configurab
 
 func setupMemoryIntegrationEnv(t *testing.T, assembleTimeout time.Duration) memoryIntegrationEnv {
 	t.Helper()
-	dsn, cleanup := testutil.SetupPostgres(t)
-	t.Cleanup(cleanup)
-
-	db := testutil.OpenDB(t, dsn)
-	t.Cleanup(func() { _ = db.Close() })
-
-	authFx := integrationtest.StartAuthGRPC(t, dsn)
-	t.Cleanup(authFx.Close)
-
-	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-mem-"+uuid.NewString()[:8])
-	userA := testutil.SeedUser(t, db, orgA, "user-a-"+uuid.NewString()[:8]+"@example.com", "User A")
-	agentA := testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
-	chatBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ProxyChatCompletion)
-
 	fake, client := startBufconnContextClient(t, assembleTimeout)
 	prov := &capturingMockProvider{}
-	proxy := startProxyServer(t, authFx.Addr, proxyServerOpts{
+	fx := setupProxyAuthFixtureWithOpts(t, proxyServerOpts{
 		providers:      []provider.Provider{prov},
 		contextClient:  client,
 		contextEnabled: true,
 	})
-	t.Cleanup(proxy.Close)
-
 	return memoryIntegrationEnv{
-		proxyURL:   proxy.URL,
-		chatBearer: chatBearer,
-		agentID:    agentA,
+		proxyURL:   fx.srv.URL,
+		chatBearer: fx.chatBearer,
+		agentID:    fx.agentA,
 		server:     fake,
 		provider:   prov,
 		client:     client,
@@ -190,14 +167,15 @@ func setupMemoryIntegrationEnv(t *testing.T, assembleTimeout time.Duration) memo
 
 func assertMemoryContextHeaders(t *testing.T, resp *http.Response, want memoryContextHeaders) {
 	t.Helper()
-	if got := resp.Header.Get("X-IBEX-Memories-Injected"); got != want.memories {
-		t.Fatalf("X-IBEX-Memories-Injected=%q want %q", got, want.memories)
+	checks := []struct{ header, got, want string }{
+		{"X-IBEX-Memories-Injected", resp.Header.Get("X-IBEX-Memories-Injected"), want.memories},
+		{"X-IBEX-Context-Tokens", resp.Header.Get("X-IBEX-Context-Tokens"), want.tokens},
+		{"X-IBEX-Context-Fallback", resp.Header.Get("X-IBEX-Context-Fallback"), want.fallback},
 	}
-	if got := resp.Header.Get("X-IBEX-Context-Tokens"); got != want.tokens {
-		t.Fatalf("X-IBEX-Context-Tokens=%q want %q", got, want.tokens)
-	}
-	if got := resp.Header.Get("X-IBEX-Context-Fallback"); got != want.fallback {
-		t.Fatalf("X-IBEX-Context-Fallback=%q want %q", got, want.fallback)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Fatalf("%s=%q want %q", c.header, c.got, c.want)
+		}
 	}
 }
 
@@ -222,10 +200,7 @@ func assertInjectedAssembledMessages(t *testing.T, msgs []provider.Message) {
 
 func assertPhase2OnlyUserMessage(t *testing.T, msgs []provider.Message) {
 	t.Helper()
-	if len(msgs) != 1 {
-		t.Fatalf("messages=%+v want single user turn (no directive seeded)", msgs)
-	}
-	if msgs[0].Role != "user" || msgs[0].Content != "hi" {
-		t.Fatalf("message=%+v", msgs[0])
+	if len(msgs) != 1 || msgs[0].Role != "user" || msgs[0].Content != "hi" {
+		t.Fatalf("messages=%+v want single user/hi turn", msgs)
 	}
 }
