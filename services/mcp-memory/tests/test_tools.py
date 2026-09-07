@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from uuid import UUID, uuid4
 
 import httpx
@@ -28,7 +29,7 @@ from app.tools import (
     write_idempotency_key,
     write_memory,
 )
-from tests.memory_fixtures import create_memory_response, memory_client_for
+from tests.memory_fixtures import CreatedMemory, create_memory_response, memory_client_for
 
 ORG_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 ORG_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -116,18 +117,25 @@ def test_backend_rejected_default_code() -> None:
     assert err.code == "backend_error"
 
 
+def _status_handler(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, text="err")
+
+    return handler
+
+
+def _timeout_handler(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("slow")
+
+
+def _transport_handler(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("down")
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("tool", "permissions", "args"),
-    [
-        ("search", 0, {"query": "q"}),
-        ("write", MEMORY_READ, {"content": "c"}),
-    ],
-)
-async def test_permission_denied_skips_http(
-    tool: str, permissions: int, args: dict
-) -> None:
-    principal = Principal(org_id=ORG_A, permissions=permissions, agent_id=AGENT)
+async def test_search_requires_memory_read() -> None:
+    principal = Principal(org_id=ORG_A, permissions=0, agent_id=AGENT)
+    args = parse_search_args({"query": "q"})
     calls = {"n": 0}
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -136,10 +144,23 @@ async def test_permission_denied_skips_http(
 
     client = memory_client_for(handler)
     with pytest.raises(PermissionDeniedError):
-        if tool == "search":
-            await search_memory(principal, parse_search_args(args), client)
-        else:
-            await write_memory(principal, parse_write_args(args), client)
+        await search_memory(principal, args, client)
+    assert calls["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_write_requires_memory_write() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    args = parse_write_args({"content": "c"})
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(201, json={"data": {}})
+
+    client = memory_client_for(handler)
+    with pytest.raises(PermissionDeniedError):
+        await write_memory(principal, args, client)
     assert calls["n"] == 0
 
 
@@ -211,102 +232,64 @@ async def test_search_empty_hits_is_success() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("status", "exc_type"),
+    ("handler", "exc_type"),
     [
-        (503, BackendUnavailableError),
-        (403, PermissionDeniedError),
-        (401, AuthFailedError),
-        (409, BackendRejectedError),
+        (_status_handler(503), BackendUnavailableError),
+        (_status_handler(403), PermissionDeniedError),
+        (_status_handler(401), AuthFailedError),
+        (_status_handler(409), BackendRejectedError),
+        (_timeout_handler, BackendUnavailableError),
+        (_transport_handler, BackendUnavailableError),
     ],
 )
-async def test_search_http_errors_fail_closed(status: int, exc_type: type) -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, text="err")
-
+async def test_search_backend_fail_closed(
+    handler: Callable[[httpx.Request], httpx.Response],
+    exc_type: type[BaseException],
+) -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    args = parse_search_args({"query": "q"})
+    client = memory_client_for(handler)
     set_access_token(TOKEN)
     try:
         with pytest.raises(exc_type):
-            await search_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
-                parse_search_args({"query": "q"}),
-                memory_client_for(handler),
-            )
-    finally:
-        set_access_token(None)
-
-
-@pytest.mark.asyncio
-async def test_search_timeout_fail_closed() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow")
-
-    set_access_token(TOKEN)
-    try:
-        with pytest.raises(BackendUnavailableError):
-            await search_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
-                parse_search_args({"query": "q"}),
-                memory_client_for(handler),
-            )
+            await search_memory(principal, args, client)
     finally:
         set_access_token(None)
 
 
 @pytest.mark.asyncio
 async def test_search_unconfigured_client() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    args = parse_search_args({"query": "q"})
     set_access_token(TOKEN)
     try:
         with pytest.raises(BackendUnavailableError, match="IBEX_MEMORY_HTTP_URL"):
-            await search_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
-                parse_search_args({"query": "q"}),
-                None,
-            )
+            await search_memory(principal, args, None)
     finally:
         set_access_token(None)
 
 
 @pytest.mark.asyncio
-async def test_write_unconfigured_and_timeout() -> None:
+async def test_write_unconfigured_client() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
+    args = parse_write_args({"content": "c"})
     set_access_token(TOKEN)
     try:
         with pytest.raises(BackendUnavailableError):
-            await write_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-                parse_write_args({"content": "c"}),
-                None,
-            )
-    finally:
-        set_access_token(None)
-
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow")
-
-    set_access_token(TOKEN)
-    try:
-        with pytest.raises(BackendUnavailableError):
-            await write_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-                parse_write_args({"content": "c"}),
-                memory_client_for(handler),
-            )
+            await write_memory(principal, args, None)
     finally:
         set_access_token(None)
 
 
 @pytest.mark.asyncio
-async def test_search_transport_maps_unavailable() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("down")
-
+async def test_write_timeout_fail_closed() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
+    args = parse_write_args({"content": "c"})
+    client = memory_client_for(_timeout_handler)
     set_access_token(TOKEN)
     try:
         with pytest.raises(BackendUnavailableError):
-            await search_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
-                parse_search_args({"query": "q"}),
-                memory_client_for(handler),
-            )
+            await write_memory(principal, args, client)
     finally:
         set_access_token(None)
 
@@ -320,7 +303,9 @@ async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         seen_keys.append(request.headers["X-Idempotency-Key"])
         bodies.append(json.loads(request.content))
-        return create_memory_response(memory_id=mid, org_id=ORG_A, agent_id=AGENT)
+        return create_memory_response(
+            CreatedMemory(memory_id=mid, org_id=ORG_A, agent_id=AGENT)
+        )
 
     set_access_token(TOKEN)
     try:

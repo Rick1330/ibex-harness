@@ -14,20 +14,27 @@ from app.clients.memory import (
     MemoryHttpTimeout,
     build_memory_client,
 )
-from tests.memory_fixtures import create_memory_response, empty_search_response, memory_client_for
+from tests.memory_fixtures import (
+    CreatedMemory,
+    create_memory_response,
+    empty_search_response,
+    memory_client_for,
+)
 
 ORG = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 AGENT = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
 
 def test_config_rejects_empty_url() -> None:
+    config = MemoryHttpConfig(base_url="   ")
     with pytest.raises(ValueError, match="IBEX_MEMORY_HTTP_URL"):
-        MemoryHttpClient(MemoryHttpConfig(base_url="   "))
+        MemoryHttpClient(config)
 
 
 def test_config_rejects_non_positive_timeout() -> None:
+    config = MemoryHttpConfig(base_url="http://m", timeout_seconds=0)
     with pytest.raises(ValueError, match="timeout"):
-        MemoryHttpClient(MemoryHttpConfig(base_url="http://m", timeout_seconds=0))
+        MemoryHttpClient(config)
 
 
 @pytest.mark.asyncio
@@ -122,7 +129,7 @@ async def test_create_success_parses_metadata_default() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-Idempotency-Key"] == "abc"
         return create_memory_response(
-            memory_id=mid, org_id=ORG, agent_id=AGENT, metadata={}
+            CreatedMemory(memory_id=mid, org_id=ORG, agent_id=AGENT, metadata={})
         )
 
     client = memory_client_for(handler)
