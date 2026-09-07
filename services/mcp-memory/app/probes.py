@@ -51,7 +51,23 @@ async def ready(request: Request) -> JSONResponse:
 
 @probe_router.get("/.well-known/oauth-protected-resource")
 async def protected_resource_metadata(request: Request) -> dict[str, object]:
+    """RFC 9728 Protected Resource Metadata (MCP resource-server discovery).
+
+    IBEX ships the minimum discovery fields MCP clients need to locate the
+    authorization server and understand scopes for this resource. Exhaustive
+    RFC 9728 field completeness is deferred (tracked as an E.1 follow-up).
+    """
     settings: Settings = request.app.state.settings
+    return build_protected_resource_metadata(settings)
+
+
+def build_protected_resource_metadata(settings: Settings) -> dict[str, object]:
+    """Build the PRM JSON document for ``IBEX_MCP_RESOURCE_URL``.
+
+    Minimum fields (locked for 3.5.E.1): ``resource``, ``authorization_servers``,
+    ``scopes_supported``. ``bearer_methods_supported`` and
+    ``resource_documentation`` are additive discovery hints.
+    """
     return {
         "resource": settings.resource_url,
         "authorization_servers": [settings.auth_server_url],

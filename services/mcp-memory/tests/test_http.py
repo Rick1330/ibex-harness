@@ -1,4 +1,4 @@
-"""HTTP probe, auth challenge, and MCP conformance-ish handshake tests."""
+"""HTTP probe, auth challenge, and MCP conformance handshake tests."""
 
 from __future__ import annotations
 
@@ -12,6 +12,13 @@ from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
 from app.main import create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
+from app.probes import build_protected_resource_metadata
+from app.protocol import (
+    MCP_PROTOCOL_VERSION_HEADER,
+    PROTOCOL_VERSION_LATEST,
+    PROTOCOL_VERSION_LEGACY,
+    SUPPORTED_PROTOCOL_VERSIONS,
+)
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 ORG_B = UUID("22222222-2222-2222-2222-222222222222")
@@ -27,7 +34,7 @@ def _clear_settings() -> None:
     get_settings.cache_clear()
 
 
-def _app() -> TestClient:
+def _app() -> tuple[TestClient, MemoryAuditSink]:
     settings = Settings(
         transport="streamable_http",
         resource_url="http://testserver/mcp",
@@ -46,6 +53,35 @@ def _app() -> TestClient:
     return TestClient(application), sink
 
 
+def _mcp_headers(token: str, protocol_version: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        MCP_PROTOCOL_VERSION_HEADER: protocol_version,
+    }
+
+
+def _initialize_payload(protocol_version: str, request_id: int = 1) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": protocol_version,
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0"},
+        },
+    }
+
+
+def _parse_jsonrpc_result(resp: object) -> dict[str, object]:
+    body = resp.json()
+    assert "result" in body, body
+    assert isinstance(body["result"], dict)
+    return body["result"]
+
+
 def test_health_and_ready() -> None:
     client, _ = _app()
     with client:
@@ -56,19 +92,40 @@ def test_health_and_ready() -> None:
 
 
 def test_protected_resource_metadata() -> None:
+    """RFC 9728 minimum discovery fields for the MCP resource server."""
     client, _ = _app()
     with client:
         resp = client.get("/.well-known/oauth-protected-resource")
     assert resp.status_code == 200
     body = resp.json()
+    # Minimum fields locked for 3.5.E.1 (deviation: exhaustive RFC 9728 later).
     assert body["resource"] == "http://testserver/mcp"
     assert body["authorization_servers"] == ["http://auth.test"]
+    assert body["scopes_supported"] == ["memory:read", "memory:write"]
+    assert set(body.keys()) >= {
+        "resource",
+        "authorization_servers",
+        "scopes_supported",
+    }
+
+
+def test_build_protected_resource_metadata_helper() -> None:
+    settings = Settings(
+        resource_url="https://mcp.example.com/mcp",
+        auth_server_url="https://auth.example.com",
+    )
+    meta = build_protected_resource_metadata(settings)
+    assert meta["resource"] == "https://mcp.example.com/mcp"
+    assert meta["authorization_servers"] == ["https://auth.example.com"]
+    assert meta["scopes_supported"] == ["memory:read", "memory:write"]
 
 
 def test_mcp_requires_bearer() -> None:
     client, _ = _app()
     with client:
-        resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        resp = client.post(
+            "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        )
     assert resp.status_code == 401
     assert "WWW-Authenticate" in resp.headers
     assert "resource_metadata" in resp.headers["WWW-Authenticate"]
@@ -99,30 +156,22 @@ def test_auth_unavailable_fail_closed() -> None:
         assert resp.json()["error"]["code"] == "auth_unavailable"
 
 
-def test_mcp_initialize_and_tools_list() -> None:
+@pytest.mark.parametrize(
+    "protocol_version",
+    sorted(SUPPORTED_PROTOCOL_VERSIONS),
+    ids=sorted(SUPPORTED_PROTOCOL_VERSIONS),
+)
+def test_mcp_initialize_negotiates_protocol_version(protocol_version: str) -> None:
+    """Both legacy and LATEST protocol versions must negotiate to the requested value."""
+    assert protocol_version in (PROTOCOL_VERSION_LEGACY, PROTOCOL_VERSION_LATEST)
     client, _sink = _app()
-    headers = {
-        "Authorization": f"Bearer {TOKEN_A}",
-        "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json",
-    }
+    headers = _mcp_headers(TOKEN_A, protocol_version)
     with client:
-        init = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test", "version": "0"},
-                },
-            },
-        )
+        init = client.post("/mcp", headers=headers, json=_initialize_payload(protocol_version))
         assert init.status_code in (200, 202), init.text
-        # Required after initialize for many MCP servers.
+        result = _parse_jsonrpc_result(init)
+        assert result["protocolVersion"] == protocol_version
+        # Required after initialize for Streamable HTTP clients.
         client.post(
             "/mcp",
             headers=headers,
@@ -134,9 +183,9 @@ def test_mcp_initialize_and_tools_list() -> None:
             json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         )
         assert listed.status_code in (200, 202), listed.text
-        text = listed.text
-        assert "search_memory" in text
-        assert "write_memory" in text
+        listed_text = listed.text
+        assert "search_memory" in listed_text
+        assert "write_memory" in listed_text
         called = client.post(
             "/mcp",
             headers=headers,
@@ -149,6 +198,11 @@ def test_mcp_initialize_and_tools_list() -> None:
         )
         assert called.status_code in (200, 202), called.text
         assert "stub" in called.text or "search_memory" in called.text or "mcp_stub" in called.text
+
+
+def test_mcp_initialize_and_tools_list() -> None:
+    """Back-compat alias: default conformance path uses LATEST protocol version."""
+    test_mcp_initialize_negotiates_protocol_version(PROTOCOL_VERSION_LATEST)
 
 
 def test_metrics_endpoint() -> None:
@@ -169,3 +223,11 @@ def test_authorization_token_not_echoed() -> None:
             json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
         )
     assert secret not in resp.text
+
+
+def test_supported_protocol_versions_constant() -> None:
+    assert PROTOCOL_VERSION_LEGACY == "2024-11-05"
+    assert PROTOCOL_VERSION_LATEST == "2025-11-25"
+    assert SUPPORTED_PROTOCOL_VERSIONS == frozenset(
+        {PROTOCOL_VERSION_LEGACY, PROTOCOL_VERSION_LATEST}
+    )

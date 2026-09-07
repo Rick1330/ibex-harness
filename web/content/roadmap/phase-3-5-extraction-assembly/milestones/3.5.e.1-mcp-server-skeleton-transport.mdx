@@ -1,8 +1,8 @@
 ---
 title: "3.5.E.1 MCP server skeleton and transport"
-description: "Minimal spec-compliant MCP server process with Streamable HTTP transport (production) and stdio (dev-only), auth via AuthService.ValidateToken gRPC, zero tools registered yet."
-summary: "Minimal spec-compliant MCP server process with Streamable HTTP transport (production) and stdio (dev-only), auth via AuthService.ValidateToken gRPC, zero tools registered yet."
-status: "planned"
+description: "Deepen existing mcp-memory Streamable HTTP skeleton (G6.M1 / ADR-0050) with dual protocol-version negotiation coverage and RFC 9728 minimum PRM fields — expand the process, do not recreate it."
+summary: "Deepen existing mcp-memory Streamable HTTP skeleton with dual protocol-version negotiation and RFC 9728 minimum protected-resource metadata."
+status: "in-progress"
 milestoneId: "3.5.E.1"
 track: "E"
 trackTitle: "MCP Tool Surface"
@@ -15,12 +15,12 @@ fullTitle: "Milestone 3.5.E.1 — MCP Server Skeleton and Transport"
 
 # Milestone 3.5.E.1 — MCP Server Skeleton and Transport
 
-**Status:** Planned  
+**Status:** In progress  
 **Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
 **Track:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
-**Depends on:** Phase 3 exit
+**Depends on:** Phase 3 exit + Phase 2.5.G6.M1 / [ADR-0050](/docs/adr/0050-mcp-server-skeleton)
 
 ---
 
@@ -31,9 +31,28 @@ fullTitle: "Milestone 3.5.E.1 — MCP Server Skeleton and Transport"
   make a better shape clear. Prefer outcomes over matching any particular file tree.
 </Callout>
 
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: expand live `services/mcp-memory/` from G6.M1 (do **not** create a
+  second MCP process or register “zero tools” — stub `search_memory` / `write_memory` already
+  exist per ADR-0050 §4; real bodies stay 3.5.E.2). Stay on official `mcp` **1.x** (floor
+  `>=1.29.1,<2`; no 2.x dual-era bump here). Explicitly assert `initialize` negotiation for
+  both `2024-11-05` and `2025-11-25` via `infra/scripts/mcp-conformance.sh` /
+  `tests/test_http.py`. Keep FastMCP `stateless_http=True` + `json_response=True` — **no**
+  EventStore / session resumability in E.1 (document, do not implement). RFC 9728 PRM ships
+  minimum fields (`resource`, `authorization_servers`, `scopes_supported`); exhaustive field
+  completeness ([#728](https://github.com/Rick1330/ibex-harness/issues/728)) and official
+  `@modelcontextprotocol/conformance` harness evaluation
+  ([#729](https://github.com/Rick1330/ibex-harness/issues/729)) are follow-up issues. Auth
+  failures remain HTTP 401/503 with `WWW-Authenticate` (OAuth RS /
+  ADR-0050), not JSON-RPC MCP errors. App processes stay host-run — no new
+  `docker-compose.dev.yml` MCP service (compose/dev is data stores only).
+</Callout>
+
 ## Why This Milestone Exists
 
-Stand up a minimal, spec-compliant MCP server process that authenticates against the existing IBEX identity system and exposes zero tools yet — proving the transport, auth, and process-lifecycle plumbing work before any memory logic is added.
+Deepen the existing MCP resource-server skeleton so transport, auth discovery, and
+protocol-version negotiation are explicitly proven against the current MCP 1.x SDK —
+before Phase 3.5 replaces stub tool bodies with real memory pipelines.
 
 ---
 
@@ -41,7 +60,7 @@ Stand up a minimal, spec-compliant MCP server process that authenticates against
 
 - **Streamable HTTP** as the only supported production transport (established in 2.5.G6.M1)
 - **stdio** for dev-convenience only, gated behind `IBEX_MCP_TRANSPORT=stdio` + `IBEX_MCP_ALLOW_STDIO`
-- **Python 3.12 + official `mcp` SDK** (`modelcontextprotocol/python-sdk`)
+- **Python 3.12 + official `mcp` SDK 1.x** (`modelcontextprotocol/python-sdk`)
 - Expand existing `services/mcp-memory/` — do **not** create a second MCP process
 
 <Callout type="info" title="Expand, do not recreate">
@@ -68,22 +87,23 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 **Areas that may be involved** (situational — not a checklist):
 
-- MCP server surface
-- Memory service / repositories
+- MCP server surface (`services/mcp-memory/`)
+- Conformance evidence (`infra/scripts/mcp-conformance.sh`)
 
 ## Success signals
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Starts, responds to MCP `initialize` handshake over Streamable HTTP (exact path may differ)
-- [ ] Bearer token validated via real `AuthService.ValidateToken` gRPC call (integration test)
-- [ ] Invalid/expired/revoked token → MCP error response in JSON-RPC format
-- [ ] Zero tools registered yet — plumbing only
-- [ ] `docker-compose.dev.yml` entry added; health-checked
-- [ ] Repo guards / CI checks still pass
+- [x] Starts, responds to MCP `initialize` over Streamable HTTP for `2024-11-05` **and** `2025-11-25`, with negotiated `protocolVersion` asserted
+- [x] Bearer required; invalid token → HTTP 401 + `WWW-Authenticate` `resource_metadata` (OAuth RS shape)
+- [x] Auth outage → HTTP 503 fail-closed
+- [x] RFC 9728 PRM at `/.well-known/oauth-protected-resource` includes `resource`, `authorization_servers`, `scopes_supported`
+- [x] Stub tools remain registered (real bodies deferred to 3.5.E.2)
+- [ ] `make mcp-conformance` / `ci-gate-python` paths still pass
+- [x] Follow-up issues filed: [#728](https://github.com/Rick1330/ibex-harness/issues/728) (RFC 9728 exhaustive fields), [#729](https://github.com/Rick1330/ibex-harness/issues/729) (official conformance harness)
 
 ## Prerequisites
 
 - Phase 3 exit
 - Auth service gRPC contract stable
-
+- Phase 2.5.G6.M1 / ADR-0050 skeleton present
