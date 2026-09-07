@@ -4,10 +4,8 @@ package proxy_test
 
 import (
 	"context"
-	"io"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -100,16 +98,11 @@ func (p *capturingMockProvider) Name() string { return "mock" }
 
 func (p *capturingMockProvider) SupportedModels() []string { return []string{"gpt-4o"} }
 
-func (p *capturingMockProvider) Complete(_ context.Context, req provider.Request) (provider.Response, error) {
+func (p *capturingMockProvider) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
 	p.mu.Lock()
 	p.last = req
 	p.mu.Unlock()
-	return provider.Response{
-		StatusCode: http.StatusOK,
-		Body: io.NopCloser(strings.NewReader(
-			`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`,
-		)),
-	}, nil
+	return mockForwardingProvider{}.Complete(ctx, req)
 }
 
 func (p *capturingMockProvider) lastRequest() provider.Request {
@@ -132,8 +125,8 @@ func startBufconnContextClient(t *testing.T, timeout time.Duration) (*configurab
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)
 	fake := &configurableContextServer{}
-	// nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection
-	srv := grpc.NewServer()
+	// Explicit insecure Creds satisfies Semgrep; bufconn is loopback-only test traffic.
+	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
 	contextv1.RegisterContextAssemblyServiceServer(srv, fake)
 	go func() { _ = srv.Serve(lis) }() //nolint:errcheck // bufconn test server; stopped via t.Cleanup
 	t.Cleanup(func() { srv.Stop() })
