@@ -51,8 +51,10 @@ on:
         default: ''
 
 concurrency:
-  group: memory-benchmarks-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Isolate schedule from push/PR so Sunday full (incl. 1M) is not cancelled by
+  # a same-day main push that also touches memory/bench paths.
+  group: memory-benchmarks-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 permissions:
   contents: read
@@ -224,7 +226,7 @@ jobs:
           sampler=$!
           set +e
           bash infra/scripts/memory-bench.sh \
-            --ef-search 40 \
+            --ef-search 64 \
             --min-similarity 0.70 \
             --iterative-scan off \
             --index-build-mode bulk

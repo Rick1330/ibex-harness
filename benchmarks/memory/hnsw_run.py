@@ -36,7 +36,7 @@ from synth import (
     vec_literal,
 )
 
-_QUERY_COUNTS = {10_000: 500, 100_000: 200, 1_000_000: 200}
+_QUERY_COUNTS = {10_000: 500, 100_000: 200, 1_000_000: 500}
 WARMUP_QUERIES = 100
 # Offset so warm-up indices never share the timed `(q * 97) % size` sequence.
 _WARMUP_INDEX_OFFSET = 10_007

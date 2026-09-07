@@ -11,7 +11,7 @@ published history.
 ## What it measures
 
 Synthetic semi-dense unit-vector corpus against live `pgvector` HNSW
-(`idx_memories_embedding_hnsw`, default `ef_search=40`):
+(`idx_memories_embedding_hnsw`, default `ef_search=64`):
 
 - **recall@10** — planted near-neighbor must appear in top-10
 - **latency** — wall-clock `PgVectorStore.search` p50/p95/p99 (+ bootstrap 95% CI on p95)
@@ -37,7 +37,7 @@ Partial btree indexes sharing the probe's `status`/`deleted_at` predicate otherw
 2. Assert `count(*) == corpus_size` before timing
 3. `ANALYZE ibex_core.memories` after COPY
 4. ≥100 discarded warm-up queries (optional `pg_prewarm` when available)
-5. Default `--ef-search 40` (roadmap SLA); overrides must be explicit CLI flags
+5. Default `--ef-search 64` (production / publish SLA); overrides must be explicit CLI flags
 6. Seed **once** per `(corpus_size × index_build_mode)`; search knobs
    (`min_similarity` × `iterative_scan`) reuse that corpus (no 4× re-seed)
 
@@ -46,7 +46,7 @@ Partial btree indexes sharing the probe's `status`/`deleted_at` predicate otherw
 CI (`memory-benchmark.yml`) always measures with production publish knobs:
 
 ```bash
---ef-search 40 --min-similarity 0.70 --iterative-scan off --index-build-mode bulk
+--ef-search 64 --min-similarity 0.70 --iterative-scan off --index-build-mode bulk
 ```
 
 `build_published_data.py` (via `publish_cells.py`) filters to those cells and attaches
@@ -95,7 +95,7 @@ POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable 
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
   MEMORY_BENCH_SIZES='10000 100000' \
   bash infra/scripts/memory-bench.sh \
-    --ef-search 40 \
+    --ef-search 64 \
     --min-similarity 0.70 \
     --iterative-scan off \
     --index-build-mode bulk
@@ -105,7 +105,7 @@ Useful flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--ef-search` | `40` | `hnsw.ef_search` |
+| `--ef-search` | `64` | `hnsw.ef_search` |
 | `--min-similarity` | `0.0 0.70` | production default is `0.70` |
 | `--iterative-scan` | `off relaxed_order` | pgvector 0.8 filtered-ANN continuation |
 | `--index-build-mode` | `incremental` | `bulk` = COPY then `CREATE INDEX` |

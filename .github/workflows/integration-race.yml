@@ -26,7 +26,9 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16@sha256:be01cf82fc7dbba824acf0a82e150b4b360f3ff93c6631d7844af431e841a95c
+        # pgvector 0.8.6 on PostgreSQL 16 — immutable pin (same as ci.yml).
+        # Migrate creates EXTENSION vector; vanilla postgres:16 fails here.
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_USER: ibex
           POSTGRES_PASSWORD: ibex
@@ -67,9 +69,11 @@ jobs:
       - name: Race + integration (proxy, auth, session, directive)
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          # Race detector inflates wall time; keep SEC1_5 meaningful without false fails.
+          REVOCATION_SLA_MS: "2000"
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/integration-race.xml -- \
-            -race -tags=integration -timeout=20m -count=1 \
+            -race -tags=integration -timeout=20m -count=1 -p 1 -parallel 1 \
             ./packages/session/... \
             ./packages/directive/... \
             ./services/auth/... \

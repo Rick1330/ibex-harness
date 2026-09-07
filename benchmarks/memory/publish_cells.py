@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_PUBLISH_EF_SEARCH = 40
+_PUBLISH_EF_SEARCH = 64
 _PUBLISH_MIN_SIMILARITY = 0.70
 _PUBLISH_MIN_SIM_TOLERANCE = 0.001
 _PUBLISH_ITERATIVE_SCAN = "off"

@@ -32,7 +32,7 @@ from hnsw_run import MatrixConfig, SizeResult, WARMUP_QUERIES, run_search_matrix
 from path_guard import UnsafePathError, resolve_raw_bench_path  # noqa: E402
 from synth import ACTIVE_DIMS, DIM  # noqa: E402
 
-_DEFAULT_EF_SEARCH = 40
+_DEFAULT_EF_SEARCH = 64
 _DEFAULT_SIZES = (10_000, 100_000)
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +141,7 @@ def main() -> None:
         "--ef-search",
         type=int,
         default=_DEFAULT_EF_SEARCH,
-        help="hnsw.ef_search (default: 40 — roadmap SLA)",
+        help="hnsw.ef_search (default: 64 — production / publish SLA)",
     )
     parser.add_argument(
         "--min-similarity",
