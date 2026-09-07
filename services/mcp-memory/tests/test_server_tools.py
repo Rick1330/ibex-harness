@@ -11,6 +11,7 @@ from app.audit import AsyncAuditEmitter, MemoryAuditSink
 from app.errors import PermissionDeniedError
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, require_principal, set_principal
+from app.ratelimit import NoopMcpLimiter
 from app.server import _invoke_tool, _run_search, _run_write
 from tests.memory_fixtures import AGENT, ORG, stub_memory_client
 
@@ -34,12 +35,14 @@ async def test_invoke_search_and_write_emits_audit() -> None:
     try:
         search = await _invoke_tool(
             audit=audit,
+            rate_limiter=NoopMcpLimiter(),
             tool_name="search_memory",
             raw={"query": "hello"},
             runner=lambda raw: _run_search(raw, client),
         )
         write = await _invoke_tool(
             audit=audit,
+            rate_limiter=NoopMcpLimiter(),
             tool_name="write_memory",
             raw={"content": "note"},
             runner=lambda raw: _run_write(raw, client),
@@ -68,6 +71,7 @@ async def test_invoke_permission_denied_audited() -> None:
         with pytest.raises(PermissionDeniedError):
             await _invoke_tool(
                 audit=audit,
+                rate_limiter=NoopMcpLimiter(),
                 tool_name="write_memory",
                 raw={"content": "x"},
                 runner=lambda raw: _run_write(raw, None),

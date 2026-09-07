@@ -47,7 +47,7 @@ and authorization-server URL hint. Full AS flows remain downstream.
 
 - 3.5.E.2 — replace stub runners with context/memory clients; keep schemas
 - 3.5.E.3 — `record_feedback`
-- 3.5.E.4 — independent MCP RPM + auth circuit-breaker polish (table already exists)
+- 3.5.E.4 — independent MCP RPM (`isError`/`rate_limited`, not HTTP 429) + auth circuit-breaker polish (table already exists)
 - 5.B.3 — `get_memory_lineage`
 
 ## Local commands

@@ -16,8 +16,9 @@ from pydantic import ConfigDict, Field
 
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
 from app.clients.memory import MemoryHttpClient
-from app.errors import MCPServiceError
+from app.errors import MCPServiceError, RateLimitedError
 from app.principal import require_principal
+from app.ratelimit import McpRateLimiter, NoopMcpLimiter
 from app.tools import (
     Category,
     FeedbackKind,
@@ -42,12 +43,14 @@ def build_mcp_server(
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
     *,
+    rate_limiter: McpRateLimiter | None = None,
     allow_test_hosts: bool = True,
 ) -> FastMCP:
+    limiter = rate_limiter or NoopMcpLimiter()
     mcp = FastMCP(
         "ibex-mcp-memory",
         instructions=(
-            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2–E.3). "
+            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2–E.4). "
             "search_memory, write_memory, and record_feedback call the memory "
             "service over HTTP. Auth is required. Streamable HTTP is stateless "
             "(no EventStore resumability)."
@@ -58,9 +61,9 @@ def build_mcp_server(
         json_response=True,
         transport_security=_transport_security(allow_test_hosts=allow_test_hosts),
     )
-    _register_search_tool(mcp, audit, memory_client)
-    _register_write_tool(mcp, audit, memory_client)
-    _register_feedback_tool(mcp, audit, memory_client)
+    _register_search_tool(mcp, audit, memory_client, limiter)
+    _register_write_tool(mcp, audit, memory_client, limiter)
+    _register_feedback_tool(mcp, audit, memory_client, limiter)
     _forbid_undeclared_tool_args(mcp)
     return mcp
 
@@ -69,6 +72,7 @@ def _register_search_tool(
     mcp: FastMCP,
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
+    limiter: McpRateLimiter,
 ) -> None:
     @mcp.tool(
         name="search_memory",
@@ -81,6 +85,7 @@ def _register_search_tool(
     ) -> str:
         return await _invoke_tool(
             audit=audit,
+            rate_limiter=limiter,
             tool_name="search_memory",
             raw=_optional_agent({"query": query, "limit": limit}, agent_id),
             runner=lambda raw: _run_search(raw, memory_client),
@@ -91,6 +96,7 @@ def _register_write_tool(
     mcp: FastMCP,
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
+    limiter: McpRateLimiter,
 ) -> None:
     @mcp.tool(
         name="write_memory",
@@ -107,6 +113,7 @@ def _register_write_tool(
     ) -> str:
         return await _invoke_tool(
             audit=audit,
+            rate_limiter=limiter,
             tool_name="write_memory",
             raw=_optional_agent(
                 {"content": content, "category": category, "confidence": confidence},
@@ -120,6 +127,7 @@ def _register_feedback_tool(
     mcp: FastMCP,
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
+    limiter: McpRateLimiter,
 ) -> None:
     @mcp.tool(
         name="record_feedback",
@@ -144,6 +152,7 @@ def _register_feedback_tool(
             raw["notes"] = notes
         return await _invoke_tool(
             audit=audit,
+            rate_limiter=limiter,
             tool_name="record_feedback",
             raw=raw,
             runner=lambda payload: _run_feedback(payload, memory_client),
@@ -170,7 +179,11 @@ def _transport_security(*, allow_test_hosts: bool) -> TransportSecuritySettings:
         return TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
             allowed_hosts=["127.0.0.1:*", "localhost:*", "testserver", "testserver:*"],
-            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://testserver"],
+            allowed_origins=[
+                "http://127.0.0.1:*",
+                "http://localhost:*",
+                "http://testserver",
+            ],
         )
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
@@ -208,6 +221,7 @@ async def _run_feedback(
 async def _invoke_tool(
     *,
     audit: AsyncAuditEmitter,
+    rate_limiter: McpRateLimiter,
     tool_name: str,
     raw: dict[str, Any],
     runner: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
@@ -218,6 +232,9 @@ async def _invoke_tool(
     success = False
     error_code = ""
     try:
+        decision = await rate_limiter.check(principal.org_id)
+        if not decision.allowed:
+            raise RateLimitedError()
         result = await runner(raw)
         success = True
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
@@ -227,6 +244,14 @@ async def _invoke_tool(
             "mcp tool failed tool_name=%s error_code=%s request_id=%s",
             tool_name,
             exc.code,
+            request_id,
+        )
+        raise
+    except Exception:
+        error_code = "internal_error"
+        logger.exception(
+            "mcp tool internal_error tool_name=%s request_id=%s",
+            tool_name,
             request_id,
         )
         raise
