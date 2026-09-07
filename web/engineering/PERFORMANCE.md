@@ -222,7 +222,7 @@ Weekly or before major releases:
 
 ### 7.2 pgvector tuning (initial guidance)
 
-- Preferred Phase 3+ index: **HNSW** (`m=16`, `ef_construction=64` as a starting build preference; tune query-time `ef_search` from recall/latency benches — roadmap starting point `40`).
+- Preferred Phase 3+ index: **HNSW** (`m=16`, `ef_construction=64` as a starting build preference; tune query-time `ef_search` from recall/latency benches — production default `64`).
 - Older IVFFlat `lists ≈ sqrt(N)` / `probes` guidance is **historical** (pre-redesign). Do not start new deployments on IVFFlat without an ADR reversing ADR-0040-style HNSW preference.
 - Plan migration to Qdrant (or Postgres partitioning) only when:
   - corpus/QPS clearly outgrows a single HNSW instance with evidence, **and**

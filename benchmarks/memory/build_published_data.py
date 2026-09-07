@@ -1,7 +1,7 @@
 """Merge a raw HNSW bench result into the published history JSON.
 
 Published cells are production knobs only:
-  ef_search=40, min_similarity≈0.70, iterative_scan=off, index_build_mode=bulk
+  ef_search=64, min_similarity≈0.70, iterative_scan=off, index_build_mode=bulk
 Full matrix remains in the raw artifact under benchmarks/memory/output/.
 """
 

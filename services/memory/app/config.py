@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     )
 
     hnsw_ef_search: int = Field(
-        default=40,
+        default=64,
         ge=1,
         validation_alias=AliasChoices("IBEX_HNSW_EF_SEARCH", "IBEX_MEMORY_HNSW_EF_SEARCH"),
         description="Per-transaction HNSW ef_search",

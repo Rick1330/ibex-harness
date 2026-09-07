@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run memory HNSW benches under benchmarks/memory/ (needs migrated pgvector Postgres).
 # Extra args after the script are forwarded to hnsw_bench.py
-# (e.g. --ef-search 40 --min-similarity 0.0 0.70).
+# (e.g. --ef-search 64 --min-similarity 0.0 0.70).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

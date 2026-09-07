@@ -224,7 +224,7 @@ jobs:
           sampler=$!
           set +e
           bash infra/scripts/memory-bench.sh \
-            --ef-search 40 \
+            --ef-search 64 \
             --min-similarity 0.70 \
             --iterative-scan off \
             --index-build-mode bulk
