@@ -838,7 +838,7 @@ Content-Type: application/json
   "data": {
     "memory_id": "a1b2c3d4-...",
     "feedback": "positive",
-    "new_usefulness_score": 0.85,
+    "new_usefulness_score": 0.88,
     "total_positive_feedback": 13,
     "total_negative_feedback": 1
   }
