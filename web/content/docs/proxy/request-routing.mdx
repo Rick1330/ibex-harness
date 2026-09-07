@@ -37,9 +37,20 @@ flowchart LR
   CT --> AU[auth]
   AU --> AG[agentVerify]
   AG --> RL[rateLimit]
-  RL --> CP[chatParse]
+  RL --> DR[directiveResolve]
+  DR --> CP[chatParse]
   CP --> PR[providerRouter]
   PR --> H[handler]
+```
+
+Inside the chat handler (not a middleware hop): when `IBEX_CONTEXT_ENABLED` and a context client are present, **Assemble** runs via gRPC, then messages are injected and forwarded to the provider. Failures fail open to Phase 2 directive-only injection.
+
+Terminate is a separate authenticated route:
+
+```mermaid
+flowchart LR
+  T[POST terminate] --> TC[Complete session]
+  TC -->|status completed| EN[async HTTP enqueue ADR-0072]
 ```
 
 Global middleware (metrics, request ID, logging) wraps all routes. Chat-specific middleware runs in the order above — auth never executes on oversize or wrong Content-Type bodies. `chatParse` attaches the validated body; `providerRouter` attaches the selected `provider.Provider` (or returns `501 PROVIDER_NOT_CONFIGURED`).
