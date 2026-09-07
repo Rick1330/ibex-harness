@@ -141,3 +141,59 @@ async def test_create_success_parses_metadata_default() -> None:
     assert result.memory_id == mid
     assert result.metadata == {}
     assert result.org_id == str(ORG)
+
+
+@pytest.mark.asyncio
+async def test_record_feedback_success() -> None:
+    mid = str(uuid4())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(f"/memories/{mid}/feedback")
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "memory_id": mid,
+                    "feedback": "positive",
+                    "new_usefulness_score": 0.67,
+                    "total_positive_feedback": 1,
+                    "total_negative_feedback": 0,
+                }
+            },
+        )
+
+    client = memory_client_for(handler)
+    result = await client.record_feedback(
+        token="tok",
+        memory_id=UUID(mid),
+        body={"feedback": "positive"},
+    )
+    assert result.memory_id == mid
+    assert result.new_usefulness_score == 0.67
+
+
+@pytest.mark.asyncio
+async def test_record_feedback_rejects_invalid_feedback_enum() -> None:
+    mid = str(uuid4())
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "memory_id": mid,
+                    "feedback": "other",
+                    "new_usefulness_score": 0.5,
+                    "total_positive_feedback": 0,
+                    "total_negative_feedback": 0,
+                }
+            },
+        )
+
+    client = memory_client_for(handler)
+    with pytest.raises(MemoryHttpError, match="feedback response invalid"):
+        await client.record_feedback(
+            token="tok",
+            memory_id=UUID(mid),
+            body={"feedback": "positive"},
+        )

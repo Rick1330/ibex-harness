@@ -1,4 +1,4 @@
-"""FastMCP server with search_memory / write_memory tools (memory HTTP)."""
+"""FastMCP server with search_memory / write_memory / record_feedback tools."""
 
 from __future__ import annotations
 
@@ -20,8 +20,13 @@ from app.errors import MCPServiceError
 from app.principal import require_principal
 from app.tools import (
     Category,
+    FeedbackKind,
+    parse_feedback_args,
     parse_search_args,
     parse_write_args,
+)
+from app.tools import (
+    record_feedback as run_record_feedback,
 )
 from app.tools import (
     search_memory as run_search_memory,
@@ -42,9 +47,10 @@ def build_mcp_server(
     mcp = FastMCP(
         "ibex-mcp-memory",
         instructions=(
-            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2). "
-            "search_memory and write_memory call the memory service over HTTP. "
-            "Auth is required. Streamable HTTP is stateless (no EventStore resumability)."
+            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2–E.3). "
+            "search_memory, write_memory, and record_feedback call the memory "
+            "service over HTTP. Auth is required. Streamable HTTP is stateless "
+            "(no EventStore resumability)."
         ),
         # Stateless + JSON responses: no session EventStore / resumable SSE
         # (explicitly out of scope for 3.5.E.1 — document in milestone MDX).
@@ -52,7 +58,18 @@ def build_mcp_server(
         json_response=True,
         transport_security=_transport_security(allow_test_hosts=allow_test_hosts),
     )
+    _register_search_tool(mcp, audit, memory_client)
+    _register_write_tool(mcp, audit, memory_client)
+    _register_feedback_tool(mcp, audit, memory_client)
+    _forbid_undeclared_tool_args(mcp)
+    return mcp
 
+
+def _register_search_tool(
+    mcp: FastMCP,
+    audit: AsyncAuditEmitter,
+    memory_client: MemoryHttpClient | None,
+) -> None:
     @mcp.tool(
         name="search_memory",
         description="Search org-scoped memories via the memory service HTTP API.",
@@ -69,6 +86,12 @@ def build_mcp_server(
             runner=lambda raw: _run_search(raw, memory_client),
         )
 
+
+def _register_write_tool(
+    mcp: FastMCP,
+    audit: AsyncAuditEmitter,
+    memory_client: MemoryHttpClient | None,
+) -> None:
     @mcp.tool(
         name="write_memory",
         description=(
@@ -92,8 +115,39 @@ def build_mcp_server(
             runner=lambda raw: _run_write(raw, memory_client),
         )
 
-    _forbid_undeclared_tool_args(mcp)
-    return mcp
+
+def _register_feedback_tool(
+    mcp: FastMCP,
+    audit: AsyncAuditEmitter,
+    memory_client: MemoryHttpClient | None,
+) -> None:
+    @mcp.tool(
+        name="record_feedback",
+        description=(
+            "Record positive/negative/neutral usefulness feedback for a memory "
+            "via POST /v1/memories/{id}/feedback."
+        ),
+    )
+    async def record_feedback(
+        memory_id: UUID,
+        feedback: FeedbackKind,
+        session_id: UUID | None = None,
+        trace_id: UUID | None = None,
+        notes: Annotated[str | None, Field(default=None, max_length=2000)] = None,
+    ) -> str:
+        raw: dict[str, Any] = {"memory_id": str(memory_id), "feedback": feedback}
+        if session_id is not None:
+            raw["session_id"] = str(session_id)
+        if trace_id is not None:
+            raw["trace_id"] = str(trace_id)
+        if notes is not None:
+            raw["notes"] = notes
+        return await _invoke_tool(
+            audit=audit,
+            tool_name="record_feedback",
+            raw=raw,
+            runner=lambda payload: _run_feedback(payload, memory_client),
+        )
 
 
 def _forbid_undeclared_tool_args(mcp: FastMCP) -> None:
@@ -141,6 +195,14 @@ async def _run_write(
     raw: dict[str, Any], client: MemoryHttpClient | None
 ) -> dict[str, Any]:
     return await run_write_memory(require_principal(), parse_write_args(raw), client)
+
+
+async def _run_feedback(
+    raw: dict[str, Any], client: MemoryHttpClient | None
+) -> dict[str, Any]:
+    return await run_record_feedback(
+        require_principal(), parse_feedback_args(raw), client
+    )
 
 
 async def _invoke_tool(

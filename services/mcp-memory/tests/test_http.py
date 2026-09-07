@@ -208,6 +208,7 @@ def test_mcp_initialize_negotiates_protocol_version(protocol_version: str) -> No
         listed_text = listed.text
         assert "search_memory" in listed_text
         assert "write_memory" in listed_text
+        assert "record_feedback" in listed_text
         called = client.post(
             "/mcp",
             headers=headers,

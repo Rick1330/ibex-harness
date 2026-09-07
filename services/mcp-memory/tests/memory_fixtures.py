@@ -59,6 +59,48 @@ def create_memory_response(created: CreatedMemory | None = None) -> httpx.Respon
     )
 
 
+@dataclass(frozen=True, slots=True)
+class FeedbackResultSpec:
+    """Fixture knobs for a successful POST /v1/memories/{id}/feedback response."""
+
+    memory_id: str | None = None
+    feedback: str = "positive"
+    score: float = 0.67
+    positive: int = 1
+    negative: int = 0
+
+
+def feedback_response(spec: FeedbackResultSpec | None = None) -> httpx.Response:
+    resolved = spec or FeedbackResultSpec()
+    mid = resolved.memory_id or str(uuid4())
+    return httpx.Response(
+        200,
+        json={
+            "data": {
+                "memory_id": mid,
+                "feedback": resolved.feedback,
+                "new_usefulness_score": resolved.score,
+                "total_positive_feedback": resolved.positive,
+                "total_negative_feedback": resolved.negative,
+            }
+        },
+    )
+
+
+def _feedback_memory_id(path: str) -> str | None:
+    """Return memory_id for `/v1/memories/{id}/feedback`, else None."""
+    prefix = "/v1/memories/"
+    suffix = "/feedback"
+    if not path.startswith(prefix):
+        return None
+    if not path.endswith(suffix):
+        return None
+    memory_id = path.removeprefix(prefix).removesuffix(suffix)
+    if not memory_id or "/" in memory_id:
+        return None
+    return memory_id
+
+
 def stub_memory_handler(
     *,
     org_id: UUID = ORG,
@@ -67,8 +109,16 @@ def stub_memory_handler(
     mid = str(uuid4())
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/search"):
+        path = request.url.path
+        if path.endswith("/search"):
             return empty_search_response()
+        if request.method != "POST":
+            return create_memory_response(
+                CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
+            )
+        memory_id = _feedback_memory_id(path)
+        if memory_id is not None:
+            return feedback_response(FeedbackResultSpec(memory_id=memory_id))
         return create_memory_response(
             CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
         )

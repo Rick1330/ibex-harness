@@ -20,10 +20,13 @@ from app.errors import (
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal
 from app.tools import (
+    RECORD_FEEDBACK_SCHEMA,
     SEARCH_MEMORY_SCHEMA,
     WRITE_MEMORY_SCHEMA,
+    parse_feedback_args,
     parse_search_args,
     parse_write_args,
+    record_feedback,
     resolve_tool_agent_id,
     search_memory,
     write_idempotency_key,
@@ -56,6 +59,7 @@ def test_write_schema_accepts_memory_api_categories() -> None:
 def test_schemas_forbid_additional_properties() -> None:
     assert SEARCH_MEMORY_SCHEMA["additionalProperties"] is False
     assert WRITE_MEMORY_SCHEMA["additionalProperties"] is False
+    assert RECORD_FEEDBACK_SCHEMA["additionalProperties"] is False
     assert set(WRITE_MEMORY_SCHEMA["properties"]["category"]["enum"]) == {
         "factual",
         "preference",
@@ -343,3 +347,104 @@ async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
 def test_schema_rejects_missing_wrong_type_and_oversized(parser, raw: dict) -> None:
     with pytest.raises(SchemaError):
         parser(raw)
+
+
+def test_feedback_schema_rejects_extra() -> None:
+    with pytest.raises(SchemaError):
+        parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive", "extra": 1})
+
+
+def test_feedback_schema_rejects_bad_enum() -> None:
+    with pytest.raises(SchemaError):
+        parse_feedback_args({"memory_id": str(AGENT), "feedback": "great"})
+
+
+def test_feedback_schema_accepts_optional_fields() -> None:
+    args = parse_feedback_args(
+        {
+            "memory_id": str(AGENT),
+            "feedback": "neutral",
+            "notes": "ok",
+            "session_id": str(AGENT),
+        }
+    )
+    assert args.feedback == "neutral"
+    assert args.notes == "ok"
+
+
+@pytest.mark.asyncio
+async def test_record_feedback_requires_memory_write() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    hits = {"n": 0}
+
+    def counting(_request: httpx.Request) -> httpx.Response:
+        hits["n"] += 1
+        return httpx.Response(200, json={"data": {}})
+
+    args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive"})
+    client = memory_client_for(counting)
+    with pytest.raises(PermissionDeniedError):
+        await record_feedback(principal, args, client)
+    assert hits["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_record_feedback_success() -> None:
+    mid = str(uuid4())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+        assert request.url.path.endswith(f"/memories/{mid}/feedback")
+        body = json.loads(request.content)
+        assert body == {"feedback": "positive", "notes": "helped"}
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "memory_id": mid,
+                    "feedback": "positive",
+                    "new_usefulness_score": 0.67,
+                    "total_positive_feedback": 1,
+                    "total_negative_feedback": 0,
+                }
+            },
+        )
+
+    set_access_token(TOKEN)
+    try:
+        out = await record_feedback(
+            Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+            parse_feedback_args(
+                {"memory_id": mid, "feedback": "positive", "notes": "helped"}
+            ),
+            memory_client_for(handler),
+        )
+    finally:
+        set_access_token(None)
+    assert out["memory_id"] == mid
+    assert out["new_usefulness_score"] == 0.67
+    assert out["total_positive_feedback"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler", "exc_type"),
+    [
+        (_status_handler(404), BackendRejectedError),
+        (_status_handler(503), BackendUnavailableError),
+        (_timeout_handler, BackendUnavailableError),
+    ],
+)
+async def test_record_feedback_fail_closed(
+    handler: Callable[[httpx.Request], httpx.Response],
+    exc_type: type[BaseException],
+) -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
+    args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "negative"})
+    client = memory_client_for(handler)
+    set_access_token(TOKEN)
+    try:
+        with pytest.raises(exc_type):
+            await record_feedback(principal, args, client)
+    finally:
+        set_access_token(None)

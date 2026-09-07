@@ -90,3 +90,15 @@ def test_register_hot_zadd_trim_script() -> None:
     redis = MagicMock()
     register_hot_zadd_trim_script(redis)
     redis.register_script.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_hot_fail_open_on_redis_error() -> None:
+    from redis.exceptions import RedisError
+
+    redis = MagicMock()
+    redis.register_script = MagicMock(side_effect=RedisError("boom"))
+    writer = MemoryCacheWriter(redis, MagicMock(memory_cache_ttl_seconds=3600))
+    row = sample_memory_row()
+    await writer.refresh_hot(row)  # must not raise
+    redis.register_script.assert_called_once()

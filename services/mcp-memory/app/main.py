@@ -89,7 +89,7 @@ def _resolve_memory_client(
         return injected, False
     if not cfg.memory_http_url.strip():
         logger.warning(
-            "IBEX_MEMORY_HTTP_URL unset — search_memory/write_memory will fail closed"
+            "IBEX_MEMORY_HTTP_URL unset — search_memory/write_memory/record_feedback will fail closed"
         )
         return None, False
     return (
