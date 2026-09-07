@@ -1,13 +1,12 @@
-"""FastMCP server with stub search_memory / write_memory tools."""
+"""FastMCP server with search_memory / write_memory tools (memory HTTP)."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -16,26 +15,36 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import ConfigDict, Field
 
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
+from app.clients.memory import MemoryHttpClient
 from app.errors import MCPServiceError
 from app.principal import require_principal
 from app.tools import (
     Category,
     parse_search_args,
     parse_write_args,
-    stub_search_memory,
-    stub_write_memory,
+)
+from app.tools import (
+    search_memory as run_search_memory,
+)
+from app.tools import (
+    write_memory as run_write_memory,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True) -> FastMCP:
+def build_mcp_server(
+    audit: AsyncAuditEmitter,
+    memory_client: MemoryHttpClient | None,
+    *,
+    allow_test_hosts: bool = True,
+) -> FastMCP:
     mcp = FastMCP(
         "ibex-mcp-memory",
         instructions=(
-            "IBEX memory MCP resource server (G6.M1 / 3.5.E.1). "
-            "Tools are stubs — no persistence. Auth is required. "
-            "Streamable HTTP is stateless (no EventStore resumability)."
+            "IBEX memory MCP resource server (G6.M1 / 3.5.E.2). "
+            "search_memory and write_memory call the memory service over HTTP. "
+            "Auth is required. Streamable HTTP is stateless (no EventStore resumability)."
         ),
         # Stateless + JSON responses: no session EventStore / resumable SSE
         # (explicitly out of scope for 3.5.E.1 — document in milestone MDX).
@@ -46,7 +55,7 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
 
     @mcp.tool(
         name="search_memory",
-        description="Search org-scoped memories (stub — returns deterministic mock hits).",
+        description="Search org-scoped memories via the memory service HTTP API.",
     )
     async def search_memory(
         query: Annotated[str, Field(min_length=1, max_length=2000)],
@@ -57,16 +66,19 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
             audit=audit,
             tool_name="search_memory",
             raw=_optional_agent({"query": query, "limit": limit}, agent_id),
-            runner=_run_search,
+            runner=lambda raw: _run_search(raw, memory_client),
         )
 
     @mcp.tool(
         name="write_memory",
-        description="Write an explicit memory (stub — does not persist).",
+        description=(
+            "Write an explicit memory through the memory service pipeline "
+            "(metadata.mcp_source=mcp_explicit)."
+        ),
     )
     async def write_memory(
         content: Annotated[str, Field(min_length=1, max_length=8000)],
-        category: Category = "fact",
+        category: Category = "factual",
         confidence: Annotated[float, Field(default=0.6, ge=0.0, le=1.0)] = 0.6,
         agent_id: UUID | None = None,
     ) -> str:
@@ -77,7 +89,7 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
                 {"content": content, "category": category, "confidence": confidence},
                 agent_id,
             ),
-            runner=_run_write,
+            runner=lambda raw: _run_write(raw, memory_client),
         )
 
     _forbid_undeclared_tool_args(mcp)
@@ -119,12 +131,16 @@ def _optional_agent(payload: dict[str, Any], agent_id: UUID | None) -> dict[str,
     return payload
 
 
-def _run_search(raw: dict[str, Any]) -> dict[str, Any]:
-    return stub_search_memory(require_principal(), parse_search_args(raw))
+async def _run_search(
+    raw: dict[str, Any], client: MemoryHttpClient | None
+) -> dict[str, Any]:
+    return await run_search_memory(require_principal(), parse_search_args(raw), client)
 
 
-def _run_write(raw: dict[str, Any]) -> dict[str, Any]:
-    return stub_write_memory(require_principal(), parse_write_args(raw))
+async def _run_write(
+    raw: dict[str, Any], client: MemoryHttpClient | None
+) -> dict[str, Any]:
+    return await run_write_memory(require_principal(), parse_write_args(raw), client)
 
 
 async def _invoke_tool(
@@ -132,7 +148,7 @@ async def _invoke_tool(
     audit: AsyncAuditEmitter,
     tool_name: str,
     raw: dict[str, Any],
-    runner: Callable[[dict[str, Any]], dict[str, Any]],
+    runner: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
 ) -> str:
     started = time.perf_counter()
     request_id = str(uuid.uuid4())
@@ -140,7 +156,7 @@ async def _invoke_tool(
     success = False
     error_code = ""
     try:
-        result = await asyncio.to_thread(runner, raw)
+        result = await runner(raw)
         success = True
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
     except MCPServiceError as exc:

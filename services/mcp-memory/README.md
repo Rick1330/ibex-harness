@@ -1,10 +1,10 @@
 # MCP Memory Server (`services/mcp-memory`)
 
-Python MCP **resource server** for IBEX memory tools (Phase **2.5.G6.M1** skeleton).
+Python MCP **resource server** for IBEX memory tools (Phase **2.5.G6.M1** skeleton → **3.5.E.2** tools).
 
 - Transport: Streamable HTTP (`/mcp`); stdio only when `IBEX_MCP_TRANSPORT=stdio` and `IBEX_MCP_ALLOW_STDIO=true`
 - Auth: Bearer → `AuthService.ValidateToken` gRPC (fail closed)
-- Tools: stub `search_memory` / `write_memory` (no persistence)
+- Tools: `search_memory` / `write_memory` via memory HTTP (`IBEX_MEMORY_HTTP_URL`); `metadata.mcp_source=mcp_explicit`
 - Audit: async `ibex.mcp_tool_calls` emitter seam (ClickHouse)
 
 See [ADR-0050](../../web/content/docs/adr/0050-mcp-server-skeleton.mdx).
