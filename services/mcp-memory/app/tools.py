@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.access_token import require_access_token
 from app.clients.memory import (
+    FeedbackResult,
     MemoryHttpClient,
     MemoryHttpError,
     MemoryHttpTimeout,
@@ -42,6 +43,7 @@ from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.principal import Principal
 
 Category = Literal["factual", "preference", "behavioral", "episodic", "procedural"]
+FeedbackKind = Literal["positive", "negative", "neutral"]
 MCP_SOURCE = "mcp_explicit"
 
 SEARCH_MEMORY_SCHEMA: dict[str, Any] = {
@@ -71,6 +73,22 @@ WRITE_MEMORY_SCHEMA: dict[str, Any] = {
     },
 }
 
+RECORD_FEEDBACK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["memory_id", "feedback"],
+    "properties": {
+        "memory_id": {"type": "string", "format": "uuid"},
+        "feedback": {
+            "type": "string",
+            "enum": ["positive", "negative", "neutral"],
+        },
+        "session_id": {"type": "string", "format": "uuid"},
+        "trace_id": {"type": "string", "format": "uuid"},
+        "notes": {"type": "string", "maxLength": 2000},
+    },
+}
+
 
 class SearchMemoryArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -89,6 +107,16 @@ class WriteMemoryArgs(BaseModel):
     agent_id: UUID | None = None
 
 
+class RecordFeedbackArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    memory_id: UUID
+    feedback: FeedbackKind
+    session_id: UUID | None = None
+    trace_id: UUID | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 def parse_search_args(raw: dict[str, Any] | None) -> SearchMemoryArgs:
     try:
         return SearchMemoryArgs.model_validate(raw or {})
@@ -99,6 +127,13 @@ def parse_search_args(raw: dict[str, Any] | None) -> SearchMemoryArgs:
 def parse_write_args(raw: dict[str, Any] | None) -> WriteMemoryArgs:
     try:
         return WriteMemoryArgs.model_validate(raw or {})
+    except ValidationError as exc:
+        raise SchemaError(_first_validation_message(exc)) from exc
+
+
+def parse_feedback_args(raw: dict[str, Any] | None) -> RecordFeedbackArgs:
+    try:
+        return RecordFeedbackArgs.model_validate(raw or {})
     except ValidationError as exc:
         raise SchemaError(_first_validation_message(exc)) from exc
 
@@ -185,6 +220,35 @@ async def write_memory(
         "persisted": True,
         "status": created.status,
         "metadata": created.metadata,
+    }
+
+
+async def record_feedback(
+    principal: Principal,
+    args: RecordFeedbackArgs,
+    client: MemoryHttpClient | None,
+) -> dict[str, Any]:
+    """Record usefulness feedback via memory HTTP. Requires MemoryWrite."""
+    _require_permission(principal, MEMORY_WRITE, "record_feedback requires MemoryWrite")
+    mem = _require_client(client)
+    token = require_access_token()
+    body: dict[str, Any] = {"feedback": args.feedback}
+    if args.session_id is not None:
+        body["session_id"] = str(args.session_id)
+    if args.trace_id is not None:
+        body["trace_id"] = str(args.trace_id)
+    if args.notes is not None:
+        body["notes"] = args.notes
+    recorded: FeedbackResult = await _call_memory(
+        lambda: mem.record_feedback(token=token, memory_id=args.memory_id, body=body)
+    )
+    return {
+        "org_id": str(principal.org_id),
+        "memory_id": recorded.memory_id,
+        "feedback": recorded.feedback,
+        "new_usefulness_score": recorded.new_usefulness_score,
+        "total_positive_feedback": recorded.total_positive_feedback,
+        "total_negative_feedback": recorded.total_negative_feedback,
     }
 
 

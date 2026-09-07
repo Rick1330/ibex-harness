@@ -19,6 +19,7 @@ from app.auth.client import GRPCTokenValidator, TokenValidator
 from app.clients.embedding import EmbeddingClient
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
+from app.feedback.service import MemoryFeedbackService
 from app.http_metrics import HTTPMetricsMiddleware
 from app.http_validation import request_validation_error_handler
 from app.idempotency.redis_store import RedisIdempotencyStore
@@ -53,6 +54,8 @@ class MemoryAppState:
     hot_cache_reader: MemoryHotCacheReader | None = field(default=None, repr=False)
     embedding_client: EmbeddingClient | None = field(default=None, repr=False)
     pii: PiiService | None = field(default=None, repr=False)
+    cache_writer: MemoryCacheWriter | None = field(default=None, repr=False)
+    feedback_service: MemoryFeedbackService | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +167,7 @@ def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
     )
     state.redis = redis_client
     cache_writer = MemoryCacheWriter(redis_client, cfg)
+    state.cache_writer = cache_writer
     idempotency_store = RedisIdempotencyStore(
         redis_client,
         ttl_seconds=cfg.idempotency_ttl_seconds,
@@ -200,6 +204,10 @@ def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:
     bootstrap.state.hot_cache_reader = MemoryHotCacheReader(
         bootstrap.redis.client,
         bootstrap.session_factory,
+    )
+    bootstrap.state.feedback_service = MemoryFeedbackService(
+        bootstrap.session_factory,
+        cache_writer=bootstrap.redis.cache_writer,
     )
 
 

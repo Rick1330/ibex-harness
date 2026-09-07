@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
 from app.auth.errors import AuthFailedError, AuthUnavailableError
+from app.feedback.service import MemoryFeedbackService
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.read.hot_cache import MemoryHotCacheReader
 from app.read.repository import MemoryReadRepository
@@ -143,6 +144,18 @@ class HotMemoryContext:
     session_factory: async_sessionmaker[AsyncSession]
 
 
+@dataclass(frozen=True, slots=True)
+class FeedbackMemoryContext:
+    token: ValidateResult
+    feedback_service: MemoryFeedbackService
+
+
+def get_feedback_service(request: Request) -> MemoryFeedbackService:
+    return _require_memory_component(
+        request, "feedback_service", message="Feedback path not configured"
+    )
+
+
 def get_hot_cache_reader(request: Request) -> MemoryHotCacheReader:
     return _require_memory_component(
         request, "hot_cache_reader", message="Hot cache read path not configured"
@@ -187,3 +200,10 @@ def get_create_memory_context(
         idempotency_store=idempotency_store,
         idempotency_key=idempotency_key,
     )
+
+
+def get_feedback_memory_context(
+    token: Annotated[ValidateResult, Depends(require_memory_write)],
+    feedback_service: Annotated[MemoryFeedbackService, Depends(get_feedback_service)],
+) -> FeedbackMemoryContext:
+    return FeedbackMemoryContext(token=token, feedback_service=feedback_service)

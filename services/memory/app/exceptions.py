@@ -56,3 +56,11 @@ class EmbeddingServiceError(ExternalServiceError):
 
 class MemoryDatabaseError(ExternalServiceError):
     code = "DATABASE_UNAVAILABLE"
+
+
+class MemoryNotFoundError(IBEXError):
+    code = "NOT_FOUND"
+    http_status = 404
+
+    def __init__(self) -> None:
+        super().__init__("Memory not found")

@@ -7,20 +7,29 @@ import time
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.cache.hot_keys import HOT_CACHE_CAPACITY
 from app.deps import (
     CreateMemoryContext,
+    FeedbackMemoryContext,
     HotMemoryContext,
     SearchMemoryContext,
     get_create_memory_context,
+    get_feedback_memory_context,
     get_hot_memory_context,
     get_search_memory_context,
 )
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    MemoryNotFoundError,
+    ValidationError,
+)
+from app.feedback.models import ApplyFeedbackCommand, FeedbackKind
+from app.feedback.persist import require_agent_id
 from app.read.models import HotMemoryQuery
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
@@ -42,6 +51,7 @@ from app.routers.memory_write_support import (
     memory_command_from_request,
     release_idempotency,
 )
+from app.schemas.feedback import RecordFeedbackData, RecordFeedbackRequest, RecordFeedbackResponse
 from app.schemas.memories import CreateMemoryRequest
 from app.schemas.search import SearchMemoriesRequest, SearchMemoriesResponse
 from app.write.models import WriteOutcomeKind
@@ -167,3 +177,54 @@ async def list_hot_memories(
         log_search_database_failure(exc, org_id=ctx.token.org_id)
         raise http_error_for_search(exc) from exc
     return search_response_from_results(results)
+
+
+@router.post("/{memory_id}/feedback", summary="Record usefulness feedback for a memory")
+async def record_memory_feedback(
+    memory_id: UUID,
+    request: RecordFeedbackRequest,
+    ctx: Annotated[FeedbackMemoryContext, Depends(get_feedback_memory_context)],
+) -> RecordFeedbackResponse:
+    try:
+        agent_id = require_agent_id(ctx.token.agent_id)
+        result = await ctx.feedback_service.apply(
+            ApplyFeedbackCommand(
+                org_id=ctx.token.org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                feedback=FeedbackKind(request.feedback),
+                session_id=request.session_id,
+                trace_id=request.trace_id,
+                notes=request.notes,
+            )
+        )
+    except (MemoryNotFoundError, ValidationError) as exc:
+        raise http_error_for_feedback(exc) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database unavailable"},
+        ) from exc
+    return RecordFeedbackResponse(
+        data=RecordFeedbackData(
+            memory_id=result.memory_id,
+            feedback=result.feedback.value,  # type: ignore[arg-type]
+            new_usefulness_score=result.new_usefulness_score,
+            total_positive_feedback=result.total_positive_feedback,
+            total_negative_feedback=result.total_negative_feedback,
+        )
+    )
+
+
+def http_error_for_feedback(exc: BaseException) -> HTTPException:
+    if isinstance(exc, MemoryNotFoundError):
+        return HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "Memory not found"},
+        )
+    if isinstance(exc, ValidationError):
+        return HTTPException(
+            status_code=400,
+            detail={"code": exc.code, "message": exc.message},
+        )
+    raise exc

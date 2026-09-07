@@ -40,6 +40,13 @@ async def test_fastmcp_call_tools() -> None:
                 "confidence": 0.7,
             },
         )
+        feedback = await mcp.call_tool(
+            "record_feedback",
+            {
+                "memory_id": str(AGENT),
+                "feedback": "positive",
+            },
+        )
     finally:
         set_principal(None)
         set_access_token(None)
@@ -47,6 +54,7 @@ async def test_fastmcp_call_tools() -> None:
         await client.aclose()
     assert search is not None
     assert write is not None
+    assert feedback is not None
 
 
 @pytest.mark.asyncio
@@ -56,7 +64,7 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     mcp = build_mcp_server(audit, None)
     tools = await mcp.list_tools()
     by_name = {t.name: t for t in tools}
-    assert set(by_name) == {"search_memory", "write_memory"}
+    assert set(by_name) == {"search_memory", "write_memory", "record_feedback"}
 
     search = by_name["search_memory"].inputSchema
     assert search.get("additionalProperties") is False
@@ -85,6 +93,26 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     confidence = write["properties"]["confidence"]
     assert confidence.get("minimum") == 0.0
     assert confidence.get("maximum") == 1.0
+
+
+
+    feedback = by_name["record_feedback"].inputSchema
+    assert feedback.get("additionalProperties") is False
+    assert set(feedback["properties"]["feedback"].get("enum", [])) == {
+        "positive",
+        "negative",
+        "neutral",
+    }
+    assert "memory_id" in feedback["properties"]
+    notes = feedback["properties"]["notes"]
+    # Optional[str] may nest maxLength under anyOf
+    note_max = notes.get("maxLength")
+    if note_max is None:
+        for opt in notes.get("anyOf", []):
+            if isinstance(opt, dict) and opt.get("type") == "string":
+                note_max = opt.get("maxLength")
+                break
+    assert note_max == 2000
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,29 @@ def create_memory_response(created: CreatedMemory | None = None) -> httpx.Respon
     )
 
 
+def feedback_response(
+    *,
+    memory_id: str | None = None,
+    feedback: str = "positive",
+    score: float = 0.67,
+    positive: int = 1,
+    negative: int = 0,
+) -> httpx.Response:
+    mid = memory_id or str(uuid4())
+    return httpx.Response(
+        200,
+        json={
+            "data": {
+                "memory_id": mid,
+                "feedback": feedback,
+                "new_usefulness_score": score,
+                "total_positive_feedback": positive,
+                "total_negative_feedback": negative,
+            }
+        },
+    )
+
+
 def stub_memory_handler(
     *,
     org_id: UUID = ORG,
@@ -67,8 +90,11 @@ def stub_memory_handler(
     mid = str(uuid4())
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/search"):
+        path = request.url.path
+        if path.endswith("/search"):
             return empty_search_response()
+        if path.endswith("/feedback"):
+            return feedback_response(memory_id=mid)
         return create_memory_response(
             CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
         )

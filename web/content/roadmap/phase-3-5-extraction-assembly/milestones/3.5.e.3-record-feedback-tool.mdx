@@ -2,7 +2,7 @@
 title: "3.5.E.3 record_feedback tool"
 description: "MCP tool and REST endpoint (POST /v1/memories/{id}/feedback) both calling one shared MemoryFeedbackService.apply() — the mechanism the composite scorer's usefulness term depends on."
 summary: "MCP tool and REST endpoint (POST /v1/memories/{id}/feedback) both calling one shared MemoryFeedbackService.apply() — the mechanism the composite scorer's usefulness term depends on."
-status: "planned"
+status: "complete"
 milestoneId: "3.5.E.3"
 track: "E"
 trackTitle: "MCP Tool Surface"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.E.3 — record_feedback Tool"
 
 # Milestone 3.5.E.3 — record_feedback Tool
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
@@ -31,9 +31,25 @@ fullTitle: "Milestone 3.5.E.3 — record_feedback Tool"
   make a better shape clear. Prefer outcomes over matching any particular file tree.
 </Callout>
 
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: feedback is **HTTP-first** — MCP `record_feedback` calls
+  `POST /v1/memories/{id}/feedback` on the memory service. Context gRPC
+  `RecordMemoryFeedback` stays `UNIMPLEMENTED` (same deferral pattern as E.2 /
+  ADR-0038). Usefulness uses Laplace smoothing `(p+1)/(p+n+2)` from a
+  `memory_feedback` ledger with upsert uniqueness `(org_id, memory_id, agent_id)`;
+  totals are recomputed via `COUNT(*) FILTER` in the same transaction (no
+  denormalized counters on `memories`). Neutral votes are stored but excluded
+  from `p`/`n`. E2E uses **three distinct agents** each posting `positive` once
+  (score `0.50 → 0.80`); three votes from one agent would no-op after the first
+  upsert. Permission is existing `MEMORY_WRITE` only.
+</Callout>
+
 ## Why This Milestone Exists
 
-Exposes `RecordMemoryFeedback` as an MCP tool so agents can report "this memory was useful" / "this memory was wrong" — the mechanism the composite scorer's `usefulness` term depends on. Also exposes as REST `POST /v1/memories/{memory_id}/feedback` for non-MCP callers. Same underlying service call, two entry surfaces.
+Exposes usefulness feedback as an MCP tool so agents can report "this memory was useful" /
+"this memory was wrong" — the mechanism the composite scorer's `usefulness` term depends on.
+Also exposes as REST `POST /v1/memories/{memory_id}/feedback` for non-MCP callers. Same
+underlying `MemoryFeedbackService.apply()`, two entry surfaces.
 
 ---
 
@@ -53,19 +69,19 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 **Areas that may be involved** (situational — not a checklist):
 
-- MCP server surface
-- Memory service / repositories
+- MCP server surface (`services/mcp-memory/`)
+- Memory service HTTP (`POST /v1/memories/{id}/feedback`)
+- Feedback ledger migration (`000023_create_memory_feedback`)
 
 ## Success signals
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `record_feedback` MCP tool and REST endpoint both call one shared `MemoryFeedbackService.apply()`
-- [ ] `new_usefulness_score` recalculation unit tested for positive/negative/neutral inputs
-- [ ] E2E test: write memory → record 3 positive feedbacks → verify composite score increases and memory ranks higher in subsequent search
-- [ ] Repo guards / CI checks still pass
+- [x] `record_feedback` MCP tool and REST endpoint both call one shared `MemoryFeedbackService.apply()`
+- [x] `new_usefulness_score` recalculation unit tested for positive/negative/neutral inputs
+- [x] E2E test: three agents record positive feedback → usefulness ≈ 0.80 and memory ranks above a default-score control under equal relevance
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.5.E.2 (search/write tools)
-

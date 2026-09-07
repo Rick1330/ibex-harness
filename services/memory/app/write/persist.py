@@ -53,7 +53,7 @@ def _split_presentation_metadata(
     return visibility, pinned, tags, stored
 
 
-def _row_from_mapping(row: Any) -> MemoryRow:
+def memory_row_from_mapping(row: Any) -> MemoryRow:
     meta = row.metadata
     if isinstance(meta, str):
         meta = json.loads(meta)
@@ -136,7 +136,7 @@ async def insert_memory_session(
             params,
         )
     ).one()
-    return _row_from_mapping(row)
+    return memory_row_from_mapping(row)
 
 
 async def insert_labels_session(
@@ -190,7 +190,7 @@ async def reload_memory_session(
             {"memory_id": str(memory_id), "org_id": str(org_id)},
         )
     ).one()
-    return _row_from_mapping(row)
+    return memory_row_from_mapping(row)
 
 
 async def insert_escalations_session(

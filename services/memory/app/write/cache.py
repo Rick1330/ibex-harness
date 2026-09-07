@@ -49,8 +49,20 @@ class MemoryCacheWriter:
                 memory.org_id,
                 memory.id,
             )
+        await self.refresh_hot(memory, ttl=ttl)
+
+    async def refresh_hot(
+        self,
+        memory: MemoryRow,
+        *,
+        ttl: int | None = None,
+    ) -> None:
+        """Recompute and ZADD hot score. Fail-open on Redis errors."""
+        resolved_ttl = (
+            ttl if ttl is not None else self.settings.memory_cache_ttl_seconds
+        )
         try:
-            await self._write_hot(memory, ttl)
+            await self._write_hot(memory, resolved_ttl)
         except (OSError, RedisError):
             WRITE_CACHE_ERRORS.labels(op="hot_zset").inc()
             logger.warning(

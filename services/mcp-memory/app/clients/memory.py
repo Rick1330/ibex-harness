@@ -60,6 +60,15 @@ class CreateMemoryResult:
 
 
 @dataclass(frozen=True, slots=True)
+class FeedbackResult:
+    memory_id: str
+    feedback: str
+    new_usefulness_score: float
+    total_positive_feedback: int
+    total_negative_feedback: int
+
+
+@dataclass(frozen=True, slots=True)
 class _CallSpec:
     """Bundles outbound request fields so the sender stays under arg limits."""
 
@@ -104,6 +113,16 @@ class _CreateMemoryBody(BaseModel):
     status: str
     source: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class _FeedbackBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    memory_id: UUID
+    feedback: str
+    new_usefulness_score: float = Field(ge=0.0, le=1.0)
+    total_positive_feedback: int = Field(ge=0)
+    total_negative_feedback: int = Field(ge=0)
 
 
 def build_memory_client(
@@ -185,6 +204,23 @@ class MemoryHttpClient:
             )
         )
         return _parse_create_result(response)
+
+    async def record_feedback(
+        self,
+        *,
+        token: str,
+        memory_id: UUID,
+        body: Mapping[str, Any],
+    ) -> FeedbackResult:
+        response = await self._send(
+            _CallSpec(
+                method="POST",
+                path=f"/v1/memories/{memory_id}/feedback",
+                token=token,
+                body=dict(body),
+            )
+        )
+        return _parse_feedback_result(response)
 
     async def _send(self, call: _CallSpec) -> httpx.Response:
         if not call.token.strip():
@@ -272,4 +308,20 @@ def _parse_create_result(response: httpx.Response) -> CreateMemoryResult:
         status=body.status,
         source=body.source,
         metadata=dict(body.metadata),
+    )
+
+
+def _parse_feedback_result(response: httpx.Response) -> FeedbackResult:
+    try:
+        body = _FeedbackBody.model_validate(_response_data(response))
+    except ValidationError as exc:
+        raise MemoryHttpError(
+            f"memory feedback response invalid: {exc.errors()[0]['msg']}"
+        ) from exc
+    return FeedbackResult(
+        memory_id=str(body.memory_id),
+        feedback=body.feedback,
+        new_usefulness_score=body.new_usefulness_score,
+        total_positive_feedback=body.total_positive_feedback,
+        total_negative_feedback=body.total_negative_feedback,
     )
