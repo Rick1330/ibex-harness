@@ -32,8 +32,8 @@ func TestMemoryIntegration_AssembleSuccess(t *testing.T) {
 
 func TestMemoryIntegration_DeadlineExceeded_FailOpen(t *testing.T) {
 	runMemoryFailOpen(t, memoryFailOpenCase{
-		name:    "deadline",
-		timeout: 45 * time.Millisecond,
+		name:     "deadline",
+		timeout:  45 * time.Millisecond,
 		behavior: memoryAssembleBehavior{errCode: codes.DeadlineExceeded},
 	})
 }

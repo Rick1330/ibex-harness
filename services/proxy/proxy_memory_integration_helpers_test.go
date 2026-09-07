@@ -4,21 +4,19 @@ package proxy_test
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/infra/testing/grpctest"
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	contextv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 )
 
 const (
@@ -60,14 +58,8 @@ func (s *configurableContextServer) AssembleContext(
 	s.calls++
 	s.mu.Unlock()
 
-	if b.delay > 0 {
-		timer := time.NewTimer(b.delay)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return nil, status.Error(codes.DeadlineExceeded, "assemble delayed past deadline")
-		case <-timer.C:
-		}
+	if err := s.applyDelay(ctx, b.delay); err != nil {
+		return nil, err
 	}
 	if b.errCode != codes.OK {
 		return nil, status.Error(b.errCode, "injected assemble failure")
@@ -75,14 +67,28 @@ func (s *configurableContextServer) AssembleContext(
 	if b.resp != nil {
 		return b.resp, nil
 	}
-	if b.defaultOKResp {
-		return &contextv1.AssembleContextResponse{
-			AssembledContext: memoryIntegrationAssembleBlob,
-			TokensUsed:       42,
-			MemoriesIncluded: 3,
-		}, nil
+	if !b.defaultOKResp {
+		return &contextv1.AssembleContextResponse{}, nil
 	}
-	return &contextv1.AssembleContextResponse{}, nil
+	return &contextv1.AssembleContextResponse{
+		AssembledContext: memoryIntegrationAssembleBlob,
+		TokensUsed:       42,
+		MemoriesIncluded: 3,
+	}, nil
+}
+
+func (s *configurableContextServer) applyDelay(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return status.Error(codes.DeadlineExceeded, "assemble delayed past deadline")
+	case <-timer.C:
+		return nil
+	}
 }
 
 type capturingMockProvider struct {
@@ -115,26 +121,10 @@ type memoryIntegrationEnv struct {
 
 func startBufconnContextClient(t *testing.T, timeout time.Duration) (*configurableContextServer, *contextclient.Client) {
 	t.Helper()
-	const bufSize = 1024 * 1024
-	lis := bufconn.Listen(bufSize)
 	fake := &configurableContextServer{}
-	// Explicit insecure Creds satisfies Semgrep; bufconn is loopback-only test traffic.
-	srv := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
-	contextv1.RegisterContextAssemblyServiceServer(srv, fake)
-	go func() { _ = srv.Serve(lis) }() //nolint:errcheck // bufconn test server; stopped via t.Cleanup
-	t.Cleanup(func() { srv.Stop() })
-
-	conn, err := grpc.NewClient("passthrough:///bufnet",
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-			return lis.DialContext(ctx)
-		}),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
-	if err != nil {
-		t.Fatalf("dial bufconn context: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-
+	conn := grpctest.StartInsecureBufconn(t, func(srv *grpc.Server) {
+		contextv1.RegisterContextAssemblyServiceServer(srv, fake)
+	})
 	client, err := contextclient.New(
 		contextv1.NewContextAssemblyServiceClient(conn),
 		timeout,
@@ -200,7 +190,13 @@ func assertInjectedAssembledMessages(t *testing.T, msgs []provider.Message) {
 
 func assertPhase2OnlyUserMessage(t *testing.T, msgs []provider.Message) {
 	t.Helper()
-	if len(msgs) != 1 || msgs[0].Role != "user" || msgs[0].Content != "hi" {
+	if len(msgs) != 1 {
 		t.Fatalf("messages=%+v want single user/hi turn", msgs)
+	}
+	if msgs[0].Role != "user" {
+		t.Fatalf("role=%q want user", msgs[0].Role)
+	}
+	if msgs[0].Content != "hi" {
+		t.Fatalf("content=%q want hi", msgs[0].Content)
 	}
 }
