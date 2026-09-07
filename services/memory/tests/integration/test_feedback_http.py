@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -162,17 +163,54 @@ async def test_feedback_upsert_replaces_same_agent_vote(
             feedback=FeedbackKind.POSITIVE,
         )
     )
+    assert first.total_positive_feedback == 1
+    assert first.total_negative_feedback == 0
+    assert first.new_usefulness_score == pytest.approx(0.67)
     second = await service.apply(
         ApplyFeedbackCommand(
             org_id=org.org_id,
             agent_id=org.agent_id,
             memory_id=org.memory_id,
-            feedback=FeedbackKind.POSITIVE,
+            feedback=FeedbackKind.NEGATIVE,
         )
     )
-    assert first.total_positive_feedback == 1
-    assert second.total_positive_feedback == 1
-    assert second.new_usefulness_score == pytest.approx(0.67)
+    assert second.total_positive_feedback == 0
+    assert second.total_negative_feedback == 1
+    assert second.new_usefulness_score == pytest.approx(0.33)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_feedback_from_distinct_agents(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """FOR UPDATE serializes concurrent votes so both agents are counted."""
+    org = await seed_org_agent(
+        session_factory, slug_prefix="fb-race", content="concurrent feedback memory"
+    )
+    agent_b = await seed_second_agent_same_org(
+        session_factory,
+        org_id=org.org_id,
+        user_id=org.user_id,
+        slug_prefix="fb-race",
+    )
+    service = MemoryFeedbackService(session_factory)
+
+    async def _vote(agent_id: UUID) -> object:
+        return await service.apply(
+            ApplyFeedbackCommand(
+                org_id=org.org_id,
+                agent_id=agent_id,
+                memory_id=org.memory_id,
+                feedback=FeedbackKind.POSITIVE,
+            )
+        )
+
+    first, second = await asyncio.gather(_vote(org.agent_id), _vote(agent_b))
+    totals = {first.total_positive_feedback, second.total_positive_feedback}
+    assert 2 in totals
+    winner = first if first.total_positive_feedback == 2 else second
+    assert winner.total_negative_feedback == 0
+    assert winner.new_usefulness_score == pytest.approx(0.60)
 
 
 @pytest.mark.asyncio

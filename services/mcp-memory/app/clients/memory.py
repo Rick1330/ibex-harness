@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
@@ -119,7 +119,7 @@ class _FeedbackBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     memory_id: UUID
-    feedback: str
+    feedback: Literal["positive", "negative", "neutral"]
     new_usefulness_score: float = Field(ge=0.0, le=1.0)
     total_positive_feedback: int = Field(ge=0)
     total_negative_feedback: int = Field(ge=0)

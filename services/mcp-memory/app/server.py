@@ -135,29 +135,19 @@ def _register_feedback_tool(
         trace_id: UUID | None = None,
         notes: Annotated[str | None, Field(default=None, max_length=2000)] = None,
     ) -> str:
+        raw: dict[str, Any] = {"memory_id": str(memory_id), "feedback": feedback}
+        if session_id is not None:
+            raw["session_id"] = str(session_id)
+        if trace_id is not None:
+            raw["trace_id"] = str(trace_id)
+        if notes is not None:
+            raw["notes"] = notes
         return await _invoke_tool(
             audit=audit,
             tool_name="record_feedback",
-            raw=_feedback_raw(memory_id, feedback, session_id, trace_id, notes),
+            raw=raw,
             runner=lambda payload: _run_feedback(payload, memory_client),
         )
-
-
-def _feedback_raw(
-    memory_id: UUID,
-    feedback: FeedbackKind,
-    session_id: UUID | None,
-    trace_id: UUID | None,
-    notes: str | None,
-) -> dict[str, Any]:
-    raw: dict[str, Any] = {"memory_id": str(memory_id), "feedback": feedback}
-    if session_id is not None:
-        raw["session_id"] = str(session_id)
-    if trace_id is not None:
-        raw["trace_id"] = str(trace_id)
-    if notes is not None:
-        raw["notes"] = notes
-    return raw
 
 
 def _forbid_undeclared_tool_args(mcp: FastMCP) -> None:

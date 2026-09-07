@@ -27,3 +27,14 @@ class RecordFeedbackData(BaseModel):
 
 class RecordFeedbackResponse(BaseModel):
     data: RecordFeedbackData
+
+
+class FeedbackErrorDetail(BaseModel):
+    code: str
+    message: str
+
+
+class FeedbackErrorEnvelope(BaseModel):
+    """Stable HTTPException detail envelope for feedback error responses."""
+
+    detail: FeedbackErrorDetail

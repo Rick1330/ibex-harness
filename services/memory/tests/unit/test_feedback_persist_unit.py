@@ -100,11 +100,10 @@ async def test_apply_feedback_session_happy_path() -> None:
 @pytest.mark.asyncio
 async def test_apply_feedback_session_missing_memory() -> None:
     session = _FakeSession([None, None, None])
+    factory = _factory_for(session)  # type: ignore[arg-type]
+    command = _command()
     with pytest.raises(MemoryNotFoundError):
-        await apply_feedback_session(
-            _factory_for(session),  # type: ignore[arg-type]
-            _command(),
-        )
+        await apply_feedback_session(factory, command)
 
 
 @pytest.mark.asyncio
@@ -123,11 +122,10 @@ async def test_apply_feedback_session_update_missing_row() -> None:
             None,
         ]
     )
+    factory = _factory_for(session)  # type: ignore[arg-type]
+    command = _command(org_id=org_id, agent_id=agent_id, memory_id=memory_id)
     with pytest.raises(MemoryNotFoundError):
-        await apply_feedback_session(
-            _factory_for(session),  # type: ignore[arg-type]
-            _command(org_id=org_id, agent_id=agent_id, memory_id=memory_id),
-        )
+        await apply_feedback_session(factory, command)
 
 
 @pytest.mark.asyncio

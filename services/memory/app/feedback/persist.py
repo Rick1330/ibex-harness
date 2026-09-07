@@ -56,6 +56,7 @@ async def _load_memory(
                 WHERE id = :memory_id
                   AND org_id = :org_id
                   AND deleted_at IS NULL
+                FOR UPDATE
                 """
             ),
             {"memory_id": str(command.memory_id), "org_id": str(command.org_id)},

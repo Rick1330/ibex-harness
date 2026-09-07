@@ -98,8 +98,13 @@ def stub_memory_handler(
         path = request.url.path
         if path.endswith("/search"):
             return empty_search_response()
-        if path.endswith("/feedback"):
-            return feedback_response(FeedbackResultSpec(memory_id=mid))
+        if request.method == "POST" and path.startswith("/v1/memories/") and path.endswith(
+            "/feedback"
+        ):
+            # /v1/memories/{memory_id}/feedback — echo the requested ID
+            memory_id = path.removeprefix("/v1/memories/").removesuffix("/feedback")
+            if memory_id and "/" not in memory_id:
+                return feedback_response(FeedbackResultSpec(memory_id=memory_id))
         return create_memory_response(
             CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
         )

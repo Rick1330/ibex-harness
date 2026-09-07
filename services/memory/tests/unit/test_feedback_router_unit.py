@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -16,11 +17,21 @@ from app.exceptions import MemoryNotFoundError, ValidationError
 from app.feedback.models import ApplyFeedbackResult, FeedbackKind
 from app.main import create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
+from app.routers.memories import http_error_for_feedback
 
 TOKEN = "test-feedback-token"
 ORG = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 AGENT = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 MEMORY = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+
+
+@dataclass(frozen=True, slots=True)
+class _GateCase:
+    permissions: int
+    agent_id: UUID | None
+    body: dict
+    expected_status: int
+    expected_code: str
 
 
 def _client(
@@ -53,25 +64,37 @@ def _post_feedback(
 
 
 @pytest.mark.parametrize(
-    ("permissions", "agent_id", "body", "expected_status", "expected_code"),
+    "case",
     [
-        (MEMORY_READ, AGENT, {"feedback": "positive"}, 403, "INSUFFICIENT_PERMISSIONS"),
-        (MEMORY_WRITE, None, {"feedback": "positive"}, 400, "VALIDATION_ERROR"),
-        (MEMORY_WRITE, AGENT, {"feedback": "neutral", "notes": "x" * 2001}, 400, "VALIDATION_ERROR"),
+        _GateCase(
+            MEMORY_READ,
+            AGENT,
+            {"feedback": "positive"},
+            403,
+            "INSUFFICIENT_PERMISSIONS",
+        ),
+        _GateCase(
+            MEMORY_WRITE,
+            None,
+            {"feedback": "positive"},
+            400,
+            "VALIDATION_ERROR",
+        ),
+        _GateCase(
+            MEMORY_WRITE,
+            AGENT,
+            {"feedback": "neutral", "notes": "x" * 2001},
+            400,
+            "VALIDATION_ERROR",
+        ),
     ],
 )
-def test_feedback_request_gates(
-    permissions: int,
-    agent_id: UUID | None,
-    body: dict,
-    expected_status: int,
-    expected_code: str,
-) -> None:
-    http, mock = _client(permissions=permissions, agent_id=agent_id)
+def test_feedback_request_gates(case: _GateCase) -> None:
+    http, mock = _client(permissions=case.permissions, agent_id=case.agent_id)
     with http:
-        response = _post_feedback(http, body=body)
-    assert response.status_code == expected_status
-    assert response.json()["detail"]["code"] == expected_code
+        response = _post_feedback(http, body=case.body)
+    assert response.status_code == case.expected_status
+    assert response.json()["detail"]["code"] == case.expected_code
     mock.apply.assert_not_called()
 
 
@@ -123,7 +146,6 @@ def test_feedback_database_error_maps_503() -> None:
 
 
 def test_http_error_for_feedback_passthrough() -> None:
-    from app.routers.memories import http_error_for_feedback
-
+    err = RuntimeError("unexpected")
     with pytest.raises(RuntimeError, match="unexpected"):
-        http_error_for_feedback(RuntimeError("unexpected"))
+        http_error_for_feedback(err)

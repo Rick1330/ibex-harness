@@ -101,3 +101,4 @@ async def test_refresh_hot_fail_open_on_redis_error() -> None:
     writer = MemoryCacheWriter(redis, MagicMock(memory_cache_ttl_seconds=3600))
     row = sample_memory_row()
     await writer.refresh_hot(row)  # must not raise
+    redis.register_script.assert_called_once()

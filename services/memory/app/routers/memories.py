@@ -51,7 +51,12 @@ from app.routers.memory_write_support import (
     memory_command_from_request,
     release_idempotency,
 )
-from app.schemas.feedback import RecordFeedbackData, RecordFeedbackRequest, RecordFeedbackResponse
+from app.schemas.feedback import (
+    FeedbackErrorEnvelope,
+    RecordFeedbackData,
+    RecordFeedbackRequest,
+    RecordFeedbackResponse,
+)
 from app.schemas.memories import CreateMemoryRequest
 from app.schemas.search import SearchMemoriesRequest, SearchMemoriesResponse
 from app.write.models import WriteOutcomeKind
@@ -183,9 +188,18 @@ async def list_hot_memories(
     "/{memory_id}/feedback",
     summary="Record usefulness feedback for a memory",
     responses={
-        400: {"description": "Validation error (missing agent scope or invalid body)"},
-        404: {"description": "Memory not found in the caller's organization"},
-        503: {"description": "Database unavailable while applying feedback"},
+        400: {
+            "model": FeedbackErrorEnvelope,
+            "description": "Validation error (missing agent scope or invalid body)",
+        },
+        404: {
+            "model": FeedbackErrorEnvelope,
+            "description": "Memory not found in the caller's organization",
+        },
+        503: {
+            "model": FeedbackErrorEnvelope,
+            "description": "Database unavailable while applying feedback",
+        },
     },
 )
 async def record_memory_feedback(
