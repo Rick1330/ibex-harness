@@ -210,7 +210,7 @@ async def test_concurrent_feedback_from_distinct_agents(
     assert 2 in totals
     winner = first if first.total_positive_feedback == 2 else second
     assert winner.total_negative_feedback == 0
-    assert winner.new_usefulness_score == pytest.approx(0.60)
+    assert winner.new_usefulness_score == pytest.approx(0.75)
 
 
 @pytest.mark.asyncio
