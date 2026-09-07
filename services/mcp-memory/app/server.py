@@ -33,9 +33,12 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
     mcp = FastMCP(
         "ibex-mcp-memory",
         instructions=(
-            "IBEX memory MCP resource server (G6.M1). "
-            "Tools are stubs — no persistence. Auth is required."
+            "IBEX memory MCP resource server (G6.M1 / 3.5.E.1). "
+            "Tools are stubs — no persistence. Auth is required. "
+            "Streamable HTTP is stateless (no EventStore resumability)."
         ),
+        # Stateless + JSON responses: no session EventStore / resumable SSE
+        # (explicitly out of scope for 3.5.E.1 — document in milestone MDX).
         stateless_http=True,
         json_response=True,
         transport_security=_transport_security(allow_test_hosts=allow_test_hosts),
