@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
-from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.config import Settings, get_settings
 from app.main import create_app
 from app.permissions import MEMORY_READ, MEMORY_WRITE
@@ -21,6 +19,7 @@ from app.protocol import (
     PROTOCOL_VERSION_LEGACY,
     SUPPORTED_PROTOCOL_VERSIONS,
 )
+from tests.memory_fixtures import stub_memory_client
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 ORG_B = UUID("22222222-2222-2222-2222-222222222222")
@@ -35,34 +34,6 @@ def _clear_settings() -> None:
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
-
-
-def _mock_memory_client() -> MemoryHttpClient:
-    mid = str(uuid4())
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/search"):
-            return httpx.Response(200, json={"data": {"results": []}})
-        return httpx.Response(
-            201,
-            json={
-                "data": {
-                    "id": mid,
-                    "agent_id": str(AGENT),
-                    "org_id": str(ORG),
-                    "category": "factual",
-                    "confidence": 0.6,
-                    "source": "user_provided",
-                    "status": "active",
-                    "metadata": {"mcp_source": "mcp_explicit"},
-                }
-            },
-        )
-
-    return MemoryHttpClient(
-        MemoryHttpConfig(base_url="http://memory.test", timeout_seconds=1.0),
-        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
 
 
 def _app() -> tuple[TestClient, MemoryAuditSink]:
@@ -90,7 +61,7 @@ def _app() -> tuple[TestClient, MemoryAuditSink]:
         settings=settings,
         validator=validator,
         audit_sink=sink,
-        memory_client=_mock_memory_client(),
+        memory_client=stub_memory_client(org_id=ORG, agent_id=AGENT),
     )
     return TestClient(application), sink
 

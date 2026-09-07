@@ -3,29 +3,18 @@
 from __future__ import annotations
 
 import json
-from uuid import UUID, uuid4
 
-import httpx
 import pytest
 
 from app.access_token import set_access_token
 from app.audit import AsyncAuditEmitter, MemoryAuditSink
-from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.errors import PermissionDeniedError
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, require_principal, set_principal
 from app.server import _invoke_tool, _run_search, _run_write
+from tests.memory_fixtures import AGENT, ORG, stub_memory_client
 
-ORG = UUID("11111111-1111-1111-1111-111111111111")
-AGENT = UUID("22222222-2222-2222-2222-222222222222")
 TOKEN = "tok-audit"
-
-
-def _memory_client(handler) -> MemoryHttpClient:
-    return MemoryHttpClient(
-        MemoryHttpConfig(base_url="http://memory.test", timeout_seconds=1.0),
-        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
 
 
 def test_require_principal_missing() -> None:
@@ -36,28 +25,7 @@ def test_require_principal_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_invoke_search_and_write_emits_audit() -> None:
-    mid = str(uuid4())
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/search"):
-            return httpx.Response(200, json={"data": {"results": []}})
-        return httpx.Response(
-            201,
-            json={
-                "data": {
-                    "id": mid,
-                    "agent_id": str(AGENT),
-                    "org_id": str(ORG),
-                    "category": "factual",
-                    "confidence": 0.6,
-                    "source": "user_provided",
-                    "status": "active",
-                    "metadata": {"mcp_source": "mcp_explicit"},
-                }
-            },
-        )
-
-    client = _memory_client(handler)
+    client = stub_memory_client(org_id=ORG, agent_id=AGENT)
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=16)
     audit.start()

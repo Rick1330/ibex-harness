@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from app.audit import AsyncAuditEmitter, AuditSink, build_audit_sink
 from app.auth import GRPCTokenValidator, TokenValidator
-from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
+from app.clients.memory import MemoryHttpClient, build_memory_client
 from app.config import Settings, get_settings
 from app.http_metrics import HTTPMetricsMiddleware
 from app.middleware import BearerAuthMiddleware
@@ -32,22 +32,7 @@ def create_app(
     state = AppState()
     sink = audit_sink or build_audit_sink(cfg.clickhouse_url)
     audit = AsyncAuditEmitter(sink, maxsize=cfg.audit_queue_size)
-    owned_memory = False
-    if memory_client is not None:
-        mem = memory_client
-    elif cfg.memory_http_url.strip():
-        mem = MemoryHttpClient(
-            MemoryHttpConfig(
-                base_url=cfg.memory_http_url,
-                timeout_seconds=cfg.memory_timeout_ms / 1000.0,
-            )
-        )
-        owned_memory = True
-    else:
-        mem = None
-        logger.warning(
-            "IBEX_MEMORY_HTTP_URL unset — search_memory/write_memory will fail closed"
-        )
+    mem, owned_memory = _resolve_memory_client(cfg, memory_client)
     mcp = build_mcp_server(audit, mem, allow_test_hosts=cfg.env != "production")
     # Lazily creates session_manager; must happen before lifespan uses it.
     mcp_asgi = mcp.streamable_http_app()
@@ -93,6 +78,27 @@ def create_app(
     )
     application.add_middleware(HTTPMetricsMiddleware)
     return application
+
+
+def _resolve_memory_client(
+    cfg: Settings,
+    injected: MemoryHttpClient | None,
+) -> tuple[MemoryHttpClient | None, bool]:
+    """Return (client, owns_lifecycle). Injected clients are not closed by lifespan."""
+    if injected is not None:
+        return injected, False
+    if not cfg.memory_http_url.strip():
+        logger.warning(
+            "IBEX_MEMORY_HTTP_URL unset — search_memory/write_memory will fail closed"
+        )
+        return None, False
+    return (
+        build_memory_client(
+            base_url=cfg.memory_http_url,
+            timeout_seconds=cfg.memory_timeout_ms / 1000.0,
+        ),
+        True,
+    )
 
 
 async def _mark_readiness(state: AppState, auth: TokenValidator, cfg: Settings) -> None:

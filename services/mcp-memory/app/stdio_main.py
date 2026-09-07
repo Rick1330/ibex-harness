@@ -26,13 +26,11 @@ async def _run() -> None:
     audit.start()
     memory_client = None
     if settings.memory_http_url.strip():
-        from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
+        from app.clients.memory import build_memory_client
 
-        memory_client = MemoryHttpClient(
-            MemoryHttpConfig(
-                base_url=settings.memory_http_url,
-                timeout_seconds=settings.memory_timeout_ms / 1000.0,
-            )
+        memory_client = build_memory_client(
+            base_url=settings.memory_http_url,
+            timeout_seconds=settings.memory_timeout_ms / 1000.0,
         )
     mcp = build_mcp_server(audit, memory_client)
     try:

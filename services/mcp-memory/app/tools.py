@@ -17,13 +17,19 @@ from __future__ import annotations
 
 import hashlib
 import unicodedata
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.access_token import require_access_token
-from app.clients.memory import MemoryHttpClient, MemoryHttpError, MemoryHttpTimeout
+from app.clients.memory import (
+    MemoryHttpClient,
+    MemoryHttpError,
+    MemoryHttpTimeout,
+    SearchHit,
+)
 from app.errors import (
     BackendRejectedError,
     BackendUnavailableError,
@@ -122,39 +128,24 @@ async def search_memory(
     client: MemoryHttpClient | None,
 ) -> dict[str, Any]:
     """Org-scoped search via memory HTTP. Tenant from principal + forwarded bearer."""
-    if not has_permission(principal.permissions, MEMORY_READ):
-        raise PermissionDeniedError("search_memory requires MemoryRead")
+    _require_permission(principal, MEMORY_READ, "search_memory requires MemoryRead")
     agent_id = resolve_tool_agent_id(principal, args.agent_id)
-    if client is None:
-        raise BackendUnavailableError("IBEX_MEMORY_HTTP_URL is not configured")
+    mem = _require_client(client)
     token = require_access_token()
-    try:
-        hits = await client.search_memories(
+    hits = await _call_memory(
+        lambda: mem.search_memories(
             token=token,
             agent_id=agent_id,
             query=args.query,
             limit=args.limit,
         )
-    except MemoryHttpTimeout as exc:
-        raise BackendUnavailableError(str(exc)) from exc
-    except MemoryHttpError as exc:
-        raise _map_memory_http_error(exc) from exc
+    )
     return {
         "org_id": str(principal.org_id),
         "agent_id": str(agent_id),
         "query": args.query,
         "limit": args.limit,
-        "results": [
-            {
-                "memory_id": hit.memory_id,
-                "content": hit.content,
-                "score": hit.score,
-                "category": hit.category,
-                "rank": hit.rank,
-                "source": hit.source,
-            }
-            for hit in hits
-        ],
+        "results": [_hit_dict(hit) for hit in hits],
     }
 
 
@@ -164,11 +155,9 @@ async def write_memory(
     client: MemoryHttpClient | None,
 ) -> dict[str, Any]:
     """Persist via memory write pipeline with metadata.mcp_source=mcp_explicit."""
-    if not has_permission(principal.permissions, MEMORY_WRITE):
-        raise PermissionDeniedError("write_memory requires MemoryWrite")
+    _require_permission(principal, MEMORY_WRITE, "write_memory requires MemoryWrite")
     agent_id = resolve_tool_agent_id(principal, args.agent_id)
-    if client is None:
-        raise BackendUnavailableError("IBEX_MEMORY_HTTP_URL is not configured")
+    mem = _require_client(client)
     token = require_access_token()
     idem = write_idempotency_key(
         org_id=principal.org_id, agent_id=agent_id, content=args.content
@@ -180,14 +169,9 @@ async def write_memory(
         "confidence": args.confidence,
         "metadata": {"mcp_source": MCP_SOURCE},
     }
-    try:
-        created = await client.create_memory(
-            token=token, payload=payload, idempotency_key=idem
-        )
-    except MemoryHttpTimeout as exc:
-        raise BackendUnavailableError(str(exc)) from exc
-    except MemoryHttpError as exc:
-        raise _map_memory_http_error(exc) from exc
+    created = await _call_memory(
+        lambda: mem.create_memory(token=token, payload=payload, idempotency_key=idem)
+    )
     return {
         "org_id": str(principal.org_id),
         "memory_id": created.memory_id,
@@ -199,6 +183,37 @@ async def write_memory(
         "persisted": True,
         "status": created.status,
         "metadata": created.metadata,
+    }
+
+
+def _require_permission(principal: Principal, bit: int, message: str) -> None:
+    if not has_permission(principal.permissions, bit):
+        raise PermissionDeniedError(message)
+
+
+def _require_client(client: MemoryHttpClient | None) -> MemoryHttpClient:
+    if client is None:
+        raise BackendUnavailableError("IBEX_MEMORY_HTTP_URL is not configured")
+    return client
+
+
+async def _call_memory[T](op: Callable[[], Awaitable[T]]) -> T:
+    try:
+        return await op()
+    except MemoryHttpTimeout as exc:
+        raise BackendUnavailableError(str(exc)) from exc
+    except MemoryHttpError as exc:
+        raise _map_memory_http_error(exc) from exc
+
+
+def _hit_dict(hit: SearchHit) -> dict[str, Any]:
+    return {
+        "memory_id": hit.memory_id,
+        "content": hit.content,
+        "score": hit.score,
+        "category": hit.category,
+        "rank": hit.rank,
+        "source": hit.source,
     }
 
 
