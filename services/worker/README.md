@@ -71,9 +71,9 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 | `REDIS_DB_RESULTS` | `3` | Result backend logical DB |
 | `IBEX_WORKER_DATABASE_URL` / `POSTGRES_DSN` | (none) | Postgres DSN for dead-letter persistence |
 | `IBEX_WORKER_METRICS_PORT` | `8006` | Prometheus `/metrics` HTTP port |
-| `IBEX_WORKER_ENQUEUE_PORT` | `8007` | Starlette port for `POST /internal/extraction/enqueue` ([ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http)) |
+| `IBEX_WORKER_ENQUEUE_PORT` | `8007` | Starlette port for `POST /internal/extraction/enqueue` and `GET /health` ([ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http)) |
 | `IBEX_WORKER_ENQUEUE_HOST` | `127.0.0.1` | Bind host; compose sets `0.0.0.0` |
-| `IBEX_WORKER_ENQUEUE_API_TOKEN` | (none) | Static Bearer; required to enable enqueue HTTP |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | (none) | Static Bearer; **required to enable** enqueue HTTP (no non-empty default; missing/blank → server not started). Secret; never logged |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (none) | OTLP gRPC collector (optional) |
 | `OTEL_SAMPLE_RATIO` | `0.01` | Trace sampling ratio |
 | `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | `300` | Beat interval for noop sweep |
@@ -93,7 +93,7 @@ visibility.
 - **OTel:** `IbexTask.__call__` wraps every task in a span (`ibex-worker` tracer). See [ADR-0062](/docs/adr/0062-worker-task-observability-dead-letter).
 - **Dead-letter:** `task_failure` signal persists exhausted-retry failures to `ibex_core.failed_tasks` and increments `ibex_worker_task_dead_letter_total{task_name}`.
 - **Metrics:** `GET :8006/metrics` when worker process is running (`ibex_process_up`, dead-letter counter).
-- **Enqueue HTTP:** `POST :8007/internal/extraction/enqueue` (static Bearer) enqueues `extract_session_memories` via Celery `apply_async`.
+- **Enqueue HTTP:** `POST :8007/internal/extraction/enqueue` (static Bearer) enqueues `extract_session_memories` via Celery `apply_async`. `GET :8007/health` stays **unauthenticated** (liveness only; no secrets), matching embedder `/health`. Without `IBEX_WORKER_ENQUEUE_API_TOKEN`, the enqueue server does not start.
 - **Alert:** `IBEXWorkerTaskDeadLettered` in `infra/monitoring/prometheus/rules/ibex-worker.yml`.
 
 ### Local verification

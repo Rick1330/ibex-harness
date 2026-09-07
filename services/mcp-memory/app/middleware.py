@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.access_token import set_access_token
 from app.auth import TokenValidator, parse_authorization_header
 from app.config import Settings
 from app.errors import AuthFailedError, AuthUnavailableError
@@ -51,8 +52,7 @@ class BearerAuthMiddleware:
         self.get_validator = get_validator
         self.protected_prefixes = protected_prefixes
         self._metadata_url = (
-            _origin_from_resource(settings.resource_url)
-            + "/.well-known/oauth-protected-resource"
+            _origin_from_resource(settings.resource_url) + "/.well-known/oauth-protected-resource"
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -84,6 +84,7 @@ class BearerAuthMiddleware:
             token = parse_authorization_header(request.headers.get("authorization"))
             result = await validator.validate(token)
             set_principal(result.to_principal())
+            set_access_token(token)
         except AuthFailedError as exc:
             await _send_error(
                 scope,
@@ -110,6 +111,7 @@ class BearerAuthMiddleware:
             await self.app(scope, receive, send)
         finally:
             set_principal(None)
+            set_access_token(None)
 
 
 def _path_is_protected(path: str, prefixes: tuple[str, ...]) -> bool:

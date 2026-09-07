@@ -229,9 +229,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
 | `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
-| `IBEX_EXTRACTION_TURNS_TTL` | No | same as idle timeout | Redis TTL for `{org_id}:session:{agent}:{external_id}:extraction_turns` | Fail-open on chat path; ADR-0072 |
-| `IBEX_WORKER_ENQUEUE_BASE_URL` | No | (empty) | Worker enqueue HTTP origin (e.g. `http://worker:8007`) | Empty disables proxy enqueue |
-| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional | (empty) | Shared Bearer with worker `IBEX_WORKER_ENQUEUE_API_TOKEN` | Required with base URL |
+| `IBEX_EXTRACTION_TURNS_TTL` | No (**3.5.D.4**) | same as idle timeout | Redis TTL for `{org_id}:session:{agent}:{external_id}:extraction_turns` on shared `REDIS_URL` (proxy has no separate extraction Redis) | Fail-open on chat path; ADR-0072 |
+| `IBEX_WORKER_ENQUEUE_BASE_URL` | No (**3.5.D.4**) | (empty) | Worker enqueue HTTP origin (e.g. `http://worker:8007`) | Empty disables proxy enqueue client |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Conditional (**3.5.D.4**) | (empty) | Shared Bearer with worker `IBEX_WORKER_ENQUEUE_API_TOKEN` | Required with base URL; no non-empty default; empty token disables enqueue. Secret; never logged |
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
@@ -265,7 +265,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No (**3.5.C.4**) | `5` | Greedy fallback consecutive-skip limit before stopping | Used only on greedy path |
 | `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No (**3.5.C.5**) | `16` | Byte length for `secrets.token_urlsafe` **per-assembly** nonce on `<ibex_memory>` delimiters (range 1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)) | One nonce per `ContextFormatter.format()` call; not a secret to log |
 | `IBEX_CONTEXT_EMBED_METADATA` | No (**3.5.D.3**) | `false` | Embed top-level `ibex` JSON in non-streaming chat responses via `IBEXMetadataStage` | Off by default; no-op per request when Assemble was not attempted |
-| `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
+| `IBEX_EXTRACTION_REDIS_URL` | No (**3.5.D.4** / worker) | falls back to `REDIS_URL` | Worker-only alias for shared Redis base (Celery broker + results). **Proxy does not read this** — turn-buffer uses `REDIS_URL` | Secret if password present; see §11 Worker |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
 | `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir (`o200k_base.tiktoken`, etc.) | Air-gapped friendly; defaults to embedded assets |
 | `IBEX_TOKENIZER_SERVICE_URL` | Planned **2.5+** | (none) | Python tokenizer-service base URL | Deferred until service mode lands |
@@ -409,7 +409,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
 | `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` | No | `true` | Supplement sparse vector hits with GIN full-text search (m3.D.1) | Metric: `ibex_memory_search_fallback_total{triggered}` |
 | `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
-| `IBEX_HNSW_EF_SEARCH` | No | `40` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
+| `IBEX_HNSW_EF_SEARCH` | No | `64` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
 | `IBEX_MEMORY_EMBEDDING_BASE_URL` | No | `http://127.0.0.1:8004` | Embedder service base URL | Client: `app/clients/embedding.py` |
 | `IBEX_EMBEDDING_API_TOKEN` / `IBEX_MEMORY_EMBEDDING_API_TOKEN` | Conditional | (none) | Bearer for `POST /v1/embed` | Never logged; same token space as embedder |
 | `IBEX_MEMORY_EMBEDDING_TIMEOUT_SECONDS` | No | `30.0` | Embedder read timeout | |
@@ -437,9 +437,9 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_BEAT_SCHEDULE_FILE` | No | `/var/lib/ibex/celerybeat/celerybeat-schedule` | Beat persistence path | Writable in container image |
 | `IBEX_WORKER_DATABASE_URL` | Conditional | (none) | Postgres DSN for dead-letter persistence | Alias: `POSTGRES_DSN` |
 | `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
-| `IBEX_WORKER_ENQUEUE_PORT` | No | `8007` | Starlette port for `POST /internal/extraction/enqueue` | Co-located with Celery worker (ADR-0072) |
-| `IBEX_WORKER_ENQUEUE_HOST` | No | `127.0.0.1` | Bind host for enqueue HTTP | Containers set `0.0.0.0` explicitly |
-| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* | — | Static Bearer for proxy→worker enqueue | Required to enable enqueue HTTP; `hmac.compare_digest` |
+| `IBEX_WORKER_ENQUEUE_PORT` | No (**3.5.D.4**) | `8007` | Starlette port for `POST /internal/extraction/enqueue` and `GET /health` | Co-located with Celery worker (ADR-0072) |
+| `IBEX_WORKER_ENQUEUE_HOST` | No (**3.5.D.4**) | `127.0.0.1` | Bind host for enqueue HTTP | Containers set `0.0.0.0` explicitly for probes |
+| `IBEX_WORKER_ENQUEUE_API_TOKEN` | Yes* (**3.5.D.4**) | (none) | Static Bearer for proxy→worker enqueue | **No non-empty default.** Missing/blank → enqueue HTTP server does not start (fail-closed enablement). `POST /internal/extraction/enqueue` uses `hmac.compare_digest`. Probe `GET /health` stays unauthenticated (liveness only; no secrets), matching embedder `/health`. Secret; never logged |
 | `IBEX_WORKER_EXTRACTION_PROVIDER` | No | `openai` | Extraction LLM backend: `openai` or `vllm` | Alias: `EXTRACTION_PROVIDER`. Fail-closed at first extract if required secrets/URL missing |
 | `OPENAI_API_KEY` | Conditional | (none) | Bearer token for hosted OpenAI extraction | Required when provider=`openai`. Alias: `IBEX_WORKER_OPENAI_API_KEY` |
 | `IBEX_WORKER_EXTRACTION_OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model id | |
@@ -515,7 +515,8 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include credentials when required, e.g. `http://<user>:<password>@127.0.0.1:8123`; compose-dev fixture uses `CLICKHOUSE_PASSWORD` from `infra/compose/dev/.env`) | Empty → logging sink |
 | `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |
 | `IBEX_MCP_RATE_LIMIT_RPM` | Planned 3.5.E.4 | `120` | Independent MCP tool budget | Reserved; not enforced in G6 |
-| `IBEX_MEMORY_HTTP_URL` | Conditional | (none) | Memory service base for tools | Phase 3+ |
+| `IBEX_MEMORY_HTTP_URL` | Yes for 3.5.E.2 tools | (none) | Memory service base URL for `search_memory` / `write_memory` (`POST /v1/memories/search`, `POST /v1/memories`); alias `IBEX_MCP_MEMORY_HTTP_URL` | Empty → tool calls fail closed |
+| `IBEX_MCP_MEMORY_TIMEOUT_MS` | No | `5000` | Per-call timeout for memory HTTP from mcp-memory | Fail closed on timeout |
 
 ---
 

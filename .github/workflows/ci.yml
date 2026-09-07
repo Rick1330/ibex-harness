@@ -625,6 +625,27 @@ jobs:
           org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
         env:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+      - name: Proxy memory integration tests (3.5.D.6)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: |
+          count=$(go test -tags=integration -list '^TestMemoryIntegration_' ./services/proxy | grep -c '^TestMemoryIntegration_' || true)
+          if [ "$count" -lt 3 ]; then
+            echo "expected at least 3 TestMemoryIntegration_* tests, found $count"
+            exit 1
+          fi
+          bash infra/scripts/go-test-gotestsum.sh test-results/junit/proxy-memory-integration.xml -- \
+            -tags=integration -count=1 -p 1 ./services/proxy -run '^TestMemoryIntegration_'
+      - name: Upload test results to Trunk (proxy-memory-integration)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/trunk-upload-junit
+        with:
+          junit-paths: test-results/junit/proxy-memory-integration.xml
+          variant: proxy-memory-integration
+          org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
+        env:
+          TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
   proxy-agent-verify-smoke:
     name: proxy-agent-verify-smoke

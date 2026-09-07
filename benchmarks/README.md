@@ -71,7 +71,7 @@ Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only
   proxy `benchmark-data.json` / `badge.svg`).
 - Same-repo PRs upsert the **Memory HNSW** section of the shared sticky comment
   (`post-hnsw-pr-comment` → `IBEX_BOT_COMMENT`; same thread as Proxy).
-- Published cells are production knobs only: `ef_search=40`, `min_similarity=0.70`,
+- Published cells are production knobs only: `ef_search=64`, `min_similarity=0.70`,
   `iterative_scan=off`, `index_build_mode=bulk` (full matrix stays in raw output).
 - Site suite: `/benchmarks/memory` (+ latency / history / compare).
 

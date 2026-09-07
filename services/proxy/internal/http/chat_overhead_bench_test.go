@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
+	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -29,21 +30,32 @@ const chatOverheadToken = "bench-chat-overhead-token"
 
 // BenchmarkProxyChatOverhead measures POST /v1/chat/completions through the full
 // middleware chain with a warmed auth LRU, Redis rate limit, warmed directive
-// cache, and an immediate mockllm provider (ADR-0034).
+// cache, and an immediate mockllm provider (ADR-0034). Assemble remains off.
 func BenchmarkProxyChatOverhead(b *testing.B) {
-	runChatOverheadBench(b, false)
+	runChatOverheadBench(b, chatOverheadBenchOpts{})
 }
 
 // BenchmarkProxyChatOverheadParallel is complementary to k6's 100-VU gate.
 func BenchmarkProxyChatOverheadParallel(b *testing.B) {
-	runChatOverheadBench(b, true)
+	runChatOverheadBench(b, chatOverheadBenchOpts{parallel: true})
 }
 
-func runChatOverheadBench(b *testing.B, parallel bool) {
-	handler, body := warmChatOverhead(b)
+// BenchmarkProxyChatOverheadWithAssemble is the Assemble-on counterpart of
+// BenchmarkProxyChatOverhead (fast always-success fake; no hard p99 gate).
+func BenchmarkProxyChatOverheadWithAssemble(b *testing.B) {
+	runChatOverheadBench(b, chatOverheadBenchOpts{assemble: true})
+}
+
+type chatOverheadBenchOpts struct {
+	parallel bool
+	assemble bool
+}
+
+func runChatOverheadBench(b *testing.B, opts chatOverheadBenchOpts) {
+	handler, body := warmChatOverhead(b, opts.assemble)
 	b.ReportAllocs()
 	b.ResetTimer()
-	if parallel {
+	if opts.parallel {
 		runChatOverheadParallel(b, handler, body)
 		return
 	}
@@ -75,9 +87,9 @@ func runChatOverheadParallel(b *testing.B, handler http.Handler, body []byte) {
 	}
 }
 
-func warmChatOverhead(b *testing.B) (http.Handler, []byte) {
+func warmChatOverhead(b *testing.B, assemble bool) (http.Handler, []byte) {
 	b.Helper()
-	handler := newChatOverheadHandler(b)
+	handler := newChatOverheadHandler(b, assemble)
 	body := []byte(chatOverheadBody)
 	if code := chatOverheadStatus(handler, body); code != http.StatusOK {
 		b.Fatalf("setup status=%d", code)
@@ -99,7 +111,7 @@ func newChatOverheadRequest(body []byte) *http.Request {
 	return req
 }
 
-func newChatOverheadHandler(b *testing.B) http.Handler {
+func newChatOverheadHandler(b *testing.B, assemble bool) http.Handler {
 	b.Helper()
 	orgUUID := uuid.MustParse(testChatOrgID)
 	agentUUID := uuid.MustParse(testChatAgentID)
@@ -107,8 +119,16 @@ func newChatOverheadHandler(b *testing.B) http.Handler {
 	if err != nil {
 		b.Fatalf("registry: %v", err)
 	}
+	cfg := chatTestConfig()
+	var assembler contextAssembler
+	if assemble {
+		cfg.ContextEnabled = true
+		assembler = &fakeContextAssembler{result: contextclient.AssembleResult{
+			AssembledContext: "bench assembled", TokensUsed: 8, MemoriesIncluded: 1,
+		}}
+	}
 	return mustNewRouter(b, RouterDeps{
-		Config:            chatTestConfig(),
+		Config:            cfg,
 		Logger:            logger.Discard("proxy"),
 		Metrics:           metrics.NewProxy("chat-overhead"),
 		Tracer:            telemetry.NoopTracer("proxy"),
@@ -118,6 +138,7 @@ func newChatOverheadHandler(b *testing.B) http.Handler {
 		DirectiveResolver: newWarmedBenchDirective(b, orgUUID, agentUUID),
 		Health:            testHealthServer(),
 		ProviderRegistry:  reg,
+		ContextClient:     assembler,
 	})
 }
 

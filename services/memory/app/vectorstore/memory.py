@@ -26,7 +26,7 @@ class InMemoryVectorStore(VectorStore):
     _rows: dict[UUID, _StoredEmbedding] = field(default_factory=dict)
     _agents: dict[UUID, UUID] = field(default_factory=dict)
     default_min_similarity: float = 0.70
-    default_ef_search: int = 40
+    default_ef_search: int = 64
 
     def bind_agent(self, memory_id: UUID, agent_id: UUID) -> None:
         """Associate a memory with an agent (simulates row ownership for search)."""

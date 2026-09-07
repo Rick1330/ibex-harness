@@ -72,6 +72,45 @@ def test_production_accepts_public_https(monkeypatch: pytest.MonkeyPatch) -> Non
     s = get_settings()
     assert s.resource_url.startswith("https://")
     assert s.auth_server_url.startswith("https://")
+    assert s.memory_http_url == ""
+
+
+def test_production_allows_empty_memory_http_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "production")
+    monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
+    monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "")
+    get_settings.cache_clear()
+    assert get_settings().memory_http_url == ""
+
+
+def test_production_rejects_insecure_memory_http_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "production")
+    monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
+    monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "http://memory.example.com")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="IBEX_MEMORY_HTTP_URL"):
+        get_settings()
+
+
+def test_production_rejects_loopback_memory_http_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "production")
+    monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
+    monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "https://127.0.0.1:8080")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="loopback"):
+        get_settings()
+
+
+def test_production_accepts_public_memory_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "production")
+    monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
+    monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "https://memory.example.com")
+    get_settings.cache_clear()
+    assert get_settings().memory_http_url == "https://memory.example.com"
 
 
 def test_production_rejects_loopback_ipv4_range(monkeypatch: pytest.MonkeyPatch) -> None:

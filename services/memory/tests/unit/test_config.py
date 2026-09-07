@@ -16,7 +16,7 @@ def test_default_rank_weights_sum_to_one() -> None:
         + settings.rank_weight_frequency
     )
     assert total == pytest.approx(1.0)
-    assert settings.hnsw_ef_search == 40
+    assert settings.hnsw_ef_search == 64
     assert settings.vector_search_min_similarity == pytest.approx(0.70)
     assert settings.composite_relevance_floor == pytest.approx(0.15)
 

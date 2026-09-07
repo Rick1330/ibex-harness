@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/authcache"
+	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -53,10 +54,14 @@ type proxyAuthFixture struct {
 }
 
 func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
-	return setupProxyAuthFixtureWithProviders(t, nil)
+	return setupProxyAuthFixtureWithOpts(t, proxyServerOpts{})
 }
 
 func setupProxyAuthFixtureWithProviders(t *testing.T, providers []provider.Provider) proxyAuthFixture {
+	return setupProxyAuthFixtureWithOpts(t, proxyServerOpts{providers: providers})
+}
+
+func setupProxyAuthFixtureWithOpts(t *testing.T, opts proxyServerOpts) proxyAuthFixture {
 	t.Helper()
 	dsn, cleanup := testutil.SetupPostgres(t)
 	t.Cleanup(cleanup)
@@ -80,7 +85,7 @@ func setupProxyAuthFixtureWithProviders(t *testing.T, providers []provider.Provi
 	orgBBearer, _ := testutil.SeedToken(t, db, orgB, 42)
 	lowPermsBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ReadOnly)
 
-	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{providers: providers})
+	srv := startProxyServer(t, authFx.Addr, opts)
 	t.Cleanup(srv.Close)
 
 	return proxyAuthFixture{
@@ -114,11 +119,13 @@ type redisFixture struct {
 }
 
 type proxyServerOpts struct {
-	defaultRPM    int64
-	orgOverrides  map[uuid.UUID]int64
-	providers     []provider.Provider
-	withAuthCache bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
-	skipRedis     bool // empty REDIS_URL — Wave 4: cache must not wrap
+	defaultRPM     int64
+	orgOverrides   map[uuid.UUID]int64
+	providers      []provider.Provider
+	withAuthCache  bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
+	skipRedis      bool // empty REDIS_URL — Wave 4: cache must not wrap
+	contextClient  *contextclient.Client
+	contextEnabled bool
 }
 
 func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
@@ -224,6 +231,7 @@ func proxyIntegrationConfig(authAddr, redisURL string, srvOpts proxyServerOpts) 
 		RateLimit: config.RateLimitConfig{
 			DefaultRPM: int(defaultRPM),
 		},
+		ContextEnabled: srvOpts.contextEnabled,
 	}
 	if srvOpts.withAuthCache {
 		cfg.AuthCache = config.AuthCacheConfig{
@@ -285,6 +293,7 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		Limiter:          limiter,
 		Health:           &healthcheck.Server{CriticalCheckers: healthCheckers},
 		ProviderRegistry: providerReg,
+		ContextClient:    opts.srvOpts.contextClient,
 	})
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)

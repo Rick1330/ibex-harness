@@ -7,8 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
-	"github.com/Rick1330/ibex-harness/packages/contextclient"
+	"github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
@@ -59,7 +58,8 @@ type RouterDeps struct {
 	IdempotencyStore   idempotency.Store
 	// ContextClient is the fail-open Assemble client from bootstrap (nil when
 	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
-	ContextClient     *contextclient.Client
+	// Production passes *contextclient.Client; tests may supply fakes.
+	ContextClient     contextAssembler
 	TurnBuffer        *extractionbuffer.Buffer
 	ExtractionEnqueue *extractionenqueue.Client
 }

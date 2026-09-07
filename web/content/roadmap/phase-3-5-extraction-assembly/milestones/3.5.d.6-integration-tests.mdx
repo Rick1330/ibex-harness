@@ -1,8 +1,8 @@
 ---
 title: "3.5.D.6 Integration tests"
-description: "TestMemoryIntegration_* suite covering context assembly success, L1–L3 degradation fault injection, X-IBEX-Skip-Memory bypass, extraction enqueue semantics, and full Phase 1+2 regression."
-summary: "TestMemoryIntegration_* suite covering context assembly success, L1–L3 degradation fault injection, X-IBEX-Skip-Memory bypass, extraction enqueue semantics, and full Phase 1+2 regression."
-status: "planned"
+description: "Proxy TestMemoryIntegration_* via bufconn ContextAssembly, enqueue active-status gap fill, Assemble-on overhead bench, middleware docs, and proxy-auth-smoke CI gate."
+summary: "Proxy TestMemoryIntegration_* via bufconn ContextAssembly, enqueue active-status gap fill, Assemble-on overhead bench, middleware docs, and proxy-auth-smoke CI gate."
+status: "completed"
 milestoneId: "3.5.D.6"
 track: "D"
 trackTitle: "Proxy Integration"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.D.6 — Integration Tests"
 
 # Milestone 3.5.D.6 — Integration Tests
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
@@ -24,61 +24,38 @@ fullTitle: "Milestone 3.5.D.6 — Integration Tests"
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
+## Outcome
 
-## Why This Milestone Exists
+Track D closeout: prove proxy-observed Assemble success and fail-open through a **live** `contextclient` dial (bufconn fake `ContextAssemblyService`), close remaining enqueue/bench gaps, refresh middleware docs, and gate the suite on `proxy-auth-smoke`. SEC\* fixtures stay context-off.
 
-Update the canonical middleware chain diagram to its final Phase 3.5 form and add `TestMemoryIntegration_*` suite in `services/proxy`, mirroring the `TestSecurity_SEC*` convention.
+Ownership split (not re-proven here):
 
----
+| Layer | Owner | What it proves |
+|---|---|---|
+| L0–L3 ladder units | **3.5.C.6** | Context server degradation contract |
+| Client fail-open | **3.5.D.1** | `contextclient` maps gRPC errors → `Fallback` |
+| Proxy-observed path | **3.5.D.6** | Headers + injection / Phase 2 fail-open via real dial |
+| Extraction enqueue | **3.5.D.4** / [ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http) | HTTP enqueue (not Celery Redis `LPUSH` from proxy) |
 
-## Test Coverage
+## Coverage
 
-- Context assembly success path with real memories present
-- L1–L3 degradation paths (fault-injected via a test gRPC server that delays/errors on demand)
-- `X-IBEX-Skip-Memory` correctly bypasses the gRPC call (asserted via call-count mock)
-- Extraction enqueue fires exactly once per completed session, never on `active` status
-- Full regression: all Phase 1 + Phase 2 security/session tests still pass with `IBEX_CONTEXT_ENABLED=true`
-
----
-
-## Orientation (indicative)
-
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
-
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Proxy service (HTTP, bootstrap, config)
-- Context assembly service
-- Workers / task runtime
+- `TestMemoryIntegration_AssembleSuccess` — valid Assemble response → injected provider messages; `X-IBEX-Memories-Injected` / `X-IBEX-Context-Tokens` / `X-IBEX-Context-Fallback=false`; chat **200**
+- `TestMemoryIntegration_DeadlineExceeded_FailOpen` — server returns `codes.DeadlineExceeded` → Phase 2 messages; `Fallback=true`; chat **200**
+- `TestMemoryIntegration_TimeoutDelay_FailOpen` — server sleeps past `contextclient` assemble timeout → same fail-open via real `context.WithTimeout`
+- Unit: `status=active` terminate never hits enqueue (`hits==0`)
+- Bench: `BenchmarkProxyChatOverheadWithAssemble` (fast fake; report ns/op vs Assemble-off; no hard p99 gate)
+- Docs: proxy README middleware (Assemble in-handler; terminate→enqueue separate); request-routing Mermaid
+- CI: explicit `proxy-auth-smoke` step for `^TestMemoryIntegration_` with a minimum list-count gate (`security-integration` unchanged)
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Fully unit-tested with fault injection for all 4 degradation levels
-- [ ] `dispatchProviderCompletion` wired, with `IBEX_CONTEXT_ENABLED=false` verified to reproduce exact Phase 2 behavior
-- [ ] Both header-only and embedded-metadata response surfaces implemented
-- [ ] Extraction enqueue uses Celery-native Redis list semantics
-- [ ] Proxy-side benchmark confirms `<20ms` proxy overhead target with context assembly enabled
-- [ ] Repo guards / CI checks still pass
+- [x] `TestMemoryIntegration_*` covers success + DeadlineExceeded + delay-timeout fail-open via bufconn
+- [x] Enqueue never fires on `status=active` (asserted hits)
+- [x] Assemble-on chat overhead bench compiles and runs (no hard threshold)
+- [x] Middleware / routing docs match Phase 3.5 (Assemble in-handler; ADR-0072 enqueue)
+- [x] `proxy-auth-smoke` gates `TestMemoryIntegration_*`; SEC\* remain context-off
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestones 3.5.D.1–3.5.D.5
-

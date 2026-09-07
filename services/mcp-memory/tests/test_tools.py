@@ -1,12 +1,22 @@
-"""Stub tool schema and handler tests."""
+"""Tool schema, agent resolution, and memory-HTTP handler tests."""
 
 from __future__ import annotations
 
-from uuid import UUID
+import json
+from collections.abc import Callable
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
-from app.errors import PermissionDeniedError, SchemaError
+from app.access_token import get_access_token, require_access_token, set_access_token
+from app.errors import (
+    AuthFailedError,
+    BackendRejectedError,
+    BackendUnavailableError,
+    PermissionDeniedError,
+    SchemaError,
+)
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal
 from app.tools import (
@@ -14,12 +24,18 @@ from app.tools import (
     WRITE_MEMORY_SCHEMA,
     parse_search_args,
     parse_write_args,
-    stub_search_memory,
-    stub_write_memory,
+    resolve_tool_agent_id,
+    search_memory,
+    write_idempotency_key,
+    write_memory,
 )
+from tests.memory_fixtures import CreatedMemory, create_memory_response, memory_client_for
 
 ORG_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 ORG_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+AGENT = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+AGENT_OTHER = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+TOKEN = "tok-test"
 
 
 def test_search_schema_rejects_extra() -> None:
@@ -29,48 +45,301 @@ def test_search_schema_rejects_extra() -> None:
 
 def test_write_schema_rejects_bad_category() -> None:
     with pytest.raises(SchemaError):
-        parse_write_args({"content": "hello", "category": "nope"})
+        parse_write_args({"content": "hello", "category": "fact"})
 
 
-def test_search_requires_memory_read() -> None:
-    principal = Principal(org_id=ORG_A, permissions=0)
-    args = parse_search_args({"query": "q"})
-    with pytest.raises(PermissionDeniedError):
-        stub_search_memory(principal, args)
-
-
-def test_write_requires_memory_write() -> None:
-    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ)
-    args = parse_write_args({"content": "c"})
-    with pytest.raises(PermissionDeniedError):
-        stub_write_memory(principal, args)
-
-
-def test_stub_search_is_org_scoped() -> None:
-    a = stub_search_memory(
-        Principal(org_id=ORG_A, permissions=MEMORY_READ),
-        parse_search_args({"query": "same"}),
-    )
-    b = stub_search_memory(
-        Principal(org_id=ORG_B, permissions=MEMORY_READ),
-        parse_search_args({"query": "same"}),
-    )
-    assert a["org_id"] == str(ORG_A)
-    assert b["org_id"] == str(ORG_B)
-    assert a["results"][0]["memory_id"] != b["results"][0]["memory_id"]
-
-
-def test_stub_write_shape() -> None:
-    out = stub_write_memory(
-        Principal(org_id=ORG_A, permissions=MEMORY_WRITE),
-        parse_write_args({"content": "remember this"}),
-    )
-    assert out["stub"] is True
-    assert out["persisted"] is False
-    assert out["source"] == "mcp_explicit"
-    assert out["org_id"] == str(ORG_A)
+def test_write_schema_accepts_memory_api_categories() -> None:
+    args = parse_write_args({"content": "hello", "category": "episodic"})
+    assert args.category == "episodic"
 
 
 def test_schemas_forbid_additional_properties() -> None:
     assert SEARCH_MEMORY_SCHEMA["additionalProperties"] is False
     assert WRITE_MEMORY_SCHEMA["additionalProperties"] is False
+    assert set(WRITE_MEMORY_SCHEMA["properties"]["category"]["enum"]) == {
+        "factual",
+        "preference",
+        "behavioral",
+        "episodic",
+        "procedural",
+    }
+
+
+def test_resolve_agent_prefers_principal() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    assert resolve_tool_agent_id(principal, AGENT) == AGENT
+    assert resolve_tool_agent_id(principal, None) == AGENT
+
+
+def test_resolve_agent_mismatch_denied() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    with pytest.raises(PermissionDeniedError):
+        resolve_tool_agent_id(principal, AGENT_OTHER)
+
+
+def test_resolve_agent_from_arg() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ)
+    assert resolve_tool_agent_id(principal, AGENT) == AGENT
+
+
+def test_resolve_agent_missing_rejected() -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ)
+    with pytest.raises(SchemaError, match="agent_id"):
+        resolve_tool_agent_id(principal, None)
+
+
+def test_idempotency_key_stable() -> None:
+    a = write_idempotency_key(org_id=ORG_A, agent_id=AGENT, content="  Hello\u0041  ")
+    b = write_idempotency_key(org_id=ORG_A, agent_id=AGENT, content="HelloA")
+    c = write_idempotency_key(org_id=ORG_A, agent_id=AGENT, content="HelloA")
+    assert a == c
+    assert b == c
+    d = write_idempotency_key(org_id=ORG_B, agent_id=AGENT, content="HelloA")
+    assert d != c
+
+
+def test_access_token_require_and_get() -> None:
+    set_access_token(None)
+    assert get_access_token() is None
+    with pytest.raises(AuthFailedError):
+        require_access_token()
+    set_access_token("   ")
+    with pytest.raises(AuthFailedError):
+        require_access_token()
+    set_access_token(TOKEN)
+    assert require_access_token() == TOKEN
+    assert get_access_token() == TOKEN
+    set_access_token(None)
+
+
+def test_backend_rejected_default_code() -> None:
+    err = BackendRejectedError("nope")
+    assert err.code == "backend_error"
+
+
+def _status_handler(status: int) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, text="err")
+
+    return handler
+
+
+def _timeout_handler(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("slow")
+
+
+def _transport_handler(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("down")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "permissions", "raw"),
+    [
+        ("search", 0, {"query": "q"}),
+        ("write", MEMORY_READ, {"content": "c"}),
+    ],
+)
+async def test_local_permission_gate_skips_http(
+    tool: str, permissions: int, raw: dict
+) -> None:
+    principal = Principal(org_id=ORG_A, permissions=permissions, agent_id=AGENT)
+    hits = {"n": 0}
+
+    def counting(_request: httpx.Request) -> httpx.Response:
+        hits["n"] += 1
+        return httpx.Response(200, json={"data": {"results": []}})
+
+    client = memory_client_for(counting)
+    if tool == "search":
+        coro = search_memory(principal, parse_search_args(raw), client)
+    else:
+        coro = write_memory(principal, parse_write_args(raw), client)
+    with pytest.raises(PermissionDeniedError):
+        await coro
+    assert hits["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_search_success_with_hits() -> None:
+    mid = str(uuid4())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+        body = json.loads(request.content)
+        assert body["agent_id"] == str(AGENT)
+        assert body["query"] == "theme"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "results": [
+                        {
+                            "memory": {
+                                "id": mid,
+                                "agent_id": str(AGENT),
+                                "org_id": str(ORG_A),
+                                "content": "hit",
+                                "category": "preference",
+                                "confidence": 0.9,
+                                "status": "active",
+                                "created_at": "2026-01-01T00:00:00Z",
+                                "updated_at": "2026-01-01T00:00:00Z",
+                            },
+                            "similarity": 0.88,
+                            "rank": 1,
+                            "source": "vector",
+                        }
+                    ]
+                }
+            },
+        )
+
+    set_access_token(TOKEN)
+    try:
+        out = await search_memory(
+            Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+            parse_search_args({"query": "theme", "limit": 5}),
+            memory_client_for(handler),
+        )
+    finally:
+        set_access_token(None)
+    assert out["results"][0]["memory_id"] == mid
+    assert out["results"][0]["score"] == 0.88
+    assert out["org_id"] == str(ORG_A)
+
+
+@pytest.mark.asyncio
+async def test_search_empty_hits_is_success() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"results": []}})
+
+    set_access_token(TOKEN)
+    try:
+        out = await search_memory(
+            Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+            parse_search_args({"query": "none"}),
+            memory_client_for(handler),
+        )
+    finally:
+        set_access_token(None)
+    assert out["results"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler", "exc_type"),
+    [
+        (_status_handler(503), BackendUnavailableError),
+        (_status_handler(403), PermissionDeniedError),
+        (_status_handler(401), AuthFailedError),
+        (_status_handler(409), BackendRejectedError),
+        (_timeout_handler, BackendUnavailableError),
+        (_transport_handler, BackendUnavailableError),
+    ],
+)
+async def test_search_backend_fail_closed(
+    handler: Callable[[httpx.Request], httpx.Response],
+    exc_type: type[BaseException],
+) -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT)
+    args = parse_search_args({"query": "q"})
+    client = memory_client_for(handler)
+    set_access_token(TOKEN)
+    try:
+        with pytest.raises(exc_type):
+            await search_memory(principal, args, client)
+    finally:
+        set_access_token(None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "mode", "match"),
+    [
+        ("search", "unset", "IBEX_MEMORY_HTTP_URL"),
+        ("write", "unset", None),
+        ("write", "timeout", None),
+    ],
+)
+async def test_tool_dependency_unavailable(
+    tool: str, mode: str, match: str | None
+) -> None:
+    """Unset URL and write-path timeouts fail closed without inventing success."""
+    client = None if mode == "unset" else memory_client_for(_timeout_handler)
+    set_access_token(TOKEN)
+    try:
+        if tool == "search":
+            call = search_memory(
+                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+                parse_search_args({"query": "q"}),
+                client,
+            )
+        else:
+            call = write_memory(
+                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+                parse_write_args({"content": "c"}),
+                client,
+            )
+        if match is None:
+            with pytest.raises(BackendUnavailableError):
+                await call
+        else:
+            with pytest.raises(BackendUnavailableError, match=match):
+                await call
+    finally:
+        set_access_token(None)
+
+
+@pytest.mark.asyncio
+async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
+    mid = str(uuid4())
+    seen_keys: list[str] = []
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_keys.append(request.headers["X-Idempotency-Key"])
+        bodies.append(json.loads(request.content))
+        return create_memory_response(
+            CreatedMemory(memory_id=mid, org_id=ORG_A, agent_id=AGENT)
+        )
+
+    set_access_token(TOKEN)
+    try:
+        principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
+        args = parse_write_args({"content": "remember", "category": "factual"})
+        client = memory_client_for(handler)
+        first = await write_memory(principal, args, client)
+        second = await write_memory(principal, args, client)
+    finally:
+        set_access_token(None)
+
+    assert first["memory_id"] == mid
+    assert first["persisted"] is True
+    assert first["mcp_source"] == "mcp_explicit"
+    assert first["source"] == "user_provided"
+    assert bodies[0]["metadata"] == {"mcp_source": "mcp_explicit"}
+    assert "source" not in bodies[0]
+    assert bodies[0]["confidence"] == 0.6
+    assert "org_id" not in bodies[0]
+    assert seen_keys[0] == seen_keys[1]
+    assert seen_keys[0] == write_idempotency_key(
+        org_id=ORG_A, agent_id=AGENT, content="remember"
+    )
+    assert second["memory_id"] == mid
+
+
+@pytest.mark.parametrize(
+    ("parser", "raw"),
+    [
+        (parse_search_args, {}),
+        (parse_search_args, {"query": 1}),
+        (parse_search_args, {"query": "x" * 2001}),
+        (parse_write_args, {}),
+        (parse_write_args, {"content": 1}),
+        (parse_write_args, {"content": "x" * 8001}),
+    ],
+)
+def test_schema_rejects_missing_wrong_type_and_oversized(parser, raw: dict) -> None:
+    with pytest.raises(SchemaError):
+        parser(raw)
