@@ -132,7 +132,8 @@ func startBufconnContextClient(t *testing.T, timeout time.Duration) (*configurab
 	const bufSize = 1024 * 1024
 	lis := bufconn.Listen(bufSize)
 	fake := &configurableContextServer{}
-	srv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection
+	// nosemgrep: go.grpc.security.grpc-server-insecure-connection.grpc-server-insecure-connection
+	srv := grpc.NewServer()
 	contextv1.RegisterContextAssemblyServiceServer(srv, fake)
 	go func() { _ = srv.Serve(lis) }() //nolint:errcheck // bufconn test server; stopped via t.Cleanup
 	t.Cleanup(func() { srv.Stop() })
@@ -194,17 +195,23 @@ func setupMemoryIntegrationEnv(t *testing.T, assembleTimeout time.Duration) memo
 	}
 }
 
-func assertMemoryContextHeaders(t *testing.T, resp *http.Response, memories, tokens, fallback string) {
+func assertMemoryContextHeaders(t *testing.T, resp *http.Response, want memoryContextHeaders) {
 	t.Helper()
-	if got := resp.Header.Get("X-IBEX-Memories-Injected"); got != memories {
-		t.Fatalf("X-IBEX-Memories-Injected=%q want %q", got, memories)
+	if got := resp.Header.Get("X-IBEX-Memories-Injected"); got != want.memories {
+		t.Fatalf("X-IBEX-Memories-Injected=%q want %q", got, want.memories)
 	}
-	if got := resp.Header.Get("X-IBEX-Context-Tokens"); got != tokens {
-		t.Fatalf("X-IBEX-Context-Tokens=%q want %q", got, tokens)
+	if got := resp.Header.Get("X-IBEX-Context-Tokens"); got != want.tokens {
+		t.Fatalf("X-IBEX-Context-Tokens=%q want %q", got, want.tokens)
 	}
-	if got := resp.Header.Get("X-IBEX-Context-Fallback"); got != fallback {
-		t.Fatalf("X-IBEX-Context-Fallback=%q want %q", got, fallback)
+	if got := resp.Header.Get("X-IBEX-Context-Fallback"); got != want.fallback {
+		t.Fatalf("X-IBEX-Context-Fallback=%q want %q", got, want.fallback)
 	}
+}
+
+type memoryContextHeaders struct {
+	memories string
+	tokens   string
+	fallback string
 }
 
 func assertInjectedAssembledMessages(t *testing.T, msgs []provider.Message) {

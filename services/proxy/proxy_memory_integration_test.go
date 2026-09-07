@@ -26,7 +26,7 @@ func TestMemoryIntegration_AssembleSuccess(t *testing.T) {
 	if !strings.Contains(body, "assistant") {
 		t.Fatalf("body=%s missing assistant", body)
 	}
-	assertMemoryContextHeaders(t, resp, "3", "42", "false")
+	assertMemoryContextHeaders(t, resp, memoryContextHeaders{memories: "3", tokens: "42", fallback: "false"})
 	assertInjectedAssembledMessages(t, env.provider.lastRequest().Messages)
 	if env.server.callCount() < 1 {
 		t.Fatal("expected AssembleContext call")
@@ -45,7 +45,7 @@ func TestMemoryIntegration_DeadlineExceeded_FailOpen(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	assertMemoryContextHeaders(t, resp, "0", "0", "true")
+	assertMemoryContextHeaders(t, resp, memoryContextHeaders{memories: "0", tokens: "0", fallback: "true"})
 	assertPhase2OnlyUserMessage(t, env.provider.lastRequest().Messages)
 }
 
@@ -66,6 +66,6 @@ func TestMemoryIntegration_TimeoutDelay_FailOpen(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
-	assertMemoryContextHeaders(t, resp, "0", "0", "true")
+	assertMemoryContextHeaders(t, resp, memoryContextHeaders{memories: "0", tokens: "0", fallback: "true"})
 	assertPhase2OnlyUserMessage(t, env.provider.lastRequest().Messages)
 }
