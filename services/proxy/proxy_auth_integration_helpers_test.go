@@ -15,6 +15,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/authcache"
+	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -114,11 +115,13 @@ type redisFixture struct {
 }
 
 type proxyServerOpts struct {
-	defaultRPM    int64
-	orgOverrides  map[uuid.UUID]int64
-	providers     []provider.Provider
-	withAuthCache bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
-	skipRedis     bool // empty REDIS_URL — Wave 4: cache must not wrap
+	defaultRPM     int64
+	orgOverrides   map[uuid.UUID]int64
+	providers      []provider.Provider
+	withAuthCache  bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
+	skipRedis      bool // empty REDIS_URL — Wave 4: cache must not wrap
+	contextClient  *contextclient.Client
+	contextEnabled bool
 }
 
 func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
@@ -224,6 +227,7 @@ func proxyIntegrationConfig(authAddr, redisURL string, srvOpts proxyServerOpts) 
 		RateLimit: config.RateLimitConfig{
 			DefaultRPM: int(defaultRPM),
 		},
+		ContextEnabled: srvOpts.contextEnabled,
 	}
 	if srvOpts.withAuthCache {
 		cfg.AuthCache = config.AuthCacheConfig{
@@ -285,6 +289,7 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		Limiter:          limiter,
 		Health:           &healthcheck.Server{CriticalCheckers: healthCheckers},
 		ProviderRegistry: providerReg,
+		ContextClient:    opts.srvOpts.contextClient,
 	})
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)

@@ -27,7 +27,12 @@ Auth validates via gRPC `ValidateToken` ([ADR-0011](../../web/content/docs/adr/0
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → agentVerify → rateLimit → directiveResolve → chatParse → providerRouting → handler (inject + Complete)
+  bodyLimit → contentType → auth → agentVerify → rateLimit → directiveResolve → chatParse → providerRouting → handler
+  handler: Assemble (in-handler when IBEX_CONTEXT_ENABLED + client; not a middleware hop) → inject → Complete
+
+POST /v1/sessions/{external_id}/terminate:
+  auth → agentVerify → rateLimit → handler
+  handler: Complete session; async HTTP enqueue to worker (ADR-0072) when status=completed
 
 GET /v1/internal/auth-probe:
   auth → agentVerify → rateLimit → handler
@@ -107,11 +112,11 @@ Embedded `ibex` JSON metadata is shipped in **3.5.D.3** behind `IBEX_CONTEXT_EMB
 ## Next (Phase 2.5+) — remaining planning baseline
 
 Anthropic adapter, model capability registry, self-hosted OpenAI-compatible adapter,
-tokenizer registry, non-streaming response pipeline, and context-assembly hot-path wiring
-are shipped (m2.5.G1.M1–M3, m2.5.G2.M1, m2.5.G3.M1 / ADR-0040–0044; m3.5.D.1–D.3). Still planned:
+tokenizer registry, non-streaming response pipeline, and Track D proxy integration
+(m3.5.D.1–D.5: context client, handler wiring, response headers/metadata, extraction
+enqueue, config/env audit) are shipped. Still planned:
 
 - Streaming response pipeline design (G3.M2)
-- Extraction enqueue after chat (3.5.D.4)
 
 Paths and env names may change during implementation — update this README and `ENVIRONMENT_VARIABLES.md` when they land.
 
