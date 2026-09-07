@@ -71,7 +71,7 @@ jobs:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/integration-race.xml -- \
-            -race -tags=integration -timeout=20m -count=1 \
+            -race -tags=integration -timeout=20m -count=1 -p 1 \
             ./packages/session/... \
             ./packages/directive/... \
             ./services/auth/... \
