@@ -69,9 +69,11 @@ jobs:
       - name: Race + integration (proxy, auth, session, directive)
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          # Race detector inflates wall time; keep SEC1_5 meaningful without false fails.
+          REVOCATION_SLA_MS: "2000"
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/integration-race.xml -- \
-            -race -tags=integration -timeout=20m -count=1 -p 1 \
+            -race -tags=integration -timeout=20m -count=1 -p 1 -parallel 1 \
             ./packages/session/... \
             ./packages/directive/... \
             ./services/auth/... \
