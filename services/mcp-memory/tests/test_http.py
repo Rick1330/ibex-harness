@@ -254,22 +254,16 @@ def _mcp_session(client: TestClient, token: str) -> dict[str, str]:
     return headers
 
 
-def _tools_call(
-    client: TestClient,
-    headers: dict[str, str],
-    *,
-    request_id: int,
-    name: str,
-    arguments: dict[str, object],
-) -> object:
+def _tools_call(client: TestClient, call: dict[str, object]) -> object:
+    """call keys: headers, request_id, name, arguments."""
     return client.post(
         "/mcp",
-        headers=headers,
+        headers=call["headers"],  # type: ignore[arg-type]
         json={
             "jsonrpc": "2.0",
-            "id": request_id,
+            "id": call["request_id"],
             "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
+            "params": {"name": call["name"], "arguments": call["arguments"]},
         },
     )
 
@@ -303,40 +297,57 @@ def test_tools_call_org_b_forwards_bearer_never_org_id() -> None:
         _assert_tool_ok(
             _tools_call(
                 client,
-                headers,
-                request_id=2,
-                name="search_memory",
-                arguments={"query": "tenant"},
+                {
+                    "headers": headers,
+                    "request_id": 2,
+                    "name": "search_memory",
+                    "arguments": {"query": "tenant"},
+                },
             )
         )
         _assert_tool_ok(
             _tools_call(
                 client,
-                headers,
-                request_id=3,
-                name="write_memory",
-                arguments={"content": "org-b note"},
-            )
-        )
-        _assert_tool_error(
-            _tools_call(
-                client,
-                headers,
-                request_id=4,
-                name="search_memory",
-                arguments={"query": "x", "org_id": str(ORG)},
-            )
-        )
-        _assert_tool_error(
-            _tools_call(
-                client,
-                headers,
-                request_id=5,
-                name="write_memory",
-                arguments={"content": "x", "agent_id": str(ORG)},
+                {
+                    "headers": headers,
+                    "request_id": 3,
+                    "name": "write_memory",
+                    "arguments": {"content": "org-b note"},
+                },
             )
         )
     _assert_org_b_outbound(outbound, expected_calls=2)
+
+
+def test_tools_call_rejects_client_org_override_and_agent_mismatch() -> None:
+    """Client org_id / foreign agent_id must not reach memory HTTP."""
+    mem, outbound = _capturing_org_b_memory()
+    client, _sink = _app(memory_client=mem)
+    with client:
+        headers = _mcp_session(client, TOKEN_B)
+        _assert_tool_error(
+            _tools_call(
+                client,
+                {
+                    "headers": headers,
+                    "request_id": 4,
+                    "name": "search_memory",
+                    "arguments": {"query": "x", "org_id": str(ORG)},
+                },
+            )
+        )
+        _assert_tool_error(
+            _tools_call(
+                client,
+                {
+                    "headers": headers,
+                    "request_id": 5,
+                    "name": "write_memory",
+                    "arguments": {"content": "x", "agent_id": str(ORG)},
+                },
+            )
+        )
+    assert outbound == []
 
 
 def test_metrics_endpoint() -> None:
