@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import FastAPI
 
@@ -38,6 +39,19 @@ class CreateAppDeps:
     rate_limiter: McpRateLimiter | None = None
 
 
+@dataclass(slots=True)
+class _Runtime:
+    state: AppState
+    injected: CreateAppDeps
+    cfg: Settings
+    audit: AsyncAuditEmitter
+    mem: MemoryHttpClient | None
+    owned_memory: bool
+    limiter: McpRateLimiter
+    owned_limiter: bool
+    mcp: Any
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -56,46 +70,27 @@ def create_app(
         rate_limiter=limiter,
         allow_test_hosts=cfg.env != "production",
     )
-    # Lazily creates session_manager; must happen before lifespan uses it.
-    mcp_asgi = mcp.streamable_http_app()
-
-    @asynccontextmanager
-    async def lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
-        inner = injected.validator or GRPCTokenValidator(
-            cfg.auth_grpc_addr,
-            timeout_seconds=cfg.auth_timeout_ms / 1000.0,
-        )
-        auth = _with_auth_breaker(inner)
-        state.validator = auth
-        state.audit = audit
-        state.memory_client = mem
-        state.rate_limiter = limiter
-        state.mcp_app = mcp
-        audit.start()
-        try:
-            await _mark_readiness(state, auth, cfg)
-            async with mcp.session_manager.run():
-                yield
-        finally:
-            state.ready = False
-            await audit.aclose()
-            await auth.aclose()
-            if owned_memory and mem is not None:
-                await mem.aclose()
-            if owned_limiter and isinstance(limiter, RedisMcpLimiter):
-                await limiter.aclose()
-            logger.info("mcp-memory shutdown complete")
-
+    runtime = _Runtime(
+        state=state,
+        injected=injected,
+        cfg=cfg,
+        audit=audit,
+        mem=mem,
+        owned_memory=owned_memory,
+        limiter=limiter,
+        owned_limiter=owned_limiter,
+        mcp=mcp,
+    )
     application = FastAPI(
         title="IBEX MCP Memory",
         version="0.1.0",
-        lifespan=lifespan,
+        lifespan=_build_lifespan(runtime),
     )
     application.state.mcp = state
     application.state.settings = cfg
     application.include_router(probe_router)
     # Mount at root: FastMCP exposes /mcp; FastAPI routes (/health, /ready) win first.
-    application.mount("/", mcp_asgi)
+    application.mount("/", mcp.streamable_http_app())
     # Inner auth first, then metrics outermost so 401s are counted.
     application.add_middleware(
         BearerAuthMiddleware,
@@ -107,6 +102,43 @@ def create_app(
     )
     application.add_middleware(HTTPMetricsMiddleware)
     return application
+
+
+def _build_lifespan(
+    runtime: _Runtime,
+) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+    @asynccontextmanager
+    async def lifespan(_application: FastAPI) -> AsyncGenerator[None, None]:
+        inner = runtime.injected.validator or GRPCTokenValidator(
+            runtime.cfg.auth_grpc_addr,
+            timeout_seconds=runtime.cfg.auth_timeout_ms / 1000.0,
+        )
+        auth = _with_auth_breaker(inner)
+        runtime.state.validator = auth
+        runtime.state.audit = runtime.audit
+        runtime.state.memory_client = runtime.mem
+        runtime.state.rate_limiter = runtime.limiter
+        runtime.state.mcp_app = runtime.mcp
+        runtime.audit.start()
+        try:
+            await _mark_readiness(runtime.state, auth, runtime.cfg)
+            async with runtime.mcp.session_manager.run():
+                yield
+        finally:
+            await _shutdown(runtime, auth)
+
+    return lifespan
+
+
+async def _shutdown(runtime: _Runtime, auth: TokenValidator) -> None:
+    runtime.state.ready = False
+    await runtime.audit.aclose()
+    await auth.aclose()
+    if runtime.owned_memory and runtime.mem is not None:
+        await runtime.mem.aclose()
+    if runtime.owned_limiter and isinstance(runtime.limiter, RedisMcpLimiter):
+        await runtime.limiter.aclose()
+    logger.info("mcp-memory shutdown complete")
 
 
 def _with_auth_breaker(inner: TokenValidator) -> TokenValidator:

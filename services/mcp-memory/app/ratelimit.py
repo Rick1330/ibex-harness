@@ -178,11 +178,18 @@ def _parse_org_rpm_pair(pair: str) -> tuple[UUID, int]:
     if not sep:
         msg = f"invalid pair {pair!r} (expected uuid=rpm)"
         raise ValueError(msg)
+    return _parse_org_uuid(org_s, pair), _parse_rpm(rpm_s, pair)
+
+
+def _parse_org_uuid(org_s: str, pair: str) -> UUID:
     try:
-        org_id = UUID(org_s.strip())
+        return UUID(org_s.strip())
     except ValueError as exc:
         msg = f"invalid org UUID in {pair!r}"
         raise ValueError(msg) from exc
+
+
+def _parse_rpm(rpm_s: str, pair: str) -> int:
     try:
         rpm = int(rpm_s.strip())
     except ValueError as exc:
@@ -191,4 +198,4 @@ def _parse_org_rpm_pair(pair: str) -> tuple[UUID, int]:
     if rpm < 1:
         msg = f"invalid RPM in {pair!r}"
         raise ValueError(msg)
-    return org_id, rpm
+    return rpm

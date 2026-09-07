@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.audit import MemoryAuditSink
@@ -40,7 +41,7 @@ def _clear_settings() -> None:
     get_settings.cache_clear()
 
 
-def test_tools_call_rate_limited_is_error_not_http_429() -> None:
+def _rate_limit_app(sink: MemoryAuditSink) -> FastAPI:
     settings = Settings(
         transport="streamable_http",
         resource_url="http://testserver/mcp",
@@ -48,9 +49,7 @@ def test_tools_call_rate_limited_is_error_not_http_429() -> None:
         auth_grpc_addr="127.0.0.1:1",
         redis_url="",
     )
-    sink = MemoryAuditSink()
-    limiter = _DenyAfter(remaining_allows=0)
-    application = create_app(
+    return create_app(
         settings=settings,
         deps=CreateAppDeps(
             validator=StaticTokenValidator(
@@ -64,36 +63,48 @@ def test_tools_call_rate_limited_is_error_not_http_429() -> None:
             ),
             audit_sink=sink,
             memory_client=stub_memory_client(org_id=ORG, agent_id=AGENT),
-            rate_limiter=limiter,
+            rate_limiter=_DenyAfter(remaining_allows=0),
         ),
     )
-    headers = {
+
+
+def _mcp_headers() -> dict[str, str]:
+    return {
         "Authorization": f"Bearer {TOKEN}",
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         MCP_PROTOCOL_VERSION_HEADER: PROTOCOL_VERSION_LATEST,
     }
-    with TestClient(application) as client:
-        init = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": PROTOCOL_VERSION_LATEST,
-                    "capabilities": {},
-                    "clientInfo": {"name": "t", "version": "0"},
-                },
+
+
+def _initialize_session(client: TestClient, headers: dict[str, str]) -> None:
+    init = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": PROTOCOL_VERSION_LATEST,
+                "capabilities": {},
+                "clientInfo": {"name": "t", "version": "0"},
             },
-        )
-        assert init.status_code in (200, 202)
-        client.post(
-            "/mcp",
-            headers=headers,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        )
+        },
+    )
+    assert init.status_code in (200, 202)
+    client.post(
+        "/mcp",
+        headers=headers,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+
+
+def test_tools_call_rate_limited_is_error_not_http_429() -> None:
+    sink = MemoryAuditSink()
+    headers = _mcp_headers()
+    with TestClient(_rate_limit_app(sink)) as client:
+        _initialize_session(client, headers)
         resp = client.post(
             "/mcp",
             headers=headers,

@@ -83,6 +83,13 @@ class BreakingTokenValidator(TokenValidator):
     async def validate(self, access_token: str) -> ValidateResult:
         is_probe = self._reserve_or_reject()
         try:
+            return await self._call_inner(access_token)
+        finally:
+            if is_probe:
+                self._release_probe_reservation()
+
+    async def _call_inner(self, access_token: str) -> ValidateResult:
+        try:
             result = await self._inner.validate(access_token)
         except AuthFailedError:
             # Invalid token is not an upstream outage — do not trip the breaker.
@@ -92,16 +99,15 @@ class BreakingTokenValidator(TokenValidator):
             self._record_outcome(success=False)
             raise
         except Exception:
-            with self._lock:
-                if self._state == BreakerState.HALF_OPEN:
-                    self._trip_open()
+            self._trip_open_if_half_open()
             raise
-        else:
-            self._record_outcome(success=True)
-            return result
-        finally:
-            if is_probe:
-                self._release_probe_reservation()
+        self._record_outcome(success=True)
+        return result
+
+    def _trip_open_if_half_open(self) -> None:
+        with self._lock:
+            if self._state == BreakerState.HALF_OPEN:
+                self._trip_open()
 
     def _reserve_or_reject(self) -> bool:
         """Return True when this caller owns the half-open Auth probe."""
@@ -164,7 +170,7 @@ class BreakingTokenValidator(TokenValidator):
 
     def force_cooldown_elapsed_for_tests(self) -> None:
         """Test helper: make OPEN→HALF_OPEN eligible on the next validate()."""
-        self._opened_at = 0.0
+        self._opened_at = time.monotonic() - self._cooldown_seconds - 1.0
 
     def _transition(self, to: BreakerState) -> None:
         if to == self._state:

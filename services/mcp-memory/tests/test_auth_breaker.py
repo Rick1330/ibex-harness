@@ -18,17 +18,27 @@ from app.errors import AuthFailedError, AuthUnavailableError
 from tests.memory_fixtures import AGENT, ORG
 
 
-@pytest.mark.asyncio
-async def test_breaker_opens_after_n_unavailable() -> None:
+async def _open_breaker(
+    *,
+    failure_threshold: int,
+    cooldown_seconds: float = 60.0,
+) -> BreakingTokenValidator:
     inner = StaticTokenValidator({}, available=False)
     breaker = BreakingTokenValidator(
-        inner, failure_threshold=3, cooldown_seconds=60.0
+        inner,
+        failure_threshold=failure_threshold,
+        cooldown_seconds=cooldown_seconds,
     )
-    for _ in range(3):
+    for _ in range(failure_threshold):
         with pytest.raises(AuthUnavailableError):
             await breaker.validate("x")
     assert breaker.state == BreakerState.OPEN
-    # Short-circuit: no further inner call needed
+    return breaker
+
+
+@pytest.mark.asyncio
+async def test_breaker_opens_after_n_unavailable() -> None:
+    breaker = await _open_breaker(failure_threshold=3)
     with pytest.raises(AuthUnavailableError):
         await breaker.validate("x")
 
@@ -96,21 +106,23 @@ def test_breaker_rejects_invalid_ctor_args() -> None:
 
 @pytest.mark.asyncio
 async def test_breaker_half_open_failure_reopens() -> None:
-    inner = StaticTokenValidator({}, available=False)
-    breaker = BreakingTokenValidator(
-        inner, failure_threshold=2, cooldown_seconds=60.0
-    )
-    for _ in range(2):
-        with pytest.raises(AuthUnavailableError):
-            await breaker.validate("x")
-    assert breaker.state == BreakerState.OPEN
+    breaker = await _open_breaker(failure_threshold=2)
     breaker.force_cooldown_elapsed_for_tests()
     with pytest.raises(AuthUnavailableError):
         await breaker.validate("x")
     assert breaker.state == BreakerState.OPEN
 
 
-def test_breaker_transition_noop_when_unchanged() -> None:
+def test_force_cooldown_works_on_fresh_monotonic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CI runners can have time.monotonic() < cooldown; 0.0 must still expire."""
+    monkeypatch.setattr("app.auth_breaker.time.monotonic", lambda: 12.0)
+    breaker = BreakingTokenValidator(
+        StaticTokenValidator({}), failure_threshold=1, cooldown_seconds=60.0
+    )
+    breaker._state = BreakerState.OPEN
+    breaker._opened_at = 0.0  # naive value that used to look "still cooling"
+    breaker.force_cooldown_elapsed_for_tests()
+    assert breaker._reserve_or_reject() is True
     breaker = BreakingTokenValidator(
         StaticTokenValidator({}), failure_threshold=2, cooldown_seconds=1.0
     )
@@ -137,18 +149,22 @@ async def test_breaker_half_open_single_probe_under_concurrency() -> None:
     )
     # Simulate OPEN past cooldown, then contend for the single probe reservation.
     breaker._state = BreakerState.OPEN
-    breaker._opened_at = 0.0
+    breaker.force_cooldown_elapsed_for_tests()
     breaker._probe_inflight = False
 
     reserved: list[bool | str] = []
     barrier = threading.Barrier(16)
+    out_lock = threading.Lock()
 
     def worker() -> None:
         barrier.wait()
         try:
-            reserved.append(breaker._reserve_or_reject())
+            got = breaker._reserve_or_reject()
+            with out_lock:
+                reserved.append(got)
         except AuthUnavailableError:
-            reserved.append("reject")
+            with out_lock:
+                reserved.append("reject")
 
     threads = [threading.Thread(target=worker) for _ in range(16)]
     for t in threads:
