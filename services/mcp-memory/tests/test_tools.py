@@ -320,8 +320,26 @@ async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
     assert first["source"] == "user_provided"
     assert bodies[0]["metadata"] == {"mcp_source": "mcp_explicit"}
     assert "source" not in bodies[0]
+    assert bodies[0]["confidence"] == 0.6
+    assert "org_id" not in bodies[0]
     assert seen_keys[0] == seen_keys[1]
     assert seen_keys[0] == write_idempotency_key(
         org_id=ORG_A, agent_id=AGENT, content="remember"
     )
     assert second["memory_id"] == mid
+
+
+@pytest.mark.parametrize(
+    ("parser", "raw"),
+    [
+        (parse_search_args, {}),
+        (parse_search_args, {"query": 1}),
+        (parse_search_args, {"query": "x" * 2001}),
+        (parse_write_args, {}),
+        (parse_write_args, {"content": 1}),
+        (parse_write_args, {"content": "x" * 8001}),
+    ],
+)
+def test_schema_rejects_missing_wrong_type_and_oversized(parser, raw: dict) -> None:
+    with pytest.raises(SchemaError):
+        parser(raw)

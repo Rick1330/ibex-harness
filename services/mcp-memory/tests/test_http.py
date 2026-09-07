@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -19,7 +21,13 @@ from app.protocol import (
     PROTOCOL_VERSION_LEGACY,
     SUPPORTED_PROTOCOL_VERSIONS,
 )
-from tests.memory_fixtures import stub_memory_client
+from tests.memory_fixtures import (
+    CreatedMemory,
+    create_memory_response,
+    empty_search_response,
+    memory_client_for,
+    stub_memory_client,
+)
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 ORG_B = UUID("22222222-2222-2222-2222-222222222222")
@@ -36,7 +44,7 @@ def _clear_settings() -> None:
     get_settings.cache_clear()
 
 
-def _app() -> tuple[TestClient, MemoryAuditSink]:
+def _app(*, memory_client=None) -> tuple[TestClient, MemoryAuditSink]:
     settings = Settings(
         transport="streamable_http",
         resource_url="http://testserver/mcp",
@@ -61,7 +69,8 @@ def _app() -> tuple[TestClient, MemoryAuditSink]:
         settings=settings,
         validator=validator,
         audit_sink=sink,
-        memory_client=stub_memory_client(org_id=ORG, agent_id=AGENT),
+        memory_client=memory_client
+        or stub_memory_client(org_id=ORG, agent_id=AGENT),
     )
     return TestClient(application), sink
 
@@ -217,6 +226,107 @@ def test_mcp_initialize_negotiates_protocol_version(protocol_version: str) -> No
 def test_mcp_initialize_and_tools_list() -> None:
     """Back-compat alias: default conformance path uses LATEST protocol version."""
     test_mcp_initialize_negotiates_protocol_version(PROTOCOL_VERSION_LATEST)
+
+
+def test_tools_call_org_b_forwards_bearer_never_org_id() -> None:
+    """ISO-MCP-01: Org B tools/call must forward Org B bearer; never client org_id."""
+    outbound: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outbound.append(request)
+        if request.url.path.endswith("/search"):
+            return empty_search_response()
+        return create_memory_response(
+            CreatedMemory(org_id=ORG_B, agent_id=AGENT)
+        )
+
+    mem = memory_client_for(handler)
+    client, _sink = _app(memory_client=mem)
+    headers = _mcp_headers(TOKEN_B, PROTOCOL_VERSION_LATEST)
+    with client:
+        init = client.post(
+            "/mcp", headers=headers, json=_initialize_payload(PROTOCOL_VERSION_LATEST)
+        )
+        assert init.status_code in (200, 202), init.text
+        client.post(
+            "/mcp",
+            headers=headers,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        search = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "search_memory", "arguments": {"query": "tenant"}},
+            },
+        )
+        assert search.status_code in (200, 202), search.text
+        assert "isError" not in search.text or '"isError":false' in search.text.replace(
+            " ", ""
+        )
+        write = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "write_memory",
+                    "arguments": {"content": "org-b note"},
+                },
+            },
+        )
+        assert write.status_code in (200, 202), write.text
+        assert "isError" not in write.text or '"isError":false' in write.text.replace(
+            " ", ""
+        )
+        # org_id-shaped client field must not be accepted as an org override.
+        poisoned = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_memory",
+                    "arguments": {"query": "x", "org_id": str(ORG)},
+                },
+            },
+        )
+        assert poisoned.status_code in (200, 202), poisoned.text
+        # Extra undeclared properties are rejected before memory is called.
+        assert '"isError":true' in poisoned.text.replace(" ", "") or "isError" in poisoned.text
+        # Agent-scoped Org B token cannot retarget a foreign agent_id (org-shaped UUID).
+        mismatch = client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {
+                    "name": "write_memory",
+                    "arguments": {"content": "x", "agent_id": str(ORG)},
+                },
+            },
+        )
+        assert mismatch.status_code in (200, 202), mismatch.text
+        assert "isError" in mismatch.text or "permission" in mismatch.text.lower()
+
+    assert len(outbound) >= 2
+    for req in outbound:
+        assert req.headers["Authorization"] == f"Bearer {TOKEN_B}"
+        assert TOKEN_A not in req.headers.get("Authorization", "")
+        if req.content:
+            payload = json.loads(req.content)
+            assert "org_id" not in payload
+    # Poisoned / mismatch calls must not have produced additional memory HTTP traffic.
+    assert len(outbound) == 2
 
 
 def test_metrics_endpoint() -> None:
