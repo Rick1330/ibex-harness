@@ -228,105 +228,115 @@ def test_mcp_initialize_and_tools_list() -> None:
     test_mcp_initialize_negotiates_protocol_version(PROTOCOL_VERSION_LATEST)
 
 
-def test_tools_call_org_b_forwards_bearer_never_org_id() -> None:
-    """ISO-MCP-01: Org B tools/call must forward Org B bearer; never client org_id."""
+def _capturing_org_b_memory() -> tuple[object, list[httpx.Request]]:
     outbound: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         outbound.append(request)
         if request.url.path.endswith("/search"):
             return empty_search_response()
-        return create_memory_response(
-            CreatedMemory(org_id=ORG_B, agent_id=AGENT)
-        )
+        return create_memory_response(CreatedMemory(org_id=ORG_B, agent_id=AGENT))
 
-    mem = memory_client_for(handler)
-    client, _sink = _app(memory_client=mem)
-    headers = _mcp_headers(TOKEN_B, PROTOCOL_VERSION_LATEST)
-    with client:
-        init = client.post(
-            "/mcp", headers=headers, json=_initialize_payload(PROTOCOL_VERSION_LATEST)
-        )
-        assert init.status_code in (200, 202), init.text
-        client.post(
-            "/mcp",
-            headers=headers,
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        )
-        search = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "search_memory", "arguments": {"query": "tenant"}},
-            },
-        )
-        assert search.status_code in (200, 202), search.text
-        assert "isError" not in search.text or '"isError":false' in search.text.replace(
-            " ", ""
-        )
-        write = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": "write_memory",
-                    "arguments": {"content": "org-b note"},
-                },
-            },
-        )
-        assert write.status_code in (200, 202), write.text
-        assert "isError" not in write.text or '"isError":false' in write.text.replace(
-            " ", ""
-        )
-        # org_id-shaped client field must not be accepted as an org override.
-        poisoned = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "tools/call",
-                "params": {
-                    "name": "search_memory",
-                    "arguments": {"query": "x", "org_id": str(ORG)},
-                },
-            },
-        )
-        assert poisoned.status_code in (200, 202), poisoned.text
-        # Extra undeclared properties are rejected before memory is called.
-        assert '"isError":true' in poisoned.text.replace(" ", "") or "isError" in poisoned.text
-        # Agent-scoped Org B token cannot retarget a foreign agent_id (org-shaped UUID).
-        mismatch = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "tools/call",
-                "params": {
-                    "name": "write_memory",
-                    "arguments": {"content": "x", "agent_id": str(ORG)},
-                },
-            },
-        )
-        assert mismatch.status_code in (200, 202), mismatch.text
-        assert "isError" in mismatch.text or "permission" in mismatch.text.lower()
+    return memory_client_for(handler), outbound
 
-    assert len(outbound) >= 2
+
+def _mcp_session(client: TestClient, token: str) -> dict[str, str]:
+    headers = _mcp_headers(token, PROTOCOL_VERSION_LATEST)
+    init = client.post(
+        "/mcp", headers=headers, json=_initialize_payload(PROTOCOL_VERSION_LATEST)
+    )
+    assert init.status_code in (200, 202), init.text
+    client.post(
+        "/mcp",
+        headers=headers,
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+    return headers
+
+
+def _tools_call(
+    client: TestClient,
+    headers: dict[str, str],
+    *,
+    request_id: int,
+    name: str,
+    arguments: dict[str, object],
+) -> object:
+    return client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
+    )
+
+
+def _assert_tool_ok(resp: object) -> None:
+    assert resp.status_code in (200, 202), resp.text
+    compact = resp.text.replace(" ", "")
+    assert "isError" not in resp.text or '"isError":false' in compact
+
+
+def _assert_tool_error(resp: object) -> None:
+    assert resp.status_code in (200, 202), resp.text
+    assert "isError" in resp.text or "permission" in resp.text.lower()
+
+
+def _assert_org_b_outbound(outbound: list[httpx.Request], *, expected_calls: int) -> None:
+    assert len(outbound) == expected_calls
     for req in outbound:
         assert req.headers["Authorization"] == f"Bearer {TOKEN_B}"
         assert TOKEN_A not in req.headers.get("Authorization", "")
         if req.content:
-            payload = json.loads(req.content)
-            assert "org_id" not in payload
-    # Poisoned / mismatch calls must not have produced additional memory HTTP traffic.
-    assert len(outbound) == 2
+            assert "org_id" not in json.loads(req.content)
+
+
+def test_tools_call_org_b_forwards_bearer_never_org_id() -> None:
+    """ISO-MCP-01: Org B tools/call must forward Org B bearer; never client org_id."""
+    mem, outbound = _capturing_org_b_memory()
+    client, _sink = _app(memory_client=mem)
+    with client:
+        headers = _mcp_session(client, TOKEN_B)
+        _assert_tool_ok(
+            _tools_call(
+                client,
+                headers,
+                request_id=2,
+                name="search_memory",
+                arguments={"query": "tenant"},
+            )
+        )
+        _assert_tool_ok(
+            _tools_call(
+                client,
+                headers,
+                request_id=3,
+                name="write_memory",
+                arguments={"content": "org-b note"},
+            )
+        )
+        _assert_tool_error(
+            _tools_call(
+                client,
+                headers,
+                request_id=4,
+                name="search_memory",
+                arguments={"query": "x", "org_id": str(ORG)},
+            )
+        )
+        _assert_tool_error(
+            _tools_call(
+                client,
+                headers,
+                request_id=5,
+                name="write_memory",
+                arguments={"content": "x", "agent_id": str(ORG)},
+            )
+        )
+    _assert_org_b_outbound(outbound, expected_calls=2)
 
 
 def test_metrics_endpoint() -> None:
