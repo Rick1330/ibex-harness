@@ -381,12 +381,10 @@ async def test_record_feedback_requires_memory_write() -> None:
         hits["n"] += 1
         return httpx.Response(200, json={"data": {}})
 
+    args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive"})
+    client = memory_client_for(counting)
     with pytest.raises(PermissionDeniedError):
-        await record_feedback(
-            principal,
-            parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive"}),
-            memory_client_for(counting),
-        )
+        await record_feedback(principal, args, client)
     assert hits["n"] == 0
 
 
@@ -441,13 +439,12 @@ async def test_record_feedback_fail_closed(
     handler: Callable[[httpx.Request], httpx.Response],
     exc_type: type[BaseException],
 ) -> None:
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
+    args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "negative"})
+    client = memory_client_for(handler)
     set_access_token(TOKEN)
     try:
         with pytest.raises(exc_type):
-            await record_feedback(
-                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-                parse_feedback_args({"memory_id": str(AGENT), "feedback": "negative"}),
-                memory_client_for(handler),
-            )
+            await record_feedback(principal, args, client)
     finally:
         set_access_token(None)

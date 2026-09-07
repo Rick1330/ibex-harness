@@ -25,6 +25,7 @@ from tests.integration.find_similar_support import (
     upsert_embedding,
 )
 from tests.integration.security.seed import (
+    OrgSeed,
     seed_org_agent,
     seed_second_agent_same_org,
 )
@@ -52,6 +53,97 @@ class _StubEmbed:
 
     async def aclose(self) -> None:
         return None
+
+
+async def _seed_ranked_pair(
+    session_factory: async_sessionmaker[AsyncSession],
+    store: PgVectorStore,
+) -> tuple[OrgSeed, UUID, UUID, UUID]:
+    org = await seed_org_agent(
+        session_factory,
+        slug_prefix="fb-e2e",
+        content="feedback boosted dark mode preference memory",
+    )
+    agent_b = await seed_second_agent_same_org(
+        session_factory,
+        org_id=org.org_id,
+        user_id=org.user_id,
+        slug_prefix="fb-e2e",
+    )
+    agent_c = await seed_second_agent_same_org(
+        session_factory,
+        org_id=org.org_id,
+        user_id=org.user_id,
+        slug_prefix="fb-e2e-c",
+    )
+    control_id = await insert_scored_memory(
+        session_factory,
+        InsertScoredMemoryParams(
+            org_id=org.org_id,
+            agent_id=org.agent_id,
+            content="control dark mode preference memory default usefulness",
+            category="factual",
+            valid_from=datetime.now(tz=UTC),
+            confidence=0.85,
+            usefulness_score=0.50,
+        ),
+    )
+    await upsert_embedding(store, org_id=org.org_id, memory_id=org.memory_id, hotspot=3)
+    await upsert_embedding(store, org_id=org.org_id, memory_id=control_id, hotspot=3)
+    return org, agent_b, agent_c, control_id
+
+
+def _e2e_tokens(org: OrgSeed, agent_b: UUID, agent_c: UUID) -> dict[str, ValidateResult]:
+    return {
+        OWNER_TOKEN: ValidateResult(
+            org_id=org.org_id,
+            permissions=MEMORY_WRITE | MEMORY_READ,
+            agent_id=org.agent_id,
+        ),
+        AGENT_B_TOKEN: ValidateResult(
+            org_id=org.org_id, permissions=MEMORY_WRITE, agent_id=agent_b
+        ),
+        AGENT_C_TOKEN: ValidateResult(
+            org_id=org.org_id, permissions=MEMORY_WRITE, agent_id=agent_c
+        ),
+        SEARCH_TOKEN: ValidateResult(
+            org_id=org.org_id, permissions=MEMORY_READ, agent_id=org.agent_id
+        ),
+    }
+
+
+async def _post_three_positives(client: AsyncClient, memory_id: UUID) -> dict:
+    last_body: dict = {}
+    for token in (OWNER_TOKEN, AGENT_B_TOKEN, AGENT_C_TOKEN):
+        response = await client.post(
+            f"/v1/memories/{memory_id}/feedback",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"feedback": "positive"},
+        )
+        assert response.status_code == 200, response.text
+        last_body = response.json()["data"]
+    return last_body
+
+
+async def _assert_db_usefulness(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    org_id: UUID,
+    memory_id: UUID,
+    expected: float,
+) -> None:
+    async with session_factory() as session, session.begin():
+        await with_service_org(session, org_id)
+        row = (
+            await session.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    "SELECT usefulness_score FROM ibex_core.memories "
+                    "WHERE id = :id AND org_id = :org"
+                ),
+                {"id": str(memory_id), "org": str(org_id)},
+            )
+        ).one()
+    assert float(row.usefulness_score) == pytest.approx(expected)
 
 
 @pytest.mark.asyncio
@@ -144,92 +236,28 @@ async def test_e2e_three_agents_positive_raises_rank(
     store: PgVectorStore,
 ) -> None:
     """Option (a): three distinct agents each upsert positive once → 0.80, ranks above control."""
-    org = await seed_org_agent(
-        session_factory,
-        slug_prefix="fb-e2e",
-        content="feedback boosted dark mode preference memory",
-    )
-    agent_b = await seed_second_agent_same_org(
-        session_factory,
-        org_id=org.org_id,
-        user_id=org.user_id,
-        slug_prefix="fb-e2e",
-    )
-    agent_c = await seed_second_agent_same_org(
-        session_factory,
-        org_id=org.org_id,
-        user_id=org.user_id,
-        slug_prefix="fb-e2e-c",
-    )
-    now = datetime.now(tz=UTC)
-    control_id = await insert_scored_memory(
-        session_factory,
-        InsertScoredMemoryParams(
-            org_id=org.org_id,
-            agent_id=org.agent_id,
-            content="control dark mode preference memory default usefulness",
-            category="factual",
-            valid_from=now,
-            confidence=0.85,
-            usefulness_score=0.50,
-        ),
-    )
-    await upsert_embedding(store, org_id=org.org_id, memory_id=org.memory_id, hotspot=3)
-    await upsert_embedding(store, org_id=org.org_id, memory_id=control_id, hotspot=3)
-
-    tokens = {
-        OWNER_TOKEN: ValidateResult(
-            org_id=org.org_id,
-            permissions=MEMORY_WRITE | MEMORY_READ,
-            agent_id=org.agent_id,
-        ),
-        AGENT_B_TOKEN: ValidateResult(
-            org_id=org.org_id, permissions=MEMORY_WRITE, agent_id=agent_b
-        ),
-        AGENT_C_TOKEN: ValidateResult(
-            org_id=org.org_id, permissions=MEMORY_WRITE, agent_id=agent_c
-        ),
-        SEARCH_TOKEN: ValidateResult(
-            org_id=org.org_id, permissions=MEMORY_READ, agent_id=org.agent_id
-        ),
-    }
+    org, agent_b, agent_c, control_id = await _seed_ranked_pair(session_factory, store)
     search_settings = settings.model_copy(
         update={"embedding_api_token": SecretStr("test-embed-token")}
     )
     app = create_app(
         settings=search_settings,
-        validator=StaticTokenValidator(tokens),
+        validator=StaticTokenValidator(_e2e_tokens(org, agent_b, agent_c)),
     )
     async with app.router.lifespan_context(app):
         app.state.memory.embedding_client = _StubEmbed()
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            last_body: dict = {}
-            for token in (OWNER_TOKEN, AGENT_B_TOKEN, AGENT_C_TOKEN):
-                response = await client.post(
-                    f"/v1/memories/{org.memory_id}/feedback",
-                    headers={"Authorization": f"Bearer {token}"},
-                    json={"feedback": "positive"},
-                )
-                assert response.status_code == 200, response.text
-                last_body = response.json()["data"]
-
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            last_body = await _post_three_positives(client, org.memory_id)
             assert last_body["new_usefulness_score"] == pytest.approx(0.80)
             assert last_body["total_positive_feedback"] == 3
-
-            async with session_factory() as session, session.begin():
-                await with_service_org(session, org.org_id)
-                row = (
-                    await session.execute(
-                        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                            "SELECT usefulness_score FROM ibex_core.memories "
-                            "WHERE id = :id AND org_id = :org"
-                        ),
-                        {"id": str(org.memory_id), "org": str(org.org_id)},
-                    )
-                ).one()
-            assert float(row.usefulness_score) == pytest.approx(0.80)
-
+            await _assert_db_usefulness(
+                session_factory,
+                org_id=org.org_id,
+                memory_id=org.memory_id,
+                expected=0.80,
+            )
             search = await client.post(
                 "/v1/memories/search",
                 headers={"Authorization": f"Bearer {SEARCH_TOKEN}"},
@@ -241,8 +269,7 @@ async def test_e2e_three_agents_positive_raises_rank(
                 },
             )
             assert search.status_code == 200, search.text
-            results = search.json()["data"]["results"]
-            ids = [hit["memory"]["id"] for hit in results]
+            ids = [hit["memory"]["id"] for hit in search.json()["data"]["results"]]
             assert str(org.memory_id) in ids
             assert str(control_id) in ids
             assert ids.index(str(org.memory_id)) < ids.index(str(control_id))

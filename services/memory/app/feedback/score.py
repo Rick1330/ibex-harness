@@ -14,8 +14,4 @@ def laplace_usefulness(positive: int, negative: int) -> float:
     quantized = float(
         Decimal(str(raw)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     )
-    if quantized < 0.0:
-        return 0.0
-    if quantized > 1.0:
-        return 1.0
-    return quantized
+    return min(1.0, max(0.0, quantized))

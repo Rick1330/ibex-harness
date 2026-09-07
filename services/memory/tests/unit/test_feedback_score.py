@@ -35,3 +35,8 @@ def test_laplace_rejects_negative_counts() -> None:
 def test_laplace_quantizes_to_two_decimals() -> None:
     # (2+1)/(2+1+2) = 0.6 exactly
     assert laplace_usefulness(2, 1) == 0.60
+
+
+def test_laplace_clamp_bounds() -> None:
+    assert 0.0 <= laplace_usefulness(10_000, 0) <= 1.0
+    assert 0.0 <= laplace_usefulness(0, 10_000) <= 1.0

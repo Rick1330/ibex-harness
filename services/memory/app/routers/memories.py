@@ -179,7 +179,15 @@ async def list_hot_memories(
     return search_response_from_results(results)
 
 
-@router.post("/{memory_id}/feedback", summary="Record usefulness feedback for a memory")
+@router.post(
+    "/{memory_id}/feedback",
+    summary="Record usefulness feedback for a memory",
+    responses={
+        400: {"description": "Validation error (missing agent scope or invalid body)"},
+        404: {"description": "Memory not found in the caller's organization"},
+        503: {"description": "Database unavailable while applying feedback"},
+    },
+)
 async def record_memory_feedback(
     memory_id: UUID,
     request: RecordFeedbackRequest,
@@ -201,10 +209,7 @@ async def record_memory_feedback(
     except (MemoryNotFoundError, ValidationError) as exc:
         raise http_error_for_feedback(exc) from exc
     except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database unavailable"},
-        ) from exc
+        raise http_error_for_feedback_database(exc) from exc
     return RecordFeedbackResponse(
         data=RecordFeedbackData(
             memory_id=result.memory_id,
@@ -228,3 +233,11 @@ def http_error_for_feedback(exc: BaseException) -> HTTPException:
             detail={"code": exc.code, "message": exc.message},
         )
     raise exc
+
+
+def http_error_for_feedback_database(_exc: BaseException) -> HTTPException:
+    """Map SQLAlchemy failures to a stable 503 envelope (documented in responses)."""
+    return HTTPException(
+        status_code=503,
+        detail={"code": "DATABASE_UNAVAILABLE", "message": "Database unavailable"},
+    )

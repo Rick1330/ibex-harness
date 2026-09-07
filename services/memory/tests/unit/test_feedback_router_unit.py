@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
@@ -38,28 +39,39 @@ def _client(
     return TestClient(app), mock
 
 
-def test_feedback_requires_memory_write() -> None:
-    http, mock = _client(permissions=MEMORY_READ)
-    with http:
-        response = http.post(
-            f"/v1/memories/{MEMORY}/feedback",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"feedback": "positive"},
-        )
-    assert response.status_code == 403
-    mock.apply.assert_not_called()
+def _post_feedback(
+    http: TestClient,
+    *,
+    memory_id: UUID = MEMORY,
+    body: dict | None = None,
+) -> object:
+    return http.post(
+        f"/v1/memories/{memory_id}/feedback",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json=body or {"feedback": "positive"},
+    )
 
 
-def test_feedback_requires_agent_scoped_token() -> None:
-    http, mock = _client(agent_id=None)
+@pytest.mark.parametrize(
+    ("permissions", "agent_id", "body", "expected_status", "expected_code"),
+    [
+        (MEMORY_READ, AGENT, {"feedback": "positive"}, 403, "INSUFFICIENT_PERMISSIONS"),
+        (MEMORY_WRITE, None, {"feedback": "positive"}, 400, "VALIDATION_ERROR"),
+        (MEMORY_WRITE, AGENT, {"feedback": "neutral", "notes": "x" * 2001}, 400, "VALIDATION_ERROR"),
+    ],
+)
+def test_feedback_request_gates(
+    permissions: int,
+    agent_id: UUID | None,
+    body: dict,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    http, mock = _client(permissions=permissions, agent_id=agent_id)
     with http:
-        response = http.post(
-            f"/v1/memories/{MEMORY}/feedback",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"feedback": "positive"},
-        )
-    assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "VALIDATION_ERROR"
+        response = _post_feedback(http, body=body)
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["code"] == expected_code
     mock.apply.assert_not_called()
 
 
@@ -74,11 +86,7 @@ def test_feedback_happy_path() -> None:
         memory_agent_id=AGENT,
     )
     with http:
-        response = http.post(
-            f"/v1/memories/{MEMORY}/feedback",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"feedback": "positive", "notes": "helped"},
-        )
+        response = _post_feedback(http, body={"feedback": "positive", "notes": "helped"})
     assert response.status_code == 200
     body = response.json()["data"]
     assert body["memory_id"] == str(MEMORY)
@@ -92,34 +100,30 @@ def test_feedback_not_found_maps_404() -> None:
     http, mock = _client()
     mock.apply.side_effect = MemoryNotFoundError()
     with http:
-        response = http.post(
-            f"/v1/memories/{MEMORY}/feedback",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"feedback": "negative"},
-        )
+        response = _post_feedback(http, body={"feedback": "negative"})
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "NOT_FOUND"
-
-
-def test_feedback_rejects_oversized_notes() -> None:
-    http, mock = _client()
-    with http:
-        response = http.post(
-            f"/v1/memories/{MEMORY}/feedback",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"feedback": "neutral", "notes": "x" * 2001},
-        )
-    assert response.status_code == 400
-    mock.apply.assert_not_called()
 
 
 def test_feedback_validation_error_maps_400() -> None:
     http, mock = _client()
     mock.apply.side_effect = ValidationError("bad", field="feedback")
     with http:
-        response = http.post(
-            f"/v1/memories/{uuid4()}/feedback",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"feedback": "positive"},
-        )
+        response = _post_feedback(http, memory_id=uuid4())
     assert response.status_code == 400
+
+
+def test_feedback_database_error_maps_503() -> None:
+    http, mock = _client()
+    mock.apply.side_effect = SQLAlchemyError("boom")
+    with http:
+        response = _post_feedback(http)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "DATABASE_UNAVAILABLE"
+
+
+def test_http_error_for_feedback_passthrough() -> None:
+    from app.routers.memories import http_error_for_feedback
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        http_error_for_feedback(RuntimeError("unexpected"))

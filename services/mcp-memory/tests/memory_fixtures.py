@@ -59,24 +59,29 @@ def create_memory_response(created: CreatedMemory | None = None) -> httpx.Respon
     )
 
 
-def feedback_response(
-    *,
-    memory_id: str | None = None,
-    feedback: str = "positive",
-    score: float = 0.67,
-    positive: int = 1,
-    negative: int = 0,
-) -> httpx.Response:
-    mid = memory_id or str(uuid4())
+@dataclass(frozen=True, slots=True)
+class FeedbackResultSpec:
+    """Fixture knobs for a successful POST /v1/memories/{id}/feedback response."""
+
+    memory_id: str | None = None
+    feedback: str = "positive"
+    score: float = 0.67
+    positive: int = 1
+    negative: int = 0
+
+
+def feedback_response(spec: FeedbackResultSpec | None = None) -> httpx.Response:
+    resolved = spec or FeedbackResultSpec()
+    mid = resolved.memory_id or str(uuid4())
     return httpx.Response(
         200,
         json={
             "data": {
                 "memory_id": mid,
-                "feedback": feedback,
-                "new_usefulness_score": score,
-                "total_positive_feedback": positive,
-                "total_negative_feedback": negative,
+                "feedback": resolved.feedback,
+                "new_usefulness_score": resolved.score,
+                "total_positive_feedback": resolved.positive,
+                "total_negative_feedback": resolved.negative,
             }
         },
     )
@@ -94,7 +99,7 @@ def stub_memory_handler(
         if path.endswith("/search"):
             return empty_search_response()
         if path.endswith("/feedback"):
-            return feedback_response(memory_id=mid)
+            return feedback_response(FeedbackResultSpec(memory_id=mid))
         return create_memory_response(
             CreatedMemory(memory_id=mid, org_id=org_id, agent_id=agent_id)
         )
