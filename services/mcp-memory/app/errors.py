@@ -42,3 +42,10 @@ class BackendRejectedError(MCPServiceError):
 
     def __init__(self, message: str, *, code: str = "backend_error") -> None:
         super().__init__(code, message)
+
+
+class RateLimitedError(MCPServiceError):
+    """Org MCP RPM exceeded — surfaces as CallToolResult(isError=true)."""
+
+    def __init__(self, message: str = "MCP rate limit exceeded") -> None:
+        super().__init__("rate_limited", message)

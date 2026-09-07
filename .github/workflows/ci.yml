@@ -932,6 +932,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Dedicated URL so Settings.redis_url (REDIS_URL alias) stays empty in unit tests.
+      IBEX_MCP_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
@@ -1270,6 +1283,8 @@ jobs:
       contents: read
     env:
       REDIS_URL: redis://127.0.0.1:6379/0
+      # mcp-memory Redis limiter integration (avoids relying on REDIS_URL Settings alias).
+      IBEX_MCP_TEST_REDIS_URL: redis://127.0.0.1:6379/0
     services:
       redis:
         image: redis:7
@@ -1746,6 +1761,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      IBEX_MCP_TEST_REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0

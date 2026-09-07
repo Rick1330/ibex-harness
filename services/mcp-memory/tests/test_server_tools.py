@@ -11,7 +11,8 @@ from app.audit import AsyncAuditEmitter, MemoryAuditSink
 from app.errors import PermissionDeniedError
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, require_principal, set_principal
-from app.server import _invoke_tool, _run_search, _run_write
+from app.ratelimit import NoopMcpLimiter
+from app.server import _invoke_tool, _run_search, _run_write, _ToolCall, _ToolRequest
 from tests.memory_fixtures import AGENT, ORG, stub_memory_client
 
 TOKEN = "tok-audit"
@@ -33,16 +34,26 @@ async def test_invoke_search_and_write_emits_audit() -> None:
     set_access_token(TOKEN)
     try:
         search = await _invoke_tool(
-            audit=audit,
-            tool_name="search_memory",
-            raw={"query": "hello"},
-            runner=lambda raw: _run_search(raw, client),
+            _ToolCall(
+                audit=audit,
+                rate_limiter=NoopMcpLimiter(),
+                request=_ToolRequest(
+                    tool_name="search_memory",
+                    raw={"query": "hello"},
+                    runner=lambda raw: _run_search(raw, client),
+                ),
+            )
         )
         write = await _invoke_tool(
-            audit=audit,
-            tool_name="write_memory",
-            raw={"content": "note"},
-            runner=lambda raw: _run_write(raw, client),
+            _ToolCall(
+                audit=audit,
+                rate_limiter=NoopMcpLimiter(),
+                request=_ToolRequest(
+                    tool_name="write_memory",
+                    raw={"content": "note"},
+                    runner=lambda raw: _run_write(raw, client),
+                ),
+            )
         )
     finally:
         set_principal(None)
@@ -64,14 +75,18 @@ async def test_invoke_permission_denied_audited() -> None:
     audit.start()
     set_principal(Principal(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT))
     set_access_token(TOKEN)
+    call = _ToolCall(
+        audit=audit,
+        rate_limiter=NoopMcpLimiter(),
+        request=_ToolRequest(
+            tool_name="write_memory",
+            raw={"content": "x"},
+            runner=lambda raw: _run_write(raw, None),
+        ),
+    )
     try:
         with pytest.raises(PermissionDeniedError):
-            await _invoke_tool(
-                audit=audit,
-                tool_name="write_memory",
-                raw={"content": "x"},
-                runner=lambda raw: _run_write(raw, None),
-            )
+            await _invoke_tool(call)
     finally:
         set_principal(None)
         set_access_token(None)

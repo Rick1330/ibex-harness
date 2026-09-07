@@ -17,6 +17,7 @@ dependencies = [
   "httpx>=0.27.0",
   "grpcio>=1.62.0",
   "prometheus-client>=0.20.0",
+  "redis>=5.0.0",
   # Latest PyPI 1.x as of E.1 is 1.29.1; do not float to mcp 2.x in this milestone.
   "mcp>=1.29.1,<2",
 ]

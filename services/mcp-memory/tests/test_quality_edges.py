@@ -23,6 +23,10 @@ def test_origin_from_resource_strips_mcp() -> None:
     assert _origin_from_resource("https://mcp.example.com/mcp") == "https://mcp.example.com"
 
 
+def test_origin_from_resource_opaque_fallback() -> None:
+    assert _origin_from_resource("not-a-url") == "not-a-url"
+
+
 def test_encode_token_too_large() -> None:
     with pytest.raises(AuthCodecError):
         encode_validate_token_request("x" * 9000)

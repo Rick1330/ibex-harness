@@ -32,11 +32,19 @@ async def _run() -> None:
             base_url=settings.memory_http_url,
             timeout_seconds=settings.memory_timeout_ms / 1000.0,
         )
-    mcp = build_mcp_server(audit, memory_client)
+    from app.ratelimit import build_mcp_rate_limiter
+
+    limiter = build_mcp_rate_limiter(
+        redis_url=settings.redis_url,
+        default_rpm=settings.rate_limit_rpm,
+        org_overrides=settings.rate_limit_org_override_map,
+    )
+    mcp = build_mcp_server(audit, memory_client, rate_limiter=limiter)
     try:
         await mcp.run_stdio_async()
     finally:
         await audit.aclose()
+        await limiter.aclose()
         if memory_client is not None:
             await memory_client.aclose()
 
