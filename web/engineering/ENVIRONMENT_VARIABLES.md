@@ -514,7 +514,9 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
 | `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include credentials when required, e.g. `http://<user>:<password>@127.0.0.1:8123`; compose-dev fixture uses `CLICKHOUSE_PASSWORD` from `infra/compose/dev/.env`) | Empty → logging sink |
 | `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |
-| `IBEX_MCP_RATE_LIMIT_RPM` | Planned 3.5.E.4 | `120` | Independent MCP tool budget | Reserved; not enforced in G6 |
+| `IBEX_MCP_REDIS_URL` | No | (empty) | Redis URL for org MCP RPM limiter | Empty → Noop (allow all). Alias `REDIS_URL`. Fail-open on Redis errors |
+| `IBEX_MCP_RATE_LIMIT_RPM` | No | `120` | Independent org-wide MCP tool budget (calendar-minute) | Enforced when Redis URL set; key `ratelimit:{org_id}:mcp:{unix_minute}` |
+| `IBEX_MCP_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm,uuid2=rpm2` per-org MCP RPM overrides | Same parse shape as `IBEX_RATE_LIMIT_ORG_OVERRIDES` |
 | `IBEX_MEMORY_HTTP_URL` | Yes for 3.5.E.2 tools | (none) | Memory service base URL for `search_memory` / `write_memory` (`POST /v1/memories/search`, `POST /v1/memories`); alias `IBEX_MCP_MEMORY_HTTP_URL` | Empty → tool calls fail closed |
 | `IBEX_MCP_MEMORY_TIMEOUT_MS` | No | `5000` | Per-call timeout for memory HTTP from mcp-memory | Fail closed on timeout |
 

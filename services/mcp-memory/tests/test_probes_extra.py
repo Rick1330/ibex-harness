@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from app.audit import LoggingAuditSink, ToolCallAuditEvent
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings
-from app.main import create_app
+from app.main import CreateAppDeps, create_app
 from app.permissions import MEMORY_READ
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
@@ -41,7 +41,9 @@ def test_ready_503_when_auth_unreachable() -> None:
         {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ)},
         available=False,
     )
-    application = create_app(settings=settings, validator=validator)
+    application = create_app(
+        settings=settings, deps=CreateAppDeps(validator=validator)
+    )
     with TestClient(application) as client:
         resp = client.get("/ready")
         assert resp.status_code == 503
@@ -55,7 +57,9 @@ def test_ready_recovers_when_auth_becomes_available() -> None:
         {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ)},
         available=False,
     )
-    application = create_app(settings=settings, validator=validator)
+    application = create_app(
+        settings=settings, deps=CreateAppDeps(validator=validator)
+    )
     with TestClient(application) as client:
         assert client.get("/ready").status_code == 503
         validator.set_available(True)

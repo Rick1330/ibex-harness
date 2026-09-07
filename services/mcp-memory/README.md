@@ -1,11 +1,12 @@
 # MCP Memory Server (`services/mcp-memory`)
 
-Python MCP **resource server** for IBEX memory tools (Phase **2.5.G6.M1** skeleton → **3.5.E.2** tools).
+Python MCP **resource server** for IBEX memory tools (Phase **2.5.G6.M1** skeleton → **3.5.E.2–E.4**).
 
 - Transport: Streamable HTTP (`/mcp`); stdio only when `IBEX_MCP_TRANSPORT=stdio` and `IBEX_MCP_ALLOW_STDIO=true`
-- Auth: Bearer → `AuthService.ValidateToken` gRPC (fail closed)
+- Auth: Bearer → `AuthService.ValidateToken` gRPC (fail closed + circuit-breaker polish)
 - Tools: `search_memory` / `write_memory` / `record_feedback` via memory HTTP (`IBEX_MEMORY_HTTP_URL`); `metadata.mcp_source=mcp_explicit`
-- Audit: async `ibex.mcp_tool_calls` emitter seam (ClickHouse)
+- Rate limit: org-wide Redis calendar-minute budget (`IBEX_MCP_REDIS_URL`, `IBEX_MCP_RATE_LIMIT_RPM`); over-limit → `isError` / `rate_limited`
+- Audit: async `ibex.mcp_tool_calls` emitter (ClickHouse), including auth rejects
 
 See [ADR-0050](../../web/content/docs/adr/0050-mcp-server-skeleton.mdx).
 
@@ -38,8 +39,7 @@ make test-clickhouse-migrate
 make test-clickhouse-migrate-integration
 ```
 
-## Non-goals (this milestone)
+## Non-goals (historical G6)
 
-- Real memory pipelines (Phase 3.5.E.2)
-- Feedback / lineage tools
 - OAuth authorization server
+- Per-tool / per-agent rate-limit granularity (org-wide only in E.4)

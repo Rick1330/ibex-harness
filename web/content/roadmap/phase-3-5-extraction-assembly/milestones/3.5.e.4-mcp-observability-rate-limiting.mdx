@@ -1,8 +1,8 @@
 ---
 title: "3.5.E.4 MCP observability and rate limiting"
-description: "ClickHouse mcp_tool_calls table, rate limiting via packages/ratelimit Limiter with independent MCP budget, and AuthService circuit breaker (fail-closed on auth outage)."
-summary: "ClickHouse mcp_tool_calls table, rate limiting via packages/ratelimit Limiter with independent MCP budget, and AuthService circuit breaker (fail-closed on auth outage)."
-status: "planned"
+description: "Independent Python Redis MCP RPM budget, auth circuit-breaker polish, and mcp_tool_calls audit gap-fill (table already from G6 / ADR-0050)."
+summary: "Independent Python Redis MCP RPM budget, auth circuit-breaker polish, and mcp_tool_calls audit gap-fill (table already from G6 / ADR-0050)."
+status: "complete"
 milestoneId: "3.5.E.4"
 track: "E"
 trackTitle: "MCP Tool Surface"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.E.4 — MCP Observability and Rate Limiting"
 
 # Milestone 3.5.E.4 — MCP Observability and Rate Limiting
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 1 day  
@@ -31,6 +31,22 @@ fullTitle: "Milestone 3.5.E.4 — MCP Observability and Rate Limiting"
   make a better shape clear. Prefer outcomes over matching any particular file tree.
 </Callout>
 
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: Go `packages/ratelimit` / `packages/circuitbreaker` are **not** reused
+  from Python — mcp-memory implements a calendar-minute Redis Lua twin
+  (`INCR` + `EXPIRE`-on-create, 90s TTL) keyed
+  `ratelimit:<org_id>:mcp:<unix_minute>` (independent of proxy `:rpm:`).
+  Redis errors **fail open**. Over-limit rejects raise
+  `MCPServiceError(code="rate_limited")` → FastMCP `CallToolResult(isError=true)` —
+  **not** HTTP 429 (matches existing in-tool `PermissionDenied` precedent). Default
+  RPM `IBEX_MCP_RATE_LIMIT_RPM=120` with optional `IBEX_MCP_RATE_LIMIT_ORG_OVERRIDES`.
+  Auth breaker polish is hand-rolled (N=5 consecutive `AuthUnavailableError`, 30s
+  cooldown, half-open single probe) in front of the existing timeout fail-closed path.
+  `ibex.mcp_tool_calls` already exists (`000002`, 90-day TTL); this milestone does
+  **not** `CREATE TABLE` again — it gap-fills auth-reject audit rows
+  (`tool_name=auth`) and `internal_error` codes for unexpected exceptions.
+</Callout>
+
 ## Why This Milestone Exists
 
 An MCP server exposed to external agent frameworks is a new, untrusted-by-default entry point — it needs the same operational rigor as the HTTP proxy.
@@ -40,8 +56,8 @@ An MCP server exposed to external agent frameworks is a new, untrusted-by-defaul
 ## Requirements
 
 - Every tool call traced to ClickHouse `mcp_tool_calls` table (org_id, agent_id, tool_name, latency_ms, success, error_code) — table created in 2.5.G6.M1 / ADR-0050; this milestone must **not** `CREATE TABLE` again
-- Rate limiting reuses `packages/ratelimit`'s `Limiter` interface, keyed `ratelimit:{org_id}:mcp:{unix_minute}` — independent budget from chat-completions
-- Circuit breaker: `AuthService` gRPC unreachable → MCP server fails closed (fail-closed already shipped in G6; this milestone adds breaker polish)
+- Rate limiting uses a Python Redis calendar-minute limiter keyed `ratelimit:{org_id}:mcp:{unix_minute}` — independent budget from chat-completions (not Go `packages/ratelimit`)
+- Circuit breaker polish: `AuthService` gRPC unreachable → short-circuit after N failures (fail-closed timeout already shipped in G6)
 
 ---
 
@@ -61,19 +77,18 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 **Areas that may be involved** (situational — not a checklist):
 
-- MCP server surface
-- Memory service / repositories
+- MCP server surface (`services/mcp-memory/`)
+- Redis (shared cluster, separate key namespace)
 
 ## Success signals
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `mcp_tool_calls` ClickHouse table + migration, TTL matching `llm_traces` (90 days)
-- [ ] Rate limit integration test: burst of `search_memory` calls correctly 429s at threshold, independent of proxy chat rate limit
-- [ ] Fault injection test: `AuthService` down → MCP calls fail closed within timeout, no hang
-- [ ] Repo guards / CI checks still pass
+- [x] `mcp_tool_calls` wiring verified (existing `000002` + 90-day TTL); auth-reject + `internal_error` audit gap-fill
+- [x] Rate limit test: over-budget `search_memory` / tool invoke → `isError` with `error_code=rate_limited` (not HTTP 429); key uses `:mcp:` not `:rpm:`
+- [x] Auth breaker: N consecutive AuthUnavailable → open short-circuit; cooldown → half-open; success closes
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.5.E.3 (record_feedback tool)
-

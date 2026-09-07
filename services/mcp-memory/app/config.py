@@ -5,9 +5,12 @@ from __future__ import annotations
 import ipaddress
 from functools import lru_cache
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.ratelimit import parse_org_rpm_overrides
 
 TRANSPORT_HTTP = "streamable_http"
 TRANSPORT_STDIO = "stdio"
@@ -53,6 +56,16 @@ class Settings(BaseSettings):
         le=60_000,
         validation_alias=AliasChoices("IBEX_MCP_MEMORY_TIMEOUT_MS", "IBEX_MEMORY_TIMEOUT_MS"),
     )
+    redis_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("IBEX_MCP_REDIS_URL", "REDIS_URL"),
+    )
+    rate_limit_rpm: int = Field(default=120, ge=1, le=1_000_000)
+    rate_limit_org_overrides: str = Field(default="")
+
+    @property
+    def rate_limit_org_override_map(self) -> dict[UUID, int]:
+        return parse_org_rpm_overrides(self.rate_limit_org_overrides)
 
     @field_validator("transport")
     @classmethod
@@ -66,6 +79,12 @@ class Settings(BaseSettings):
     @classmethod
     def _check_env(cls, value: str) -> str:
         return value.strip().lower() or "development"
+
+    @field_validator("rate_limit_org_overrides")
+    @classmethod
+    def _check_org_overrides(cls, value: str) -> str:
+        parse_org_rpm_overrides(value)
+        return value
 
     @model_validator(mode="after")
     def _check_discovery_urls(self) -> Settings:
