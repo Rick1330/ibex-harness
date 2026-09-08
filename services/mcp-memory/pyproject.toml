@@ -40,6 +40,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
   "integration: requires optional live dependencies",
+  "iso_mcp: cross-tenant isolation matrix (3.5.F.2; live auth/Postgres/memory)",
 ]
 
 [tool.ruff]

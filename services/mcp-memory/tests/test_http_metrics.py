@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY, generate_latest
 from starlette.responses import StreamingResponse
 
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
@@ -111,7 +112,7 @@ def test_unauthorized_request_increments_metrics() -> None:
     )
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink()),
+        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
     )
     before = _counter_value(
         "ibex_mcp_http_requests_total",

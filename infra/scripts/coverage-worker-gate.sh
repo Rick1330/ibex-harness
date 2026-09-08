@@ -35,5 +35,5 @@ PY
 fi
 
 bash "$ROOT/infra/scripts/worker-uv-sync.sh"
-.venv/bin/pytest -q -m "not integration" --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
+.venv/bin/pytest -q -m "not integration and not iso_mcp" --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
 echo "worker app coverage gate passed (minimum ${MIN_RAW}%)"

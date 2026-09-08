@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
@@ -64,6 +65,7 @@ def _rate_limit_app(sink: MemoryAuditSink) -> FastAPI:
             audit_sink=sink,
             memory_client=stub_memory_client(org_id=ORG, agent_id=AGENT),
             rate_limiter=_DenyAfter(remaining_allows=0),
+            agent_verifier=AllowAllAgentVerifier(),
         ),
     )
 

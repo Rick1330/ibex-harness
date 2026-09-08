@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import ConfigDict, Field
 
+from app.agent_verifier import AgentVerifier
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
 from app.clients.memory import MemoryHttpClient
 from app.errors import MCPServiceError, RateLimitedError
@@ -58,6 +59,7 @@ def build_mcp_server(
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
     *,
+    agent_verifier: AgentVerifier | None = None,
     rate_limiter: McpRateLimiter | None = None,
     allow_test_hosts: bool = True,
 ) -> FastMCP:
@@ -76,8 +78,8 @@ def build_mcp_server(
         json_response=True,
         transport_security=_transport_security(allow_test_hosts=allow_test_hosts),
     )
-    _register_search_tool(mcp, audit, memory_client, limiter)
-    _register_write_tool(mcp, audit, memory_client, limiter)
+    _register_search_tool(mcp, audit, memory_client, agent_verifier, limiter)
+    _register_write_tool(mcp, audit, memory_client, agent_verifier, limiter)
     _register_feedback_tool(mcp, audit, memory_client, limiter)
     _forbid_undeclared_tool_args(mcp)
     return mcp
@@ -87,6 +89,7 @@ def _register_search_tool(
     mcp: FastMCP,
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
     limiter: McpRateLimiter,
 ) -> None:
     @mcp.tool(
@@ -105,7 +108,7 @@ def _register_search_tool(
                 request=_ToolRequest(
                     tool_name="search_memory",
                     raw=_optional_agent({"query": query, "limit": limit}, agent_id),
-                    runner=lambda raw: _run_search(raw, memory_client),
+                    runner=lambda raw: _run_search(raw, memory_client, agent_verifier),
                 ),
             )
         )
@@ -115,6 +118,7 @@ def _register_write_tool(
     mcp: FastMCP,
     audit: AsyncAuditEmitter,
     memory_client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
     limiter: McpRateLimiter,
 ) -> None:
     @mcp.tool(
@@ -144,7 +148,7 @@ def _register_write_tool(
                         },
                         agent_id,
                     ),
-                    runner=lambda raw: _run_write(raw, memory_client),
+                    runner=lambda raw: _run_write(raw, memory_client, agent_verifier),
                 ),
             )
         )
@@ -230,15 +234,29 @@ def _optional_agent(payload: dict[str, Any], agent_id: UUID | None) -> dict[str,
 
 
 async def _run_search(
-    raw: dict[str, Any], client: MemoryHttpClient | None
+    raw: dict[str, Any],
+    client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
 ) -> dict[str, Any]:
-    return await run_search_memory(require_principal(), parse_search_args(raw), client)
+    return await run_search_memory(
+        require_principal(),
+        parse_search_args(raw),
+        client,
+        agent_verifier,
+    )
 
 
 async def _run_write(
-    raw: dict[str, Any], client: MemoryHttpClient | None
+    raw: dict[str, Any],
+    client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
 ) -> dict[str, Any]:
-    return await run_write_memory(require_principal(), parse_write_args(raw), client)
+    return await run_write_memory(
+        require_principal(),
+        parse_write_args(raw),
+        client,
+        agent_verifier,
+    )
 
 
 async def _run_feedback(

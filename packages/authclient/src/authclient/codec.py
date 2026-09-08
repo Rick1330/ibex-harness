@@ -1,4 +1,4 @@
-"""Bounded protobuf wire codec for AuthService.ValidateToken."""
+"""Bounded protobuf wire codec for AuthService.ValidateToken / ValidateAgent."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _WIRE_32BIT = 5
 
 
 class AuthCodecError(Exception):
-    """ValidateToken wire encode/decode failure."""
+    """Auth wire encode/decode failure."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,13 +28,27 @@ class ValidateTokenWire:
     token_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ValidateAgentWire:
+    agent_id: UUID
+    org_id: UUID
+    status: str
+
+
 @dataclass(slots=True)
-class _DecodeState:
+class _TokenDecodeState:
     org_id: UUID | None = None
     permissions: int = 0
     agent_id: UUID | None = None
     user_id: str | None = None
     token_id: str | None = None
+
+
+@dataclass(slots=True)
+class _AgentDecodeState:
+    agent_id: UUID | None = None
+    org_id: UUID | None = None
+    status: str | None = None
 
 
 def encode_validate_token_request(access_token: str) -> bytes:
@@ -47,7 +61,52 @@ def encode_validate_token_request(access_token: str) -> bytes:
 def decode_validate_token_response(payload: bytes) -> ValidateTokenWire:
     if len(payload) > MAX_MESSAGE_BYTES:
         raise AuthCodecError("auth response too large")
-    return _finish_decode(_decode_all_fields(payload))
+    state = _TokenDecodeState()
+    idx = 0
+    while idx < len(payload):
+        idx = _decode_token_field(payload, idx, state)
+    if state.org_id is None:
+        raise AuthCodecError("auth response missing org_id")
+    return ValidateTokenWire(
+        org_id=state.org_id,
+        permissions=state.permissions,
+        agent_id=state.agent_id,
+        user_id=state.user_id,
+        token_id=state.token_id,
+    )
+
+
+def encode_validate_agent_request(*, agent_id: str, org_id: str) -> bytes:
+    """Encode ValidateAgentRequest (agent_id=1, org_id=2)."""
+    return _encode_string_field(1, agent_id) + _encode_string_field(2, org_id)
+
+
+def decode_validate_agent_response(payload: bytes) -> ValidateAgentWire:
+    """Decode ValidateAgentResponse (agent_id=1, org_id=2, status=3)."""
+    if len(payload) > MAX_MESSAGE_BYTES:
+        raise AuthCodecError("auth response too large")
+    state = _AgentDecodeState()
+    idx = 0
+    while idx < len(payload):
+        idx = _decode_agent_field(payload, idx, state)
+    if state.agent_id is None:
+        raise AuthCodecError("auth response missing agent_id")
+    if state.org_id is None:
+        raise AuthCodecError("auth response missing org_id")
+    if not state.status:
+        raise AuthCodecError("auth response missing status")
+    return ValidateAgentWire(
+        agent_id=state.agent_id,
+        org_id=state.org_id,
+        status=_bounded_string(state.status, "status"),
+    )
+
+
+def _encode_string_field(field: int, value: str) -> bytes:
+    data = value.encode("utf-8")
+    if len(data) > MAX_STRING_BYTES:
+        raise AuthCodecError("string field exceeds codec limit")
+    return _tag(field, _WIRE_LEN) + encode_varint(len(data)) + data
 
 
 def encode_varint(value: int) -> bytes:
@@ -62,58 +121,46 @@ def encode_varint(value: int) -> bytes:
             return bytes(out)
 
 
-def _decode_all_fields(payload: bytes) -> _DecodeState:
-    state = _DecodeState()
-    idx = 0
-    while idx < len(payload):
-        idx = _decode_one_field(payload, idx, state)
-    return state
-
-
-def _decode_one_field(buf: bytes, idx: int, state: _DecodeState) -> int:
+def _decode_token_field(buf: bytes, idx: int, state: _TokenDecodeState) -> int:
     key, idx = _decode_varint(buf, idx)
     field = key >> 3
     wire = key & 0x07
     if wire == _WIRE_LEN:
         raw, idx = _read_bytes(buf, idx)
-        _apply_len_field(state, field, raw)
+        if field == 1:
+            state.org_id = _parse_uuid(_decode_utf8(raw), "org_id")
+        elif field == 3:
+            state.agent_id = _parse_uuid(_decode_utf8(raw), "agent_id")
+        elif field == 4:
+            state.user_id = _bounded_string(_decode_utf8(raw), "user_id")
+        elif field == 5:
+            state.token_id = _bounded_string(_decode_utf8(raw), "token_id")
         return idx
     if wire == _WIRE_VARINT:
         num, idx = _decode_varint(buf, idx)
-        _apply_varint_field(state, field, num)
+        if field == 2:
+            state.permissions = int(num)
         return idx
     return _skip_unknown(buf, idx, wire)
 
 
-def _finish_decode(state: _DecodeState) -> ValidateTokenWire:
-    if state.org_id is None:
-        raise AuthCodecError("auth response missing org_id")
-    return ValidateTokenWire(
-        org_id=state.org_id,
-        permissions=state.permissions,
-        agent_id=state.agent_id,
-        user_id=state.user_id,
-        token_id=state.token_id,
-    )
-
-
-def _apply_len_field(state: _DecodeState, field: int, raw: bytes) -> None:
-    if field not in (1, 3, 4, 5):
-        return
-    text = _decode_utf8(raw)
-    if field == 1:
-        state.org_id = _parse_uuid(text, "org_id")
-    elif field == 3:
-        state.agent_id = _parse_uuid(text, "agent_id")
-    elif field == 4:
-        state.user_id = _bounded_string(text, "user_id")
-    else:
-        state.token_id = _bounded_string(text, "token_id")
-
-
-def _apply_varint_field(state: _DecodeState, field: int, num: int) -> None:
-    if field == 2:
-        state.permissions = int(num)
+def _decode_agent_field(buf: bytes, idx: int, state: _AgentDecodeState) -> int:
+    key, idx = _decode_varint(buf, idx)
+    field = key >> 3
+    wire = key & 0x07
+    if wire == _WIRE_LEN:
+        raw, idx = _read_bytes(buf, idx)
+        if field == 1:
+            state.agent_id = _parse_uuid(_decode_utf8(raw), "agent_id")
+        elif field == 2:
+            state.org_id = _parse_uuid(_decode_utf8(raw), "org_id")
+        elif field == 3:
+            state.status = _bounded_string(_decode_utf8(raw), "status")
+        return idx
+    if wire == _WIRE_VARINT:
+        _, idx = _decode_varint(buf, idx)
+        return idx
+    return _skip_unknown(buf, idx, wire)
 
 
 def _tag(field: int, wire: int) -> bytes:

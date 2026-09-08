@@ -44,6 +44,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
   "integration: requires live Redis broker/result backend",
+  "iso_mcp: cross-tenant isolation matrix (3.5.F.2; live Postgres)",
 ]
 
 [tool.ruff]

@@ -35,7 +35,7 @@ COPY services/mcp-memory/pyproject.toml services/mcp-memory/uv.lock ./
 
 # Install third-party dependencies from lockfile (wheels only — Sonar S8541).
 RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package authclient \
-    && uv pip install --no-index --find-links /wheels "authclient==0.1.0"
+    && uv pip install --no-index --find-links /wheels "authclient==0.1.2"
 
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #

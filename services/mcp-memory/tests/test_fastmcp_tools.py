@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from app.access_token import set_access_token
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import AsyncAuditEmitter, MemoryAuditSink
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, set_principal
@@ -24,7 +25,7 @@ async def test_fastmcp_call_tools() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=16)
     audit.start()
-    mcp = build_mcp_server(audit, client)
+    mcp = build_mcp_server(audit, client, agent_verifier=AllowAllAgentVerifier())
     set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT))
     set_access_token(TOKEN)
     try:
@@ -61,7 +62,7 @@ async def test_fastmcp_call_tools() -> None:
 async def test_tools_list_schemas_advertise_constraints() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=4)
-    mcp = build_mcp_server(audit, None)
+    mcp = build_mcp_server(audit, None, agent_verifier=AllowAllAgentVerifier())
     tools = await mcp.list_tools()
     by_name = {t.name: t for t in tools}
     assert set(by_name) == {"search_memory", "write_memory", "record_feedback"}
@@ -120,7 +121,7 @@ async def test_unknown_tool_argument_rejected_before_execution() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=4)
     audit.start()
-    mcp = build_mcp_server(audit, None)
+    mcp = build_mcp_server(audit, None, agent_verifier=AllowAllAgentVerifier())
     set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT))
     try:
         with pytest.raises(Exception, match="[Ee]xtra|limti|validation"):

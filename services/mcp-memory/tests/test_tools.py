@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from app.access_token import get_access_token, require_access_token, set_access_token
+from app.agent_verifier import AllowAllAgentVerifier, StaticAgentVerifier
 from app.errors import (
     AuthFailedError,
     BackendRejectedError,
@@ -39,6 +40,7 @@ ORG_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 AGENT = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 AGENT_OTHER = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
 TOKEN = "tok-test"
+_ALLOW = AllowAllAgentVerifier()
 
 
 def test_search_schema_rejects_extra() -> None:
@@ -156,9 +158,9 @@ async def test_local_permission_gate_skips_http(
 
     client = memory_client_for(counting)
     if tool == "search":
-        coro = search_memory(principal, parse_search_args(raw), client)
+        coro = search_memory(principal, parse_search_args(raw), client, _ALLOW)
     else:
-        coro = write_memory(principal, parse_write_args(raw), client)
+        coro = write_memory(principal, parse_write_args(raw), client, _ALLOW)
     with pytest.raises(PermissionDeniedError):
         await coro
     assert hits["n"] == 0
@@ -205,6 +207,7 @@ async def test_search_success_with_hits() -> None:
             Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
             parse_search_args({"query": "theme", "limit": 5}),
             memory_client_for(handler),
+            _ALLOW,
         )
     finally:
         set_access_token(None)
@@ -224,6 +227,59 @@ async def test_search_empty_hits_is_success() -> None:
             Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
             parse_search_args({"query": "none"}),
             memory_client_for(handler),
+            _ALLOW,
+        )
+    finally:
+        set_access_token(None)
+    assert out["results"] == []
+
+
+@pytest.mark.asyncio
+async def test_inactive_agent_denied_before_memory_http() -> None:
+    """ISO-MCP-03 unit: suspended/inactive verifier fails closed without memory I/O."""
+    outbound: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outbound.append(request)
+        return httpx.Response(200, json={"data": {"results": []}})
+
+    deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
+    set_access_token(TOKEN)
+    try:
+        with pytest.raises(PermissionDeniedError, match="agent is not active"):
+            await search_memory(
+                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+                parse_search_args({"query": "q"}),
+                memory_client_for(handler),
+                deny,
+            )
+        with pytest.raises(PermissionDeniedError, match="agent is not active"):
+            await write_memory(
+                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+                parse_write_args({"content": "note"}),
+                memory_client_for(handler),
+                deny,
+            )
+    finally:
+        set_access_token(None)
+    assert outbound == []
+
+
+@pytest.mark.asyncio
+async def test_active_agent_verifier_allows_search() -> None:
+    """Active agents continue to memory HTTP unchanged after ValidateAgent."""
+    allow = StaticAgentVerifier(allowed={(ORG_A, AGENT)})
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": {"results": []}})
+
+    set_access_token(TOKEN)
+    try:
+        out = await search_memory(
+            Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+            parse_search_args({"query": "ok"}),
+            memory_client_for(handler),
+            allow,
         )
     finally:
         set_access_token(None)
@@ -252,7 +308,7 @@ async def test_search_backend_fail_closed(
     set_access_token(TOKEN)
     try:
         with pytest.raises(exc_type):
-            await search_memory(principal, args, client)
+            await search_memory(principal, args, client, _ALLOW)
     finally:
         set_access_token(None)
 
@@ -278,12 +334,14 @@ async def test_tool_dependency_unavailable(
                 Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
                 parse_search_args({"query": "q"}),
                 client,
+                _ALLOW,
             )
         else:
             call = write_memory(
                 Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
                 parse_write_args({"content": "c"}),
                 client,
+                _ALLOW,
             )
         if match is None:
             with pytest.raises(BackendUnavailableError):
@@ -313,8 +371,8 @@ async def test_write_success_mcp_source_metadata_and_idempotency() -> None:
         principal = Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT)
         args = parse_write_args({"content": "remember", "category": "factual"})
         client = memory_client_for(handler)
-        first = await write_memory(principal, args, client)
-        second = await write_memory(principal, args, client)
+        first = await write_memory(principal, args, client, _ALLOW)
+        second = await write_memory(principal, args, client, _ALLOW)
     finally:
         set_access_token(None)
 
