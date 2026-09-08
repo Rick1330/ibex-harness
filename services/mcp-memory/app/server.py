@@ -117,8 +117,8 @@ def _register_search_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
                 request=_ToolRequest(
                     tool_name="search_memory",
                     raw=_optional_agent({"query": query, "limit": limit}, agent_id),
-                    runner=lambda raw: _run_search(
-                        raw, wiring.memory_client, wiring.agent_verifier
+                    runner=lambda raw: _run_verified_tool(
+                        raw, wiring.memory_client, wiring.agent_verifier, _SEARCH_TOOL
                     ),
                 ),
             )
@@ -155,8 +155,8 @@ def _register_write_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
                         },
                         agent_id,
                     ),
-                    runner=lambda raw: _run_write(
-                        raw, wiring.memory_client, wiring.agent_verifier
+                    runner=lambda raw: _run_verified_tool(
+                        raw, wiring.memory_client, wiring.agent_verifier, _WRITE_TOOL
                     ),
                 ),
             )
@@ -241,49 +241,25 @@ def _optional_agent(payload: dict[str, Any], agent_id: UUID | None) -> dict[str,
     return payload
 
 
-async def _run_search(
+@dataclass(frozen=True, slots=True)
+class _VerifiedTool:
+    parse: Callable[[dict[str, Any] | None], Any]
+    run: Callable[..., Awaitable[dict[str, Any]]]
+
+
+_SEARCH_TOOL = _VerifiedTool(parse_search_args, run_search_memory)
+_WRITE_TOOL = _VerifiedTool(parse_write_args, run_write_memory)
+
+
+async def _run_verified_tool(
     raw: dict[str, Any],
     client: MemoryHttpClient | None,
     agent_verifier: AgentVerifier | None,
+    tool: _VerifiedTool,
 ) -> dict[str, Any]:
-    async def _handler(
-        principal: Any,
-        payload: dict[str, Any],
-        mem: MemoryHttpClient | None,
-        verifier: AgentVerifier | None,
-    ) -> dict[str, Any]:
-        return await run_search_memory(
-            principal, parse_search_args(payload), mem, verifier
-        )
-
-    return await _run_verified(raw, client, agent_verifier, _handler)
-
-
-async def _run_write(
-    raw: dict[str, Any],
-    client: MemoryHttpClient | None,
-    agent_verifier: AgentVerifier | None,
-) -> dict[str, Any]:
-    async def _handler(
-        principal: Any,
-        payload: dict[str, Any],
-        mem: MemoryHttpClient | None,
-        verifier: AgentVerifier | None,
-    ) -> dict[str, Any]:
-        return await run_write_memory(
-            principal, parse_write_args(payload), mem, verifier
-        )
-
-    return await _run_verified(raw, client, agent_verifier, _handler)
-
-
-async def _run_verified(
-    raw: dict[str, Any],
-    client: MemoryHttpClient | None,
-    agent_verifier: AgentVerifier | None,
-    handler: Callable[..., Awaitable[dict[str, Any]]],
-) -> dict[str, Any]:
-    return await handler(require_principal(), raw, client, agent_verifier)
+    return await tool.run(
+        require_principal(), tool.parse(raw), client, agent_verifier
+    )
 
 
 async def _run_feedback(
