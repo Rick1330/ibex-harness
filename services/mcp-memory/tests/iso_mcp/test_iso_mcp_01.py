@@ -25,6 +25,7 @@ def test_iso_mcp_01_cross_org_agent_denied_on_search_and_write(
     headers = mcp_session(client, iso_env["token_a"])
     agent_b = str(iso_ids["agent_b"])
 
+    before = len(sink.events)
     search = tools_call(
         client,
         ToolCallSpec(
@@ -34,8 +35,11 @@ def test_iso_mcp_01_cross_org_agent_denied_on_search_and_write(
             arguments={"query": "cross-tenant", "agent_id": agent_b},
         ),
     )
-    assert_permission_denied(search, sink=sink)
+    assert_permission_denied(
+        search, sink=sink, tool_name="search_memory", events_before=before
+    )
 
+    before = len(sink.events)
     write = tools_call(
         client,
         ToolCallSpec(
@@ -45,4 +49,6 @@ def test_iso_mcp_01_cross_org_agent_denied_on_search_and_write(
             arguments={"content": "must not write across orgs", "agent_id": agent_b},
         ),
     )
-    assert_permission_denied(write, sink=sink)
+    assert_permission_denied(
+        write, sink=sink, tool_name="write_memory", events_before=before
+    )

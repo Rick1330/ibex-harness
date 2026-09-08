@@ -236,11 +236,23 @@ async def record_feedback(
     principal: Principal,
     args: RecordFeedbackArgs,
     client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None = None,
 ) -> dict[str, Any]:
-    """Record usefulness feedback via memory HTTP. Requires MemoryWrite."""
+    """Record usefulness feedback via memory HTTP. Requires MemoryWrite.
+
+    Agent-scoped principals must pass ValidateAgent (org + active) before the
+    memory HTTP call. Org-scoped principals (no agent_id) rely on MEMORY_WRITE.
+    """
     _require_permission(principal, MEMORY_WRITE, "record_feedback requires MemoryWrite")
     mem = _require_client(client)
     token = require_access_token()
+    if principal.agent_id is not None:
+        await _verify_agent_active(
+            agent_verifier,
+            bearer=token,
+            org_id=principal.org_id,
+            agent_id=principal.agent_id,
+        )
     body: dict[str, Any] = {"feedback": args.feedback}
     if args.session_id is not None:
         body["session_id"] = str(args.session_id)

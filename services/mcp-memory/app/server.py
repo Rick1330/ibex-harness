@@ -194,7 +194,9 @@ def _register_feedback_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
                 request=_ToolRequest(
                     tool_name="record_feedback",
                     raw=raw,
-                    runner=lambda payload: _run_feedback(payload, wiring.memory_client),
+                    runner=lambda payload: _run_feedback(
+                        payload, wiring.memory_client, wiring.agent_verifier
+                    ),
                 ),
             )
         )
@@ -270,10 +272,15 @@ async def _run_verified(
 
 
 async def _run_feedback(
-    raw: dict[str, Any], client: MemoryHttpClient | None
+    raw: dict[str, Any],
+    client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
 ) -> dict[str, Any]:
     return await run_record_feedback(
-        require_principal(), parse_feedback_args(raw), client
+        require_principal(),
+        parse_feedback_args(raw),
+        client,
+        agent_verifier,
     )
 
 

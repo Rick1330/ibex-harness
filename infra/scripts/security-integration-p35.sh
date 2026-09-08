@@ -14,9 +14,60 @@ if [[ -z "${CANONICAL_DSN}" ]]; then
   exit 1
 fi
 if [[ -z "${REDIS_URL:-}" ]]; then
-  echo "REDIS_URL required for security-integration-p3.5" >&2
+  echo "REDIS_URL required for security-integration-p35" >&2
   exit 1
 fi
+
+normalize_psql_dsn() {
+  local dsn="$1"
+  dsn="${dsn//postgresql+asyncpg:/postgres:}"
+  dsn="${dsn//postgresql:/postgres:}"
+  echo "$dsn"
+}
+
+extract_dsn_host() {
+  local dsn="$1"
+  local host=""
+  if [[ "$dsn" =~ @([^:/?]+) ]]; then
+    host="${BASH_REMATCH[1]}"
+  elif [[ "$dsn" =~ ^postgres://([^:/?@]+) ]]; then
+    host="${BASH_REMATCH[1]}"
+  elif [[ "$dsn" =~ (^|[[:space:]])host=([^[:space:]]+) ]]; then
+    host="${BASH_REMATCH[2]}"
+  fi
+  echo "$host"
+}
+
+refuse_non_ephemeral_db() {
+  # Fail closed before migrate/seed: local/CI loopback only + explicit ack.
+  if [[ "${IBEX_ENV:-}" == "production" ]]; then
+    echo "refusing security-integration-p35: IBEX_ENV=production" >&2
+    exit 1
+  fi
+  if [[ "${IBEX_ISO_MCP_ALLOW_DESTRUCTIVE_DB:-}" != "1" ]]; then
+    echo "refusing security-integration-p35: set IBEX_ISO_MCP_ALLOW_DESTRUCTIVE_DB=1" >&2
+    echo "(acknowledges migrate/seed against an ephemeral local/CI database)" >&2
+    exit 1
+  fi
+  local dsn host
+  dsn="$(normalize_psql_dsn "$1")"
+  host="$(extract_dsn_host "$dsn")"
+  if [[ -z "$host" ]]; then
+    echo "refusing security-integration-p35: cannot parse host from DSN" >&2
+    exit 1
+  fi
+  case "$host" in
+    localhost|127.0.0.1|host.docker.internal|::1)
+      return 0
+      ;;
+    *)
+      echo "refusing security-integration-p35: DSN host '$host' is not local/ephemeral" >&2
+      exit 1
+      ;;
+  esac
+}
+
+refuse_non_ephemeral_db "${CANONICAL_DSN}"
 
 export POSTGRES_DSN="${CANONICAL_DSN}"
 export POSTGRES_MIGRATE_DSN="${CANONICAL_DSN}"
@@ -45,9 +96,10 @@ TOKEN_ORG_ID="00000000-0000-0000-0000-0000000000c4"
 AGENT_SUSPENDED="00000000-0000-0000-0000-0000000000c5"
 TOKEN_SUSPENDED_ID="00000000-0000-0000-0000-0000000000c6"
 
-TOKEN_A="${IBEX_ISO_MCP_TOKEN_A:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY}"
-TOKEN_ORG="${IBEX_ISO_MCP_TOKEN_ORG_SCOPED:-ibex_pat_00000000-0000-0000-0000-0000000000f2_LOCALDEVELOPMENTONLY}"
-TOKEN_SUSPENDED="${IBEX_ISO_MCP_TOKEN_SUSPENDED:-ibex_pat_00000000-0000-0000-0000-0000000000f3_LOCALDEVELOPMENTONLY}"
+# Fixed to seeded verifier rows (no env override — mismatch would greenwash ISO tests).
+TOKEN_A='ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY'
+TOKEN_ORG='ibex_pat_00000000-0000-0000-0000-0000000000f2_LOCALDEVELOPMENTONLY'
+TOKEN_SUSPENDED='ibex_pat_00000000-0000-0000-0000-0000000000f3_LOCALDEVELOPMENTONLY'
 # Argon2id via: go run ./infra/tools/hashtoken <bearer>
 TOKEN_ORG_HASH='$argon2id$v=19$m=65536,t=3,p=4$d1XID/KdLaepzl4fieO1Lw$XxWWKg6JtYCS5w/AJEheYxHLhCHb5kHaX8VfXx5FKtc'
 TOKEN_ORG_PREFIX='ibex_pat_00000000-0000-0000-0000-0000000000f2'
@@ -76,13 +128,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-normalize_psql_dsn() {
-  local dsn="$1"
-  dsn="${dsn//postgresql+asyncpg:/postgres:}"
-  dsn="${dsn//postgresql:/postgres:}"
-  echo "$dsn"
-}
-
 run_psql() {
   local dsn
   dsn="$(normalize_psql_dsn "${POSTGRES_DSN}")"
@@ -107,7 +152,7 @@ wait_http() {
   local attempts="${3:-60}"
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS "$url" >/dev/null 2>&1; then
+    if curl -fsS --connect-timeout 2 --max-time 5 "$url" >/dev/null 2>&1; then
       pass "$name ready ($url)"
       return 0
     fi

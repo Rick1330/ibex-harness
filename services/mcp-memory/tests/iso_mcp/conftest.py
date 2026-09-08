@@ -129,7 +129,13 @@ def tools_call(client: TestClient, call: ToolCallSpec) -> object:
     )
 
 
-def assert_permission_denied(resp: object, *, sink: MemoryAuditSink) -> None:
+def assert_permission_denied(
+    resp: object,
+    *,
+    sink: MemoryAuditSink,
+    tool_name: str,
+    events_before: int,
+) -> None:
     assert resp.status_code in (200, 202), resp.text
     body = resp.json()
     result = body.get("result")
@@ -137,7 +143,13 @@ def assert_permission_denied(resp: object, *, sink: MemoryAuditSink) -> None:
     assert result.get("isError") is True, body
     blob = resp.text.lower()
     assert "not_found" not in blob
-    assert any(e.error_code == "permission_denied" for e in sink.events), sink.events
+    new_events = sink.events[events_before:]
+    assert any(
+        e.tool_name == tool_name
+        and e.success is False
+        and e.error_code == "permission_denied"
+        for e in new_events
+    ), new_events
 
 
 def assert_tool_ok(resp: object) -> None:

@@ -462,8 +462,32 @@ async def test_record_feedback_requires_memory_write() -> None:
     args = parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive"})
     client = memory_client_for(counting)
     with pytest.raises(PermissionDeniedError):
-        await record_feedback(principal, args, client)
+        await record_feedback(principal, args, client, _ALLOW)
     assert hits["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_record_feedback_inactive_agent_denied_before_memory_http() -> None:
+    outbound: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outbound.append(request)
+        return httpx.Response(200, json={"data": {}})
+
+    deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
+    call = record_feedback(
+        Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+        parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive"}),
+        memory_client_for(handler),
+        deny,
+    )
+    set_access_token(TOKEN)
+    try:
+        with pytest.raises(PermissionDeniedError, match="agent is not active"):
+            await call
+    finally:
+        set_access_token(None)
+    assert outbound == []
 
 
 @pytest.mark.asyncio
@@ -496,6 +520,7 @@ async def test_record_feedback_success() -> None:
                 {"memory_id": mid, "feedback": "positive", "notes": "helped"}
             ),
             memory_client_for(handler),
+            _ALLOW,
         )
     finally:
         set_access_token(None)
@@ -523,6 +548,6 @@ async def test_record_feedback_fail_closed(
     set_access_token(TOKEN)
     try:
         with pytest.raises(exc_type):
-            await record_feedback(principal, args, client)
+            await record_feedback(principal, args, client, _ALLOW)
     finally:
         set_access_token(None)
