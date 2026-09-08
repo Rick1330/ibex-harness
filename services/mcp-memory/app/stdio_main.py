@@ -7,7 +7,7 @@ import logging
 
 from app.audit import AsyncAuditEmitter, LoggingAuditSink
 from app.config import TRANSPORT_STDIO, get_settings
-from app.server import build_mcp_server
+from app.server import McpServerWiring, build_mcp_server
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,13 @@ async def _run() -> None:
         default_rpm=settings.rate_limit_rpm,
         org_overrides=settings.rate_limit_org_override_map,
     )
-    mcp = build_mcp_server(audit, memory_client, rate_limiter=limiter)
+    mcp = build_mcp_server(
+        McpServerWiring(
+            audit=audit,
+            memory_client=memory_client,
+            rate_limiter=limiter,
+        )
+    )
     try:
         await mcp.run_stdio_async()
     finally:

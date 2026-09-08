@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.audit import MemoryAuditSink
 from tests.iso_mcp.conftest import (
+    ToolCallSpec,
     assert_permission_denied,
     mcp_session,
     tools_call,
@@ -24,18 +25,22 @@ def test_iso_mcp_03_suspended_agent_denied_on_search_and_write(
 
     search = tools_call(
         client,
-        headers=headers,
-        request_id=30,
-        name="search_memory",
-        arguments={"query": "suspended-agent"},
+        ToolCallSpec(
+            headers=headers,
+            request_id=30,
+            name="search_memory",
+            arguments={"query": "suspended-agent"},
+        ),
     )
     assert_permission_denied(search, sink=sink)
 
     write = tools_call(
         client,
-        headers=headers,
-        request_id=31,
-        name="write_memory",
-        arguments={"content": "must not write for suspended agent"},
+        ToolCallSpec(
+            headers=headers,
+            request_id=31,
+            name="write_memory",
+            arguments={"content": "must not write for suspended agent"},
+        ),
     )
     assert_permission_denied(write, sink=sink)

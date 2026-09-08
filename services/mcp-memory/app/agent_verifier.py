@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 import grpc
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 _VALIDATE_AGENT_METHOD = "/ibex.auth.v1.AuthService/ValidateAgent"
 _INACTIVE_MSG = "agent is not active"
+_ValidateAgentStub = Callable[..., Awaitable[bytes]]
 
 
 class AgentVerifier(ABC):
@@ -46,7 +48,7 @@ class GRPCAgentVerifier(AgentVerifier):
             timeout_seconds = 0.05
         self._timeout = timeout_seconds
         self._channel: grpc.aio.Channel | None = None
-        self._stub: object | None = None
+        self._stub: _ValidateAgentStub | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def verify(self, *, bearer: str, org_id: UUID, agent_id: UUID) -> None:
@@ -75,20 +77,11 @@ class GRPCAgentVerifier(AgentVerifier):
         if channel is not None:
             await channel.close()
 
-    def _ensure_stub(self) -> object:
+    def _ensure_stub(self) -> _ValidateAgentStub:
         loop = asyncio.get_running_loop()
         if self._stub is not None and self._loop is loop:
             return self._stub
-        # Drop stale channel from a prior loop (e.g. create_app before TestClient).
-        if self._channel is not None:
-            close = getattr(self._channel, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:  # noqa: BLE001 — best-effort stale cleanup
-                    logger.debug(
-                        "stale validate_agent channel close failed", exc_info=True
-                    )
+        self._drop_stale_channel()
         self._channel = grpc.aio.insecure_channel(self._target)
         self._stub = self._channel.unary_unary(
             _VALIDATE_AGENT_METHOD,
@@ -97,6 +90,21 @@ class GRPCAgentVerifier(AgentVerifier):
         )
         self._loop = loop
         return self._stub
+
+    def _drop_stale_channel(self) -> None:
+        # Prior loop may have left a channel (e.g. create_app before TestClient).
+        channel = self._channel
+        self._channel = None
+        self._stub = None
+        if channel is None:
+            return
+        close = getattr(channel, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except OSError:
+            logger.debug("stale validate_agent channel close failed", exc_info=True)
 
 
 class AllowAllAgentVerifier(AgentVerifier):

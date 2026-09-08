@@ -24,7 +24,7 @@ from app.http_metrics import HTTPMetricsMiddleware
 from app.middleware import BearerAuthConfig, BearerAuthMiddleware
 from app.probes import probe_router
 from app.ratelimit import McpRateLimiter, RedisMcpLimiter, build_mcp_rate_limiter
-from app.server import build_mcp_server
+from app.server import McpServerWiring, build_mcp_server
 from app.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -70,10 +70,12 @@ def create_app(
     verifier, owned_verifier = _resolve_agent_verifier(cfg, injected.agent_verifier)
     limiter, owned_limiter = _resolve_rate_limiter(cfg, injected.rate_limiter)
     mcp = build_mcp_server(
-        audit,
-        mem,
-        agent_verifier=verifier,
-        rate_limiter=limiter,
+        McpServerWiring(
+            audit=audit,
+            memory_client=mem,
+            agent_verifier=verifier,
+            rate_limiter=limiter,
+        ),
         allow_test_hosts=cfg.env != "production",
     )
     runtime = _Runtime(

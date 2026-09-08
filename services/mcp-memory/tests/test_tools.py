@@ -235,7 +235,7 @@ async def test_search_empty_hits_is_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inactive_agent_denied_before_memory_http() -> None:
+async def test_inactive_agent_denied_on_search_before_memory_http() -> None:
     """ISO-MCP-03 unit: suspended/inactive verifier fails closed without memory I/O."""
     outbound: list[httpx.Request] = []
 
@@ -244,22 +244,42 @@ async def test_inactive_agent_denied_before_memory_http() -> None:
         return httpx.Response(200, json={"data": {"results": []}})
 
     deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
+    client = memory_client_for(handler)
+    call = search_memory(
+        Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+        parse_search_args({"query": "q"}),
+        client,
+        deny,
+    )
     set_access_token(TOKEN)
     try:
         with pytest.raises(PermissionDeniedError, match="agent is not active"):
-            await search_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
-                parse_search_args({"query": "q"}),
-                memory_client_for(handler),
-                deny,
-            )
+            await call
+    finally:
+        set_access_token(None)
+    assert outbound == []
+
+
+@pytest.mark.asyncio
+async def test_inactive_agent_denied_on_write_before_memory_http() -> None:
+    outbound: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outbound.append(request)
+        return httpx.Response(200, json={"data": {"id": str(uuid4())}})
+
+    deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
+    client = memory_client_for(handler)
+    call = write_memory(
+        Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+        parse_write_args({"content": "note"}),
+        client,
+        deny,
+    )
+    set_access_token(TOKEN)
+    try:
         with pytest.raises(PermissionDeniedError, match="agent is not active"):
-            await write_memory(
-                Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-                parse_write_args({"content": "note"}),
-                memory_client_for(handler),
-                deny,
-            )
+            await call
     finally:
         set_access_token(None)
     assert outbound == []

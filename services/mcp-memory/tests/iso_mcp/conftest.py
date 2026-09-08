@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass
 from uuid import UUID
 
 import pytest
@@ -107,22 +108,23 @@ def mcp_session(client: TestClient, token: str) -> dict[str, str]:
     return headers
 
 
-def tools_call(
-    client: TestClient,
-    *,
-    headers: dict[str, str],
-    request_id: int,
-    name: str,
-    arguments: dict[str, object],
-) -> object:
+@dataclass(frozen=True, slots=True)
+class ToolCallSpec:
+    headers: dict[str, str]
+    request_id: int
+    name: str
+    arguments: dict[str, object]
+
+
+def tools_call(client: TestClient, call: ToolCallSpec) -> object:
     return client.post(
         "/mcp",
-        headers=headers,
+        headers=call.headers,
         json={
             "jsonrpc": "2.0",
-            "id": request_id,
+            "id": call.request_id,
             "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
+            "params": {"name": call.name, "arguments": call.arguments},
         },
     )
 

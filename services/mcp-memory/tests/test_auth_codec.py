@@ -80,7 +80,6 @@ def test_validate_agent_response_roundtrip() -> None:
 def test_validate_agent_response_missing_status() -> None:
     agent = "33333333-3333-3333-3333-333333333333"
     org = "11111111-1111-1111-1111-111111111111"
+    payload = encode_validate_agent_request(agent_id=agent, org_id=org)
     with pytest.raises(AuthCodecError, match="status"):
-        decode_validate_agent_response(
-            encode_validate_agent_request(agent_id=agent, org_id=org)
-        )
+        decode_validate_agent_response(payload)

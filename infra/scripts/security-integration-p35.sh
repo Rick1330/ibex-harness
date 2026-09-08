@@ -60,7 +60,6 @@ MCP_DIR="$ROOT/services/mcp-memory"
 WORKER_DIR="$ROOT/services/worker"
 STUB_TEI_PY="$ROOT/infra/scripts/phase3_e2e_stub_tei.py"
 DOCKER_PS_FORMAT='{{.Names}}'
-PSQL_PING='SELECT 1'
 
 PIDS=()
 fail() { echo "FAIL: $*" >&2; exit 1; }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -59,12 +60,8 @@ def encode_validate_token_request(access_token: str) -> bytes:
 
 
 def decode_validate_token_response(payload: bytes) -> ValidateTokenWire:
-    if len(payload) > MAX_MESSAGE_BYTES:
-        raise AuthCodecError("auth response too large")
     state = _TokenDecodeState()
-    idx = 0
-    while idx < len(payload):
-        idx = _decode_token_field(payload, idx, state)
+    _walk_fields(payload, lambda buf, idx: _decode_token_field(buf, idx, state))
     if state.org_id is None:
         raise AuthCodecError("auth response missing org_id")
     return ValidateTokenWire(
@@ -83,12 +80,20 @@ def encode_validate_agent_request(*, agent_id: str, org_id: str) -> bytes:
 
 def decode_validate_agent_response(payload: bytes) -> ValidateAgentWire:
     """Decode ValidateAgentResponse (agent_id=1, org_id=2, status=3)."""
+    state = _AgentDecodeState()
+    _walk_fields(payload, lambda buf, idx: _decode_agent_field(buf, idx, state))
+    return _finish_agent_wire(state)
+
+
+def _walk_fields(payload: bytes, decode_one: Callable[[bytes, int], int]) -> None:
     if len(payload) > MAX_MESSAGE_BYTES:
         raise AuthCodecError("auth response too large")
-    state = _AgentDecodeState()
     idx = 0
     while idx < len(payload):
-        idx = _decode_agent_field(payload, idx, state)
+        idx = decode_one(payload, idx)
+
+
+def _finish_agent_wire(state: _AgentDecodeState) -> ValidateAgentWire:
     if state.agent_id is None:
         raise AuthCodecError("auth response missing agent_id")
     if state.org_id is None:
@@ -123,44 +128,61 @@ def encode_varint(value: int) -> bytes:
 
 def _decode_token_field(buf: bytes, idx: int, state: _TokenDecodeState) -> int:
     key, idx = _decode_varint(buf, idx)
-    field = key >> 3
-    wire = key & 0x07
+    field, wire = key >> 3, key & 0x07
     if wire == _WIRE_LEN:
         raw, idx = _read_bytes(buf, idx)
-        if field == 1:
-            state.org_id = _parse_uuid(_decode_utf8(raw), "org_id")
-        elif field == 3:
-            state.agent_id = _parse_uuid(_decode_utf8(raw), "agent_id")
-        elif field == 4:
-            state.user_id = _bounded_string(_decode_utf8(raw), "user_id")
-        elif field == 5:
-            state.token_id = _bounded_string(_decode_utf8(raw), "token_id")
+        _apply_token_len(state, field, raw)
         return idx
     if wire == _WIRE_VARINT:
-        num, idx = _decode_varint(buf, idx)
-        if field == 2:
-            state.permissions = int(num)
-        return idx
+        return _apply_token_varint(buf, idx, state, field)
     return _skip_unknown(buf, idx, wire)
+
+
+def _apply_token_len(state: _TokenDecodeState, field: int, raw: bytes) -> None:
+    if field == 1:
+        state.org_id = _parse_uuid(_decode_utf8(raw), "org_id")
+        return
+    if field == 3:
+        state.agent_id = _parse_uuid(_decode_utf8(raw), "agent_id")
+        return
+    if field == 4:
+        state.user_id = _bounded_string(_decode_utf8(raw), "user_id")
+        return
+    if field == 5:
+        state.token_id = _bounded_string(_decode_utf8(raw), "token_id")
+
+
+def _apply_token_varint(
+    buf: bytes, idx: int, state: _TokenDecodeState, field: int
+) -> int:
+    num, idx = _decode_varint(buf, idx)
+    if field == 2:
+        state.permissions = int(num)
+    return idx
 
 
 def _decode_agent_field(buf: bytes, idx: int, state: _AgentDecodeState) -> int:
     key, idx = _decode_varint(buf, idx)
-    field = key >> 3
-    wire = key & 0x07
+    field, wire = key >> 3, key & 0x07
     if wire == _WIRE_LEN:
         raw, idx = _read_bytes(buf, idx)
-        if field == 1:
-            state.agent_id = _parse_uuid(_decode_utf8(raw), "agent_id")
-        elif field == 2:
-            state.org_id = _parse_uuid(_decode_utf8(raw), "org_id")
-        elif field == 3:
-            state.status = _bounded_string(_decode_utf8(raw), "status")
+        _apply_agent_len(state, field, raw)
         return idx
     if wire == _WIRE_VARINT:
         _, idx = _decode_varint(buf, idx)
         return idx
     return _skip_unknown(buf, idx, wire)
+
+
+def _apply_agent_len(state: _AgentDecodeState, field: int, raw: bytes) -> None:
+    if field == 1:
+        state.agent_id = _parse_uuid(_decode_utf8(raw), "agent_id")
+        return
+    if field == 2:
+        state.org_id = _parse_uuid(_decode_utf8(raw), "org_id")
+        return
+    if field == 3:
+        state.status = _bounded_string(_decode_utf8(raw), "status")
 
 
 def _tag(field: int, wire: int) -> bytes:
