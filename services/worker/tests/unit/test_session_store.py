@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
-from app.extraction.session_store import PostgresSessionStore, SessionSnapshot, _set_org_guc
+from app.extraction.session_store import (
+    PostgresSessionStore,
+    SessionSnapshot,
+    _run_coro,
+    _set_org_guc,
+)
 
 
 @pytest.mark.asyncio
@@ -37,6 +44,72 @@ def test_postgres_store_load_and_update_delegate(monkeypatch: pytest.MonkeyPatch
     assert snap.last_extracted_turn == 2
     store.update_last_extracted_turn(org_id, session_id, 9)
     assert fake_update.turn == 9  # type: ignore[attr-defined]
+
+
+def test_run_coro_rejects_same_thread_running_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = MagicMock()
+    loop.is_closed.return_value = False
+    loop.is_running.return_value = True
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: loop)
+    with pytest.raises(RuntimeError, match="cannot block on a running event loop"):
+        _run_coro(object())
+
+
+@pytest.mark.asyncio
+async def test_run_coro_closes_coro_on_same_thread_running_loop() -> None:
+    """Real coroutine must be closed (not left unawaited) before fail-fast raise."""
+
+    async def pending() -> int:
+        return 1
+
+    coro = pending()
+    with pytest.raises(RuntimeError, match="cannot block on a running event loop"):
+        _run_coro(coro)
+    assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+
+def test_run_coro_cross_thread_via_threadsafe(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = MagicMock()
+    loop.is_closed.return_value = False
+    loop.is_running.return_value = True
+    fut = MagicMock()
+    fut.result.return_value = "from-thread"
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    monkeypatch.setattr(
+        asyncio, "get_running_loop", MagicMock(side_effect=RuntimeError("no loop"))
+    )
+    monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", lambda _c, _l: fut)
+    assert _run_coro(object()) == "from-thread"
+    fut.result.assert_called_once_with()
+
+
+def test_run_coro_run_until_complete_when_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = MagicMock()
+    loop.is_closed.return_value = False
+    loop.is_running.return_value = False
+    loop.run_until_complete.return_value = "idle"
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    assert _run_coro(object()) == "idle"
+    loop.run_until_complete.assert_called_once()
+
+
+def test_run_coro_asyncio_run_when_no_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        asyncio, "get_event_loop", MagicMock(side_effect=RuntimeError("no loop"))
+    )
+    monkeypatch.setattr(asyncio, "run", lambda _c: "fresh")
+    assert _run_coro(object()) == "fresh"
+
+
+def test_run_coro_asyncio_run_when_loop_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = MagicMock()
+    loop.is_closed.return_value = True
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    monkeypatch.setattr(asyncio, "run", lambda _c: "reopened")
+    assert _run_coro(object()) == "reopened"
 
 
 def _session_factory(execute: AsyncMock) -> MagicMock:

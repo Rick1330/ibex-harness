@@ -27,7 +27,7 @@ OTEL_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
 PORT_FROM_URL_SED='s#.*:([0-9]+).*#\1#'
 
 PIDS=()
-BODY_FILE=""
+BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-e2e-body.XXXXXX")"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
@@ -89,8 +89,12 @@ wait_http() {
 }
 
 http_code() {
+  # BODY_FILE must be created in the parent shell — $(http_code) runs in a subshell
+  # and assignments here would not persist for later `cat "$BODY_FILE"`.
   if [[ -z "${BODY_FILE:-}" ]]; then
-    BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-e2e-body.XXXXXX")"
+    echo "BODY_FILE not initialized" >&2
+    printf '%s' "000"
+    return 1
   fi
   curl -sS -o "$BODY_FILE" -w "%{http_code}" "$@" || true
 }
@@ -247,10 +251,18 @@ CODE="$(http_code -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
 BODY="$(cat "${BODY_FILE:-/dev/null}" 2>/dev/null || true)"
 if [[ "$CODE" != "200" && "$CODE" != "202" ]]; then
-  fail "mcp tools/list -> $CODE"
+  fail "mcp tools/list -> $CODE body=${BODY:0:400}"
 fi
-echo "$BODY" | grep -q search_memory || fail "mcp tools/list missing search_memory"
-echo "$BODY" | grep -q write_memory || fail "mcp tools/list missing write_memory"
+if ! echo "$BODY" | grep -q search_memory; then
+  echo "---- mcp tools/list body ----" >&2
+  echo "$BODY" >&2
+  fail "mcp tools/list missing search_memory"
+fi
+if ! echo "$BODY" | grep -q write_memory; then
+  echo "---- mcp tools/list body ----" >&2
+  echo "$BODY" >&2
+  fail "mcp tools/list missing write_memory"
+fi
 pass "mcp tools/list (live Auth ValidateToken)"
 
 CODE="$(http_code -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \

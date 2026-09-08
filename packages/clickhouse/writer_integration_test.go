@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const defaultTestAppDSN = "clickhouse://default:@localhost:8124/ibex"
+const defaultTestAppDSN = "clickhouse://default:ibextest@localhost:8124/ibex"
 
 func testAppDSN() string {
 	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_DSN")); dsn != "" {

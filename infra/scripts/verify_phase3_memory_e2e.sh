@@ -138,16 +138,17 @@ run_psql() {
     psql "$dsn" -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
+  # -i is required so heredoc / stdin SQL reaches the container psql.
   if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx ibex-test-postgres; then
-    docker exec ibex-test-postgres psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
+    docker exec -i ibex-test-postgres psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
   if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx test-postgres-1; then
-    docker exec test-postgres-1 psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
+    docker exec -i test-postgres-1 psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
   if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx ibex-dev-postgres; then
-    docker exec ibex-dev-postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 "$@"
+    docker exec -i ibex-dev-postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
   fail "psql not available for cascade DELETE"

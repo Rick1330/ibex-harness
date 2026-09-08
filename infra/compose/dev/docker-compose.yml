@@ -71,7 +71,8 @@ services:
 
   worker:
     build:
-      context: ../..
+      # compose file lives in infra/compose/dev → three levels up is repo root
+      context: ../../..
       dockerfile: services/worker/Dockerfile
     container_name: ibex-dev-worker
     ports:
@@ -96,7 +97,7 @@ services:
 
   worker-beat:
     build:
-      context: ../..
+      context: ../../..
       dockerfile: services/worker/Dockerfile
     container_name: ibex-dev-worker-beat
     command:
