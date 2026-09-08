@@ -45,13 +45,28 @@ def test_postgres_store_load_and_update_delegate(monkeypatch: pytest.MonkeyPatch
     assert fake_update.turn == 9  # type: ignore[attr-defined]
 
 
-def test_run_coro_uses_running_loop_via_threadsafe(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_coro_rejects_same_thread_running_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = MagicMock()
+    loop.is_closed.return_value = False
+    loop.is_running.return_value = True
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    monkeypatch.setattr(asyncio, "get_running_loop", lambda: loop)
+    with pytest.raises(RuntimeError, match="cannot block on a running event loop"):
+        _run_coro(object())
+
+
+def test_run_coro_cross_thread_via_threadsafe(monkeypatch: pytest.MonkeyPatch) -> None:
     loop = MagicMock()
     loop.is_closed.return_value = False
     loop.is_running.return_value = True
     fut = MagicMock()
     fut.result.return_value = "from-thread"
     monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    monkeypatch.setattr(
+        asyncio, "get_running_loop", MagicMock(side_effect=RuntimeError("no loop"))
+    )
     monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", lambda _c, _l: fut)
     assert _run_coro(object()) == "from-thread"
     fut.result.assert_called_once_with()

@@ -36,6 +36,10 @@ def _run_coro(coro: object) -> object:
 
     ``asyncio.run`` creates a new loop and breaks SQLAlchemy async engines
     initialized in ``worker_process_init`` (attached to ``_worker_loop``).
+
+    If *loop* is already running on this thread, waiting on
+    ``run_coroutine_threadsafe(...).result()`` would deadlock — fail fast.
+    Cross-thread dispatch (no running loop on the caller thread) remains OK.
     """
     try:
         loop = asyncio.get_event_loop()
@@ -44,7 +48,14 @@ def _run_coro(coro: object) -> object:
     if loop.is_closed():
         return asyncio.run(coro)  # type: ignore[arg-type]
     if loop.is_running():
-        # Nested call inside an already-running loop — unexpected for Celery tasks.
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            raise RuntimeError(
+                "_run_coro cannot block on a running event loop from its own thread"
+            )
         return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[arg-type]
     return loop.run_until_complete(coro)  # type: ignore[arg-type]
 

@@ -15,7 +15,7 @@ import (
 )
 
 // Test compose maps native 9000 → host 9003 (dev uses 9002).
-const defaultTestMigrateDSN = "clickhouse://default:@localhost:9003?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree"
+const defaultTestMigrateDSN = "clickhouse://default:ibextest@localhost:9003?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree"
 
 var requiredLLMTraceColumns = []string{
 	"request_id", "org_id", "agent_id", "session_id", "checkpoint_id",

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import time
@@ -328,8 +329,21 @@ def mcp_jsonrpc(
 
 
 def percentile(values: list[float], pct: float) -> float:
+    """Interpolated percentile; *pct* is a fraction in ``[0, 1]`` (e.g. 0.95).
+
+    Matches the linear-rank approach in ``benchmarks/memory/synth.py`` so p95/p99
+    can diverge on small samples. Callers must pass a non-empty list.
+    """
     ordered = sorted(values)
-    return ordered[max(0, int(pct * (len(ordered) - 1)))]
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = pct * (len(ordered) - 1)
+    lo = int(math.floor(rank))
+    hi = int(math.ceil(rank))
+    if lo == hi:
+        return ordered[lo]
+    weight = rank - lo
+    return ordered[lo] * (1.0 - weight) + ordered[hi] * weight
 
 
 @dataclass(frozen=True)

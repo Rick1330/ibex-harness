@@ -234,9 +234,19 @@ start_stack() {
   memory_port="$(echo "$MEMORY_ADDR" | sed -E "$PORT_FROM_URL_SED")"
   mcp_port="$(echo "$MCP_ADDR" | sed -E "$PORT_FROM_URL_SED")"
 
+  # Build auth/proxy binaries so PIDS track the process holding the port
+  # (go run's wrapper PID is not the listener — cleanup would leak ports).
+  local auth_bin proxy_bin
+  auth_bin="$LOG_DIR/ibex-auth"
+  proxy_bin="$LOG_DIR/ibex-proxy"
+  echo "e2e-phase35: building auth → ${auth_bin}..."
+  go build -o "$auth_bin" ./services/auth/cmd/auth
+  echo "e2e-phase35: building proxy → ${proxy_bin}..."
+  go build -o "$proxy_bin" ./services/proxy/cmd/proxy
+
   echo "e2e-phase35: starting auth on :${auth_http_port}/:${AUTH_GRPC_PORT}..."
   IBEX_PORT="$auth_http_port" IBEX_GRPC_PORT="$AUTH_GRPC_PORT" OTEL_SERVICE_NAME=ibex-auth \
-    go run ./services/auth/cmd/auth >"$LOG_DIR/auth.log" 2>&1 &
+    "$auth_bin" >"$LOG_DIR/auth.log" 2>&1 &
   PIDS+=("$!")
   wait_http "auth" "$AUTH_HTTP/health"
 
@@ -397,7 +407,7 @@ start_stack() {
     IBEX_WORKER_ENQUEUE_BASE_URL="http://127.0.0.1:${WORKER_ENQUEUE_PORT}" \
     IBEX_WORKER_ENQUEUE_API_TOKEN="$ENQUEUE_TOKEN" \
     OTEL_SERVICE_NAME=ibex-proxy \
-    go run ./services/proxy/cmd/proxy \
+    "$proxy_bin" \
     >"$LOG_DIR/proxy.log" 2>&1 &
   PIDS+=("$!")
   wait_http "proxy" "$PROXY_ADDR/health"
