@@ -241,7 +241,6 @@ start_stack() {
   wait_http "auth" "$AUTH_HTTP/health"
 
   echo "e2e-phase35: starting stub TEI on :${STUB_TEI_PORT}..."
-  export PYTHONPATH="$EMBEDDER_DIR${PYTHONPATH:+:$PYTHONPATH}"
   (
     cd "$EMBEDDER_DIR"
     if [[ ! -d .venv ]]; then
@@ -250,7 +249,9 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    exec python "$STUB_TEI_PY" --host 127.0.0.1 --port "$STUB_TEI_PORT"
+    # Child-only env via `env` (not `export`) — avoids Codacy/ShellCheck SC2030/SC2031.
+    exec env PYTHONPATH="$EMBEDDER_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+      python "$STUB_TEI_PY" --host 127.0.0.1 --port "$STUB_TEI_PORT"
   ) >"$LOG_DIR/stub-tei.log" 2>&1 &
   PIDS+=("$!")
   wait_http "stub-tei" "http://127.0.0.1:${STUB_TEI_PORT}/health"
@@ -260,24 +261,20 @@ start_stack() {
     cd "$EMBEDDER_DIR"
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export IBEX_EMBEDDING_PROFILE=gpu
-    export IBEX_EMBEDDING_TEI_BASE_URL="http://127.0.0.1:${STUB_TEI_PORT}"
-    export IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true
-    export IBEX_EMBEDDING_DIM=1024
-    export IBEX_EMBEDDING_MODEL=BAAI/bge-m3
-    export IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN"
-    export IBEX_EMBEDDING_CACHE_ENABLED=false
-    exec uvicorn app.main:app --host 127.0.0.1 --port "$embedder_port"
+    exec env \
+      IBEX_EMBEDDING_PROFILE=gpu \
+      IBEX_EMBEDDING_TEI_BASE_URL="http://127.0.0.1:${STUB_TEI_PORT}" \
+      IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true \
+      IBEX_EMBEDDING_DIM=1024 \
+      IBEX_EMBEDDING_MODEL=BAAI/bge-m3 \
+      IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN" \
+      IBEX_EMBEDDING_CACHE_ENABLED=false \
+      uvicorn app.main:app --host 127.0.0.1 --port "$embedder_port"
   ) >"$LOG_DIR/embedder.log" 2>&1 &
   PIDS+=("$!")
   wait_http "embedder" "$EMBEDDER_ADDR/health"
 
   echo "e2e-phase35: starting memory on :${memory_port}..."
-  # Token must be visible to the memory process (inherited); not only the embedder subshell.
-  export IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN"
-  export IBEX_MEMORY_EMBEDDING_BASE_URL="$EMBEDDER_ADDR"
-  export IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}"
-  export IBEX_MEMORY_REDIS_URL="${REDIS_URL}"
   (
     cd "$MEMORY_DIR"
     if [[ ! -d .venv ]]; then
@@ -285,11 +282,14 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}"
-    export IBEX_MEMORY_AUTH_TIMEOUT_MS="${IBEX_MEMORY_AUTH_TIMEOUT_MS:-2000}"
-    export IBEX_MEMORY_EMBEDDING_BASE_URL="$EMBEDDER_ADDR"
-    export IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN"
-    exec uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
+    exec env \
+      IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}" \
+      IBEX_MEMORY_AUTH_TIMEOUT_MS="${IBEX_MEMORY_AUTH_TIMEOUT_MS:-2000}" \
+      IBEX_MEMORY_EMBEDDING_BASE_URL="$EMBEDDER_ADDR" \
+      IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN" \
+      IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}" \
+      IBEX_MEMORY_REDIS_URL="${REDIS_URL}" \
+      uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
   ) >"$LOG_DIR/memory.log" 2>&1 &
   PIDS+=("$!")
   wait_http "memory" "$MEMORY_ADDR/health" 180
@@ -312,6 +312,18 @@ start_stack() {
   fi
 
   echo "e2e-phase35: starting worker (celery + enqueue :${WORKER_ENQUEUE_PORT})..."
+  local worker_openai_base worker_openai_key worker_timeout_args=()
+  if [[ "$LIVE_EXTRACTION" == "1" ]]; then
+    worker_openai_base="${IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL}"
+    worker_openai_key="${OPENAI_API_KEY}"
+    worker_timeout_args=(
+      IBEX_WORKER_EXTRACTION_OPENAI_MODEL="${IBEX_WORKER_EXTRACTION_OPENAI_MODEL}"
+      IBEX_WORKER_EXTRACTION_TIMEOUT_SECONDS="${IBEX_WORKER_EXTRACTION_TIMEOUT_SECONDS:-120}"
+    )
+  else
+    worker_openai_base="http://127.0.0.1:${EXTRACTION_STUB_PORT}/v1"
+    worker_openai_key="sk-e2e-phase35-not-real"
+  fi
   (
     cd "$WORKER_DIR"
     if [[ ! -d .venv ]]; then
@@ -319,28 +331,22 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export REDIS_URL
-    export REDIS_DB_QUEUE=1
-    export REDIS_DB_RESULTS=3
-    export POSTGRES_DSN
-    export IBEX_WORKER_METRICS_PORT="$WORKER_METRICS_PORT"
-    export IBEX_WORKER_ENQUEUE_PORT="$WORKER_ENQUEUE_PORT"
-    export IBEX_WORKER_ENQUEUE_HOST=127.0.0.1
-    export IBEX_WORKER_ENQUEUE_API_TOKEN="$ENQUEUE_TOKEN"
-    export IBEX_WORKER_EXTRACTION_PROVIDER="${IBEX_WORKER_EXTRACTION_PROVIDER:-openai}"
-    if [[ "$LIVE_EXTRACTION" == "1" ]]; then
-      export IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL
-      export IBEX_WORKER_EXTRACTION_OPENAI_MODEL
-      export OPENAI_API_KEY
-      export IBEX_WORKER_EXTRACTION_TIMEOUT_SECONDS="${IBEX_WORKER_EXTRACTION_TIMEOUT_SECONDS:-120}"
-    else
-      export IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL="http://127.0.0.1:${EXTRACTION_STUB_PORT}/v1"
-      export OPENAI_API_KEY=sk-e2e-phase35-not-real
-    fi
-    export IBEX_WORKER_MEMORY_BASE_URL="$MEMORY_ADDR"
-    export IBEX_WORKER_MEMORY_API_TOKEN="$DEV_TOKEN"
-    unset CLICKHOUSE_DSN || true
-    exec celery -A app.celery_app:celery_app worker \
+    exec env -u CLICKHOUSE_DSN \
+      REDIS_URL="$REDIS_URL" \
+      REDIS_DB_QUEUE=1 \
+      REDIS_DB_RESULTS=3 \
+      POSTGRES_DSN="$POSTGRES_DSN" \
+      IBEX_WORKER_METRICS_PORT="$WORKER_METRICS_PORT" \
+      IBEX_WORKER_ENQUEUE_PORT="$WORKER_ENQUEUE_PORT" \
+      IBEX_WORKER_ENQUEUE_HOST=127.0.0.1 \
+      IBEX_WORKER_ENQUEUE_API_TOKEN="$ENQUEUE_TOKEN" \
+      IBEX_WORKER_EXTRACTION_PROVIDER="${IBEX_WORKER_EXTRACTION_PROVIDER:-openai}" \
+      IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL="$worker_openai_base" \
+      OPENAI_API_KEY="$worker_openai_key" \
+      "${worker_timeout_args[@]}" \
+      IBEX_WORKER_MEMORY_BASE_URL="$MEMORY_ADDR" \
+      IBEX_WORKER_MEMORY_API_TOKEN="$DEV_TOKEN" \
+      celery -A app.celery_app:celery_app worker \
       -n "ibex-e2e-p35@%h" \
       -Q extraction,embedding,maintenance,mcp_audit \
       --loglevel=info \
@@ -351,6 +357,7 @@ start_stack() {
 
   echo "e2e-phase35: starting context gRPC on ${CONTEXT_GRPC_ADDR}..."
   bash "$ROOT_DIR/infra/scripts/context-proto-gen.sh" >/dev/null
+  local context_pythonpath="$ROOT_DIR/packages/proto/gen/python${PYTHONPATH:+:$PYTHONPATH}"
   (
     cd "$CONTEXT_DIR"
     if [[ ! -d .venv ]]; then
@@ -358,41 +365,40 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export PYTHONPATH="$ROOT_DIR/packages/proto/gen/python${PYTHONPATH:+:$PYTHONPATH}"
-    export IBEX_CONTEXT_GRPC_ADDR="$CONTEXT_GRPC_ADDR"
-    export IBEX_CONTEXT_MEMORY_BASE_URL="$MEMORY_ADDR"
-    export IBEX_CONTEXT_MEMORY_API_TOKEN="$DEV_TOKEN"
-    export IBEX_CONTEXT_REDIS_URL="$REDIS_URL"
-    # Generous budgets for CI process-manage (mechanism gate; soft latency).
-    export IBEX_CONTEXT_TIMEOUT=200ms
-    export IBEX_CONTEXT_DEADLINE_MS=180
-    export IBEX_CONTEXT_HOT_TIMEOUT_MS=80
-    export IBEX_CONTEXT_COLD_TIMEOUT_MS=180
-    exec python -m app
+    exec env \
+      PYTHONPATH="$context_pythonpath" \
+      IBEX_CONTEXT_GRPC_ADDR="$CONTEXT_GRPC_ADDR" \
+      IBEX_CONTEXT_MEMORY_BASE_URL="$MEMORY_ADDR" \
+      IBEX_CONTEXT_MEMORY_API_TOKEN="$DEV_TOKEN" \
+      IBEX_CONTEXT_REDIS_URL="$REDIS_URL" \
+      IBEX_CONTEXT_TIMEOUT=200ms \
+      IBEX_CONTEXT_DEADLINE_MS=180 \
+      IBEX_CONTEXT_HOT_TIMEOUT_MS=80 \
+      IBEX_CONTEXT_COLD_TIMEOUT_MS=180 \
+      python -m app
   ) >"$LOG_DIR/context.log" 2>&1 &
   CONTEXT_PID="$!"
   PIDS+=("$CONTEXT_PID")
   wait_tcp "context" "$CONTEXT_GRPC_ADDR" 180
 
   echo "e2e-phase35: starting proxy on :${proxy_port}..."
-  (
-    export IBEX_PORT="$proxy_port"
-    export IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}"
-    export POSTGRES_DSN
-    export REDIS_URL
-    export IBEX_LLM_MODE=mock
-    export IBEX_AUTH_VALIDATE_TIMEOUT="${IBEX_AUTH_VALIDATE_TIMEOUT:-2s}"
-    # Polling inject/latency scenarios exceed default RPM; raise for process-managed e2e.
-    export IBEX_RATE_LIMIT_DEFAULT_RPM="${IBEX_RATE_LIMIT_DEFAULT_RPM:-6000}"
-    export IBEX_CONTEXT_ENABLED=true
-    export IBEX_CONTEXT_GRPC_TARGET="$CONTEXT_GRPC_ADDR"
-    export IBEX_CONTEXT_ASSEMBLE_TIMEOUT=200ms
-    export IBEX_CONTEXT_EMBED_METADATA=true
-    export IBEX_WORKER_ENQUEUE_BASE_URL="http://127.0.0.1:${WORKER_ENQUEUE_PORT}"
-    export IBEX_WORKER_ENQUEUE_API_TOKEN="$ENQUEUE_TOKEN"
-    export OTEL_SERVICE_NAME=ibex-proxy
-    exec go run ./services/proxy/cmd/proxy
-  ) >"$LOG_DIR/proxy.log" 2>&1 &
+  # Prefix env on the command (no subshell exports) for Codacy SC2030/SC2031.
+  IBEX_PORT="$proxy_port" \
+    IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}" \
+    POSTGRES_DSN="$POSTGRES_DSN" \
+    REDIS_URL="$REDIS_URL" \
+    IBEX_LLM_MODE=mock \
+    IBEX_AUTH_VALIDATE_TIMEOUT="${IBEX_AUTH_VALIDATE_TIMEOUT:-2s}" \
+    IBEX_RATE_LIMIT_DEFAULT_RPM="${IBEX_RATE_LIMIT_DEFAULT_RPM:-6000}" \
+    IBEX_CONTEXT_ENABLED=true \
+    IBEX_CONTEXT_GRPC_TARGET="$CONTEXT_GRPC_ADDR" \
+    IBEX_CONTEXT_ASSEMBLE_TIMEOUT=200ms \
+    IBEX_CONTEXT_EMBED_METADATA=true \
+    IBEX_WORKER_ENQUEUE_BASE_URL="http://127.0.0.1:${WORKER_ENQUEUE_PORT}" \
+    IBEX_WORKER_ENQUEUE_API_TOKEN="$ENQUEUE_TOKEN" \
+    OTEL_SERVICE_NAME=ibex-proxy \
+    go run ./services/proxy/cmd/proxy \
+    >"$LOG_DIR/proxy.log" 2>&1 &
   PIDS+=("$!")
   wait_http "proxy" "$PROXY_ADDR/health"
 
@@ -405,17 +411,16 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}"
-    export IBEX_MCP_AUTH_TIMEOUT_MS="${IBEX_MCP_AUTH_TIMEOUT_MS:-2000}"
-    export IBEX_MCP_HOST=127.0.0.1
-    export IBEX_MCP_PORT="$mcp_port"
-    export IBEX_MCP_RESOURCE_URL="http://127.0.0.1:${mcp_port}/mcp"
-    export IBEX_MCP_AUTH_SERVER_URL="http://127.0.0.1:${proxy_port}"
-    export IBEX_MEMORY_HTTP_URL="$MEMORY_ADDR"
-    export IBEX_MCP_MEMORY_HTTP_URL="$MEMORY_ADDR"
-    unset IBEX_MCP_CLICKHOUSE_URL || true
-    unset IBEX_MCP_REDIS_URL || true
-    exec uvicorn app.main:app --host 127.0.0.1 --port "$mcp_port"
+    exec env -u IBEX_MCP_CLICKHOUSE_URL -u IBEX_MCP_REDIS_URL \
+      IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}" \
+      IBEX_MCP_AUTH_TIMEOUT_MS="${IBEX_MCP_AUTH_TIMEOUT_MS:-2000}" \
+      IBEX_MCP_HOST=127.0.0.1 \
+      IBEX_MCP_PORT="$mcp_port" \
+      IBEX_MCP_RESOURCE_URL="http://127.0.0.1:${mcp_port}/mcp" \
+      IBEX_MCP_AUTH_SERVER_URL="http://127.0.0.1:${proxy_port}" \
+      IBEX_MEMORY_HTTP_URL="$MEMORY_ADDR" \
+      IBEX_MCP_MEMORY_HTTP_URL="$MEMORY_ADDR" \
+      uvicorn app.main:app --host 127.0.0.1 --port "$mcp_port"
   ) >"$LOG_DIR/mcp.log" 2>&1 &
   PIDS+=("$!")
   wait_http "mcp" "$MCP_ADDR/health"
@@ -452,6 +457,7 @@ CODE="$(curl -sS -o /dev/null -w '%{http_code}' "$PROXY_ADDR/ready" || true)"
 pass "proxy /ready"
 
 # Scenario driver uses memory venv (httpx) + proto stubs on PYTHONPATH.
+# Child-scoped via function subshell — no `export` (Codacy SC2030/SC2031).
 export IBEX_PROXY_ADDR="$PROXY_ADDR"
 export IBEX_MEMORY_ADDR="$MEMORY_ADDR"
 export IBEX_MCP_ADDR="$MCP_ADDR"
@@ -469,21 +475,21 @@ if [[ -n "${CONTEXT_PID:-}" ]]; then
   export IBEX_E2E_P35_CONTEXT_PID="$CONTEXT_PID"
 fi
 
-(
+run_scenarios() (
   cd "$MEMORY_DIR"
   # shellcheck disable=SC1091
   source .venv/bin/activate
-  export PYTHONPATH="$ROOT_DIR/packages/proto/gen/python${PYTHONPATH:+:$PYTHONPATH}"
+  local py_path="$ROOT_DIR/packages/proto/gen/python${PYTHONPATH:+:$PYTHONPATH}"
   # memory venv may lack google.protobuf; context venv has grpc + protobuf + httpx.
-  if ! python -c "import grpc; from ibex.context.v1 import context_pb2" 2>/dev/null; then
+  if ! PYTHONPATH="$py_path" python -c "import grpc; from ibex.context.v1 import context_pb2" 2>/dev/null; then
     # shellcheck disable=SC1091
     source "$CONTEXT_DIR/.venv/bin/activate"
-    export PYTHONPATH="$ROOT_DIR/packages/proto/gen/python${PYTHONPATH:+:$PYTHONPATH}"
   fi
-  python -c "import grpc; from ibex.context.v1 import context_pb2; import httpx" \
+  PYTHONPATH="$py_path" python -c "import grpc; from ibex.context.v1 import context_pb2; import httpx" \
     || fail "scenario driver needs grpc, context_pb2, and httpx"
-  python "$SCENARIOS_PY"
+  PYTHONPATH="$py_path" python "$SCENARIOS_PY"
 )
+run_scenarios
 
 echo ""
 echo "e2e-smoke-p3.5 passed"

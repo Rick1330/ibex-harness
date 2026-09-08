@@ -67,10 +67,36 @@ def _completion_body(user_content: str, marker: str, model: str) -> dict[str, An
     }
 
 
+def _user_content(body: object) -> str:
+    if not isinstance(body, dict):
+        return ""
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for msg in messages:
+        if isinstance(msg, dict) and msg.get("role") == "user":
+            return str(msg.get("content") or "")
+    return ""
+
+
+def _model_name(body: object) -> str:
+    if isinstance(body, dict) and body.get("model"):
+        return str(body["model"])
+    return "gpt-4o-mini"
+
+
+def _parse_json_body(raw: bytes) -> object | None:
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
 class Handler(BaseHTTPRequestHandler):
     marker: str = _DEFAULT_MARKER
 
-    def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
+    # Match BaseHTTPRequestHandler.log_message arity exactly (Codacy override check).
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
         return
 
     def _json(self, code: int, body: dict[str, Any]) -> None:
@@ -94,19 +120,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         length = int(self.headers.get("Content-Length", "0") or "0")
         raw = self.rfile.read(length) if length > 0 else b"{}"
-        try:
-            body = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+        body = _parse_json_body(raw)
+        if body is None:
             self._json(400, {"error": "invalid_json"})
             return
-        messages = body.get("messages") if isinstance(body, dict) else None
-        user_content = ""
-        if isinstance(messages, list):
-            for msg in messages:
-                if isinstance(msg, dict) and msg.get("role") == "user":
-                    user_content = str(msg.get("content") or "")
-        model = str(body.get("model") or "gpt-4o-mini") if isinstance(body, dict) else "gpt-4o-mini"
-        self._json(200, _completion_body(user_content, self.marker, model))
+        self._json(200, _completion_body(_user_content(body), self.marker, _model_name(body)))
 
 
 def main() -> None:
@@ -119,7 +137,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     Handler.marker = args.marker
+    # Loopback-only e2e stub; HTTPS not required for process-managed CI.  # NOSONAR
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    # NOSONAR python:S5332 — intentional plaintext HTTP for local e2e stub
     print(f"phase35 extraction stub on http://{args.host}:{args.port} marker={args.marker}")
     server.serve_forever()
 
