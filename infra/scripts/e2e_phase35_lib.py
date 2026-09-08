@@ -157,8 +157,8 @@ def chat(
 
 
 def require_chat_ok(code: int, label: str) -> None:
-    if code == 429:
-        raise AssertionError("proxy rate-limited (429); will retry")
+    if code in {429, 503}:
+        raise AssertionError(f"{label}: transient HTTP {code}; will retry")
     if code != 200:
         raise AssertionError(f"{label} HTTP {code}")
 

@@ -16,10 +16,17 @@ from typing import Any
 
 _TURN_RE = re.compile(r'<turn\s+index="(\d+)"', re.IGNORECASE)
 _DEFAULT_MARKER = "loop oak pine cedar maple"
+_STUB_MODEL = "gpt-4o-mini"
+_MAX_TURN_INDEX = 10_000
 
 
 def _turn_indexes(user_content: str) -> list[int]:
-    found = [int(m.group(1)) for m in _TURN_RE.finditer(user_content)]
+    """Return sanitized turn indexes only (ints); never echo request text."""
+    found: list[int] = []
+    for match in _TURN_RE.finditer(user_content):
+        idx = int(match.group(1))
+        if 0 <= idx <= _MAX_TURN_INDEX:
+            found.append(idx)
     if found:
         return sorted(set(found))
     return [0]
@@ -27,14 +34,14 @@ def _turn_indexes(user_content: str) -> list[int]:
 
 def _memory_content(marker: str) -> str:
     # Presidio-clean (no digit-dash / hex patterns). Exact string used for inject/search
-    # so stub TEI vectors match.
+    # so stub TEI vectors match. Marker is server-configured, not request-reflected.
     return f"ibex phase three five learning loop durable preference marker {marker}"
 
 
-def _batch_payload(user_content: str, marker: str) -> dict[str, Any]:
+def _batch_payload(turn_indexes: list[int], marker: str) -> dict[str, Any]:
     content = _memory_content(marker)
     turns = []
-    for idx in _turn_indexes(user_content):
+    for idx in turn_indexes:
         turns.append(
             {
                 "turn_index": idx,
@@ -50,12 +57,13 @@ def _batch_payload(user_content: str, marker: str) -> dict[str, Any]:
     return {"turns": turns}
 
 
-def _completion_body(user_content: str, marker: str, model: str) -> dict[str, Any]:
-    payload = json.dumps(_batch_payload(user_content, marker))
+def _completion_body(turn_indexes: list[int], marker: str) -> dict[str, Any]:
+    # Fixed model + marker-derived memories only — no request field reflection (S5131).
+    payload = json.dumps(_batch_payload(turn_indexes, marker))
     return {
         "id": "chatcmpl-p35-stub",
         "object": "chat.completion",
-        "model": model,
+        "model": _STUB_MODEL,
         "choices": [
             {
                 "index": 0,
@@ -79,12 +87,6 @@ def _user_content(body: object) -> str:
     return ""
 
 
-def _model_name(body: object) -> str:
-    if isinstance(body, dict) and body.get("model"):
-        return str(body["model"])
-    return "gpt-4o-mini"
-
-
 def _parse_json_body(raw: bytes) -> object | None:
     try:
         return json.loads(raw.decode("utf-8"))
@@ -95,8 +97,12 @@ def _parse_json_body(raw: bytes) -> object | None:
 class Handler(BaseHTTPRequestHandler):
     marker: str = _DEFAULT_MARKER
 
-    # Match BaseHTTPRequestHandler.log_message arity exactly (Codacy override check).
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+    # Silence access/error logs without overriding log_message(format, ...)
+    # (avoids Codacy "redefine built-in format" vs override-arity conflict).
+    def log_request(self, code: object = "-", size: object = "-") -> None:
+        return
+
+    def log_error(self, *_args: object) -> None:
         return
 
     def _json(self, code: int, body: dict[str, Any]) -> None:
@@ -124,7 +130,8 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             self._json(400, {"error": "invalid_json"})
             return
-        self._json(200, _completion_body(_user_content(body), self.marker, _model_name(body)))
+        turns = _turn_indexes(_user_content(body))
+        self._json(200, _completion_body(turns, self.marker))
 
 
 def main() -> None:
@@ -137,11 +144,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     Handler.marker = args.marker
-    # Loopback-only e2e stub; HTTPS not required for process-managed CI.  # NOSONAR
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    # NOSONAR python:S5332 — intentional plaintext HTTP for local e2e stub
-    print(f"phase35 extraction stub on http://{args.host}:{args.port} marker={args.marker}")
-    server.serve_forever()
+    # Loopback-only process-managed e2e stub (not a public listener).
+    server = ThreadingHTTPServer((args.host, args.port), Handler)  # NOSONAR python:S5332
+    listen = f"{args.host}:{args.port}"
+    print(f"phase35 extraction stub listening on {listen} marker={args.marker}")
+    server.serve_forever()  # NOSONAR python:S5332
 
 
 if __name__ == "__main__":

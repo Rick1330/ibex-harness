@@ -186,11 +186,13 @@ def _scenario4_sample(client: httpx.Client, env: Env, index: int) -> dict[str, A
     code, hdrs, body = chat(
         client, env, f"phase35 overhead probe {index} about {env.marker}"
     )
-    _require_http_ok(code, "scenario4 chat")
+    require_chat_ok(code, "scenario4 chat")
     has_fallback = "x-ibex-context-fallback" in hdrs
     has_injected = "x-ibex-memories-injected" in hdrs
     if not has_fallback and not has_injected:
-        fail("scenario4 missing context headers (is IBEX_CONTEXT_ENABLED?)")
+        raise AssertionError(
+            "scenario4 missing context headers (is IBEX_CONTEXT_ENABLED?)"
+        )
     ibex = _ibex_meta(body)
     return {
         "fallback": hdrs.get("x-ibex-context-fallback"),
@@ -211,7 +213,19 @@ def _numeric_field(samples: list[dict[str, Any]], key: str) -> list[float]:
 
 def scenario_4(client: httpx.Client, env: Env) -> None:
     """Proxy chat with Assemble — capture overhead/assembly ms when present."""
-    samples = [_scenario4_sample(client, env, i) for i in range(10)]
+    samples: list[dict[str, Any]] = []
+
+    def _collect() -> None:
+        samples.clear()
+        for i in range(10):
+            samples.append(_scenario4_sample(client, env, i))
+
+    eventually(
+        _collect,
+        timeout=env.timeout_s,
+        interval=max(env.interval_s, 0.5),
+        label="scenario4 chat samples",
+    )
     overheads = _numeric_field(samples, "proxy_overhead_ms")
     assemblies = _numeric_field(samples, "context_assembly_ms")
     report: dict[str, Any] = {
