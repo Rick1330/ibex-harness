@@ -1265,6 +1265,10 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
       - name: Phase 3.5 ISO-MCP isolation matrix (3.5.F.2)
         env:
           POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable

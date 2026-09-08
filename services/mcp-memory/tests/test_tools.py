@@ -235,47 +235,52 @@ async def test_search_empty_hits_is_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inactive_agent_denied_on_search_before_memory_http() -> None:
+@pytest.mark.parametrize(
+    ("tool", "principal"),
+    [
+        (
+            "search",
+            Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
+        ),
+        (
+            "write",
+            Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+        ),
+        (
+            "feedback",
+            Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
+        ),
+    ],
+)
+async def test_inactive_agent_denied_before_memory_http(
+    tool: str,
+    principal: Principal,
+) -> None:
     """ISO-MCP-03 unit: suspended/inactive verifier fails closed without memory I/O."""
     outbound: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         outbound.append(request)
-        return httpx.Response(200, json={"data": {"results": []}})
+        return httpx.Response(200, json={"data": {"results": [], "id": str(uuid4())}})
 
     deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
     client = memory_client_for(handler)
-    call = search_memory(
-        Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=AGENT),
-        parse_search_args({"query": "q"}),
-        client,
-        deny,
-    )
-    set_access_token(TOKEN)
-    try:
-        with pytest.raises(PermissionDeniedError, match="agent is not active"):
-            await call
-    finally:
-        set_access_token(None)
-    assert outbound == []
-
-
-@pytest.mark.asyncio
-async def test_inactive_agent_denied_on_write_before_memory_http() -> None:
-    outbound: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        outbound.append(request)
-        return httpx.Response(200, json={"data": {"id": str(uuid4())}})
-
-    deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
-    client = memory_client_for(handler)
-    call = write_memory(
-        Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-        parse_write_args({"content": "note"}),
-        client,
-        deny,
-    )
+    if tool == "search":
+        call = search_memory(
+            principal, parse_search_args({"query": "q"}), client, deny
+        )
+    elif tool == "write":
+        call = write_memory(
+            principal, parse_write_args({"content": "note"}), client, deny
+        )
+    else:
+        mid = uuid4()
+        call = record_feedback(
+            principal,
+            parse_feedback_args({"memory_id": str(mid), "feedback": "positive"}),
+            client,
+            deny,
+        )
     set_access_token(TOKEN)
     try:
         with pytest.raises(PermissionDeniedError, match="agent is not active"):
@@ -467,27 +472,51 @@ async def test_record_feedback_requires_memory_write() -> None:
 
 
 @pytest.mark.asyncio
-async def test_record_feedback_inactive_agent_denied_before_memory_http() -> None:
+async def test_record_feedback_org_scoped_skips_agent_verify() -> None:
+    """Org-scoped PATs (no agent_id) rely on MEMORY_WRITE only."""
     outbound: list[httpx.Request] = []
+    mid = str(uuid4())
 
     def handler(request: httpx.Request) -> httpx.Response:
         outbound.append(request)
-        return httpx.Response(200, json={"data": {}})
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "memory_id": mid,
+                    "feedback": "positive",
+                    "new_usefulness_score": 0.5,
+                    "total_positive_feedback": 1,
+                    "total_negative_feedback": 0,
+                }
+            },
+        )
 
-    deny = StaticAgentVerifier(allowed=set(), deny_message="agent is not active")
-    call = record_feedback(
-        Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=AGENT),
-        parse_feedback_args({"memory_id": str(AGENT), "feedback": "positive"}),
-        memory_client_for(handler),
-        deny,
-    )
+    deny_all = StaticAgentVerifier(allowed=set())
     set_access_token(TOKEN)
     try:
-        with pytest.raises(PermissionDeniedError, match="agent is not active"):
-            await call
+        out = await record_feedback(
+            Principal(org_id=ORG_A, permissions=MEMORY_WRITE, agent_id=None),
+            parse_feedback_args(
+                {
+                    "memory_id": mid,
+                    "feedback": "positive",
+                    "session_id": str(AGENT),
+                    "trace_id": str(ORG_A),
+                    "notes": "n",
+                }
+            ),
+            memory_client_for(handler),
+            deny_all,
+        )
     finally:
         set_access_token(None)
-    assert outbound == []
+    assert out["memory_id"] == mid
+    assert len(outbound) == 1
+    body = json.loads(outbound[0].content)
+    assert body["session_id"] == str(AGENT)
+    assert body["trace_id"] == str(ORG_A)
+    assert body["notes"] == "n"
 
 
 @pytest.mark.asyncio

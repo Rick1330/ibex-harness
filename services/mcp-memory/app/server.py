@@ -246,9 +246,17 @@ async def _run_search(
     client: MemoryHttpClient | None,
     agent_verifier: AgentVerifier | None,
 ) -> dict[str, Any]:
-    return await _run_verified(
-        raw, client, agent_verifier, parse_search_args, run_search_memory
-    )
+    async def _handler(
+        principal: Any,
+        payload: dict[str, Any],
+        mem: MemoryHttpClient | None,
+        verifier: AgentVerifier | None,
+    ) -> dict[str, Any]:
+        return await run_search_memory(
+            principal, parse_search_args(payload), mem, verifier
+        )
+
+    return await _run_verified(raw, client, agent_verifier, _handler)
 
 
 async def _run_write(
@@ -256,19 +264,26 @@ async def _run_write(
     client: MemoryHttpClient | None,
     agent_verifier: AgentVerifier | None,
 ) -> dict[str, Any]:
-    return await _run_verified(
-        raw, client, agent_verifier, parse_write_args, run_write_memory
-    )
+    async def _handler(
+        principal: Any,
+        payload: dict[str, Any],
+        mem: MemoryHttpClient | None,
+        verifier: AgentVerifier | None,
+    ) -> dict[str, Any]:
+        return await run_write_memory(
+            principal, parse_write_args(payload), mem, verifier
+        )
+
+    return await _run_verified(raw, client, agent_verifier, _handler)
 
 
 async def _run_verified(
     raw: dict[str, Any],
     client: MemoryHttpClient | None,
     agent_verifier: AgentVerifier | None,
-    parse: Callable[[dict[str, Any] | None], Any],
-    run: Callable[..., Awaitable[dict[str, Any]]],
+    handler: Callable[..., Awaitable[dict[str, Any]]],
 ) -> dict[str, Any]:
-    return await run(require_principal(), parse(raw), client, agent_verifier)
+    return await handler(require_principal(), raw, client, agent_verifier)
 
 
 async def _run_feedback(

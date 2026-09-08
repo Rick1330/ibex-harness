@@ -102,6 +102,23 @@ def test_create_app_keeps_injected_breaker() -> None:
         assert application.state.mcp.validator is breaker
 
 
+def test_create_app_builds_owned_agent_verifier() -> None:
+    from app.agent_verifier import GRPCAgentVerifier
+    from app.main import _resolve_agent_verifier
+
+    verifier, owned = _resolve_agent_verifier(
+        _settings(auth_grpc_addr="127.0.0.1:9", auth_timeout_ms=50),
+        None,
+    )
+    assert owned is True
+    assert isinstance(verifier, GRPCAgentVerifier)
+
+    injected = AllowAllAgentVerifier()
+    kept, owned_kept = _resolve_agent_verifier(_settings(), injected)
+    assert kept is injected
+    assert owned_kept is False
+
+
 def test_create_app_closes_owned_redis_limiter() -> None:
     validator = StaticTokenValidator(
         {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}

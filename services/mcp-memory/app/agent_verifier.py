@@ -93,18 +93,10 @@ class GRPCAgentVerifier(AgentVerifier):
 
     def _drop_stale_channel(self) -> None:
         # Prior loop may have left a channel (e.g. create_app before TestClient).
-        channel = self._channel
+        # grpc.aio.Channel.close is async and must not be invoked from sync code;
+        # drop the reference and rely on aclose() for orderly shutdown.
         self._channel = None
         self._stub = None
-        if channel is None:
-            return
-        close = getattr(channel, "close", None)
-        if not callable(close):
-            return
-        try:
-            close()
-        except OSError:
-            logger.debug("stale validate_agent channel close failed", exc_info=True)
 
 
 class AllowAllAgentVerifier(AgentVerifier):
