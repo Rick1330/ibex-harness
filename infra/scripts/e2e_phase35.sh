@@ -325,6 +325,9 @@ start_stack() {
   local worker_openai_base worker_openai_key worker_timeout_args=()
   if [[ "$LIVE_EXTRACTION" == "1" ]]; then
     worker_openai_base="${IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL}"
+    # Live extraction sends OPENAI_API_KEY to a remote LLM — require HTTPS.
+    [[ "$worker_openai_base" == https://* ]] \
+      || fail "IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL must use https:// (refusing non-HTTPS live endpoint)"
     worker_openai_key="${OPENAI_API_KEY}"
     worker_timeout_args=(
       IBEX_WORKER_EXTRACTION_OPENAI_MODEL="${IBEX_WORKER_EXTRACTION_OPENAI_MODEL}"

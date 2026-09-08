@@ -53,6 +53,9 @@ def _run_coro(coro: object) -> object:
         except RuntimeError:
             running = None
         if running is loop:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
             raise RuntimeError(
                 "_run_coro cannot block on a running event loop from its own thread"
             )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -55,6 +56,19 @@ def test_run_coro_rejects_same_thread_running_loop(
     monkeypatch.setattr(asyncio, "get_running_loop", lambda: loop)
     with pytest.raises(RuntimeError, match="cannot block on a running event loop"):
         _run_coro(object())
+
+
+@pytest.mark.asyncio
+async def test_run_coro_closes_coro_on_same_thread_running_loop() -> None:
+    """Real coroutine must be closed (not left unawaited) before fail-fast raise."""
+
+    async def pending() -> int:
+        return 1
+
+    coro = pending()
+    with pytest.raises(RuntimeError, match="cannot block on a running event loop"):
+        _run_coro(coro)
+    assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
 
 
 def test_run_coro_cross_thread_via_threadsafe(monkeypatch: pytest.MonkeyPatch) -> None:

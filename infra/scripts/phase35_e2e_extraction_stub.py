@@ -147,7 +147,7 @@ def main() -> None:
     # Loopback-only process-managed e2e stub (not a public listener).
     server = ThreadingHTTPServer((args.host, args.port), Handler)  # NOSONAR python:S5332
     listen = f"{args.host}:{args.port}"
-    print(f"phase35 extraction stub listening on {listen} marker={args.marker}")
+    print(f"phase35 extraction stub listening on {listen}")
     server.serve_forever()  # NOSONAR python:S5332
 
 
