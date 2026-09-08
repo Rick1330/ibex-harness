@@ -311,7 +311,7 @@ def assemble_once(env: Env, query: str, opts: AssembleOpts | None = None) -> Any
                 skip_cold_memories=flags.skip_cold,
             ),
         )
-        return method(req, timeout=2.0)
+        return method(req, timeout=5.0)
     finally:
         channel.close()
 

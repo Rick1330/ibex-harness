@@ -248,14 +248,26 @@ def _ladder_counts_nonzero(candidates: int, included: int) -> bool:
     return included != 0
 
 
-def _assert_ladder_metrics(label: str, resp: Any, *, expect_zero: bool) -> None:
+def _assert_ladder_metrics(
+    label: str,
+    resp: Any,
+    *,
+    expect_zero: bool,
+    require_candidates: bool = False,
+) -> dict[str, int]:
     if resp.metrics is None:
         fail(f"{label} missing metrics")
     candidates = int(resp.metrics.candidates_evaluated)
     included = int(resp.memories_included)
     if expect_zero and _ladder_counts_nonzero(candidates, included):
         fail(f"{label} expected zeros got candidates={candidates} included={included}")
+    if require_candidates and candidates < 1:
+        raise AssertionError(
+            f"{label} expected candidates_evaluated > 0 got {candidates} "
+            f"(memories_included={included})"
+        )
     pass_(f"{label} candidates={candidates} memories_included={included}")
+    return {"candidates_evaluated": candidates, "memories_included": included}
 
 
 def _scenario5_l3(client: httpx.Client, env: Env) -> None:
@@ -282,20 +294,49 @@ def _scenario5_l3(client: httpx.Client, env: Env) -> None:
 
 
 def scenario_5(client: httpx.Client, env: Env) -> None:
-    """ADR-0071 ladder: L0–L2 via gRPC options/metrics; L3 via proxy Fallback header."""
+    """ADR-0071 ladder: L0–L2 via gRPC options/metrics; L3 via proxy Fallback header.
+
+    L0/L1 must observe real retrieval (candidates_evaluated > 0) after scenario 1
+    wrote the marker memory — not a metrics-present greenwash.
+    L1 uses skip_cold (hot-only), matching ADR-0071 “exactly one source usable.”
+    """
     require_grpc()
-    _assert_ladder_metrics("scenario5 L0", assemble_once(env, env.marker), expect_zero=False)
-    _assert_ladder_metrics(
-        "scenario5 L1 skip_cold",
-        assemble_once(env, env.marker, AssembleOpts(skip_cold=True)),
-        expect_zero=False,
-    )
-    _assert_ladder_metrics(
+    query = memory_content(env.marker)
+    legs: dict[str, Any] = {}
+
+    def _l0() -> None:
+        legs["L0"] = _assert_ladder_metrics(
+            "scenario5 L0",
+            assemble_once(env, query),
+            expect_zero=False,
+            require_candidates=True,
+        )
+
+    def _l1() -> None:
+        legs["L1"] = _assert_ladder_metrics(
+            "scenario5 L1 skip_cold",
+            assemble_once(env, query, AssembleOpts(skip_cold=True)),
+            expect_zero=False,
+            require_candidates=True,
+        )
+
+    eventually(_l0, timeout=env.timeout_s, interval=env.interval_s, label="scenario5 L0")
+    eventually(_l1, timeout=env.timeout_s, interval=env.interval_s, label="scenario5 L1")
+    legs["L2"] = _assert_ladder_metrics(
         "scenario5 L2 skip_hot+skip_cold",
-        assemble_once(env, env.marker, AssembleOpts(skip_hot=True, skip_cold=True)),
+        assemble_once(env, query, AssembleOpts(skip_hot=True, skip_cold=True)),
         expect_zero=True,
     )
     _scenario5_l3(client, env)
+    print(
+        json.dumps(
+            {
+                "scenario": 5,
+                "legs": legs,
+                "note": "L0/L1 require candidates_evaluated>0; L2 hard zeros; L3 Fallback",
+            }
+        )
+    )
 
 
 def _mcp_write_memory(client: httpx.Client, env: Env, content: str) -> None:

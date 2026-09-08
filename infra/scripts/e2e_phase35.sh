@@ -375,16 +375,19 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
+    # Generous process-managed budgets: local/CI hosts often exceed 80–200ms
+    # memory HTTP RTT under cold start; too-tight walls force L2 timeouts and
+    # greenwash inject/L0–L1 proofs (candidates=0).
     exec env \
       PYTHONPATH="$context_pythonpath" \
       IBEX_CONTEXT_GRPC_ADDR="$CONTEXT_GRPC_ADDR" \
       IBEX_CONTEXT_MEMORY_BASE_URL="$MEMORY_ADDR" \
       IBEX_CONTEXT_MEMORY_API_TOKEN="$DEV_TOKEN" \
       IBEX_CONTEXT_REDIS_URL="$REDIS_URL" \
-      IBEX_CONTEXT_TIMEOUT=200ms \
-      IBEX_CONTEXT_DEADLINE_MS=180 \
-      IBEX_CONTEXT_HOT_TIMEOUT_MS=80 \
-      IBEX_CONTEXT_COLD_TIMEOUT_MS=180 \
+      IBEX_CONTEXT_TIMEOUT=2s \
+      IBEX_CONTEXT_DEADLINE_MS=1500 \
+      IBEX_CONTEXT_HOT_TIMEOUT_MS=800 \
+      IBEX_CONTEXT_COLD_TIMEOUT_MS=1200 \
       python -m app
   ) >"$LOG_DIR/context.log" 2>&1 &
   CONTEXT_PID="$!"
@@ -402,7 +405,7 @@ start_stack() {
     IBEX_RATE_LIMIT_DEFAULT_RPM="${IBEX_RATE_LIMIT_DEFAULT_RPM:-6000}" \
     IBEX_CONTEXT_ENABLED=true \
     IBEX_CONTEXT_GRPC_TARGET="$CONTEXT_GRPC_ADDR" \
-    IBEX_CONTEXT_ASSEMBLE_TIMEOUT=200ms \
+    IBEX_CONTEXT_ASSEMBLE_TIMEOUT=2s \
     IBEX_CONTEXT_EMBED_METADATA=true \
     IBEX_WORKER_ENQUEUE_BASE_URL="http://127.0.0.1:${WORKER_ENQUEUE_PORT}" \
     IBEX_WORKER_ENQUEUE_API_TOKEN="$ENQUEUE_TOKEN" \

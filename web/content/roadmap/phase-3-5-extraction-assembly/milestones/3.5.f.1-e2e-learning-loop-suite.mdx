@@ -24,6 +24,28 @@ fullTitle: "Milestone 3.5.F.1 — End-to-End Learning-Loop Test Suite"
 
 ---
 
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: the suite process-manages auth/proxy/memory/worker/context/mcp + stub
+  TEI/extraction on **compose-test** Postgres/Redis/ClickHouse (`IBEX_E2E_P35_MANAGE=1`) —
+  it does **not** invent a full app mesh inside `compose-test.yml`. CI extraction uses an
+  OpenAI-compat **HTTP stub** (`phase35_e2e_extraction_stub.py`); live LLM is optional via
+  `IBEX_E2E_P35_LIVE_EXTRACTION=1`. Degradation assertions follow **ADR-0071**
+  (`AssemblyMetrics.candidates_evaluated` / `memories_included` + `skip_*` options; L3 via
+  proxy `X-IBEX-Context-Fallback`) — not sketch L0–L3 response headers or a `was_truncated`
+  proto field. Scenarios 3/4 print soft p95/p99 only (mechanism-gated; not CI hard
+  thresholds). L0/L1 require `candidates_evaluated > 0` after the extract→memory proof.
+  Collateral bugfixes landed in `e2e_phase25.sh` (MCP body-file subshell) and
+  `verify_phase3_memory_e2e.sh` (`docker exec -i`) while validating the composed stack —
+  F.1 itself remains additive scripts/Makefile/CI, not a retrofit of those suites.
+</Callout>
+
 ## Outcome
 
 Prove the composed learning loop against **process-managed** services on `compose-test` infra (Postgres/Redis/ClickHouse), not a fictional full app mesh in `compose-test.yml`:
@@ -36,7 +58,7 @@ Prove the composed learning loop against **process-managed** services on `compos
 2. **Cross-tenant smoke** — Org A marker absent from Org B search/chat (thin; full matrix is 3.5.F.2)
 3. **Latency mechanism** — 20 concurrent Assemble; print p95/p99 (soft; not CI hard threshold)
 4. **Proxy overhead mechanism** — Assemble-on chat headers + optional `ibex` metadata timings printed (soft)
-5. **Degradation (ADR-0071)** — L0–L2 via gRPC `AssemblyMetrics.candidates_evaluated` + `memories_included` and `skip_*` options; L3 via `X-IBEX-Context-Fallback=true` (no 4-valued header; no `was_truncated` proto field)
+5. **Degradation (ADR-0071)** — L0–L1 require `candidates_evaluated > 0` (L1 via `skip_cold`); L2 hard zeros with `skip_hot+skip_cold`; L3 via `X-IBEX-Context-Fallback=true` (no 4-valued header; no `was_truncated` proto field)
 6. **MCP/proxy consistency** — `write_memory` → eventually proxy injects same substrate
 
 ## Harness notes
@@ -58,8 +80,8 @@ Recorded from a green `make e2e-smoke-p3.5` run (mechanism-gated; not CI hard th
 
 - [x] `make e2e-smoke-p3.5` exits 0 (exit criterion #9)
 - [x] Six scenarios exercised with empty-buffer hazard addressed (memory/marker proof after terminate)
-- [x] Degradation assertions match ADR-0071 (not sketch L0–L3 headers)
-- [x] Additive scripts/Makefile/CI — no retrofit of phase25 / phase3 memory e2e scripts
+- [x] Degradation assertions match ADR-0071 (not sketch L0–L3 headers); L0/L1 require non-zero candidates
+- [x] Additive scripts/Makefile/CI — F.1 harness is new; collateral fixes only where older suites were broken
 - [x] Repo guards / CI checks still pass
 
 ## Prerequisites
