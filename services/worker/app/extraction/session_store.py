@@ -31,6 +31,26 @@ class SessionStore(Protocol):
     ) -> None: ...
 
 
+def _close_coro(coro: object) -> None:
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
+
+
+def _run_on_running_loop(coro: object, loop: asyncio.AbstractEventLoop) -> object:
+    """Dispatch to *loop* from another thread, or fail fast on same-thread deadlock."""
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not loop:
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[arg-type]
+    _close_coro(coro)
+    raise RuntimeError(
+        "_run_coro cannot block on a running event loop from its own thread"
+    )
+
+
 def _run_coro(coro: object) -> object:
     """Run *coro* on the worker process loop when set (Celery prefork).
 
@@ -48,18 +68,7 @@ def _run_coro(coro: object) -> object:
     if loop.is_closed():
         return asyncio.run(coro)  # type: ignore[arg-type]
     if loop.is_running():
-        try:
-            running = asyncio.get_running_loop()
-        except RuntimeError:
-            running = None
-        if running is loop:
-            close = getattr(coro, "close", None)
-            if callable(close):
-                close()
-            raise RuntimeError(
-                "_run_coro cannot block on a running event loop from its own thread"
-            )
-        return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[arg-type]
+        return _run_on_running_loop(coro, loop)
     return loop.run_until_complete(coro)  # type: ignore[arg-type]
 
 
