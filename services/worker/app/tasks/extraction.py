@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from uuid import UUID
 
@@ -15,7 +14,7 @@ from app.extraction.batch import BatchJob, BatchRunResult, parse_turns, run_batc
 from app.extraction.factory import load_active_extraction_provider
 from app.extraction.memory_writer import HttpMemoryWriter, MemoryHttpConfig
 from app.extraction.provider import ExtractionTransportError
-from app.extraction.session_store import PostgresSessionStore, SessionStore
+from app.extraction.session_store import PostgresSessionStore, SessionStore, _run_coro
 from app.task_context import parse_org_id
 from app.task_names import TASK_EXTRACT_SESSION_MEMORIES
 from app.tasks.base import IbexTask
@@ -55,7 +54,7 @@ def _require_session_store(
 def _dispose_engine(engine: AsyncEngine | None) -> None:
     if engine is None:
         return
-    asyncio.run(engine.dispose())
+    _run_coro(engine.dispose())
 
 
 def _task_payload(result: BatchRunResult) -> dict[str, Any]:
