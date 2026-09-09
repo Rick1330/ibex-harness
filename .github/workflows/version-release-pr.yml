@@ -82,6 +82,10 @@ jobs:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
         run: bash .github/scripts/resolve-version-release-pr-number.sh
 
+      # Posts required branch-protection check `semantic-pr-title` (see main
+      # required_status_checks). Must block: VERSION_RELEASE_TOKEN needs Checks
+      # write via GitHub App installation token or classic PAT (fine-grained PAT
+      # → 403 "You must authenticate via a GitHub App").
       - name: Report semantic-pr-title check on release PR
         if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose' && steps.release_pr.outputs.resolved == 'true'
         env:
