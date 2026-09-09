@@ -14,6 +14,10 @@ python:
   - 'infra/scripts/e2e_phase35_lib.py'
   - 'infra/scripts/phase35_e2e_extraction_stub.py'
   - 'infra/scripts/phase35_e2e_safe_marker.py'
+  - 'infra/scripts/api-*.sh'
+  - 'infra/scripts/coverage-api-gate.sh'
+  - 'infra/scripts/build-apierror-py-wheel.sh'
+  - 'packages/apierror_py/**'
 go:
   - 'services/**'
   - 'packages/**'

@@ -19,6 +19,7 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | `memory/` | Python FastAPI — memory substrate: probes, scoring v2, VectorStore/PgVectorStore, embedder HTTP client, full write pipeline (`POST /v1/memories`: PII → dedup → conflict → persist → cache/index, multi-label `labels[]`) | **In progress (Phase 3)** — Tracks A–B + C complete; Track D read path next |
 | `worker/` | Python Celery — extraction, embedding, maintenance, mcp_audit queues; beat skeleton; `IbexTask` retry base | **In progress (Phase 3.5)** — A/B tracks shipping; context library under `context/` (C.1 budget + C.2 retrieval) |
 | `context/` | Python library — token budget calculator, generate-and-diff capability catalog, parallel retrieval HTTP/Redis clients (gRPC assembly deferred to 3.5.C.6) | **In progress (Phase 3.5.C)** — C.1 / [ADR-0067](../web/content/docs/adr/0067-context-capability-catalog-generate-and-diff.mdx) + C.2 shipped; gRPC façade deferred to 3.5.C.6 |
+| `api/` | Python FastAPI — management plane: auth gRPC ValidateToken, IBEX error envelope, request IDs, org GUC sessions, tenant ping | **Shipped (4.A.1 skeleton)** — resource CRUD in 4.A.2+ |
 
 ---
 
@@ -27,7 +28,6 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | Directory | Role | Preferred phase | Notes |
 | --- | --- | --- | --- |
 | `tokenizer-service/` | Python FastAPI — accurate token counts via Hugging Face `tokenizers` (optional dual-path with in-process Go/CGo in the proxy) | **2.5** | Situational: may be deferred if proxy-side counting alone proves sufficient for early budgets |
-| `api/` | Python FastAPI — management plane CRUD (orgs, users, agents, tokens, provider credentials, rate-limit config, …) | **4** | Operator/control plane; not the LLM proxy |
 | `dashboard/` | Next.js — operator UI (agents, memories, traces, drift, directives, analytics, cost governance) | **4** | Separate from the public `web/` site |
 
 Intelligence (fingerprinting, drift, directive regression) primarily extends `worker/`, `api/`, and `dashboard/` rather than introducing a separate “intelligence” process by default. Advanced retrieval (Phase 5) primarily extends `memory/` / `context/` / `mcp-memory/` rather than a new search service by default.

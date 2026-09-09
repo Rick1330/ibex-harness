@@ -13,6 +13,7 @@ on:
       - 'services/embedder/**'
       - 'services/mcp-memory/**'
       - 'services/memory/**'
+      - 'services/api/**'
       - 'packages/**'
       - 'go.mod'
       - 'go.sum'
@@ -316,6 +317,40 @@ jobs:
           path: /tmp/memory.tar
           retention-days: 1
 
+  build-api:
+    name: build-api
+    needs: resolve-tag
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Build api image artifact
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: services/api/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=docker,dest=/tmp/api.tar
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Upload api OCI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-api
+          path: /tmp/api.tar
+          retention-days: 1
+
   scan-image-auth:
     name: scan-image-auth
     needs: build-auth
@@ -533,6 +568,54 @@ jobs:
         with:
           sarif_file: trivy-image-memory.sarif
           category: trivy-image-memory
+
+  scan-image-api:
+    name: scan-image-api
+    needs: build-api
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Download api OCI artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: oci-api
+          path: /tmp
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+        with:
+          version: v0.70.0
+      - name: Scan api image with Trivy
+        run: |
+          set +e
+          trivy image --input /tmp/api.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1
+          table_rc=$?
+          trivy image --input /tmp/api.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-image-api.sarif \
+            --exit-code 0
+          sarif_rc=$?
+          set -e
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
+      - name: Upload Trivy api SARIF
+        if: always() && hashFiles('trivy-image-api.sarif') != ''
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: trivy-image-api.sarif
+          category: trivy-image-api
 
   push-auth:
     name: push-auth
@@ -845,9 +928,69 @@ jobs:
           cache-from: type=gha,scope=memory
           cache-to: type=gha,mode=max,scope=memory
 
+  push-api:
+    name: push-api
+    needs: [resolve-tag, scan-image-api]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/api:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/api:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push api image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: services/api/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
   attest-provenance:
     name: attest-provenance
-    needs: [push-auth, push-proxy, push-embedder, push-mcp-memory, push-memory]
+    needs: [push-auth, push-proxy, push-embedder, push-mcp-memory, push-memory, push-api]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -906,6 +1049,13 @@ jobs:
           subject-digest: ${{ needs.push-memory.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest api image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/api
+          subject-digest: ${{ needs.push-api.outputs.digest }}
+          push-to-registry: true
+
 
   notify:
     name: notify
@@ -916,11 +1066,13 @@ jobs:
       - scan-image-embedder
       - scan-image-mcp-memory
       - scan-image-memory
+      - scan-image-api
       - push-auth
       - push-proxy
       - push-embedder
       - push-mcp-memory
       - push-memory
+      - push-api
       - attest-provenance
     if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -944,17 +1096,20 @@ jobs:
           EMBEDDER_DIGEST: ${{ needs.push-embedder.outputs.digest }}
           MCP_MEMORY_DIGEST: ${{ needs.push-mcp-memory.outputs.digest }}
           MEMORY_DIGEST: ${{ needs.push-memory.outputs.digest }}
+          API_DIGEST: ${{ needs.push-api.outputs.digest }}
           REPO_LC: ${{ github.repository }}
           RESULT_SCAN_AUTH: ${{ needs.scan-image-auth.result }}
           RESULT_SCAN_PROXY: ${{ needs.scan-image-proxy.result }}
           RESULT_SCAN_EMBEDDER: ${{ needs.scan-image-embedder.result }}
           RESULT_SCAN_MCP_MEMORY: ${{ needs.scan-image-mcp-memory.result }}
           RESULT_SCAN_MEMORY: ${{ needs.scan-image-memory.result }}
+          RESULT_SCAN_API: ${{ needs.scan-image-api.result }}
           RESULT_PUSH_AUTH: ${{ needs.push-auth.result }}
           RESULT_PUSH_PROXY: ${{ needs.push-proxy.result }}
           RESULT_PUSH_EMBEDDER: ${{ needs.push-embedder.result }}
           RESULT_PUSH_MCP_MEMORY: ${{ needs.push-mcp-memory.result }}
           RESULT_PUSH_MEMORY: ${{ needs.push-memory.result }}
+          RESULT_PUSH_API: ${{ needs.push-api.result }}
           RESULT_ATTEST: ${{ needs.attest-provenance.result }}
         run: |
           repo_lc="${REPO,,}"
@@ -968,6 +1123,7 @@ jobs:
           embedder_image="ghcr.io/${repo_lc}/embedder:${TAG}"
           mcp_memory_image="ghcr.io/${repo_lc}/mcp-memory:${TAG}"
           memory_image="ghcr.io/${repo_lc}/memory:${TAG}"
+          api_image="ghcr.io/${repo_lc}/api:${TAG}"
 
           cat <<EOF > body.md
           ## Docker Publish
@@ -982,6 +1138,7 @@ jobs:
           - **Embedder**: \`${embedder_image}\`  \`${EMBEDDER_DIGEST}\`
           - **MCP Memory**: \`${mcp_memory_image}\`  \`${MCP_MEMORY_DIGEST}\`
           - **Memory**: \`${memory_image}\`  \`${MEMORY_DIGEST}\`
+          - **API**: \`${api_image}\`  \`${API_DIGEST}\`
 
           ### Job results
           - scan-image-auth: **${RESULT_SCAN_AUTH}**
@@ -989,11 +1146,13 @@ jobs:
           - scan-image-embedder: **${RESULT_SCAN_EMBEDDER}**
           - scan-image-mcp-memory: **${RESULT_SCAN_MCP_MEMORY}**
           - scan-image-memory: **${RESULT_SCAN_MEMORY}**
+          - scan-image-api: **${RESULT_SCAN_API}**
           - push-auth: **${RESULT_PUSH_AUTH}**
           - push-proxy: **${RESULT_PUSH_PROXY}**
           - push-embedder: **${RESULT_PUSH_EMBEDDER}**
           - push-mcp-memory: **${RESULT_PUSH_MCP_MEMORY}**
           - push-memory: **${RESULT_PUSH_MEMORY}**
+          - push-api: **${RESULT_PUSH_API}**
           - attest-provenance: **${RESULT_ATTEST}**
 
           EOF
