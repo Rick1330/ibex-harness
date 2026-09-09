@@ -87,7 +87,7 @@ def _settings_from(request: Request) -> Settings | None:
     return getattr(request.app.state, "settings", None)
 
 
-async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
+def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     return envelope_response(
         code=exc.code,
         message=exc.message,
@@ -99,7 +99,7 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     )
 
 
-async def request_validation_error_handler(
+def request_validation_error_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
@@ -146,7 +146,7 @@ def _code_for_http_status(status_code: int) -> str:
     return VALIDATION_ERROR
 
 
-async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Map Starlette/FastAPI HTTPException into the IBEX envelope when possible."""
     settings = _settings_from(request)
     mapped = _code_message_from_http_detail(exc.detail)
@@ -165,7 +165,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     )
 
 
-async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return envelope_response(
         code=INTERNAL_ERROR,
         message="An unexpected error occurred",

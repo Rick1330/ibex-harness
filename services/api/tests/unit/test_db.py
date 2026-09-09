@@ -12,9 +12,12 @@ from app.config import Settings
 from app.db import create_engine, create_session_factory, session_with_org
 
 
-def test_create_engine_paths() -> None:
+def test_create_engine_requires_database_url() -> None:
     with pytest.raises(RuntimeError):
         create_engine(Settings(database_url=None))
+
+
+def test_create_engine_and_session_factory() -> None:
     settings = Settings(database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex")
     engine = create_engine(settings)
     factory = create_session_factory(engine)
