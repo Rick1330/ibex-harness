@@ -15,8 +15,8 @@ export function getRoadmapPages() {
 }
 
 export function getMilestonePages() {
-  return getRoadmapPages().filter((page) =>
-    page.slugs.includes("milestones"),
+  return getRoadmapPages().filter(
+    (page) => page.slugs.includes("milestones") && page.slugs.length >= 3,
   );
 }
 
@@ -40,10 +40,19 @@ function countMilestoneStatuses(pages: RoadmapPage[]) {
 }
 
 export function getPhaseStats(slug: PhaseSlug) {
-  const milestones = getRoadmapPages().filter(
-    (page) =>
-      page.slugs[0] === slug && page.slugs.includes("milestones"),
-  );
+  const milestones = getRoadmapPages()
+    .filter(
+      (page) =>
+        page.slugs[0] === slug &&
+        page.slugs.includes("milestones") &&
+        // Real milestone pages are phase / milestones / <slug> (exclude folder indexes).
+        page.slugs.length >= 3,
+    )
+    .sort((a, b) => {
+      const aId = String(a.data.milestoneId ?? a.data.title ?? "");
+      const bId = String(b.data.milestoneId ?? b.data.title ?? "");
+      return aId.localeCompare(bId, undefined, { numeric: true });
+    });
 
   const counts = countMilestoneStatuses(milestones);
   const total = milestones.length;
@@ -151,7 +160,12 @@ function phaseDisplayIndex(slug: PhaseSlug): string {
 export function getPhaseTimeline() {
   return getPhaseCards().map((card) => {
     const stats = getPhaseStats(card.slug as PhaseSlug);
-    const bullets = stats.milestones.slice(0, 5).map((page) => ({
+    const pages =
+      card.status === "completed"
+        ? stats.milestones
+        : prioritizeActiveMilestones(stats.milestones).slice(0, 8);
+
+    const bullets = pages.map((page) => ({
       title:
         (typeof page.data.sidebarTitle === "string" && page.data.sidebarTitle) ||
         page.data.title,
@@ -166,6 +180,16 @@ export function getPhaseTimeline() {
       anchor: card.slug,
       bullets,
     };
+  });
+}
+
+function prioritizeActiveMilestones(milestones: RoadmapPage[]) {
+  return [...milestones].sort((a, b) => {
+    const aStatus = normalizeStatus(a.data.status as string | undefined) ?? "planned";
+    const bStatus = normalizeStatus(b.data.status as string | undefined) ?? "planned";
+    const rank = (s: MilestoneStatus) =>
+      s === "in-progress" ? 0 : s === "planned" ? 1 : 2;
+    return rank(aStatus) - rank(bStatus);
   });
 }
 
