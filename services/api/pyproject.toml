@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ibex-api"
+version = "0.1.0"
+description = "IBEX Harness management API server skeleton (m4.A.1)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "authclient",
+  "ibex-async-db",
+  "apierror-py",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.0.0",
+  "pydantic-settings>=2.0.0",
+  "sqlalchemy[asyncio]>=2.0.0",
+  "asyncpg>=0.29.0",
+  "grpcio>=1.62.0",
+  "prometheus-client>=0.20.0",
+  "uuid6>=2024.7.10",
+  "redis>=5.0.1",
+  "celery>=5.4,<6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-cov>=5.0.0",
+  "pytest-asyncio>=0.24.0",
+  "httpx>=0.27.0",
+  "ruff>=0.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: requires live Postgres",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_empty = true
+
+[tool.uv]
+# Semgrep dependency-cooldown: refuse packages published within the last 7 days.
+exclude-newer = "7 days"
+
+[tool.uv.sources]
+authclient = { path = "../../packages/authclient" }
+ibex-async-db = { path = "../../packages/ibex_async_db" }
+apierror-py = { path = "../../packages/apierror_py" }

@@ -22,7 +22,7 @@ phase: "phase-4-multi-provider"
 ### Goal 4.A: Authenticated, tenant-isolated management surface for all IBEX resources
 
 **Milestones:**
-- **4.A.1 — API server skeleton:** FastAPI, auth middleware via gRPC `ValidateToken`, stable error envelope, `SET LOCAL app.org_id` per transaction for RLS.
+- **4.A.1 — API server skeleton:** FastAPI, auth middleware via gRPC `ValidateToken`, stable error envelope, `SET LOCAL app.current_org_id` per transaction for RLS.
 - **4.A.2 — Organization and user management:** Full CRUD. Org suspension propagates to proxy auth cache within 5s. Last-owner-cannot-be-demoted invariant.
 - **4.A.3 — Agent management:** 8 endpoints (list/create/get/patch/delete/activate/pause/archive). `default_provider` and `default_model` fields.
 - **4.A.4 — Token management:** Scoped permission strings, plaintext shown once on creation, optional IP CIDR restriction, revocation via `AuthService.RevokeToken`.

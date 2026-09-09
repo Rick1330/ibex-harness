@@ -16,12 +16,14 @@ jobs:
   tagged-docker-publish:
     name: tagged-docker-publish
     # Callee jobs need packages/id-token/attestations; caller must grant them (cannot elevate).
+    # contents:write is required by docker-publish `notify` (commit comment); contents:read
+    # alone causes reusable-workflow startup_failure on tag push.
     permissions:
       packages: write
       id-token: write
       attestations: write
       security-events: write
-      contents: read
+      contents: write
     secrets: inherit
     uses: ./.github/workflows/docker-publish.yml
     with:

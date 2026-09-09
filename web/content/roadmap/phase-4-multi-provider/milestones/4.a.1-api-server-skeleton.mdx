@@ -2,7 +2,7 @@
 title: "4.A.1 API Server Skeleton"
 description: "Stand up the FastAPI process, auth middleware, error envelope, and OpenAPI generation — the load-bearing scaffold every subsequent resource router depends on."
 summary: "Stand up the FastAPI process, auth middleware, error envelope, and OpenAPI generation — the load-bearing scaffold every subsequent resource router depends on."
-status: "planned"
+status: "completed"
 milestoneId: "4.A.1"
 track: "A"
 trackTitle: "Management API Server"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.A.1 — API Server Skeleton"
 
 # Milestone 4.A.1 — API Server Skeleton
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 3 days  
@@ -73,14 +73,14 @@ Rename freely to match the change that actually lands.
 
 ## Design note: RLS Session Variable
 
-Every existing service in this codebase double-enforces tenant isolation: RLS **and** application-layer `WHERE org_id = ...`. The API server's DB session dependency should set `SET LOCAL app.org_id = '<uuid>'` at the start of every request transaction (from the verified token's `org_id`, never from a path/body param), so that Postgres RLS policies are the backstop even if a router forgets a `WHERE` clause. This costs one line per request.
+Every existing service in this codebase double-enforces tenant isolation: RLS **and** application-layer `WHERE org_id = ...`. The API server's DB session dependency sets `app.current_org_id` via `set_config(..., true)` at the start of every request transaction (from the verified token's `org_id`, never from a path/body param), so that Postgres RLS policies are the backstop even if a router forgets a `WHERE` clause.
 
 ```python
-# Illustrative — exact path may differ
-async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
- async with async_session_factory() as session:
- await session.execute(text("SET LOCAL app.org_id = :org_id"), {"org_id": str(request.state.org_id)})
- yield session
+# Live pattern in services/api/app/db.py
+await session.execute(
+    text("SELECT set_config('app.current_org_id', :org_id, true)"),
+    {"org_id": org_id},
+)
 ```
 
 ---
@@ -89,11 +89,11 @@ async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] OpenAPI spec is generated; health/readiness endpoints work
-- [ ] Unauthenticated requests and unhandled exceptions use the stable IBEX error envelope (not raw tracebacks)
-- [ ] Every DB session sets tenant context for RLS (from verified token claims, not request path/body)
-- [ ] Request IDs propagate into error responses and structured logs
-- [ ] Offline and integration coverage exists for auth middleware and session tenant wiring
+- [x] OpenAPI spec is generated; health/readiness endpoints work
+- [x] Unauthenticated requests and unhandled exceptions use the stable IBEX error envelope (not raw tracebacks)
+- [x] Every DB session sets tenant context for RLS (from verified token claims, not request path/body)
+- [x] Request IDs propagate into error responses and structured logs (`request_id=%s` on API log lines)
+- [x] Offline and integration coverage exists for auth middleware and session tenant wiring (unit in `api-test`; Postgres GUC/cross-tenant in `api-integration`)
 
 ## Prerequisites
 

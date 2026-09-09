@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
@@ -24,6 +25,7 @@ type CachingValidator struct {
 	bloom    *bloomFilter
 	lru      *lru.Cache[digest, *cachedEntry]
 	tokenIdx *tokenIndex
+	orgIdx   *orgIndex
 	now      func() time.Time
 	// afterTokenIndexPut is an optional test hook invoked after a successful
 	// tokenIdx.put and before lru.Add (nil in production).
@@ -56,12 +58,14 @@ func New(upstream Validator, cfg Config, log *logger.Logger, m Metrics) (*Cachin
 		metrics:  m,
 		bloom:    newBloomFilter(cfg.BloomExpectedItems, cfg.BloomFPRate),
 		tokenIdx: newTokenIndex(cfg.LRUMaxTTL, now),
+		orgIdx:   newOrgIndex(cfg.LRUMaxTTL, now),
 		now:      now,
 	}
 	cache, err := lru.NewWithEvict[digest, *cachedEntry](cfg.LRUCapacity, func(hash digest, entry *cachedEntry) {
 		m.IncAuthCacheLRUEviction()
 		if entry != nil {
 			v.tokenIdx.removeDigest(hash, entry.result.TokenID)
+			v.orgIdx.removeDigest(entry.result.OrgID, hash)
 		}
 	})
 	if err != nil {
@@ -91,25 +95,44 @@ func (v *CachingValidator) Invalidate(tokenHash string) {
 	if tokenHash == "" {
 		return
 	}
-	hash := digestFromHex(tokenHash)
-	if entry, ok := v.lru.Get(hash); ok && entry != nil {
-		v.tokenIdx.removeDigest(hash, entry.result.TokenID)
-	}
-	v.lru.Remove(hash)
+	v.dropCachedHash(digestFromHex(tokenHash))
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 
 // InvalidateByTokenID removes a cached claims entry by token UUID (2.2.2 pub/sub)
 // and installs a bounded tombstone so in-flight upstream results cannot repopulate.
 func (v *CachingValidator) InvalidateByTokenID(tokenID string) {
-	if tokenID == "" {
+	hash, ok := v.tokenIdx.revoke(tokenID)
+	if !ok {
 		return
 	}
-	hash, ok := v.tokenIdx.revoke(tokenID)
-	if ok {
-		v.lru.Remove(hash)
-		v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+	v.invalidateAfterRevoke([]digest{hash})
+}
+
+// InvalidateByOrgID removes all cached claims for an organization (ADR-0073
+// org_suspend) and installs a bounded tombstone so in-flight upstream results
+// cannot repopulate until the next authoritative ValidateToken.
+func (v *CachingValidator) InvalidateByOrgID(orgID string) {
+	v.invalidateAfterRevoke(v.orgIdx.revoke(orgID))
+}
+
+func (v *CachingValidator) invalidateAfterRevoke(hashes []digest) {
+	for _, hash := range hashes {
+		v.dropCachedHash(hash)
 	}
+	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+}
+
+func (v *CachingValidator) dropCachedHash(hash digest) {
+	if entry, ok := v.lru.Get(hash); ok && entry != nil {
+		v.tokenIdx.removeDigest(hash, entry.result.TokenID)
+		v.orgIdx.removeDigest(entry.result.OrgID, hash)
+	}
+	v.lru.Remove(hash)
+}
+
+func (v *CachingValidator) cacheBlocked(tokenID string, orgID uuid.UUID) bool {
+	return v.tokenIdx.isRevoked(tokenID) || v.orgIdx.isSuspended(orgID)
 }
 
 func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
@@ -117,28 +140,25 @@ func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
 	if !ok || entry == nil {
 		return nil, false
 	}
-	if !v.now().Before(entry.expiresAt) {
-		v.evictRevoked(hash, entry.result.TokenID)
+	if !v.now().Before(entry.expiresAt) || v.cacheBlocked(entry.result.TokenID, entry.result.OrgID) {
+		v.evictRevoked(hash, entry.result.TokenID, entry.result.OrgID)
 		return nil, false
 	}
-	if v.tokenIdx.isRevoked(entry.result.TokenID) {
-		v.evictRevoked(hash, entry.result.TokenID)
-		return nil, false
-	}
-	// Re-check after clone: InvalidateByTokenID may race between isRevoked and return.
+	// Re-check after clone: InvalidateByTokenID/OrgID may race between check and return.
 	out := cloneResult(&entry.result, true)
 	if v.afterLRUClone != nil {
 		v.afterLRUClone()
 	}
-	if v.tokenIdx.isRevoked(entry.result.TokenID) {
-		v.evictRevoked(hash, entry.result.TokenID)
+	if v.cacheBlocked(entry.result.TokenID, entry.result.OrgID) {
+		v.evictRevoked(hash, entry.result.TokenID, entry.result.OrgID)
 		return nil, false
 	}
 	return out, true
 }
 
-func (v *CachingValidator) evictRevoked(hash digest, tokenID string) {
+func (v *CachingValidator) evictRevoked(hash digest, tokenID string, orgID uuid.UUID) {
 	v.tokenIdx.removeDigest(hash, tokenID)
+	v.orgIdx.removeDigest(orgID, hash)
 	v.lru.Remove(hash)
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
@@ -172,6 +192,10 @@ func (v *CachingValidator) mapUpstreamErr(hash digest, err error) error {
 		v.bloom.add(hash)
 		return ErrInvalidToken
 	}
+	if errors.Is(err, ErrOrgSuspended) {
+		// Do not bloom: org may be reactivated; fail closed without poisoning.
+		return ErrOrgSuspended
+	}
 	if errors.Is(err, ErrUnavailable) {
 		return ErrUnavailable
 	}
@@ -186,6 +210,10 @@ func (v *CachingValidator) putLRU(hash digest, res *Result) {
 	if !v.tokenIdx.put(res.TokenID, hash) {
 		return
 	}
+	if !v.orgIdx.put(res.OrgID, hash) {
+		v.tokenIdx.removeDigest(hash, res.TokenID)
+		return
+	}
 	if v.afterTokenIndexPut != nil {
 		v.afterTokenIndexPut()
 	}
@@ -194,10 +222,9 @@ func (v *CachingValidator) putLRU(hash digest, res *Result) {
 		expiresAt: v.now().Add(ttl),
 	}
 	v.lru.Add(hash, entry)
-	// A concurrent InvalidateByTokenID may have run between put and Add,
-	// leaving an unindexed stale entry — re-check and evict if revoked.
-	if v.tokenIdx.isRevoked(res.TokenID) {
-		v.evictRevoked(hash, res.TokenID)
+	// Concurrent InvalidateByTokenID/OrgID may have run between put and Add.
+	if v.cacheBlocked(res.TokenID, res.OrgID) {
+		v.evictRevoked(hash, res.TokenID, res.OrgID)
 	}
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }

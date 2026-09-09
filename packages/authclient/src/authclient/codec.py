@@ -78,6 +78,14 @@ def encode_validate_agent_request(*, agent_id: str, org_id: str) -> bytes:
     return _encode_string_field(1, agent_id) + _encode_string_field(2, org_id)
 
 
+def encode_revoke_token_request(*, org_id: str, token_id: str, reason: str | None = None) -> bytes:
+    """Encode RevokeTokenRequest (org_id=1, token_id=2, optional revoke_reason=3)."""
+    out = _encode_string_field(1, org_id) + _encode_string_field(2, token_id)
+    if reason:
+        out += _encode_string_field(3, reason)
+    return out
+
+
 def decode_validate_agent_response(payload: bytes) -> ValidateAgentWire:
     """Decode ValidateAgentResponse (agent_id=1, org_id=2, status=3)."""
     state = _AgentDecodeState()

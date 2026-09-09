@@ -20,6 +20,24 @@ func TestUnit_RevocationEventValidate(t *testing.T) {
 	assertEventInvalid(t, revocation.RevocationEvent{Version: 1, OrgID: "o", RevokedAt: time.Now()})
 	assertEventInvalid(t, revocation.RevocationEvent{Version: 1, TokenID: "t", RevokedAt: time.Now()})
 	assertEventInvalid(t, revocation.RevocationEvent{Version: 1, TokenID: "t", OrgID: "o"})
+	assertEventValid(t, revocation.RevocationEvent{
+		Version: 1, EventType: revocation.EventTypeOrgSuspend, OrgID: "o", RevokedAt: time.Now(),
+	})
+	assertEventInvalid(t, revocation.RevocationEvent{
+		Version: 1, EventType: "nope", OrgID: "o", RevokedAt: time.Now(),
+	})
+}
+
+func TestUnit_ParseEventLegacyDefaultsToToken(t *testing.T) {
+	t.Parallel()
+	raw := `{"v":1,"token_id":"tok-legacy","org_id":"org-1","revoked_at":"2026-07-23T12:00:00Z"}`
+	out, err := revocation.ParseEvent(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if out.EffectiveEventType() != revocation.EventTypeToken {
+		t.Fatalf("event_type=%q", out.EffectiveEventType())
+	}
 }
 
 func assertEventValid(t *testing.T, e revocation.RevocationEvent) {
@@ -217,6 +235,17 @@ func (s *spyInvalidator) InvalidateByTokenID(tokenID string) {
 	}
 }
 
+func (s *spyInvalidator) InvalidateByOrgID(orgID string) {
+	s.hits.Add(1)
+	s.mu.Lock()
+	s.ids = append(s.ids, "org:"+orgID)
+	s.mu.Unlock()
+	select {
+	case s.signal <- "org:" + orgID:
+	default:
+	}
+}
+
 type countingInvalidateMetrics struct {
 	n atomic.Int64
 }
@@ -248,6 +277,21 @@ func TestUnit_SubscriberInvalidatesOnMessage(t *testing.T) {
 	if metrics.n.Load() < 1 {
 		t.Fatal("expected invalidate metric")
 	}
+}
+
+func TestUnit_SubscriberInvalidatesOrgSuspend(t *testing.T) {
+	t.Parallel()
+	_, client := newTestRedis(t)
+	inv := newSpyInvalidator()
+	sub := startSubscriber(t, client, inv, nil)
+	publishRaw(t, client, revocation.RevocationEvent{
+		Version:   1,
+		EventType: revocation.EventTypeOrgSuspend,
+		OrgID:     "org-suspend-1",
+		RevokedAt: time.Now().UTC(),
+	})
+	waitInvalidate(t, inv, "org:org-suspend-1")
+	sub.Stop()
 }
 
 func publishRaw(t *testing.T, client *redis.Client, event revocation.RevocationEvent) {

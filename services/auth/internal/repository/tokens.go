@@ -17,6 +17,7 @@ var ErrNotFound = errors.New("token not found")
 type TokenRow struct {
 	ID          string
 	OrgID       string
+	OrgStatus   string
 	UserID      sql.NullString
 	AgentID     sql.NullString
 	Permissions int64
@@ -38,14 +39,17 @@ func (r *TokensRepository) FindActiveByPrefix(ctx context.Context, prefix string
 	var row TokenRow
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
-			SELECT id::text, org_id::text, user_id::text, agent_id::text, permissions, expires_at, hash
-			FROM ibex_core.tokens
-			WHERE prefix = $1
-			  AND is_revoked = false
-			  AND (expires_at IS NULL OR expires_at > NOW())
+			SELECT t.id::text, t.org_id::text, o.status, t.user_id::text, t.agent_id::text,
+			       t.permissions, t.expires_at, t.hash
+			FROM ibex_core.tokens t
+			INNER JOIN ibex_core.organizations o ON o.id = t.org_id
+			WHERE t.prefix = $1
+			  AND t.is_revoked = false
+			  AND (t.expires_at IS NULL OR t.expires_at > NOW())
+			  AND o.deleted_at IS NULL
 			LIMIT 1`,
 			prefix,
-		).Scan(&row.ID, &row.OrgID, &row.UserID, &row.AgentID, &row.Permissions, &row.ExpiresAt, &row.Hash)
+		).Scan(&row.ID, &row.OrgID, &row.OrgStatus, &row.UserID, &row.AgentID, &row.Permissions, &row.ExpiresAt, &row.Hash)
 	})
 	if err != nil {
 		return TokenRow{}, err
@@ -183,6 +187,44 @@ func (r *TokensRepository) RevokeToken(ctx context.Context, in RevokeTokenInput)
 		}
 		return nil
 	})
+}
+
+// OrgUserRef scopes token listing to one org member.
+type OrgUserRef struct {
+	OrgID  string
+	UserID string
+}
+
+// ListActiveTokenIDsByUser returns non-revoked token IDs for a user within an org.
+func (r *TokensRepository) ListActiveTokenIDsByUser(ctx context.Context, scope OrgUserRef) ([]string, error) {
+	start := time.Now()
+	defer observeQuery(r.obs, "list_active_token_ids_by_user", start)
+
+	var ids []string
+	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT id::text
+			FROM ibex_core.tokens
+			WHERE org_id = $1::uuid
+			  AND user_id = $2::uuid
+			  AND is_revoked = false
+			ORDER BY created_at ASC, id ASC`,
+			scope.OrgID, scope.UserID,
+		)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return rows.Err()
+	})
+	return ids, err
 }
 
 // InsertTestOrganization inserts an organization (integration tests only).

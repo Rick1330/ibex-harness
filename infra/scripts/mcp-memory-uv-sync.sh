@@ -19,4 +19,5 @@ bash "$(dirname "${BASH_SOURCE[0]}")/build-authclient-wheel.sh" "$WHEEL_DIR"
 cd "$MCP_DIR"
 uv sync --frozen --no-build --extra dev --no-install-project \
   --find-links "$WHEEL_DIR" --no-install-package authclient
-uv pip install --no-index --find-links "$WHEEL_DIR" "authclient==0.1.3"
+uv pip install --no-cache --force-reinstall --no-index --find-links "$WHEEL_DIR" \
+  "authclient==0.1.3"

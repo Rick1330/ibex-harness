@@ -63,7 +63,7 @@ async def test_grpc_validator_maps_unauthenticated() -> None:
         trailing_metadata=(),
         details="down",
     )
-    with patch.object(validator, "_stub", new_callable=AsyncMock) as stub:
+    with patch.object(validator._inner, "_stub", new_callable=AsyncMock) as stub:
         stub.side_effect = unauth
         with pytest.raises(AuthFailedError):
             await validator.validate("tok")
@@ -90,7 +90,7 @@ async def test_grpc_validator_maps_unauthenticated() -> None:
 @pytest.mark.asyncio
 async def test_grpc_validator_malformed_response_fail_closed() -> None:
     validator = GRPCTokenValidator("127.0.0.1:9", timeout_seconds=0.01)
-    with patch.object(validator, "_stub", new_callable=AsyncMock) as stub:
+    with patch.object(validator._inner, "_stub", new_callable=AsyncMock) as stub:
         stub.return_value = b"\xff\xfe\xfd not-a-protobuf"
         with pytest.raises(AuthUnavailableError):
             await validator.validate("tok")

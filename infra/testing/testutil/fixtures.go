@@ -44,6 +44,29 @@ func SeedUser(t testing.TB, db *sql.DB, orgID, email, name string) string {
 	return id
 }
 
+// SoftDeleteUser mirrors management-API soft-delete (status + deleted_at).
+func SoftDeleteUser(t testing.TB, db *sql.DB, orgID, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	err := WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, softDeleteUserSQL)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		_, err = stmt.ExecContext(ctx, userID, orgID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("soft-delete user: %v", err)
+	}
+}
+
+const softDeleteUserSQL = `
+	UPDATE ibex_core.users
+	SET status = 'deactivated', deleted_at = NOW()
+	WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`
+
 // SeedAgent inserts an agent for orgID, optionally referenced by created_by=userID, and returns its agent ID.
 func SeedAgent(t testing.TB, db *sql.DB, orgID, userID, name, slug string) string {
 	t.Helper()

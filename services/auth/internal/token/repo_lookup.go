@@ -43,7 +43,8 @@ func (l RepoLookup) FindActiveByPrefix(ctx context.Context, prefix string) (Row,
 
 func rowFromRepository(row repository.TokenRow) Row {
 	out := Row{
-		ID: row.ID, OrgID: row.OrgID, Permissions: row.Permissions, Hash: row.Hash,
+		ID: row.ID, OrgID: row.OrgID, OrgStatus: row.OrgStatus,
+		Permissions: row.Permissions, Hash: row.Hash,
 	}
 	if row.UserID.Valid {
 		s := row.UserID.String

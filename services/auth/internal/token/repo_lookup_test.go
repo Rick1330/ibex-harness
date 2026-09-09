@@ -34,7 +34,7 @@ func TestRepoLookup_FindActiveByPrefix(t *testing.T) {
 		t.Fatalf("FindActiveByPrefix: %v", err)
 	}
 	want := token.Row{
-		ID: "tid", OrgID: "oid", Hash: "h", Permissions: 3,
+		ID: "tid", OrgID: "oid", OrgStatus: "active", Hash: "h", Permissions: 3,
 		AgentID: &agentID, UserID: &userID, ExpiresAt: &expires,
 	}
 	assertMappedRow(t, got, want)
@@ -71,7 +71,7 @@ func TestUnit_RepoLookup_FindActiveByPrefix_NilInner(t *testing.T) {
 
 func sampleRepoTokenRow(agentID, userID string, expires time.Time) repository.TokenRow {
 	return repository.TokenRow{
-		ID: "tid", OrgID: "oid", Hash: "h", Permissions: 3,
+		ID: "tid", OrgID: "oid", OrgStatus: "active", Hash: "h", Permissions: 3,
 		AgentID:   sql.NullString{String: agentID, Valid: true},
 		UserID:    sql.NullString{String: userID, Valid: true},
 		ExpiresAt: sql.NullTime{Time: expires, Valid: true},
@@ -93,6 +93,9 @@ func assertRowCore(t *testing.T, got, want token.Row) {
 	}
 	if got.OrgID != want.OrgID {
 		t.Fatalf("org_id=%q want %q", got.OrgID, want.OrgID)
+	}
+	if got.OrgStatus != want.OrgStatus {
+		t.Fatalf("org_status=%q want %q", got.OrgStatus, want.OrgStatus)
 	}
 	if got.Hash != want.Hash {
 		t.Fatalf("hash=%q want %q", got.Hash, want.Hash)
