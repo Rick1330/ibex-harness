@@ -1,21 +1,21 @@
 ---
 title: "Current State"
-description: "Phases 0–3 complete. Phase 3.5 extraction and context assembly is next."
-summary: "Phases 0–3 complete. Phase 3.5 extraction and context assembly is next."
+description: "Phases 0–3.5 complete. Phase 4 operator platform is next."
+summary: "Phases 0–3.5 complete. Phase 4 operator platform is next."
 ---
 
 # Current State
 
-<Callout type="success" title="Phase 3 shipped">
-  Phases 0–3 are complete. **Phase 3 — Core Memory Substrate** exit audit signed off
-  ([phase3-exit-audit](/roadmap/phase-3-memory-engine/phase3-exit-audit)): schema v2 (HNSW),
-  write pipeline, semantic search + composite ranking, hot cache, ISO-* security suite,
-  e2e lifecycle smoke, and retrieval-quality CI gates.
+<Callout type="success" title="Phase 3.5 shipped">
+  Phases 0–3.5 are complete. **Phase 3.5 — Extraction & Context Assembly** exit audit signed off
+  ([phase35-exit-audit](/roadmap/phase-3-5-extraction-assembly/phase35-exit-audit)):
+  Celery extraction, context assembly on the proxy hot path, real MCP memory tools,
+  learning-loop e2e, and ISO-MCP isolation.
 </Callout>
 
-<Callout type="info" title="Phase 3.5 next">
-  **Current focus:** [3.5.A.1 Celery worker skeleton](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton) —
-  extraction worker, context assembly on the proxy hot path, and real MCP memory tools.
+<Callout type="info" title="Phase 4 next">
+  **Current focus:** [Phase 4 — Operator Platform & Multi-Provider](/roadmap/phase-4-multi-provider) —
+  management API, dashboard, multi-provider routing, hierarchical rate limiting.
 </Callout>
 
 ## Snapshot
@@ -26,37 +26,37 @@ summary: "Phases 0–3 complete. Phase 3.5 extraction and context assembly is ne
 <StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
 <StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete  
 <StatusBadge status="stable" /> **Phase 3 — Core Memory Substrate:** complete  
-<StatusBadge status="new" /> **Phase 3.5 — Extraction & Context Assembly:** next  
-<StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** planned  
+<StatusBadge status="stable" /> **Phase 3.5 — Extraction & Context Assembly:** complete  
+<StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** next  
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-08-31  
-**Branch:** `main` (`45696a2`)  
-**Current focus:** [3.5.A.1 Celery worker skeleton](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton)  
-**Completed (recent):** 3.E.5 Phase 3 exit audit; 3.E.4 ADR consolidation (ADR-0060/0061)
+**Last updated:** 2026-09-09  
+**Branch:** `main` (`ae0272d6` at Phase 3.5 audit)  
+**Current focus:** [Phase 4](/roadmap/phase-4-multi-provider)  
+**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e
 
 <QuickLinks
   links={[
     {
-      title: "Phase 3 exit audit",
-      href: "/roadmap/phase-3-memory-engine/phase3-exit-audit",
+      title: "Phase 3.5 exit audit",
+      href: "/roadmap/phase-3-5-extraction-assembly/phase35-exit-audit",
       description: "Gap register and sign-off — zero open P0 gaps.",
     },
     {
-      title: "3.5.A.1 Celery skeleton",
-      href: "/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton",
-      description: "First Phase 3.5 milestone — worker foundation.",
+      title: "Phase 3.5 decisions",
+      href: "/roadmap/phase-3-5-extraction-assembly/decisions",
+      description: "ADR register 0038 / 0050 / 0062–0072.",
     },
     {
-      title: "Phase 3.5 hub",
-      href: "/roadmap/phase-3-5-extraction-assembly",
-      description: "Extraction, context assembly, proxy hot-path integration.",
+      title: "Phase 4 hub",
+      href: "/roadmap/phase-4-multi-provider",
+      description: "Operator platform and multi-provider routing.",
     },
     {
       title: "Architecture decisions",
       href: "/docs/adr",
-      description: "Accepted ADRs through ADR-0061.",
+      description: "Accepted ADRs through ADR-0072.",
     },
     {
       title: "Roadmap hub",
@@ -68,28 +68,27 @@ summary: "Phases 0–3 complete. Phase 3.5 extraction and context assembly is ne
 
 ## Shipped Since Last Update
 
-- **Phase 3 Track E 3.E.5:** Phase 3 exit audit — [gap register](/roadmap/archive/032-phase3-exit-audit), [summary](/roadmap/phase-3-memory-engine/phase3-exit-audit); zero open P0 gaps
-- **Phase 3 Track E 3.E.4:** ADR consolidation — [ADR-0060](/docs/adr/0060-memory-service-tenant-isolation), [ADR-0061](/docs/adr/0061-retrieval-quality-benchmark-methodology) ([#661](https://github.com/Rick1330/ibex-harness/pull/661))
-- **Phase 3 Track E 3.E.3:** Retrieval-quality benchmark sign-off — HNSW + ranking + write CI gates ([#654](https://github.com/Rick1330/ibex-harness/pull/654), [#660](https://github.com/Rick1330/ibex-harness/pull/660))
-- **Phase 3 Track E 3.E.2:** E2e lifecycle — `make e2e-smoke-p3-memory` ([#645](https://github.com/Rick1330/ibex-harness/pull/645))
-- **Phase 3 Track E 3.E.1:** Memory security integration — 12 ISO-* cases ([#643](https://github.com/Rick1330/ibex-harness/pull/643))
+- **Phase 3.5 Track F 3.5.F.3:** Benchmark sign-off + ADR index — [gap register](/roadmap/archive/033-phase3.5-exit-audit), [summary](/roadmap/phase-3-5-extraction-assembly/phase35-exit-audit)
+- **Phase 3.5 Track F 3.5.F.2:** Cross-tenant ISO-MCP isolation matrix ([#759](https://github.com/Rick1330/ibex-harness/pull/759))
+- **Phase 3.5 Track F 3.5.F.1:** Learning-loop e2e — `make e2e-smoke-p3.5` ([#752](https://github.com/Rick1330/ibex-harness/pull/752))
+- **Phase 3 Track E 3.E.5:** Phase 3 exit audit — [gap register](/roadmap/archive/032-phase3-exit-audit), [summary](/roadmap/phase-3-memory-engine/phase3-exit-audit)
 
 ## What Ships Today
 
 <Callout type="note" title="Current capability boundary">
-  **Shipped:** Auth, Proxy, embedder, MCP skeleton (stub tools), observability, memories schema,
-  full memory write pipeline (stages 1–9 via `POST /v1/memories`), multi-label write
-  (`labels[]`), semantic search (`POST /v1/memories/search`), composite ranking,
-  hot cache read consumer, Tier-1 read-path PII re-check, ISO-* security integration tests,
-  e2e lifecycle smoke (`e2e-smoke-p3-memory`), and memory benchmark CI regression gates
-  (HNSW, ranking quality, write pipeline).
-  **Not yet:** Extraction worker, context assembly, real MCP memory tools (Phase 3.5);
-  management API/dashboard (Phase 4).
+  **Shipped:** Auth, Proxy, embedder, observability, memories schema, full memory write pipeline,
+  semantic search + composite ranking, hot cache, ISO-* security suite, Celery extraction worker,
+  context assembly on the proxy hot path (degradation ladder), real MCP memory tools
+  (`search_memory` / `write_memory` / `record_feedback`), learning-loop e2e (`e2e-smoke-p3.5`),
+  ISO-MCP isolation (`security-integration-p35`), and memory/extraction quality benchmark CI gates.
+  **Not yet:** Dedicated published suites for context-assembly / MCP tool p95 / extraction
+  throughput (contract columns reserved; see Phase 3.5 exit audit P2); management API/dashboard
+  (Phase 4).
 </Callout>
 
 ## Next
 
-1. Begin **Phase 3.5** — [3.5.A.1 Celery worker skeleton](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton).  
-2. Then extraction intelligence, context assembly, and proxy hot-path integration.
+1. Begin **Phase 4** — [Operator Platform & Multi-Provider](/roadmap/phase-4-multi-provider).  
+2. Optionally close Phase 3.5 P2 suite-publish debt in follow-up bench PRs.
 
-See [Phase 3.5](/roadmap/phase-3-5-extraction-assembly).
+See [Phase 3.5](/roadmap/phase-3-5-extraction-assembly) and [Phase 4](/roadmap/phase-4-multi-provider).

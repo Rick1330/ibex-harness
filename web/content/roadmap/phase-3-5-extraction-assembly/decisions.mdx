@@ -1,0 +1,77 @@
+---
+title: "Phase 3.5"
+description: "Stack choices and ADR decisions for Extraction & Context Assembly."
+summary: "Stack choices and ADR decisions for Extraction & Context Assembly."
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Phase 3.5 — Extraction & Context Assembly — Decision Log"
+---
+
+# Phase 3.5 — Decision Log
+
+Quick decisions during Phase 3.5. Promote durable choices to `docs/adr/` and the public [ADR index](/docs/adr) when they affect multiple phases.
+
+## Python / service stack (Phase 3.5 deltas)
+
+Phase 3 stack choices in [Phase 3 decisions](/roadmap/phase-3-memory-engine/decisions) still apply. Phase 3.5 deltas:
+
+| Concern | Choice | Reason |
+| --- | --- | --- |
+| Context assembly runtime | Python 3.12 (`services/context/`) | Matches memory/worker ML-adjacent stack; gRPC + async |
+| Worker service | Celery 5 + Redis broker (`services/worker/`) | At-least-once extraction; observability via ADR-0062 |
+| MCP server | FastMCP / MCP Python SDK Streamable HTTP + stdio (`services/mcp-memory/`) | ADR-0050 transport; tools share memory HTTP substrate |
+| Extraction enqueue from proxy | Worker HTTP enqueue (not Celery Redis wire from Go) | ADR-0072 — avoid Go/Celery protocol coupling |
+| Token budgets | Capability catalog generate-and-diff | ADR-0067 |
+| Packing | Bounded DP knapsack (16-token buckets) | ADR-0069 |
+| Degradation | L0–L3 ladder with deadline | ADR-0071; L3 is proxy fail-open |
+
+## ADR register (Phase 3.5 — Accepted)
+
+| ADR | Topic | Milestone | Status |
+| --- | --- | --- | --- |
+| [ADR-0038](/docs/adr/0038-context-assembly-service) | Context assembly service design + gRPC contract | Pre-phase design (cited throughout C/D) | Accepted |
+| [ADR-0050](/docs/adr/0050-mcp-server-skeleton) | MCP transport, auth, audit skeleton | 2.5.G / Track E foundation | Accepted |
+| [ADR-0062](/docs/adr/0062-worker-task-observability-dead-letter) | Worker task observability + dead-letter | 3.5.A.2 | Accepted |
+| [ADR-0063](/docs/adr/0063-extraction-output-schema-v2) | Extraction output schema v2 | 3.5.B.1 | Accepted |
+| [ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution) | Extraction provider registry + batch execution | 3.5.B.2 | Accepted |
+| [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) | Extraction batch idempotency + turn pointer | 3.5.B.3 | Accepted |
+| [ADR-0066](/docs/adr/0066-extraction-quality-evaluation-harness) | Extraction quality evaluation harness | 3.5.B.4 | Accepted |
+| [ADR-0067](/docs/adr/0067-context-capability-catalog-generate-and-diff) | Capability catalog generate-and-diff | 3.5.C.1 | Accepted |
+| [ADR-0068](/docs/adr/0068-composite-relevance-gate) | Composite scoring-time relevance gate | 3.5.C.3 | Accepted |
+| [ADR-0069](/docs/adr/0069-context-packer-dp-knapsack) | Context packer bounded DP knapsack | 3.5.C.4 | Accepted |
+| [ADR-0070](/docs/adr/0070-context-formatter-ordering-nonce) | Formatter locked ordering + session nonce | 3.5.C.5 | Accepted |
+| [ADR-0071](/docs/adr/0071-context-grpc-degradation-deadline) | gRPC degradation ladder + retrieval deadline | 3.5.C.6 | Accepted |
+| [ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http) | Extraction enqueue via worker HTTP | 3.5.D.4 | Accepted |
+
+### Planning aliases not used
+
+Early Phase 3.5 sketches reserved ADR-0043 / ADR-0044 for MCP / assembly topics. Those numbers already ship Phase 2.5 work — do **not** reuse them:
+
+| Planning alias | Actual shipped ADR / note |
+| --- | --- |
+| “ADR-0043 context / MCP” | **Occupied** — [ADR-0043](/docs/adr/0043-tokenizer-registry) tokenizer registry; MCP is ADR-0050 |
+| “ADR-0044 assembly / MCP tools” | **Occupied** — [ADR-0044](/docs/adr/0044-response-pipeline-non-streaming) response pipeline; assembly is ADR-0038 / ADR-0071 |
+| “Move ADR-0038 Pending → Accepted” | **Stale** — ADR-0038 has been `Accepted` since 2026-07-19; F.3 only re-indexes / cites it |
+
+Always assign the next free number from [`web/content/docs/adr/meta.json`](/docs/adr) when publishing a new ADR.
+
+Log pivots in [findings](/roadmap/findings). When an ADR merges, add it under [docs/adr](/docs/adr).
+
+## Architectural decisions
+
+| Decision | Rationale |
+| --- | --- |
+| Separate Python context service (not inline Go) | Ranking / packing / tiktoken stay in Python; proxy stays thin (ADR-0038) |
+| gRPC AssembleContext with hard deadline | Bound hot-path latency; degrade rather than block chat (ADR-0071) |
+| Relevance gate before composite score | Floor cosine excludes irrelevant-but-hot memories (ADR-0068) |
+| DP packer over pure greedy | Recover budget utilization on adversarial sets (ADR-0069) |
+| Locked formatter order + nonce | Deterministic injection; lost-in-the-middle mitigation (ADR-0070) |
+| Batch extraction on session close | Cross-turn awareness + cost (ADR-0064 / ADR-0065) |
+| MCP tools call memory HTTP (one substrate) | Same tenancy / write path as proxy-assembled memories (ADR-0050 + E.2) |
+| MCP fail-closed on auth outage + org RPM budget | Independent of proxy rate limits (E.4) |
+| ISO-MCP matrix live auth + Postgres | Defense-in-depth beyond unit mocks (F.2) |
+
+## Pending decisions (post Phase 3.5)
+
+1. **Published `contextAssembly` / `mcpTool` / `extractionThroughput` suites** — contract columns exist (3.5.F.3); CI + site registry wiring deferred (exit-audit P2).
+2. **Live 100K assemble_load CI gate** — stub harness exists; live profile remains manual.
+3. **Celery extraction throughput baseline** — quality suite shipped (ADR-0066); throughput suite not started.
