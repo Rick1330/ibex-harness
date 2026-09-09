@@ -46,12 +46,14 @@ def test_create_and_list_users() -> None:
 
     async def _fake_create(session, oid, body, *, created_by):
         del session, created_by
-        assert oid == org_id and body.email == "new@example.com"
+        assert oid == org_id
+        assert body.email == "new@example.com"
         return UserResponse(**invited, invite_token="raw-invite-token")
 
     async def _fake_list(session, oid, *, cursor, limit):
         del session, cursor
-        assert oid == org_id and limit == 50
+        assert oid == org_id
+        assert limit == 50
         return CursorPage(
             data=[listed],
             pagination=PaginationMeta(has_more=False, next_cursor=None),
@@ -87,7 +89,8 @@ def test_patch_get_delete_user_routes() -> None:
 
     async def _fake_patch(session, oid, uid, body):
         del session, body
-        assert oid == org_id and uid == user_id
+        assert oid == org_id
+        assert uid == user_id
         return UserResponse(**row)
 
     async def _fake_get(session, oid, uid):
@@ -100,7 +103,9 @@ def test_patch_get_delete_user_routes() -> None:
 
     async def _fake_delete(session, oid, uid, revoke):
         del session
-        assert oid == org_id and uid == user_id and revoke.access_token
+        assert oid == org_id
+        assert uid == user_id
+        assert revoke.access_token
 
     with patched_managed_client(
         ManagedClientOpts(org_id=org_id, role="admin"),

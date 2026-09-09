@@ -101,8 +101,9 @@ async def test_patch_user_update_race_not_found() -> None:
     current = _user(id=user_id, org_id=org_id, role="member")
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(None)])
+    patch = UserPatch(name="x")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, UserPatch(name="x"))
+        await user_service.patch_user(session, org_id, user_id, patch)
     assert exc.value.code == NOT_FOUND
 
 
@@ -120,13 +121,9 @@ async def test_soft_delete_rowcount_zero() -> None:
         ]
     )
     session.rollback = AsyncMock()
+    revoke = user_service.RevokeContext(revoker=AsyncMock(), access_token="t")
     with pytest.raises(ApiError) as exc:
-        await user_service.soft_delete_user(
-            session,
-            org_id,
-            user_id,
-            user_service.RevokeContext(revoker=AsyncMock(), access_token="t"),
-        )
+        await user_service.soft_delete_user(session, org_id, user_id, revoke)
     assert exc.value.code == NOT_FOUND
 
 
@@ -143,29 +140,31 @@ async def test_soft_delete_unavailable_rolls_back(monkeypatch: pytest.MonkeyPatc
     revoker = AsyncMock()
     revoker.revoke = AsyncMock(side_effect=AuthUnavailableError())
     monkeypatch.setattr(user_service.asyncio, "sleep", AsyncMock())
+    revoke = user_service.RevokeContext(revoker=revoker, access_token="t")
     with pytest.raises(AuthUnavailableError):
-        await user_service.soft_delete_user(
-            session,
-            org_id,
-            user_id,
-            user_service.RevokeContext(revoker=revoker, access_token="t"),
-        )
+        await user_service.soft_delete_user(session, org_id, user_id, revoke)
     session.rollback.assert_awaited()
     session.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_suspend_and_patch_race_not_found() -> None:
+async def test_suspend_race_not_found() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=_MapResult(None))
+    publisher = AsyncMock()
+    org_id = uuid4()
     with pytest.raises(ApiError):
-        await org_service.suspend_organization(session, uuid4(), AsyncMock())
+        await org_service.suspend_organization(session, org_id, publisher)
+
+
+@pytest.mark.asyncio
+async def test_patch_org_race_not_found() -> None:
     current = _org()
+    session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_MapResult(current), _MapResult(None)])
+    patch = OrganizationPatch(name="x")
     with pytest.raises(ApiError):
-        await org_service.patch_organization(
-            session, current.id, OrganizationPatch(name="x")
-        )
+        await org_service.patch_organization(session, current.id, patch)
 
 
 @pytest.mark.asyncio

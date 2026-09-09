@@ -50,7 +50,7 @@ class _UserListCtx:
     query: ListQuery
 
 
-async def _user_list_ctx(
+def _user_list_ctx(
     token: RequireUserManage,
     session: Annotated[AsyncSession, Depends(org_session)],
     query: Annotated[ListQuery, Depends(_list_query)],

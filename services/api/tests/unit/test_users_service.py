@@ -120,8 +120,9 @@ async def test_patch_user_last_owner_demotion() -> None:
     current = _user(id=user_id, org_id=org_id, role="owner", email="owner@example.com")
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
+    patch = UserPatch(role="admin")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, UserPatch(role="admin"))
+        await user_service.patch_user(session, org_id, user_id, patch)
     assert exc.value.code == LAST_OWNER_PROTECTED
 
 
@@ -157,13 +158,9 @@ async def test_soft_delete_auth_unavailable_skips_commit(monkeypatch: pytest.Mon
     org_id, user_id, session, revoker = _soft_delete_fixture(token_ids=["tok-1"], rowcount=None)
     revoker.revoke = AsyncMock(side_effect=AuthUnavailableError())
     monkeypatch.setattr(user_service.asyncio, "sleep", AsyncMock())
+    revoke = user_service.RevokeContext(revoker=revoker, access_token="secret")
     with pytest.raises(AuthUnavailableError):
-        await user_service.soft_delete_user(
-            session,
-            org_id,
-            user_id,
-            user_service.RevokeContext(revoker=revoker, access_token="secret"),
-        )
+        await user_service.soft_delete_user(session, org_id, user_id, revoke)
     session.commit.assert_not_awaited()
     session.rollback.assert_awaited()
     assert revoker.revoke.await_count == 3
@@ -232,11 +229,7 @@ async def test_soft_delete_last_owner_blocked() -> None:
     org_id, user_id, session, revoker = _soft_delete_fixture(
         role="owner", owner_count=1, token_ids=None, rowcount=None
     )
+    revoke = user_service.RevokeContext(revoker=revoker, access_token="x")
     with pytest.raises(ApiError) as exc:
-        await user_service.soft_delete_user(
-            session,
-            org_id,
-            user_id,
-            user_service.RevokeContext(revoker=revoker, access_token="x"),
-        )
+        await user_service.soft_delete_user(session, org_id, user_id, revoke)
     assert exc.value.code == LAST_OWNER_PROTECTED
