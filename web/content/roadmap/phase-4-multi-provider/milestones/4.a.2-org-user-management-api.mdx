@@ -20,7 +20,7 @@ fullTitle: "Milestone 4.A.2 — Organization & User Management API"
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 3 days  
 **Track:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)  
-**ADR required:** ADR-0045 — Organization lifecycle and cascading suspension
+**ADR required:** ADR-0073 — Organization lifecycle and cascading suspension
 
 ---
 
@@ -29,6 +29,16 @@ fullTitle: "Milestone 4.A.2 — Organization & User Management API"
   libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
   that are expected to change once the live code, constraints, and research during implementation
   make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+
+- Role naming uses the database column `viewer` (not the sketch's `read_only` wording).
+- The org lifecycle ADR uses the next free ADR number (rather than `ADR-0045`).
+- GDPR org deletion scope in this milestone is the ordered async delete entry point plus job/status; MinIO archive purge and orphan-detection remain explicit follow-ups for #641.
+- User invitations are token/link-only (no transactional email integration in this milestone).
+- Org delete exposes a thin, purpose-built async status surface (not a generic job polling platform).
+
 </Callout>
 
 ## Why This Milestone Exists
@@ -95,16 +105,16 @@ DELETE /v1/users/{id} → 204 (soft delete, revokes their PATs)
 
 - `POST /v1/organizations` (creation) is **not** exposed here — orgs are created via a separate signup/provisioning flow, keeping this API "manage what exists" only.
 - Suspending an org must propagate to the proxy's auth cache within the same 5-second bound already guaranteed for token revocation — reuse the existing Redis pub/sub revocation-propagation channel (ADR-0029) rather than inventing a second mechanism.
-- Role model: `owner` (one per org, cannot be demoted below the last owner), `admin`, `member`, `read_only` — mapped onto the existing 64-bit permission bitmap (ADR-0009), not a parallel RBAC system.
+- Role model: `owner` (one per org, cannot be demoted below the last owner), `admin`, `member`, `viewer` — mapped onto the existing 64-bit permission bitmap (ADR-0009), not a parallel RBAC system.
 - User deletion revokes all PATs owned by that user (calls `AuthService.RevokeToken` in a loop; add `RevokeAllTokensForUser` batch RPC only if p95 exceeds 200ms with realistic token counts).
 
 ---
 
-## ADR-0045 — Organization Lifecycle and Cascading Suspension
+## ADR-0073 — Organization Lifecycle and Cascading Suspension
 
 Document as a new ADR:
 - **Suspension vs. deletion**: suspension is reversible and blocks proxy traffic immediately (checked in the same auth-cache path as revocation); deletion is a one-way async GDPR cascade.
-- **Why suspension reuses the token-revocation Redis channel**: one propagation mechanism to reason about, tested once (ADR-0029), rather than two.
+- **Why suspension reuses the token-revocation Redis channel**: one propagation mechanism to reason about, tested once (ADR-0029), rather than two; extend the revocation event with `event_type` (`token` | `org_suspend`).
 - **Owner-cannot-be-demoted-below-one invariant**: enforced at the API layer with a row lock (`SELECT ... FOR UPDATE` on the owners count) rather than only a DB constraint (constraint alone can't express "last owner" without a trigger, which is harder to test/debug than a locked API-layer check).
 
 ---

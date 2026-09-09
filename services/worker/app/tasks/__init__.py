@@ -2,4 +2,5 @@
 
 from app.tasks import extraction as _extraction  # noqa: F401
 from app.tasks import maintenance as _maintenance  # noqa: F401
+from app.tasks import org_deletion as _org_deletion  # noqa: F401
 from app.tasks import stubs as _stubs  # noqa: F401

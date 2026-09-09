@@ -19,6 +19,7 @@ type tokenRepo interface {
 	CreateToken(ctx context.Context, p repository.CreateTokenParams) (string, error)
 	RevokeToken(ctx context.Context, in repository.RevokeTokenInput) error
 	ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]repository.TokenMetadata, string, error)
+	ListActiveTokenIDsByUser(ctx context.Context, orgID, userID string) ([]string, error)
 }
 
 // TokenService manages PAT creation, revocation, and listing.
@@ -175,6 +176,7 @@ func (s *TokenService) publishRevocationAsync(p RevokeTokenParams) {
 		}()
 		event := revocation.RevocationEvent{
 			Version:   revocation.CurrentSchemaVersion,
+			EventType: revocation.EventTypeToken,
 			TokenID:   p.TokenID,
 			OrgID:     p.OrgID,
 			RevokedAt: time.Now().UTC(),
@@ -220,6 +222,15 @@ func (s *TokenService) ListTokens(ctx context.Context, orgID, cursor string, lim
 		return nil, "", fmt.Errorf("ListTokens org_id=%s: %w", orgID, err)
 	}
 	return mapTokenMetadata(rows), next, nil
+}
+
+// ListActiveTokenIDsByUser returns non-revoked token IDs owned by a user in an org.
+func (s *TokenService) ListActiveTokenIDsByUser(ctx context.Context, orgID, userID string) ([]string, error) {
+	ids, err := s.repo.ListActiveTokenIDsByUser(ctx, orgID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("ListActiveTokenIDsByUser org_id=%s user_id=%s: %w", orgID, userID, err)
+	}
+	return ids, nil
 }
 
 func mapTokenMetadata(rows []repository.TokenMetadata) []TokenListItem {

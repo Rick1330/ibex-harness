@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from authclient.errors import AuthFailedError, AuthUnavailableError
+from authclient.errors import AuthFailedError, AuthUnavailableError, OrgSuspendedError
 
-__all__ = ["AuthFailedError", "AuthUnavailableError"]
+__all__ = ["AuthFailedError", "AuthUnavailableError", "OrgSuspendedError"]

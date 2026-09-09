@@ -103,6 +103,10 @@ func (errTokenRepo) ListTokens(context.Context, string, string, int) ([]reposito
 	return nil, "", fmt.Errorf("db down")
 }
 
+func (errTokenRepo) ListActiveTokenIDsByUser(context.Context, string, string) ([]string, error) {
+	return nil, fmt.Errorf("db down")
+}
+
 func TestDecodeMemTokenCursor_invalid(t *testing.T) {
 	t.Parallel()
 	if _, _, err := decodeMemTokenCursor("bad"); err == nil {

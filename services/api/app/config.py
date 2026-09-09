@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     )
     auth_timeout_ms: int = Field(default=50, ge=1)
 
+    redis_url: str | None = Field(
+        default=None,
+        description="Redis URL for org_suspend pub/sub (optional; best-effort)",
+    )
+    celery_broker_url: str | None = Field(
+        default=None,
+        description="Celery broker URL for org deletion enqueue (optional)",
+    )
+
     docs_base_url: str = Field(
         default="https://docs.ibexharness.com",
         description="Base URL for error docs_url links",

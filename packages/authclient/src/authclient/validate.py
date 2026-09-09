@@ -16,7 +16,8 @@ from authclient.codec import (
     decode_validate_token_response,
     encode_validate_token_request,
 )
-from authclient.errors import AuthFailedError, AuthUnavailableError
+from authclient.errors import AuthFailedError, AuthUnavailableError, OrgSuspendedError
+
 from authclient.target import assert_trusted_insecure_auth_target
 
 logger = logging.getLogger(__name__)
@@ -146,9 +147,21 @@ def _decode_validate_payload(payload: object) -> ValidateResult:
     return ValidateResult.from_wire(wire)
 
 
+def _map_permission_denied(
+    exc: grpc.aio.AioRpcError,
+) -> AuthFailedError | AuthUnavailableError | OrgSuspendedError:
+    if (exc.details() or "") == "organization is suspended":
+        return OrgSuspendedError("organization is suspended")
+    code_name = exc.code().name if exc.code() is not None else "unknown"
+    logger.warning("auth grpc fail-closed code=%s", code_name)
+    return AuthUnavailableError()
+
+
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
     if exc.code() == grpc.StatusCode.UNAUTHENTICATED:
         return AuthFailedError("invalid or revoked token")
+    if exc.code() == grpc.StatusCode.PERMISSION_DENIED:
+        return _map_permission_denied(exc)
     code_name = exc.code().name if exc.code() is not None else "unknown"
     logger.warning("auth grpc fail-closed code=%s", code_name)
     return AuthUnavailableError()

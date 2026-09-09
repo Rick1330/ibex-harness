@@ -22,6 +22,15 @@ func grpcValidatorErrorCases() []grpcValidatorCase {
 			wantErr: ErrInvalidToken,
 		},
 		{
+			name: "org suspended",
+			client: &mockAuthServiceClient{
+				validateTokenFn: func(context.Context, *authv1.ValidateTokenRequest, ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
+					return nil, status.Error(codes.PermissionDenied, "organization is suspended")
+				},
+			},
+			wantErr: ErrOrgSuspended,
+		},
+		{
 			name: "unavailable",
 			client: &mockAuthServiceClient{
 				validateTokenFn: func(context.Context, *authv1.ValidateTokenRequest, ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {

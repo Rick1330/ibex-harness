@@ -1,0 +1,132 @@
+---
+title: "ADR-0073: Organization Lifecycle and Cascading Suspension"
+description: "Accepted — org suspension semantics, Redis revocation event_type, and last-owner invariant."
+adrId: "0073"
+status: "Accepted"
+date: "2026-09-09"
+authors: "IBEX Harness team"
+---
+
+    10|# ADR-0073: Organization Lifecycle and Cascading Suspension
+
+- **Status:** Accepted
+- **Date:** 2026-09-09
+- **Authors:** IBEX Harness team
+- **Milestone:** [4.A.2 Org & User Management API](/roadmap/phase-4-multi-provider/milestones/4.a.2-org-user-management-api)
+
+## Context
+
+The system stores tenant lifecycle on `ibex_core.organizations.status` with values such as `active` and `suspended`.
+Suspension must become effective quickly (same overall SLA as auth revocation invalidation), and the proxy must
+deny suspended-org access rather than letting tokens continue to work until TTL expiry.
+
+IBEX already has a Redis pub/sub mechanism for token revocation propagation (ADR-0029). That channel is global
+and its primary invalidation primitive today is token-id scrubbing in the auth cache.
+
+This ADR defines how to:
+1. Fail-closed on `ValidateToken` when the caller's `org_id` is suspended.
+2. Propagate suspension to proxy cache instances quickly.
+3. Keep authorization semantics consistent by using both `users.role` (org hierarchy) and the presented token's
+   permission bitmap (ADR-0009).
+4. Enforce the last-owner invariant safely at the API layer.
+
+## Decision
+
+### 1) Suspension vs deletion semantics
+
+- **Suspension** is reversible and must block proxy traffic quickly (fail-closed).
+- **Deletion** is irreversible and may require an ordered cascade job (GDPR).
+
+Only suspension semantics are covered in this ADR; deletion cascade mechanics belong in the 4.A.2 implementation ADR
+and follow-up issues.
+
+### 2) Reuse the existing revocation channel with an `event_type`
+
+- **Channel:** `ibex:token:revocations` (ADR-0029)
+- **Event shape:** JSON `RevocationEvent` extended with an `event_type` discriminator:
+  - `event_type = "token"` for token revocations (existing behavior)
+  - `event_type = "org_suspend"` for org suspension propagation
+
+**Backward-compatibility rule:**
+
+- If `event_type` is missing, treat the event as `event_type="token"`.
+- Token-revocation events must continue to include `token_id` and be valid under the previous schema.
+- Subscribers must treat `org_suspend` events as an alternative invalidation path that does not require
+  a token_id → digest mapping.
+
+### 3) Auth-side fail-closed check in `ValidateToken`
+
+The `AuthService.ValidateToken` implementation must verify:
+
+- The token row is active and not revoked/expired (existing).
+- The token's `org_id` belongs to an organization with `organizations.status = 'active'`.
+
+If the organization is not active, return a stable domain error representing **org suspension**.
+No proto wire changes are required if this can live in auth server-side logic.
+
+### 4) Proxy-side cache invalidation and HTTP mapping
+
+On the proxy, the revocation subscriber must handle:
+
+- `event_type="token"`: call existing `CachingValidator.InvalidateByTokenID(token_id)`
+- `event_type="org_suspend"`: call `CachingValidator.InvalidateByOrgID(org_id)` and scrub all relevant cached entries
+
+HTTP error mapping:
+
+- Denials due to suspended org must map to a dedicated canonical API error code:
+  - `ORG_SUSPENDED`
+- The mapping should use **403 (Forbidden)** semantics to distinguish from invalid/expired tokens, ensuring suspended
+  org denials do not poison the auth cache bloom filter intended for invalid-token caching.
+
+### 5) Last-owner invariant enforcement (API-layer lock)
+
+When demoting org roles (e.g. PATCH user role):
+
+1. Start a transaction under the org scope.
+2. Acquire a row-level lock based on the count of current `owner` users for the target org:
+   - `SELECT COUNT(*) ... FOR UPDATE`
+3. If the caller would demote the final owner, deny with:
+   - `409 LAST_OWNER_PROTECTED`
+
+This is enforced in the API layer because database-only constraints cannot express "last owner" safely and ergonomically
+for this workflow, and because the API layer needs a deterministic error code.
+
+### 6) Role ↔ permission-bitmap mapping (ADR-0009)
+
+The management API must use **both**:
+
+- `users.role` for org hierarchy invariants
+- the presented token's ADR-0009 permission bitmap to gate whether the PAT is allowed to call management endpoints
+
+This ADR documents the role → bitmap mapping used for interpreting the management surface:
+
+- `owner` → `permissions.Admin`
+- `admin` → `permissions.Admin`
+- `member` → `permissions.AgentDefault`
+- `viewer` → `permissions.ReadOnly`
+
+If the presented token bitmap is missing required bits for a given management operation, deny even if the user's role
+would allow it; conversely, do not rely on token bitmap bits alone for last-owner protection.
+
+## Consequences
+
+- Suspended-org access becomes fail-closed quickly (cache invalidation + auth-side join/check).
+- The revocation propagation mechanism remains single-channel (ADR-0029) by adding an `event_type` discriminator.
+- The management API authorization semantics are deterministic and auditable: role enforces hierarchy, bitmap enforces
+  token capabilities.
+
+## Alternatives considered
+
+1. **Separate Redis channel for org suspension**
+   - Rejected: introduces second propagation mechanism with extra operational complexity.
+2. **Only invalidate cache entries without auth-side checks**
+   - Rejected: brand-new/uncached tokens issued after suspension could still work until natural expiry.
+3. **Add org suspension status to proto**
+   - Rejected: avoid unnecessary wire expansion if server-side logic is sufficient.
+
+## References
+
+- [ADR-0029 Token revocation propagation via Redis pub/sub](/docs/adr/0029-token-revocation-propagation)
+- [ADR-0009 Permission bitmap layout](/docs/adr/0009-permission-bitmap-layout)
+- [4.A.2 Org & User Management API](/roadmap/phase-4-multi-provider/milestones/4.a.2-org-user-management-api)
+

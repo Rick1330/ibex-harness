@@ -55,6 +55,24 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareOrgSuspended(t *testing.T) {
+	t.Parallel()
+
+	handler := AuthMiddleware(&mockValidator{err: auth.ErrOrgSuspended}, logger.Discard("proxy"), AuthOptions{})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_x")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeOrgSuspended)) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
 func TestAuthMiddlewareAuthUnavailable(t *testing.T) {
 	t.Parallel()
 

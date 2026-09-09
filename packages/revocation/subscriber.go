@@ -9,9 +9,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Invalidator removes a cached claims entry by token UUID.
+// Invalidator clears auth-cache entries for revoked tokens or suspended orgs.
 type Invalidator interface {
 	InvalidateByTokenID(tokenID string)
+	InvalidateByOrgID(orgID string)
 }
 
 // IncRevocationInvalidater records successful invalidate deliveries.
@@ -106,6 +107,11 @@ func (s *Subscriber) handleMessage(ctx context.Context, payload string) {
 		s.log.WarnCtx(ctx, "malformed revocation event", "error", err)
 		return
 	}
-	s.cache.InvalidateByTokenID(event.TokenID)
+	switch event.EffectiveEventType() {
+	case EventTypeOrgSuspend:
+		s.cache.InvalidateByOrgID(event.OrgID)
+	default:
+		s.cache.InvalidateByTokenID(event.TokenID)
+	}
 	s.metrics.IncRevocationInvalidate()
 }

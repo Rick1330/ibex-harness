@@ -32,6 +32,10 @@ const (
 	CodeAgentNotAuthorized Code = "AGENT_NOT_AUTHORIZED"
 	// CodeAgentSuspended tells clients the agent exists but is paused, suspended, or archived.
 	CodeAgentSuspended Code = "AGENT_SUSPENDED"
+	// CodeOrgSuspended tells clients the organization is suspended and must not receive traffic.
+	CodeOrgSuspended Code = "ORG_SUSPENDED"
+	// CodeLastOwnerProtected tells clients the last remaining owner cannot be demoted or removed.
+	CodeLastOwnerProtected Code = "LAST_OWNER_PROTECTED"
 	// CodeRateLimited tells clients to back off and retry after the rate-limit window.
 	CodeRateLimited Code = "RATE_LIMITED"
 	// CodeIdempotencyKeyReuse tells clients the Idempotency-Key was already used with a different request body.

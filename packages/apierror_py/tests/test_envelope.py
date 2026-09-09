@@ -47,5 +47,7 @@ def test_build_envelope_required_fields() -> None:
 def test_http_status_for_known_codes() -> None:
     assert http_status_for_code("MISSING_TOKEN") == 401
     assert http_status_for_code("NOT_FOUND") == 404
+    assert http_status_for_code("ORG_SUSPENDED") == 403
+    assert http_status_for_code("LAST_OWNER_PROTECTED") == 409
     assert http_status_for_code("AUTH_UNAVAILABLE") == 503
     assert http_status_for_code("UNKNOWN_CODE") == 500

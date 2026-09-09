@@ -71,7 +71,7 @@ func TestUnit_RepoLookup_FindActiveByPrefix_NilInner(t *testing.T) {
 
 func sampleRepoTokenRow(agentID, userID string, expires time.Time) repository.TokenRow {
 	return repository.TokenRow{
-		ID: "tid", OrgID: "oid", Hash: "h", Permissions: 3,
+		ID: "tid", OrgID: "oid", OrgStatus: "active", Hash: "h", Permissions: 3,
 		AgentID:   sql.NullString{String: agentID, Valid: true},
 		UserID:    sql.NullString{String: userID, Valid: true},
 		ExpiresAt: sql.NullTime{Time: expires, Valid: true},

@@ -6,12 +6,18 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import UUID
 
-from apierror_py import AUTH_UNAVAILABLE, INVALID_TOKEN, MISSING_TOKEN, SERVICE_DEGRADED
+from apierror_py import (
+    AUTH_UNAVAILABLE,
+    INVALID_TOKEN,
+    MISSING_TOKEN,
+    ORG_SUSPENDED,
+    SERVICE_DEGRADED,
+)
 from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
-from app.auth.errors import AuthFailedError, AuthUnavailableError
+from app.auth.errors import AuthFailedError, AuthUnavailableError, OrgSuspendedError
 from app.db import session_with_org
 from app.errors import ApiError
 
@@ -40,6 +46,8 @@ async def require_token(
     try:
         token_value = parse_authorization_header(authorization)
         return await validator.validate(token_value)
+    except OrgSuspendedError as exc:
+        raise ApiError(code=ORG_SUSPENDED, message=str(exc)) from exc
     except AuthFailedError as exc:
         code = MISSING_TOKEN if "missing" in str(exc).lower() else INVALID_TOKEN
         raise ApiError(code=code, message=str(exc)) from exc

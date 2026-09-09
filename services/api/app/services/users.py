@@ -1,0 +1,317 @@
+"""User persistence, invites, last-owner protection, soft-delete + PAT revoke."""
+
+from __future__ import annotations
+
+import hashlib
+import secrets
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol
+from uuid import UUID
+
+from apierror_py import LAST_OWNER_PROTECTED, NOT_FOUND, VALIDATION_ERROR
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.errors import ApiError
+from app.pagination import CursorPage, decode_cursor, page_from_rows
+from app.schemas.users import UserCreate, UserPatch, UserResponse
+
+
+class TokenRevoker(Protocol):
+    async def revoke(
+        self,
+        *,
+        org_id: str,
+        token_id: str,
+        access_token: str,
+        reason: str | None = None,
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class RevokeContext:
+    revoker: TokenRevoker
+    access_token: str
+
+
+def _user_from_row(row: Any, *, invite_token: str | None = None) -> UserResponse:
+    return UserResponse(
+        id=row.id,
+        org_id=row.org_id,
+        email=row.email,
+        name=row.name,
+        role=row.role,
+        status=row.status,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        invite_token=invite_token,
+    )
+
+
+def _parse_user_list_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+    try:
+        payload = decode_cursor(cursor)
+    except ValueError as exc:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
+    if payload is None:
+        return None, None
+    created_at = payload.get("created_at")
+    user_id = payload.get("id")
+    if not created_at or not user_id:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor")
+    return str(created_at), str(user_id)
+
+
+async def _fetch_user_rows(
+    session: AsyncSession,
+    org_id: UUID,
+    *,
+    created_at: str | None,
+    user_id: str | None,
+    limit: int,
+) -> list[Any]:
+    if created_at is None:
+        result = await session.execute(
+            text(
+                """
+                SELECT id, org_id, email, name, role, status, created_at, updated_at
+                FROM ibex_core.users
+                WHERE org_id = :org_id AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {"org_id": str(org_id), "limit": limit + 1},
+        )
+    else:
+        result = await session.execute(
+            text(
+                """
+                SELECT id, org_id, email, name, role, status, created_at, updated_at
+                FROM ibex_core.users
+                WHERE org_id = :org_id AND deleted_at IS NULL
+                  AND (created_at < CAST(:created_at AS timestamptz)
+                       OR (created_at = CAST(:created_at AS timestamptz) AND id < CAST(:id AS uuid)))
+                ORDER BY created_at DESC, id DESC
+                LIMIT :limit
+                """
+            ),
+            {
+                "org_id": str(org_id),
+                "created_at": created_at,
+                "id": user_id,
+                "limit": limit + 1,
+            },
+        )
+    return list(result.mappings().all())
+
+
+async def list_users(
+    session: AsyncSession,
+    org_id: UUID,
+    *,
+    cursor: str | None,
+    limit: int,
+) -> CursorPage[UserResponse]:
+    created_at, user_id = _parse_user_list_cursor(cursor)
+    rows = await _fetch_user_rows(
+        session, org_id, created_at=created_at, user_id=user_id, limit=limit
+    )
+    users = [_user_from_row(r) for r in rows[: limit + 1]]
+    next_payload = None
+    if len(users) > limit:
+        last = users[limit - 1]
+        next_payload = {
+            "created_at": last.created_at.isoformat(),
+            "id": str(last.id),
+        }
+    return page_from_rows(users, limit=limit, cursor_payload=next_payload)
+
+
+async def get_user(session: AsyncSession, org_id: UUID, user_id: UUID) -> UserResponse:
+    result = await session.execute(
+        text(
+            """
+            SELECT id, org_id, email, name, role, status, created_at, updated_at
+            FROM ibex_core.users
+            WHERE id = :user_id AND org_id = :org_id AND deleted_at IS NULL
+            """
+        ),
+        {"user_id": str(user_id), "org_id": str(org_id)},
+    )
+    row = result.mappings().first()
+    if row is None:
+        raise ApiError(code=NOT_FOUND, message="User not found")
+    return _user_from_row(row)
+
+
+async def create_user_invite(
+    session: AsyncSession,
+    org_id: UUID,
+    body: UserCreate,
+    *,
+    created_by: UUID | None,
+) -> UserResponse:
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    expires_at = datetime.now(UTC) + timedelta(hours=72)
+
+    try:
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO ibex_core.users (org_id, email, name, role, status)
+                VALUES (:org_id, :email, :name, :role, 'invited')
+                RETURNING id, org_id, email, name, role, status, created_at, updated_at
+                """
+            ),
+            {
+                "org_id": str(org_id),
+                "email": str(body.email).lower(),
+                "name": body.name,
+                "role": body.role,
+            },
+        )
+        row = result.mappings().first()
+        if row is None:
+            raise ApiError(code=VALIDATION_ERROR, message="Unable to create user")
+        await session.execute(
+            text(
+                """
+                INSERT INTO ibex_core.organization_invites
+                    (org_id, email, role, token_hash, expires_at, created_by)
+                VALUES (:org_id, :email, :role, :token_hash, :expires_at, :created_by)
+                """
+            ),
+            {
+                "org_id": str(org_id),
+                "email": str(body.email).lower(),
+                "role": body.role,
+                "token_hash": token_hash,
+                "expires_at": expires_at,
+                "created_by": str(created_by) if created_by else None,
+            },
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise ApiError(
+            code=VALIDATION_ERROR,
+            message="User with this email already exists in the organization",
+        ) from exc
+    return _user_from_row(row, invite_token=raw_token)
+
+
+def _is_owner_demotion(current_role: str, new_role: str | None) -> bool:
+    return new_role is not None and current_role == "owner" and new_role != "owner"
+
+
+async def patch_user(
+    session: AsyncSession,
+    org_id: UUID,
+    user_id: UUID,
+    patch: UserPatch,
+) -> UserResponse:
+    current = await get_user(session, org_id, user_id)
+    name = patch.name if patch.name is not None else current.name
+    role = patch.role if patch.role is not None else current.role
+
+    if _is_owner_demotion(current.role, patch.role):
+        await _assert_not_last_owner(session, org_id)
+
+    result = await session.execute(
+        text(
+            """
+            UPDATE ibex_core.users
+            SET name = :name, role = :role
+            WHERE id = :user_id AND org_id = :org_id AND deleted_at IS NULL
+            RETURNING id, org_id, email, name, role, status, created_at, updated_at
+            """
+        ),
+        {
+            "user_id": str(user_id),
+            "org_id": str(org_id),
+            "name": name,
+            "role": role,
+        },
+    )
+    row = result.mappings().first()
+    if row is None:
+        raise ApiError(code=NOT_FOUND, message="User not found")
+    await session.commit()
+    return _user_from_row(row)
+
+
+async def soft_delete_user(
+    session: AsyncSession,
+    org_id: UUID,
+    user_id: UUID,
+    revoke: RevokeContext,
+) -> None:
+    current = await get_user(session, org_id, user_id)
+    if current.role == "owner":
+        await _assert_not_last_owner(session, org_id)
+
+    token_ids = await _list_active_token_ids(session, org_id, user_id)
+    result = await session.execute(
+        text(
+            """
+            UPDATE ibex_core.users
+            SET status = 'deactivated', deleted_at = NOW()
+            WHERE id = :user_id AND org_id = :org_id AND deleted_at IS NULL
+            """
+        ),
+        {"user_id": str(user_id), "org_id": str(org_id)},
+    )
+    if result.rowcount == 0:
+        raise ApiError(code=NOT_FOUND, message="User not found")
+    await session.commit()
+
+    for token_id in token_ids:
+        await revoke.revoker.revoke(
+            org_id=str(org_id),
+            token_id=token_id,
+            access_token=revoke.access_token,
+            reason="user_deleted",
+        )
+
+
+async def _list_active_token_ids(
+    session: AsyncSession, org_id: UUID, user_id: UUID
+) -> list[str]:
+    result = await session.execute(
+        text(
+            """
+            SELECT id::text AS id
+            FROM ibex_core.tokens
+            WHERE org_id = :org_id AND user_id = :user_id AND is_revoked = false
+            ORDER BY created_at ASC, id ASC
+            """
+        ),
+        {"org_id": str(org_id), "user_id": str(user_id)},
+    )
+    return [str(r.id) for r in result.mappings().all()]
+
+
+async def _assert_not_last_owner(session: AsyncSession, org_id: UUID) -> None:
+    # Lock owner rows (not COUNT) — Postgres rejects FOR UPDATE with aggregates.
+    result = await session.execute(
+        text(
+            """
+            SELECT id
+            FROM ibex_core.users
+            WHERE org_id = :org_id
+              AND role = 'owner'
+              AND deleted_at IS NULL
+            FOR UPDATE
+            """
+        ),
+        {"org_id": str(org_id)},
+    )
+    if len(result.fetchall()) <= 1:
+        raise ApiError(
+            code=LAST_OWNER_PROTECTED,
+            message="Cannot demote or remove the last remaining owner",
+        )

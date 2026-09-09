@@ -1,0 +1,109 @@
+"""Ordered Postgres cascade for org GDPR deletion jobs (MinIO/orphans are follow-ups)."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from sqlalchemy import text
+
+from app.celery_app import celery_app
+from app.config import get_settings
+from app.db import create_engine, create_session_factory, session_as_service_account
+from app.task_names import TASK_ORG_DELETE_ORGANIZATION
+from app.tasks.base import IbexTask
+
+logger = logging.getLogger(__name__)
+
+# Delete children that RESTRICT parent org removal, then soft-delete the org row.
+# Keep org_deletion_jobs row (RESTRICT FK) until after soft-delete; org row remains.
+_CASCADE_STATEMENTS: tuple[str, ...] = (
+    "DELETE FROM ibex_core.memory_feedback WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.memory_conflict_escalations WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.memory_relationships WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.memory_labels WHERE org_id = CAST(:org_id AS uuid)",
+    "UPDATE ibex_core.memories SET session_id = NULL WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.memories WHERE org_id = CAST(:org_id AS uuid)",
+    "UPDATE ibex_core.sessions SET directive_version_id = NULL WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.sessions WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.directive_versions WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.directives WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.tokens WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.agents WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.organization_invites WHERE org_id = CAST(:org_id AS uuid)",
+    "DELETE FROM ibex_core.users WHERE org_id = CAST(:org_id AS uuid)",
+    """
+    UPDATE ibex_core.organizations
+    SET status = 'cancelled', deleted_at = COALESCE(deleted_at, NOW())
+    WHERE id = CAST(:org_id AS uuid)
+    """,
+)
+
+
+@celery_app.task(
+    bind=True,
+    base=IbexTask,
+    name=TASK_ORG_DELETE_ORGANIZATION,
+    queue="maintenance",
+)
+def delete_organization(self: IbexTask, job_id: str, org_id: str, **kwargs: Any) -> dict[str, str]:
+    """Execute ordered org cascade and update org_deletion_jobs status."""
+    del kwargs
+    return asyncio.run(_run_delete(job_id=job_id, org_id=org_id))
+
+
+async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
+    settings = get_settings()
+    if not settings.database_url:
+        raise ValueError("database_url is required for org deletion")
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        async with session_as_service_account(factory) as session:
+            claimed = await _claim_job(session, job_id=job_id, org_id=org_id)
+            if not claimed:
+                return {"status": "skipped", "reason": "job_not_claimable"}
+            try:
+                for stmt in _CASCADE_STATEMENTS:
+                    await session.execute(text(stmt), {"org_id": org_id})
+                await _finish_job(session, job_id=job_id, status="succeeded", error=None)
+            except Exception as exc:
+                logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
+                await _finish_job(session, job_id=job_id, status="failed", error=str(exc)[:500])
+                raise
+        return {"status": "succeeded", "job_id": job_id, "org_id": org_id}
+    finally:
+        await engine.dispose()
+
+
+async def _claim_job(session, *, job_id: str, org_id: str) -> bool:
+    result = await session.execute(
+        text(
+            """
+            UPDATE ibex_core.org_deletion_jobs
+            SET status = 'running', started_at = NOW(), error = NULL
+            WHERE id = CAST(:job_id AS uuid)
+              AND org_id = CAST(:org_id AS uuid)
+              AND status IN ('pending', 'failed')
+            RETURNING id
+            """
+        ),
+        {"job_id": job_id, "org_id": org_id},
+    )
+    return result.first() is not None
+
+
+async def _finish_job(session, *, job_id: str, status: str, error: str | None) -> None:
+    await session.execute(
+        text(
+            """
+            UPDATE ibex_core.org_deletion_jobs
+            SET status = :status,
+                error = :error,
+                finished_at = NOW()
+            WHERE id = CAST(:job_id AS uuid)
+            """
+        ),
+        {"job_id": job_id, "status": status, "error": error},
+    )

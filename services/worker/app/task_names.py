@@ -7,6 +7,7 @@ TASK_MCP_AUDIT_NOOP = "ibex.worker.mcp_audit.noop"
 TASK_MAINTENANCE_NOOP_SWEEP = "ibex.worker.maintenance.noop_sweep"
 TASK_MAINTENANCE_ALWAYS_FAIL = "ibex.worker.maintenance.always_fail"
 TASK_RESULT_PROBE = "ibex.worker.maintenance.result_probe"
+TASK_ORG_DELETE_ORGANIZATION = "ibex.worker.org.delete_organization"
 
 ALL_TASK_NAMES: tuple[str, ...] = (
     TASK_EXTRACTION_NOOP,
@@ -16,4 +17,5 @@ ALL_TASK_NAMES: tuple[str, ...] = (
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_RESULT_PROBE,
+    TASK_ORG_DELETE_ORGANIZATION,
 )

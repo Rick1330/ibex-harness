@@ -58,6 +58,9 @@ func (v *Validator) Validate(ctx context.Context, accessToken string) (*authv1.V
 	if !ok {
 		return nil, ErrUnauthenticated
 	}
+	if row.OrgStatus != "active" {
+		return nil, ErrOrgSuspended
+	}
 	return validateResponseFromRow(row), nil
 }
 

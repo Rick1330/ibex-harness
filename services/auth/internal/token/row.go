@@ -7,6 +7,7 @@ import "time"
 type Row struct {
 	ID          string
 	OrgID       string
+	OrgStatus   string
 	UserID      *string
 	AgentID     *string
 	Permissions int64
