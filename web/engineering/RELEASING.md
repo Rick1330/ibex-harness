@@ -87,7 +87,7 @@ Mint an installation access token in CI, or store a short-lived token generator 
 
 ### What does **not** work
 
-- **Fine-grained PAT alone:** can often push contents / PRs, but the Checks API returns `403 You must authenticate via a GitHub App`. Propose mode still updates the release PR; the semantic-title check step is `continue-on-error` so that 403 does not fail the workflow.
+- **Fine-grained PAT alone:** can often push contents / PRs, but the Checks API returns `403 You must authenticate via a GitHub App`. That **fails** the Version Release propose job (correctly): `semantic-pr-title` is a required status check on `main`, and release PRs only get that check from this step. Use a classic PAT or GitHub App instead.
 - **Relying on `GITHUB_TOKEN` for SBOM upload:** job `permissions.contents` is `read`. `anchore/sbom-action` must use `upload-release-assets: false`; signed assets are uploaded in a later step with `VERSION_RELEASE_TOKEN`. If you see `Resource not accessible by integration` while “Attaching SBOMs to release”, that is the Actions token — not a missing secret.
 
 ### Cleanup checklist
