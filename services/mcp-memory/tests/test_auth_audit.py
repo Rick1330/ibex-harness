@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
@@ -33,7 +34,7 @@ def test_auth_401_emits_audit() -> None:
     sink = MemoryAuditSink()
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=StaticTokenValidator({}), audit_sink=sink),
+        deps=CreateAppDeps(validator=StaticTokenValidator({}), audit_sink=sink, agent_verifier=AllowAllAgentVerifier()),
     )
     with TestClient(application) as client:
         resp = client.post(
@@ -68,7 +69,7 @@ def test_auth_503_emits_audit() -> None:
     )
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=validator, audit_sink=sink),
+        deps=CreateAppDeps(validator=validator, audit_sink=sink, agent_verifier=AllowAllAgentVerifier()),
     )
     with TestClient(application) as client:
         # Trip breaker (N=5) then still 503

@@ -58,7 +58,8 @@ services:
     environment:
       CLICKHOUSE_DB: ibex
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      # Non-empty password required for host access (empty → default user is localhost-only).
+      CLICKHOUSE_PASSWORD: ibextest
     ports:
       - "8124:8123"
       - "9003:9000"

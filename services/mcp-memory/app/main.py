@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from app.agent_verifier import AgentVerifier, GRPCAgentVerifier
 from app.audit import AsyncAuditEmitter, AuditSink, build_audit_sink
 from app.auth import GRPCTokenValidator, TokenValidator
 from app.auth_breaker import (
@@ -23,7 +24,7 @@ from app.http_metrics import HTTPMetricsMiddleware
 from app.middleware import BearerAuthConfig, BearerAuthMiddleware
 from app.probes import probe_router
 from app.ratelimit import McpRateLimiter, RedisMcpLimiter, build_mcp_rate_limiter
-from app.server import build_mcp_server
+from app.server import McpServerWiring, build_mcp_server
 from app.state import AppState
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ class CreateAppDeps:
     """Optional test/production injections (keeps create_app under CodeScene arity)."""
 
     validator: TokenValidator | None = None
+    agent_verifier: AgentVerifier | None = None
     audit_sink: AuditSink | None = None
     memory_client: MemoryHttpClient | None = None
     rate_limiter: McpRateLimiter | None = None
@@ -47,6 +49,8 @@ class _Runtime:
     audit: AsyncAuditEmitter
     mem: MemoryHttpClient | None
     owned_memory: bool
+    verifier: AgentVerifier | None
+    owned_verifier: bool
     limiter: McpRateLimiter
     owned_limiter: bool
     mcp: Any
@@ -63,11 +67,15 @@ def create_app(
     sink = injected.audit_sink or build_audit_sink(cfg.clickhouse_url)
     audit = AsyncAuditEmitter(sink, maxsize=cfg.audit_queue_size)
     mem, owned_memory = _resolve_memory_client(cfg, injected.memory_client)
+    verifier, owned_verifier = _resolve_agent_verifier(cfg, injected.agent_verifier)
     limiter, owned_limiter = _resolve_rate_limiter(cfg, injected.rate_limiter)
     mcp = build_mcp_server(
-        audit,
-        mem,
-        rate_limiter=limiter,
+        McpServerWiring(
+            audit=audit,
+            memory_client=mem,
+            agent_verifier=verifier,
+            rate_limiter=limiter,
+        ),
         allow_test_hosts=cfg.env != "production",
     )
     runtime = _Runtime(
@@ -77,6 +85,8 @@ def create_app(
         audit=audit,
         mem=mem,
         owned_memory=owned_memory,
+        verifier=verifier,
+        owned_verifier=owned_verifier,
         limiter=limiter,
         owned_limiter=owned_limiter,
         mcp=mcp,
@@ -134,6 +144,8 @@ async def _shutdown(runtime: _Runtime, auth: TokenValidator) -> None:
     runtime.state.ready = False
     await runtime.audit.aclose()
     await auth.aclose()
+    if runtime.owned_verifier and runtime.verifier is not None:
+        await runtime.verifier.aclose()
     if runtime.owned_memory and runtime.mem is not None:
         await runtime.mem.aclose()
     if runtime.owned_limiter and isinstance(runtime.limiter, RedisMcpLimiter):
@@ -167,6 +179,21 @@ def _resolve_memory_client(
         build_memory_client(
             base_url=cfg.memory_http_url,
             timeout_seconds=cfg.memory_timeout_ms / 1000.0,
+        ),
+        True,
+    )
+
+
+def _resolve_agent_verifier(
+    cfg: Settings,
+    injected: AgentVerifier | None,
+) -> tuple[AgentVerifier | None, bool]:
+    if injected is not None:
+        return injected, False
+    return (
+        GRPCAgentVerifier(
+            cfg.auth_grpc_addr,
+            timeout_seconds=cfg.auth_timeout_ms / 1000.0,
         ),
         True,
     )

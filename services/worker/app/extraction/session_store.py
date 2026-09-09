@@ -31,6 +31,47 @@ class SessionStore(Protocol):
     ) -> None: ...
 
 
+def _close_coro(coro: object) -> None:
+    close = getattr(coro, "close", None)
+    if callable(close):
+        close()
+
+
+def _run_on_running_loop(coro: object, loop: asyncio.AbstractEventLoop) -> object:
+    """Dispatch to *loop* from another thread, or fail fast on same-thread deadlock."""
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not loop:
+        return asyncio.run_coroutine_threadsafe(coro, loop).result()  # type: ignore[arg-type]
+    _close_coro(coro)
+    raise RuntimeError(
+        "_run_coro cannot block on a running event loop from its own thread"
+    )
+
+
+def _run_coro(coro: object) -> object:
+    """Run *coro* on the worker process loop when set (Celery prefork).
+
+    ``asyncio.run`` creates a new loop and breaks SQLAlchemy async engines
+    initialized in ``worker_process_init`` (attached to ``_worker_loop``).
+
+    If *loop* is already running on this thread, waiting on
+    ``run_coroutine_threadsafe(...).result()`` would deadlock — fail fast.
+    Cross-thread dispatch (no running loop on the caller thread) remains OK.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        return asyncio.run(coro)  # type: ignore[arg-type]
+    if loop.is_closed():
+        return asyncio.run(coro)  # type: ignore[arg-type]
+    if loop.is_running():
+        return _run_on_running_loop(coro, loop)
+    return loop.run_until_complete(coro)  # type: ignore[arg-type]
+
+
 class PostgresSessionStore:
     """SELECT/UPDATE ibex_core.sessions with explicit org_id + RLS GUC."""
 
@@ -38,12 +79,12 @@ class PostgresSessionStore:
         self._factory = factory
 
     def load(self, org_id: UUID, session_id: UUID) -> SessionSnapshot | None:
-        return asyncio.run(self._load(org_id, session_id))
+        return _run_coro(self._load(org_id, session_id))  # type: ignore[return-value]
 
     def update_last_extracted_turn(
         self, org_id: UUID, session_id: UUID, last_extracted_turn: int
     ) -> None:
-        asyncio.run(self._update(org_id, session_id, last_extracted_turn))
+        _run_coro(self._update(org_id, session_id, last_extracted_turn))
 
     async def _load(self, org_id: UUID, session_id: UUID) -> SessionSnapshot | None:
         async with self._factory() as session, session.begin():

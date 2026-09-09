@@ -7,15 +7,26 @@ from uuid import UUID
 import pytest
 
 from app.access_token import set_access_token
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import AsyncAuditEmitter, MemoryAuditSink
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, set_principal
-from app.server import build_mcp_server
+from app.server import McpServerWiring, build_mcp_server
 from tests.memory_fixtures import stub_memory_client
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 AGENT = UUID("22222222-2222-2222-2222-222222222222")
 TOKEN = "tok-fastmcp"
+
+
+def _mcp(audit: AsyncAuditEmitter, client=None):
+    return build_mcp_server(
+        McpServerWiring(
+            audit=audit,
+            memory_client=client,
+            agent_verifier=AllowAllAgentVerifier(),
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -24,7 +35,7 @@ async def test_fastmcp_call_tools() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=16)
     audit.start()
-    mcp = build_mcp_server(audit, client)
+    mcp = _mcp(audit, client)
     set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT))
     set_access_token(TOKEN)
     try:
@@ -61,7 +72,7 @@ async def test_fastmcp_call_tools() -> None:
 async def test_tools_list_schemas_advertise_constraints() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=4)
-    mcp = build_mcp_server(audit, None)
+    mcp = _mcp(audit)
     tools = await mcp.list_tools()
     by_name = {t.name: t for t in tools}
     assert set(by_name) == {"search_memory", "write_memory", "record_feedback"}
@@ -120,7 +131,7 @@ async def test_unknown_tool_argument_rejected_before_execution() -> None:
     sink = MemoryAuditSink()
     audit = AsyncAuditEmitter(sink, maxsize=4)
     audit.start()
-    mcp = build_mcp_server(audit, None)
+    mcp = _mcp(audit)
     set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT))
     try:
         with pytest.raises(Exception, match="[Ee]xtra|limti|validation"):

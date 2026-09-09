@@ -20,4 +20,4 @@ bash "$(dirname "${BASH_SOURCE[0]}")/build-ibex-async-db-wheel.sh" "$WHEEL_DIR"
 cd "$MEMORY_DIR"
 uv sync --frozen --no-build --extra dev --no-install-project \
   --find-links "$WHEEL_DIR" --no-install-package authclient --no-install-package ibex-async-db
-uv pip install --no-index --find-links "$WHEEL_DIR" "authclient==0.1.0" "ibex-async-db==0.1.0"
+uv pip install --no-index --find-links "$WHEEL_DIR" "authclient==0.1.3" "ibex-async-db==0.1.0"

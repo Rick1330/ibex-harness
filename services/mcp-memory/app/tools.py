@@ -24,6 +24,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.access_token import require_access_token
+from app.agent_verifier import AgentVerifier
 from app.clients.memory import (
     FeedbackResult,
     MemoryHttpClient,
@@ -163,12 +164,16 @@ async def search_memory(
     principal: Principal,
     args: SearchMemoryArgs,
     client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None = None,
 ) -> dict[str, Any]:
     """Org-scoped search via memory HTTP. Tenant from principal + forwarded bearer."""
     _require_permission(principal, MEMORY_READ, "search_memory requires MemoryRead")
     agent_id = resolve_tool_agent_id(principal, args.agent_id)
     mem = _require_client(client)
     token = require_access_token()
+    await _verify_agent_active(
+        agent_verifier, bearer=token, org_id=principal.org_id, agent_id=agent_id
+    )
     hits = await _call_memory(
         lambda: mem.search_memories(
             token=token,
@@ -190,12 +195,16 @@ async def write_memory(
     principal: Principal,
     args: WriteMemoryArgs,
     client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None = None,
 ) -> dict[str, Any]:
     """Persist via memory write pipeline with metadata.mcp_source=mcp_explicit."""
     _require_permission(principal, MEMORY_WRITE, "write_memory requires MemoryWrite")
     agent_id = resolve_tool_agent_id(principal, args.agent_id)
     mem = _require_client(client)
     token = require_access_token()
+    await _verify_agent_active(
+        agent_verifier, bearer=token, org_id=principal.org_id, agent_id=agent_id
+    )
     idem = write_idempotency_key(
         org_id=principal.org_id, agent_id=agent_id, content=args.content
     )
@@ -227,11 +236,23 @@ async def record_feedback(
     principal: Principal,
     args: RecordFeedbackArgs,
     client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None = None,
 ) -> dict[str, Any]:
-    """Record usefulness feedback via memory HTTP. Requires MemoryWrite."""
+    """Record usefulness feedback via memory HTTP. Requires MemoryWrite.
+
+    Agent-scoped principals must pass ValidateAgent (org + active) before the
+    memory HTTP call. Org-scoped principals (no agent_id) rely on MEMORY_WRITE.
+    """
     _require_permission(principal, MEMORY_WRITE, "record_feedback requires MemoryWrite")
     mem = _require_client(client)
     token = require_access_token()
+    if principal.agent_id is not None:
+        await _verify_agent_active(
+            agent_verifier,
+            bearer=token,
+            org_id=principal.org_id,
+            agent_id=principal.agent_id,
+        )
     body: dict[str, Any] = {"feedback": args.feedback}
     if args.session_id is not None:
         body["session_id"] = str(args.session_id)
@@ -255,6 +276,19 @@ async def record_feedback(
 def _require_permission(principal: Principal, bit: int, message: str) -> None:
     if not has_permission(principal.permissions, bit):
         raise PermissionDeniedError(message)
+
+
+async def _verify_agent_active(
+    verifier: AgentVerifier | None,
+    *,
+    bearer: str,
+    org_id: UUID,
+    agent_id: UUID,
+) -> None:
+    """Fail closed when verifier missing; active agents pass through unchanged."""
+    if verifier is None:
+        raise BackendUnavailableError("agent verifier is not configured")
+    await verifier.verify(bearer=bearer, org_id=org_id, agent_id=agent_id)
 
 
 def _require_client(client: MemoryHttpClient | None) -> MemoryHttpClient:

@@ -7,15 +7,24 @@ import json
 import pytest
 
 from app.access_token import set_access_token
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import AsyncAuditEmitter, MemoryAuditSink
 from app.errors import PermissionDeniedError
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, require_principal, set_principal
 from app.ratelimit import NoopMcpLimiter
-from app.server import _invoke_tool, _run_search, _run_write, _ToolCall, _ToolRequest
+from app.server import (
+    _SEARCH_TOOL,
+    _WRITE_TOOL,
+    _invoke_tool,
+    _run_verified_tool,
+    _ToolCall,
+    _ToolRequest,
+)
 from tests.memory_fixtures import AGENT, ORG, stub_memory_client
 
 TOKEN = "tok-audit"
+_ALLOW = AllowAllAgentVerifier()
 
 
 def test_require_principal_missing() -> None:
@@ -40,7 +49,9 @@ async def test_invoke_search_and_write_emits_audit() -> None:
                 request=_ToolRequest(
                     tool_name="search_memory",
                     raw={"query": "hello"},
-                    runner=lambda raw: _run_search(raw, client),
+                    runner=lambda raw: _run_verified_tool(
+                        raw, client, _ALLOW, _SEARCH_TOOL
+                    ),
                 ),
             )
         )
@@ -51,7 +62,9 @@ async def test_invoke_search_and_write_emits_audit() -> None:
                 request=_ToolRequest(
                     tool_name="write_memory",
                     raw={"content": "note"},
-                    runner=lambda raw: _run_write(raw, client),
+                    runner=lambda raw: _run_verified_tool(
+                        raw, client, _ALLOW, _WRITE_TOOL
+                    ),
                 ),
             )
         )
@@ -81,7 +94,7 @@ async def test_invoke_permission_denied_audited() -> None:
         request=_ToolRequest(
             tool_name="write_memory",
             raw={"content": "x"},
-            runner=lambda raw: _run_write(raw, None),
+            runner=lambda raw: _run_verified_tool(raw, None, _ALLOW, _WRITE_TOOL),
         ),
     )
     try:
