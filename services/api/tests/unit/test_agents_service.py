@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from apierror_py import AGENT_HAS_SESSIONS, AGENT_SLUG_CONFLICT, NOT_FOUND, VALIDATION_ERROR
+from apierror_py import (
+    AGENT_HAS_SESSIONS,
+    AGENT_SLUG_CONFLICT,
+    AGENT_STATUS_CONFLICT,
+    NOT_FOUND,
+    VALIDATION_ERROR,
+)
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import ApiError
@@ -229,7 +235,7 @@ async def test_pause_cas_conflict() -> None:
     row = _agent_row(status="active")
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_MapResult(row), _MapResult(None)])
-    await _expect_code(agent_service.pause_agent(session, row.org_id, row.id), VALIDATION_ERROR)
+    await _expect_code(agent_service.pause_agent(session, row.org_id, row.id), AGENT_STATUS_CONFLICT)
 
 
 @pytest.mark.asyncio
@@ -271,6 +277,7 @@ async def test_list_agents_filters_and_cursor() -> None:
         ),
     )
     assert len(page2.data) == 2
+    assert page2.pagination.has_more is False
 
 
 @pytest.mark.asyncio

@@ -30,6 +30,16 @@ def test_blank_description_becomes_none() -> None:
     assert AgentPatch(description="   ").description is None
 
 
+def test_description_utf8_byte_limit() -> None:
+    # 2049 × U+00E9 (2 UTF-8 bytes each) = 4098 > DB octet_length 4096
+    oversized = "é" * 2049
+    assert len(oversized.encode("utf-8")) > 4096
+    with pytest.raises(ValidationError):
+        AgentCreate(name="A", slug="a", description=oversized)
+    with pytest.raises(ValidationError):
+        AgentPatch(description=oversized)
+
+
 def test_empty_provider_rejected() -> None:
     with pytest.raises(ValidationError):
         AgentCreate(name="A", slug="a", default_provider="  ")

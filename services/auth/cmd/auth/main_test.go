@@ -232,25 +232,31 @@ func TestConfigurePostgresPool(t *testing.T) {
 }
 
 func TestRun_StopsOnSignal(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	httpLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, portStr, err := net.SplitHostPort(ln.Addr().String())
+	grpcLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		_ = httpLn.Close()
 		t.Fatal(err)
 	}
-	_ = ln.Close()
-
-	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
+	_, portStr, err := net.SplitHostPort(httpLn.Addr().String())
 	if err != nil {
+		_ = httpLn.Close()
+		_ = grpcLn.Close()
 		t.Fatal(err)
 	}
-	_, grpcPortStr, err := net.SplitHostPort(grpcLis.Addr().String())
+	_, grpcPortStr, err := net.SplitHostPort(grpcLn.Addr().String())
 	if err != nil {
+		_ = httpLn.Close()
+		_ = grpcLn.Close()
 		t.Fatal(err)
 	}
-	_ = grpcLis.Close()
+	// Close only after both ports are reserved so the kernel cannot reuse one
+	// ephemeral port for both IBEX_PORT and IBEX_GRPC_PORT.
+	_ = httpLn.Close()
+	_ = grpcLn.Close()
 
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable")

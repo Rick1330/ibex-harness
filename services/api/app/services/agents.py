@@ -10,6 +10,7 @@ from uuid import UUID
 from apierror_py import (
     AGENT_HAS_SESSIONS,
     AGENT_SLUG_CONFLICT,
+    AGENT_STATUS_CONFLICT,
     NOT_FOUND,
     VALIDATION_ERROR,
 )
@@ -519,7 +520,7 @@ async def set_agent_status(
     )
     if result.mappings().first() is None:
         raise ApiError(
-            code=VALIDATION_ERROR,
+            code=AGENT_STATUS_CONFLICT,
             message="Agent status changed concurrently; retry the lifecycle transition",
         )
     updated = await get_agent(session, org_id, agent_id)

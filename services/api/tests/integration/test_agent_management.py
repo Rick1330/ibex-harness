@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -102,20 +103,23 @@ class _SeedAgent:
     name: str
     slug: str
     total_sessions: int = 0
+    tags: tuple[str, ...] = ()
 
 
 async def _insert_agent(factory: async_sessionmaker[AsyncSession], seed: _SeedAgent) -> UUID:
     agent_id = uuid4()
     await _sa(
         factory,
-        "INSERT INTO ibex_core.agents (id, org_id, name, slug, total_sessions) VALUES "
-        "(CAST(:id AS uuid), CAST(:org AS uuid), :name, :slug, :sessions)",
+        "INSERT INTO ibex_core.agents (id, org_id, name, slug, total_sessions, tags) VALUES "
+        "(CAST(:id AS uuid), CAST(:org AS uuid), :name, :slug, :sessions, "
+        "ARRAY(SELECT jsonb_array_elements_text(CAST(:tags_json AS jsonb))))",
         {
             "id": str(agent_id),
             "org": str(seed.org_id),
             "name": seed.name,
             "slug": seed.slug,
             "sessions": seed.total_sessions,
+            "tags_json": json.dumps(list(seed.tags)),
         },
     )
     return agent_id
@@ -182,7 +186,9 @@ def _assert_create_pause_iso(client: TestClient, org: _Tenant, foreign_agent: UU
         params={"status": "active", "tags": "prod", "search": "Support"},
     )
     assert listed.status_code == 200
-    assert any(item["id"] == agent_id for item in listed.json()["data"])
+    listed_ids = {item["id"] for item in listed.json()["data"]}
+    assert agent_id in listed_ids
+    assert str(foreign_agent) not in listed_ids
 
     paused = client.post(f"/v1/agents/{agent_id}/pause", headers=_AUTH)
     assert paused.status_code == 200
@@ -214,7 +220,12 @@ async def test_agent_crud_pause_and_cross_tenant_404(
     async with _tenants(factory, "aga", "agb") as (org_a, org_b):
         foreign = await _insert_agent(
             factory,
-            _SeedAgent(org_id=org_b.org_id, name="B Agent", slug=f"b-{org_b.org_id.hex[:8]}"),
+            _SeedAgent(
+                org_id=org_b.org_id,
+                name="Support (foreign)",
+                slug=f"support-b-{org_b.org_id.hex[:8]}",
+                tags=("prod",),
+            ),
         )
         with _client(org_a.org_id, str(org_a.user_id)) as client:
             _assert_create_pause_iso(client, org_a, foreign)

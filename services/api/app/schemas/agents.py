@@ -27,7 +27,7 @@ _MAX_METADATA_BYTES = 8192
 _MAX_TAGS = 32
 _MAX_PROVIDER_LEN = 64
 _MAX_MODEL_LEN = 128
-_MAX_DESCRIPTION_LEN = 4096
+_MAX_DESCRIPTION_BYTES = 4096
 
 
 def _validate_json_object_bounds(
@@ -66,7 +66,12 @@ def _strip_optional_description(value: str | None) -> str | None:
     if value is None:
         return None
     stripped = value.strip()
-    return stripped or None
+    if not stripped:
+        return None
+    if len(stripped.encode("utf-8")) > _MAX_DESCRIPTION_BYTES:
+        msg = f"description must be at most {_MAX_DESCRIPTION_BYTES} UTF-8 bytes"
+        raise ValueError(msg)
+    return stripped
 
 
 def _bound_config(value: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -116,7 +121,7 @@ class AgentResponse(BaseModel):
 class _AgentWritable(BaseModel):
     """Shared create/patch fields — validators live once to avoid Sonar clones."""
 
-    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LEN)
+    description: str | None = None
     config: dict[str, Any] | None = None
     tags: list[TagStr] | None = Field(default=None, max_length=_MAX_TAGS)
     metadata: dict[str, Any] | None = None

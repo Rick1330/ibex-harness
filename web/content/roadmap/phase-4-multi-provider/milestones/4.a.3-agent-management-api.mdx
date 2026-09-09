@@ -40,7 +40,7 @@ fullTitle: "Milestone 4.A.3 — Agent Management API"
   - **`GET …/stats` deferred** (out of scope).
   - **Pause→proxy ≤5s** proven in proxy security-integration via the same SQL as API `pause` (CI has no Python API process); HTTP `POST …/pause` covered by API integration tests.
   - Mutating auth: owner/admin + **`ORG_SETTINGS_WRITE`** (`RequireOrgSettings`); reads: any authenticated org token.
-  - Soft-delete (`deleted_at`) when `total_sessions == 0`; else 409 `AGENT_HAS_SESSIONS`.
+  - Soft-delete (`deleted_at`) when `total_sessions == 0` and no live session rows; else 409 `AGENT_HAS_SESSIONS`.
 </Callout>
 
 ## Why This Milestone Exists
@@ -111,10 +111,10 @@ class AgentResponse(BaseModel):
  org_id: UUID
  slug: str # unique per org, URL-safe, immutable after creation
  name: str
- status: Literal["active", "paused", "archived"]
- default_provider: str | None # NEW — e.g. "anthropic", "openai"; null = platform default
- default_model: str | None # NEW — e.g. "claude-3-5-sonnet-20241022"; null = org/platform default
- directive_id: UUID | None
+ status: Literal["active", "paused", "suspended", "archived"]
+ default_provider: str | None # soft-validated (non-empty + max length); null = platform default
+ default_model: str | None # soft-validated (non-empty + max length); null = org/platform default
+ active_directive_version_id: UUID | None
  total_sessions: int
  created_at: datetime
  updated_at: datetime
@@ -126,9 +126,9 @@ class AgentResponse(BaseModel):
 
 - Slug is immutable after creation (changing it would break external integrations that reference agents by slug).
 - `slug` uniqueness enforced at DB level (`UNIQUE (org_id, slug)`); API returns 409 `AGENT_SLUG_CONFLICT` on collision.
-- Soft-delete blocked when sessions exist (`total_sessions > 0` or live session rows) — returns 409 `AGENT_HAS_SESSIONS`. Use `archive` instead; otherwise sets `deleted_at`.
-- `default_provider` should be one of the registered provider names or null; validation done at the API layer (not just a DB constraint) with an explicit 422 on unknown provider name.
-- Pausing an agent propagates to the proxy: paused agents return `AGENT_SUSPENDED` on subsequent requests (same enforcement path as org suspension from 4.A.2).
+- Soft-delete (`deleted_at`) succeeds only when `total_sessions == 0` **and** no live session rows exist; otherwise returns 409 `AGENT_HAS_SESSIONS`. Use `archive` instead.
+- `default_provider` / `default_model` use soft API validation only (non-empty + max length when set). Registered-provider allowlist is deferred to Track C discovery — unknown names are not rejected here.
+- Pausing an agent propagates to the proxy: paused agents return `AGENT_SUSPENDED` on subsequent requests (ValidateAgent is uncached; ≤5s product SLA).
 
 ---
 
