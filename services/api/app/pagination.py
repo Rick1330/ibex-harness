@@ -42,35 +42,19 @@ def decode_cursor(cursor: str | None) -> dict[str, Any] | None:
     return data
 
 
-def _encode_next_cursor(
-    *,
-    has_more: bool,
-    page_rows: list[Any],
-    cursor_payload: dict[str, Any] | None,
-) -> str | None:
-    if not has_more or not page_rows or cursor_payload is None:
-        return None
-    return encode_cursor(cursor_payload)
-
-
 def page_from_rows[T](
     rows: list[T],
     *,
     limit: int,
-    cursor_payload: dict[str, Any] | None,
+    next_cursor: str | None = None,
     total_count: int | None = None,
 ) -> CursorPage[T]:
     has_more = len(rows) > limit
-    page_rows = rows[:limit]
     return CursorPage(
-        data=page_rows,
+        data=rows[:limit],
         pagination=PaginationMeta(
             has_more=has_more,
-            next_cursor=_encode_next_cursor(
-                has_more=has_more,
-                page_rows=page_rows,
-                cursor_payload=cursor_payload,
-            ),
+            next_cursor=next_cursor if has_more else None,
             total_count=total_count,
         ),
     )

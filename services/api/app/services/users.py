@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
-from app.pagination import CursorPage, decode_cursor, page_from_rows
+from app.pagination import CursorPage, decode_cursor, encode_cursor, page_from_rows
 from app.schemas.users import UserCreate, UserPatch, UserResponse
 
 _USER_NOT_FOUND = "User not found"
@@ -141,11 +141,9 @@ async def list_users(
     else:
         rows = await _fetch_users_after_cursor(session, org_id, list_cursor, limit)
     users = [_user_from_row(r) for r in rows]
-    return page_from_rows(
-        users,
-        limit=limit,
-        cursor_payload=_next_user_list_payload(users, limit),
-    )
+    payload = _next_user_list_payload(users, limit)
+    next_cursor = encode_cursor(payload) if payload is not None else None
+    return page_from_rows(users, limit=limit, next_cursor=next_cursor)
 
 
 async def get_user(session: AsyncSession, org_id: UUID, user_id: UUID) -> UserResponse:
@@ -187,15 +185,17 @@ async def _insert_invited_user(session: AsyncSession, org_id: UUID, body: UserCr
     return row
 
 
-async def _insert_invite_row(
-    session: AsyncSession,
-    *,
-    org_id: UUID,
-    body: UserCreate,
-    token_hash: str,
-    expires_at: datetime,
-    created_by: UUID | None,
-) -> None:
+@dataclass(frozen=True)
+class _InviteRow:
+    org_id: UUID
+    email: str
+    role: str
+    token_hash: str
+    expires_at: datetime
+    created_by: UUID | None
+
+
+async def _insert_invite_row(session: AsyncSession, invite: _InviteRow) -> None:
     await session.execute(
         text(
             """
@@ -205,12 +205,12 @@ async def _insert_invite_row(
             """
         ),
         {
-            "org_id": str(org_id),
-            "email": str(body.email).lower(),
-            "role": body.role,
-            "token_hash": token_hash,
-            "expires_at": expires_at,
-            "created_by": str(created_by) if created_by else None,
+            "org_id": str(invite.org_id),
+            "email": invite.email,
+            "role": invite.role,
+            "token_hash": invite.token_hash,
+            "expires_at": invite.expires_at,
+            "created_by": str(invite.created_by) if invite.created_by else None,
         },
     )
 
@@ -229,11 +229,14 @@ async def create_user_invite(
         row = await _insert_invited_user(session, org_id, body)
         await _insert_invite_row(
             session,
-            org_id=org_id,
-            body=body,
-            token_hash=token_hash,
-            expires_at=expires_at,
-            created_by=created_by,
+            _InviteRow(
+                org_id=org_id,
+                email=str(body.email).lower(),
+                role=body.role,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                created_by=created_by,
+            ),
         )
         await session.commit()
     except IntegrityError as exc:

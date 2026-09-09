@@ -25,13 +25,13 @@ def test_decode_cursor_invalid() -> None:
 
 def test_page_from_rows_has_more() -> None:
     rows = [1, 2, 3]
-    page = page_from_rows(rows, limit=2, cursor_payload={"id": "2"})
+    page = page_from_rows(rows, limit=2, next_cursor=encode_cursor({"id": "2"}))
     assert page.data == [1, 2]
     assert page.pagination.has_more is True
     assert page.pagination.next_cursor is not None
 
 
 def test_page_from_rows_complete() -> None:
-    page = page_from_rows([1], limit=2, cursor_payload={"id": "1"})
+    page = page_from_rows([1], limit=2, next_cursor=encode_cursor({"id": "1"}))
     assert page.pagination.has_more is False
     assert page.pagination.next_cursor is None

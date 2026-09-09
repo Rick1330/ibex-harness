@@ -39,8 +39,8 @@ def test_decode_cursor_rejects_non_object() -> None:
 
 
 def test_page_from_rows_edge_branches() -> None:
-    assert page_from_rows([], limit=2, cursor_payload={"id": "x"}).pagination.next_cursor is None
-    page = page_from_rows([1, 2, 3], limit=2, cursor_payload=None)
+    assert page_from_rows([], limit=2, next_cursor="x").pagination.next_cursor is None
+    page = page_from_rows([1, 2, 3], limit=2, next_cursor=None)
     assert page.pagination.has_more is True
     assert page.pagination.next_cursor is None
 

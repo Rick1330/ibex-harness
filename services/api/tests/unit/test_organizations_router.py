@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
 from authclient.permissions import ADMIN, READ_ONLY
 
 from app.auth.client import ValidateResult
@@ -40,40 +41,72 @@ def test_cross_tenant_org_get_returns_404() -> None:
             resp = client.get(f"/v1/organizations/{other_org}", headers=bearer_headers())
         finally:
             client.app.dependency_overrides.clear()
-        assert resp.status_code == 404
-        assert resp.json()["error"]["code"] == "NOT_FOUND"
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
 
 
-def test_get_org_happy_path() -> None:
+@pytest.mark.parametrize(
+    ("role", "token", "perms", "method", "path_suffix", "json_body"),
+    [
+        ("member", "weak", READ_ONLY, "post", "/suspend", None),
+        ("member", "mem", ADMIN, "patch", "", {"name": "Nope"}),
+    ],
+)
+def test_org_mutations_denied_for_non_owners(
+    role: str,
+    token: str,
+    perms: int,
+    method: str,
+    path_suffix: str,
+    json_body: dict | None,
+) -> None:
     org_id = uuid4()
-    row = sample_org_row(org_id)
+    result = ValidateResult(org_id=org_id, permissions=perms, user_id=str(uuid4()))
+    with managed_org_client(
+        ManagedClientOpts(org_id=org_id, role=role, token=token, result=result)
+    ) as (client, _res, _pub):
+        call = getattr(client, method)
+        kwargs: dict = {"headers": bearer_headers(token)}
+        if json_body is not None:
+            kwargs["json"] = json_body
+        resp = call(f"/v1/organizations/{org_id}{path_suffix}", **kwargs)
+    assert resp.status_code == 403
+
+
+def test_get_and_patch_org_happy_paths() -> None:
+    org_id = uuid4()
+    get_row = sample_org_row(org_id)
+    patch_row = sample_org_row(org_id, name="Renamed")
 
     async def _fake_get(_session, oid):
         assert oid == org_id
-        return OrganizationResponse(**row)
+        return OrganizationResponse(**get_row)
+
+    async def _fake_patch(session, oid, body):
+        del session, body
+        return OrganizationResponse(**patch_row)
 
     with patched_managed_client(
         ManagedClientOpts(org_id=org_id, role="member"),
         "app.routers.organizations.org_service.get_organization",
         _fake_get,
     ) as (client, _res, _pub):
-        resp = client.get(f"/v1/organizations/{org_id}", headers=bearer_headers())
-    assert resp.status_code == 200
-    assert resp.json()["id"] == str(org_id)
+        got = client.get(f"/v1/organizations/{org_id}", headers=bearer_headers())
+    assert got.status_code == 200
+    assert got.json()["id"] == str(org_id)
 
-
-def test_suspend_requires_owner_role_bitmap() -> None:
-    org_id = uuid4()
-    weak = ValidateResult(org_id=org_id, permissions=READ_ONLY, user_id=str(uuid4()))
-    with managed_org_client(
-        ManagedClientOpts(org_id=org_id, role="member", token="weak", result=weak)
+    with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="admin"),
+        "app.routers.organizations.org_service.patch_organization",
+        _fake_patch,
     ) as (client, _res, _pub):
-        resp = client.post(
-            f"/v1/organizations/{org_id}/suspend",
-            headers=bearer_headers("weak"),
+        patched = client.patch(
+            f"/v1/organizations/{org_id}",
+            headers=bearer_headers(),
+            json={"name": "Renamed"},
         )
-    assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
+    assert patched.status_code == 200
+    assert patched.json()["name"] == "Renamed"
 
 
 def test_suspend_owner_publishes() -> None:
@@ -95,14 +128,15 @@ def test_suspend_owner_publishes() -> None:
     assert pub.org_ids == [str(org_id)]
 
 
-def test_delete_org_returns_202() -> None:
+def test_delete_org_and_job_lookup() -> None:
     org_id = uuid4()
     job_id = uuid4()
+    now = datetime.now(UTC)
+    calls: list[tuple[str, str]] = []
 
     async def _fake_enqueue(session, oid, *, enqueue_fn):
         del session
         enqueue_fn(str(job_id), str(oid))
-        now = datetime.now(UTC)
         return OrgDeletionJobResponse(
             id=job_id,
             org_id=oid,
@@ -111,37 +145,6 @@ def test_delete_org_returns_202() -> None:
             created_at=now,
             updated_at=now,
         )
-
-    calls: list[tuple[str, str]] = []
-    with patched_managed_client(
-        ManagedClientOpts(org_id=org_id, role="owner", enqueue_calls=calls),
-        "app.routers.organizations.org_service.enqueue_org_deletion",
-        _fake_enqueue,
-    ) as (client, _res, _pub):
-        resp = client.delete(f"/v1/organizations/{org_id}", headers=bearer_headers())
-    assert resp.status_code == 202
-    assert resp.json()["status"] == "pending"
-    assert calls == [(str(job_id), str(org_id))]
-
-
-def test_member_cannot_patch_org() -> None:
-    org_id = uuid4()
-    member = ValidateResult(org_id=org_id, permissions=ADMIN, user_id=str(uuid4()))
-    with managed_org_client(
-        ManagedClientOpts(org_id=org_id, role="member", token="mem", result=member)
-    ) as (client, _res, _pub):
-        resp = client.patch(
-            f"/v1/organizations/{org_id}",
-            headers=bearer_headers("mem"),
-            json={"name": "Nope"},
-        )
-    assert resp.status_code == 403
-
-
-def test_get_deletion_job() -> None:
-    org_id = uuid4()
-    job_id = uuid4()
-    now = datetime.now(UTC)
 
     async def _fake_job(session, oid, jid):
         del session
@@ -156,35 +159,23 @@ def test_get_deletion_job() -> None:
         )
 
     with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="owner", enqueue_calls=calls),
+        "app.routers.organizations.org_service.enqueue_org_deletion",
+        _fake_enqueue,
+    ) as (client, _res, _pub):
+        deleted = client.delete(f"/v1/organizations/{org_id}", headers=bearer_headers())
+    assert deleted.status_code == 202
+    assert deleted.json()["status"] == "pending"
+    assert calls == [(str(job_id), str(org_id))]
+
+    with patched_managed_client(
         ManagedClientOpts(org_id=org_id, role="owner"),
         "app.routers.organizations.org_service.get_deletion_job",
         _fake_job,
     ) as (client, _res, _pub):
-        resp = client.get(
+        job = client.get(
             f"/v1/organizations/{org_id}/deletion-jobs/{job_id}",
             headers=bearer_headers(),
         )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "running"
-
-
-def test_patch_org_happy_path() -> None:
-    org_id = uuid4()
-    row = sample_org_row(org_id, name="Renamed")
-
-    async def _fake_patch(session, oid, body):
-        del session, body
-        return OrganizationResponse(**row)
-
-    with patched_managed_client(
-        ManagedClientOpts(org_id=org_id, role="admin"),
-        "app.routers.organizations.org_service.patch_organization",
-        _fake_patch,
-    ) as (client, _res, _pub):
-        resp = client.patch(
-            f"/v1/organizations/{org_id}",
-            headers=bearer_headers(),
-            json={"name": "Renamed"},
-        )
-    assert resp.status_code == 200
-    assert resp.json()["name"] == "Renamed"
+    assert job.status_code == 200
+    assert job.json()["status"] == "running"
