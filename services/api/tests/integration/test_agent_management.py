@@ -151,6 +151,11 @@ async def _tenants(
         await _cleanup_orgs(factory, *[t.org_id for t in seeded])
 
 
+def _assert_not_found(resp) -> None:
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+
 def _assert_create_pause_iso(client: TestClient, org: _Tenant, foreign_agent: UUID) -> None:
     slug = f"support-{org.org_id.hex[:8]}"
     created = client.post(
@@ -183,9 +188,7 @@ def _assert_create_pause_iso(client: TestClient, org: _Tenant, foreign_agent: UU
     assert paused.status_code == 200
     assert paused.json()["status"] == "paused"
 
-    leaked = client.get(f"/v1/agents/{foreign_agent}", headers=_AUTH)
-    assert leaked.status_code == 404
-    assert leaked.json()["error"]["code"] == "NOT_FOUND"
+    _assert_not_found(client.get(f"/v1/agents/{foreign_agent}", headers=_AUTH))
 
     conflict = client.post("/v1/agents", headers=_AUTH, json={"name": "Dup", "slug": slug})
     assert conflict.status_code == 409
@@ -193,6 +196,15 @@ def _assert_create_pause_iso(client: TestClient, org: _Tenant, foreign_agent: UU
 
     deleted = client.delete(f"/v1/agents/{agent_id}", headers=_AUTH)
     assert deleted.status_code == 204
+
+
+def _assert_iso_agent_mutations_404(client: TestClient, foreign_agent: UUID) -> None:
+    """TestAPI_ISO_AGENT_*: org A cannot modify/delete org B's agent (anti-enumeration 404)."""
+    path = f"/v1/agents/{foreign_agent}"
+    _assert_not_found(client.patch(path, headers=_AUTH, json={"name": "leaked"}))
+    _assert_not_found(client.delete(path, headers=_AUTH))
+    for action in ("pause", "activate", "archive"):
+        _assert_not_found(client.post(f"{path}/{action}", headers=_AUTH))
 
 
 @pytest.mark.asyncio
@@ -206,6 +218,24 @@ async def test_agent_crud_pause_and_cross_tenant_404(
         )
         with _client(org_a.org_id, str(org_a.user_id)) as client:
             _assert_create_pause_iso(client, org_a, foreign)
+
+
+@pytest.mark.asyncio
+async def test_api_iso_agent_cross_tenant_mutations_404(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with _tenants(factory, "iso-a", "iso-b") as (org_a, org_b):
+        foreign = await _insert_agent(
+            factory,
+            _SeedAgent(
+                org_id=org_b.org_id,
+                name="Foreign Agent",
+                slug=f"foreign-{org_b.org_id.hex[:8]}",
+            ),
+        )
+        with _client(org_a.org_id, str(org_a.user_id)) as client:
+            _assert_not_found(client.get(f"/v1/agents/{foreign}", headers=_AUTH))
+            _assert_iso_agent_mutations_404(client, foreign)
 
 
 @pytest.mark.asyncio
