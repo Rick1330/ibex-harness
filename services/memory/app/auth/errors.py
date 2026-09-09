@@ -1,11 +1,7 @@
-"""Auth-specific errors (fail closed on unavailable)."""
+"""Auth domain errors for memory (re-exported from authclient)."""
 
 from __future__ import annotations
 
+from authclient.errors import AuthFailedError, AuthUnavailableError
 
-class AuthFailedError(Exception):
-    """Invalid or missing bearer token."""
-
-
-class AuthUnavailableError(Exception):
-    """Auth gRPC unreachable."""
+__all__ = ["AuthFailedError", "AuthUnavailableError"]
