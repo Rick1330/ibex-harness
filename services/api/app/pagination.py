@@ -48,11 +48,7 @@ def _encode_next_cursor(
     page_rows: list[Any],
     cursor_payload: dict[str, Any] | None,
 ) -> str | None:
-    if not has_more:
-        return None
-    if not page_rows:
-        return None
-    if cursor_payload is None:
+    if not has_more or not page_rows or cursor_payload is None:
         return None
     return encode_cursor(cursor_payload)
 

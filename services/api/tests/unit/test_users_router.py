@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
 from uuid import uuid4
 
 from authclient.permissions import ADMIN, READ_ONLY
@@ -12,7 +11,9 @@ from app.pagination import CursorPage, PaginationMeta
 from app.schemas.users import UserResponse
 from tests.unit.org_user_test_support import (
     ManagedClientOpts,
+    bearer_headers,
     managed_org_client,
+    patched_managed_client,
     sample_user_row,
 )
 
@@ -27,13 +28,14 @@ def test_create_user_returns_invite_token_once() -> None:
         assert body.email == "new@example.com"
         return UserResponse(**row, invite_token="raw-invite-token")
 
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id, role="admin")) as (client, _res, _pub),
-        patch("app.routers.users.user_service.create_user_invite", new=_fake_create),
-    ):
+    with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="admin"),
+        "app.routers.users.user_service.create_user_invite",
+        _fake_create,
+    ) as (client, _res, _pub):
         resp = client.post(
             "/v1/users",
-            headers={"Authorization": "Bearer owner-token"},
+            headers=bearer_headers(),
             json={"email": "new@example.com", "name": "New", "role": "member"},
         )
     assert resp.status_code == 201
@@ -55,11 +57,12 @@ def test_list_users_returns_cursor_page() -> None:
             pagination=PaginationMeta(has_more=False, next_cursor=None),
         )
 
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id, role="admin")) as (client, _res, _pub),
-        patch("app.routers.users.user_service.list_users", new=_fake_list),
-    ):
-        resp = client.get("/v1/users", headers={"Authorization": "Bearer owner-token"})
+    with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="admin"),
+        "app.routers.users.user_service.list_users",
+        _fake_list,
+    ) as (client, _res, _pub):
+        resp = client.get("/v1/users", headers=bearer_headers())
     assert resp.status_code == 200
     body = resp.json()
     assert body["pagination"]["has_more"] is False
@@ -72,7 +75,7 @@ def test_member_cannot_list_users() -> None:
     with managed_org_client(
         ManagedClientOpts(org_id=org_id, role="member", token="mem", result=member)
     ) as (client, _res, _pub):
-        resp = client.get("/v1/users", headers={"Authorization": "Bearer mem"})
+        resp = client.get("/v1/users", headers=bearer_headers("mem"))
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
@@ -84,10 +87,7 @@ def test_viewer_cannot_get_user() -> None:
     with managed_org_client(
         ManagedClientOpts(org_id=org_id, role="viewer", token="viewer", result=viewer)
     ) as (client, _res, _pub):
-        resp = client.get(
-            f"/v1/users/{user_id}",
-            headers={"Authorization": "Bearer viewer"},
-        )
+        resp = client.get(f"/v1/users/{user_id}", headers=bearer_headers("viewer"))
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
@@ -102,14 +102,12 @@ def test_delete_user_204() -> None:
         assert uid == user_id
         assert revoke.access_token
 
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id, role="admin")) as (client, _res, _pub),
-        patch("app.routers.users.user_service.soft_delete_user", new=_fake_delete),
-    ):
-        resp = client.delete(
-            f"/v1/users/{user_id}",
-            headers={"Authorization": "Bearer owner-token"},
-        )
+    with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="admin"),
+        "app.routers.users.user_service.soft_delete_user",
+        _fake_delete,
+    ) as (client, _res, _pub):
+        resp = client.delete(f"/v1/users/{user_id}", headers=bearer_headers())
     assert resp.status_code == 204
 
 
@@ -124,13 +122,14 @@ def test_patch_user_route() -> None:
         assert uid == user_id
         return UserResponse(**row)
 
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id, role="admin")) as (client, _res, _pub),
-        patch("app.routers.users.user_service.patch_user", new=_fake_patch),
-    ):
+    with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="admin"),
+        "app.routers.users.user_service.patch_user",
+        _fake_patch,
+    ) as (client, _res, _pub):
         resp = client.patch(
             f"/v1/users/{user_id}",
-            headers={"Authorization": "Bearer owner-token"},
+            headers=bearer_headers(),
             json={"name": "Patched"},
         )
     assert resp.status_code == 200
@@ -149,13 +148,11 @@ def test_get_user_not_found_envelope() -> None:
 
         raise ApiError(code=NOT_FOUND, message="User not found")
 
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id, role="admin")) as (client, _res, _pub),
-        patch("app.routers.users.user_service.get_user", new=_fake_get),
-    ):
-        resp = client.get(
-            f"/v1/users/{user_id}",
-            headers={"Authorization": "Bearer owner-token"},
-        )
+    with patched_managed_client(
+        ManagedClientOpts(org_id=org_id, role="admin"),
+        "app.routers.users.user_service.get_user",
+        _fake_get,
+    ) as (client, _res, _pub):
+        resp = client.get(f"/v1/users/{user_id}", headers=bearer_headers())
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "NOT_FOUND"

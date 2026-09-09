@@ -71,6 +71,25 @@ def managed_org_client(
             client.app.dependency_overrides.clear()
 
 
+def bearer_headers(token: str = "owner-token") -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@contextmanager
+def patched_managed_client(
+    opts: ManagedClientOpts,
+    patch_target: str,
+    fake: Any,
+) -> Iterator[tuple[TestClient, ValidateResult, RecordingOrgSuspendPublisher]]:
+    from unittest.mock import patch
+
+    with (
+        managed_org_client(opts) as (client, res, pub),
+        patch(patch_target, new=fake),
+    ):
+        yield client, res, pub
+
+
 @contextmanager
 def api_client(
     *,

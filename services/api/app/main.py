@@ -144,6 +144,20 @@ async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
         logger.info("api service stopped request_id=%s", request_id_for_log())
 
 
+async def _startup_database(
+    state: ApiAppState,
+    cfg: Settings,
+    auth: TokenValidator,
+) -> None:
+    if not cfg.database_url:
+        _mark_not_ready(state, "IBEX_API_DATABASE_URL not set")
+        return
+    engine = create_engine(cfg)
+    state.engine = engine
+    state.session_factory = create_session_factory(engine)
+    await _refresh_readiness(state, auth=auth, engine=engine)
+
+
 @asynccontextmanager
 async def _api_service_lifespan(
     state: ApiAppState,
@@ -157,17 +171,8 @@ async def _api_service_lifespan(
     )
     state.validator = auth
     _wire_runtime_defaults(state, cfg)
-
     try:
-        if not cfg.database_url:
-            _mark_not_ready(state, "IBEX_API_DATABASE_URL not set")
-            yield
-            return
-
-        engine = create_engine(cfg)
-        state.engine = engine
-        state.session_factory = create_session_factory(engine)
-        await _refresh_readiness(state, auth=auth, engine=engine)
+        await _startup_database(state, cfg, auth)
         yield
     finally:
         await _close_runtime(state, auth)

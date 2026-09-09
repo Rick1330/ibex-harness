@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -42,14 +43,25 @@ def _revoke_context(
     )
 
 
-@router.get("")
-async def list_users(
+@dataclass(frozen=True)
+class _UserListCtx:
+    org_id: UUID
+    session: AsyncSession
+    query: ListQuery
+
+
+async def _user_list_ctx(
     token: RequireUserManage,
     session: Annotated[AsyncSession, Depends(org_session)],
     query: Annotated[ListQuery, Depends(_list_query)],
-) -> CursorPage[UserResponse]:
+) -> _UserListCtx:
+    return _UserListCtx(org_id=token.org_id, session=session, query=query)
+
+
+@router.get("")
+async def list_users(ctx: Annotated[_UserListCtx, Depends(_user_list_ctx)]) -> CursorPage[UserResponse]:
     return await user_service.list_users(
-        session, token.org_id, cursor=query.cursor, limit=query.limit
+        ctx.session, ctx.org_id, cursor=ctx.query.cursor, limit=ctx.query.limit
     )
 
 

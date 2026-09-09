@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import LAST_OWNER_PROTECTED, NOT_FOUND
+from authclient.errors import AuthUnavailableError
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import ApiError
+from app.pagination import encode_cursor
 from app.schemas.users import UserCreate, UserPatch
 from app.services import users as user_service
 
@@ -61,6 +63,31 @@ def _user(**overrides):
     return SimpleNamespace(**base)
 
 
+def _soft_delete_fixture(
+    *,
+    role: str = "member",
+    token_ids: list[str] | None = None,
+    rowcount: int | None = 1,
+    owner_count: int | None = None,
+) -> tuple[UUID, UUID, AsyncMock, AsyncMock]:
+    org_id = uuid4()
+    user_id = uuid4()
+    current = _user(id=user_id, org_id=org_id, role=role)
+    session = AsyncMock()
+    effects: list = [_ScalarResult(current)]
+    if owner_count is not None:
+        effects.append(_ScalarResult(owner_count))
+    if token_ids is not None:
+        effects.append(_ScalarResult([SimpleNamespace(id=tid) for tid in token_ids]))
+    if rowcount is not None:
+        effects.append(MagicMock(rowcount=rowcount))
+    session.execute = AsyncMock(side_effect=effects)
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    revoker = AsyncMock()
+    return org_id, user_id, session, revoker
+
+
 @pytest.mark.asyncio
 async def test_assert_not_last_owner_blocks() -> None:
     session = AsyncMock()
@@ -93,9 +120,8 @@ async def test_patch_user_last_owner_demotion() -> None:
     current = _user(id=user_id, org_id=org_id, role="owner", email="owner@example.com")
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
-    patch = UserPatch(role="admin")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, patch)
+        await user_service.patch_user(session, org_id, user_id, UserPatch(role="admin"))
     assert exc.value.code == LAST_OWNER_PROTECTED
 
 
@@ -114,19 +140,7 @@ async def test_patch_user_success() -> None:
 
 @pytest.mark.asyncio
 async def test_soft_delete_revokes_tokens() -> None:
-    org_id = uuid4()
-    user_id = uuid4()
-    current = _user(id=user_id, org_id=org_id, role="member")
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            _ScalarResult(current),
-            _ScalarResult([SimpleNamespace(id="tok-1"), SimpleNamespace(id="tok-2")]),
-            MagicMock(rowcount=1),
-        ]
-    )
-    session.commit = AsyncMock()
-    revoker = AsyncMock()
+    org_id, user_id, session, revoker = _soft_delete_fixture(token_ids=["tok-1", "tok-2"])
     await user_service.soft_delete_user(
         session,
         org_id,
@@ -135,30 +149,14 @@ async def test_soft_delete_revokes_tokens() -> None:
     )
     assert revoker.revoke.await_count == 2
     session.commit.assert_awaited()
-    # Revokes complete before soft-delete commit.
     assert revoker.revoke.await_args_list[0].kwargs["token_id"] == "tok-1"
 
 
 @pytest.mark.asyncio
 async def test_soft_delete_auth_unavailable_skips_commit(monkeypatch: pytest.MonkeyPatch) -> None:
-    from authclient.errors import AuthUnavailableError
-
-    org_id = uuid4()
-    user_id = uuid4()
-    current = _user(id=user_id, org_id=org_id, role="member")
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            _ScalarResult(current),
-            _ScalarResult([SimpleNamespace(id="tok-1")]),
-        ]
-    )
-    session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    revoker = AsyncMock()
+    org_id, user_id, session, revoker = _soft_delete_fixture(token_ids=["tok-1"], rowcount=None)
     revoker.revoke = AsyncMock(side_effect=AuthUnavailableError())
     monkeypatch.setattr(user_service.asyncio, "sleep", AsyncMock())
-
     with pytest.raises(AuthUnavailableError):
         await user_service.soft_delete_user(
             session,
@@ -175,24 +173,9 @@ async def test_soft_delete_auth_unavailable_skips_commit(monkeypatch: pytest.Mon
 async def test_soft_delete_auth_unavailable_retries_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from authclient.errors import AuthUnavailableError
-
-    org_id = uuid4()
-    user_id = uuid4()
-    current = _user(id=user_id, org_id=org_id, role="member")
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            _ScalarResult(current),
-            _ScalarResult([SimpleNamespace(id="tok-1")]),
-            MagicMock(rowcount=1),
-        ]
-    )
-    session.commit = AsyncMock()
-    revoker = AsyncMock()
+    org_id, user_id, session, revoker = _soft_delete_fixture(token_ids=["tok-1"])
     revoker.revoke = AsyncMock(side_effect=[AuthUnavailableError(), None])
     monkeypatch.setattr(user_service.asyncio, "sleep", AsyncMock())
-
     await user_service.soft_delete_user(
         session,
         org_id,
@@ -235,8 +218,6 @@ async def test_create_user_invite_integrity_error() -> None:
 
 @pytest.mark.asyncio
 async def test_list_users_with_cursor() -> None:
-    from app.pagination import encode_cursor
-
     org_id = uuid4()
     rows = [_user(org_id=org_id)]
     session = AsyncMock()
@@ -248,12 +229,14 @@ async def test_list_users_with_cursor() -> None:
 
 @pytest.mark.asyncio
 async def test_soft_delete_last_owner_blocked() -> None:
-    org_id = uuid4()
-    user_id = uuid4()
-    current = _user(id=user_id, org_id=org_id, role="owner")
-    session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
-    revoke = user_service.RevokeContext(revoker=AsyncMock(), access_token="x")
+    org_id, user_id, session, revoker = _soft_delete_fixture(
+        role="owner", owner_count=1, token_ids=None, rowcount=None
+    )
     with pytest.raises(ApiError) as exc:
-        await user_service.soft_delete_user(session, org_id, user_id, revoke)
+        await user_service.soft_delete_user(
+            session,
+            org_id,
+            user_id,
+            user_service.RevokeContext(revoker=revoker, access_token="x"),
+        )
     assert exc.value.code == LAST_OWNER_PROTECTED

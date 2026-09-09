@@ -77,46 +77,55 @@ def _parse_user_list_cursor(cursor: str | None) -> _UserListCursor:
     return _UserListCursor(str(created_at), str(user_id))
 
 
-async def _fetch_user_rows(
+async def _fetch_users_first_page(session: AsyncSession, org_id: UUID, limit: int) -> list[Any]:
+    result = await session.execute(
+        text(
+            """
+            SELECT id, org_id, email, name, role, status, created_at, updated_at
+            FROM ibex_core.users
+            WHERE org_id = :org_id AND deleted_at IS NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT :limit
+            """
+        ),
+        {"org_id": str(org_id), "limit": limit + 1},
+    )
+    return list(result.mappings().all())
+
+
+async def _fetch_users_after_cursor(
     session: AsyncSession,
     org_id: UUID,
     cursor: _UserListCursor,
     limit: int,
 ) -> list[Any]:
-    if cursor.created_at is None:
-        result = await session.execute(
-            text(
-                """
-                SELECT id, org_id, email, name, role, status, created_at, updated_at
-                FROM ibex_core.users
-                WHERE org_id = :org_id AND deleted_at IS NULL
-                ORDER BY created_at DESC, id DESC
-                LIMIT :limit
-                """
-            ),
-            {"org_id": str(org_id), "limit": limit + 1},
-        )
-    else:
-        result = await session.execute(
-            text(
-                """
-                SELECT id, org_id, email, name, role, status, created_at, updated_at
-                FROM ibex_core.users
-                WHERE org_id = :org_id AND deleted_at IS NULL
-                  AND (created_at < CAST(:created_at AS timestamptz)
-                       OR (created_at = CAST(:created_at AS timestamptz) AND id < CAST(:id AS uuid)))
-                ORDER BY created_at DESC, id DESC
-                LIMIT :limit
-                """
-            ),
-            {
-                "org_id": str(org_id),
-                "created_at": cursor.created_at,
-                "id": cursor.user_id,
-                "limit": limit + 1,
-            },
-        )
+    result = await session.execute(
+        text(
+            """
+            SELECT id, org_id, email, name, role, status, created_at, updated_at
+            FROM ibex_core.users
+            WHERE org_id = :org_id AND deleted_at IS NULL
+              AND (created_at < CAST(:created_at AS timestamptz)
+                   OR (created_at = CAST(:created_at AS timestamptz) AND id < CAST(:id AS uuid)))
+            ORDER BY created_at DESC, id DESC
+            LIMIT :limit
+            """
+        ),
+        {
+            "org_id": str(org_id),
+            "created_at": cursor.created_at,
+            "id": cursor.user_id,
+            "limit": limit + 1,
+        },
+    )
     return list(result.mappings().all())
+
+
+def _next_user_list_payload(users: list[UserResponse], limit: int) -> dict[str, str] | None:
+    if len(users) <= limit:
+        return None
+    last = users[limit - 1]
+    return {"created_at": last.created_at.isoformat(), "id": str(last.id)}
 
 
 async def list_users(
@@ -127,16 +136,16 @@ async def list_users(
     limit: int,
 ) -> CursorPage[UserResponse]:
     list_cursor = _parse_user_list_cursor(cursor)
-    rows = await _fetch_user_rows(session, org_id, list_cursor, limit)
-    users = [_user_from_row(r) for r in rows[: limit + 1]]
-    next_payload = None
-    if len(users) > limit:
-        last = users[limit - 1]
-        next_payload = {
-            "created_at": last.created_at.isoformat(),
-            "id": str(last.id),
-        }
-    return page_from_rows(users, limit=limit, cursor_payload=next_payload)
+    if list_cursor.created_at is None:
+        rows = await _fetch_users_first_page(session, org_id, limit)
+    else:
+        rows = await _fetch_users_after_cursor(session, org_id, list_cursor, limit)
+    users = [_user_from_row(r) for r in rows]
+    return page_from_rows(
+        users,
+        limit=limit,
+        cursor_payload=_next_user_list_payload(users, limit),
+    )
 
 
 async def get_user(session: AsyncSession, org_id: UUID, user_id: UUID) -> UserResponse:
@@ -156,6 +165,56 @@ async def get_user(session: AsyncSession, org_id: UUID, user_id: UUID) -> UserRe
     return _user_from_row(row)
 
 
+async def _insert_invited_user(session: AsyncSession, org_id: UUID, body: UserCreate) -> Any:
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.users (org_id, email, name, role, status)
+            VALUES (:org_id, :email, :name, :role, 'invited')
+            RETURNING id, org_id, email, name, role, status, created_at, updated_at
+            """
+        ),
+        {
+            "org_id": str(org_id),
+            "email": str(body.email).lower(),
+            "name": body.name,
+            "role": body.role,
+        },
+    )
+    row = result.mappings().first()
+    if row is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Unable to create user")
+    return row
+
+
+async def _insert_invite_row(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    body: UserCreate,
+    token_hash: str,
+    expires_at: datetime,
+    created_by: UUID | None,
+) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.organization_invites
+                (org_id, email, role, token_hash, expires_at, created_by)
+            VALUES (:org_id, :email, :role, :token_hash, :expires_at, :created_by)
+            """
+        ),
+        {
+            "org_id": str(org_id),
+            "email": str(body.email).lower(),
+            "role": body.role,
+            "token_hash": token_hash,
+            "expires_at": expires_at,
+            "created_by": str(created_by) if created_by else None,
+        },
+    )
+
+
 async def create_user_invite(
     session: AsyncSession,
     org_id: UUID,
@@ -166,42 +225,15 @@ async def create_user_invite(
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
     expires_at = datetime.now(UTC) + timedelta(hours=72)
-
     try:
-        result = await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.users (org_id, email, name, role, status)
-                VALUES (:org_id, :email, :name, :role, 'invited')
-                RETURNING id, org_id, email, name, role, status, created_at, updated_at
-                """
-            ),
-            {
-                "org_id": str(org_id),
-                "email": str(body.email).lower(),
-                "name": body.name,
-                "role": body.role,
-            },
-        )
-        row = result.mappings().first()
-        if row is None:
-            raise ApiError(code=VALIDATION_ERROR, message="Unable to create user")
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.organization_invites
-                    (org_id, email, role, token_hash, expires_at, created_by)
-                VALUES (:org_id, :email, :role, :token_hash, :expires_at, :created_by)
-                """
-            ),
-            {
-                "org_id": str(org_id),
-                "email": str(body.email).lower(),
-                "role": body.role,
-                "token_hash": token_hash,
-                "expires_at": expires_at,
-                "created_by": str(created_by) if created_by else None,
-            },
+        row = await _insert_invited_user(session, org_id, body)
+        await _insert_invite_row(
+            session,
+            org_id=org_id,
+            body=body,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            created_by=created_by,
         )
         await session.commit()
     except IntegrityError as exc:
