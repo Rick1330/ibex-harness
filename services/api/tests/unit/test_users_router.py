@@ -87,8 +87,8 @@ def test_patch_get_delete_user_routes() -> None:
     user_id = uuid4()
     row = sample_user_row(org_id, id=user_id, name="Patched")
 
-    async def _fake_patch(session, oid, uid, body):
-        del session, body
+    async def _fake_patch(session, oid, uid, body, *, caller_role):
+        del session, body, caller_role
         assert oid == org_id
         assert uid == user_id
         return UserResponse(**row)

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-from apierror_py import LAST_OWNER_PROTECTED, NOT_FOUND
+from apierror_py import INSUFFICIENT_PERMISSIONS, LAST_OWNER_PROTECTED, NOT_FOUND
 from authclient.errors import AuthUnavailableError
 from sqlalchemy.exc import IntegrityError
 
@@ -122,7 +122,7 @@ async def test_patch_user_last_owner_demotion() -> None:
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
     patch = UserPatch(role="admin")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, patch)
+        await user_service.patch_user(session, org_id, user_id, patch, caller_role="owner")
     assert exc.value.code == LAST_OWNER_PROTECTED
 
 
@@ -135,8 +135,40 @@ async def test_patch_user_success() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(updated)])
     session.commit = AsyncMock()
-    out = await user_service.patch_user(session, org_id, user_id, UserPatch(name="New"))
+    out = await user_service.patch_user(
+        session, org_id, user_id, UserPatch(name="New"), caller_role="admin"
+    )
     assert out.name == "New"
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_promote_to_owner() -> None:
+    org_id = uuid4()
+    user_id = uuid4()
+    current = _user(id=user_id, org_id=org_id, role="member")
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_ScalarResult(current))
+    patch = UserPatch(role="owner")
+    with pytest.raises(ApiError) as exc:
+        await user_service.patch_user(session, org_id, user_id, patch, caller_role="admin")
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert "owner" in exc.value.message.lower()
+    session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_owner_can_promote_to_owner() -> None:
+    org_id = uuid4()
+    user_id = uuid4()
+    current = _user(id=user_id, org_id=org_id, role="admin")
+    updated = _user(id=user_id, org_id=org_id, role="owner")
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(updated)])
+    session.commit = AsyncMock()
+    out = await user_service.patch_user(
+        session, org_id, user_id, UserPatch(role="owner"), caller_role="owner"
+    )
+    assert out.role == "owner"
 
 
 @pytest.mark.asyncio

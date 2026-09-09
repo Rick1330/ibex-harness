@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
-from apierror_py import LAST_OWNER_PROTECTED, NOT_FOUND, VALIDATION_ERROR
+from apierror_py import INSUFFICIENT_PERMISSIONS, LAST_OWNER_PROTECTED, NOT_FOUND, VALIDATION_ERROR
 from authclient.errors import AuthUnavailableError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -257,10 +257,18 @@ async def patch_user(
     org_id: UUID,
     user_id: UUID,
     patch: UserPatch,
+    *,
+    caller_role: str,
 ) -> UserResponse:
     current = await get_user(session, org_id, user_id)
     name = patch.name if patch.name is not None else current.name
     role = patch.role if patch.role is not None else current.role
+
+    if patch.role == "owner" and caller_role != "owner":
+        raise ApiError(
+            code=INSUFFICIENT_PERMISSIONS,
+            message="Only an owner can promote a user to owner",
+        )
 
     if _is_owner_demotion(current.role, patch.role):
         await _assert_not_last_owner(session, org_id)

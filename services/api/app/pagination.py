@@ -38,6 +38,7 @@ def decode_cursor(cursor: str | None) -> dict[str, Any] | None:
     except ValueError as exc:
         raise ValueError("invalid cursor") from exc
     if not isinstance(data, dict):
+        # Prefer TypeError for wrong JSON shape (ruff TRY004); decode errors above stay ValueError.
         raise TypeError("invalid cursor")
     return data
 

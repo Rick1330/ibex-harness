@@ -67,7 +67,9 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
             try:
                 for stmt in _CASCADE_STATEMENTS:
                     await session.execute(text(stmt), {"org_id": org_id})
-                await _finish_job(session, job_id=job_id, status="succeeded", error=None)
+                await _finish_job(
+                    session, job_id=job_id, org_id=org_id, status="succeeded", error=None
+                )
             except Exception as exc:
                 logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
                 await session.rollback()
@@ -75,6 +77,7 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
                     await _finish_job(
                         fail_session,
                         job_id=job_id,
+                        org_id=org_id,
                         status="failed",
                         error=str(exc)[:500],
                     )
@@ -101,7 +104,9 @@ async def _claim_job(session, *, job_id: str, org_id: str) -> bool:
     return result.first() is not None
 
 
-async def _finish_job(session, *, job_id: str, status: str, error: str | None) -> None:
+async def _finish_job(
+    session, *, job_id: str, org_id: str, status: str, error: str | None
+) -> None:
     await session.execute(
         text(
             """
@@ -110,7 +115,8 @@ async def _finish_job(session, *, job_id: str, status: str, error: str | None) -
                 error = :error,
                 finished_at = NOW()
             WHERE id = CAST(:job_id AS uuid)
+              AND org_id = CAST(:org_id AS uuid)
             """
         ),
-        {"job_id": job_id, "status": status, "error": error},
+        {"job_id": job_id, "org_id": org_id, "status": status, "error": error},
     )

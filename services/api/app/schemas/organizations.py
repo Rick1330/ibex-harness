@@ -40,14 +40,10 @@ class OrganizationResponse(BaseModel):
     tier: str
     status: str
     billing_email: str | None = None
+    # No input-style size bounds: existing DB rows may exceed patch limits.
     settings: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
-
-    @field_validator("settings")
-    @classmethod
-    def _bound_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return _validate_settings_bounds(value) or {}
 
 
 class OrganizationPatch(BaseModel):

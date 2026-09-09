@@ -124,10 +124,12 @@ def _wire_runtime_defaults(state: ApiAppState, cfg: Settings) -> None:
             else NoopOrgSuspendPublisher()
         )
     if state.enqueue_org_deletion is None:
+        from app.services.organizations import unconfigured_org_deletion_enqueue
+
         state.enqueue_org_deletion = (
             _make_celery_enqueue(cfg.celery_broker_url)
             if cfg.celery_broker_url
-            else (lambda _job, _org: None)
+            else unconfigured_org_deletion_enqueue
         )
 
 

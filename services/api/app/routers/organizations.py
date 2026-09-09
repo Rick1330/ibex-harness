@@ -69,7 +69,12 @@ async def delete_org(
     request: Request,
 ) -> OrgDeletionJobResponse:
     assert_path_org(token.org_id, org_id)
-    enqueue = request.app.state.api.enqueue_org_deletion or (lambda _j, _o: None)
+    enqueue = request.app.state.api.enqueue_org_deletion
+    if enqueue is None:
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="Organization deletion queue not configured",
+        )
     return await org_service.enqueue_org_deletion(session, org_id, enqueue_fn=enqueue)
 
 

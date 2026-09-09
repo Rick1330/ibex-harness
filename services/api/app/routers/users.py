@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.client import parse_authorization_header
-from app.authz import RequireUserManage
+from app.authz import RequireUserManage, load_caller_role
 from app.deps import org_session
 from app.pagination import CursorPage, ListQuery
 from app.schemas.users import UserCreate, UserPatch, UserResponse
@@ -92,8 +92,11 @@ async def patch_user(
     body: UserPatch,
     token: RequireUserManage,
     session: Annotated[AsyncSession, Depends(org_session)],
+    caller_role: Annotated[str, Depends(load_caller_role)],
 ) -> UserResponse:
-    return await user_service.patch_user(session, token.org_id, user_id, body)
+    return await user_service.patch_user(
+        session, token.org_id, user_id, body, caller_role=caller_role
+    )
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
