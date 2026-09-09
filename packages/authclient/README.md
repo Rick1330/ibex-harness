@@ -6,6 +6,8 @@ Shared helpers for calling `AuthService.ValidateToken` from IBEX Python services
 - insecure gRPC dial-target trust checks for local/mesh deployments
 - async `GRPCTokenValidator` dial client (`authclient.validate`) — management API and memory re-export it; mcp-memory wraps it to preserve MCPServiceError + `to_principal` (#779)
 
+Consumers: `services/api`, `services/memory`, `services/mcp-memory`.
+
 ## Layout
 
 ```text
