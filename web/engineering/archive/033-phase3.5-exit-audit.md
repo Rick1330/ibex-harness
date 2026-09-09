@@ -73,9 +73,9 @@ Phase 3.5 closes the learning loop: Celery extraction turns completed sessions i
 | Field | Value |
 |-------|-------|
 | **Track** | C / F |
-| **Evidence** | Exit criterion says “p95 &lt; 50ms at 20 concurrent”; `assemble_load` is open-loop RPS (default stub 500 RPS) with p99 assert — not a fixed concurrency=20 CI profile |
-| **Remediation** | Either add a concurrency=20 CI profile or amend criterion wording in a follow-up docs PR after measurement |
-| **Status** | **Open** — accepted measurement debt; not silently closed |
+| **Evidence** | Exit criterion in `index.mdx` says “p95 &lt; 50ms at 20 concurrent requests”; Track C AC in `goals.mdx` says “p95 &lt; 50ms at sustained 500 RPS on 100K-memory corpus”. Local `assemble_load` is open-loop RPS (default stub 500 RPS) with stub p99 assert — not a fixed concurrency=20 CI profile, and live 100K is manual/non-failing. These two published specs disagree; neither is CI-gated today |
+| **Remediation** | Reconcile `index.mdx` vs `goals.mdx` wording (or measure both), then add a matching CI profile; keep criterion #4 **Partial** until then |
+| **Status** | **Open** — accepted measurement + spec-debt; not silently closed |
 
 ### GAP-35-P2-005 — ADR index prose lagged `meta.json` (0066–0072)
 
@@ -101,12 +101,12 @@ Phase 3.5 closes the learning loop: Celery extraction turns completed sessions i
 
 | ID | Item | Rationale | Destination |
 |----|------|-----------|-------------|
-| GAP-35-P3-001 | Carry-forward Phase 3 P2 schema doc gaps (conflict escalations, `memory_versions`, ADR-0057 ENUM drift) | Not Phase 3.5 scope; still open from 032 register | Schema-doc hygiene PR / Phase 4 |
+| GAP-35-P3-001 | Carry-forward Phase 3 P2 schema doc gaps (conflict escalations, `memory_versions`, ADR-0057 ENUM drift) | Not Phase 3.5 scope; still open from 032 register | Schema-doc hygiene / Phase 4 ([#762](https://github.com/Rick1330/ibex-harness/issues/762)) — deferral tracker |
 | GAP-35-P3-002 | Escalation worker for `memory_conflict_escalations` | Still deferred from Phase 3 ([#627](https://github.com/Rick1330/ibex-harness/issues/627) CLOSED as deferral tracker) | Phase 4+ |
 | GAP-35-P3-003 | Org-scope GDPR + MinIO cascade | Still deferred ([#641](https://github.com/Rick1330/ibex-harness/issues/641) CLOSED as deferral tracker) | Phase 4.A.2 |
-| GAP-35-P3-004 | Per-tool / per-agent MCP rate limits | E.4 ships org-wide RPM only (`mcp-memory` README) | Phase 4 ops polish |
-| GAP-35-P3-005 | Live 100K `assemble_load` as required CI | Live profile is manual / non-failing by design (`benchmarks/context/README.md`) | Scheduled / full-profile follow-up |
-| GAP-35-P3-006 | Site registry + bot modules for new suite_ids | Contract-only in F.3; avoid inventing CI without harnesses | Follow-up bench PRs |
+| GAP-35-P3-004 | Per-tool / per-agent MCP rate limits | E.4 ships org-wide RPM only (`mcp-memory` README) | Phase 4 ops polish ([#763](https://github.com/Rick1330/ibex-harness/issues/763)) — deferral tracker |
+| GAP-35-P3-005 | Live 100K `assemble_load` as required CI | Live profile is manual / non-failing by design (`benchmarks/context/README.md`) | Scheduled / full-profile follow-up ([#764](https://github.com/Rick1330/ibex-harness/issues/764)) — deferral tracker |
+| GAP-35-P3-006 | Site registry + bot modules for new suite_ids | Contract-only in F.3; avoid inventing CI without harnesses | Follow-up bench PRs ([#765](https://github.com/Rick1330/ibex-harness/issues/765)) — deferral tracker |
 
 ---
 
