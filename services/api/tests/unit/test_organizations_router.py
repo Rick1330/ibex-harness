@@ -46,20 +46,14 @@ def test_cross_tenant_org_get_returns_404() -> None:
 
 
 @pytest.mark.parametrize(
-    ("role", "token", "perms", "method", "path_suffix", "json_body"),
+    "case",
     [
         ("member", "weak", READ_ONLY, "post", "/suspend", None),
         ("member", "mem", ADMIN, "patch", "", {"name": "Nope"}),
     ],
 )
-def test_org_mutations_denied_for_non_owners(
-    role: str,
-    token: str,
-    perms: int,
-    method: str,
-    path_suffix: str,
-    json_body: dict | None,
-) -> None:
+def test_org_mutations_denied_for_non_owners(case: tuple) -> None:
+    role, token, perms, method, path_suffix, json_body = case
     org_id = uuid4()
     result = ValidateResult(org_id=org_id, permissions=perms, user_id=str(uuid4()))
     with managed_org_client(

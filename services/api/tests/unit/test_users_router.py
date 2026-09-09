@@ -20,15 +20,14 @@ from tests.unit.org_user_test_support import (
 
 
 @pytest.mark.parametrize(
-    ("role", "token", "perms", "method", "path"),
+    "case",
     [
         ("member", "mem", ADMIN, "get", "/v1/users"),
         ("viewer", "viewer", READ_ONLY, "get", None),
     ],
 )
-def test_user_reads_denied_without_manage(
-    role: str, token: str, perms: int, method: str, path: str | None
-) -> None:
+def test_user_reads_denied_without_manage(case: tuple) -> None:
+    role, token, perms, method, path = case
     org_id = uuid4()
     result = ValidateResult(org_id=org_id, permissions=perms, user_id=str(uuid4()))
     target = path or f"/v1/users/{uuid4()}"
