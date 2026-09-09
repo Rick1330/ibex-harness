@@ -2,7 +2,7 @@
 title: "3.5.E.1 MCP server skeleton and transport"
 description: "Deepen existing mcp-memory Streamable HTTP skeleton (G6.M1 / ADR-0050) with dual protocol-version negotiation coverage and RFC 9728 minimum PRM fields — expand the process, do not recreate it."
 summary: "Deepen existing mcp-memory Streamable HTTP skeleton with dual protocol-version negotiation and RFC 9728 minimum protected-resource metadata."
-status: "in-progress"
+status: "completed"
 milestoneId: "3.5.E.1"
 track: "E"
 trackTitle: "MCP Tool Surface"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.E.1 — MCP Server Skeleton and Transport"
 
 # Milestone 3.5.E.1 — MCP Server Skeleton and Transport
 
-**Status:** In progress  
+**Status:** Completed
 **Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
@@ -99,7 +99,7 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 - [x] Auth outage → HTTP 503 fail-closed
 - [x] RFC 9728 PRM at `/.well-known/oauth-protected-resource` includes `resource`, `authorization_servers`, `scopes_supported`
 - [x] Stub tools remain registered (real bodies deferred to 3.5.E.2)
-- [ ] `make mcp-conformance` / `ci-gate-python` paths still pass
+- [x] `make mcp-conformance` / `ci-gate-python` paths still pass
 - [x] Follow-up issues filed: [#728](https://github.com/Rick1330/ibex-harness/issues/728) (RFC 9728 exhaustive fields), [#729](https://github.com/Rick1330/ibex-harness/issues/729) (official conformance harness)
 
 ## Prerequisites

@@ -2,16 +2,17 @@
 title: "Phase 3.5"
 description: "Phase 3.5 closes the learning loop: conversations become memories (extraction) and memories become context on the next request (assembly), wired into the real proxy hot path."
 summary: "Phase 3.5 closes the learning loop: conversations become memories (extraction) and memories become context on the next request (assembly), wired into the real proxy hot path."
-status: "planned"
+status: "completed"
 phase: "phase-3-5-extraction-assembly"
 fullTitle: "Phase 3.5 — Extraction & Context Assembly"
 ---
 
 # Phase 3.5 — Extraction & Context Assembly
 
-<Callout type="note" title="Planning baseline">
-  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
-  Implementation is expected to require further research and may land differently than any sketch.
+<Callout type="success" title="Phase 3.5 complete">
+  Exit audit signed off ([phase35-exit-audit](/roadmap/phase-3-5-extraction-assembly/phase35-exit-audit)).
+  Detailed gap register: [033-phase3.5-exit-audit](/roadmap/archive/033-phase3.5-exit-audit).
+  Decision log: [decisions](/roadmap/phase-3-5-extraction-assembly/decisions).
 </Callout>
 
 <Callout type="info" title="Entry condition">
@@ -90,15 +91,17 @@ Track F (Exit gate — after all):
 - **Degradation ladder:** L0 (full) → L1 (cold-search degraded) → L2 (memory degraded, directive-only) → L3 (full degraded, original messages unchanged). Assembly failure never blocks the LLM response.
 - **Batch extraction:** Per-session-close, not per-turn. Single LLM call covering all unprocessed turns for cross-turn awareness and cost efficiency.
 
+See the [decision log](/roadmap/phase-3-5-extraction-assembly/decisions) for the ADR register.
+
 ## Phase 3.5 Exit Criteria
 
-1. Extraction worker converts a completed session into correctly-categorized memories
-2. A subsequent chat request transparently injects a relevant memory
-3. Zero cross-tenant memory leakage across all ISO-\* and ISO-MCP-\* cases
-4. Context assembly p95 &lt; 50ms at 20 concurrent requests; proxy overhead stays &lt;20ms p99 non-provider time
-5. All 4 degradation-ladder levels independently verified
-6. MCP `search_memory`/`write_memory`/`record_feedback` tools function end-to-end, sharing one substrate with the proxy
-7. MCP server fails closed on auth-service outage; independent rate-limit budget verified
-8. All Phase 1, Phase 2, and Phase 3 regression tests still pass
-9. `make e2e-smoke-p3.5` exits 0
-10. ADR-0038, ADR-0043, ADR-0044 published and indexed
+1. Extraction worker converts a completed session into correctly-categorized memories — **met** (F.1)
+2. A subsequent chat request transparently injects a relevant memory — **met** (F.1)
+3. Zero cross-tenant memory leakage across all ISO-\* and ISO-MCP-\* cases — **met** (F.2 + Phase 3 ISO-\*)
+4. Context assembly p95 &lt; 50ms at 20 concurrent requests; proxy overhead stays &lt;20ms p99 non-provider time — **partial** (local harness + proxy microbench; dedicated suites deferred — see exit audit)
+5. All 4 degradation-ladder levels independently verified — **met** (C.6 + F.1 L3)
+6. MCP `search_memory`/`write_memory`/`record_feedback` tools function end-to-end, sharing one substrate with the proxy — **met** (E.2–E.3)
+7. MCP server fails closed on auth-service outage; independent rate-limit budget verified — **met** (E.4)
+8. All Phase 1, Phase 2, and Phase 3 regression tests still pass — **met** (required CI gates)
+9. `make e2e-smoke-p3.5` exits 0 — **met** (F.1 CI)
+10. ADR-0038, ADR-0050, and Phase 3.5 ADRs 0062–0072 published and indexed (planning aliases ADR-0043/0044 are tokenizer / response-pipeline — not reused) — **met** (F.3)
