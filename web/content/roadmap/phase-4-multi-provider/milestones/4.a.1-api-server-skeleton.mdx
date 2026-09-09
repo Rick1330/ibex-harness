@@ -92,8 +92,8 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 - [x] OpenAPI spec is generated; health/readiness endpoints work
 - [x] Unauthenticated requests and unhandled exceptions use the stable IBEX error envelope (not raw tracebacks)
 - [x] Every DB session sets tenant context for RLS (from verified token claims, not request path/body)
-- [x] Request IDs propagate into error responses and structured logs
-- [x] Offline and integration coverage exists for auth middleware and session tenant wiring
+- [x] Request IDs propagate into error responses and structured logs (`request_id=%s` on API log lines)
+- [x] Offline and integration coverage exists for auth middleware and session tenant wiring (unit in `api-test`; Postgres GUC/cross-tenant in `api-integration`)
 
 ## Prerequisites
 
