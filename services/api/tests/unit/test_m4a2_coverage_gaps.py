@@ -103,7 +103,12 @@ async def test_patch_user_update_race_not_found() -> None:
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(None)])
     patch = UserPatch(name="x")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, patch, caller_role="owner")
+        await user_service.patch_user(
+            session,
+            user_service.PatchUserArgs(
+                org_id=org_id, user_id=user_id, patch=patch, caller_role="owner"
+            ),
+        )
     assert exc.value.code == NOT_FOUND
 
 
@@ -181,31 +186,24 @@ async def test_enqueue_job_missing_after_insert() -> None:
 
 
 def test_suspend_requires_publisher() -> None:
-    org_id = uuid4()
-    with managed_org_client(ManagedClientOpts(org_id=org_id, role="owner")) as (
-        client,
-        _res,
-        _pub,
-    ):
-        client.app.state.api.org_suspend_publisher = None
-        resp = client.post(
-            f"/v1/organizations/{org_id}/suspend",
-            headers={"Authorization": "Bearer owner-token"},
-        )
-        assert resp.status_code == 503
-        assert resp.json()["error"]["code"] == SERVICE_DEGRADED
+    _assert_org_runtime_dependency_503("org_suspend_publisher", "post", "/suspend")
 
 
 def test_delete_org_requires_enqueue() -> None:
+    _assert_org_runtime_dependency_503("enqueue_org_deletion", "delete", "")
+
+
+def _assert_org_runtime_dependency_503(attr: str, method: str, path_suffix: str) -> None:
     org_id = uuid4()
     with managed_org_client(ManagedClientOpts(org_id=org_id, role="owner")) as (
         client,
         _res,
         _pub,
     ):
-        client.app.state.api.enqueue_org_deletion = None
-        resp = client.delete(
-            f"/v1/organizations/{org_id}",
+        setattr(client.app.state.api, attr, None)
+        call = getattr(client, method)
+        resp = call(
+            f"/v1/organizations/{org_id}{path_suffix}",
             headers={"Authorization": "Bearer owner-token"},
         )
         assert resp.status_code == 503

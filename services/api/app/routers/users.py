@@ -50,12 +50,27 @@ class _UserListCtx:
     query: ListQuery
 
 
+@dataclass(frozen=True)
+class _UserPatchCtx:
+    org_id: UUID
+    session: AsyncSession
+    caller_role: str
+
+
 def _user_list_ctx(
     token: RequireUserManage,
     session: Annotated[AsyncSession, Depends(org_session)],
     query: Annotated[ListQuery, Depends(_list_query)],
 ) -> _UserListCtx:
     return _UserListCtx(org_id=token.org_id, session=session, query=query)
+
+
+def _user_patch_ctx(
+    token: RequireUserManage,
+    session: Annotated[AsyncSession, Depends(org_session)],
+    caller_role: Annotated[str, Depends(load_caller_role)],
+) -> _UserPatchCtx:
+    return _UserPatchCtx(org_id=token.org_id, session=session, caller_role=caller_role)
 
 
 @router.get("")
@@ -90,12 +105,16 @@ async def get_user(
 async def patch_user(
     user_id: UUID,
     body: UserPatch,
-    token: RequireUserManage,
-    session: Annotated[AsyncSession, Depends(org_session)],
-    caller_role: Annotated[str, Depends(load_caller_role)],
+    ctx: Annotated[_UserPatchCtx, Depends(_user_patch_ctx)],
 ) -> UserResponse:
     return await user_service.patch_user(
-        session, token.org_id, user_id, body, caller_role=caller_role
+        ctx.session,
+        user_service.PatchUserArgs(
+            org_id=ctx.org_id,
+            user_id=user_id,
+            patch=body,
+            caller_role=ctx.caller_role,
+        ),
     )
 
 

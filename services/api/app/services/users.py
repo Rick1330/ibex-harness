@@ -43,6 +43,16 @@ class RevokeContext:
     access_token: str
 
 
+@dataclass(frozen=True)
+class PatchUserArgs:
+    """Packed args for patch_user (keeps the public surface under CodeScene limits)."""
+
+    org_id: UUID
+    user_id: UUID
+    patch: UserPatch
+    caller_role: str
+
+
 def _user_from_row(row: Any, *, invite_token: str | None = None) -> UserResponse:
     return UserResponse(
         id=row.id,
@@ -252,26 +262,19 @@ def _is_owner_demotion(current_role: str, new_role: str | None) -> bool:
     return new_role is not None and current_role == "owner" and new_role != "owner"
 
 
-async def patch_user(
-    session: AsyncSession,
-    org_id: UUID,
-    user_id: UUID,
-    patch: UserPatch,
-    *,
-    caller_role: str,
-) -> UserResponse:
-    current = await get_user(session, org_id, user_id)
-    name = patch.name if patch.name is not None else current.name
-    role = patch.role if patch.role is not None else current.role
+async def patch_user(session: AsyncSession, args: PatchUserArgs) -> UserResponse:
+    current = await get_user(session, args.org_id, args.user_id)
+    name = args.patch.name if args.patch.name is not None else current.name
+    role = args.patch.role if args.patch.role is not None else current.role
 
-    if patch.role == "owner" and caller_role != "owner":
+    if args.patch.role == "owner" and args.caller_role != "owner":
         raise ApiError(
             code=INSUFFICIENT_PERMISSIONS,
             message="Only an owner can promote a user to owner",
         )
 
-    if _is_owner_demotion(current.role, patch.role):
-        await _assert_not_last_owner(session, org_id)
+    if _is_owner_demotion(current.role, args.patch.role):
+        await _assert_not_last_owner(session, args.org_id)
 
     result = await session.execute(
         text(
@@ -283,8 +286,8 @@ async def patch_user(
             """
         ),
         {
-            "user_id": str(user_id),
-            "org_id": str(org_id),
+            "user_id": str(args.user_id),
+            "org_id": str(args.org_id),
             "name": name,
             "role": role,
         },

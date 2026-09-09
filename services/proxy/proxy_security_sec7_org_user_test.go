@@ -23,14 +23,21 @@ import (
 // productSuspensionSLA is the milestone 4.A.2 exit gate (same bound as token revocation).
 const productSuspensionSLA = 5 * time.Second
 
-func requireProbeForbiddenEventually(t *testing.T, opts authProbeOpts, secret string, want apierror.Code, within time.Duration) {
+type probeForbiddenOpts struct {
+	opts   authProbeOpts
+	secret string
+	want   apierror.Code
+	within time.Duration
+}
+
+func requireProbeForbiddenEventually(t *testing.T, p probeForbiddenOpts) {
 	t.Helper()
 	var lastStatus int
 	var lastBody string
 	var forbiddenResp *http.Response
 	var forbiddenBody string
 	require.Eventually(t, func() bool {
-		resp, body := authProbeGET(t, opts)
+		resp, body := authProbeGET(t, p.opts)
 		lastStatus = resp.StatusCode
 		lastBody = body
 		if resp.StatusCode == http.StatusForbidden {
@@ -40,12 +47,12 @@ func requireProbeForbiddenEventually(t *testing.T, opts authProbeOpts, secret st
 		}
 		resp.Body.Close()
 		return false
-	}, within, 10*time.Millisecond,
+	}, p.within, 10*time.Millisecond,
 		"expected forbidden within %v; last status=%d body=%s",
-		within, lastStatus, redactBearer(lastBody, opts.bearer))
+		p.within, lastStatus, redactBearer(lastBody, p.opts.bearer))
 	defer forbiddenResp.Body.Close()
-	requireErrorCode(t, forbiddenBody, want)
-	assertSecurityErrorEnvelope(t, forbiddenResp, forbiddenBody, secret)
+	requireErrorCode(t, forbiddenBody, p.want)
+	assertSecurityErrorEnvelope(t, forbiddenResp, forbiddenBody, p.secret)
 }
 
 func suspendOrgInDB(t *testing.T, db *sql.DB, orgID string) {
@@ -97,7 +104,12 @@ func TestSecurity_SEC7_4_OrgSuspendInvalidatesAuthCacheWithin5s(t *testing.T) {
 	start := time.Now()
 	suspendOrgInDB(t, env.db, env.orgA.OrgID)
 	publishOrgSuspend(t, env.redisMR.Addr(), env.orgA.OrgID)
-	requireProbeForbiddenEventually(t, p.opts, p.plain, apierror.CodeOrgSuspended, productSuspensionSLA)
+	requireProbeForbiddenEventually(t, probeForbiddenOpts{
+		opts:   p.opts,
+		secret: p.plain,
+		want:   apierror.CodeOrgSuspended,
+		within: productSuspensionSLA,
+	})
 	elapsed := time.Since(start)
 	t.Logf("org_suspend_propagation_latency_ms=%d (limit_ms=%d)", elapsed.Milliseconds(), productSuspensionSLA.Milliseconds())
 	if elapsed > productSuspensionSLA {
@@ -107,13 +119,18 @@ func TestSecurity_SEC7_4_OrgSuspendInvalidatesAuthCacheWithin5s(t *testing.T) {
 
 const realisticPATCountPerUser = 8
 
+type ownedPAT struct {
+	tokenID string
+	plain   string
+	opts    authProbeOpts
+}
+
 // TestSecurity_SEC7_5_UserDeleteRevokeLoopAuthCache mirrors DELETE /v1/users/{id}
 // revoke-before-soft-delete: RevokeToken for every PAT owned by the user, then
 // assert proxy auth-cache rejects. Records revoke-loop latency for the deferred
 // RevokeAllTokensForUser batch-RPC decision.
 func TestSecurity_SEC7_5_UserDeleteRevokeLoopAuthCache(t *testing.T) {
 	env := setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60, withAuthCache: true})
-
 	memberID := testutil.SeedUser(t, env.db,
 		env.orgA.OrgID,
 		fmt.Sprintf("member-%s@example.com", env.orgA.OrgID[:8]),
@@ -122,18 +139,45 @@ func TestSecurity_SEC7_5_UserDeleteRevokeLoopAuthCache(t *testing.T) {
 	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
 	authMD := metadata.Pairs("authorization", "Bearer "+admin)
 
-	type ownedPAT struct {
-		tokenID string
-		plain   string
-		opts    authProbeOpts
+	pats := mintUserPATs(t, mintPATRequest{
+		env: env, authMD: authMD, userID: memberID, count: realisticPATCountPerUser,
+	})
+	warmPATCache(t, pats)
+
+	start := time.Now()
+	revokeUserPATs(t, env, authMD, pats)
+	env.authFx.WaitPendingPublishes()
+	revokeLoopElapsed := time.Since(start)
+	t.Logf(
+		"user_delete_revoke_loop pats=%d latency_ms=%d p95_threshold_ms=200",
+		realisticPATCountPerUser,
+		revokeLoopElapsed.Milliseconds(),
+	)
+
+	testutil.SoftDeleteUser(t, env.db, env.orgA.OrgID, memberID)
+	assertPATsUnauthorized(t, pats, userDeleteAuthCacheDeadline(t))
+
+	if revokeLoopElapsed.Milliseconds() > 200 {
+		t.Logf("NOTE: revoke-loop latency %dms exceeds documented 200ms batch-RPC threshold; consider RevokeAllTokensForUser", revokeLoopElapsed.Milliseconds())
 	}
-	pats := make([]ownedPAT, 0, realisticPATCountPerUser)
-	for i := 0; i < realisticPATCountPerUser; i++ {
+}
+
+type mintPATRequest struct {
+	env    securityTestEnv
+	authMD metadata.MD
+	userID string
+	count  int
+}
+
+func mintUserPATs(t *testing.T, req mintPATRequest) []ownedPAT {
+	t.Helper()
+	pats := make([]ownedPAT, 0, req.count)
+	for i := 0; i < req.count; i++ {
 		rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		ctx := metadata.NewOutgoingContext(rpcCtx, authMD)
-		uid := memberID
-		createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
-			OrgId:       env.orgA.OrgID,
+		ctx := metadata.NewOutgoingContext(rpcCtx, req.authMD)
+		uid := req.userID
+		createResp, err := req.env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
+			OrgId:       req.env.orgA.OrgID,
 			Name:        fmt.Sprintf("user-delete-pat-%d", i),
 			Type:        authv1.TokenType_TOKEN_TYPE_PAT,
 			Permissions: permissions.ProxyChatCompletion,
@@ -147,67 +191,51 @@ func TestSecurity_SEC7_5_UserDeleteRevokeLoopAuthCache(t *testing.T) {
 		pats = append(pats, ownedPAT{
 			tokenID: createResp.GetTokenId(),
 			plain:   plain,
-			opts:    authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID},
+			opts: authProbeOpts{
+				srvURL: req.env.proxy.URL, bearer: plain, agentID: req.env.orgA.AgentID,
+			},
 		})
 	}
+	return pats
+}
 
-	// Warm auth cache for each PAT (same as a live traffic loop before delete).
+func warmPATCache(t *testing.T, pats []ownedPAT) {
+	t.Helper()
 	for _, pat := range pats {
 		requireProbeOKCached(t, pat.opts, false)
 		requireProbeOKCached(t, pat.opts, true)
 	}
+}
 
-	start := time.Now()
+func revokeUserPATs(t *testing.T, env securityTestEnv, authMD metadata.MD, pats []ownedPAT) {
+	t.Helper()
 	for _, pat := range pats {
 		rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		ctx := metadata.NewOutgoingContext(rpcCtx, authMD)
-		if _, err := env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
+		_, err := env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
 			OrgId: env.orgA.OrgID, TokenId: pat.tokenID, RevokeReason: strPtr("user_deleted"),
-		}); err != nil {
-			cancel()
+		})
+		cancel()
+		if err != nil {
 			t.Fatalf("revoke %s: %v", pat.tokenID, err)
 		}
-		cancel()
-	}
-	env.authFx.WaitPendingPublishes()
-	revokeLoopElapsed := time.Since(start)
-	t.Logf(
-		"user_delete_revoke_loop pats=%d latency_ms=%d p95_threshold_ms=200",
-		realisticPATCountPerUser,
-		revokeLoopElapsed.Milliseconds(),
-	)
-
-	// Soft-delete the user row the same way the API does after revoke succeeds.
-	softDeleteUser(t, env.db, env.orgA.OrgID, memberID)
-
-	deadline := revocationSLA(t)
-	if deadline < productSuspensionSLA {
-		// Prefer product SLA for this milestone verification.
-		deadline = productSuspensionSLA
-	}
-	for _, pat := range pats {
-		requireProbeUnauthorizedEventually(t, pat.opts, pat.plain, deadline)
-	}
-
-	if revokeLoopElapsed.Milliseconds() > 200 {
-		t.Logf("NOTE: revoke-loop latency %dms exceeds documented 200ms batch-RPC threshold; consider RevokeAllTokensForUser", revokeLoopElapsed.Milliseconds())
 	}
 }
 
-func softDeleteUser(t *testing.T, db *sql.DB, orgID, userID string) {
+func assertPATsUnauthorized(t *testing.T, pats []ownedPAT, within time.Duration) {
 	t.Helper()
-	ctx := context.Background()
-	err := testutil.WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			UPDATE ibex_core.users
-			SET status = 'deactivated', deleted_at = NOW()
-			WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`,
-			userID, orgID)
-		return err
-	})
-	if err != nil {
-		t.Fatalf("soft-delete user: %v", err)
+	for _, pat := range pats {
+		requireProbeUnauthorizedEventually(t, pat.opts, pat.plain, within)
 	}
+}
+
+func userDeleteAuthCacheDeadline(t *testing.T) time.Duration {
+	t.Helper()
+	deadline := revocationSLA(t)
+	if deadline < productSuspensionSLA {
+		return productSuspensionSLA
+	}
+	return deadline
 }
 
 func strPtr(s string) *string { return &s }

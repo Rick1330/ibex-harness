@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text
@@ -15,6 +16,14 @@ from app.task_names import TASK_ORG_DELETE_ORGANIZATION
 from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _JobOutcome:
+    job_id: str
+    org_id: str
+    status: str
+    error: str | None = None
 
 # Delete children that RESTRICT parent org removal, then soft-delete the org row.
 # Keep org_deletion_jobs row (RESTRICT FK) until after soft-delete; org row remains.
@@ -68,7 +77,7 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
                 for stmt in _CASCADE_STATEMENTS:
                     await session.execute(text(stmt), {"org_id": org_id})
                 await _finish_job(
-                    session, job_id=job_id, org_id=org_id, status="succeeded", error=None
+                    session, _JobOutcome(job_id=job_id, org_id=org_id, status="succeeded")
                 )
             except Exception as exc:
                 logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
@@ -76,10 +85,12 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
                 async with session_as_service_account(factory) as fail_session:
                     await _finish_job(
                         fail_session,
-                        job_id=job_id,
-                        org_id=org_id,
-                        status="failed",
-                        error=str(exc)[:500],
+                        _JobOutcome(
+                            job_id=job_id,
+                            org_id=org_id,
+                            status="failed",
+                            error=str(exc)[:500],
+                        ),
                     )
                 raise
         return {"status": "succeeded", "job_id": job_id, "org_id": org_id}
@@ -104,9 +115,7 @@ async def _claim_job(session, *, job_id: str, org_id: str) -> bool:
     return result.first() is not None
 
 
-async def _finish_job(
-    session, *, job_id: str, org_id: str, status: str, error: str | None
-) -> None:
+async def _finish_job(session, outcome: _JobOutcome) -> None:
     await session.execute(
         text(
             """
@@ -118,5 +127,10 @@ async def _finish_job(
               AND org_id = CAST(:org_id AS uuid)
             """
         ),
-        {"job_id": job_id, "org_id": org_id, "status": status, "error": error},
+        {
+            "job_id": outcome.job_id,
+            "org_id": outcome.org_id,
+            "status": outcome.status,
+            "error": outcome.error,
+        },
     )

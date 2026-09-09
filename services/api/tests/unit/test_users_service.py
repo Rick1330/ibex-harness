@@ -122,7 +122,12 @@ async def test_patch_user_last_owner_demotion() -> None:
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
     patch = UserPatch(role="admin")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, patch, caller_role="owner")
+        await user_service.patch_user(
+            session,
+            user_service.PatchUserArgs(
+                org_id=org_id, user_id=user_id, patch=patch, caller_role="owner"
+            ),
+        )
     assert exc.value.code == LAST_OWNER_PROTECTED
 
 
@@ -136,7 +141,13 @@ async def test_patch_user_success() -> None:
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(updated)])
     session.commit = AsyncMock()
     out = await user_service.patch_user(
-        session, org_id, user_id, UserPatch(name="New"), caller_role="admin"
+        session,
+        user_service.PatchUserArgs(
+            org_id=org_id,
+            user_id=user_id,
+            patch=UserPatch(name="New"),
+            caller_role="admin",
+        ),
     )
     assert out.name == "New"
 
@@ -150,7 +161,12 @@ async def test_admin_cannot_promote_to_owner() -> None:
     session.execute = AsyncMock(return_value=_ScalarResult(current))
     patch = UserPatch(role="owner")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, patch, caller_role="admin")
+        await user_service.patch_user(
+            session,
+            user_service.PatchUserArgs(
+                org_id=org_id, user_id=user_id, patch=patch, caller_role="admin"
+            ),
+        )
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert "owner" in exc.value.message.lower()
     session.commit.assert_not_called()
@@ -166,7 +182,13 @@ async def test_owner_can_promote_to_owner() -> None:
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(updated)])
     session.commit = AsyncMock()
     out = await user_service.patch_user(
-        session, org_id, user_id, UserPatch(role="owner"), caller_role="owner"
+        session,
+        user_service.PatchUserArgs(
+            org_id=org_id,
+            user_id=user_id,
+            patch=UserPatch(role="owner"),
+            caller_role="owner",
+        ),
     )
     assert out.role == "owner"
 

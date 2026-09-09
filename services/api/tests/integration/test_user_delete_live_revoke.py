@@ -9,7 +9,8 @@ soft-delete the user when revoke cannot complete.
 from __future__ import annotations
 
 import os
-from uuid import uuid4
+from dataclasses import dataclass
+from uuid import UUID, uuid4
 
 import pytest
 from authclient.permissions import ADMIN, USER_MANAGE
@@ -58,107 +59,109 @@ async def factory() -> async_sessionmaker[AsyncSession]:
         await engine.dispose()
 
 
+@dataclass(frozen=True)
+class _SeededOrg:
+    org_id: UUID
+    owner_id: UUID
+    member_id: UUID
+    token_id: UUID
+
+
+async def _seed_org_with_member_pat(factory: async_sessionmaker[AsyncSession]) -> _SeededOrg:
+    seeded = _SeededOrg(org_id=uuid4(), owner_id=uuid4(), member_id=uuid4(), token_id=uuid4())
+    slug = f"ua-{seeded.org_id.hex[:8]}"
+    await _sa(
+        factory,
+        "INSERT INTO ibex_core.organizations (id, name, slug) VALUES "
+        "(CAST(:id AS uuid), :name, :slug)",
+        {"id": str(seeded.org_id), "name": "Unavail", "slug": slug},
+    )
+    for user_id, email_prefix, role in (
+        (seeded.owner_id, "o", "owner"),
+        (seeded.member_id, "m", "member"),
+    ):
+        await _sa(
+            factory,
+            "INSERT INTO ibex_core.users (id, org_id, email, name, role, status) VALUES "
+            "(CAST(:id AS uuid), CAST(:org AS uuid), :email, :name, :role, 'active')",
+            {
+                "id": str(user_id),
+                "org": str(seeded.org_id),
+                "email": f"{email_prefix}-{seeded.org_id.hex[:8]}@example.com",
+                "name": role.title(),
+                "role": role,
+            },
+        )
+    await _sa(
+        factory,
+        """
+        INSERT INTO ibex_core.tokens
+            (id, org_id, user_id, type, hash, prefix, name, permissions, is_revoked)
+        VALUES (
+            CAST(:id AS uuid), CAST(:org AS uuid), CAST(:user AS uuid),
+            'pat', 'h', 'ibex_pat_x', 't', 1, false
+        )
+        """,
+        {
+            "id": str(seeded.token_id),
+            "org": str(seeded.org_id),
+            "user": str(seeded.member_id),
+        },
+    )
+    return seeded
+
+
+async def _cleanup_org(factory: async_sessionmaker[AsyncSession], org_id: UUID) -> None:
+    oid = {"id": str(org_id)}
+    await _sa(factory, "DELETE FROM ibex_core.tokens WHERE org_id = CAST(:id AS uuid)", oid)
+    await _sa(factory, "DELETE FROM ibex_core.users WHERE org_id = CAST(:id AS uuid)", oid)
+    await _sa(factory, "DELETE FROM ibex_core.organizations WHERE id = CAST(:id AS uuid)", oid)
+
+
+def _delete_member_with_dead_auth(seeded: _SeededOrg) -> int:
+    revoker = GRPCTokenRevoker("127.0.0.1:1", timeout_seconds=0.2)
+    app = create_app(
+        settings=Settings(database_url=_require_dsn()),
+        validator=StaticTokenValidator(
+            {
+                "tok": ValidateResult(
+                    org_id=seeded.org_id,
+                    permissions=ADMIN | USER_MANAGE,
+                    user_id=str(seeded.owner_id),
+                )
+            }
+        ),
+        runtime=ApiRuntimeOverrides(
+            token_revoker=revoker,
+            org_suspend_publisher=RecordingOrgSuspendPublisher(),
+        ),
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        return client.delete(
+            f"/v1/users/{seeded.member_id}",
+            headers={"Authorization": "Bearer tok"},
+        ).status_code
+
+
 @pytest.mark.asyncio
 async def test_delete_user_fails_closed_when_auth_unavailable(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """DELETE must not soft-delete the user if revoke cannot reach AuthService."""
-    org_id = uuid4()
-    owner_id = uuid4()
-    member_id = uuid4()
-    token_id = uuid4()
-    slug = f"ua-{org_id.hex[:8]}"
+    seeded = await _seed_org_with_member_pat(factory)
     try:
-        await _sa(
-            factory,
-            "INSERT INTO ibex_core.organizations (id, name, slug) VALUES "
-            "(CAST(:id AS uuid), :name, :slug)",
-            {"id": str(org_id), "name": "Unavail", "slug": slug},
-        )
-        await _sa(
-            factory,
-            "INSERT INTO ibex_core.users (id, org_id, email, name, role, status) VALUES "
-            "(CAST(:id AS uuid), CAST(:org AS uuid), :email, :name, 'owner', 'active')",
-            {
-                "id": str(owner_id),
-                "org": str(org_id),
-                "email": f"o-{org_id.hex[:8]}@example.com",
-                "name": "Owner",
-            },
-        )
-        await _sa(
-            factory,
-            "INSERT INTO ibex_core.users (id, org_id, email, name, role, status) VALUES "
-            "(CAST(:id AS uuid), CAST(:org AS uuid), :email, :name, 'member', 'active')",
-            {
-                "id": str(member_id),
-                "org": str(org_id),
-                "email": f"m-{org_id.hex[:8]}@example.com",
-                "name": "Member",
-            },
-        )
-        await _sa(
-            factory,
-            """
-            INSERT INTO ibex_core.tokens
-                (id, org_id, user_id, type, hash, prefix, name, permissions, is_revoked)
-            VALUES (
-                CAST(:id AS uuid), CAST(:org AS uuid), CAST(:user AS uuid),
-                'pat', 'h', 'ibex_pat_x', 't', 1, false
-            )
-            """,
-            {"id": str(token_id), "org": str(org_id), "user": str(member_id)},
-        )
-
-        revoker = GRPCTokenRevoker("127.0.0.1:1", timeout_seconds=0.2)
-        settings = Settings(database_url=_require_dsn())
-        app = create_app(
-            settings=settings,
-            validator=StaticTokenValidator(
-                {
-                    "tok": ValidateResult(
-                        org_id=org_id,
-                        permissions=ADMIN | USER_MANAGE,
-                        user_id=str(owner_id),
-                    )
-                }
-            ),
-            runtime=ApiRuntimeOverrides(
-                token_revoker=revoker,
-                org_suspend_publisher=RecordingOrgSuspendPublisher(),
-            ),
-        )
-        with TestClient(app, raise_server_exceptions=False) as client:
-            resp = client.delete(
-                f"/v1/users/{member_id}",
-                headers={"Authorization": "Bearer tok"},
-            )
-        assert resp.status_code >= 500
+        assert _delete_member_with_dead_auth(seeded) >= 500
         status = await _scalar(
             factory,
             "SELECT status FROM ibex_core.users WHERE id = CAST(:id AS uuid)",
-            {"id": str(member_id)},
+            {"id": str(seeded.member_id)},
         )
         assert status == "active"
         revoked = await _scalar(
             factory,
             "SELECT is_revoked FROM ibex_core.tokens WHERE id = CAST(:id AS uuid)",
-            {"id": str(token_id)},
+            {"id": str(seeded.token_id)},
         )
         assert revoked is False
     finally:
-        await _sa(
-            factory,
-            "DELETE FROM ibex_core.tokens WHERE org_id = CAST(:id AS uuid)",
-            {"id": str(org_id)},
-        )
-        await _sa(
-            factory,
-            "DELETE FROM ibex_core.users WHERE org_id = CAST(:id AS uuid)",
-            {"id": str(org_id)},
-        )
-        await _sa(
-            factory,
-            "DELETE FROM ibex_core.organizations WHERE id = CAST(:id AS uuid)",
-            {"id": str(org_id)},
-        )
+        await _cleanup_org(factory, seeded.org_id)
