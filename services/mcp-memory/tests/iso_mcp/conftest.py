@@ -7,10 +7,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from uuid import UUID
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.audit import MemoryAuditSink
+from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
 from app.config import Settings, get_settings
 from app.main import CreateAppDeps, create_app
 from app.protocol import MCP_PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION_LATEST
@@ -21,6 +23,20 @@ def _require_env(name: str) -> str:
     if not value:
         pytest.skip(f"{name} required for iso_mcp tests")
     return value
+
+
+@dataclass
+class MemoryOutboundCounter:
+    """Counts outbound memory HTTP requests (ValidateAgent deny must stay at 0)."""
+
+    count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class IsoAppCounted:
+    client: TestClient
+    sink: MemoryAuditSink
+    memory_outbound: MemoryOutboundCounter
 
 
 @pytest.fixture(scope="module")
@@ -50,11 +66,8 @@ def iso_ids(iso_env: dict[str, str]) -> dict[str, UUID]:
     }
 
 
-@pytest.fixture
-def iso_app(iso_env: dict[str, str]) -> Iterator[tuple[TestClient, MemoryAuditSink]]:
-    get_settings.cache_clear()
-    sink = MemoryAuditSink()
-    settings = Settings(
+def _iso_settings(iso_env: dict[str, str]) -> Settings:
+    return Settings(
         transport="streamable_http",
         resource_url="http://testserver/mcp",
         auth_server_url="http://auth.test",
@@ -64,13 +77,50 @@ def iso_app(iso_env: dict[str, str]) -> Iterator[tuple[TestClient, MemoryAuditSi
         memory_timeout_ms=10_000,
         redis_url="",
     )
+
+
+@pytest.fixture
+def iso_app(iso_env: dict[str, str]) -> Iterator[tuple[TestClient, MemoryAuditSink]]:
+    get_settings.cache_clear()
+    sink = MemoryAuditSink()
     application = create_app(
-        settings=settings,
+        settings=_iso_settings(iso_env),
         deps=CreateAppDeps(audit_sink=sink),
     )
     client = TestClient(application)
     with client:
         yield client, sink
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def iso_app_counted(iso_env: dict[str, str]) -> Iterator[IsoAppCounted]:
+    """Like iso_app, but memory HTTP is instrumented for zero-outbound asserts."""
+    get_settings.cache_clear()
+    sink = MemoryAuditSink()
+    counter = MemoryOutboundCounter()
+
+    async def _count_request(_request: httpx.Request) -> None:
+        counter.count += 1
+
+    http = httpx.AsyncClient(
+        event_hooks={"request": [_count_request]},
+        timeout=10.0,
+    )
+    mem = MemoryHttpClient(
+        MemoryHttpConfig(
+            base_url=iso_env["memory_http"],
+            timeout_seconds=10.0,
+        ),
+        client=http,
+    )
+    application = create_app(
+        settings=_iso_settings(iso_env),
+        deps=CreateAppDeps(audit_sink=sink, memory_client=mem),
+    )
+    client = TestClient(application)
+    with client:
+        yield IsoAppCounted(client=client, sink=sink, memory_outbound=counter)
     get_settings.cache_clear()
 
 
@@ -150,6 +200,12 @@ def assert_permission_denied(
         and e.error_code == "permission_denied"
         for e in new_events
     ), new_events
+
+
+def assert_no_memory_outbound(counter: MemoryOutboundCounter) -> None:
+    assert counter.count == 0, (
+        f"expected zero outbound memory HTTP on deny; got {counter.count}"
+    )
 
 
 def assert_tool_ok(resp: object) -> None:

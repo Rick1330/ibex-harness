@@ -1,13 +1,18 @@
-"""ISO-MCP-01: cross-org agent_id must be permission_denied (never not_found)."""
+"""ISO-MCP-01: org-scoped PAT + cross-org agent_id → ValidateAgent permission_denied.
+
+Uses an org-scoped token (principal.agent_id is None) so resolve_tool_agent_id
+forwards the foreign agent_id into ValidateAgent — not the agent-binding short
+circuit that agent-scoped PATs hit first.
+"""
 
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.audit import MemoryAuditSink
 from tests.iso_mcp.conftest import (
+    IsoAppCounted,
     ToolCallSpec,
+    assert_no_memory_outbound,
     assert_permission_denied,
     mcp_session,
     tools_call,
@@ -16,16 +21,20 @@ from tests.iso_mcp.conftest import (
 pytestmark = pytest.mark.iso_mcp
 
 
-def test_iso_mcp_01_cross_org_agent_denied_on_search_and_write(
-    iso_app: tuple[TestClient, MemoryAuditSink],
+def test_iso_mcp_01_org_scoped_cross_org_agent_denied_via_validate_agent(
+    iso_app_counted: IsoAppCounted,
     iso_env: dict[str, str],
     iso_ids: dict[str, object],
 ) -> None:
-    client, sink = iso_app
-    headers = mcp_session(client, iso_env["token_a"])
+    client = iso_app_counted.client
+    sink = iso_app_counted.sink
+    outbound = iso_app_counted.memory_outbound
+    # Org-scoped Org A PAT (agent_id NULL) — same fixture as ISO-MCP-02.
+    headers = mcp_session(client, iso_env["token_org"])
     agent_b = str(iso_ids["agent_b"])
 
     before = len(sink.events)
+    outbound.count = 0
     search = tools_call(
         client,
         ToolCallSpec(
@@ -38,8 +47,10 @@ def test_iso_mcp_01_cross_org_agent_denied_on_search_and_write(
     assert_permission_denied(
         search, sink=sink, tool_name="search_memory", events_before=before
     )
+    assert_no_memory_outbound(outbound)
 
     before = len(sink.events)
+    outbound.count = 0
     write = tools_call(
         client,
         ToolCallSpec(
@@ -52,3 +63,4 @@ def test_iso_mcp_01_cross_org_agent_denied_on_search_and_write(
     assert_permission_denied(
         write, sink=sink, tool_name="write_memory", events_before=before
     )
+    assert_no_memory_outbound(outbound)

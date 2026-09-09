@@ -94,6 +94,87 @@ def test_resolve_agent_missing_rejected() -> None:
         resolve_tool_agent_id(principal, None)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["search", "write"])
+async def test_agent_scoped_token_rejects_foreign_agent_id_before_memory_http(
+    tool: str,
+) -> None:
+    """Agent-binding regression (formerly mislabeled ISO-MCP-01).
+
+    Agent-scoped PATs deny a mismatched tool agent_id in resolve_tool_agent_id
+    before ValidateAgent. Kept as a non-ISO regression so ISO-MCP-01 can own the
+    org-scoped → ValidateAgent cross-org path.
+    """
+    outbound: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outbound.append(request)
+        return httpx.Response(200, json={"data": {"results": [], "id": str(uuid4())}})
+
+    # AllowAll would pass ValidateAgent — denial must come from binding only.
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT)
+    client = memory_client_for(handler)
+    if tool == "search":
+        call = search_memory(
+            principal,
+            parse_search_args({"query": "q", "agent_id": str(AGENT_OTHER)}),
+            client,
+            _ALLOW,
+        )
+    else:
+        call = write_memory(
+            principal,
+            parse_write_args({"content": "x", "agent_id": str(AGENT_OTHER)}),
+            client,
+            _ALLOW,
+        )
+    set_access_token(TOKEN)
+    try:
+        with pytest.raises(
+            PermissionDeniedError, match="not authorized for the requested agent"
+        ):
+            await call
+    finally:
+        set_access_token(None)
+    assert outbound == []
+
+
+@pytest.mark.asyncio
+async def test_org_scoped_foreign_agent_reaches_verifier_not_binding() -> None:
+    """Sanity: org-scoped + foreign agent_id is not stopped by resolve_tool_agent_id.
+
+    With AllowAll, memory HTTP is reached (proves ISO-MCP-01 would greenwash if
+    ValidateAgent were stubbed to allow-all). With a denying verifier, zero outbound.
+    """
+    outbound: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        outbound.append(request)
+        return httpx.Response(200, json={"data": {"results": []}})
+
+    principal = Principal(org_id=ORG_A, permissions=MEMORY_READ, agent_id=None)
+    args = parse_search_args({"query": "cross", "agent_id": str(AGENT_OTHER)})
+    client = memory_client_for(handler)
+
+    set_access_token(TOKEN)
+    try:
+        out = await search_memory(principal, args, client, _ALLOW)
+    finally:
+        set_access_token(None)
+    assert out["results"] == []
+    assert len(outbound) == 1
+
+    outbound.clear()
+    deny = StaticAgentVerifier(allowed=set(), deny_message="agent not authorized")
+    set_access_token(TOKEN)
+    try:
+        with pytest.raises(PermissionDeniedError, match="agent not authorized"):
+            await search_memory(principal, args, client, deny)
+    finally:
+        set_access_token(None)
+    assert outbound == []
+
+
 def test_idempotency_key_stable() -> None:
     a = write_idempotency_key(org_id=ORG_A, agent_id=AGENT, content="  Hello\u0041  ")
     b = write_idempotency_key(org_id=ORG_A, agent_id=AGENT, content="HelloA")
