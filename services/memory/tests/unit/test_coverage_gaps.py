@@ -414,7 +414,7 @@ async def test_orchestrator_after_commit_failure_does_not_propagate() -> None:
 
 
 def test_map_rpc_error_unknown_code() -> None:
-    from app.auth.client import _map_rpc_error
+    from authclient.validate import _map_rpc_error
 
     mapped = _map_rpc_error(rpc_error(grpc.StatusCode.UNAVAILABLE))
     assert isinstance(mapped, AuthUnavailableError)

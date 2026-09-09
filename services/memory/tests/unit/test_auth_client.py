@@ -151,7 +151,7 @@ async def test_grpc_validator_ready_unavailable() -> None:
 
 
 def test_grpc_validator_zero_timeout_clamped() -> None:
-    with patch("app.auth.client.grpc.aio.insecure_channel") as chan_mock:
+    with patch("authclient.validate.grpc.aio.insecure_channel") as chan_mock:
         channel = MagicMock()
         channel.unary_unary.return_value = AsyncMock()
         chan_mock.return_value = channel

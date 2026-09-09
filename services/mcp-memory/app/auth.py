@@ -1,30 +1,34 @@
-"""Auth gRPC client for AuthService.ValidateToken (fail closed)."""
+"""Auth ValidateToken façade over authclient.validate (#779).
+
+Keeps MCP-specific AuthFailedError / AuthUnavailableError (MCPServiceError)
+and ValidateResult.to_principal(); dial / codec logic lives in authclient.
+"""
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from uuid import UUID
 
 import grpc
-from authclient import (
-    AuthCodecError,
-    ValidateTokenWire,
-    assert_trusted_insecure_auth_target,
-    decode_validate_token_response,
-    encode_validate_token_request,
-)
+from authclient import ValidateTokenWire, assert_trusted_insecure_auth_target
+from authclient import errors as auth_errors
+from authclient import validate as shared
 
 from app.errors import AuthFailedError, AuthUnavailableError
 from app.principal import Principal
 
-logger = logging.getLogger(__name__)
+READINESS_PROBE_SENTINEL = shared.READINESS_PROBE_SENTINEL
 
-# Sentinel rejected at PAT parse without Argon2/Postgres (matches packages/healthcheck).
-READINESS_PROBE_SENTINEL = "ibex_health_probe_invalid"
-
-_VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateToken"
+__all__ = [
+    "READINESS_PROBE_SENTINEL",
+    "GRPCTokenValidator",
+    "StaticTokenValidator",
+    "TokenValidator",
+    "ValidateResult",
+    "assert_trusted_insecure_auth_target",
+    "parse_authorization_header",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +47,16 @@ class ValidateResult:
             agent_id=wire.agent_id,
             user_id=wire.user_id,
             token_id=wire.token_id,
+        )
+
+    @classmethod
+    def from_shared(cls, result: shared.ValidateResult) -> ValidateResult:
+        return cls(
+            org_id=result.org_id,
+            permissions=result.permissions,
+            agent_id=result.agent_id,
+            user_id=result.user_id,
+            token_id=result.token_id,
         )
 
     def to_principal(self) -> Principal:
@@ -71,75 +85,42 @@ class TokenValidator(ABC):
 
 
 def parse_authorization_header(header: str | None) -> str:
-    if header is None or not header.strip():
-        raise AuthFailedError("missing authorization header")
-    scheme, _, remainder = header.strip().partition(" ")
-    if scheme.lower() != "bearer":
-        raise AuthFailedError("authorization header must be Bearer <token>")
-    token = remainder.strip()
-    if not token:
-        raise AuthFailedError("authorization header must be Bearer <token>")
-    return token
+    try:
+        return shared.parse_authorization_header(header)
+    except auth_errors.AuthFailedError as exc:
+        raise AuthFailedError(str(exc)) from exc
+
+
+def _map_shared_error(
+    exc: auth_errors.AuthFailedError | auth_errors.AuthUnavailableError,
+) -> AuthFailedError | AuthUnavailableError:
+    if isinstance(exc, auth_errors.AuthFailedError):
+        return AuthFailedError(str(exc) or "invalid or revoked token")
+    msg = str(exc)
+    return AuthUnavailableError(msg) if msg else AuthUnavailableError()
+
+
+def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
+    return _map_shared_error(shared._map_rpc_error(exc))
 
 
 class GRPCTokenValidator(TokenValidator):
     """Bounded ValidateToken client. Never logs the access token."""
 
     def __init__(self, target: str, timeout_seconds: float) -> None:
-        trusted = assert_trusted_insecure_auth_target(target)
-        if timeout_seconds <= 0:
-            timeout_seconds = 0.05
-        self._timeout = timeout_seconds
-        self._channel = grpc.aio.insecure_channel(trusted)
-        self._stub = self._channel.unary_unary(
-            _VALIDATE_METHOD,
-            request_serializer=encode_validate_token_request,
-            response_deserializer=None,
-        )
+        self._inner = shared.GRPCTokenValidator(target, timeout_seconds)
 
     async def validate(self, access_token: str) -> ValidateResult:
-        payload = await self._invoke(access_token)
-        return _decode_validate_payload(payload)
+        try:
+            return ValidateResult.from_shared(await self._inner.validate(access_token))
+        except (auth_errors.AuthFailedError, auth_errors.AuthUnavailableError) as exc:
+            raise _map_shared_error(exc) from exc
 
     async def ready(self) -> bool:
-        try:
-            await self.validate(READINESS_PROBE_SENTINEL)
-            return True
-        except AuthFailedError:
-            return True
-        except AuthUnavailableError:
-            return False
+        return await self._inner.ready()
 
     async def aclose(self) -> None:
-        await self._channel.close()
-
-    async def _invoke(self, access_token: str) -> bytes:
-        try:
-            return await self._stub(access_token, timeout=self._timeout)
-        except grpc.aio.AioRpcError as exc:
-            raise _map_rpc_error(exc) from exc
-        except OSError as exc:
-            # TimeoutError is an OSError subclass on modern Python.
-            logger.warning("auth grpc unavailable error_class=%s", type(exc).__name__)
-            raise AuthUnavailableError() from exc
-
-
-def _decode_validate_payload(payload: object) -> ValidateResult:
-    if not isinstance(payload, (bytes, bytearray)):
-        raise AuthUnavailableError("auth response is not bytes")
-    try:
-        wire = decode_validate_token_response(bytes(payload))
-    except AuthCodecError as exc:
-        raise AuthUnavailableError(str(exc)) from exc
-    return ValidateResult.from_wire(wire)
-
-
-def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
-    if exc.code() == grpc.StatusCode.UNAUTHENTICATED:
-        return AuthFailedError("invalid or revoked token")
-    code_name = exc.code().name if exc.code() is not None else "unknown"
-    logger.warning("auth grpc fail-closed code=%s", code_name)
-    return AuthUnavailableError()
+        await self._inner.aclose()
 
 
 class StaticTokenValidator(TokenValidator):

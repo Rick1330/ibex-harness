@@ -4,9 +4,7 @@ Shared helpers for calling `AuthService.ValidateToken` from IBEX Python services
 
 - bounded protobuf wire codec (no generated stubs; see ADR-0004)
 - insecure gRPC dial-target trust checks for local/mesh deployments
-- async `GRPCTokenValidator` dial client (`authclient.validate`) — management API uses this; memory/mcp-memory copies remain until #779 finishes migration
-
-Consumers: `services/api` (dialer), `services/memory`, `services/mcp-memory` (codec + trust gate today).
+- async `GRPCTokenValidator` dial client (`authclient.validate`) — management API and memory re-export it; mcp-memory wraps it to preserve MCPServiceError + `to_principal` (#779)
 
 ## Layout
 
