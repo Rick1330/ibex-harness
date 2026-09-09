@@ -3,25 +3,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 from authclient.permissions import ADMIN, READ_ONLY
-from fastapi import FastAPI
 
 from app.auth.client import ValidateResult
-from app.authz import assert_path_org, load_caller_role
-from app.deps import org_session
+from app.authz import assert_path_org
 from app.errors import ApiError
 from app.schemas.organizations import OrganizationResponse, OrgDeletionJobResponse
-from tests.unit.org_user_test_support import api_client, owner_result, sample_org_row
-
-
-def _override_session(app: FastAPI) -> None:
-    async def _session_override():
-        yield AsyncMock()
-
-    app.dependency_overrides[org_session] = _session_override
+from tests.unit.org_user_test_support import (
+    api_client,
+    managed_org_client,
+    owner_result,
+    override_org_session,
+    sample_org_row,
+)
 
 
 def test_assert_path_org_anti_enumeration() -> None:
@@ -36,7 +33,7 @@ def test_cross_tenant_org_get_returns_404() -> None:
     token_org = uuid4()
     other_org = uuid4()
     with api_client(result=owner_result(org_id=token_org)) as (client, _res, _pub):
-        _override_session(client.app)
+        override_org_session(client.app)
         try:
             resp = client.get(
                 f"/v1/organizations/{other_org}",
@@ -57,17 +54,13 @@ def test_get_org_happy_path() -> None:
         return OrganizationResponse(**row)
 
     with (
-        api_client(result=owner_result(org_id=org_id)) as (client, _res, _pub),
+        managed_org_client(org_id=org_id, role="member") as (client, _res, _pub),
         patch("app.routers.organizations.org_service.get_organization", new=_fake_get),
     ):
-        _override_session(client.app)
-        try:
-            resp = client.get(
-                f"/v1/organizations/{org_id}",
-                headers={"Authorization": "Bearer owner-token"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+        resp = client.get(
+            f"/v1/organizations/{org_id}",
+            headers={"Authorization": "Bearer owner-token"},
+        )
         assert resp.status_code == 200
         assert resp.json()["id"] == str(org_id)
 
@@ -75,20 +68,13 @@ def test_get_org_happy_path() -> None:
 def test_suspend_requires_owner_role_bitmap() -> None:
     org_id = uuid4()
     weak = ValidateResult(org_id=org_id, permissions=READ_ONLY, user_id=str(uuid4()))
-    with api_client(token="weak", result=weak) as (client, _res, _pub):
-        _override_session(client.app)
-
-        async def _role_override():
-            return "member"
-
-        client.app.dependency_overrides[load_caller_role] = _role_override
-        try:
-            resp = client.post(
-                f"/v1/organizations/{org_id}/suspend",
-                headers={"Authorization": "Bearer weak"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+    with managed_org_client(
+        org_id=org_id, role="member", token="weak", result=weak
+    ) as (client, _res, _pub):
+        resp = client.post(
+            f"/v1/organizations/{org_id}/suspend",
+            headers={"Authorization": "Bearer weak"},
+        )
         assert resp.status_code == 403
         assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
@@ -103,25 +89,16 @@ def test_suspend_owner_publishes() -> None:
         return OrganizationResponse(**row)
 
     with (
-        api_client(result=owner_result(org_id=org_id)) as (client, _res, pub),
+        managed_org_client(org_id=org_id, role="owner") as (client, _res, pub),
         patch(
             "app.routers.organizations.org_service.suspend_organization",
             new=_fake_suspend,
         ),
     ):
-        _override_session(client.app)
-
-        async def _role_override():
-            return "owner"
-
-        client.app.dependency_overrides[load_caller_role] = _role_override
-        try:
-            resp = client.post(
-                f"/v1/organizations/{org_id}/suspend",
-                headers={"Authorization": "Bearer owner-token"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+        resp = client.post(
+            f"/v1/organizations/{org_id}/suspend",
+            headers={"Authorization": "Bearer owner-token"},
+        )
         assert resp.status_code == 200
         assert pub.org_ids == [str(org_id)]
 
@@ -145,7 +122,7 @@ def test_delete_org_returns_202() -> None:
 
     calls: list[tuple[str, str]] = []
     with (
-        api_client(result=owner_result(org_id=org_id), enqueue_calls=calls) as (
+        managed_org_client(org_id=org_id, role="owner", enqueue_calls=calls) as (
             client,
             _res,
             _pub,
@@ -155,19 +132,10 @@ def test_delete_org_returns_202() -> None:
             new=_fake_enqueue,
         ),
     ):
-        _override_session(client.app)
-
-        async def _role_override():
-            return "owner"
-
-        client.app.dependency_overrides[load_caller_role] = _role_override
-        try:
-            resp = client.delete(
-                f"/v1/organizations/{org_id}",
-                headers={"Authorization": "Bearer owner-token"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+        resp = client.delete(
+            f"/v1/organizations/{org_id}",
+            headers={"Authorization": "Bearer owner-token"},
+        )
         assert resp.status_code == 202
         assert resp.json()["status"] == "pending"
         assert calls == [(str(job_id), str(org_id))]
@@ -176,21 +144,14 @@ def test_delete_org_returns_202() -> None:
 def test_member_cannot_patch_org() -> None:
     org_id = uuid4()
     member = ValidateResult(org_id=org_id, permissions=ADMIN, user_id=str(uuid4()))
-    with api_client(token="mem", result=member) as (client, _res, _pub):
-        _override_session(client.app)
-
-        async def _role_override():
-            return "member"
-
-        client.app.dependency_overrides[load_caller_role] = _role_override
-        try:
-            resp = client.patch(
-                f"/v1/organizations/{org_id}",
-                headers={"Authorization": "Bearer mem"},
-                json={"name": "Nope"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+    with managed_org_client(
+        org_id=org_id, role="member", token="mem", result=member
+    ) as (client, _res, _pub):
+        resp = client.patch(
+            f"/v1/organizations/{org_id}",
+            headers={"Authorization": "Bearer mem"},
+            json={"name": "Nope"},
+        )
         assert resp.status_code == 403
 
 
@@ -212,22 +173,13 @@ def test_get_deletion_job() -> None:
         )
 
     with (
-        api_client(result=owner_result(org_id=org_id)) as (client, _res, _pub),
+        managed_org_client(org_id=org_id, role="owner") as (client, _res, _pub),
         patch("app.routers.organizations.org_service.get_deletion_job", new=_fake_job),
     ):
-        _override_session(client.app)
-
-        async def _role_override():
-            return "owner"
-
-        client.app.dependency_overrides[load_caller_role] = _role_override
-        try:
-            resp = client.get(
-                f"/v1/organizations/{org_id}/deletion-jobs/{job_id}",
-                headers={"Authorization": "Bearer owner-token"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+        resp = client.get(
+            f"/v1/organizations/{org_id}/deletion-jobs/{job_id}",
+            headers={"Authorization": "Bearer owner-token"},
+        )
         assert resp.status_code == 200
         assert resp.json()["status"] == "running"
 
@@ -241,22 +193,13 @@ def test_patch_org_happy_path() -> None:
         return OrganizationResponse(**row)
 
     with (
-        api_client(result=owner_result(org_id=org_id)) as (client, _res, _pub),
+        managed_org_client(org_id=org_id, role="admin") as (client, _res, _pub),
         patch("app.routers.organizations.org_service.patch_organization", new=_fake_patch),
     ):
-        _override_session(client.app)
-
-        async def _role_override():
-            return "admin"
-
-        client.app.dependency_overrides[load_caller_role] = _role_override
-        try:
-            resp = client.patch(
-                f"/v1/organizations/{org_id}",
-                headers={"Authorization": "Bearer owner-token"},
-                json={"name": "Renamed"},
-            )
-        finally:
-            client.app.dependency_overrides.clear()
+        resp = client.patch(
+            f"/v1/organizations/{org_id}",
+            headers={"Authorization": "Bearer owner-token"},
+            json={"name": "Renamed"},
+        )
         assert resp.status_code == 200
         assert resp.json()["name"] == "Renamed"

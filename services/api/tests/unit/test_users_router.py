@@ -5,6 +5,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+from authclient.permissions import ADMIN, READ_ONLY
+
+from app.auth.client import ValidateResult
 from app.pagination import CursorPage, PaginationMeta
 from app.schemas.users import UserResponse
 from tests.unit.org_user_test_support import api_client, owner_result, sample_user_row
@@ -68,9 +71,14 @@ def test_list_users_returns_cursor_page() -> None:
         async def _session_override():
             yield AsyncMock()
 
+        from app.authz import load_caller_role
         from app.deps import org_session
 
+        async def _role_override():
+            return "admin"
+
         app.dependency_overrides[org_session] = _session_override
+        app.dependency_overrides[load_caller_role] = _role_override
         with patch("app.routers.users.user_service.list_users", new=_fake_list):
             try:
                 resp = client.get(
@@ -83,6 +91,60 @@ def test_list_users_returns_cursor_page() -> None:
         body = resp.json()
         assert body["pagination"]["has_more"] is False
         assert len(body["data"]) == 1
+
+
+def test_member_cannot_list_users() -> None:
+    org_id = uuid4()
+    member = ValidateResult(org_id=org_id, permissions=ADMIN, user_id=str(uuid4()))
+    with api_client(token="mem", result=member) as (client, _res, _pub):
+        app = client.app
+
+        async def _session_override():
+            yield AsyncMock()
+
+        from app.authz import load_caller_role
+        from app.deps import org_session
+
+        async def _role_override():
+            return "member"
+
+        app.dependency_overrides[org_session] = _session_override
+        app.dependency_overrides[load_caller_role] = _role_override
+        try:
+            resp = client.get("/v1/users", headers={"Authorization": "Bearer mem"})
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
+
+
+def test_viewer_cannot_get_user() -> None:
+    org_id = uuid4()
+    user_id = uuid4()
+    viewer = ValidateResult(org_id=org_id, permissions=READ_ONLY, user_id=str(uuid4()))
+    with api_client(token="viewer", result=viewer) as (client, _res, _pub):
+        app = client.app
+
+        async def _session_override():
+            yield AsyncMock()
+
+        from app.authz import load_caller_role
+        from app.deps import org_session
+
+        async def _role_override():
+            return "viewer"
+
+        app.dependency_overrides[org_session] = _session_override
+        app.dependency_overrides[load_caller_role] = _role_override
+        try:
+            resp = client.get(
+                f"/v1/users/{user_id}",
+                headers={"Authorization": "Bearer viewer"},
+            )
+        finally:
+            app.dependency_overrides.clear()
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
 
 def test_delete_user_204() -> None:
@@ -127,7 +189,8 @@ def test_patch_user_route() -> None:
 
     async def _fake_patch(session, oid, uid, body):
         del session, body
-        assert oid == org_id and uid == user_id
+        assert oid == org_id
+        assert uid == user_id
         return UserResponse(**row)
 
     with api_client(result=owner_result(org_id=org_id)) as (client, _res, _pub):
@@ -175,9 +238,14 @@ def test_get_user_not_found_envelope() -> None:
         async def _session_override():
             yield AsyncMock()
 
+        from app.authz import load_caller_role
         from app.deps import org_session
 
+        async def _role_override():
+            return "admin"
+
         app.dependency_overrides[org_session] = _session_override
+        app.dependency_overrides[load_caller_role] = _role_override
         with patch("app.routers.users.user_service.get_user", new=_fake_get):
             try:
                 resp = client.get(

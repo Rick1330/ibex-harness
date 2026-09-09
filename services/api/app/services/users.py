@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from apierror_py import LAST_OWNER_PROTECTED, NOT_FOUND, VALIDATION_ERROR
+from authclient.errors import AuthUnavailableError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.errors import ApiError
 from app.pagination import CursorPage, decode_cursor, page_from_rows
 from app.schemas.users import UserCreate, UserPatch, UserResponse
+
+_USER_NOT_FOUND = "User not found"
+_REVOKE_MAX_ATTEMPTS = 3
+_REVOKE_BACKOFF_BASE_SECONDS = 0.05
+_REVOKE_BACKOFF_MAX_SECONDS = 1.0
 
 
 class TokenRevoker(Protocol):
@@ -50,29 +57,33 @@ def _user_from_row(row: Any, *, invite_token: str | None = None) -> UserResponse
     )
 
 
-def _parse_user_list_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+@dataclass(frozen=True)
+class _UserListCursor:
+    created_at: str | None
+    user_id: str | None
+
+
+def _parse_user_list_cursor(cursor: str | None) -> _UserListCursor:
     try:
         payload = decode_cursor(cursor)
     except ValueError as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
     if payload is None:
-        return None, None
+        return _UserListCursor(None, None)
     created_at = payload.get("created_at")
     user_id = payload.get("id")
     if not created_at or not user_id:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor")
-    return str(created_at), str(user_id)
+    return _UserListCursor(str(created_at), str(user_id))
 
 
 async def _fetch_user_rows(
     session: AsyncSession,
     org_id: UUID,
-    *,
-    created_at: str | None,
-    user_id: str | None,
+    cursor: _UserListCursor,
     limit: int,
 ) -> list[Any]:
-    if created_at is None:
+    if cursor.created_at is None:
         result = await session.execute(
             text(
                 """
@@ -100,8 +111,8 @@ async def _fetch_user_rows(
             ),
             {
                 "org_id": str(org_id),
-                "created_at": created_at,
-                "id": user_id,
+                "created_at": cursor.created_at,
+                "id": cursor.user_id,
                 "limit": limit + 1,
             },
         )
@@ -115,10 +126,8 @@ async def list_users(
     cursor: str | None,
     limit: int,
 ) -> CursorPage[UserResponse]:
-    created_at, user_id = _parse_user_list_cursor(cursor)
-    rows = await _fetch_user_rows(
-        session, org_id, created_at=created_at, user_id=user_id, limit=limit
-    )
+    list_cursor = _parse_user_list_cursor(cursor)
+    rows = await _fetch_user_rows(session, org_id, list_cursor, limit)
     users = [_user_from_row(r) for r in rows[: limit + 1]]
     next_payload = None
     if len(users) > limit:
@@ -143,7 +152,7 @@ async def get_user(session: AsyncSession, org_id: UUID, user_id: UUID) -> UserRe
     )
     row = result.mappings().first()
     if row is None:
-        raise ApiError(code=NOT_FOUND, message="User not found")
+        raise ApiError(code=NOT_FOUND, message=_USER_NOT_FOUND)
     return _user_from_row(row)
 
 
@@ -239,9 +248,41 @@ async def patch_user(
     )
     row = result.mappings().first()
     if row is None:
-        raise ApiError(code=NOT_FOUND, message="User not found")
+        raise ApiError(code=NOT_FOUND, message=_USER_NOT_FOUND)
     await session.commit()
     return _user_from_row(row)
+
+
+def _revoke_backoff_seconds(attempt: int) -> float:
+    """Full-jitter exponential backoff for AuthUnavailableError retries."""
+    cap = min(_REVOKE_BACKOFF_BASE_SECONDS * (2**attempt), _REVOKE_BACKOFF_MAX_SECONDS)
+    return (secrets.randbelow(1_000_000) / 1_000_000) * cap
+
+
+async def _revoke_tokens_before_delete(
+    revoke: RevokeContext,
+    *,
+    org_id: UUID,
+    token_ids: list[str],
+) -> None:
+    last_unavailable: AuthUnavailableError | None = None
+    for attempt in range(_REVOKE_MAX_ATTEMPTS):
+        try:
+            for token_id in token_ids:
+                await revoke.revoker.revoke(
+                    org_id=str(org_id),
+                    token_id=token_id,
+                    access_token=revoke.access_token,
+                    reason="user_deleted",
+                )
+            return
+        except AuthUnavailableError as exc:
+            last_unavailable = exc
+            if attempt >= _REVOKE_MAX_ATTEMPTS - 1:
+                raise
+            await asyncio.sleep(_revoke_backoff_seconds(attempt))
+    if last_unavailable is not None:
+        raise last_unavailable
 
 
 async def soft_delete_user(
@@ -255,6 +296,12 @@ async def soft_delete_user(
         await _assert_not_last_owner(session, org_id)
 
     token_ids = await _list_active_token_ids(session, org_id, user_id)
+    try:
+        await _revoke_tokens_before_delete(revoke, org_id=org_id, token_ids=token_ids)
+    except Exception:
+        await session.rollback()
+        raise
+
     result = await session.execute(
         text(
             """
@@ -266,16 +313,8 @@ async def soft_delete_user(
         {"user_id": str(user_id), "org_id": str(org_id)},
     )
     if result.rowcount == 0:
-        raise ApiError(code=NOT_FOUND, message="User not found")
+        raise ApiError(code=NOT_FOUND, message=_USER_NOT_FOUND)
     await session.commit()
-
-    for token_id in token_ids:
-        await revoke.revoker.revoke(
-            org_id=str(org_id),
-            token_id=token_id,
-            access_token=revoke.access_token,
-            reason="user_deleted",
-        )
 
 
 async def _list_active_token_ids(

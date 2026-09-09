@@ -25,8 +25,9 @@ class _RoleResult:
 @pytest.mark.asyncio
 async def test_load_caller_role_requires_user_id() -> None:
     token = ValidateResult(org_id=uuid4(), permissions=ADMIN, user_id=None)
+    session = AsyncMock()
     with pytest.raises(ApiError) as exc:
-        await load_caller_role(token, AsyncMock())
+        await load_caller_role(token, session)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
 
@@ -48,17 +49,15 @@ async def test_load_caller_role_ok() -> None:
     assert await load_caller_role(token, session) == "admin"
 
 
-@pytest.mark.asyncio
-async def test_require_roles_permission_gate() -> None:
+def test_require_roles_permission_gate() -> None:
     dep = require_roles(frozenset({"admin"}), required_permission=USER_MANAGE)
     token = ValidateResult(org_id=uuid4(), permissions=READ_ONLY, user_id=str(uuid4()))
     with pytest.raises(ApiError) as exc:
-        await dep(token=token, role="admin")
+        dep(token=token, role="admin")
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
 
-@pytest.mark.asyncio
-async def test_require_roles_ok() -> None:
+def test_require_roles_ok() -> None:
     dep = require_roles(frozenset({"admin"}), required_permission=USER_MANAGE)
     token = ValidateResult(org_id=uuid4(), permissions=ADMIN, user_id=str(uuid4()))
-    assert await dep(token=token, role="admin") is token
+    assert dep(token=token, role="admin") is token

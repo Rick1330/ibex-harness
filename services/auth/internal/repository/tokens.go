@@ -189,8 +189,14 @@ func (r *TokensRepository) RevokeToken(ctx context.Context, in RevokeTokenInput)
 	})
 }
 
+// OrgUserRef scopes token listing to one org member.
+type OrgUserRef struct {
+	OrgID  string
+	UserID string
+}
+
 // ListActiveTokenIDsByUser returns non-revoked token IDs for a user within an org.
-func (r *TokensRepository) ListActiveTokenIDsByUser(ctx context.Context, orgID, userID string) ([]string, error) {
+func (r *TokensRepository) ListActiveTokenIDsByUser(ctx context.Context, scope OrgUserRef) ([]string, error) {
 	start := time.Now()
 	defer observeQuery(r.obs, "list_active_token_ids_by_user", start)
 
@@ -203,7 +209,7 @@ func (r *TokensRepository) ListActiveTokenIDsByUser(ctx context.Context, orgID, 
 			  AND user_id = $2::uuid
 			  AND is_revoked = false
 			ORDER BY created_at ASC, id ASC`,
-			orgID, userID,
+			scope.OrgID, scope.UserID,
 		)
 		if err != nil {
 			return err

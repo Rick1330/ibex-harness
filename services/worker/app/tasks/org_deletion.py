@@ -70,7 +70,14 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
                 await _finish_job(session, job_id=job_id, status="succeeded", error=None)
             except Exception as exc:
                 logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
-                await _finish_job(session, job_id=job_id, status="failed", error=str(exc)[:500])
+                await session.rollback()
+                async with session_as_service_account(factory) as fail_session:
+                    await _finish_job(
+                        fail_session,
+                        job_id=job_id,
+                        status="failed",
+                        error=str(exc)[:500],
+                    )
                 raise
         return {"status": "succeeded", "job_id": job_id, "org_id": org_id}
     finally:

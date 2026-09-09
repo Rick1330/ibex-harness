@@ -103,7 +103,7 @@ func (errTokenRepo) ListTokens(context.Context, string, string, int) ([]reposito
 	return nil, "", fmt.Errorf("db down")
 }
 
-func (errTokenRepo) ListActiveTokenIDsByUser(context.Context, string, string) ([]string, error) {
+func (errTokenRepo) ListActiveTokenIDsByUser(context.Context, repository.OrgUserRef) ([]string, error) {
 	return nil, fmt.Errorf("db down")
 }
 

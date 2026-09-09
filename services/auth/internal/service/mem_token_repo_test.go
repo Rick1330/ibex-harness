@@ -67,15 +67,15 @@ func (m *memTokenRepo) ListTokens(ctx context.Context, orgID, cursor string, lim
 	return rows, next, nil
 }
 
-func (m *memTokenRepo) ListActiveTokenIDsByUser(_ context.Context, orgID, userID string) ([]string, error) {
+func (m *memTokenRepo) ListActiveTokenIDsByUser(_ context.Context, scope repository.OrgUserRef) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var ids []string
 	for id, p := range m.tokens {
-		if p.OrgID != orgID || m.revoked[id] {
+		if p.OrgID != scope.OrgID || m.revoked[id] {
 			continue
 		}
-		if p.UserID != nil && *p.UserID == userID {
+		if p.UserID != nil && *p.UserID == scope.UserID {
 			ids = append(ids, id)
 		}
 	}

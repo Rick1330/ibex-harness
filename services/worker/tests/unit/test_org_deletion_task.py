@@ -56,6 +56,49 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out["status"] == "succeeded"
 
 
+@pytest.mark.asyncio
+async def test_run_delete_cascade_failure_marks_job_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
+    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
+
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
+    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
+
+    session = AsyncMock()
+    session.rollback = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            MagicMock(first=MagicMock(return_value=(1,))),  # claim
+            RuntimeError("cascade boom"),
+        ]
+    )
+    fail_session = AsyncMock()
+    fail_session.execute = AsyncMock()
+    sessions = iter([session, fail_session])
+
+    class _CM:
+        def __init__(self):
+            self._session = next(sessions)
+
+        async def __aenter__(self):
+            return self._session
+
+        async def __aexit__(self, *args):
+            return None
+
+    monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+    with pytest.raises(RuntimeError, match="cascade boom"):
+        await org_deletion._run_delete(job_id="j", org_id="o")
+    session.rollback.assert_awaited()
+    assert fail_session.execute.await_count == 1
+    finish_sql = str(fail_session.execute.await_args.args[0])
+    assert "status" in finish_sql.lower() or ":status" in finish_sql
+
+
 def test_cascade_includes_soft_delete_org() -> None:
     joined = "\n".join(org_deletion._CASCADE_STATEMENTS)
     assert "deleted_at" in joined

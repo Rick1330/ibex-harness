@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 from uuid import UUID
 
-from apierror_py import NOT_FOUND, VALIDATION_ERROR
+from apierror_py import NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,9 @@ from app.schemas.organizations import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ORG_NOT_FOUND = "Organization not found"
+_ENQUEUE_TIMEOUT_SECONDS = 5.0
 
 
 def _org_from_row(row: Any) -> OrganizationResponse:
@@ -48,7 +52,7 @@ async def get_organization(session: AsyncSession, org_id: UUID) -> OrganizationR
     )
     row = result.mappings().first()
     if row is None:
-        raise ApiError(code=NOT_FOUND, message="Organization not found")
+        raise ApiError(code=NOT_FOUND, message=_ORG_NOT_FOUND)
     return _org_from_row(row)
 
 
@@ -81,7 +85,7 @@ async def patch_organization(
     )
     row = result.mappings().first()
     if row is None:
-        raise ApiError(code=NOT_FOUND, message="Organization not found")
+        raise ApiError(code=NOT_FOUND, message=_ORG_NOT_FOUND)
     await session.commit()
     return _org_from_row(row)
 
@@ -104,7 +108,7 @@ async def suspend_organization(
     )
     row = result.mappings().first()
     if row is None:
-        raise ApiError(code=NOT_FOUND, message="Organization not found")
+        raise ApiError(code=NOT_FOUND, message=_ORG_NOT_FOUND)
     await session.commit()
     await publisher.publish_org_suspend(str(org_id))
     return _org_from_row(row)
@@ -144,13 +148,36 @@ async def enqueue_org_deletion(
     if job is None:
         raise ApiError(code=VALIDATION_ERROR, message="Unable to create deletion job")
     try:
-        enqueue_fn(str(job.id), str(org_id))
-    except Exception as exc:  # noqa: BLE001
+        await asyncio.wait_for(
+            asyncio.to_thread(enqueue_fn, str(job.id), str(org_id)),
+            timeout=_ENQUEUE_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
         logger.warning(
             "org deletion enqueue failed job_id=%s error_class=%s",
             job.id,
             type(exc).__name__,
         )
+        await session.execute(
+            text(
+                """
+                UPDATE ibex_core.org_deletion_jobs
+                SET status = 'failed',
+                    error = :error,
+                    finished_at = NOW()
+                WHERE id = :job_id
+                """
+            ),
+            {
+                "job_id": str(job.id),
+                "error": f"enqueue failed: {type(exc).__name__}"[:500],
+            },
+        )
+        await session.commit()
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="Failed to enqueue organization deletion",
+        ) from exc
     return OrgDeletionJobResponse(
         id=job.id,
         org_id=job.org_id,

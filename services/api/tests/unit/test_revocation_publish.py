@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.revocation_publish import (
@@ -36,18 +38,19 @@ async def test_noop_publisher() -> None:
 
 
 @pytest.mark.asyncio
-async def test_redis_publisher_swallows_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_redis_publisher_retries_then_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pub = RedisOrgSuspendPublisher("redis://localhost:6379/0")
 
     class _Boom:
         async def publish(self, *_a, **_k):
             raise OSError("down")
 
-    async def _client():
-        return _Boom()
-
-    monkeypatch.setattr(pub, "_get_client", _client)
-    await pub.publish_org_suspend("org-1")
+    monkeypatch.setattr(pub, "_get_client", lambda: _Boom())
+    monkeypatch.setattr("app.revocation_publish.asyncio.sleep", AsyncMock())
+    with pytest.raises(OSError, match="down"):
+        await pub.publish_org_suspend("org-1")
 
 
 @pytest.mark.asyncio

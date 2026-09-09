@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import grpc
@@ -44,11 +45,8 @@ class GRPCTokenRevoker:
         try:
             await self._stub(payload, timeout=self._timeout, metadata=metadata)
         except grpc.aio.AioRpcError as exc:
-            if exc.code() in (
-                grpc.StatusCode.NOT_FOUND,
-                grpc.StatusCode.PERMISSION_DENIED,
-            ):
-                # Anti-enumeration / already-revoked: treat as success for delete loops.
+            if exc.code() == grpc.StatusCode.NOT_FOUND:
+                # Already-revoked / unknown token: treat as success for delete loops.
                 return
             if exc.code() == grpc.StatusCode.UNAUTHENTICATED:
                 raise AuthFailedError("invalid or revoked token") from exc
@@ -78,7 +76,8 @@ class NoopTokenRevoker:
         reason: str | None = None,
     ) -> None:
         del access_token, reason
+        await asyncio.sleep(0)
         self.calls.append((org_id, token_id))
 
     async def aclose(self) -> None:
-        return None
+        await asyncio.sleep(0)

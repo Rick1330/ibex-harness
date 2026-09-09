@@ -22,6 +22,7 @@ dependencies = [
   "prometheus-client>=0.20.0",
   "uuid6>=2024.7.10",
   "redis>=5.0.0",
+  "celery>=5.4,<6",
 ]
 
 [project.optional-dependencies]

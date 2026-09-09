@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from apierror_py import NOT_FOUND, VALIDATION_ERROR
+from apierror_py import NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
 
 from app.errors import ApiError
 from app.revocation_publish import RecordingOrgSuspendPublisher
@@ -107,9 +107,7 @@ async def test_enqueue_already_cancelled() -> None:
     assert exc.value.code == VALIDATION_ERROR
 
 
-@pytest.mark.asyncio
-async def test_enqueue_org_deletion() -> None:
-    org_id = uuid4()
+def _pending_job_fixture(org_id, *, extra_executes: int = 0):
     current = _org(id=org_id)
     job = SimpleNamespace(
         id=uuid4(),
@@ -122,10 +120,17 @@ async def test_enqueue_org_deletion() -> None:
         finished_at=None,
     )
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[_MapResult(current), _MapResult(job), MagicMock()]
-    )
+    side_effect: list = [_MapResult(current), _MapResult(job), MagicMock()]
+    side_effect.extend(MagicMock() for _ in range(extra_executes))
+    session.execute = AsyncMock(side_effect=side_effect)
     session.commit = AsyncMock()
+    return session, job
+
+
+@pytest.mark.asyncio
+async def test_enqueue_org_deletion() -> None:
+    org_id = uuid4()
+    session, job = _pending_job_fixture(org_id)
     calls: list[tuple[str, str]] = []
 
     def enqueue(job_id: str, oid: str) -> None:
@@ -137,27 +142,16 @@ async def test_enqueue_org_deletion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_enqueue_swallows_enqueue_errors() -> None:
+async def test_enqueue_marks_failed_on_enqueue_errors() -> None:
     org_id = uuid4()
-    current = _org(id=org_id)
-    job = SimpleNamespace(
-        id=uuid4(),
-        org_id=org_id,
-        status="pending",
-        error=None,
-        created_at=current.created_at,
-        updated_at=current.updated_at,
-        started_at=None,
-        finished_at=None,
-    )
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[_MapResult(current), _MapResult(job), MagicMock()]
-    )
-    session.commit = AsyncMock()
+    session, _job = _pending_job_fixture(org_id, extra_executes=1)
 
     def boom(_j: str, _o: str) -> None:
         raise RuntimeError("broker down")
 
-    out = await org_service.enqueue_org_deletion(session, org_id, enqueue_fn=boom)
-    assert out.status == "pending"
+    with pytest.raises(ApiError) as exc:
+        await org_service.enqueue_org_deletion(session, org_id, enqueue_fn=boom)
+    assert exc.value.code == SERVICE_DEGRADED
+    assert session.commit.await_count == 2
+    fail_call = session.execute.await_args_list[-1]
+    assert "failed" in str(fail_call.args[0])

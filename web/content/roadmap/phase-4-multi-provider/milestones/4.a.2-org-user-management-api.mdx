@@ -93,7 +93,7 @@ POST /v1/organizations/{id}/suspend → OrganizationResponse (status: suspended 
 DELETE /v1/organizations/{id} → 202 Accepted (async GDPR full-deletion job, cascade pattern)
 
 GET /v1/users → CursorPage[UserResponse] (org-scoped)
-POST /v1/users → UserResponse (201) — invites a user, sends email via async job
+POST /v1/users → UserResponse (201) — invites a user (token/link-only; raw invite token returned once; no email)
 GET /v1/users/{id} → UserResponse
 PATCH /v1/users/{id} → UserResponse (role, name)
 DELETE /v1/users/{id} → 204 (soft delete, revokes their PATs)
@@ -124,7 +124,7 @@ Document as a new ADR:
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
 - [ ] Cross-tenant isolation test through `_08`: cross-org user/org access all return 404 (not 403 — anti-enumeration, matching Phase 1's convention)
-- [ ] Org suspension observed in proxy auth-cache within 5s in an integration test (start a chat request loop, suspend, assert 503/403 within bound)
+- [ ] Org suspension observed in proxy auth-cache within 5s in an integration test (start a chat request loop, suspend, assert HTTP 403 with `ORG_SUSPENDED` within bound)
 - [ ] Last-owner demotion attempt returns 409 `LAST_OWNER_PROTECTED`
 - [ ] User deletion triggers revocation of all the user's PATs (verified by integration test checking auth cache)
 

@@ -7,7 +7,7 @@ date: "2026-09-09"
 authors: "IBEX Harness team"
 ---
 
-    10|# ADR-0073: Organization Lifecycle and Cascading Suspension
+# ADR-0073: Organization Lifecycle and Cascading Suspension
 
 - **Status:** Accepted
 - **Date:** 2026-09-09
@@ -83,8 +83,9 @@ HTTP error mapping:
 When demoting org roles (e.g. PATCH user role):
 
 1. Start a transaction under the org scope.
-2. Acquire a row-level lock based on the count of current `owner` users for the target org:
-   - `SELECT COUNT(*) ... FOR UPDATE`
+2. Lock matching owner rows, then count them in application logic:
+   - `SELECT id FROM ibex_core.users WHERE org_id = $1 AND role = 'owner' AND deleted_at IS NULL FOR UPDATE`
+   - Deny when `len(rows) <= 1` would leave the org without an owner.
 3. If the caller would demote the final owner, deny with:
    - `409 LAST_OWNER_PROTECTED`
 

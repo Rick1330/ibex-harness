@@ -8,9 +8,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.client import ValidateResult, parse_authorization_header
+from app.auth.client import parse_authorization_header
 from app.authz import RequireUserManage
-from app.deps import org_id_from_token, org_session, require_token
+from app.deps import org_session
 from app.pagination import CursorPage, ListQuery
 from app.schemas.users import UserCreate, UserPatch, UserResponse
 from app.services import users as user_service
@@ -42,20 +42,18 @@ def _revoke_context(
     )
 
 
-@router.get("", response_model=CursorPage[UserResponse])
+@router.get("")
 async def list_users(
-    token: Annotated[ValidateResult, Depends(require_token)],
+    token: RequireUserManage,
     session: Annotated[AsyncSession, Depends(org_session)],
-    org_id: Annotated[UUID, Depends(org_id_from_token)],
     query: Annotated[ListQuery, Depends(_list_query)],
 ) -> CursorPage[UserResponse]:
-    del token
     return await user_service.list_users(
-        session, org_id, cursor=query.cursor, limit=query.limit
+        session, token.org_id, cursor=query.cursor, limit=query.limit
     )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: UserCreate,
     token: RequireUserManage,
@@ -67,16 +65,16 @@ async def create_user(
     )
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}")
 async def get_user(
     user_id: UUID,
-    token: Annotated[ValidateResult, Depends(require_token)],
+    token: RequireUserManage,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> UserResponse:
     return await user_service.get_user(session, token.org_id, user_id)
 
 
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch("/{user_id}")
 async def patch_user(
     user_id: UUID,
     body: UserPatch,

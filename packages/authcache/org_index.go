@@ -37,6 +37,15 @@ func orgKey(orgID uuid.UUID) string {
 	return orgID.String()
 }
 
+func parseOrgKey(orgID string) (string, bool) {
+	parsed, err := uuid.Parse(orgID)
+	if err != nil {
+		return "", false
+	}
+	key := orgKey(parsed)
+	return key, key != ""
+}
+
 // put records orgID→hash unless a live tombstone rejects the insert.
 func (idx *orgIndex) put(orgID uuid.UUID, hash digest) bool {
 	key := orgKey(orgID)
@@ -45,6 +54,7 @@ func (idx *orgIndex) put(orgID uuid.UUID, hash digest) bool {
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	idx.pruneExpiredTombsLocked()
 	if idx.tombLiveLocked(key) {
 		return false
 	}
@@ -88,14 +98,16 @@ func (idx *orgIndex) removeDigest(orgID uuid.UUID, hash digest) {
 
 // revoke installs an org tombstone and returns digests that must be evicted.
 func (idx *orgIndex) revoke(orgID string) []digest {
-	if orgID == "" {
+	key, ok := parseOrgKey(orgID)
+	if !ok {
 		return nil
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	idx.tomb[orgID] = idx.now().Add(idx.tombTTL)
-	set := idx.byOrg[orgID]
-	delete(idx.byOrg, orgID)
+	idx.pruneExpiredTombsLocked()
+	idx.tomb[key] = idx.now().Add(idx.tombTTL)
+	set := idx.byOrg[key]
+	delete(idx.byOrg, key)
 	if len(set) == 0 {
 		return nil
 	}
@@ -104,6 +116,15 @@ func (idx *orgIndex) revoke(orgID string) []digest {
 		out = append(out, h)
 	}
 	return out
+}
+
+func (idx *orgIndex) pruneExpiredTombsLocked() {
+	now := idx.now()
+	for orgID, until := range idx.tomb {
+		if !now.Before(until) {
+			delete(idx.tomb, orgID)
+		}
+	}
 }
 
 func (idx *orgIndex) tombLiveLocked(orgID string) bool {

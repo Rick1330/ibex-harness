@@ -102,25 +102,22 @@ func (v *CachingValidator) Invalidate(tokenHash string) {
 // InvalidateByTokenID removes a cached claims entry by token UUID (2.2.2 pub/sub)
 // and installs a bounded tombstone so in-flight upstream results cannot repopulate.
 func (v *CachingValidator) InvalidateByTokenID(tokenID string) {
-	if tokenID == "" {
-		return
-	}
 	hash, ok := v.tokenIdx.revoke(tokenID)
 	if !ok {
 		return
 	}
-	v.dropCachedHash(hash)
-	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+	v.invalidateAfterRevoke([]digest{hash})
 }
 
 // InvalidateByOrgID removes all cached claims for an organization (ADR-0073
 // org_suspend) and installs a bounded tombstone so in-flight upstream results
 // cannot repopulate until the next authoritative ValidateToken.
 func (v *CachingValidator) InvalidateByOrgID(orgID string) {
-	if orgID == "" {
-		return
-	}
-	for _, hash := range v.orgIdx.revoke(orgID) {
+	v.invalidateAfterRevoke(v.orgIdx.revoke(orgID))
+}
+
+func (v *CachingValidator) invalidateAfterRevoke(hashes []digest) {
+	for _, hash := range hashes {
 		v.dropCachedHash(hash)
 	}
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
@@ -226,7 +223,7 @@ func (v *CachingValidator) putLRU(hash digest, res *Result) {
 	}
 	v.lru.Add(hash, entry)
 	// Concurrent InvalidateByTokenID/OrgID may have run between put and Add.
-    if v.cacheBlocked(res.TokenID, res.OrgID) {
+	if v.cacheBlocked(res.TokenID, res.OrgID) {
 		v.evictRevoked(hash, res.TokenID, res.OrgID)
 	}
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))

@@ -46,8 +46,14 @@ def test_build_envelope_required_fields() -> None:
 
 def test_http_status_for_known_codes() -> None:
     assert http_status_for_code("MISSING_TOKEN") == 401
+    assert http_status_for_code("INVALID_TOKEN") == 401
     assert http_status_for_code("NOT_FOUND") == 404
     assert http_status_for_code("ORG_SUSPENDED") == 403
     assert http_status_for_code("LAST_OWNER_PROTECTED") == 409
     assert http_status_for_code("AUTH_UNAVAILABLE") == 503
+    assert http_status_for_code("INVALID_REQUEST") == 400
+    assert http_status_for_code("RATE_LIMITED") == 429
+    assert http_status_for_code("PROVIDER_TIMEOUT") == 504
+    assert http_status_for_code("PROVIDER_NOT_CONFIGURED") == 501
+    assert http_status_for_code("PAYLOAD_TOO_LARGE") == 413
     assert http_status_for_code("UNKNOWN_CODE") == 500

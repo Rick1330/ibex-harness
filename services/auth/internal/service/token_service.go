@@ -19,7 +19,7 @@ type tokenRepo interface {
 	CreateToken(ctx context.Context, p repository.CreateTokenParams) (string, error)
 	RevokeToken(ctx context.Context, in repository.RevokeTokenInput) error
 	ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]repository.TokenMetadata, string, error)
-	ListActiveTokenIDsByUser(ctx context.Context, orgID, userID string) ([]string, error)
+	ListActiveTokenIDsByUser(ctx context.Context, scope repository.OrgUserRef) ([]string, error)
 }
 
 // TokenService manages PAT creation, revocation, and listing.
@@ -226,7 +226,7 @@ func (s *TokenService) ListTokens(ctx context.Context, orgID, cursor string, lim
 
 // ListActiveTokenIDsByUser returns non-revoked token IDs owned by a user in an org.
 func (s *TokenService) ListActiveTokenIDsByUser(ctx context.Context, orgID, userID string) ([]string, error) {
-	ids, err := s.repo.ListActiveTokenIDsByUser(ctx, orgID, userID)
+	ids, err := s.repo.ListActiveTokenIDsByUser(ctx, repository.OrgUserRef{OrgID: orgID, UserID: userID})
 	if err != nil {
 		return nil, fmt.Errorf("ListActiveTokenIDsByUser org_id=%s user_id=%s: %w", orgID, userID, err)
 	}

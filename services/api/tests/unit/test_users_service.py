@@ -93,8 +93,9 @@ async def test_patch_user_last_owner_demotion() -> None:
     current = _user(id=user_id, org_id=org_id, role="owner", email="owner@example.com")
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
+    patch = UserPatch(role="admin")
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(session, org_id, user_id, UserPatch(role="admin"))
+        await user_service.patch_user(session, org_id, user_id, patch)
     assert exc.value.code == LAST_OWNER_PROTECTED
 
 
@@ -133,6 +134,73 @@ async def test_soft_delete_revokes_tokens() -> None:
         user_service.RevokeContext(revoker=revoker, access_token="secret"),
     )
     assert revoker.revoke.await_count == 2
+    session.commit.assert_awaited()
+    # Revokes complete before soft-delete commit.
+    assert revoker.revoke.await_args_list[0].kwargs["token_id"] == "tok-1"
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_auth_unavailable_skips_commit(monkeypatch: pytest.MonkeyPatch) -> None:
+    from authclient.errors import AuthUnavailableError
+
+    org_id = uuid4()
+    user_id = uuid4()
+    current = _user(id=user_id, org_id=org_id, role="member")
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            _ScalarResult(current),
+            _ScalarResult([SimpleNamespace(id="tok-1")]),
+        ]
+    )
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    revoker = AsyncMock()
+    revoker.revoke = AsyncMock(side_effect=AuthUnavailableError())
+    monkeypatch.setattr(user_service.asyncio, "sleep", AsyncMock())
+
+    with pytest.raises(AuthUnavailableError):
+        await user_service.soft_delete_user(
+            session,
+            org_id,
+            user_id,
+            user_service.RevokeContext(revoker=revoker, access_token="secret"),
+        )
+    session.commit.assert_not_awaited()
+    session.rollback.assert_awaited()
+    assert revoker.revoke.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_auth_unavailable_retries_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from authclient.errors import AuthUnavailableError
+
+    org_id = uuid4()
+    user_id = uuid4()
+    current = _user(id=user_id, org_id=org_id, role="member")
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            _ScalarResult(current),
+            _ScalarResult([SimpleNamespace(id="tok-1")]),
+            MagicMock(rowcount=1),
+        ]
+    )
+    session.commit = AsyncMock()
+    revoker = AsyncMock()
+    revoker.revoke = AsyncMock(side_effect=[AuthUnavailableError(), None])
+    monkeypatch.setattr(user_service.asyncio, "sleep", AsyncMock())
+
+    await user_service.soft_delete_user(
+        session,
+        org_id,
+        user_id,
+        user_service.RevokeContext(revoker=revoker, access_token="secret"),
+    )
+    assert revoker.revoke.await_count == 2
+    session.commit.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -159,13 +227,9 @@ async def test_create_user_invite_integrity_error() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("unique")))
     session.rollback = AsyncMock()
+    body = UserCreate(email="a@example.com", name="A", role="member")
     with pytest.raises(ApiError) as exc:
-        await user_service.create_user_invite(
-            session,
-            uuid4(),
-            UserCreate(email="a@example.com", name="A", role="member"),
-            created_by=None,
-        )
+        await user_service.create_user_invite(session, uuid4(), body, created_by=None)
     assert "already exists" in exc.value.message
 
 
@@ -189,11 +253,7 @@ async def test_soft_delete_last_owner_blocked() -> None:
     current = _user(id=user_id, org_id=org_id, role="owner")
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
+    revoke = user_service.RevokeContext(revoker=AsyncMock(), access_token="x")
     with pytest.raises(ApiError) as exc:
-        await user_service.soft_delete_user(
-            session,
-            org_id,
-            user_id,
-            user_service.RevokeContext(revoker=AsyncMock(), access_token="x"),
-        )
+        await user_service.soft_delete_user(session, org_id, user_id, revoke)
     assert exc.value.code == LAST_OWNER_PROTECTED

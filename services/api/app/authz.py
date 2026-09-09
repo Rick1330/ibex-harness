@@ -18,6 +18,8 @@ from app.errors import ApiError
 
 AdminRoles = frozenset({"owner", "admin"})
 OwnerRoles = frozenset({"owner"})
+ORG_NOT_FOUND_MSG = "Organization not found"
+USER_NOT_FOUND_MSG = "User not found"
 
 
 async def load_caller_role(
@@ -41,7 +43,7 @@ async def load_caller_role(
     )
     role = result.scalar_one_or_none()
     if role is None:
-        raise ApiError(code=NOT_FOUND, message="User not found")
+        raise ApiError(code=NOT_FOUND, message=USER_NOT_FOUND_MSG)
     return str(role)
 
 
@@ -50,7 +52,7 @@ def require_roles(
     *,
     required_permission: int,
 ) -> Callable[..., ValidateResult]:
-    async def _dep(
+    def _dep(
         token: Annotated[ValidateResult, Depends(require_token)],
         role: Annotated[str, Depends(load_caller_role)],
     ) -> ValidateResult:
@@ -86,4 +88,4 @@ RequireOwnerOrgSettings = Annotated[
 def assert_path_org(token_org: UUID, path_org: UUID) -> None:
     if token_org != path_org:
         # Anti-enumeration: do not reveal whether the org exists elsewhere.
-        raise ApiError(code=NOT_FOUND, message="Organization not found")
+        raise ApiError(code=NOT_FOUND, message=ORG_NOT_FOUND_MSG)

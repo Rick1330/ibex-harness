@@ -35,7 +35,7 @@ def decode_cursor(cursor: str | None) -> dict[str, Any] | None:
     try:
         raw = base64.urlsafe_b64decode(cursor + pad)
         data = json.loads(raw.decode("utf-8"))
-    except (ValueError, json.JSONDecodeError) as exc:
+    except ValueError as exc:
         raise ValueError("invalid cursor") from exc
     if not isinstance(data, dict):
         raise TypeError("invalid cursor")
@@ -48,7 +48,11 @@ def _encode_next_cursor(
     page_rows: list[Any],
     cursor_payload: dict[str, Any] | None,
 ) -> str | None:
-    if not has_more or not page_rows or cursor_payload is None:
+    if not has_more:
+        return None
+    if not page_rows:
+        return None
+    if cursor_payload is None:
         return None
     return encode_cursor(cursor_payload)
 
