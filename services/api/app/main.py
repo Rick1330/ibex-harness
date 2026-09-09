@@ -25,11 +25,13 @@ from app.errors import (
     unhandled_error_handler,
 )
 from app.http_metrics import HTTPMetricsMiddleware
+from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.middleware.request_id import RequestIdMiddleware
 from app.probes import probe_router
 from app.routers.tenant import router as tenant_router
 
 logger = logging.getLogger(__name__)
+install_request_id_log_filter(logger)
 
 
 @dataclass
@@ -77,7 +79,7 @@ def create_app(
 def _mark_not_ready(state: ApiAppState, message: str) -> None:
     state.ready = False
     state.ready_error = message
-    logger.error("api not ready: %s", message)
+    logger.error("api not ready: %s request_id=%s", message, request_id_for_log())
 
 
 @asynccontextmanager
@@ -86,7 +88,7 @@ async def _api_service_lifespan(
     cfg: Settings,
     validator: TokenValidator | None,
 ) -> AsyncGenerator[None, None]:
-    logger.info("api service starting port=%s", cfg.port)
+    logger.info("api service starting port=%s request_id=%s", cfg.port, request_id_for_log())
     auth = validator or GRPCTokenValidator(
         cfg.auth_grpc_addr,
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
@@ -110,7 +112,7 @@ async def _api_service_lifespan(
         await auth.aclose()
         if engine is not None:
             await engine.dispose()
-            logger.info("api service stopped")
+            logger.info("api service stopped request_id=%s", request_id_for_log())
 
 
 async def _refresh_readiness(

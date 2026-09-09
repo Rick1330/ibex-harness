@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,11 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import Settings
+from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.reqid import require_current
+
+logger = logging.getLogger(__name__)
+install_request_id_log_filter(logger)
 
 
 class ApiError(Exception):
@@ -166,6 +171,12 @@ def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSO
 
 
 def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "unhandled exception type=%s request_id=%s",
+        type(exc).__name__,
+        request_id_for_log(),
+        exc_info=exc,
+    )
     return envelope_response(
         code=INTERNAL_ERROR,
         message="An unexpected error occurred",
