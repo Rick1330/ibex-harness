@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from apierror_py.codes import (
+    AGENT_HAS_SESSIONS,
+    AGENT_SLUG_CONFLICT,
     AUTH_UNAVAILABLE,
     INSUFFICIENT_PERMISSIONS,
     INTERNAL_ERROR,
@@ -17,6 +19,8 @@ from apierror_py.codes import (
 from apierror_py.envelope import EnvelopeOpts, FieldError, build_envelope, http_status_for_code
 
 __all__ = [
+    "AGENT_HAS_SESSIONS",
+    "AGENT_SLUG_CONFLICT",
     "AUTH_UNAVAILABLE",
     "INSUFFICIENT_PERMISSIONS",
     "INTERNAL_ERROR",

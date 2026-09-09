@@ -33,6 +33,7 @@ from app.revocation_publish import (
     OrgSuspendPublisher,
     RedisOrgSuspendPublisher,
 )
+from app.routers.agents import router as agents_router
 from app.routers.organizations import router as organizations_router
 from app.routers.tenant import router as tenant_router
 from app.routers.users import router as users_router
@@ -98,6 +99,7 @@ def create_app(
     application.include_router(tenant_router)
     application.include_router(organizations_router)
     application.include_router(users_router)
+    application.include_router(agents_router)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(RequestIdMiddleware)
     return application

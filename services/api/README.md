@@ -1,4 +1,4 @@
-# IBEX Management API (m4.A.1 + m4.A.2)
+# IBEX Management API (m4.A.1 + m4.A.2 + m4.A.3)
 
 Python FastAPI management-plane service.
 
@@ -7,6 +7,9 @@ Python FastAPI management-plane service.
 - **4.A.2:** organization lifecycle (get/patch/suspend/delete), user CRUD with invites,
   last-owner protection, org-suspend Redis propagation (`event_type=org_suspend`), and
   thin async org-deletion job status (ADR-0073).
+- **4.A.3:** agent CRUD + lifecycle (activate/pause/archive), soft-delete when
+  `total_sessions == 0`, `default_provider` / `default_model`, and
+  `active_directive_version_id` derived from directives.
 
 ## Endpoints
 
@@ -26,6 +29,14 @@ Python FastAPI management-plane service.
 | GET | `/v1/users/{id}` | Bearer | 404 cross-tenant / missing |
 | PATCH | `/v1/users/{id}` | owner/admin + `UserManage` | role/name; only owner may set `role=owner`; last owner → 409 |
 | DELETE | `/v1/users/{id}` | owner/admin + `UserManage` | Soft-delete; revoke user PATs (fail closed) |
+| GET | `/v1/agents` | Bearer | Cursor page; filters `status`, `tags`, `search` |
+| POST | `/v1/agents` | owner/admin + `OrgSettingsWrite` | Create; slug unique per org → 409 |
+| GET | `/v1/agents/{id}` | Bearer | 404 cross-tenant / missing |
+| PATCH | `/v1/agents/{id}` | owner/admin + `OrgSettingsWrite` | Slug immutable; soft provider/model |
+| DELETE | `/v1/agents/{id}` | owner/admin + `OrgSettingsWrite` | Soft-delete; 409 if `total_sessions > 0` |
+| POST | `/v1/agents/{id}/activate` | owner/admin + `OrgSettingsWrite` | From paused/archived/suspended |
+| POST | `/v1/agents/{id}/pause` | owner/admin + `OrgSettingsWrite` | From active; proxy → `AGENT_SUSPENDED` |
+| POST | `/v1/agents/{id}/archive` | owner/admin + `OrgSettingsWrite` | From non-archived |
 | GET | `/openapi.json` / `/docs` | no | FastAPI defaults |
 
 ## Environment

@@ -21,6 +21,13 @@ WHERE org_id = $1::uuid AND agent_id = $2::uuid
   AND external_id = $3 AND deleted_at IS NULL
 LIMIT 1`
 
+// lockActiveAgentSQL serializes with management soft-delete (FOR UPDATE on agents).
+const lockActiveAgentSQL = `
+SELECT id
+FROM ibex_core.agents
+WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
+FOR UPDATE`
+
 const insertSessionSQL = `
 INSERT INTO ibex_core.sessions
 	(org_id, agent_id, external_id, model, provider, directive_version_id, status)
@@ -100,7 +107,22 @@ func (s *PostgresStore) tryGetOrCreate(ctx context.Context, p GetOrCreateParams)
 	if existing != nil {
 		return commitExisting(tx, existing)
 	}
+	if err := lockActiveAgent(ctx, tx, p.OrgID, p.AgentID); err != nil {
+		return nil, "", err
+	}
 	return insertAndCommit(ctx, tx, p)
+}
+
+func lockActiveAgent(ctx context.Context, tx *sql.Tx, orgID, agentID uuid.UUID) error {
+	var id uuid.UUID
+	err := tx.QueryRowContext(ctx, lockActiveAgentSQL, agentID, orgID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return ErrAgentNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("session: lock agent: %w", err)
+	}
+	return nil
 }
 
 func findExistingByExternal(ctx context.Context, tx *sql.Tx, p GetOrCreateParams) (*Session, error) {
