@@ -77,20 +77,23 @@ _LIST_AGENTS_SQL = """
         ON d.agent_id = a.id AND d.org_id = a.org_id
     WHERE a.org_id = CAST(:org_id AS uuid)
       AND a.deleted_at IS NULL
-      AND (:status IS NULL OR a.status = :status)
       AND (
-            CAST(:has_tags AS boolean) = false
+            CAST(:status AS text) IS NULL
+            OR a.status = CAST(:status AS text)
+      )
+      AND (
+            CAST(:has_tags AS boolean) IS FALSE
             OR a.tags && ARRAY(
                 SELECT jsonb_array_elements_text(CAST(:tags_json AS jsonb))
             )
       )
       AND (
-            :search IS NULL
-            OR a.name ILIKE :search
-            OR a.slug ILIKE :search
+            CAST(:search AS text) IS NULL
+            OR a.name ILIKE CAST(:search AS text)
+            OR a.slug ILIKE CAST(:search AS text)
       )
       AND (
-            :cursor_created_at IS NULL
+            CAST(:cursor_created_at AS text) IS NULL
             OR a.created_at < CAST(:cursor_created_at AS timestamptz)
             OR (
                 a.created_at = CAST(:cursor_created_at AS timestamptz)
@@ -354,16 +357,18 @@ async def get_agent(session: AsyncSession, org_id: UUID, agent_id: UUID) -> Agen
     return _agent_from_row(row)
 
 
-async def create_agent(
-    session: AsyncSession,
-    org_id: UUID,
-    body: AgentCreate,
-    *,
-    created_by: UUID | None,
-) -> AgentResponse:
-    params = {
-        "org_id": str(org_id),
-        "created_by": str(created_by) if created_by else None,
+@dataclass(frozen=True)
+class CreateAgentArgs:
+    org_id: UUID
+    body: AgentCreate
+    created_by: UUID | None
+
+
+def _create_params(args: CreateAgentArgs) -> dict[str, Any]:
+    body = args.body
+    return {
+        "org_id": str(args.org_id),
+        "created_by": str(args.created_by) if args.created_by else None,
         "name": body.name,
         "slug": body.slug,
         "description": body.description,
@@ -373,24 +378,31 @@ async def create_agent(
         "default_provider": body.default_provider,
         "default_model": body.default_model,
     }
+
+
+def _api_error_from_create_integrity(exc: IntegrityError) -> ApiError:
+    if _is_slug_conflict(exc):
+        return ApiError(
+            code=AGENT_SLUG_CONFLICT,
+            message="An agent with this slug already exists in the organization",
+        )
+    return ApiError(
+        code=VALIDATION_ERROR,
+        message="Agent create failed validation constraints",
+    )
+
+
+async def create_agent(session: AsyncSession, args: CreateAgentArgs) -> AgentResponse:
     try:
-        result = await session.execute(text(_CREATE_AGENT_SQL), params)
+        result = await session.execute(text(_CREATE_AGENT_SQL), _create_params(args))
         inserted = result.mappings().first()
         if inserted is None:
             raise ApiError(code=VALIDATION_ERROR, message="Unable to create agent")
-        created = await get_agent(session, org_id, UUID(str(inserted["id"])))
+        created = await get_agent(session, args.org_id, UUID(str(inserted["id"])))
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        if _is_slug_conflict(exc):
-            raise ApiError(
-                code=AGENT_SLUG_CONFLICT,
-                message="An agent with this slug already exists in the organization",
-            ) from exc
-        raise ApiError(
-            code=VALIDATION_ERROR,
-            message="Agent create failed validation constraints",
-        ) from exc
+        raise _api_error_from_create_integrity(exc) from exc
     return created
 
 
@@ -440,15 +452,33 @@ async def patch_agent(
     return updated
 
 
-async def soft_delete_agent(session: AsyncSession, org_id: UUID, agent_id: UUID) -> None:
-    ids = {"agent_id": str(agent_id), "org_id": str(org_id)}
+def _sessions_block_delete(*, live_sessions: bool, total_sessions: int) -> bool:
+    return live_sessions or total_sessions > 0
+
+
+async def _lock_agent_row(
+    session: AsyncSession, ids: dict[str, str]
+) -> Any:
     locked = await session.execute(text(_LOCK_AGENT_SQL), ids)
     row = locked.mappings().first()
     if row is None:
         raise ApiError(code=NOT_FOUND, message=AGENT_NOT_FOUND_MSG)
+    return row
 
-    has_sessions = await session.execute(text(_SESSION_EXISTS_SQL), ids)
-    if bool(has_sessions.scalar()) or int(row["total_sessions"] or 0) > 0:
+
+async def _live_sessions_exist(session: AsyncSession, ids: dict[str, str]) -> bool:
+    result = await session.execute(text(_SESSION_EXISTS_SQL), ids)
+    return bool(result.scalar())
+
+
+async def soft_delete_agent(session: AsyncSession, org_id: UUID, agent_id: UUID) -> None:
+    ids = {"agent_id": str(agent_id), "org_id": str(org_id)}
+    row = await _lock_agent_row(session, ids)
+    total = int(row["total_sessions"] or 0)
+    if _sessions_block_delete(
+        live_sessions=await _live_sessions_exist(session, ids),
+        total_sessions=total,
+    ):
         raise ApiError(
             code=AGENT_HAS_SESSIONS,
             message="Agent has session history; archive instead of delete",

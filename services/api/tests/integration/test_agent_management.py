@@ -96,14 +96,15 @@ async def _insert_org_owner(factory: async_sessionmaker[AsyncSession], name: str
     return _Tenant(org_id=org_id, user_id=user_id, slug=slug)
 
 
-async def _insert_agent(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    *,
-    name: str,
-    slug: str,
-    total_sessions: int = 0,
-) -> UUID:
+@dataclass(frozen=True)
+class _SeedAgent:
+    org_id: UUID
+    name: str
+    slug: str
+    total_sessions: int = 0
+
+
+async def _insert_agent(factory: async_sessionmaker[AsyncSession], seed: _SeedAgent) -> UUID:
     agent_id = uuid4()
     await _sa(
         factory,
@@ -111,10 +112,10 @@ async def _insert_agent(
         "(CAST(:id AS uuid), CAST(:org AS uuid), :name, :slug, :sessions)",
         {
             "id": str(agent_id),
-            "org": str(org_id),
-            "name": name,
-            "slug": slug,
-            "sessions": total_sessions,
+            "org": str(seed.org_id),
+            "name": seed.name,
+            "slug": seed.slug,
+            "sessions": seed.total_sessions,
         },
     )
     return agent_id
@@ -200,7 +201,8 @@ async def test_agent_crud_pause_and_cross_tenant_404(
 ) -> None:
     async with _tenants(factory, "aga", "agb") as (org_a, org_b):
         foreign = await _insert_agent(
-            factory, org_b.org_id, name="B Agent", slug=f"b-{org_b.org_id.hex[:8]}"
+            factory,
+            _SeedAgent(org_id=org_b.org_id, name="B Agent", slug=f"b-{org_b.org_id.hex[:8]}"),
         )
         with _client(org_a.org_id, str(org_a.user_id)) as client:
             _assert_create_pause_iso(client, org_a, foreign)
@@ -213,10 +215,12 @@ async def test_agent_has_sessions_blocks_delete(
     async with _tenants(factory, "sess") as (org,):
         agent_id = await _insert_agent(
             factory,
-            org.org_id,
-            name="Busy",
-            slug=f"busy-{org.org_id.hex[:8]}",
-            total_sessions=2,
+            _SeedAgent(
+                org_id=org.org_id,
+                name="Busy",
+                slug=f"busy-{org.org_id.hex[:8]}",
+                total_sessions=2,
+            ),
         )
         with _client(org.org_id, str(org.user_id)) as client:
             resp = client.delete(f"/v1/agents/{agent_id}", headers=_AUTH)

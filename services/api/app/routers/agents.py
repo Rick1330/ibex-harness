@@ -67,7 +67,10 @@ async def create_agent(
 ) -> AgentResponse:
     created_by = UUID(token.user_id) if token.user_id else None
     return await agent_service.create_agent(
-        session, token.org_id, body, created_by=created_by
+        session,
+        agent_service.CreateAgentArgs(
+            org_id=token.org_id, body=body, created_by=created_by
+        ),
     )
 
 
