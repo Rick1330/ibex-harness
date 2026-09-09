@@ -24,6 +24,9 @@ func mapToAuthcacheErr(err error) error {
 	if errors.Is(err, ErrInvalidToken) {
 		return authcache.ErrInvalidToken
 	}
+	if errors.Is(err, ErrOrgSuspended) {
+		return authcache.ErrOrgSuspended
+	}
 	if errors.Is(err, ErrAuthUnavailable) {
 		return authcache.ErrUnavailable
 	}
@@ -33,6 +36,9 @@ func mapToAuthcacheErr(err error) error {
 func mapFromAuthcacheErr(err error) error {
 	if errors.Is(err, authcache.ErrInvalidToken) {
 		return ErrInvalidToken
+	}
+	if errors.Is(err, authcache.ErrOrgSuspended) {
+		return ErrOrgSuspended
 	}
 	if errors.Is(err, authcache.ErrUnavailable) {
 		return ErrAuthUnavailable

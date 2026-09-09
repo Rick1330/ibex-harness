@@ -15,6 +15,7 @@ from app.task_names import (
     TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MCP_AUDIT_NOOP,
+    TASK_ORG_DELETE_ORGANIZATION,
     TASK_RESULT_PROBE,
 )
 
@@ -28,6 +29,7 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     TASK_MAINTENANCE_NOOP_SWEEP: {"queue": "maintenance"},
     TASK_MAINTENANCE_ALWAYS_FAIL: {"queue": "maintenance"},
     TASK_RESULT_PROBE: {"queue": "maintenance"},
+    TASK_ORG_DELETE_ORGANIZATION: {"queue": "maintenance"},
 }
 
 DEFAULT_QUEUE_NAME = "celery"

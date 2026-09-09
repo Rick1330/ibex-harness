@@ -28,5 +28,12 @@ func validatorCases(f validatorFixture) []validatorCase {
 		{name: "malformed stored hash", token: f.bearer, lookup: &fakeLookup{row: token.Row{Hash: "wrong", OrgID: "org"}}, wantErr: token.ErrUnauthenticated},
 		{name: "db error", token: f.bearer, lookup: &fakeLookup{err: errors.New("db down")}, expect: "db error"},
 		{name: "ok with optional fields", token: f.bearer, lookup: &fakeLookup{row: f.row}, expect: "ok"},
+		{name: "org suspended", token: f.bearer, lookup: &fakeLookup{row: suspendedRow(f.row)}, wantErr: token.ErrOrgSuspended},
 	}
+}
+
+func suspendedRow(row token.Row) token.Row {
+	out := row
+	out.OrgStatus = "suspended"
+	return out
 }

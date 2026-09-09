@@ -41,11 +41,30 @@ def test_invalid_token_envelope() -> None:
         assert response.json()["error"]["code"] == "INVALID_TOKEN"
 
 
-def test_auth_unavailable_envelope() -> None:
-    with _app(available=False) as client:
-        response = client.get(
+def test_org_suspended_envelope() -> None:
+    from authclient.revoke import NoopTokenRevoker
+    from fastapi.testclient import TestClient
+
+    from app.auth.client import StaticTokenValidator
+    from app.auth.errors import OrgSuspendedError
+    from app.config import Settings
+    from app.main import ApiRuntimeOverrides, create_app
+
+    class _Suspended(StaticTokenValidator):
+        async def validate(self, access_token: str) -> ValidateResult:
+            del access_token
+            raise OrgSuspendedError("organization is suspended")
+
+    settings = Settings(database_url=None)
+    app = create_app(
+        settings=settings,
+        validator=_Suspended({}),
+        runtime=ApiRuntimeOverrides(token_revoker=NoopTokenRevoker()),
+    )
+    with TestClient(app) as client:
+        resp = client.get(
             "/v1/tenant/ping",
-            headers={"Authorization": "Bearer good"},
+            headers={"Authorization": "Bearer any"},
         )
-        assert response.status_code == 503
-        assert response.json()["error"]["code"] == "AUTH_UNAVAILABLE"
+        assert resp.status_code == 403
+        assert resp.json()["error"]["code"] == "ORG_SUSPENDED"

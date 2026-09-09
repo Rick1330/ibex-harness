@@ -9,6 +9,9 @@ description = "Shared AuthService.ValidateToken wire codec, trust gates, and dia
 readme = "README.md"
 requires-python = ">=3.12"
 
+[project.optional-dependencies]
+grpc = ["grpcio>=1.60,<2"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["authclient*"]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from authclient.errors import AuthFailedError, AuthUnavailableError
+from authclient.errors import AuthFailedError, AuthUnavailableError, OrgSuspendedError
 from authclient.validate import (
     READINESS_PROBE_SENTINEL,
     GRPCTokenValidator,
@@ -17,8 +17,10 @@ __all__ = [
     "AuthFailedError",
     "AuthUnavailableError",
     "GRPCTokenValidator",
+    "OrgSuspendedError",
     "StaticTokenValidator",
     "TokenValidator",
     "ValidateResult",
     "parse_authorization_header",
 ]
+

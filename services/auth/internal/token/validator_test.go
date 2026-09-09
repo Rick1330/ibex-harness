@@ -138,7 +138,7 @@ func TestValidator_Validate(t *testing.T) {
 	userID := uuid.NewString()
 	expires := time.Now().UTC().Add(time.Hour)
 	row := token.Row{
-		ID: tokenID.String(), OrgID: uuid.NewString(), Hash: hash, Permissions: 42,
+		ID: tokenID.String(), OrgID: uuid.NewString(), OrgStatus: "active", Hash: hash, Permissions: 42,
 		AgentID: &agentID, UserID: &userID, ExpiresAt: &expires,
 	}
 	for _, tc := range validatorCases(validatorFixture{

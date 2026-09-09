@@ -282,6 +282,41 @@ func TestUnit_CachingValidatorInvalidateByTokenID(t *testing.T) {
 	assertUpstreamCalls(t, up, 2)
 }
 
+func TestUnit_CachingValidatorInvalidateByOrgID(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-org-1"}}
+	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-org-1"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	assertUpstreamCalls(t, up, 1)
+	v.InvalidateByOrgID(testOrgID.String())
+	res, err := v.Validate(context.Background(), "bearer-org-1")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("expected miss after InvalidateByOrgID")
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
+func TestUnit_CachingValidatorOrgSuspendedNotBloomed(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{err: ErrOrgSuspended}
+	v := testValidator(t, up, Config{}, NoopMetrics{})
+	_, err := v.Validate(context.Background(), "bearer-suspended")
+	if !errors.Is(err, ErrOrgSuspended) {
+		t.Fatalf("err=%v want ErrOrgSuspended", err)
+	}
+	// Second call must still hit upstream (not bloom short-circuit as invalid).
+	_, err = v.Validate(context.Background(), "bearer-suspended")
+	if !errors.Is(err, ErrOrgSuspended) {
+		t.Fatalf("second err=%v want ErrOrgSuspended", err)
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
 func TestUnit_CachingValidatorRevokeBetweenLRUCloneAndReturn(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-clone"}}

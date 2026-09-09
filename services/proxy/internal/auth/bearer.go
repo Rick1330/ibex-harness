@@ -15,6 +15,8 @@ var (
 	ErrMissingToken = errors.New("missing token")
 	// ErrInvalidToken indicates the token was rejected by auth.
 	ErrInvalidToken = errors.New("invalid token")
+	// ErrOrgSuspended indicates the organization is not active.
+	ErrOrgSuspended = errors.New("organization suspended")
 	// ErrInsufficientPermissions indicates the token lacks required permissions.
 	ErrInsufficientPermissions = errors.New("insufficient permissions")
 	// ErrAuthUnavailable indicates auth could not be reached or timed out.

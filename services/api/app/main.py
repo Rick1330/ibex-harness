@@ -1,9 +1,9 @@
-"""FastAPI host for the IBEX management API skeleton (m4.A.1)."""
+"""FastAPI host for the IBEX management API (m4.A.1 + m4.A.2)."""
 
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -28,10 +28,26 @@ from app.http_metrics import HTTPMetricsMiddleware
 from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.middleware.request_id import RequestIdMiddleware
 from app.probes import probe_router
+from app.revocation_publish import (
+    NoopOrgSuspendPublisher,
+    OrgSuspendPublisher,
+    RedisOrgSuspendPublisher,
+)
+from app.routers.organizations import router as organizations_router
 from app.routers.tenant import router as tenant_router
+from app.routers.users import router as users_router
 
 logger = logging.getLogger(__name__)
 install_request_id_log_filter(logger)
+
+
+@dataclass
+class ApiRuntimeOverrides:
+    """Optional test/runtime wiring for revokers, publishers, and enqueue hooks."""
+
+    token_revoker: object | None = None
+    org_suspend_publisher: OrgSuspendPublisher | None = None
+    enqueue_org_deletion: Callable[[str, str], None] | None = None
 
 
 @dataclass
@@ -42,15 +58,25 @@ class ApiAppState:
     engine: AsyncEngine | None = field(default=None, repr=False)
     session_factory: async_sessionmaker[AsyncSession] | None = field(default=None, repr=False)
     validator: TokenValidator | None = field(default=None, repr=False)
+    token_revoker: object | None = field(default=None, repr=False)
+    org_suspend_publisher: OrgSuspendPublisher | None = field(default=None, repr=False)
+    enqueue_org_deletion: Callable[[str, str], None] | None = field(default=None, repr=False)
 
 
 def create_app(
     *,
     settings: Settings | None = None,
     validator: TokenValidator | None = None,
+    runtime: ApiRuntimeOverrides | None = None,
 ) -> FastAPI:
     cfg = settings or get_settings()
-    state = ApiAppState(settings=cfg)
+    hooks = runtime or ApiRuntimeOverrides()
+    state = ApiAppState(
+        settings=cfg,
+        token_revoker=hooks.token_revoker,
+        org_suspend_publisher=hooks.org_suspend_publisher,
+        enqueue_org_deletion=hooks.enqueue_org_deletion,
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
@@ -59,7 +85,7 @@ def create_app(
 
     application = FastAPI(
         title="IBEX Management API",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
     application.state.api = state
@@ -70,7 +96,8 @@ def create_app(
     application.add_exception_handler(Exception, unhandled_error_handler)
     application.include_router(probe_router)
     application.include_router(tenant_router)
-    # Request ID outermost so errors and metrics see it; Starlette adds middleware in reverse.
+    application.include_router(organizations_router)
+    application.include_router(users_router)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(RequestIdMiddleware)
     return application
@@ -80,6 +107,57 @@ def _mark_not_ready(state: ApiAppState, message: str) -> None:
     state.ready = False
     state.ready_error = message
     logger.error("api not ready: %s request_id=%s", message, request_id_for_log())
+
+
+def _wire_runtime_defaults(state: ApiAppState, cfg: Settings) -> None:
+    if state.token_revoker is None:
+        from authclient.revoke import GRPCTokenRevoker
+
+        state.token_revoker = GRPCTokenRevoker(
+            cfg.auth_grpc_addr,
+            timeout_seconds=max(cfg.auth_timeout_ms / 1000.0, 0.2),
+        )
+    if state.org_suspend_publisher is None:
+        state.org_suspend_publisher = (
+            RedisOrgSuspendPublisher(cfg.redis_url)
+            if cfg.redis_url
+            else NoopOrgSuspendPublisher()
+        )
+    if state.enqueue_org_deletion is None:
+        from app.services.organizations import unconfigured_org_deletion_enqueue
+
+        state.enqueue_org_deletion = (
+            _make_celery_enqueue(cfg.celery_broker_url)
+            if cfg.celery_broker_url
+            else unconfigured_org_deletion_enqueue
+        )
+
+
+async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
+    await auth.aclose()
+    closer = getattr(state.token_revoker, "aclose", None)
+    if closer is not None:
+        await closer()
+    pub_close = getattr(state.org_suspend_publisher, "aclose", None)
+    if pub_close is not None:
+        await pub_close()
+    if state.engine is not None:
+        await state.engine.dispose()
+        logger.info("api service stopped request_id=%s", request_id_for_log())
+
+
+async def _startup_database(
+    state: ApiAppState,
+    cfg: Settings,
+    auth: TokenValidator,
+) -> None:
+    if not cfg.database_url:
+        _mark_not_ready(state, "IBEX_API_DATABASE_URL not set")
+        return
+    engine = create_engine(cfg)
+    state.engine = engine
+    state.session_factory = create_session_factory(engine)
+    await _refresh_readiness(state, auth=auth, engine=engine)
 
 
 @asynccontextmanager
@@ -94,25 +172,27 @@ async def _api_service_lifespan(
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
     )
     state.validator = auth
-    engine: AsyncEngine | None = None
-
+    _wire_runtime_defaults(state, cfg)
     try:
-        if not cfg.database_url:
-            _mark_not_ready(state, "IBEX_API_DATABASE_URL not set")
-            yield
-            return
-
-        engine = create_engine(cfg)
-        session_factory = create_session_factory(engine)
-        state.engine = engine
-        state.session_factory = session_factory
-        await _refresh_readiness(state, auth=auth, engine=engine)
+        await _startup_database(state, cfg, auth)
         yield
     finally:
-        await auth.aclose()
-        if engine is not None:
-            await engine.dispose()
-            logger.info("api service stopped request_id=%s", request_id_for_log())
+        await _close_runtime(state, auth)
+
+
+def _make_celery_enqueue(broker_url: str) -> Callable[[str, str], None]:
+    from celery import Celery
+
+    client = Celery("ibex-api", broker=broker_url)
+
+    def _enqueue(job_id: str, org_id: str) -> None:
+        client.send_task(
+            "ibex.worker.org.delete_organization",
+            args=[job_id, org_id],
+            queue="maintenance",
+        )
+
+    return _enqueue
 
 
 async def _refresh_readiness(

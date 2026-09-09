@@ -8,10 +8,11 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 )
 
-// CacheInvalidator removes cached claims (by hash or token UUID).
+// CacheInvalidator removes cached claims (by hash, token UUID, or org UUID).
 type CacheInvalidator interface {
 	Invalidate(tokenHash string)
 	InvalidateByTokenID(tokenID string)
+	InvalidateByOrgID(orgID string)
 }
 
 type grpcUpstream struct {
@@ -54,4 +55,8 @@ func (c *cachingTokenValidator) Invalidate(tokenHash string) {
 
 func (c *cachingTokenValidator) InvalidateByTokenID(tokenID string) {
 	c.inner.InvalidateByTokenID(tokenID)
+}
+
+func (c *cachingTokenValidator) InvalidateByOrgID(orgID string) {
+	c.inner.InvalidateByOrgID(orgID)
 }

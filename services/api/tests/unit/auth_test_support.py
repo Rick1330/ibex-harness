@@ -28,8 +28,8 @@ def wire_bytes(wire: ValidateTokenWire) -> bytes:
     return b"".join(chunks)
 
 
-def aio_rpc(code: grpc.StatusCode) -> grpc.aio.AioRpcError:
-    return grpc.aio.AioRpcError(code, details="unit-test")
+def aio_rpc(code: grpc.StatusCode, details: str = "unit-test") -> grpc.aio.AioRpcError:
+    return grpc.aio.AioRpcError(code, details=details)
 
 
 @contextmanager

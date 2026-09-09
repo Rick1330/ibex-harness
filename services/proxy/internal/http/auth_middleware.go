@@ -114,6 +114,9 @@ func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logge
 	case errors.Is(err, auth.ErrInvalidToken):
 		apierror.WriteStatus(awc.w, http.StatusUnauthorized, apierror.CodeInvalidToken,
 			"Invalid or expired token", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+	case errors.Is(err, auth.ErrOrgSuspended):
+		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeOrgSuspended,
+			"Organization is suspended", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	case errors.Is(err, auth.ErrAuthUnavailable):
 		log.WarnCtx(r.Context(), "auth validate unavailable", "error", err)
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,

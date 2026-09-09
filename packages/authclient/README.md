@@ -24,4 +24,4 @@ packages/authclient/
       validate.py         # GRPCTokenValidator / StaticTokenValidator
 ```
 
-Imports: `from authclient import encode_validate_token_request` · `from authclient.validate import GRPCTokenValidator` (validate is not re-exported from the package root so consumers without grpcio can still import the codec).
+Imports: `from authclient import encode_validate_token_request` · `from authclient.validate import GRPCTokenValidator` (validate/revoke are not re-exported from the package root so consumers without grpcio can still import the codec). Install gRPC dial clients with `pip install 'authclient[grpc]'` / the service extras that depend on it.

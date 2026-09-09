@@ -27,14 +27,23 @@ func (m *mockValidator) Validate(_ context.Context, _ string) (*auth.ValidateRes
 	return m.res, m.err
 }
 
-func TestAuthMiddlewareMissingToken(t *testing.T) {
-	t.Parallel()
-
-	handler := AuthMiddleware(&mockValidator{}, logger.Discard("proxy"), AuthOptions{})(
+func serveAuthProbe(t *testing.T, validator auth.TokenValidator, bearer string) *httptest.ResponseRecorder {
+	t.Helper()
+	handler := AuthMiddleware(validator, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil))
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+	if bearer != "" {
+		req.Header.Set("Authorization", bearer)
+	}
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAuthMiddlewareMissingToken(t *testing.T) {
+	t.Parallel()
+	rec := serveAuthProbe(t, &mockValidator{}, "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -42,29 +51,26 @@ func TestAuthMiddlewareMissingToken(t *testing.T) {
 
 func TestAuthMiddlewareInvalidToken(t *testing.T) {
 	t.Parallel()
-
-	handler := AuthMiddleware(&mockValidator{err: auth.ErrInvalidToken}, logger.Discard("proxy"), AuthOptions{})(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
-	)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_bad")
-	handler.ServeHTTP(rec, req)
+	rec := serveAuthProbe(t, &mockValidator{err: auth.ErrInvalidToken}, "Bearer ibex_pat_bad")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status: %d", rec.Code)
 	}
 }
 
+func TestAuthMiddlewareOrgSuspended(t *testing.T) {
+	t.Parallel()
+	rec := serveAuthProbe(t, &mockValidator{err: auth.ErrOrgSuspended}, "Bearer ibex_pat_x")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeOrgSuspended)) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
 func TestAuthMiddlewareAuthUnavailable(t *testing.T) {
 	t.Parallel()
-
-	handler := AuthMiddleware(&mockValidator{err: auth.ErrAuthUnavailable}, logger.Discard("proxy"), AuthOptions{})(
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
-	)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_x")
-	handler.ServeHTTP(rec, req)
+	rec := serveAuthProbe(t, &mockValidator{err: auth.ErrAuthUnavailable}, "Bearer ibex_pat_x")
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status: %d", rec.Code)
 	}

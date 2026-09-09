@@ -41,8 +41,15 @@ func (v *GRPCValidator) Validate(ctx context.Context, accessToken string) (*Vali
 }
 
 func mapValidateTokenError(err error) error {
-	if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
-		return ErrInvalidToken
+	if st, ok := status.FromError(err); ok {
+		switch st.Code() {
+		case codes.Unauthenticated:
+			return ErrInvalidToken
+		case codes.PermissionDenied:
+			if st.Message() == "organization is suspended" {
+				return ErrOrgSuspended
+			}
+		}
 	}
 	return fmt.Errorf("%w: %v", ErrAuthUnavailable, err)
 }

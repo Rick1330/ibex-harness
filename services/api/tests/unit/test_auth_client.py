@@ -8,6 +8,8 @@ from uuid import uuid4
 import grpc
 import pytest
 from authclient import ValidateTokenWire
+from authclient.codec import encode_revoke_token_request
+from authclient.validate import _map_rpc_error
 
 from app.auth.client import (
     GRPCTokenValidator,
@@ -15,7 +17,7 @@ from app.auth.client import (
     ValidateResult,
     parse_authorization_header,
 )
-from app.auth.errors import AuthFailedError, AuthUnavailableError
+from app.auth.errors import AuthFailedError, AuthUnavailableError, OrgSuspendedError
 from tests.unit.auth_test_support import aio_rpc, patched_validator, wire_bytes
 
 
@@ -100,6 +102,16 @@ async def test_patched_validator_unauthenticated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_patched_validator_org_suspended() -> None:
+    with patched_validator(
+        side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED, "organization is suspended")
+    ) as validator:
+        with pytest.raises(OrgSuspendedError):
+            await validator.validate("tok")
+        await validator.aclose()
+
+
+@pytest.mark.asyncio
 async def test_patched_validator_unavailable_rpc() -> None:
     with patched_validator(side_effect=aio_rpc(grpc.StatusCode.UNAVAILABLE)) as validator:
         with pytest.raises(AuthUnavailableError):
@@ -128,3 +140,13 @@ async def test_patched_validator_bad_response() -> None:
         with pytest.raises(AuthUnavailableError):
             await validator.validate("tok")
         await validator.aclose()
+
+
+def test_map_rpc_org_suspended() -> None:
+    err = _map_rpc_error(aio_rpc(grpc.StatusCode.PERMISSION_DENIED, "organization is suspended"))
+    assert isinstance(err, OrgSuspendedError)
+
+
+def test_encode_revoke_token_request() -> None:
+    payload = encode_revoke_token_request(org_id="o", token_id="t", reason="user_deleted")
+    assert len(payload) > 0

@@ -115,6 +115,12 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 			})
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
+		if errors.Is(err, token.ErrOrgSuspended) {
+			s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{
+				Result: metrics.TokenResultError, Seconds: elapsed,
+			})
+			return nil, status.Error(codes.PermissionDenied, "organization is suspended")
+		}
 		s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{
 			Result: metrics.TokenResultError, Seconds: elapsed,
 		})
