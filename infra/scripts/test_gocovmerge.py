@@ -10,7 +10,8 @@ from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().with_name("gocovmerge.py")
 _SPEC = importlib.util.spec_from_file_location("gocovmerge", _SCRIPT)
-assert _SPEC is not None and _SPEC.loader is not None
+if _SPEC is None or _SPEC.loader is None:
+    raise RuntimeError(f"failed to load gocovmerge from {_SCRIPT}")
 gocovmerge = importlib.util.module_from_spec(_SPEC)
 sys.modules["gocovmerge"] = gocovmerge
 _SPEC.loader.exec_module(gocovmerge)
