@@ -39,7 +39,7 @@ FROM python@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/services/api/.venv/bin:$PATH"
 
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
@@ -47,7 +47,9 @@ RUN apt-get update \
     && groupadd -g 10001 ibex \
     && useradd -u 10001 -g ibex -r -s /sbin/nologin ibex
 
-WORKDIR /app
+# Keep the venv at the same absolute path as the deps stage so uv console-script
+# shebangs (absolute by default) remain valid without --relocatable.
+WORKDIR /app/services/api
 
 COPY --from=deps /app/services/api/.venv ./.venv
 

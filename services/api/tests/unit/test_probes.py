@@ -31,3 +31,11 @@ def test_ready_degraded_without_database() -> None:
         assert err["code"] == "SERVICE_DEGRADED"
         assert "DATABASE" in err["message"].upper() or "database" in err["message"].lower()
         assert err["request_id"]
+
+
+def test_metrics_and_openapi() -> None:
+    settings = Settings(database_url=None)
+    validator = StaticTokenValidator({})
+    with TestClient(create_app(settings=settings, validator=validator)) as client:
+        assert client.get("/metrics").status_code == 200
+        assert "paths" in client.get("/openapi.json").json()

@@ -23,13 +23,14 @@ LATENCY = Histogram(
 
 class HTTPMetricsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        path = request.url.path
         method = request.method
         started = time.perf_counter()
         response = await call_next(request)
         elapsed = time.perf_counter() - started
-        # Bound cardinality: probes + known prefixes only.
-        label_path = path if path in {"/health", "/ready", "/metrics"} or path.startswith("/v1/") else "other"
+        # Bound cardinality: matched route templates only; unmatched → "other".
+        route = request.scope.get("route")
+        template = getattr(route, "path", None)
+        label_path = template if isinstance(template, str) else "other"
         REQUESTS.labels(method=method, path=label_path, status=str(response.status_code)).inc()
         LATENCY.labels(method=method, path=label_path).observe(elapsed)
         return response

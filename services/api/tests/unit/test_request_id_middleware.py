@@ -45,3 +45,19 @@ def test_replaces_invalid_inbound_request_id() -> None:
         assert rid is not None
         assert rid != "garbage"
         assert UUID(rid).version == 7
+
+
+def test_ready_envelope_has_single_request_id_header() -> None:
+    with _client() as client:
+        response = client.get("/ready")
+        assert response.status_code == 503
+        # Starlette/httpx expose get_list for multi-value headers when present.
+        values = response.headers.get_list(HEADER) if hasattr(response.headers, "get_list") else None
+        if values is not None:
+            assert len(values) == 1
+            assert values[0] == response.json()["error"]["request_id"]
+        else:
+            raw = response.headers.get(HEADER)
+            assert raw is not None
+            assert "," not in raw
+            assert raw == response.json()["error"]["request_id"]

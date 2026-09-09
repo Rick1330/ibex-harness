@@ -7,9 +7,10 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db import create_session_factory, session_with_org
+from app.config import Settings
+from app.db import create_engine, create_session_factory, session_with_org
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +24,8 @@ def _require_dsn() -> str:
 
 @pytest.fixture
 async def session_factory() -> async_sessionmaker[AsyncSession]:
-    engine = create_async_engine(_require_dsn(), pool_pre_ping=True)
+    settings = Settings(database_url=_require_dsn())
+    engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:
         yield factory

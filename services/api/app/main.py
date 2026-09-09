@@ -74,6 +74,12 @@ def create_app(
     return application
 
 
+def _mark_not_ready(state: ApiAppState, message: str) -> None:
+    state.ready = False
+    state.ready_error = message
+    logger.error("api not ready: %s", message)
+
+
 @asynccontextmanager
 async def _api_service_lifespan(
     state: ApiAppState,
@@ -90,9 +96,7 @@ async def _api_service_lifespan(
 
     try:
         if not cfg.database_url:
-            state.ready = False
-            state.ready_error = "IBEX_API_DATABASE_URL not set"
-            logger.error("api not ready: %s", state.ready_error)
+            _mark_not_ready(state, "IBEX_API_DATABASE_URL not set")
             yield
             return
 
@@ -116,14 +120,10 @@ async def _refresh_readiness(
     engine: AsyncEngine,
 ) -> None:
     if not await auth.ready():
-        state.ready = False
-        state.ready_error = "auth gRPC not reachable"
-        logger.error("api not ready: %s", state.ready_error)
+        _mark_not_ready(state, "auth gRPC not reachable")
         return
     if not await _postgres_ready(engine):
-        state.ready = False
-        state.ready_error = "database not reachable"
-        logger.error("api not ready: %s", state.ready_error)
+        _mark_not_ready(state, "database not reachable")
         return
     state.ready = True
     state.ready_error = None

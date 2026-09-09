@@ -7,6 +7,7 @@ from typing import Any
 
 from apierror_py import (
     AUTH_UNAVAILABLE,
+    INSUFFICIENT_PERMISSIONS,
     INTERNAL_ERROR,
     INVALID_TOKEN,
     MISSING_TOKEN,
@@ -134,6 +135,8 @@ def _code_message_from_http_detail(detail: Any) -> tuple[str, str] | None:
 def _code_for_http_status(status_code: int) -> str:
     if status_code == 401:
         return INVALID_TOKEN
+    if status_code == 403:
+        return INSUFFICIENT_PERMISSIONS
     if status_code == 404:
         return NOT_FOUND
     if status_code == 503:
