@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,25 +28,22 @@ async def test_run_delete_requires_database_url(monkeypatch: pytest.MonkeyPatch)
         await org_deletion._run_delete(job_id="j", org_id="o")
 
 
-@pytest.mark.asyncio
-async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def _wire_delete_session(
+    monkeypatch: pytest.MonkeyPatch,
+    session: AsyncMock,
+    *,
+    session_factory: Callable[[], Any] | None = None,
+) -> None:
     settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
-
     engine = MagicMock()
     engine.dispose = AsyncMock()
     monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
     monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
 
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            MagicMock(first=MagicMock(return_value=(1,))),  # claim
-            MagicMock(first=MagicMock(return_value=None)),  # org not soft-deleted
-            *([MagicMock()] * len(org_deletion._CASCADE_STATEMENTS)),
-            MagicMock(),  # finish
-        ]
-    )
+    if session_factory is not None:
+        monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: session_factory())
+        return
 
     class _CM:
         async def __aenter__(self):
@@ -53,6 +53,20 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
             return None
 
     monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+
+
+@pytest.mark.asyncio
+async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            MagicMock(first=MagicMock(return_value=(1,))),  # claim
+            MagicMock(first=MagicMock(return_value=None)),  # org not soft-deleted
+            *([MagicMock()] * len(org_deletion._CASCADE_STATEMENTS)),
+            MagicMock(),  # finish
+        ]
+    )
+    _wire_delete_session(monkeypatch, session)
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
 
@@ -61,14 +75,6 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_run_delete_cascade_failure_marks_job_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
-    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
-
-    engine = MagicMock()
-    engine.dispose = AsyncMock()
-    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
-    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
-
     session = AsyncMock()
     session.rollback = AsyncMock()
     session.execute = AsyncMock(
@@ -92,7 +98,7 @@ async def test_run_delete_cascade_failure_marks_job_failed(
         async def __aexit__(self, *args):
             return None
 
-    monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+    _wire_delete_session(monkeypatch, session, session_factory=_CM)
     with pytest.raises(RuntimeError, match="cascade boom"):
         await org_deletion._run_delete(job_id="j", org_id="o")
     session.rollback.assert_awaited()
@@ -113,14 +119,6 @@ def test_cascade_includes_soft_delete_org() -> None:
 async def test_run_delete_skips_cascade_when_org_already_deleted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
-    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
-
-    engine = MagicMock()
-    engine.dispose = AsyncMock()
-    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
-    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
-
     session = AsyncMock()
     session.execute = AsyncMock(
         side_effect=[
@@ -129,25 +127,18 @@ async def test_run_delete_skips_cascade_when_org_already_deleted(
             MagicMock(),  # finish succeeded
         ]
     )
-
-    class _CM:
-        async def __aenter__(self):
-            return session
-
-        async def __aexit__(self, *args):
-            return None
-
-    monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+    _wire_delete_session(monkeypatch, session)
     out = await org_deletion._run_delete(job_id="j", org_id="o")
-    assert out["status"] == "succeeded"
-    assert out["reason"] == "already_deleted"
-    # claim + already-deleted check + finish only (no cascade statements)
+    assert out == {
+        "status": "succeeded",
+        "job_id": "j",
+        "org_id": "o",
+        "reason": "already_deleted",
+    }
     assert session.execute.await_count == 3
 
 
 def test_claim_job_sql_excludes_failed() -> None:
-    import inspect
-
     src = inspect.getsource(org_deletion._claim_job)
     assert "status = 'pending'" in src
     assert "'failed'" not in src
