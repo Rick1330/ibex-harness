@@ -38,7 +38,7 @@ def patched_validator(
     side_effect: object | None = None,
     return_value: object | None = None,
 ) -> Iterator[GRPCTokenValidator]:
-    with patch("app.auth.client.grpc.aio.insecure_channel") as factory:
+    with patch("authclient.validate.grpc.aio.insecure_channel") as factory:
         stub = AsyncMock(side_effect=side_effect, return_value=return_value)
         channel = MagicMock()
         channel.unary_unary.return_value = stub

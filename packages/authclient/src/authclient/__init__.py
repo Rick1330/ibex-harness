@@ -11,12 +11,14 @@ from authclient.codec import (
     encode_validate_token_request,
     encode_varint,
 )
-from authclient.target import assert_trusted_insecure_auth_target
-
+from authclient.errors import AuthFailedError, AuthUnavailableError
 from authclient.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
+from authclient.target import assert_trusted_insecure_auth_target
 
 __all__ = [
     "AuthCodecError",
+    "AuthFailedError",
+    "AuthUnavailableError",
     "MEMORY_READ",
     "MEMORY_WRITE",
     "MAX_TOKEN_BYTES",
