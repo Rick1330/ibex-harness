@@ -13,10 +13,11 @@ from app.authz import assert_path_org
 from app.errors import ApiError
 from app.schemas.organizations import OrganizationResponse, OrgDeletionJobResponse
 from tests.unit.org_user_test_support import (
+    ManagedClientOpts,
     api_client,
     managed_org_client,
-    owner_result,
     override_org_session,
+    owner_result,
     sample_org_row,
 )
 
@@ -54,7 +55,7 @@ def test_get_org_happy_path() -> None:
         return OrganizationResponse(**row)
 
     with (
-        managed_org_client(org_id=org_id, role="member") as (client, _res, _pub),
+        managed_org_client(ManagedClientOpts(org_id=org_id, role="member")) as (client, _res, _pub),
         patch("app.routers.organizations.org_service.get_organization", new=_fake_get),
     ):
         resp = client.get(
@@ -68,9 +69,7 @@ def test_get_org_happy_path() -> None:
 def test_suspend_requires_owner_role_bitmap() -> None:
     org_id = uuid4()
     weak = ValidateResult(org_id=org_id, permissions=READ_ONLY, user_id=str(uuid4()))
-    with managed_org_client(
-        org_id=org_id, role="member", token="weak", result=weak
-    ) as (client, _res, _pub):
+    with managed_org_client(ManagedClientOpts(org_id=org_id, role="member", token="weak", result=weak)) as (client, _res, _pub):
         resp = client.post(
             f"/v1/organizations/{org_id}/suspend",
             headers={"Authorization": "Bearer weak"},
@@ -89,7 +88,7 @@ def test_suspend_owner_publishes() -> None:
         return OrganizationResponse(**row)
 
     with (
-        managed_org_client(org_id=org_id, role="owner") as (client, _res, pub),
+        managed_org_client(ManagedClientOpts(org_id=org_id, role="owner")) as (client, _res, pub),
         patch(
             "app.routers.organizations.org_service.suspend_organization",
             new=_fake_suspend,
@@ -122,7 +121,7 @@ def test_delete_org_returns_202() -> None:
 
     calls: list[tuple[str, str]] = []
     with (
-        managed_org_client(org_id=org_id, role="owner", enqueue_calls=calls) as (
+        managed_org_client(ManagedClientOpts(org_id=org_id, role="owner", enqueue_calls=calls)) as (
             client,
             _res,
             _pub,
@@ -144,9 +143,7 @@ def test_delete_org_returns_202() -> None:
 def test_member_cannot_patch_org() -> None:
     org_id = uuid4()
     member = ValidateResult(org_id=org_id, permissions=ADMIN, user_id=str(uuid4()))
-    with managed_org_client(
-        org_id=org_id, role="member", token="mem", result=member
-    ) as (client, _res, _pub):
+    with managed_org_client(ManagedClientOpts(org_id=org_id, role="member", token="mem", result=member)) as (client, _res, _pub):
         resp = client.patch(
             f"/v1/organizations/{org_id}",
             headers={"Authorization": "Bearer mem"},
@@ -173,7 +170,7 @@ def test_get_deletion_job() -> None:
         )
 
     with (
-        managed_org_client(org_id=org_id, role="owner") as (client, _res, _pub),
+        managed_org_client(ManagedClientOpts(org_id=org_id, role="owner")) as (client, _res, _pub),
         patch("app.routers.organizations.org_service.get_deletion_job", new=_fake_job),
     ):
         resp = client.get(
@@ -193,7 +190,7 @@ def test_patch_org_happy_path() -> None:
         return OrganizationResponse(**row)
 
     with (
-        managed_org_client(org_id=org_id, role="admin") as (client, _res, _pub),
+        managed_org_client(ManagedClientOpts(org_id=org_id, role="admin")) as (client, _res, _pub),
         patch("app.routers.organizations.org_service.patch_organization", new=_fake_patch),
     ):
         resp = client.patch(

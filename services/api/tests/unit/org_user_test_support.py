@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
@@ -37,27 +38,31 @@ def override_org_session(app: FastAPI) -> None:
     app.dependency_overrides[org_session] = _session_override
 
 
+@dataclass(frozen=True)
+class ManagedClientOpts:
+    org_id: UUID
+    role: str = "owner"
+    token: str = "owner-token"
+    result: ValidateResult | None = None
+    publisher: RecordingOrgSuspendPublisher | None = None
+    enqueue_calls: list[tuple[str, str]] | None = None
+
+
 @contextmanager
 def managed_org_client(
-    *,
-    org_id: UUID,
-    role: str = "owner",
-    token: str = "owner-token",
-    result: ValidateResult | None = None,
-    publisher: RecordingOrgSuspendPublisher | None = None,
-    enqueue_calls: list[tuple[str, str]] | None = None,
+    opts: ManagedClientOpts,
 ) -> Iterator[tuple[TestClient, ValidateResult, RecordingOrgSuspendPublisher]]:
     """api_client with org_session + caller role overrides already installed."""
     with api_client(
-        token=token,
-        result=result or owner_result(org_id=org_id),
-        publisher=publisher,
-        enqueue_calls=enqueue_calls,
+        token=opts.token,
+        result=opts.result or owner_result(org_id=opts.org_id),
+        publisher=opts.publisher,
+        enqueue_calls=opts.enqueue_calls,
     ) as (client, res, pub):
         override_org_session(client.app)
 
         async def _role_override():
-            return role
+            return opts.role
 
         client.app.dependency_overrides[load_caller_role] = _role_override
         try:

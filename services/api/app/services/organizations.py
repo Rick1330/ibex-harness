@@ -114,15 +114,7 @@ async def suspend_organization(
     return _org_from_row(row)
 
 
-async def enqueue_org_deletion(
-    session: AsyncSession,
-    org_id: UUID,
-    *,
-    enqueue_fn,
-) -> OrgDeletionJobResponse:
-    org = await get_organization(session, org_id)
-    if org.status == "cancelled":
-        raise ApiError(code=VALIDATION_ERROR, message="Organization already deleted")
+async def _create_deletion_job_row(session: AsyncSession, org_id: UUID) -> Any:
     result = await session.execute(
         text(
             """
@@ -133,7 +125,10 @@ async def enqueue_org_deletion(
         ),
         {"org_id": str(org_id)},
     )
-    job = result.mappings().first()
+    return result.mappings().first()
+
+
+async def _cancel_organization(session: AsyncSession, org_id: UUID) -> None:
     await session.execute(
         text(
             """
@@ -144,9 +139,27 @@ async def enqueue_org_deletion(
         ),
         {"org_id": str(org_id)},
     )
-    await session.commit()
-    if job is None:
-        raise ApiError(code=VALIDATION_ERROR, message="Unable to create deletion job")
+
+
+async def _mark_deletion_job_failed(session: AsyncSession, job_id: UUID, exc: Exception) -> None:
+    await session.execute(
+        text(
+            """
+            UPDATE ibex_core.org_deletion_jobs
+            SET status = 'failed',
+                error = :error,
+                finished_at = NOW()
+            WHERE id = :job_id
+            """
+        ),
+        {
+            "job_id": str(job_id),
+            "error": f"enqueue failed: {type(exc).__name__}"[:500],
+        },
+    )
+
+
+async def _dispatch_deletion_enqueue(session: AsyncSession, job: Any, org_id: UUID, enqueue_fn) -> None:
     try:
         await asyncio.wait_for(
             asyncio.to_thread(enqueue_fn, str(job.id), str(org_id)),
@@ -158,26 +171,15 @@ async def enqueue_org_deletion(
             job.id,
             type(exc).__name__,
         )
-        await session.execute(
-            text(
-                """
-                UPDATE ibex_core.org_deletion_jobs
-                SET status = 'failed',
-                    error = :error,
-                    finished_at = NOW()
-                WHERE id = :job_id
-                """
-            ),
-            {
-                "job_id": str(job.id),
-                "error": f"enqueue failed: {type(exc).__name__}"[:500],
-            },
-        )
+        await _mark_deletion_job_failed(session, job.id, exc)
         await session.commit()
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="Failed to enqueue organization deletion",
         ) from exc
+
+
+def _deletion_job_response(job: Any) -> OrgDeletionJobResponse:
     return OrgDeletionJobResponse(
         id=job.id,
         org_id=job.org_id,
@@ -188,6 +190,24 @@ async def enqueue_org_deletion(
         started_at=job.started_at,
         finished_at=job.finished_at,
     )
+
+
+async def enqueue_org_deletion(
+    session: AsyncSession,
+    org_id: UUID,
+    *,
+    enqueue_fn,
+) -> OrgDeletionJobResponse:
+    org = await get_organization(session, org_id)
+    if org.status == "cancelled":
+        raise ApiError(code=VALIDATION_ERROR, message="Organization already deleted")
+    job = await _create_deletion_job_row(session, org_id)
+    await _cancel_organization(session, org_id)
+    await session.commit()
+    if job is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Unable to create deletion job")
+    await _dispatch_deletion_enqueue(session, job, org_id, enqueue_fn)
+    return _deletion_job_response(job)
 
 
 async def get_deletion_job(
@@ -206,16 +226,7 @@ async def get_deletion_job(
     row = result.mappings().first()
     if row is None:
         raise ApiError(code=NOT_FOUND, message="Deletion job not found")
-    return OrgDeletionJobResponse(
-        id=row.id,
-        org_id=row.org_id,
-        status=row.status,
-        error=row.error,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        started_at=row.started_at,
-        finished_at=row.finished_at,
-    )
+    return _deletion_job_response(row)
 
 
 def _json_dumps(value: dict[str, Any]) -> str:
