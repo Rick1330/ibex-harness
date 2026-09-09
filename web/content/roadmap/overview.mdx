@@ -1,7 +1,7 @@
 ---
 title: "Phases Overview"
-description: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–3 complete; Phase 3.5 next."
-summary: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–3 complete; Phase 3.5 next."
+description: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–3.5 complete; Phase 4 next."
+summary: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–3.5 complete; Phase 4 next."
 status: "completed"
 ---
 
@@ -17,7 +17,7 @@ High-level roadmap from Foundation through Advanced Retrieval. Detailed mileston
 | [2](phase-2-single-provider/) | Single Provider E2E | **Complete** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
 | [2.5](phase-2-5-provider-generalization/) | Provider Generalization & Foundation | **Complete** | Phase 2 exit | Multi-provider, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton, LGTM exit |
 | [3](phase-3-memory-engine/) | Core Memory Substrate | **Complete** | Phase 2.5 exit | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache, exit audit |
-| [3.5](phase-3-5-extraction-assembly/) | Extraction & Context Assembly | Planned | Phase 3 exit | Extraction worker, context assembly on proxy hot path, MCP memory tools |
+| [3.5](phase-3-5-extraction-assembly/) | Extraction & Context Assembly | **Complete** | Phase 3 exit | Extraction worker, context assembly on proxy hot path, MCP memory tools, exit audit |
 | [4](phase-4-multi-provider/) | Operator Platform & Multi-Provider | Planned | Phase 3.5 exit | Management API, dashboard, multi-provider routing, hierarchical rate limiting |
 | [4.5](phase-4-5-intelligence-layer/) | Intelligence Layer | Planned | Phase 4 exit | Behavioral fingerprinting, drift detection, directive regression testing |
 | [5](phase-5-advanced-retrieval/) | Advanced Retrieval & Graph Memory | Planned | Phase 4.5 exit | Hybrid search (dense+sparse+reranking), graph traversal, evaluation harness |
@@ -94,11 +94,15 @@ Five tracks delivered: memory schema v2 (HNSW, temporal validity, multi-label), 
 
 ## Phase 3.5: Extraction & Context Assembly
 
-**Status:** Planned
+**Status:** Complete
+
+**Exit audit:** [phase35-exit-audit](/roadmap/phase-3-5-extraction-assembly/phase35-exit-audit)
 
 **Goals:** [goals](/roadmap/phase-3-5-extraction-assembly/goals)
 
-Six tracks: worker foundation, extraction intelligence, context assembly engine, proxy hot-path integration, MCP memory tools, and exit gate. This is where "the proxy that learns" becomes true end-to-end.
+**Decisions:** [decisions](/roadmap/phase-3-5-extraction-assembly/decisions)
+
+Six tracks delivered: worker foundation, extraction intelligence, context assembly engine, proxy hot-path integration, MCP memory tools, and exit gate (learning-loop e2e, ISO-MCP, benchmark/ADR sign-off).
 
 ---
 

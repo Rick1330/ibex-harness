@@ -1,0 +1,93 @@
+---
+title: "Phase 3.5 Exit Audit — Summary"
+description: "Date: 2026-09-09 Gate milestone: 3.5.F.3 Detailed register: /roadmap/archive/033-phase3.5-exit-audit"
+summary: "Date: 2026-09-09 Gate milestone: 3.5.F.3 Detailed register: /roadmap/archive/033-phase3.5-exit-audit"
+phase: "phase-3-5-extraction-assembly"
+status: "completed"
+---
+
+# Phase 3.5 Exit Audit — Summary
+
+**Date:** 2026-09-09  
+**Gate milestone:** [3.5.F.3 Benchmark sign-off and ADR index](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.f.3-benchmark-sign-off-adr-index)  
+**Detailed register:** [docs/archive/033-phase3.5-exit-audit.md](/roadmap/archive/033-phase3.5-exit-audit)  
+**Git SHA (`main` at audit):** `ae0272d6`
+
+---
+
+## Verdict
+
+**Phase 3.5 is complete** with **zero open P0 gaps**. Extraction → memory → context assembly → MCP tools are validated by unit/integration tests, ISO-* + ISO-MCP isolation, and `make e2e-smoke-p3.5`. Remaining debt is P2 suite-publish hygiene (dedicated `contextAssembly` / `mcpTool` / `extractionThroughput` CI) and P3 carry-forwards from Phase 3.
+
+<Callout type="info" title="Verified complete — AC hygiene">
+  Phase 3.5 acceptance criteria are verified via this exit audit and merged PRs.
+  Treat this audit and milestone frontmatter `status: completed` as authoritative.
+</Callout>
+
+<Callout type="note" title="Corrected exit criterion #10">
+  Planning text named ADR-0043/0044 for Phase 3.5. Those numbers are tokenizer /
+  response-pipeline. Sign-off cites [ADR-0038](/docs/adr/0038-context-assembly-service),
+  [ADR-0050](/docs/adr/0050-mcp-server-skeleton), and ADRs 0062–0072.
+</Callout>
+
+---
+
+## Gap summary
+
+| Severity | Count at audit | Resolved / disposition |
+|----------|----------------|------------------------|
+| P0 Blocker | 0 | — |
+| P1 High | 0 | — |
+| P2 Hygiene | 6 | 2 resolved (ADR index + milestone status); 4 open documented |
+| P3 Defer | 6 | Documented |
+
+### P0 / P1
+
+None.
+
+### P2 (hygiene)
+
+| ID | Gap | Disposition |
+|----|-----|-------------|
+| GAP-35-P2-001 | `contextAssembly` suite not published / CI-gated | **Open** — contract column only |
+| GAP-35-P2-002 | `mcpTool` p95 suite missing | **Open** |
+| GAP-35-P2-003 | `extractionThroughput` suite missing | **Open** (distinct from `extractionQuality`) |
+| GAP-35-P2-004 | Criterion #4 “20 concurrent” vs open-loop RPS harness | **Open** |
+| GAP-35-P2-005 | ADR index prose lagged through 0065 | **Resolved** in F.3 |
+| GAP-35-P2-006 | Milestone status frontmatter hygiene | **Resolved** in F.3 |
+
+### P3 (deferred)
+
+| ID | Gap | Destination |
+|----|-----|-------------|
+| GAP-35-P3-001 | Phase 3 schema-doc P2 carry-forward | Hygiene / Phase 4 |
+| GAP-35-P3-002 | Escalation worker (#627) | Phase 4+ |
+| GAP-35-P3-003 | Org-scope GDPR (#641) | Phase 4.A.2 |
+| GAP-35-P3-004 | Per-tool MCP rate limits | Phase 4 ops |
+| GAP-35-P3-005 | Live 100K assemble_load required CI | Full-profile follow-up |
+| GAP-35-P3-006 | Site/bot modules for new suite_ids | Follow-up bench PRs |
+
+---
+
+## Exit criteria (final)
+
+| # | Verdict |
+|---|---------|
+| 1 Extraction → categorized memories | **Met** |
+| 2 Chat injects relevant memory | **Met** |
+| 3 ISO-* + ISO-MCP zero leakage | **Met** |
+| 4 Latency budgets (assembly p95 / proxy p99) | **Partial** — see GAP-35-P2-001/004 |
+| 5 Degradation L0–L3 verified | **Met** |
+| 6 MCP tools E2E, shared substrate | **Met** |
+| 7 MCP fail-closed + independent RPM | **Met** |
+| 8 Phase 1–3 regressions pass | **Met** |
+| 9 `make e2e-smoke-p3.5` exits 0 | **Met** |
+| 10 ADRs published and indexed | **Met** (corrected ADR set) |
+
+---
+
+## Related
+
+- [Decision log](/roadmap/phase-3-5-extraction-assembly/decisions)
+- [Suite contract](https://github.com/Rick1330/ibex-harness/blob/main/benchmarks/README.md)
+- [Phase 3 exit audit](/roadmap/phase-3-memory-engine/phase3-exit-audit)
