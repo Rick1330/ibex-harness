@@ -36,6 +36,12 @@ const (
 	CodeOrgSuspended Code = "ORG_SUSPENDED"
 	// CodeLastOwnerProtected tells clients the last remaining owner cannot be demoted or removed.
 	CodeLastOwnerProtected Code = "LAST_OWNER_PROTECTED"
+	// CodeAgentSlugConflict tells clients the agent slug is already taken within the organization.
+	CodeAgentSlugConflict Code = "AGENT_SLUG_CONFLICT"
+	// CodeAgentHasSessions tells clients the agent cannot be deleted while session history exists.
+	CodeAgentHasSessions Code = "AGENT_HAS_SESSIONS"
+	// CodeAgentStatusConflict tells clients a concurrent lifecycle transition changed agent status.
+	CodeAgentStatusConflict Code = "AGENT_STATUS_CONFLICT"
 	// CodeRateLimited tells clients to back off and retry after the rate-limit window.
 	CodeRateLimited Code = "RATE_LIMITED"
 	// CodeIdempotencyKeyReuse tells clients the Idempotency-Key was already used with a different request body.

@@ -20,6 +20,7 @@ AdminRoles = frozenset({"owner", "admin"})
 OwnerRoles = frozenset({"owner"})
 ORG_NOT_FOUND_MSG = "Organization not found"
 USER_NOT_FOUND_MSG = "User not found"
+AGENT_NOT_FOUND_MSG = "Agent not found"
 
 
 async def load_caller_role(

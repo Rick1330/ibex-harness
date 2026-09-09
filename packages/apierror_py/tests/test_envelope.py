@@ -50,6 +50,9 @@ def test_http_status_for_known_codes() -> None:
     assert http_status_for_code("NOT_FOUND") == 404
     assert http_status_for_code("ORG_SUSPENDED") == 403
     assert http_status_for_code("LAST_OWNER_PROTECTED") == 409
+    assert http_status_for_code("AGENT_SLUG_CONFLICT") == 409
+    assert http_status_for_code("AGENT_HAS_SESSIONS") == 409
+    assert http_status_for_code("AGENT_STATUS_CONFLICT") == 409
     assert http_status_for_code("AUTH_UNAVAILABLE") == 503
     assert http_status_for_code("INVALID_REQUEST") == 400
     assert http_status_for_code("RATE_LIMITED") == 429

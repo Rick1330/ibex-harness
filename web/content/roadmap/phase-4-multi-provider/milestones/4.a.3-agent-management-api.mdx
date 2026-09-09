@@ -2,7 +2,7 @@
 title: "4.A.3 Agent Management API"
 description: "Port the original, production-ready agent management spec: 8 endpoints covering full lifecycle (list/create/get/patch/delete/activate/pause/archive), plus per-agent default provider/model fields for Track C routing."
 summary: "Port the original, production-ready agent management spec: 8 endpoints covering full lifecycle (list/create/get/patch/delete/activate/pause/archive), plus per-agent default provider/model fields for Track C routing."
-status: "planned"
+status: "done"
 milestoneId: "4.A.3"
 track: "A"
 trackTitle: "Management API Server"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.A.3 — Agent Management API"
 
 # Milestone 4.A.3 — Agent Management API
 
-**Status:** Planned  
+**Status:** Done  
 **Goal:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 2 days  
@@ -28,6 +28,19 @@ fullTitle: "Milestone 4.A.3 — Agent Management API"
   libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
   that are expected to change once the live code, constraints, and research during implementation
   make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Implemented shape vs this sketch:
+
+  - **Status enum** includes `suspended` (DB + API Literal), matching `000007` CHECK; lifecycle endpoints remain activate/pause/archive only (no `/suspend`).
+  - **Response** follows docs-shaped `AgentResponse` (description, config, metadata, tags, stats) plus `default_provider` / `default_model`.
+  - Field name is **`active_directive_version_id`** (derived via LEFT JOIN `directives.active_version_id`), never sketch `directive_id`.
+  - **Soft provider/model validation** only (non-empty + max length); registered-provider allowlist deferred to Track C discovery.
+  - **`GET …/stats` deferred** (out of scope).
+  - **Pause→proxy ≤5s** proven in proxy security-integration via the same SQL as API `pause` (CI has no Python API process); HTTP `POST …/pause` covered by API integration tests.
+  - Mutating auth: owner/admin + **`ORG_SETTINGS_WRITE`** (`RequireOrgSettings`); reads: any authenticated org token.
+  - Soft-delete (`deleted_at`) when `total_sessions == 0` and no live session rows; else 409 `AGENT_HAS_SESSIONS`.
 </Callout>
 
 ## Why This Milestone Exists
@@ -82,7 +95,7 @@ GET /v1/agents → CursorPage[AgentResponse] (org-scoped)
 POST /v1/agents → AgentResponse (201)
 GET /v1/agents/{agent_id} → AgentResponse
 PATCH /v1/agents/{agent_id} → AgentResponse
-DELETE /v1/agents/{agent_id} → 204 (hard delete blocked if total_sessions > 0 → 409)
+DELETE /v1/agents/{agent_id} → 204 soft-delete (blocked with 409 AGENT_HAS_SESSIONS if sessions exist)
 POST /v1/agents/{agent_id}/activate → AgentResponse (status: active)
 POST /v1/agents/{agent_id}/pause → AgentResponse (status: paused)
 POST /v1/agents/{agent_id}/archive → AgentResponse (status: archived)
@@ -98,10 +111,10 @@ class AgentResponse(BaseModel):
  org_id: UUID
  slug: str # unique per org, URL-safe, immutable after creation
  name: str
- status: Literal["active", "paused", "archived"]
- default_provider: str | None # NEW — e.g. "anthropic", "openai"; null = platform default
- default_model: str | None # NEW — e.g. "claude-3-5-sonnet-20241022"; null = org/platform default
- directive_id: UUID | None
+ status: Literal["active", "paused", "suspended", "archived"]
+ default_provider: str | None # soft-validated (non-empty + max length); null = platform default
+ default_model: str | None # soft-validated (non-empty + max length); null = org/platform default
+ active_directive_version_id: UUID | None
  total_sessions: int
  created_at: datetime
  updated_at: datetime
@@ -113,9 +126,9 @@ class AgentResponse(BaseModel):
 
 - Slug is immutable after creation (changing it would break external integrations that reference agents by slug).
 - `slug` uniqueness enforced at DB level (`UNIQUE (org_id, slug)`); API returns 409 `AGENT_SLUG_CONFLICT` on collision.
-- Hard delete blocked when `total_sessions > 0` — returns 409 `AGENT_HAS_SESSIONS`. Use `archive` instead.
-- `default_provider` should be one of the registered provider names or null; validation done at the API layer (not just a DB constraint) with an explicit 422 on unknown provider name.
-- Pausing an agent propagates to the proxy: paused agents return `AGENT_SUSPENDED` on subsequent requests (same enforcement path as org suspension from 4.A.2).
+- Soft-delete (`deleted_at`) succeeds only when `total_sessions == 0` **and** no live session rows exist; otherwise returns 409 `AGENT_HAS_SESSIONS`. Use `archive` instead.
+- `default_provider` / `default_model` use soft API validation only (non-empty + max length when set). Registered-provider allowlist is deferred to Track C discovery — unknown names are not rejected here.
+- Pausing an agent propagates to the proxy: paused agents return `AGENT_SUSPENDED` on subsequent requests (ValidateAgent is uncached; ≤5s product SLA).
 
 ---
 
@@ -123,14 +136,13 @@ class AgentResponse(BaseModel):
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] All 8 endpoints functional with correct status codes
-- [ ] Slug conflict returns 409 `AGENT_SLUG_CONFLICT`
-- [ ] Hard-delete of agent with sessions returns 409 `AGENT_HAS_SESSIONS`
-- [ ] `default_provider` / `default_model` fields persisted and returned correctly (null when not set)
-- [ ] `TestAPI_ISO_AGENT_*`: org A cannot read/modify org B's agents (all return 404)
-- [ ] Agent pause propagated to proxy within 5s (integration test)
+- [x] All 8 endpoints functional with correct status codes
+- [x] Slug conflict returns 409 `AGENT_SLUG_CONFLICT`
+- [x] Soft-delete of agent with sessions returns 409 `AGENT_HAS_SESSIONS`
+- [x] `default_provider` / `default_model` fields persisted and returned correctly (null when not set)
+- [x] `TestAPI_ISO_AGENT_*`: org A cannot read/modify org B's agents (all return 404)
+- [x] Agent pause propagated to proxy within 5s (integration test)
 
 ## Prerequisites
 
 - M4.A.1 skeleton merged
-
