@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import pytest
@@ -69,3 +70,15 @@ async def test_stdio_runtime_search_memory_success(
         await aclose_stdio_runtime(runtime)
 
     assert result is not None
+    assert getattr(result, "isError", False) is False
+    if isinstance(result, tuple):
+        content_blocks, _structured = result
+        text = content_blocks[0].text
+    else:
+        text = result[0].text  # type: ignore[index]
+    payload = json.loads(text)
+    assert payload["query"] == "stdio-ok"
+    assert payload["limit"] == 3
+    assert payload["org_id"] == str(ORG)
+    assert payload["agent_id"] == str(AGENT)
+    assert payload["results"] == []

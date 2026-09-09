@@ -7,11 +7,19 @@ Compatible with github.com/wadey/gocovmerge semantics for mode set/count/atomic.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # Cover block: statement count + hit count.
 Block = tuple[int, int]
 Blocks = dict[str, Block]
+
+
+@dataclass(frozen=True, slots=True)
+class _BlockHit:
+    key: str
+    stmts: int
+    count: int
 
 
 def _safe_path(raw: str, *, base: Path) -> Path:
@@ -40,14 +48,14 @@ def _combine_counts(mode: str, prev: int, new: int) -> int:
     return prev + new
 
 
-def _ingest_block(blocks: Blocks, mode: str, key: str, stmts: int, count: int) -> None:
-    if key not in blocks:
-        blocks[key] = (stmts, count)
+def _ingest_block(blocks: Blocks, mode: str, hit: _BlockHit) -> None:
+    if hit.key not in blocks:
+        blocks[hit.key] = (hit.stmts, hit.count)
         return
-    prev_stmts, prev_count = blocks[key]
-    if prev_stmts != stmts:
-        raise SystemExit(f"statement count mismatch for {key}")
-    blocks[key] = (stmts, _combine_counts(mode, prev_count, count))
+    prev_stmts, prev_count = blocks[hit.key]
+    if prev_stmts != hit.stmts:
+        raise SystemExit(f"statement count mismatch for {hit.key}")
+    blocks[hit.key] = (hit.stmts, _combine_counts(mode, prev_count, hit.count))
 
 
 def _ingest_profile_line(blocks: Blocks, mode: str, line: str) -> None:
@@ -55,7 +63,11 @@ def _ingest_profile_line(blocks: Blocks, mode: str, line: str) -> None:
     if not text:
         return
     key, stmts_s, count_s = text.rsplit(" ", 2)
-    _ingest_block(blocks, mode, key, int(stmts_s), int(count_s))
+    _ingest_block(
+        blocks,
+        mode,
+        _BlockHit(key=key, stmts=int(stmts_s), count=int(count_s)),
+    )
 
 
 def _read_profile(path: Path) -> tuple[str, list[str]]:
@@ -65,19 +77,26 @@ def _read_profile(path: Path) -> tuple[str, list[str]]:
     return _parse_mode(lines[0], path), lines[1:]
 
 
+def _apply_profile(blocks: Blocks, expected_mode: str | None, path: Path) -> str:
+    file_mode, body = _read_profile(path)
+    if expected_mode is None:
+        mode = file_mode
+    elif expected_mode != file_mode:
+        raise SystemExit(f"mode mismatch: {expected_mode} vs {file_mode} ({path})")
+    else:
+        mode = expected_mode
+    for line in body:
+        _ingest_profile_line(blocks, mode, line)
+    return mode
+
+
 def _merge(paths: list[Path]) -> tuple[str, Blocks]:
-    mode: str | None = None
-    blocks: Blocks = {}
-    for path in paths:
-        file_mode, body = _read_profile(path)
-        if mode is None:
-            mode = file_mode
-        elif mode != file_mode:
-            raise SystemExit(f"mode mismatch: {mode} vs {file_mode} ({path})")
-        for line in body:
-            _ingest_profile_line(blocks, mode, line)
-    if mode is None:
+    if not paths:
         raise SystemExit("no cover profiles provided")
+    blocks: Blocks = {}
+    mode = _apply_profile(blocks, None, paths[0])
+    for path in paths[1:]:
+        mode = _apply_profile(blocks, mode, path)
     return mode, blocks
 
 

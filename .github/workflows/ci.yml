@@ -1817,6 +1817,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Merge coverage profiles
         run: |
+          python3 infra/scripts/test_gocovmerge.py -q
           python3 infra/scripts/gocovmerge.py coverage-go-merged.out \
             coverage-go-unit.out coverage-go-integration.out
           bash infra/scripts/coverage-filter.sh coverage-go-merged.out coverage-go-handwritten.out
