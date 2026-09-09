@@ -19,7 +19,7 @@ async def health() -> dict[str, str]:
 async def ready(request: Request) -> JSONResponse:
     from apierror_py import SERVICE_DEGRADED
 
-    from app.errors import envelope_response
+    from app.errors import ResponseOpts, envelope_response
 
     state = getattr(request.app.state, "api", None)
     settings = getattr(request.app.state, "settings", None)
@@ -27,8 +27,7 @@ async def ready(request: Request) -> JSONResponse:
         return envelope_response(
             code=SERVICE_DEGRADED,
             message=state.ready_error,
-            settings=settings,
-            status_code=503,
+            opts=ResponseOpts(settings=settings, status_code=503),
         )
     return JSONResponse({"status": "ready", "service": "api"})
 

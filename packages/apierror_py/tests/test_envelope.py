@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from apierror_py import VALIDATION_ERROR, FieldError, build_envelope, http_status_for_code
+from apierror_py import (
+    VALIDATION_ERROR,
+    EnvelopeOpts,
+    FieldError,
+    build_envelope,
+    http_status_for_code,
+)
 
 
 def test_build_envelope_required_fields() -> None:
@@ -13,12 +19,14 @@ def test_build_envelope_required_fields() -> None:
         code=VALIDATION_ERROR,
         message="Request validation failed",
         request_id="0190abcd-0000-7000-8000-000000000001",
-        detail="One or more fields failed validation",
-        docs_url="https://docs.ibexharness.com/errors/VALIDATION_ERROR",
-        field_errors=[
-            FieldError(field="content", code="REQUIRED", message="content is required"),
-        ],
-        timestamp=fixed,
+        opts=EnvelopeOpts(
+            detail="One or more fields failed validation",
+            docs_url="https://docs.ibexharness.com/errors/VALIDATION_ERROR",
+            field_errors=[
+                FieldError(field="content", code="REQUIRED", message="content is required"),
+            ],
+            timestamp=fixed,
+        ),
     )
     err = payload["error"]
     assert set(err.keys()) >= {

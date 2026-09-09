@@ -26,6 +26,7 @@ from app.deps import (
 )
 from app.errors import (
     ApiError,
+    ResponseOpts,
     api_error_handler,
     auth_failed_response,
     auth_unavailable_response,
@@ -57,19 +58,25 @@ def test_create_engine_paths() -> None:
     assert factory.class_ is AsyncSession
 
 
-@pytest.mark.asyncio
-async def test_session_with_org_sets_guc_via_mock() -> None:
+def _mock_org_session(*, execute_side_effect: object | None = None):
     session = MagicMock()
-    session.execute = AsyncMock()
-    session.begin = MagicMock()
-    session.begin.return_value.__aenter__ = AsyncMock(return_value=None)
-    session.begin.return_value.__aexit__ = AsyncMock(return_value=None)
+    session.execute = AsyncMock(side_effect=execute_side_effect)
+    if execute_side_effect is None:
+        session.execute = AsyncMock()
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
     session.rollback = AsyncMock()
-
     factory = MagicMock()
     factory.return_value.__aenter__ = AsyncMock(return_value=session)
     factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    return factory, session
 
+
+@pytest.mark.asyncio
+async def test_session_with_org_sets_guc_via_mock() -> None:
+    factory, session = _mock_org_session()
     async with session_with_org(factory, str(uuid4())) as yielded:
         assert yielded is session
     assert session.execute.await_count == 1
@@ -77,15 +84,7 @@ async def test_session_with_org_sets_guc_via_mock() -> None:
 
 @pytest.mark.asyncio
 async def test_session_with_org_rolls_back_on_error() -> None:
-    session = MagicMock()
-    session.execute = AsyncMock(side_effect=RuntimeError("db"))
-    session.begin = MagicMock()
-    session.begin.return_value.__aenter__ = AsyncMock(return_value=None)
-    session.begin.return_value.__aexit__ = AsyncMock(return_value=None)
-    session.rollback = AsyncMock()
-    factory = MagicMock()
-    factory.return_value.__aenter__ = AsyncMock(return_value=session)
-    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    factory, session = _mock_org_session(execute_side_effect=RuntimeError("db"))
     with pytest.raises(RuntimeError):
         async with session_with_org(factory, str(uuid4())):
             pass
@@ -155,13 +154,40 @@ async def test_error_handlers() -> None:
     )
     assert resp.status_code == 400
 
+    resp = await http_exception_handler(
+        request,
+        StarletteHTTPException(status_code=500, detail="boom"),
+    )
+    assert resp.status_code == 500
+    assert json.loads(resp.body)["error"]["code"] == "INTERNAL_ERROR"
+
+    resp = await http_exception_handler(
+        request,
+        StarletteHTTPException(status_code=400, detail={"code": "X"}),
+    )
+    assert resp.status_code == 400
+
+    resp = await http_exception_handler(
+        request,
+        StarletteHTTPException(status_code=400, detail={"message": "only"}),
+    )
+    assert resp.status_code == 400
+
     resp = await unhandled_error_handler(request, RuntimeError("x"))
     assert resp.status_code == 500
 
     assert auth_failed_response("missing authorization header", settings).status_code == 401
     assert auth_failed_response("invalid token", settings).status_code == 401
     assert auth_unavailable_response(settings).status_code == 503
-    assert envelope_response(code="INTERNAL_ERROR", message="x", settings=None).status_code == 500
+    assert envelope_response(code="INTERNAL_ERROR", message="x").status_code == 500
+    assert (
+        envelope_response(
+            code="INTERNAL_ERROR",
+            message="x",
+            opts=ResponseOpts(settings=None),
+        ).status_code
+        == 500
+    )
 
 
 @pytest.mark.asyncio

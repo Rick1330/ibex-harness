@@ -16,7 +16,7 @@ from app.auth.client import (
     parse_authorization_header,
 )
 from app.auth.errors import AuthFailedError, AuthUnavailableError
-from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
+from tests.unit.auth_test_support import aio_rpc, patched_validator, wire_bytes
 
 
 def test_parse_authorization_header_variants() -> None:
@@ -65,12 +65,12 @@ async def test_static_validator_paths() -> None:
     assert await down.ready() is False
 
 
-def test_grpc_validator_rejects_untrusted_target() -> None:
+def test_patched_validator_rejects_untrusted_target() -> None:
     with pytest.raises(ValueError):
         GRPCTokenValidator("evil.example.com:443", timeout_seconds=0.05)
 
 
-def test_grpc_validator_zero_timeout_clamped() -> None:
+def test_patched_validator_zero_timeout_clamped() -> None:
     with patch("app.auth.client.grpc.aio.insecure_channel") as chan_mock:
         channel = MagicMock()
         channel.unary_unary.return_value = AsyncMock()
@@ -80,10 +80,10 @@ def test_grpc_validator_zero_timeout_clamped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grpc_validator_validate_success() -> None:
+async def test_patched_validator_validate_success() -> None:
     org_id = uuid4()
     wire = ValidateTokenWire(org_id=org_id, permissions=3)
-    with grpc_validator(return_value=encode_validate_token_wire(wire)) as validator:
+    with patched_validator(return_value=wire_bytes(wire)) as validator:
         result = await validator.validate("tok")
         assert result.org_id == org_id
         assert await validator.ready() is True
@@ -91,8 +91,8 @@ async def test_grpc_validator_validate_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grpc_validator_unauthenticated() -> None:
-    with grpc_validator(side_effect=rpc_error(grpc.StatusCode.UNAUTHENTICATED)) as validator:
+async def test_patched_validator_unauthenticated() -> None:
+    with patched_validator(side_effect=aio_rpc(grpc.StatusCode.UNAUTHENTICATED)) as validator:
         with pytest.raises(AuthFailedError):
             await validator.validate("tok")
         assert await validator.ready() is True
@@ -100,8 +100,8 @@ async def test_grpc_validator_unauthenticated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grpc_validator_unavailable_rpc() -> None:
-    with grpc_validator(side_effect=rpc_error(grpc.StatusCode.UNAVAILABLE)) as validator:
+async def test_patched_validator_unavailable_rpc() -> None:
+    with patched_validator(side_effect=aio_rpc(grpc.StatusCode.UNAVAILABLE)) as validator:
         with pytest.raises(AuthUnavailableError):
             await validator.validate("tok")
         assert await validator.ready() is False
@@ -109,22 +109,22 @@ async def test_grpc_validator_unavailable_rpc() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grpc_validator_os_error() -> None:
-    with grpc_validator(side_effect=OSError("conn refused")) as validator:
+async def test_patched_validator_os_error() -> None:
+    with patched_validator(side_effect=OSError("conn refused")) as validator:
         with pytest.raises(AuthUnavailableError):
             await validator.validate("tok")
         await validator.aclose()
 
 
 @pytest.mark.asyncio
-async def test_grpc_validator_bad_response() -> None:
-    with grpc_validator(return_value="not-bytes") as validator:
+async def test_patched_validator_bad_response() -> None:
+    with patched_validator(return_value="not-bytes") as validator:
         with pytest.raises(AuthUnavailableError, match="not bytes"):
             await validator.validate("tok")
         await validator.aclose()
 
     bad_payload = bytes([0x10, 0x05])
-    with grpc_validator(return_value=bad_payload) as validator:
+    with patched_validator(return_value=bad_payload) as validator:
         with pytest.raises(AuthUnavailableError):
             await validator.validate("tok")
         await validator.aclose()

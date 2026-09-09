@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apierror_py import VALIDATION_ERROR, FieldError, build_envelope
+from apierror_py import VALIDATION_ERROR, EnvelopeOpts, FieldError, build_envelope
 
 
 def test_envelope_shape_matches_docs() -> None:
@@ -10,8 +10,10 @@ def test_envelope_shape_matches_docs() -> None:
         code=VALIDATION_ERROR,
         message="Request validation failed",
         request_id="00000000-0000-4000-8000-000000000099",
-        detail="fields",
-        field_errors=[FieldError(field="q", code="INVALID", message="bad")],
+        opts=EnvelopeOpts(
+            detail="fields",
+            field_errors=[FieldError(field="q", code="INVALID", message="bad")],
+        ),
     )
     err = payload["error"]
     assert err["code"] == "VALIDATION_ERROR"

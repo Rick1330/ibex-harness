@@ -60,7 +60,8 @@ show_missing = true
 skip_empty = true
 
 [tool.uv]
-exclude-newer = "2026-09-01T00:00:00Z"
+# Semgrep dependency-cooldown: refuse packages published within the last 7 days.
+exclude-newer = "7 days"
 
 [tool.uv.sources]
 authclient = { path = "../../packages/authclient" }

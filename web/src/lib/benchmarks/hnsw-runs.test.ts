@@ -74,7 +74,9 @@ describe("hnsw-runs helpers", () => {
       short_sha: "1111111",
       timestamp: "2020-01-01T00:00:00.000Z",
     });
-    const recent = sampleRun();
+    const recent = sampleRun({
+      timestamp: new Date().toISOString(),
+    });
     expect(filterHnswRunsByRange([old, recent], "14d")).toEqual([recent]);
   });
 });

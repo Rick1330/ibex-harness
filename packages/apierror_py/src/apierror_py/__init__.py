@@ -12,7 +12,7 @@ from apierror_py.codes import (
     SERVICE_DEGRADED,
     VALIDATION_ERROR,
 )
-from apierror_py.envelope import FieldError, build_envelope, http_status_for_code
+from apierror_py.envelope import EnvelopeOpts, FieldError, build_envelope, http_status_for_code
 
 __all__ = [
     "AUTH_UNAVAILABLE",
@@ -23,6 +23,7 @@ __all__ = [
     "NOT_FOUND",
     "SERVICE_DEGRADED",
     "VALIDATION_ERROR",
+    "EnvelopeOpts",
     "FieldError",
     "build_envelope",
     "http_status_for_code",

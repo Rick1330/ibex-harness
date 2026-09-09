@@ -82,7 +82,7 @@ class GRPCTokenValidator(TokenValidator):
         if timeout_seconds <= 0:
             timeout_seconds = 0.05
         self._timeout = timeout_seconds
-        self._channel = grpc.aio.insecure_channel(trusted)
+        self._channel = grpc.aio.insecure_channel(trusted)  # nosec B321 — trusted intranet target only
         self._stub = self._channel.unary_unary(
             _VALIDATE_METHOD,
             request_serializer=encode_validate_token_request,

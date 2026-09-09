@@ -86,27 +86,27 @@ async def _api_service_lifespan(
         timeout_seconds=cfg.auth_timeout_ms / 1000.0,
     )
     state.validator = auth
-
-    if not cfg.database_url:
-        state.ready = False
-        state.ready_error = "IBEX_API_DATABASE_URL not set"
-        logger.error("api not ready: %s", state.ready_error)
-        yield
-        await auth.aclose()
-        return
-
-    engine = create_engine(cfg)
-    session_factory = create_session_factory(engine)
-    state.engine = engine
-    state.session_factory = session_factory
-    await _refresh_readiness(state, auth=auth, engine=engine)
+    engine: AsyncEngine | None = None
 
     try:
+        if not cfg.database_url:
+            state.ready = False
+            state.ready_error = "IBEX_API_DATABASE_URL not set"
+            logger.error("api not ready: %s", state.ready_error)
+            yield
+            return
+
+        engine = create_engine(cfg)
+        session_factory = create_session_factory(engine)
+        state.engine = engine
+        state.session_factory = session_factory
+        await _refresh_readiness(state, auth=auth, engine=engine)
         yield
     finally:
         await auth.aclose()
-        await engine.dispose()
-        logger.info("api service stopped")
+        if engine is not None:
+            await engine.dispose()
+            logger.info("api service stopped")
 
 
 async def _refresh_readiness(

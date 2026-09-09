@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine / session helpers with RLS org GUC."""
+"""Async SQLAlchemy helpers for the management API (RLS org GUC)."""
 
 from __future__ import annotations
 
@@ -16,16 +16,18 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import Settings
 
+_ORG_GUC_SQL = "SELECT set_config('app.current_org_id', :org_id, true)"
+
 
 def create_engine(settings: Settings) -> AsyncEngine:
-    if not settings.database_url:
-        msg = "IBEX_API_DATABASE_URL is required for database access"
-        raise RuntimeError(msg)
-    target = parse_async_database_url(settings.database_url)
+    dsn = settings.database_url
+    if not dsn:
+        raise RuntimeError("IBEX_API_DATABASE_URL is required for database access")
+    parsed = parse_async_database_url(dsn)
     return create_async_engine(
-        target.url,
+        parsed.url,
         pool_pre_ping=True,
-        connect_args=dict(target.connect_args),
+        connect_args=dict(parsed.connect_args),
     )
 
 
@@ -33,21 +35,24 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+async def _bind_org_guc(session: AsyncSession, org_id: str) -> None:
+    # Bound parameter — not string-interpolated SQL.
+    await session.execute(
+        text(_ORG_GUC_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        {"org_id": org_id},
+    )
+
+
 @asynccontextmanager
 async def session_with_org(
     factory: async_sessionmaker[AsyncSession],
     org_id: str,
 ) -> AsyncIterator[AsyncSession]:
-    """Open a transaction, set RLS org GUC, yield session, commit/rollback."""
+    """Yield a transactional session with ``app.current_org_id`` bound for RLS."""
     async with factory() as session:
         try:
             async with session.begin():
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SELECT set_config('app.current_org_id', :org_id, true)"
-                    ),
-                    {"org_id": org_id},
-                )
+                await _bind_org_guc(session, org_id)
                 yield session
         except Exception:
             await session.rollback()

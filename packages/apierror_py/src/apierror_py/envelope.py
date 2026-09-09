@@ -36,6 +36,16 @@ class FieldError:
     message: str
 
 
+@dataclass(frozen=True, slots=True)
+class EnvelopeOpts:
+    """Optional envelope fields (mirrors Go apierror.WriteOpts)."""
+
+    detail: str | None = None
+    docs_url: str | None = None
+    field_errors: list[FieldError] | None = None
+    timestamp: datetime | None = None
+
+
 def http_status_for_code(code: str) -> int:
     return _STATUS_BY_CODE.get(code, 500)
 
@@ -45,13 +55,11 @@ def build_envelope(
     code: str,
     message: str,
     request_id: str,
-    detail: str | None = None,
-    docs_url: str | None = None,
-    field_errors: list[FieldError] | None = None,
-    timestamp: datetime | None = None,
+    opts: EnvelopeOpts | None = None,
 ) -> dict[str, Any]:
     """Return ``{"error": {...}}`` matching API_DOCUMENTATION.md / Go apierror."""
-    ts = timestamp if timestamp is not None else datetime.now(UTC)
+    options = opts or EnvelopeOpts()
+    ts = options.timestamp if options.timestamp is not None else datetime.now(UTC)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
     else:
@@ -65,10 +73,10 @@ def build_envelope(
         "request_id": request_id,
         "timestamp": ts_str,
     }
-    if detail:
-        body["detail"] = detail
-    if docs_url:
-        body["docs_url"] = docs_url
-    if field_errors is not None:
-        body["field_errors"] = [asdict(fe) for fe in field_errors]
+    if options.detail:
+        body["detail"] = options.detail
+    if options.docs_url:
+        body["docs_url"] = options.docs_url
+    if options.field_errors is not None:
+        body["field_errors"] = [asdict(fe) for fe in options.field_errors]
     return {"error": body}
