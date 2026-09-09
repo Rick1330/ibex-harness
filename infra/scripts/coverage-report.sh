@@ -24,8 +24,7 @@ else
   if command -v gocovmerge >/dev/null 2>&1; then
     gocovmerge "$UNIT_OUT" "$INT_OUT" > "$MERGED_OUT"
   else
-    GOTOOLCHAIN="${GOTOOLCHAIN:-auto}" go run github.com/wadey/gocovmerge@v0.0.0-20160331181800-b5bfa59ec0ad \
-      "$UNIT_OUT" "$INT_OUT" > "$MERGED_OUT"
+    python3 "$ROOT/infra/scripts/gocovmerge.py" "$MERGED_OUT" "$UNIT_OUT" "$INT_OUT"
   fi
   INTEGRATION_RAN=true
   echo "Merged profile: $MERGED_OUT"

@@ -49,8 +49,9 @@ refuse_non_ephemeral_db() {
     echo "(acknowledges migrate/seed against an ephemeral local/CI database)" >&2
     exit 1
   fi
+  local raw_dsn="$1"
   local dsn host
-  dsn="$(normalize_psql_dsn "$1")"
+  dsn="$(normalize_psql_dsn "$raw_dsn")"
   host="$(extract_dsn_host "$dsn")"
   if [[ -z "$host" ]]; then
     echo "refusing security-integration-p35: cannot parse host from DSN" >&2

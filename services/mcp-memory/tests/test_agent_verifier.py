@@ -47,18 +47,33 @@ async def test_allow_all_and_static_helpers() -> None:
         await deny.verify(bearer=TOKEN, org_id=ORG, agent_id=AGENT)
 
 
-def test_serialize_request_and_require_active_payload() -> None:
+def test_serialize_request() -> None:
     wire = _serialize_request((str(AGENT), str(ORG)))
     assert wire == encode_validate_agent_request(
         agent_id=str(AGENT), org_id=str(ORG)
     )
+
+
+def test_require_active_payload_accepts_active() -> None:
     _require_active_payload(_active_payload())
+
+
+def test_require_active_payload_rejects_suspended() -> None:
+    payload = _active_payload(status="suspended")
     with pytest.raises(PermissionDeniedError, match="agent is not active"):
-        _require_active_payload(_active_payload(status="suspended"))
+        _require_active_payload(payload)
+
+
+def test_require_active_payload_rejects_non_bytes() -> None:
+    payload: object = "not-bytes"
     with pytest.raises(AuthUnavailableError, match="not bytes"):
-        _require_active_payload("not-bytes")
+        _require_active_payload(payload)
+
+
+def test_require_active_payload_rejects_malformed() -> None:
+    payload = b"\xff\xfe\xfd"
     with pytest.raises(AuthUnavailableError):
-        _require_active_payload(b"\xff\xfe\xfd")
+        _require_active_payload(payload)
 
 
 @pytest.mark.asyncio
