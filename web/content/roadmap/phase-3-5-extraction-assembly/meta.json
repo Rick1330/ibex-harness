@@ -1,5 +1,13 @@
 {
   "title": "Phase 3.5 extraction & assembly",
   "icon": "GitBranch",
-  "pages": ["index", "tracks", "goals", "risks", "milestones"]
+  "pages": [
+    "index",
+    "tracks",
+    "goals",
+    "decisions",
+    "risks",
+    "phase35-exit-audit",
+    "milestones"
+  ]
 }
