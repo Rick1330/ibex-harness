@@ -33,6 +33,7 @@ report_stale() {
 if report_stale coverage-mcp-memory.xml; then
   bash "$ROOT/infra/scripts/mcp-memory-uv-sync.sh"
   .venv/bin/pytest -q \
+    -m "not iso_mcp" \
     --cov=app \
     --cov-report=xml:coverage-mcp-memory.xml \
     --cov-report=term-missing \

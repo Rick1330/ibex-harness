@@ -15,7 +15,7 @@ bash "$ROOT/infra/scripts/worker-uv-sync.sh"
 .venv/bin/ruff check app tests
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"
 .venv/bin/pytest -q \
-  -m "not integration" \
+  -m "not integration and not iso_mcp" \
   --cov=app \
   --cov-report=xml:coverage-worker.xml \
   --cov-report=term-missing \

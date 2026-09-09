@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import ConfigDict, Field
 
+from app.agent_verifier import AgentVerifier
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
 from app.clients.memory import MemoryHttpClient
 from app.errors import MCPServiceError, RateLimitedError
@@ -41,6 +42,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class McpServerWiring:
+    """Bundles tool dependencies so registration helpers stay arity-safe."""
+
+    audit: AsyncAuditEmitter
+    memory_client: MemoryHttpClient | None
+    agent_verifier: AgentVerifier | None = None
+    rate_limiter: McpRateLimiter | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _ToolRequest:
     tool_name: str
     raw: dict[str, Any]
@@ -55,13 +66,17 @@ class _ToolCall:
 
 
 def build_mcp_server(
-    audit: AsyncAuditEmitter,
-    memory_client: MemoryHttpClient | None,
+    wiring: McpServerWiring,
     *,
-    rate_limiter: McpRateLimiter | None = None,
     allow_test_hosts: bool = True,
 ) -> FastMCP:
-    limiter = rate_limiter or NoopMcpLimiter()
+    limiter = wiring.rate_limiter or NoopMcpLimiter()
+    bound = McpServerWiring(
+        audit=wiring.audit,
+        memory_client=wiring.memory_client,
+        agent_verifier=wiring.agent_verifier,
+        rate_limiter=limiter,
+    )
     mcp = FastMCP(
         "ibex-mcp-memory",
         instructions=(
@@ -76,19 +91,16 @@ def build_mcp_server(
         json_response=True,
         transport_security=_transport_security(allow_test_hosts=allow_test_hosts),
     )
-    _register_search_tool(mcp, audit, memory_client, limiter)
-    _register_write_tool(mcp, audit, memory_client, limiter)
-    _register_feedback_tool(mcp, audit, memory_client, limiter)
+    _register_search_tool(mcp, bound)
+    _register_write_tool(mcp, bound)
+    _register_feedback_tool(mcp, bound)
     _forbid_undeclared_tool_args(mcp)
     return mcp
 
 
-def _register_search_tool(
-    mcp: FastMCP,
-    audit: AsyncAuditEmitter,
-    memory_client: MemoryHttpClient | None,
-    limiter: McpRateLimiter,
-) -> None:
+def _register_search_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
+    limiter = wiring.rate_limiter or NoopMcpLimiter()
+
     @mcp.tool(
         name="search_memory",
         description="Search org-scoped memories via the memory service HTTP API.",
@@ -100,23 +112,22 @@ def _register_search_tool(
     ) -> str:
         return await _invoke_tool(
             _ToolCall(
-                audit=audit,
+                audit=wiring.audit,
                 rate_limiter=limiter,
                 request=_ToolRequest(
                     tool_name="search_memory",
                     raw=_optional_agent({"query": query, "limit": limit}, agent_id),
-                    runner=lambda raw: _run_search(raw, memory_client),
+                    runner=lambda raw: _run_verified_tool(
+                        raw, wiring.memory_client, wiring.agent_verifier, _SEARCH_TOOL
+                    ),
                 ),
             )
         )
 
 
-def _register_write_tool(
-    mcp: FastMCP,
-    audit: AsyncAuditEmitter,
-    memory_client: MemoryHttpClient | None,
-    limiter: McpRateLimiter,
-) -> None:
+def _register_write_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
+    limiter = wiring.rate_limiter or NoopMcpLimiter()
+
     @mcp.tool(
         name="write_memory",
         description=(
@@ -132,7 +143,7 @@ def _register_write_tool(
     ) -> str:
         return await _invoke_tool(
             _ToolCall(
-                audit=audit,
+                audit=wiring.audit,
                 rate_limiter=limiter,
                 request=_ToolRequest(
                     tool_name="write_memory",
@@ -144,18 +155,17 @@ def _register_write_tool(
                         },
                         agent_id,
                     ),
-                    runner=lambda raw: _run_write(raw, memory_client),
+                    runner=lambda raw: _run_verified_tool(
+                        raw, wiring.memory_client, wiring.agent_verifier, _WRITE_TOOL
+                    ),
                 ),
             )
         )
 
 
-def _register_feedback_tool(
-    mcp: FastMCP,
-    audit: AsyncAuditEmitter,
-    memory_client: MemoryHttpClient | None,
-    limiter: McpRateLimiter,
-) -> None:
+def _register_feedback_tool(mcp: FastMCP, wiring: McpServerWiring) -> None:
+    limiter = wiring.rate_limiter or NoopMcpLimiter()
+
     @mcp.tool(
         name="record_feedback",
         description=(
@@ -179,12 +189,14 @@ def _register_feedback_tool(
             raw["notes"] = notes
         return await _invoke_tool(
             _ToolCall(
-                audit=audit,
+                audit=wiring.audit,
                 rate_limiter=limiter,
                 request=_ToolRequest(
                     tool_name="record_feedback",
                     raw=raw,
-                    runner=lambda payload: _run_feedback(payload, memory_client),
+                    runner=lambda payload: _run_feedback(
+                        payload, wiring.memory_client, wiring.agent_verifier
+                    ),
                 ),
             )
         )
@@ -229,23 +241,37 @@ def _optional_agent(payload: dict[str, Any], agent_id: UUID | None) -> dict[str,
     return payload
 
 
-async def _run_search(
-    raw: dict[str, Any], client: MemoryHttpClient | None
-) -> dict[str, Any]:
-    return await run_search_memory(require_principal(), parse_search_args(raw), client)
+@dataclass(frozen=True, slots=True)
+class _VerifiedTool:
+    parse: Callable[[dict[str, Any] | None], Any]
+    run: Callable[..., Awaitable[dict[str, Any]]]
 
 
-async def _run_write(
-    raw: dict[str, Any], client: MemoryHttpClient | None
+_SEARCH_TOOL = _VerifiedTool(parse_search_args, run_search_memory)
+_WRITE_TOOL = _VerifiedTool(parse_write_args, run_write_memory)
+
+
+async def _run_verified_tool(
+    raw: dict[str, Any],
+    client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
+    tool: _VerifiedTool,
 ) -> dict[str, Any]:
-    return await run_write_memory(require_principal(), parse_write_args(raw), client)
+    return await tool.run(
+        require_principal(), tool.parse(raw), client, agent_verifier
+    )
 
 
 async def _run_feedback(
-    raw: dict[str, Any], client: MemoryHttpClient | None
+    raw: dict[str, Any],
+    client: MemoryHttpClient | None,
+    agent_verifier: AgentVerifier | None,
 ) -> dict[str, Any]:
     return await run_record_feedback(
-        require_principal(), parse_feedback_args(raw), client
+        require_principal(),
+        parse_feedback_args(raw),
+        client,
+        agent_verifier,
     )
 
 

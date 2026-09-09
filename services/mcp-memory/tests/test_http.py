@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agent_verifier import AllowAllAgentVerifier
 from app.audit import MemoryAuditSink
 from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings, get_settings
@@ -72,6 +73,7 @@ def _app(*, memory_client=None) -> tuple[TestClient, MemoryAuditSink]:
             audit_sink=sink,
             memory_client=memory_client
             or stub_memory_client(org_id=ORG, agent_id=AGENT),
+            agent_verifier=AllowAllAgentVerifier(),
         ),
     )
     return TestClient(application), sink
@@ -171,7 +173,7 @@ def test_auth_unavailable_fail_closed() -> None:
     validator = StaticTokenValidator({}, available=False)
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink()),
+        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
     )
     with TestClient(application) as client:
         resp = client.post(
@@ -280,9 +282,34 @@ def _assert_tool_ok(resp: object) -> None:
     assert "isError" not in resp.text or '"isError":false' in compact
 
 
-def _assert_tool_error(resp: object) -> None:
+def _assert_tool_error(
+    resp: object,
+    *,
+    sink: MemoryAuditSink | None = None,
+    require_permission_denied: bool = True,
+) -> None:
+    """Structured MCP tool denial: isError; never not_found; prefer permission_denied."""
     assert resp.status_code in (200, 202), resp.text
-    assert "isError" in resp.text or "permission" in resp.text.lower()
+    body = resp.json()
+    result = body.get("result")
+    assert isinstance(result, dict), body
+    assert result.get("isError") is True, body
+    blob = resp.text.lower()
+    assert "not_found" not in blob
+    content = result.get("content")
+    content_text = json.dumps(content).lower() if content is not None else blob
+    assert "not_found" not in content_text
+    if not require_permission_denied:
+        return
+    if sink is not None:
+        denied = [e for e in sink.events if e.error_code == "permission_denied"]
+        assert denied, f"expected permission_denied audit; events={sink.events!r}"
+    else:
+        assert (
+            "permission_denied" in blob
+            or "permission" in blob
+            or "not authorized" in blob
+        )
 
 
 def _assert_org_b_outbound(outbound: list[httpx.Request], *, expected_calls: int) -> None:
@@ -295,7 +322,7 @@ def _assert_org_b_outbound(outbound: list[httpx.Request], *, expected_calls: int
 
 
 def test_tools_call_org_b_forwards_bearer_never_org_id() -> None:
-    """ISO-MCP-01: Org B tools/call must forward Org B bearer; never client org_id."""
+    """E.2 bearer-forward: Org B tools/call must forward Org B bearer; never client org_id."""
     mem, outbound = _capturing_org_b_memory()
     client, _sink = _app(memory_client=mem)
     with client:
@@ -328,9 +355,10 @@ def test_tools_call_org_b_forwards_bearer_never_org_id() -> None:
 def test_tools_call_rejects_client_org_override_and_agent_mismatch() -> None:
     """Client org_id / foreign agent_id must not reach memory HTTP."""
     mem, outbound = _capturing_org_b_memory()
-    client, _sink = _app(memory_client=mem)
+    client, sink = _app(memory_client=mem)
     with client:
         headers = _mcp_session(client, TOKEN_B)
+        # Undeclared org_id is rejected before tool body (not permission_denied).
         _assert_tool_error(
             _tools_call(
                 client,
@@ -340,7 +368,8 @@ def test_tools_call_rejects_client_org_override_and_agent_mismatch() -> None:
                     "name": "search_memory",
                     "arguments": {"query": "x", "org_id": str(ORG)},
                 },
-            )
+            ),
+            require_permission_denied=False,
         )
         _assert_tool_error(
             _tools_call(
@@ -351,7 +380,8 @@ def test_tools_call_rejects_client_org_override_and_agent_mismatch() -> None:
                     "name": "write_memory",
                     "arguments": {"content": "x", "agent_id": str(ORG)},
                 },
-            )
+            ),
+            sink=sink,
         )
     assert outbound == []
 

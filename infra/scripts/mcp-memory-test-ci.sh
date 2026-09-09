@@ -14,6 +14,7 @@ cd "$MCP_DIR"
 bash "$ROOT/infra/scripts/mcp-memory-uv-sync.sh"
 .venv/bin/ruff check app tests
 .venv/bin/pytest -q \
+  -m "not iso_mcp" \
   --cov=app \
   --cov-report=xml:coverage-mcp-memory.xml \
   --cov-report=term-missing \

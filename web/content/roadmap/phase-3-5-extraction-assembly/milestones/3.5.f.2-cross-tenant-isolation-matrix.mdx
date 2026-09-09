@@ -2,7 +2,7 @@
 title: "3.5.F.2 Cross-tenant isolation matrix"
 description: "Four new ISO-MCP-* cases covering MCP-specific tenant isolation: cross-org agent access, suspended agent handling, and extraction worker RLS enforcement."
 summary: "Four new ISO-MCP-* cases covering MCP-specific tenant isolation: cross-org agent access, suspended agent handling, and extraction worker RLS enforcement."
-status: "planned"
+status: "completed"
 milestoneId: "3.5.F.2"
 track: "F"
 trackTitle: "Exit Gate"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.F.2 — Cross-Tenant Isolation Matrix"
 
 # Milestone 3.5.F.2 — Cross-Tenant Isolation Matrix
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
@@ -25,52 +25,49 @@ fullTitle: "Milestone 3.5.F.2 — Cross-Tenant Isolation Matrix"
 ---
 
 <Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
+  This page started as a planning sketch. Named paths and checklists were orientation
+  aids. The landed shape below reflects live code constraints (MCP-only ValidateAgent
+  wiring; ISO-MCP-04 MockTransport for memory HTTP; E.2 bearer-forward test de-collided
+  from the ISO-MCP-01 ID).
+</Callout>
+
+<Callout type="info" title="Sketch deviations">
+  - **MCP ValidateAgent:** `packages/authclient` encodes ValidateAgent; mcp-memory
+    calls Auth `ValidateAgent` (org + active) after `resolve_tool_agent_id` and before
+    memory HTTP. No proxy / proto / Go `security-integration` changes.
+  - **ISO-MCP-04:** Real Postgres session store + RLS GUC; memory HTTP captured with
+    `httpx.MockTransport` (assert zero POSTs). Provider is a stub.
+  - **E.2 rename:** Bearer-forward unit test docstring no longer claims `ISO-MCP-01`
+    so the isolation matrix owns that ID.
 </Callout>
 
 ## Test Matrix
 
-| Case ID | Scenario | Expected |
-|---|---|---|
-| ISO-MCP-01 | Org A's PAT calls `search_memory` with Org B's `agent_id` | `PERMISSION_DENIED` → MCP error, never `NOT_FOUND` |
-| ISO-MCP-02 | Org A's token, Org A's agent, but agent belongs to different user within org | Allowed if permission bit present — org-level isolation is the boundary |
-| ISO-MCP-03 | `write_memory` with `agent_id` from a suspended agent | 403-equivalent MCP error |
-| ISO-MCP-04 | Extraction worker processing Org A's session should never read/write Org B's memories | RLS + application-layer double check |
+| Case ID | Scenario | Expected | Environment |
+|---|---|---|---|
+| ISO-MCP-01 | Org A's **org-scoped** PAT + Org B `agent_id` on `search_memory` **and** `write_memory` (ValidateAgent cross-org; not agent-binding) | `permission_denied` MCP error, never `not_found`; zero memory HTTP | Live Postgres + auth + memory HTTP |
+| ISO-MCP-02 | Org A's org-scoped PAT + Org A agent `created_by` User B | Allowed (`isError` false / memory 200) | Live Postgres + auth + memory HTTP |
+| ISO-MCP-03 | Agent-scoped PAT for `suspended` agent on search + write | `permission_denied` via ValidateAgent | Live Postgres + auth + memory HTTP |
+| ISO-MCP-04 | Extraction with forged `org_id=OrgA`, `session_id=OrgB` | `session_not_found`; zero memory POSTs; pointer unchanged | Live Postgres + MockTransport HTTP |
 
 ---
 
 ## Orientation (indicative)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+**Areas involved:**
 
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Evaluation / benchmarks
-- MCP server surface
+- MCP server (`services/mcp-memory`) — `GRPCAgentVerifier` + tool call site
+- Authclient ValidateAgent codec
+- Worker extraction session store (ISO-MCP-04)
+- CI job `security-integration-p35` (`infra/scripts/security-integration-p35.sh`)
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] All 4 ISO-MCP-* cases automated, run against real Postgres + real auth service
-- [ ] CI job `security-integration-p3.5` enforces minimum test count
-- [ ] Repo guards / CI checks still pass
+- [x] All 4 ISO-MCP-* cases automated (min-count floor 4 in CI)
+- [x] CI job `security-integration-p35` enforces minimum test count
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.5.F.1 (E2E suite)
 - Milestone 3.5.E.2 (MCP tools)
-
