@@ -9,38 +9,84 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Cover block: statement count + hit count.
+Block = tuple[int, int]
+Blocks = dict[str, Block]
 
-def _merge(paths: list[Path]) -> tuple[str, dict[str, tuple[int, int]]]:
+
+def _safe_path(raw: str, *, base: Path) -> Path:
+    """Resolve argv paths and refuse escapes outside the working directory."""
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    else:
+        resolved = (base / candidate).resolve()
+    try:
+        resolved.relative_to(base.resolve())
+    except ValueError as exc:
+        raise SystemExit(f"path escapes working directory: {raw}") from exc
+    return resolved
+
+
+def _parse_mode(header: str, path: Path) -> str:
+    if not header.startswith("mode:"):
+        raise SystemExit(f"bad cover profile (missing mode): {path}")
+    return header.split(":", 1)[1].strip()
+
+
+def _combine_counts(mode: str, prev: int, new: int) -> int:
+    if mode == "set":
+        return prev or new
+    return prev + new
+
+
+def _ingest_block(blocks: Blocks, mode: str, key: str, stmts: int, count: int) -> None:
+    if key not in blocks:
+        blocks[key] = (stmts, count)
+        return
+    prev_stmts, prev_count = blocks[key]
+    if prev_stmts != stmts:
+        raise SystemExit(f"statement count mismatch for {key}")
+    blocks[key] = (stmts, _combine_counts(mode, prev_count, count))
+
+
+def _ingest_profile_line(blocks: Blocks, mode: str, line: str) -> None:
+    text = line.strip()
+    if not text:
+        return
+    key, stmts_s, count_s = text.rsplit(" ", 2)
+    _ingest_block(blocks, mode, key, int(stmts_s), int(count_s))
+
+
+def _read_profile(path: Path) -> tuple[str, list[str]]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        raise SystemExit(f"bad cover profile (empty): {path}")
+    return _parse_mode(lines[0], path), lines[1:]
+
+
+def _merge(paths: list[Path]) -> tuple[str, Blocks]:
     mode: str | None = None
-    blocks: dict[str, tuple[int, int]] = {}
+    blocks: Blocks = {}
     for path in paths:
-        lines = path.read_text(encoding="utf-8").splitlines()
-        if not lines or not lines[0].startswith("mode:"):
-            raise SystemExit(f"bad cover profile (missing mode): {path}")
-        file_mode = lines[0].split(":", 1)[1].strip()
+        file_mode, body = _read_profile(path)
         if mode is None:
             mode = file_mode
         elif mode != file_mode:
             raise SystemExit(f"mode mismatch: {mode} vs {file_mode} ({path})")
-        for line in lines[1:]:
-            line = line.strip()
-            if not line:
-                continue
-            key, stmts_s, count_s = line.rsplit(" ", 2)
-            stmts = int(stmts_s)
-            count = int(count_s)
-            if key in blocks:
-                prev_stmts, prev_count = blocks[key]
-                if prev_stmts != stmts:
-                    raise SystemExit(f"statement count mismatch for {key}")
-                if mode == "set":
-                    count = prev_count or count
-                else:
-                    count = prev_count + count
-            blocks[key] = (stmts, count)
+        for line in body:
+            _ingest_profile_line(blocks, mode, line)
     if mode is None:
         raise SystemExit("no cover profiles provided")
     return mode, blocks
+
+
+def _write_profile(out: Path, mode: str, blocks: Blocks) -> None:
+    lines = [f"mode: {mode}\n"]
+    for key in sorted(blocks):
+        stmts, count = blocks[key]
+        lines.append(f"{key} {stmts} {count}\n")
+    out.write_text("".join(lines), encoding="utf-8")
 
 
 def main(argv: list[str]) -> int:
@@ -50,17 +96,14 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    out = Path(argv[1])
-    profiles = [Path(p) for p in argv[2:]]
+    base = Path.cwd()
+    out = _safe_path(argv[1], base=base)
+    profiles = [_safe_path(p, base=base) for p in argv[2:]]
     for path in profiles:
         if not path.is_file():
             raise SystemExit(f"cover profile not found: {path}")
     mode, blocks = _merge(profiles)
-    lines = [f"mode: {mode}\n"]
-    for key in sorted(blocks):
-        stmts, count = blocks[key]
-        lines.append(f"{key} {stmts} {count}\n")
-    out.write_text("".join(lines), encoding="utf-8")
+    _write_profile(out, mode, blocks)
     return 0
 
 
