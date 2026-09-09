@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 )
@@ -30,29 +33,69 @@ type probeForbiddenOpts struct {
 	within time.Duration
 }
 
+func tryAuthProbeGET(opts authProbeOpts) (*http.Response, string, error) {
+	req, err := http.NewRequest(http.MethodGet, opts.srvURL+"/v1/internal/auth-probe", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if opts.bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+opts.bearer)
+	}
+	if opts.agentID != "" {
+		req.Header.Set("X-IBEX-Agent-ID", opts.agentID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		resp.Body.Close()
+		return nil, "", err
+	}
+	return resp, string(b), nil
+}
+
 func requireProbeForbiddenEventually(t *testing.T, p probeForbiddenOpts) {
 	t.Helper()
-	var lastStatus int
-	var lastBody string
-	var forbiddenResp *http.Response
-	var forbiddenBody string
-	require.Eventually(t, func() bool {
-		resp, body := authProbeGET(t, p.opts)
+	var (
+		mu            sync.Mutex
+		lastStatus    int
+		lastBody      string
+		forbiddenResp *http.Response
+		forbiddenBody string
+	)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		resp, body, err := tryAuthProbeGET(p.opts)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			lastBody = err.Error()
+			assert.Fail(c, fmt.Sprintf("auth probe error: %v", err))
+			return
+		}
 		lastStatus = resp.StatusCode
 		lastBody = body
 		if resp.StatusCode == http.StatusForbidden {
 			forbiddenResp = resp
 			forbiddenBody = body
-			return true
+			return
 		}
 		resp.Body.Close()
-		return false
-	}, p.within, 10*time.Millisecond,
-		"expected forbidden within %v; last status=%d body=%s",
-		p.within, lastStatus, redactBearer(lastBody, p.opts.bearer))
-	defer forbiddenResp.Body.Close()
-	requireErrorCode(t, forbiddenBody, p.want)
-	assertSecurityErrorEnvelope(t, forbiddenResp, forbiddenBody, p.secret)
+		assert.Fail(c, fmt.Sprintf(
+			"expected forbidden within %v; last status=%d body=%s",
+			p.within, lastStatus, redactBearer(lastBody, p.opts.bearer),
+		))
+	}, p.within, 10*time.Millisecond)
+
+	mu.Lock()
+	resp := forbiddenResp
+	body := forbiddenBody
+	mu.Unlock()
+	require.NotNil(t, resp, "forbidden response missing after Eventually")
+	defer resp.Body.Close()
+	requireErrorCode(t, body, p.want)
+	assertSecurityErrorEnvelope(t, resp, body, p.secret)
 }
 
 func suspendOrgInDB(t *testing.T, db *sql.DB, orgID string) {

@@ -39,6 +39,7 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     session.execute = AsyncMock(
         side_effect=[
             MagicMock(first=MagicMock(return_value=(1,))),  # claim
+            MagicMock(first=MagicMock(return_value=None)),  # org not soft-deleted
             *([MagicMock()] * len(org_deletion._CASCADE_STATEMENTS)),
             MagicMock(),  # finish
         ]
@@ -73,6 +74,7 @@ async def test_run_delete_cascade_failure_marks_job_failed(
     session.execute = AsyncMock(
         side_effect=[
             MagicMock(first=MagicMock(return_value=(1,))),  # claim
+            MagicMock(first=MagicMock(return_value=None)),  # org not soft-deleted
             RuntimeError("cascade boom"),
         ]
     )
@@ -105,3 +107,47 @@ def test_cascade_includes_soft_delete_org() -> None:
     assert "memory_feedback" in joined
     assert "organization_invites" in joined
     assert "session_turns" not in joined
+
+
+@pytest.mark.asyncio
+async def test_run_delete_skips_cascade_when_org_already_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
+    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
+
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
+    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
+
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            MagicMock(first=MagicMock(return_value=(1,))),  # claim
+            MagicMock(first=MagicMock(return_value=(1,))),  # already deleted
+            MagicMock(),  # finish succeeded
+        ]
+    )
+
+    class _CM:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return None
+
+    monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+    out = await org_deletion._run_delete(job_id="j", org_id="o")
+    assert out["status"] == "succeeded"
+    assert out["reason"] == "already_deleted"
+    # claim + already-deleted check + finish only (no cascade statements)
+    assert session.execute.await_count == 3
+
+
+def test_claim_job_sql_excludes_failed() -> None:
+    import inspect
+
+    src = inspect.getsource(org_deletion._claim_job)
+    assert "status = 'pending'" in src
+    assert "'failed'" not in src

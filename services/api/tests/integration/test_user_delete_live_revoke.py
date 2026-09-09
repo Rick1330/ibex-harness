@@ -9,6 +9,7 @@ soft-delete the user when revoke cannot complete.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -49,7 +50,7 @@ async def _scalar(factory: async_sessionmaker[AsyncSession], sql: str, params: d
 
 
 @pytest.fixture
-async def factory() -> async_sessionmaker[AsyncSession]:
+async def factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     settings = Settings(database_url=_require_dsn())
     engine = create_engine(settings)
     fac = create_session_factory(engine)

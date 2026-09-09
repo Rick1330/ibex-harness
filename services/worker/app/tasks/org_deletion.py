@@ -74,6 +74,17 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
             if not claimed:
                 return {"status": "skipped", "reason": "job_not_claimable"}
             try:
+                if await _org_already_soft_deleted(session, org_id):
+                    # Duplicate delivery after a prior success: keep terminal org state.
+                    await _finish_job(
+                        session, _JobOutcome(job_id=job_id, org_id=org_id, status="succeeded")
+                    )
+                    return {
+                        "status": "succeeded",
+                        "job_id": job_id,
+                        "org_id": org_id,
+                        "reason": "already_deleted",
+                    }
                 for stmt in _CASCADE_STATEMENTS:
                     await session.execute(text(stmt), {"org_id": org_id})
                 await _finish_job(
@@ -99,6 +110,12 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
 
 
 async def _claim_job(session, *, job_id: str, org_id: str) -> bool:
+    """Claim a pending job only.
+
+    Failed/succeeded/running jobs are not reclaimable so delayed Celery
+    redeliveries cannot resurrect a terminal job and re-run the cascade.
+    API retries enqueue a new pending job row instead.
+    """
     result = await session.execute(
         text(
             """
@@ -106,11 +123,25 @@ async def _claim_job(session, *, job_id: str, org_id: str) -> bool:
             SET status = 'running', started_at = NOW(), error = NULL
             WHERE id = CAST(:job_id AS uuid)
               AND org_id = CAST(:org_id AS uuid)
-              AND status IN ('pending', 'failed')
+              AND status = 'pending'
             RETURNING id
             """
         ),
         {"job_id": job_id, "org_id": org_id},
+    )
+    return result.first() is not None
+
+
+async def _org_already_soft_deleted(session, org_id: str) -> bool:
+    result = await session.execute(
+        text(
+            """
+            SELECT 1
+            FROM ibex_core.organizations
+            WHERE id = CAST(:org_id AS uuid) AND deleted_at IS NOT NULL
+            """
+        ),
+        {"org_id": org_id},
     )
     return result.first() is not None
 

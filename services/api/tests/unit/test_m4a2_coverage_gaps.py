@@ -93,6 +93,17 @@ async def test_list_users_invalid_cursor_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_users_non_object_cursor_maps_type_error() -> None:
+    import base64
+
+    session = AsyncMock()
+    bad = base64.urlsafe_b64encode(b"[1,2]").decode("ascii").rstrip("=")
+    with pytest.raises(ApiError) as exc:
+        await user_service.list_users(session, uuid4(), cursor=bad, limit=10)
+    assert exc.value.code == VALIDATION_ERROR
+
+
+@pytest.mark.asyncio
 async def test_patch_user_update_race_not_found() -> None:
     from app.schemas.users import UserPatch
 
@@ -102,13 +113,11 @@ async def test_patch_user_update_race_not_found() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(None)])
     patch = UserPatch(name="x")
+    args = user_service.PatchUserArgs(
+        org_id=org_id, user_id=user_id, patch=patch, caller_role="owner"
+    )
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(
-            session,
-            user_service.PatchUserArgs(
-                org_id=org_id, user_id=user_id, patch=patch, caller_role="owner"
-            ),
-        )
+        await user_service.patch_user(session, args)
     assert exc.value.code == NOT_FOUND
 
 

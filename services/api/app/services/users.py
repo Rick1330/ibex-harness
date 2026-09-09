@@ -76,7 +76,7 @@ class _UserListCursor:
 def _parse_user_list_cursor(cursor: str | None) -> _UserListCursor:
     try:
         payload = decode_cursor(cursor)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
     if payload is None:
         return _UserListCursor(None, None)

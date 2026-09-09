@@ -121,13 +121,11 @@ async def test_patch_user_last_owner_demotion() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=[_ScalarResult(current), _ScalarResult(1)])
     patch = UserPatch(role="admin")
+    args = user_service.PatchUserArgs(
+        org_id=org_id, user_id=user_id, patch=patch, caller_role="owner"
+    )
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(
-            session,
-            user_service.PatchUserArgs(
-                org_id=org_id, user_id=user_id, patch=patch, caller_role="owner"
-            ),
-        )
+        await user_service.patch_user(session, args)
     assert exc.value.code == LAST_OWNER_PROTECTED
 
 
@@ -160,13 +158,11 @@ async def test_admin_cannot_promote_to_owner() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=_ScalarResult(current))
     patch = UserPatch(role="owner")
+    args = user_service.PatchUserArgs(
+        org_id=org_id, user_id=user_id, patch=patch, caller_role="admin"
+    )
     with pytest.raises(ApiError) as exc:
-        await user_service.patch_user(
-            session,
-            user_service.PatchUserArgs(
-                org_id=org_id, user_id=user_id, patch=patch, caller_role="admin"
-            ),
-        )
+        await user_service.patch_user(session, args)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert "owner" in exc.value.message.lower()
     session.commit.assert_not_called()
