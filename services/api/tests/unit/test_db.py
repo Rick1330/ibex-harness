@@ -47,7 +47,7 @@ async def test_session_with_org_sets_guc_via_mock() -> None:
     factory, session = _mock_org_session()
     async with session_with_org(factory, str(uuid4())) as yielded:
         assert yielded is session
-    assert session.execute.await_count == 1
+    assert session.execute.await_count == 3
 
 
 @pytest.mark.asyncio

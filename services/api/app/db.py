@@ -16,6 +16,10 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config import Settings
 
+# Compose/CI connect as role ``ibex`` (often superuser). Superusers bypass RLS
+# even with FORCE ROW LEVEL SECURITY — switch to ``ibex_app`` for enforcement.
+_SET_APP_ROLE_SQL = "SET LOCAL ROLE ibex_app"
+_CLEAR_SERVICE_ACCOUNT_SQL = "SELECT set_config('app.is_service_account', 'false', true)"
 _ORG_GUC_SQL = "SELECT set_config('app.current_org_id', :org_id, true)"
 
 
@@ -37,6 +41,12 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
 
 async def _bind_org_guc(session: AsyncSession, org_id: str) -> None:
     # Bound parameter — not string-interpolated SQL.
+    await session.execute(
+        text(_SET_APP_ROLE_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+    )
+    await session.execute(
+        text(_CLEAR_SERVICE_ACCOUNT_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+    )
     await session.execute(
         text(_ORG_GUC_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         {"org_id": org_id},
