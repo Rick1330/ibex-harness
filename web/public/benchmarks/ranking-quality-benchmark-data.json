@@ -3,12 +3,12 @@
   "benchmark": "ranking_quality",
   "runs": [
     {
-      "sha": "f93cb7ad6637a1d9df4d5eec36fcc8bfa39a160f",
-      "short_sha": "f93cb7a",
-      "timestamp": "2026-09-09T14:52:08.784139+00:00",
+      "sha": "6028a2f71fc649c640ccf8ed2a3d2c528748f887",
+      "short_sha": "6028a2f",
+      "timestamp": "2026-09-09T20:12:07.189758+00:00",
       "branch": "main",
-      "run_number": 220,
-      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/34366273595",
+      "run_number": 222,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/34399462465",
       "gold_set": "v1",
       "query_count": 20,
       "memory_count": 51,
