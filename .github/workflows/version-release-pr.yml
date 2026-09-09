@@ -82,8 +82,12 @@ jobs:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
         run: bash .github/scripts/resolve-version-release-pr-number.sh
 
+      # Checks API requires a GitHub App installation token or classic PAT.
+      # Fine-grained PATs return 403 ("You must authenticate via a GitHub App");
+      # do not fail propose when the release PR itself was updated successfully.
       - name: Report semantic-pr-title check on release PR
         if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose' && steps.release_pr.outputs.resolved == 'true'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
           PR_NUMBER: ${{ steps.release_pr.outputs.number }}

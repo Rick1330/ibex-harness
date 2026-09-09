@@ -10,7 +10,7 @@ These names look similar but do **different** jobs. You usually need only one at
 | --- | --- | --- | --- | --- |
 | **Version Release PR** | `version-release-pr.yml` | Opens/updates the weekly `chore(release): prepare vX.Y.Z` PR; on merge **publish**, creates the git tag + GitHub Release notes | Sunday 08:00 UTC propose; publish on `chore(release): prepare v…` merge | **Yes** for cutting semver releases |
 | **Tagged Release** | `release.yml` | Builds SBOM, signs with cosign, **uploads** `sbom.spdx.json` + `.sigstore` onto an **existing** GitHub Release | Tag push `v*.*.*`, release published, or manual `workflow_dispatch` with `tag_name` | **Yes** for Scorecard signed-release assets. Input must be an **existing** tag (today: `v0.1.0`) |
-| **Tagged Release Docker** | `release-docker.yml` | Publishes **version-tagged** container images (`ghcr.io/.../auth:vX.Y.Z`) | Only on **tag push** `v*.*.*` | Automatic with new tags; not used for manual SBOM repair |
+| **Tagged Release Docker** | `release-docker.yml` | Publishes **version-tagged** container images (`ghcr.io/.../auth:vX.Y.Z`) | Only on **tag push** `v*.*.*` | Automatic with new tags; not used for manual SBOM repair. Caller must grant callee max permissions including `contents: write` (notify job) or the run fails at startup. |
 | **Docker Publish** | `docker-publish.yml` | Builds/scans/pushes **`latest`** (and related) images after successful CI on `main` | `workflow_run` after CI, PRs (scan-only), manual, or called by Tagged Release Docker | **Unrelated to SBOM/releases.** A green Docker Publish does **not** attach release assets |
 
 **Confusion trap:** After a merge, **Docker Publish** often succeeds with `latest` images. That is **not** Tagged Release. To attach SBOM signatures to `v0.1.0`, run **Actions → Tagged Release → Run workflow** with `tag_name=v0.1.0`.
@@ -71,10 +71,30 @@ Because release PRs are created by `github-actions[bot]`, the standalone **Seman
 
 `VERSION_RELEASE_TOKEN` is **required** for [`.github/workflows/version-release-pr.yml`](../../.github/workflows/version-release-pr.yml) and [`.github/workflows/release.yml`](../../.github/workflows/release.yml) so `GITHUB_TOKEN` stays read-only (OpenSSF Scorecard Token-Permissions).
 
-Use a **GitHub App installation token** (recommended) or a **classic PAT** with **`contents`**, **`pull-requests`**, and **`checks`** (write) on this repository. Store it as the `VERSION_RELEASE_TOKEN` repository secret.
+Store **one** repository Actions secret named `VERSION_RELEASE_TOKEN` (Settings → Secrets and variables → Actions). Do not create duplicate secrets with the same name — GitHub keeps a single value per name; recreate by updating that secret in place.
 
-- **release-please** and **`gh release upload`** need `contents` + `pull-requests` write.
-- [`report-semantic-pr-title-check.sh`](../../.github/scripts/report-semantic-pr-title-check.sh) posts a check run via `gh api repos/.../check-runs`, which requires **`checks: write`** — fine-grained PATs do not support the Checks API; use a GitHub App or classic PAT.
+### Recommended credential
+
+Prefer a **GitHub App** installed on this repository with:
+
+| Permission | Access | Why |
+| --- | --- | --- |
+| Contents | Read & write | release-please commits/tags; `gh release upload` |
+| Pull requests | Read & write | open/update the release PR |
+| Checks | Read & write | post `semantic-pr-title` check on the release PR |
+
+Mint an installation access token in CI, or store a short-lived token generator pattern; for a simpler setup, put a **classic PAT** (`repo` scope is enough for a private/public personal repo) in `VERSION_RELEASE_TOKEN`.
+
+### What does **not** work
+
+- **Fine-grained PAT alone:** can often push contents / PRs, but the Checks API returns `403 You must authenticate via a GitHub App`. Propose mode still updates the release PR; the semantic-title check step is `continue-on-error` so that 403 does not fail the workflow.
+- **Relying on `GITHUB_TOKEN` for SBOM upload:** job `permissions.contents` is `read`. `anchore/sbom-action` must use `upload-release-assets: false`; signed assets are uploaded in a later step with `VERSION_RELEASE_TOKEN`. If you see `Resource not accessible by integration` while “Attaching SBOMs to release”, that is the Actions token — not a missing secret.
+
+### Cleanup checklist
+
+1. Settings → Developer settings → Personal access tokens: revoke extra PATs named like `VERSION_RELEASE_TOKEN` / release helpers; keep **one** classic PAT or App path.
+2. Settings → Secrets → Actions: confirm a **single** `VERSION_RELEASE_TOKEN` (updated_at recent).
+3. After fixing the secret, re-attach assets with **Actions → Tagged Release → Run workflow** and `tag_name=vX.Y.Z`.
 
 Do not rely on workflow `permissions: checks: write` on `GITHUB_TOKEN`; the script authenticates with `GH_TOKEN` (`VERSION_RELEASE_TOKEN`).
 

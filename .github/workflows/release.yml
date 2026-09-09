@@ -72,6 +72,10 @@ jobs:
           fetch-tags: true
           ref: ${{ steps.release_tag.outputs.value }}
 
+      # upload-release-assets must stay false: job GITHUB_TOKEN is contents:read
+      # (Scorecard Token-Permissions). Attaching to the GitHub Release here fails
+      # with "Resource not accessible by integration" on tag/release events.
+      # Signed assets are uploaded below with VERSION_RELEASE_TOKEN.
       - name: Generate SBOM (Syft)
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
@@ -79,6 +83,7 @@ jobs:
           config: .github/syft.yaml
           format: spdx-json
           output-file: sbom.spdx.json
+          upload-release-assets: false
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
