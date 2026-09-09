@@ -1816,6 +1816,9 @@ jobs:
         env:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Merge coverage profiles
+        env:
+          # gocovmerge pulls golang.org/x/tools; allow toolchain upgrade past go.mod pin.
+          GOTOOLCHAIN: auto
         run: |
           go run github.com/wadey/gocovmerge@v0.0.0-20160331181800-b5bfa59ec0ad \
             coverage-go-unit.out coverage-go-integration.out > coverage-go-merged.out
