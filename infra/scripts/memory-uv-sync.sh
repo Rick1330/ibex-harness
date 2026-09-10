@@ -21,4 +21,4 @@ cd "$MEMORY_DIR"
 uv sync --frozen --no-build --extra dev --no-install-project \
   --find-links "$WHEEL_DIR" --no-install-package authclient --no-install-package ibex-async-db
 uv pip install --no-cache --force-reinstall --no-index --find-links "$WHEEL_DIR" \
-  "authclient==0.1.3" "ibex-async-db==0.1.0"
+  "authclient==0.1.4" "ibex-async-db==0.1.0"

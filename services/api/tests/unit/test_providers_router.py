@@ -10,13 +10,13 @@ from authclient.codec import ProviderCredentialMetadataWire
 from authclient.permissions import MEMORY_READ
 from authclient.provider_credentials import FakeProviderCredentialManager
 
+from app.auth.client import ValidateResult
 from tests.unit.org_user_test_support import (
     ManagedClientOpts,
     bearer_headers,
     managed_org_client,
     owner_result,
 )
-from app.auth.client import ValidateResult
 
 
 def test_list_and_upsert_provider_credentials() -> None:
