@@ -54,73 +54,52 @@ func TestHierarchical_nilAgentSkipsAgentTier(t *testing.T) {
 			t.Fatalf("unexpected agent key written: %s", key)
 		}
 	}
-	orgKey := orgRPMKey(org, window.unixMinute)
-	globalKey := globalRPMKey(window.unixMinute)
-	assertRedisInt(t, mr, orgKey, 1)
-	assertRedisInt(t, mr, globalKey, 1)
+	assertRedisInt(t, mr, orgRPMKey(org, window.unixMinute), 1)
+	assertRedisInt(t, mr, globalRPMKey(window.unixMinute), 1)
 }
 
-func TestHierarchical_tierTripsIndependent(t *testing.T) {
+func TestHierarchical_agentTripIndependent(t *testing.T) {
 	t.Parallel()
-	type counters struct{ agent, org, global int64 }
-	cases := []struct {
-		name      string
-		org       uuid.UUID
-		agent     uuid.UUID
-		cfg       HierarchicalConfig
-		wantTier  string
-		wantCount counters
-	}{
-		{
-			name:  "agent",
-			org:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440102"),
-			agent: uuid.MustParse("550e8400-e29b-41d4-a716-446655440202"),
-			cfg: HierarchicalConfig{
-				DefaultRPM: 2, OrgOverrides: map[uuid.UUID]int64{
-					uuid.MustParse("550e8400-e29b-41d4-a716-446655440102"): 100,
-				}, GlobalRPM: 1000,
-			},
-			wantTier:  tierAgent,
-			wantCount: counters{agent: 3, org: 2, global: 2},
-		},
-		{
-			name:  "org",
-			org:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440103"),
-			agent: uuid.MustParse("550e8400-e29b-41d4-a716-446655440203"),
-			cfg: HierarchicalConfig{
-				DefaultRPM: 100, OrgOverrides: map[uuid.UUID]int64{
-					uuid.MustParse("550e8400-e29b-41d4-a716-446655440103"): 2,
-				}, GlobalRPM: 1000,
-			},
-			wantTier:  tierOrg,
-			wantCount: counters{agent: 2, org: 3, global: 2},
-		},
-		{
-			name:      "global",
-			org:       uuid.MustParse("550e8400-e29b-41d4-a716-446655440104"),
-			agent:     uuid.MustParse("550e8400-e29b-41d4-a716-446655440204"),
-			cfg:       HierarchicalConfig{DefaultRPM: 100, GlobalRPM: 2},
-			wantTier:  tierGlobal,
-			wantCount: counters{agent: 2, org: 2, global: 3},
-		},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			mr, lim := newTestHierarchicalMR(t, tc.cfg)
-			assertHierarchicalAllowed(t, lim, tc.org, tc.agent, true)
-			assertHierarchicalAllowed(t, lim, tc.org, tc.agent, true)
-			res := assertHierarchicalAllowed(t, lim, tc.org, tc.agent, false)
-			if res.DeniedTier != tc.wantTier {
-				t.Fatalf("DeniedTier=%q want %q", res.DeniedTier, tc.wantTier)
-			}
-			window := currentMinuteWindow(time.Now().UTC())
-			assertRedisInt(t, mr, agentRPMKey(tc.org, tc.agent, window.unixMinute), tc.wantCount.agent)
-			assertRedisInt(t, mr, orgRPMKey(tc.org, window.unixMinute), tc.wantCount.org)
-			assertRedisInt(t, mr, globalRPMKey(window.unixMinute), tc.wantCount.global)
-		})
-	}
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440102")
+	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440202")
+	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
+		DefaultRPM:   2,
+		OrgOverrides: map[uuid.UUID]int64{org: 100},
+		GlobalRPM:    1000,
+	})
+	runTripAndAssertCounters(t, mr, lim, tripExpect{
+		org: org, agent: agent, wantTier: tierAgent,
+		agentN: 3, orgN: 2, globalN: 2,
+	})
+}
+
+func TestHierarchical_orgTripIndependent(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440103")
+	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440203")
+	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
+		DefaultRPM:   100,
+		OrgOverrides: map[uuid.UUID]int64{org: 2},
+		GlobalRPM:    1000,
+	})
+	runTripAndAssertCounters(t, mr, lim, tripExpect{
+		org: org, agent: agent, wantTier: tierOrg,
+		agentN: 2, orgN: 3, globalN: 2,
+	})
+}
+
+func TestHierarchical_globalTripIndependent(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440104")
+	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440204")
+	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
+		DefaultRPM: 100,
+		GlobalRPM:  2,
+	})
+	runTripAndAssertCounters(t, mr, lim, tripExpect{
+		org: org, agent: agent, wantTier: tierGlobal,
+		agentN: 2, orgN: 2, globalN: 3,
+	})
 }
 
 func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
@@ -136,13 +115,13 @@ func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
 		},
 		GlobalRPM: 10_000,
 	})
-	assertHierarchicalAllowed(t, lim, orgA, agent, true)
-	assertHierarchicalAllowed(t, lim, orgA, agent, true)
-	res := assertHierarchicalAllowed(t, lim, orgA, agent, false)
+	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
+	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
+	res := assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, false)
 	if res.DeniedTier != tierOrg {
 		t.Fatalf("DeniedTier=%q want org", res.DeniedTier)
 	}
-	assertHierarchicalAllowed(t, lim, orgB, agent, true)
+	assertCheckWant(t, checkArgs{lim: lim, org: orgB, agent: agent}, true)
 	window := currentMinuteWindow(time.Now().UTC())
 	assertRedisInt(t, mr, agentRPMKey(orgA, agent, window.unixMinute), 2)
 	assertRedisInt(t, mr, orgRPMKey(orgA, window.unixMinute), 3)
@@ -150,69 +129,42 @@ func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
 	assertRedisInt(t, mr, orgRPMKey(orgB, window.unixMinute), 1)
 }
 
-func TestHierarchical_ConcurrentBurst_tiers(t *testing.T) {
+func TestHierarchical_ConcurrentBurst_orgTier(t *testing.T) {
 	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440110")
 	const rpm = 20
-	cases := []struct {
-		name     string
-		org      uuid.UUID
-		agent    uuid.UUID
-		cfg      HierarchicalConfig
-		wantTier string
-	}{
-		{
-			name: "org",
-			org:  uuid.MustParse("550e8400-e29b-41d4-a716-446655440110"),
-			cfg: HierarchicalConfig{
-				DefaultRPM: 10_000,
-				OrgOverrides: map[uuid.UUID]int64{
-					uuid.MustParse("550e8400-e29b-41d4-a716-446655440110"): rpm,
-				},
-				GlobalRPM: 10_000,
-			},
-		},
-		{
-			name:  "agent",
-			org:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440111"),
-			agent: uuid.MustParse("550e8400-e29b-41d4-a716-446655440211"),
-			cfg: HierarchicalConfig{
-				DefaultRPM: rpm,
-				OrgOverrides: map[uuid.UUID]int64{
-					uuid.MustParse("550e8400-e29b-41d4-a716-446655440111"): 10_000,
-				},
-				GlobalRPM: 10_000,
-			},
-			wantTier: tierAgent,
-		},
-		{
-			name:     "global",
-			org:      uuid.MustParse("550e8400-e29b-41d4-a716-446655440112"),
-			cfg:      HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
-			wantTier: tierGlobal,
-		},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			lim := newTestHierarchical(t, tc.cfg)
-			results := burstCheckHierarchical(t, lim, tc.org, tc.agent, concurrentBurstWorkers)
-			allowed := countAllowed(results)
-			assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-			assertSomeDenied(t, allowed, concurrentBurstWorkers)
-			if allowed != int(rpm) {
-				t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
-			}
-			if tc.wantTier == "" {
-				return
-			}
-			for _, r := range results {
-				if !r.Allowed && r.DeniedTier != tc.wantTier {
-					t.Fatalf("denied tier=%q want %q", r.DeniedTier, tc.wantTier)
-				}
-			}
-		})
-	}
+	lim := newTestHierarchical(t, HierarchicalConfig{
+		DefaultRPM:   10_000,
+		OrgOverrides: map[uuid.UUID]int64{org: rpm},
+		GlobalRPM:    10_000,
+	})
+	assertExactBurstRPM(t, checkArgs{lim: lim, org: org}, rpm)
+}
+
+func TestHierarchical_ConcurrentBurst_agentTier(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440111")
+	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440211")
+	const rpm = 20
+	lim := newTestHierarchical(t, HierarchicalConfig{
+		DefaultRPM:   rpm,
+		OrgOverrides: map[uuid.UUID]int64{org: 10_000},
+		GlobalRPM:    10_000,
+	})
+	results := assertExactBurstRPM(t, checkArgs{lim: lim, org: org, agent: agent}, rpm)
+	assertDeniedTier(t, results, tierAgent)
+}
+
+func TestHierarchical_ConcurrentBurst_globalTier(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440112")
+	const rpm = 20
+	lim := newTestHierarchical(t, HierarchicalConfig{
+		DefaultRPM: 10_000,
+		GlobalRPM:  rpm,
+	})
+	results := assertExactBurstRPM(t, checkArgs{lim: lim, org: org}, rpm)
+	assertDeniedTier(t, results, tierGlobal)
 }
 
 func TestHierarchical_Check_redisError(t *testing.T) {
@@ -235,6 +187,102 @@ func TestHierarchical_Check_redisError(t *testing.T) {
 	}
 }
 
+func TestUnit_resultFromHierarchical_shortReply(t *testing.T) {
+	t.Parallel()
+	window := currentMinuteWindow(time.Now().UTC())
+	_, err := resultFromHierarchical([]any{int64(1)}, 60, window)
+	if err == nil {
+		t.Fatal("expected short-reply error")
+	}
+}
+
+func TestUnit_resultFromHierarchical_parseErrors(t *testing.T) {
+	t.Parallel()
+	window := currentMinuteWindow(time.Now().UTC())
+	cases := [][]any{
+		{"x", "", int64(1), int64(60)},
+		{int64(1), "", "bad", int64(60)},
+		{int64(1), "", int64(1), "bad"},
+	}
+	for _, reply := range cases {
+		_, err := resultFromHierarchical(reply, 60, window)
+		if err == nil {
+			t.Fatalf("expected parse error for %#v", reply)
+		}
+	}
+}
+
+func TestUnit_resultFromHierarchical_denyFallback(t *testing.T) {
+	t.Parallel()
+	window := currentMinuteWindow(time.Now().UTC())
+	res, err := resultFromHierarchical([]any{int64(0), "", int64(3), int64(0)}, 60, window)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Allowed {
+		t.Fatal("expected deny")
+	}
+	if res.DeniedTier != tierOrg {
+		t.Fatalf("DeniedTier=%q", res.DeniedTier)
+	}
+	if res.Limit != 60 {
+		t.Fatalf("Limit=%d", res.Limit)
+	}
+}
+
+func TestUnit_resultFromHierarchical_allowIntBytes(t *testing.T) {
+	t.Parallel()
+	window := currentMinuteWindow(time.Now().UTC())
+	res, err := resultFromHierarchical([]any{int(1), []byte(""), int64(1), int64(10)}, 10, window)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Allowed || res.Limit != 10 {
+		t.Fatalf("allow int/bytes: %+v", res)
+	}
+}
+
+func TestUnit_asString(t *testing.T) {
+	t.Parallel()
+	if asString("a") != "a" {
+		t.Fatal("string")
+	}
+	if asString([]byte("b")) != "b" {
+		t.Fatal("bytes")
+	}
+	if asString(3) != "3" {
+		t.Fatal("fallback")
+	}
+}
+
+func TestUnit_asInt64_ok(t *testing.T) {
+	t.Parallel()
+	assertAsInt64(t, int64(7), 7)
+	assertAsInt64(t, int(8), 8)
+	assertAsInt64(t, "9", 9)
+	assertAsInt64(t, []byte("10"), 10)
+}
+
+func TestUnit_asInt64_badType(t *testing.T) {
+	t.Parallel()
+	_, err := asInt64(struct{}{})
+	if err == nil {
+		t.Fatal("expected type error")
+	}
+}
+
+type checkArgs struct {
+	lim   Limiter
+	org   uuid.UUID
+	agent uuid.UUID
+}
+
+type tripExpect struct {
+	org, agent            uuid.UUID
+	wantTier              string
+	agentN, orgN, globalN int64
+}
+
 func newTestHierarchical(t testing.TB, cfg HierarchicalConfig) Limiter {
 	t.Helper()
 	_, lim := newTestHierarchicalMR(t, cfg)
@@ -253,9 +301,9 @@ func newTestHierarchicalMR(t testing.TB, cfg HierarchicalConfig) (*miniredis.Min
 	return mr, lim
 }
 
-func assertHierarchicalAllowed(t *testing.T, lim Limiter, org, agent uuid.UUID, want bool) Result {
+func assertCheckWant(t *testing.T, args checkArgs, want bool) Result {
 	t.Helper()
-	res, err := lim.Check(context.Background(), org, agent)
+	res, err := args.lim.Check(context.Background(), args.org, args.agent)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -265,7 +313,22 @@ func assertHierarchicalAllowed(t *testing.T, lim Limiter, org, agent uuid.UUID, 
 	return res
 }
 
-func burstCheckHierarchical(t *testing.T, lim Limiter, org, agent uuid.UUID, n int) []Result {
+func runTripAndAssertCounters(t *testing.T, mr *miniredis.Miniredis, lim Limiter, expect tripExpect) {
+	t.Helper()
+	args := checkArgs{lim: lim, org: expect.org, agent: expect.agent}
+	assertCheckWant(t, args, true)
+	assertCheckWant(t, args, true)
+	res := assertCheckWant(t, args, false)
+	if res.DeniedTier != expect.wantTier {
+		t.Fatalf("DeniedTier=%q want %q", res.DeniedTier, expect.wantTier)
+	}
+	window := currentMinuteWindow(time.Now().UTC())
+	assertRedisInt(t, mr, agentRPMKey(expect.org, expect.agent, window.unixMinute), expect.agentN)
+	assertRedisInt(t, mr, orgRPMKey(expect.org, window.unixMinute), expect.orgN)
+	assertRedisInt(t, mr, globalRPMKey(window.unixMinute), expect.globalN)
+}
+
+func burstCheckHierarchical(t *testing.T, args checkArgs, n int) []Result {
 	t.Helper()
 	results := make([]Result, n)
 	errs := make([]error, n)
@@ -275,7 +338,7 @@ func burstCheckHierarchical(t *testing.T, lim Limiter, org, agent uuid.UUID, n i
 		i := i
 		go func() {
 			defer wg.Done()
-			res, err := lim.Check(context.Background(), org, agent)
+			res, err := args.lim.Check(context.Background(), args.org, args.agent)
 			results[i] = res
 			errs[i] = err
 		}()
@@ -283,6 +346,30 @@ func burstCheckHierarchical(t *testing.T, lim Limiter, org, agent uuid.UUID, n i
 	wg.Wait()
 	assertNoCheckErrors(t, errs)
 	return results
+}
+
+func assertExactBurstRPM(t *testing.T, args checkArgs, rpm int64) []Result {
+	t.Helper()
+	results := burstCheckHierarchical(t, args, concurrentBurstWorkers)
+	allowed := countAllowed(results)
+	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
+	assertSomeDenied(t, allowed, concurrentBurstWorkers)
+	if allowed != int(rpm) {
+		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
+	}
+	return results
+}
+
+func assertDeniedTier(t *testing.T, results []Result, wantTier string) {
+	t.Helper()
+	for _, r := range results {
+		if r.Allowed {
+			continue
+		}
+		if r.DeniedTier != wantTier {
+			t.Fatalf("denied tier=%q want %q", r.DeniedTier, wantTier)
+		}
+	}
 }
 
 func assertRedisInt(t *testing.T, mr *miniredis.Miniredis, key string, want int64) {
@@ -300,70 +387,13 @@ func assertRedisInt(t *testing.T, mr *miniredis.Miniredis, key string, want int6
 	}
 }
 
-func TestUnit_resultFromHierarchical_edges(t *testing.T) {
-	t.Parallel()
-	window := currentMinuteWindow(time.Now().UTC())
-
-	_, err := resultFromHierarchical([]any{int64(1)}, 60, window)
-	if err == nil {
-		t.Fatal("expected short-reply error")
-	}
-
-	_, err = resultFromHierarchical([]any{"x", "", int64(1), int64(60)}, 60, window)
-	if err == nil {
-		t.Fatal("expected allowed parse error")
-	}
-
-	_, err = resultFromHierarchical([]any{int64(1), "", "bad", int64(60)}, 60, window)
-	if err == nil {
-		t.Fatal("expected org_count parse error")
-	}
-
-	_, err = resultFromHierarchical([]any{int64(1), "", int64(1), "bad"}, 60, window)
-	if err == nil {
-		t.Fatal("expected org_limit parse error")
-	}
-
-	res, err := resultFromHierarchical([]any{int64(0), "", int64(3), int64(0)}, 60, window)
+func assertAsInt64(t *testing.T, in any, want int64) {
+	t.Helper()
+	n, err := asInt64(in)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%T: %v", in, err)
 	}
-	if res.Allowed || res.DeniedTier != tierOrg || res.Limit != 60 {
-		t.Fatalf("deny fallback: %+v", res)
-	}
-
-	res, err = resultFromHierarchical([]any{int(1), []byte(""), int64(1), int64(10)}, 10, window)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Allowed || res.Limit != 10 {
-		t.Fatalf("allow int/bytes: %+v", res)
-	}
-}
-
-func TestUnit_asString_asInt64(t *testing.T) {
-	t.Parallel()
-	if asString("a") != "a" || asString([]byte("b")) != "b" || asString(3) != "3" {
-		t.Fatal("asString cases")
-	}
-	n, err := asInt64(int64(7))
-	if err != nil || n != 7 {
-		t.Fatalf("int64: %d %v", n, err)
-	}
-	n, err = asInt64(int(8))
-	if err != nil || n != 8 {
-		t.Fatalf("int: %d %v", n, err)
-	}
-	n, err = asInt64("9")
-	if err != nil || n != 9 {
-		t.Fatalf("string: %d %v", n, err)
-	}
-	n, err = asInt64([]byte("10"))
-	if err != nil || n != 10 {
-		t.Fatalf("bytes: %d %v", n, err)
-	}
-	_, err = asInt64(struct{}{})
-	if err == nil {
-		t.Fatal("expected type error")
+	if n != want {
+		t.Fatalf("%T=%d want %d", in, n, want)
 	}
 }
