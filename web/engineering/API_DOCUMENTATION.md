@@ -2040,7 +2040,9 @@ Org-scoped BYO LLM provider keys. Plaintext is accepted only on write, validated
 
 ### GET /v1/organizations/{org_id}/providers
 
-**List** stored credentials (metadata only).
+**List** stored credentials (metadata only). This is a **bounded, non-paginated**
+exception: the response returns the full credentials metadata list for the org
+(no `limit`, `cursor`, or pagination fields).
 
 **Response: 200 OK**
 
@@ -2060,7 +2062,20 @@ Org-scoped BYO LLM provider keys. Plaintext is accepted only on write, validated
 
 ### POST /v1/organizations/{org_id}/providers
 
-**Upsert** a credential. Body always includes plaintext `api_key`. Management API probes the provider (`GET …/v1/models`, ≤5s) then calls Auth `CreateProviderCredential`.
+**Upsert** a credential. Body always includes plaintext `api_key`. Management API
+validates provider-specifically (≤5s total deadline, no redirects) then calls Auth
+`CreateProviderCredential`.
+
+Validation probes:
+
+| `provider_name` | Probe | Auth headers | Notes |
+| --- | --- | --- | --- |
+| `azure_openai` | `GET {base_url}/openai/models?api-version=…` | `api-key` | `base_url` **required** (`*.openai.azure.com`); missing/invalid → `422 INVALID_CREDENTIAL` |
+| `anthropic` | `GET {base}/v1/models` | `x-api-key`, `anthropic-version` | Default base `https://api.anthropic.com` |
+| others | `GET {base}/v1/models` | `Authorization: Bearer …` | Upstream rejection / unsafe destination → `422 INVALID_CREDENTIAL` |
+
+`vllm_self_hosted` may use plaintext `http://` only for literal loopback addresses;
+mesh/private/localhost names require HTTPS.
 
 ```json
 {

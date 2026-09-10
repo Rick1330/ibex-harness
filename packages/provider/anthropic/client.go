@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -66,8 +67,12 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		return provider.Response{}, err
 	}
 
+	base := c.cfg.BaseURL
+	if strings.TrimSpace(req.BaseURLOverride) != "" {
+		base = strings.TrimSpace(req.BaseURLOverride)
+	}
 	return c.executeWithRetry(ctx, span, upstreamCall{
-		URL:            provider.JoinBaseURL(c.cfg.BaseURL, "/v1/messages"),
+		URL:            provider.JoinBaseURL(base, "/v1/messages"),
 		Body:           body,
 		Stream:         req.Stream,
 		Model:          req.Model,

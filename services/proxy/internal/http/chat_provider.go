@@ -136,6 +136,9 @@ func (h chatCompletionHandler) applyCredentialOverride(
 	}
 	if !result.PlatformDefault {
 		provReq.APIKeyOverride = result.APIKey
+		if strings.TrimSpace(result.BaseURL) != "" {
+			provReq.BaseURLOverride = strings.TrimSpace(result.BaseURL)
+		}
 	}
 	return true
 }

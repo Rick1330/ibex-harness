@@ -129,8 +129,12 @@ func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provid
 		return provider.Response{}, fmt.Errorf("%s request: %w", c.Name(), err)
 	}
 
+	base := c.cfg.BaseURL
+	if strings.TrimSpace(req.BaseURLOverride) != "" {
+		base = strings.TrimSpace(req.BaseURLOverride)
+	}
 	return c.executeWithRetry(ctx, span, upstreamCall{
-		URL:            provider.JoinBaseURL(c.cfg.BaseURL, "/chat/completions"),
+		URL:            provider.JoinBaseURL(base, "/chat/completions"),
 		Body:           body,
 		Stream:         req.Stream,
 		APIKeyOverride: req.APIKeyOverride,

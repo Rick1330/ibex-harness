@@ -210,8 +210,10 @@ func newProviderCredentialService(
 	}
 	return service.NewProviderCredentialService(
 		credRepo,
-		cfg.CredentialsMasterKey,
-		cfg.CredentialsMasterKeyID,
+		service.MasterKeyConfig{
+			Encoded: cfg.CredentialsMasterKey,
+			KeyID:   cfg.CredentialsMasterKeyID,
+		},
 	)
 }
 

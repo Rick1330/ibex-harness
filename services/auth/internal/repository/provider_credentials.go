@@ -145,7 +145,7 @@ func (r *ProviderCredentialsRepository) ListByOrg(ctx context.Context, orgID str
 		if err != nil {
 			return err
 		}
-		defer rs.Close()
+		defer func() { _ = rs.Close() }()
 		for rs.Next() {
 			var row ProviderCredentialRow
 			if err := rs.Scan(

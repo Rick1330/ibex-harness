@@ -107,9 +107,12 @@ func (r *CachedResolver) Resolve(ctx context.Context, in ResolveInput) (Result, 
 func (r *CachedResolver) lookup(key string) (Result, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.evictExpiredLocked()
 	entry, ok := r.cache[key]
 	if !ok {
+		return Result{}, false
+	}
+	if !r.now().Before(entry.expiresAt) {
+		delete(r.cache, key)
 		return Result{}, false
 	}
 	return entry.result, true

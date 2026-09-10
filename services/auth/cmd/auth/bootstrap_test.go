@@ -80,7 +80,9 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 	if err != nil {
 		t.Fatalf("NewProviderCredentialsRepository: %v", err)
 	}
-	credSvc, err := service.NewProviderCredentialService(credRepo, "", "v1")
+	credSvc, err := service.NewProviderCredentialService(credRepo, service.MasterKeyConfig{
+		Encoded: "", KeyID: "v1",
+	})
 	if err != nil {
 		t.Fatalf("NewProviderCredentialService: %v", err)
 	}

@@ -38,6 +38,10 @@ type Request struct {
 	// APIKeyOverride, when non-empty, replaces the process-level provider API key
 	// for this request only (org BYO credentials). It must not mutate shared Client config.
 	APIKeyOverride string
+
+	// BaseURLOverride, when non-empty, replaces the process-level provider BaseURL
+	// for this request only (org BYO custom endpoint). It must not mutate shared Client config.
+	BaseURLOverride string
 }
 
 // Message is a single turn in the conversation.

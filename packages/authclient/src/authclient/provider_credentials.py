@@ -59,6 +59,17 @@ class _UnaryBytesCall[T]:
     decode: Callable[[bytes], T]
 
 
+@dataclass(frozen=True, slots=True)
+class _OrgProviderUnary[T]:
+    stub: Callable[..., Awaitable[object]]
+    org_id: str
+    provider_name: str
+    access_token: str
+    op: str
+    encode: Callable[..., bytes]
+    decode: Callable[[bytes], T]
+
+
 class ProviderCredentialManager(Protocol):
     async def create(
         self, params: CreateProviderCredentialParams
@@ -134,13 +145,15 @@ class GRPCProviderCredentialManager:
         self, *, org_id: str, provider_name: str, access_token: str
     ) -> GetProviderCredentialWire:
         return await self._org_provider_unary(
-            stub=self._get,
-            org_id=org_id,
-            provider_name=provider_name,
-            access_token=access_token,
-            op="get",
-            encode=encode_get_provider_credential_request,
-            decode=decode_get_provider_credential_response,
+            _OrgProviderUnary(
+                stub=self._get,
+                org_id=org_id,
+                provider_name=provider_name,
+                access_token=access_token,
+                op="get",
+                encode=encode_get_provider_credential_request,
+                decode=decode_get_provider_credential_response,
+            )
         )
 
     async def list(
@@ -160,38 +173,33 @@ class GRPCProviderCredentialManager:
         self, *, org_id: str, provider_name: str, access_token: str
     ) -> None:
         await self._org_provider_unary(
-            stub=self._delete,
-            org_id=org_id,
-            provider_name=provider_name,
-            access_token=access_token,
-            op="delete",
-            encode=encode_delete_provider_credential_request,
-            decode=_decode_empty,
+            _OrgProviderUnary(
+                stub=self._delete,
+                org_id=org_id,
+                provider_name=provider_name,
+                access_token=access_token,
+                op="delete",
+                encode=encode_delete_provider_credential_request,
+                decode=_decode_empty,
+            )
         )
 
     async def aclose(self) -> None:
         await self._channel.close()
 
-    async def _org_provider_unary[T](
-        self,
-        *,
-        stub: Callable[..., Awaitable[object]],
-        org_id: str,
-        provider_name: str,
-        access_token: str,
-        op: str,
-        encode: Callable[..., bytes],
-        decode: Callable[[bytes], T],
-    ) -> T:
+    async def _org_provider_unary[T](self, call: _OrgProviderUnary[T]) -> T:
         return await self._unary_bytes(
             _UnaryBytesCall(
-                stub=stub,
-                payload=encode(org_id=org_id, provider_name=provider_name),
-                access_token=access_token,
-                op=op,
-                decode=decode,
+                stub=call.stub,
+                payload=call.encode(
+                    org_id=call.org_id, provider_name=call.provider_name
+                ),
+                access_token=call.access_token,
+                op=call.op,
+                decode=call.decode,
             )
         )
+
     async def _unary_bytes[T](self, call: _UnaryBytesCall[T]) -> T:
         metadata = (("authorization", f"Bearer {call.access_token}"),)
         try:

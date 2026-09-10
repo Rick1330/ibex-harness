@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
 import socket
@@ -16,6 +17,7 @@ from app.errors import ApiError
 logger = logging.getLogger(__name__)
 
 _VALIDATE_TIMEOUT = httpx.Timeout(5.0, connect=5.0)
+_VALIDATE_DEADLINE = 5.0
 _AZURE_API_VERSION = "2024-02-01"
 _DEFAULT_BASES: Final[dict[str, str]] = {
     "openai": "https://api.openai.com",
@@ -44,10 +46,15 @@ async def validate_provider_credential(
     client: httpx.AsyncClient | None = None,
 ) -> None:
     """Probe upstream models endpoint; raise INVALID_CREDENTIAL on failure."""
-    url = _models_url(provider_name, base_url)
-    _assert_probe_destination(provider_name, url)
-    headers = _auth_headers(provider_name, api_key)
-    status = await _probe_models(url, headers, client)
+    try:
+        async with asyncio.timeout(_VALIDATE_DEADLINE):
+            url = _models_url(provider_name, base_url)
+            await _assert_probe_destination(provider_name, url)
+            headers = _auth_headers(provider_name, api_key)
+            status = await _probe_models(url, headers, client)
+    except TimeoutError:
+        logger.info("provider key probe deadline exceeded")
+        raise _invalid() from None
     if status < 200 or status >= 300:
         logger.info("provider key probe rejected provider=%s status=%s", provider_name, status)
         raise _invalid()
@@ -65,58 +72,52 @@ def _models_url(provider_name: str, base_url: str | None) -> str:
     return f"{base}/v1/models"
 
 
-def _assert_probe_destination(provider_name: str, url: str) -> None:
+async def _assert_probe_destination(provider_name: str, url: str) -> None:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().rstrip(".")
     if not host or parsed.scheme not in {"http", "https"}:
         raise _invalid()
     if provider_name == "vllm_self_hosted":
-        _assert_self_hosted_destination(parsed.scheme, host)
+        await _assert_self_hosted_destination(parsed.scheme, host)
         return
-    _assert_cloud_destination(provider_name, parsed.scheme, host)
+    await _assert_cloud_destination(provider_name, parsed.scheme, host)
 
 
-def _assert_cloud_destination(provider_name: str, scheme: str, host: str) -> None:
+async def _assert_cloud_destination(provider_name: str, scheme: str, host: str) -> None:
     if scheme != "https":
         raise _invalid()
     if provider_name == "azure_openai":
-        _assert_azure_host(host)
+        await _assert_azure_host(host)
         return
     if host in _CLOUD_DEFAULT_HOSTS.get(provider_name, frozenset()):
         return
-    _assert_public_resolved_host(host)
+    await _assert_public_resolved_host(host)
 
 
-def _assert_azure_host(host: str) -> None:
+async def _assert_azure_host(host: str) -> None:
     if not (host.endswith(".openai.azure.com") or host == "openai.azure.com"):
         raise _invalid()
-    _assert_public_resolved_host(host)
+    await _assert_public_resolved_host(host)
 
 
-def _assert_self_hosted_destination(scheme: str, host: str) -> None:
+async def _assert_self_hosted_destination(scheme: str, host: str) -> None:
     if scheme == "https":
         return
-    if scheme != "http" or not _http_self_hosted_host_ok(host):
+    if scheme != "http":
+        raise _invalid()
+    # Plaintext HTTP is allowed only for literal loopback addresses.
+    literal = _literal_ip(host)
+    if literal is None or not literal.is_loopback:
         raise _invalid()
 
 
-def _http_self_hosted_host_ok(host: str) -> bool:
-    if host == "localhost" or _is_mesh_short_name(host):
-        return True
-    literal = _literal_ip(host)
-    if literal is not None:
-        return literal.is_loopback or literal.is_private
-    addrs = _resolved_addrs(host)
-    return bool(addrs) and all(a.is_loopback or a.is_private for a in addrs)
-
-
-def _assert_public_resolved_host(host: str) -> None:
+async def _assert_public_resolved_host(host: str) -> None:
     literal = _literal_ip(host)
     if literal is not None:
         if _is_blocked_addr(literal):
             raise _invalid()
         return
-    addrs = _resolved_addrs(host)
+    addrs = await _resolved_addrs(host)
     if not addrs or any(_is_blocked_addr(a) for a in addrs):
         raise _invalid()
 
@@ -128,9 +129,9 @@ def _literal_ip(host: str) -> _IPAddr | None:
         return None
 
 
-def _resolved_addrs(host: str) -> list[_IPAddr]:
+async def _resolved_addrs(host: str) -> list[_IPAddr]:
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
     except socket.gaierror:
         return []
     out: list[_IPAddr] = []
@@ -153,10 +154,6 @@ def _is_blocked_addr(addr: _IPAddr) -> bool:
     )
 
 
-def _is_mesh_short_name(host: str) -> bool:
-    return "." not in host and host.replace("-", "").isalnum()
-
-
 async def _probe_models(
     url: str,
     headers: dict[str, str],
@@ -168,14 +165,14 @@ async def _probe_models(
         follow_redirects=False,
     )
     try:
-        resp = await http.get(url, headers=headers)
+        async with http.stream("GET", url, headers=headers) as resp:
+            return resp.status_code
     except httpx.HTTPError:
         logger.info("provider key probe transport failure")
         raise _invalid() from None
     finally:
         if owns_client:
             await http.aclose()
-    return resp.status_code
 
 
 def _auth_headers(provider_name: str, api_key: str) -> dict[str, str]:

@@ -64,20 +64,27 @@ type ProviderCredentialService struct {
 	ready  bool
 }
 
+// MasterKeyConfig holds the local KEK used for envelope seal/open.
+type MasterKeyConfig struct {
+	Encoded string
+	KeyID   string
+}
+
 // NewProviderCredentialService constructs a credential service.
-// When masterKeyEncoded is empty, ready is false and mutating/decrypt ops fail closed.
-func NewProviderCredentialService(repo providerCredentialStore, masterKeyEncoded, keyID string) (*ProviderCredentialService, error) {
+// When Encoded is empty, ready is false and mutating/decrypt ops fail closed.
+func NewProviderCredentialService(repo providerCredentialStore, kek MasterKeyConfig) (*ProviderCredentialService, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("provider credential service: nil repo")
 	}
+	keyID := kek.KeyID
 	if keyID == "" {
 		keyID = "v1"
 	}
 	svc := &ProviderCredentialService{repo: repo, keyID: keyID}
-	if strings.TrimSpace(masterKeyEncoded) == "" {
+	if strings.TrimSpace(kek.Encoded) == "" {
 		return svc, nil
 	}
-	mk, err := ibexcrypto.ParseMasterKeyBase64(masterKeyEncoded)
+	mk, err := ibexcrypto.ParseMasterKeyBase64(kek.Encoded)
 	if err != nil {
 		return nil, fmt.Errorf("provider credential service: %w", err)
 	}
