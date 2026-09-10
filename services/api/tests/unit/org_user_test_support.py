@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 from authclient.permissions import ADMIN, USER_MANAGE
-from authclient.revoke import NoopTokenRevoker
 from authclient.provider_credentials import FakeProviderCredentialManager
+from authclient.revoke import NoopTokenRevoker
 from authclient.tokens import FakeTokenManager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
