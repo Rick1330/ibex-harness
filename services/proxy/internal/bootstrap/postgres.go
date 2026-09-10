@@ -299,29 +299,22 @@ func startRateLimitConfigSubscriber(
 	limiter ratelimit.Limiter,
 	log *logger.Logger,
 ) (*ratelimit.ConfigSubscriber, context.CancelFunc, error) {
-	if redisClient == nil || pgDB == nil {
+	if skip, reason := rateLimitWatcherSkipReason(redisClient, pgDB, limiter); skip {
 		if log != nil {
-			log.InfoCtx(context.Background(),
-				"rate-limit config watcher skipped; env defaults only",
-				"redis", redisClient != nil, "postgres", pgDB != nil)
+			log.InfoCtx(context.Background(), "rate-limit config watcher skipped; env defaults only",
+				"reason", reason)
 		}
 		return nil, nil, nil
 	}
-	hier, ok := ratelimit.AsHierarchical(limiter)
-	if !ok {
-		if log != nil {
-			log.InfoCtx(context.Background(),
-				"rate-limit config watcher skipped; limiter is not hierarchical")
-		}
-		return nil, nil, nil
-	}
+	hier, _ := ratelimit.AsHierarchical(limiter)
 	store, err := ratelimit.NewConfigStore(pgDB)
 	if err != nil {
 		return nil, nil, err
 	}
-	sub, err := ratelimit.NewConfigSubscriber(
-		redisClient, store, hier, log, ratelimit.DefaultConfigPollInterval,
-	)
+	sub, err := ratelimit.NewConfigSubscriber(ratelimit.ConfigSubscriberDeps{
+		Client: redisClient, Store: store, Applier: hier, Log: log,
+		PollEvery: ratelimit.DefaultConfigPollInterval,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -333,4 +326,19 @@ func startRateLimitConfigSubscriber(
 			"poll", ratelimit.DefaultConfigPollInterval.String())
 	}
 	return sub, cancel, nil
+}
+
+func rateLimitWatcherSkipReason(
+	redisClient redis.UniversalClient, pgDB *sql.DB, limiter ratelimit.Limiter,
+) (skip bool, reason string) {
+	if redisClient == nil {
+		return true, "redis_missing"
+	}
+	if pgDB == nil {
+		return true, "postgres_missing"
+	}
+	if _, ok := ratelimit.AsHierarchical(limiter); !ok {
+		return true, "limiter_not_hierarchical"
+	}
+	return false, ""
 }

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from authclient.permissions import MEMORY_READ
 from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND, VALIDATION_ERROR
+from authclient.permissions import MEMORY_READ
 
 from app.auth.client import ValidateResult
 from app.errors import ApiError
@@ -214,9 +214,9 @@ async def test_patch_rate_limits_publish_failure_does_not_raise() -> None:
         session,
         org_id,
         body,
-        platform_default_rpm=60,
-        counter=counter,
-        publisher=_Boom(),
+        deps=rate_limit_service.PatchDeps(
+            platform_default_rpm=60, counter=counter, publisher=_Boom()
+        ),
     )
     assert got.requests_per_minute == 80
     session.commit.assert_awaited()
@@ -231,9 +231,11 @@ async def test_patch_clear_org_and_agent_validation() -> None:
             session,
             org_id,
             RateLimitsPatchRequest(requests_per_minute=10, clear_org_override=True),
-            platform_default_rpm=60,
-            counter=AsyncMock(),
-            publisher=NoopRateLimitConfigPublisher(),
+            deps=rate_limit_service.PatchDeps(
+                platform_default_rpm=60,
+                counter=AsyncMock(),
+                publisher=NoopRateLimitConfigPublisher(),
+            ),
         )
     assert exc.value.code == VALIDATION_ERROR
 
@@ -256,9 +258,11 @@ async def test_patch_unknown_agent_404() -> None:
             RateLimitsPatchRequest(
                 agent_overrides=[{"agent_id": agent_id, "requests_per_minute": 5}]
             ),
-            platform_default_rpm=60,
-            counter=AsyncMock(),
-            publisher=NoopRateLimitConfigPublisher(),
+            deps=rate_limit_service.PatchDeps(
+                platform_default_rpm=60,
+                counter=AsyncMock(),
+                publisher=NoopRateLimitConfigPublisher(),
+            ),
         )
     assert exc.value.code == NOT_FOUND
 
@@ -293,15 +297,16 @@ async def test_patch_agent_upsert_and_clear() -> None:
     counter = AsyncMock()
     counter.org_current_minute_requests = AsyncMock(return_value=0)
     pub = RecordingRateLimitConfigPublisher()
+    deps = rate_limit_service.PatchDeps(
+        platform_default_rpm=60, counter=counter, publisher=pub
+    )
     await rate_limit_service.patch_rate_limits(
         session,
         org_id,
         RateLimitsPatchRequest(
             agent_overrides=[{"agent_id": agent_id, "requests_per_minute": 11}]
         ),
-        platform_default_rpm=60,
-        counter=counter,
-        publisher=pub,
+        deps=deps,
     )
     await rate_limit_service.patch_rate_limits(
         session,
@@ -310,9 +315,7 @@ async def test_patch_agent_upsert_and_clear() -> None:
             agent_overrides=[{"agent_id": agent_id, "requests_per_minute": None}],
             clear_org_override=True,
         ),
-        platform_default_rpm=60,
-        counter=counter,
-        publisher=pub,
+        deps=deps,
     )
     assert pub.published == [str(org_id), str(org_id)]
 

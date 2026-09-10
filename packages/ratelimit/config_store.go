@@ -134,23 +134,31 @@ type overrideScan struct {
 func buildOverrideSets(rows []overrideScan) (map[uuid.UUID]OrgOverrideSet, error) {
 	out := make(map[uuid.UUID]OrgOverrideSet)
 	for _, row := range rows {
-		cur := out[row.OrgID]
-		if cur.AgentRPM == nil {
-			cur.AgentRPM = make(map[uuid.UUID]int64)
+		if err := mergeOverrideRow(out, row); err != nil {
+			return nil, err
 		}
-		if !row.AgentNull.Valid || row.AgentNull.String == "" {
-			v := row.RPM
-			cur.OrgRPM = &v
-		} else {
-			agentID, err := uuid.Parse(row.AgentNull.String)
-			if err != nil {
-				return nil, fmt.Errorf("ratelimit: agent_id: %w", err)
-			}
-			cur.AgentRPM[agentID] = row.RPM
-		}
-		out[row.OrgID] = cur
 	}
 	return out, nil
+}
+
+func mergeOverrideRow(out map[uuid.UUID]OrgOverrideSet, row overrideScan) error {
+	cur := out[row.OrgID]
+	if cur.AgentRPM == nil {
+		cur.AgentRPM = make(map[uuid.UUID]int64)
+	}
+	if !row.AgentNull.Valid || row.AgentNull.String == "" {
+		v := row.RPM
+		cur.OrgRPM = &v
+		out[row.OrgID] = cur
+		return nil
+	}
+	agentID, err := uuid.Parse(row.AgentNull.String)
+	if err != nil {
+		return fmt.Errorf("ratelimit: agent_id: %w", err)
+	}
+	cur.AgentRPM[agentID] = row.RPM
+	out[row.OrgID] = cur
+	return nil
 }
 
 func recordConfigStoreErr(span trace.Span, err error) error {

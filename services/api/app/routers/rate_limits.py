@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -18,8 +19,17 @@ from app.services import rate_limits as rate_limit_service
 router = APIRouter(prefix="/v1/organizations", tags=["rate-limits"])
 
 
+@dataclass(frozen=True, slots=True)
+class _RateLimitCtx:
+    org_id: UUID
+    session: AsyncSession
+    platform_default_rpm: int
+    counter: RedisRateLimitCounter
+    publisher: object
+
+
 def _default_rpm(request: Request) -> int:
-    settings = request.app.state.api.settings
+    settings = getattr(request.app.state.api, "settings", None)
     if settings is None:
         return 60
     return int(settings.rate_limit_default_rpm)
@@ -29,7 +39,7 @@ def _counter(request: Request) -> RedisRateLimitCounter:
     counter = getattr(request.app.state.api, "rate_limit_counter", None)
     if counter is not None:
         return counter  # type: ignore[no-any-return]
-    settings = request.app.state.api.settings
+    settings = getattr(request.app.state.api, "settings", None)
     redis_url = settings.redis_url if settings is not None else None
     return RedisRateLimitCounter(redis_url)
 
@@ -41,36 +51,62 @@ def _publisher(request: Request):
     return NoopRateLimitConfigPublisher()
 
 
-@router.get("/{org_id}/rate-limits")
-async def get_rate_limits(
+def _rate_limit_read_ctx(
+    request: Request,
     org_id: UUID,
     token: Annotated[ValidateResult, Depends(require_token)],
     session: Annotated[AsyncSession, Depends(org_session)],
-    request: Request,
-) -> RateLimitsResponse:
+) -> _RateLimitCtx:
     assert_path_org(token.org_id, org_id)
-    return await rate_limit_service.get_rate_limits(
-        session,
-        org_id,
+    return _RateLimitCtx(
+        org_id=org_id,
+        session=session,
         platform_default_rpm=_default_rpm(request),
         counter=_counter(request),
+        publisher=_publisher(request),
+    )
+
+
+def _rate_limit_write_ctx(
+    request: Request,
+    org_id: UUID,
+    token: RequireOrgSettings,
+    session: Annotated[AsyncSession, Depends(org_session)],
+) -> _RateLimitCtx:
+    assert_path_org(token.org_id, org_id)
+    return _RateLimitCtx(
+        org_id=org_id,
+        session=session,
+        platform_default_rpm=_default_rpm(request),
+        counter=_counter(request),
+        publisher=_publisher(request),
+    )
+
+
+@router.get("/{org_id}/rate-limits")
+async def get_rate_limits(
+    ctx: Annotated[_RateLimitCtx, Depends(_rate_limit_read_ctx)],
+) -> RateLimitsResponse:
+    return await rate_limit_service.get_rate_limits(
+        ctx.session,
+        ctx.org_id,
+        platform_default_rpm=ctx.platform_default_rpm,
+        counter=ctx.counter,
     )
 
 
 @router.patch("/{org_id}/rate-limits")
 async def patch_rate_limits(
-    org_id: UUID,
     body: RateLimitsPatchRequest,
-    token: RequireOrgSettings,
-    session: Annotated[AsyncSession, Depends(org_session)],
-    request: Request,
+    ctx: Annotated[_RateLimitCtx, Depends(_rate_limit_write_ctx)],
 ) -> RateLimitsResponse:
-    assert_path_org(token.org_id, org_id)
     return await rate_limit_service.patch_rate_limits(
-        session,
-        org_id,
+        ctx.session,
+        ctx.org_id,
         body,
-        platform_default_rpm=_default_rpm(request),
-        counter=_counter(request),
-        publisher=_publisher(request),
+        deps=rate_limit_service.PatchDeps(
+            platform_default_rpm=ctx.platform_default_rpm,
+            counter=ctx.counter,
+            publisher=ctx.publisher,  # type: ignore[arg-type]
+        ),
     )

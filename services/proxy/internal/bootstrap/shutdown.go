@@ -134,30 +134,42 @@ func logImmediateCleanupErr(log *logger.Logger, op string, err error) {
 
 func stopPubSubSubscribers(opts shutdownOpts) {
 	run := func() {
-		if opts.revCancel != nil {
-			opts.revCancel()
-		}
-		if opts.revSub != nil {
-			opts.revSub.Stop()
-		}
-		if opts.dirCancel != nil {
-			opts.dirCancel()
-		}
-		if opts.dirSub != nil {
-			opts.dirSub.Stop()
-		}
-		if opts.rlConfigCancel != nil {
-			opts.rlConfigCancel()
-		}
-		if opts.rlConfigSub != nil {
-			opts.rlConfigSub.Stop()
-		}
+		stopRevocationPubSub(opts)
+		stopDirectivePubSub(opts)
+		stopRateLimitPubSub(opts)
 	}
 	if opts.stopPubSubOnce != nil {
 		opts.stopPubSubOnce.Do(run)
 		return
 	}
 	run()
+}
+
+func stopRevocationPubSub(opts shutdownOpts) {
+	if opts.revCancel != nil {
+		opts.revCancel()
+	}
+	if opts.revSub != nil {
+		opts.revSub.Stop()
+	}
+}
+
+func stopDirectivePubSub(opts shutdownOpts) {
+	if opts.dirCancel != nil {
+		opts.dirCancel()
+	}
+	if opts.dirSub != nil {
+		opts.dirSub.Stop()
+	}
+}
+
+func stopRateLimitPubSub(opts shutdownOpts) {
+	if opts.rlConfigCancel != nil {
+		opts.rlConfigCancel()
+	}
+	if opts.rlConfigSub != nil {
+		opts.rlConfigSub.Stop()
+	}
 }
 
 func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {

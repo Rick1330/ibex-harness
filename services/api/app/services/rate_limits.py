@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from uuid import UUID
 
 from apierror_py import NOT_FOUND, VALIDATION_ERROR
@@ -23,6 +24,13 @@ from app.schemas.rate_limits import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PatchDeps:
+    platform_default_rpm: int
+    counter: RedisRateLimitCounter
+    publisher: RateLimitConfigPublisher | None = None
 
 _LIST_OVERRIDES_SQL = """
 SELECT agent_id, requests_per_minute
@@ -102,10 +110,24 @@ async def patch_rate_limits(
     org_id: UUID,
     body: RateLimitsPatchRequest,
     *,
-    platform_default_rpm: int,
-    counter: RedisRateLimitCounter,
-    publisher: RateLimitConfigPublisher | None,
+    deps: PatchDeps,
 ) -> RateLimitsResponse:
+    await _apply_org_patch(session, org_id, body)
+    await _apply_agent_patches(session, org_id, body)
+    await session.flush()
+    await session.commit()
+    await _publish_best_effort(deps.publisher, org_id)
+    return await get_rate_limits(
+        session,
+        org_id,
+        platform_default_rpm=deps.platform_default_rpm,
+        counter=deps.counter,
+    )
+
+
+async def _apply_org_patch(
+    session: AsyncSession, org_id: UUID, body: RateLimitsPatchRequest
+) -> None:
     if body.clear_org_override and body.requests_per_minute is not None:
         raise ApiError(
             code=VALIDATION_ERROR,
@@ -113,12 +135,17 @@ async def patch_rate_limits(
         )
     if body.clear_org_override:
         await session.execute(text(_DELETE_ORG_SQL), {"org_id": str(org_id)})
-    elif body.requests_per_minute is not None:
+        return
+    if body.requests_per_minute is not None:
         await session.execute(
             text(_UPSERT_ORG_SQL),
             {"org_id": str(org_id), "rpm": body.requests_per_minute},
         )
 
+
+async def _apply_agent_patches(
+    session: AsyncSession, org_id: UUID, body: RateLimitsPatchRequest
+) -> None:
     for item in body.agent_overrides:
         await _ensure_agent_in_org(session, org_id, item.agent_id)
         if item.requests_per_minute is None:
@@ -126,19 +153,20 @@ async def patch_rate_limits(
                 text(_DELETE_AGENT_SQL),
                 {"org_id": str(org_id), "agent_id": str(item.agent_id)},
             )
-        else:
-            await session.execute(
-                text(_UPSERT_AGENT_SQL),
-                {
-                    "org_id": str(org_id),
-                    "agent_id": str(item.agent_id),
-                    "rpm": item.requests_per_minute,
-                },
-            )
+            continue
+        await session.execute(
+            text(_UPSERT_AGENT_SQL),
+            {
+                "org_id": str(org_id),
+                "agent_id": str(item.agent_id),
+                "rpm": item.requests_per_minute,
+            },
+        )
 
-    await session.flush()
-    await session.commit()
 
+async def _publish_best_effort(
+    publisher: RateLimitConfigPublisher | None, org_id: UUID
+) -> None:
     pub = publisher or NoopRateLimitConfigPublisher()
     try:
         await pub.publish_config_update(str(org_id))
@@ -148,13 +176,6 @@ async def patch_rate_limits(
             org_id,
             type(exc).__name__,
         )
-
-    return await get_rate_limits(
-        session,
-        org_id,
-        platform_default_rpm=platform_default_rpm,
-        counter=counter,
-    )
 
 
 async def _ensure_agent_in_org(

@@ -26,6 +26,15 @@ type ConfigApplier interface {
 	ReplaceAllOverrides(all map[uuid.UUID]OrgOverrideSet)
 }
 
+// ConfigSubscriberDeps bundles NewConfigSubscriber inputs (keeps arity low).
+type ConfigSubscriberDeps struct {
+	Client    redis.UniversalClient
+	Store     OverrideLoader
+	Applier   ConfigApplier
+	Log       *logger.Logger
+	PollEvery time.Duration
+}
+
 // ConfigSubscriber reloads overrides on pub/sub and periodic poll.
 type ConfigSubscriber struct {
 	client    redis.UniversalClient
@@ -36,34 +45,29 @@ type ConfigSubscriber struct {
 	pollEvery time.Duration
 }
 
-// NewConfigSubscriber constructs a ConfigSubscriber. pollEvery defaults to 30s when <= 0.
-func NewConfigSubscriber(
-	client redis.UniversalClient,
-	store OverrideLoader,
-	applier ConfigApplier,
-	log *logger.Logger,
-	pollEvery time.Duration,
-) (*ConfigSubscriber, error) {
-	if client == nil {
+// NewConfigSubscriber constructs a ConfigSubscriber. PollEvery defaults to 30s when <= 0.
+func NewConfigSubscriber(deps ConfigSubscriberDeps) (*ConfigSubscriber, error) {
+	if deps.Client == nil {
 		return nil, fmt.Errorf("ratelimit: redis client is required")
 	}
-	if store == nil {
+	if deps.Store == nil {
 		return nil, fmt.Errorf("ratelimit: config store is required")
 	}
-	if applier == nil {
+	if deps.Applier == nil {
 		return nil, fmt.Errorf("ratelimit: config applier is required")
 	}
-	if log == nil {
+	if deps.Log == nil {
 		return nil, fmt.Errorf("ratelimit: logger is required")
 	}
+	pollEvery := deps.PollEvery
 	if pollEvery <= 0 {
 		pollEvery = DefaultConfigPollInterval
 	}
 	return &ConfigSubscriber{
-		client:    client,
-		store:     store,
-		applier:   applier,
-		log:       log,
+		client:    deps.Client,
+		store:     deps.Store,
+		applier:   deps.Applier,
+		log:       deps.Log,
 		loop:      redissub.NewLoop(),
 		pollEvery: pollEvery,
 	}, nil
@@ -116,15 +120,8 @@ func (s *ConfigSubscriber) handleMessage(ctx context.Context, channel, payload s
 		s.log.WarnCtx(ctx, "malformed rate-limit config event", "error", err)
 		return
 	}
-	orgFromChannel, err := OrgIDFromChannel(channel)
-	if err != nil {
-		s.log.WarnCtx(ctx, "rate-limit config channel invalid", "error", err)
-		return
-	}
-	orgID, err := uuid.Parse(event.OrgID)
-	if err != nil || orgID != orgFromChannel {
-		s.log.WarnCtx(ctx, "rate-limit config event org mismatch",
-			"channel_org", orgFromChannel.String(), "payload_org", event.OrgID)
+	orgID, ok := s.resolveEventOrg(ctx, channel, event)
+	if !ok {
 		return
 	}
 	set, err := s.store.LoadOrg(ctx, orgID)
@@ -136,8 +133,24 @@ func (s *ConfigSubscriber) handleMessage(ctx context.Context, channel, payload s
 	s.applier.ApplyOrgOverrides(orgID, set)
 }
 
+func (s *ConfigSubscriber) resolveEventOrg(
+	ctx context.Context, channel string, event ConfigUpdateEvent,
+) (uuid.UUID, bool) {
+	orgFromChannel, err := OrgIDFromChannel(channel)
+	if err != nil {
+		s.log.WarnCtx(ctx, "rate-limit config channel invalid", "error", err)
+		return uuid.Nil, false
+	}
+	orgID, err := uuid.Parse(event.OrgID)
+	if err != nil || orgID != orgFromChannel {
+		s.log.WarnCtx(ctx, "rate-limit config event org mismatch",
+			"channel_org", orgFromChannel.String(), "payload_org", event.OrgID)
+		return uuid.Nil, false
+	}
+	return orgID, true
+}
+
 func (s *ConfigSubscriber) pollLoop(ctx context.Context) {
-	// Initial full load so cold start picks up DB overrides without waiting for PATCH.
 	s.pollOnce(ctx)
 	ticker := time.NewTicker(s.pollEvery)
 	defer ticker.Stop()

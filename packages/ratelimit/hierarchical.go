@@ -173,20 +173,8 @@ func (h *HierarchicalLimiter) resolvedLimits(orgID, agentID uuid.UUID) (orgLimit
 func (h *HierarchicalLimiter) ApplyOrgOverrides(orgID uuid.UUID, set OrgOverrideSet) {
 	h.dbMu.Lock()
 	defer h.dbMu.Unlock()
-	delete(h.dbOrgRPM, orgID)
-	for k := range h.dbAgentRPM {
-		if k.OrgID == orgID {
-			delete(h.dbAgentRPM, k)
-		}
-	}
-	if set.OrgRPM != nil && *set.OrgRPM > 0 {
-		h.dbOrgRPM[orgID] = *set.OrgRPM
-	}
-	for agentID, rpm := range set.AgentRPM {
-		if rpm > 0 && agentID != uuid.Nil {
-			h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
-		}
-	}
+	h.clearOrgLocked(orgID)
+	h.putOrgSetLocked(orgID, set)
 }
 
 // ReplaceAllOverrides replaces the entire DB override cache (30s poll).
@@ -196,13 +184,26 @@ func (h *HierarchicalLimiter) ReplaceAllOverrides(all map[uuid.UUID]OrgOverrideS
 	h.dbOrgRPM = make(map[uuid.UUID]int64, len(all))
 	h.dbAgentRPM = make(map[agentOverrideKey]int64)
 	for orgID, set := range all {
-		if set.OrgRPM != nil && *set.OrgRPM > 0 {
-			h.dbOrgRPM[orgID] = *set.OrgRPM
+		h.putOrgSetLocked(orgID, set)
+	}
+}
+
+func (h *HierarchicalLimiter) clearOrgLocked(orgID uuid.UUID) {
+	delete(h.dbOrgRPM, orgID)
+	for k := range h.dbAgentRPM {
+		if k.OrgID == orgID {
+			delete(h.dbAgentRPM, k)
 		}
-		for agentID, rpm := range set.AgentRPM {
-			if rpm > 0 && agentID != uuid.Nil {
-				h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
-			}
+	}
+}
+
+func (h *HierarchicalLimiter) putOrgSetLocked(orgID uuid.UUID, set OrgOverrideSet) {
+	if set.OrgRPM != nil && *set.OrgRPM > 0 {
+		h.dbOrgRPM[orgID] = *set.OrgRPM
+	}
+	for agentID, rpm := range set.AgentRPM {
+		if rpm > 0 && agentID != uuid.Nil {
+			h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
 		}
 	}
 }

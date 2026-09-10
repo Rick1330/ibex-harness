@@ -113,19 +113,21 @@ func TestUnit_NewConfigSubscriber_validation(t *testing.T) {
 	store := &memOverrideLoader{}
 	lim := newTestHierarchical(t, HierarchicalConfig{DefaultRPM: 60, GlobalRPM: 1000})
 	hier, _ := AsHierarchical(lim)
-	if _, err := NewConfigSubscriber(nil, store, hier, log, 0); err == nil {
+	if _, err := NewConfigSubscriber(ConfigSubscriberDeps{Store: store, Applier: hier, Log: log}); err == nil {
 		t.Fatal("nil client")
 	}
-	if _, err := NewConfigSubscriber(client, nil, hier, log, 0); err == nil {
+	if _, err := NewConfigSubscriber(ConfigSubscriberDeps{Client: client, Applier: hier, Log: log}); err == nil {
 		t.Fatal("nil store")
 	}
-	if _, err := NewConfigSubscriber(client, store, nil, log, 0); err == nil {
+	if _, err := NewConfigSubscriber(ConfigSubscriberDeps{Client: client, Store: store, Log: log}); err == nil {
 		t.Fatal("nil applier")
 	}
-	if _, err := NewConfigSubscriber(client, store, hier, nil, 0); err == nil {
+	if _, err := NewConfigSubscriber(ConfigSubscriberDeps{Client: client, Store: store, Applier: hier}); err == nil {
 		t.Fatal("nil log")
 	}
-	sub, err := NewConfigSubscriber(client, store, hier, log, 0)
+	sub, err := NewConfigSubscriber(ConfigSubscriberDeps{
+		Client: client, Store: store, Applier: hier, Log: log,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,76 +140,40 @@ func TestUnit_NewConfigSubscriber_validation(t *testing.T) {
 func TestConfigSubscriber_pubsubAppliesWithinOneSecond(t *testing.T) {
 	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440320")
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440420")
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	limIface, err := NewHierarchicalLimiter(client, HierarchicalConfig{
-		DefaultRPM: 100, GlobalRPM: 10_000,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lim, _ := AsHierarchical(limIface)
-	rpm := int64(2)
-	loader := &memOverrideLoader{byOrg: map[uuid.UUID]OrgOverrideSet{
-		org: {OrgRPM: &rpm},
-	}}
-	sub, err := NewConfigSubscriber(client, loader, lim, logger.Discard("rl"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go sub.Run(ctx)
-	t.Cleanup(func() {
-		sub.Stop()
-		cancel()
-		<-sub.Done()
-	})
-	// Wait until PSUBSCRIBE is ready.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		n, err := client.PubSubNumPat(context.Background()).Result()
-		if err == nil && n > 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	start := time.Now()
-	pub, err := NewConfigPublisher(client, logger.Discard("rl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := pub.Publish(context.Background(), ConfigUpdateEvent{
-		Version: ConfigEventVersion, OrgID: org.String(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	var applied bool
-	for time.Since(start) < time.Second {
-		orgLim, _, _ := lim.resolvedLimits(org, agent)
-		if orgLim == 2 {
-			applied = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	elapsed := time.Since(start)
+	client, lim, loader := newSubscriberHarness(t, org, 2)
+	_ = startTestSubscriber(t, client, loader, lim, time.Hour)
+	waitPubSubPatterns(t, client)
+	mustPublishConfig(t, client, org)
+	elapsed := waitOrgRPM(t, lim, org, agent, 2, time.Second)
 	t.Logf("pubsub override propagation latency: %s", elapsed)
-	if !applied {
-		t.Fatalf("override not applied within 1s (elapsed=%s)", elapsed)
+	if elapsed < 0 {
+		t.Fatalf("override not applied within 1s")
 	}
-	assertCheckWant(t, checkArgs{lim: lim, org: org, agent: agent}, true)
-	assertCheckWant(t, checkArgs{lim: lim, org: org, agent: agent}, true)
-	res := assertCheckWant(t, checkArgs{lim: lim, org: org, agent: agent}, false)
-	if res.DeniedTier != tierOrg {
-		t.Fatalf("DeniedTier=%q", res.DeniedTier)
-	}
+	assertOrgTripAfterTwo(t, lim, org, agent)
 }
 
 func TestConfigSubscriber_pollMissConverges(t *testing.T) {
 	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440321")
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440421")
+	client, lim, loader := newSubscriberHarness(t, org, 0)
+	pollEvery := 50 * time.Millisecond
+	_ = startTestSubscriber(t, client, loader, lim, pollEvery)
+	rpm := int64(1)
+	loader.set(org, OrgOverrideSet{OrgRPM: &rpm})
+	elapsed := waitOrgRPM(t, lim, org, agent, 1, 2*time.Second)
+	t.Logf("poll-miss override propagation latency: %s (pollEvery=%s)", elapsed, pollEvery)
+	if elapsed < 0 {
+		t.Fatalf("poll did not apply override")
+	}
+	if elapsed > 30*time.Second {
+		t.Fatalf("poll latency %s exceeds 30s budget", elapsed)
+	}
+}
+
+func newSubscriberHarness(
+	t *testing.T, org uuid.UUID, orgRPM int64,
+) (redis.UniversalClient, *HierarchicalLimiter, *memOverrideLoader) {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -219,39 +185,85 @@ func TestConfigSubscriber_pollMissConverges(t *testing.T) {
 	}
 	lim, _ := AsHierarchical(limIface)
 	loader := &memOverrideLoader{byOrg: map[uuid.UUID]OrgOverrideSet{}}
-	pollEvery := 50 * time.Millisecond
-	sub, err := NewConfigSubscriber(client, loader, lim, logger.Discard("rl"), pollEvery)
+	if orgRPM > 0 {
+		v := orgRPM
+		loader.byOrg[org] = OrgOverrideSet{OrgRPM: &v}
+	}
+	return client, lim, loader
+}
+
+func startTestSubscriber(
+	t *testing.T,
+	client redis.UniversalClient,
+	loader OverrideLoader,
+	lim *HierarchicalLimiter,
+	pollEvery time.Duration,
+) *ConfigSubscriber {
+	t.Helper()
+	sub, err := NewConfigSubscriber(ConfigSubscriberDeps{
+		Client: client, Store: loader, Applier: lim, Log: logger.Discard("rl"),
+		PollEvery: pollEvery,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	go sub.Run(ctx)
 	t.Cleanup(func() {
 		sub.Stop()
 		cancel()
 		<-sub.Done()
 	})
-	// Simulate PATCH without PUBLISH: mutate store only.
-	rpm := int64(1)
+	return sub
+}
+
+func waitPubSubPatterns(t *testing.T, client redis.UniversalClient) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		n, err := client.PubSubNumPat(context.Background()).Result()
+		if err == nil && n > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func mustPublishConfig(t *testing.T, client redis.UniversalClient, org uuid.UUID) {
+	t.Helper()
+	pub, err := NewConfigPublisher(client, logger.Discard("rl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), ConfigUpdateEvent{
+		Version: ConfigEventVersion, OrgID: org.String(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitOrgRPM(
+	t *testing.T, lim *HierarchicalLimiter, org, agent uuid.UUID, want int64, budget time.Duration,
+) time.Duration {
+	t.Helper()
 	start := time.Now()
-	loader.set(org, OrgOverrideSet{OrgRPM: &rpm})
-	var applied bool
-	for time.Since(start) < 2*time.Second {
+	for time.Since(start) < budget {
 		orgLim, _, _ := lim.resolvedLimits(org, agent)
-		if orgLim == 1 {
-			applied = true
-			break
+		if orgLim == want {
+			return time.Since(start)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	elapsed := time.Since(start)
-	t.Logf("poll-miss override propagation latency: %s (pollEvery=%s)", elapsed, pollEvery)
-	if !applied {
-		t.Fatalf("poll did not apply override (elapsed=%s)", elapsed)
-	}
-	if elapsed > 30*time.Second {
-		t.Fatalf("poll latency %s exceeds 30s budget", elapsed)
+	return -1
+}
+
+func assertOrgTripAfterTwo(t *testing.T, lim *HierarchicalLimiter, org, agent uuid.UUID) {
+	t.Helper()
+	assertCheckWant(t, checkArgs{lim: lim, org: org, agent: agent}, true)
+	assertCheckWant(t, checkArgs{lim: lim, org: org, agent: agent}, true)
+	res := assertCheckWant(t, checkArgs{lim: lim, org: org, agent: agent}, false)
+	if res.DeniedTier != tierOrg {
+		t.Fatalf("DeniedTier=%q", res.DeniedTier)
 	}
 }
 
@@ -262,7 +274,10 @@ func TestConfigSubscriber_handleMessage_malformedAndMismatch(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	lim, _ := AsHierarchical(newTestHierarchical(t, HierarchicalConfig{DefaultRPM: 10, GlobalRPM: 100}))
 	loader := &memOverrideLoader{err: errors.New("db down")}
-	sub, err := NewConfigSubscriber(client, loader, lim, logger.Discard("rl"), time.Hour)
+	sub, err := NewConfigSubscriber(ConfigSubscriberDeps{
+		Client: client, Store: loader, Applier: lim, Log: logger.Discard("rl"),
+		PollEvery: time.Hour,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
