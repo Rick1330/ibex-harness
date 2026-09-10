@@ -40,14 +40,15 @@ phase: "phase-4-multi-provider"
 ### Goal 4.B: Atomic, three-level rate limiting replacing the Phase 1 placeholder
 
 **Milestones:**
-- **4.B.1 — Lua-based atomic hierarchical limiter:** Single Lua script checks agent → org → global in one round trip. `EVALSHA` with `NOSCRIPT` fallback. Monthly token-spend ceiling post-response.
-- **4.B.2 — Rate limit configuration API:** Per-org/agent RPM and token budget overrides. Dashboard usage endpoint.
+- **4.B.1 — Lua-based atomic hierarchical limiter:** Single Lua script checks agent → org → global in one round trip (`redis.NewScript` / EVALSHA). RPM only; monthly token-spend ceiling deferred to [#806](https://github.com/Rick1330/ibex-harness/issues/806).
+- **4.B.2 — Rate limit configuration API:** Per-org/agent RPM overrides in Postgres with proxy hot-path reload (pub/sub + 30s poll). No token-budget fields or usage dashboard in this milestone ([#806](https://github.com/Rick1330/ibex-harness/issues/806)).
 - **4.B.3 — Load and correctness benchmark:** 200 concurrent goroutines, limit=100: exactly 100 succeed, 100 return 429. Zero over-admission.
 
 **Acceptance criteria:**
-- `RateLimiter` interface signature unchanged (validates Phase 1 interface design)
+- `Limiter.Check` signature unchanged (validates Phase 1 interface design)
 - Concurrency test proves zero over-admission
 - Fail-open on Redis outage preserved
+- Token-spend / month_tokens and usage dashboards are **not** acceptance for Track B close (tracked in [#806](https://github.com/Rick1330/ibex-harness/issues/806))
 
 ---
 
