@@ -56,11 +56,13 @@ def managed_org_client(
 ) -> Iterator[tuple[TestClient, ValidateResult, RecordingOrgSuspendPublisher]]:
     """api_client with org_session + caller role overrides already installed."""
     with api_client(
-        token=opts.token,
-        result=opts.result or owner_result(org_id=opts.org_id),
-        publisher=opts.publisher,
-        enqueue_calls=opts.enqueue_calls,
-        token_manager=opts.token_manager,
+        ApiClientOpts(
+            token=opts.token,
+            result=opts.result or owner_result(org_id=opts.org_id),
+            publisher=opts.publisher,
+            enqueue_calls=opts.enqueue_calls,
+            token_manager=opts.token_manager,
+        )
     ) as (client, res, pub):
         override_org_session(client.app)
 
@@ -93,18 +95,23 @@ def patched_managed_client(
         yield client, res, pub
 
 
+@dataclass(frozen=True)
+class ApiClientOpts:
+    token: str = "owner-token"
+    result: ValidateResult | None = None
+    publisher: RecordingOrgSuspendPublisher | None = None
+    enqueue_calls: list[tuple[str, str]] | None = None
+    token_manager: FakeTokenManager | None = None
+
+
 @contextmanager
 def api_client(
-    *,
-    token: str = "owner-token",
-    result: ValidateResult | None = None,
-    publisher: RecordingOrgSuspendPublisher | None = None,
-    enqueue_calls: list[tuple[str, str]] | None = None,
-    token_manager: FakeTokenManager | None = None,
+    opts: ApiClientOpts | None = None,
 ) -> Iterator[tuple[TestClient, ValidateResult, RecordingOrgSuspendPublisher]]:
-    res = result or owner_result()
-    pub = publisher or RecordingOrgSuspendPublisher()
-    calls = enqueue_calls if enqueue_calls is not None else []
+    cfg = opts or ApiClientOpts()
+    res = cfg.result or owner_result()
+    pub = cfg.publisher or RecordingOrgSuspendPublisher()
+    calls = cfg.enqueue_calls if cfg.enqueue_calls is not None else []
 
     def _enqueue(job_id: str, org_id: str) -> None:
         calls.append((job_id, org_id))
@@ -112,10 +119,10 @@ def api_client(
     settings = Settings(database_url=None)
     app = create_app(
         settings=settings,
-        validator=StaticTokenValidator({token: res}),
+        validator=StaticTokenValidator({cfg.token: res}),
         runtime=ApiRuntimeOverrides(
             token_revoker=NoopTokenRevoker(),
-            token_manager=token_manager or FakeTokenManager(),
+            token_manager=cfg.token_manager or FakeTokenManager(),
             org_suspend_publisher=pub,
             enqueue_org_deletion=_enqueue,
         ),

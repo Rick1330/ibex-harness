@@ -5,12 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
 from authclient.codec import (
     TOKEN_TYPE_PAT,
     decode_create_token_response,
     decode_list_tokens_response,
     encode_create_token_request,
-    encode_list_tokens_request,
     encode_varint,
 )
 
@@ -38,18 +38,22 @@ def _timestamp(value: datetime) -> bytes:
 
 
 def test_encode_create_token_request_contains_fields() -> None:
+    from authclient.codec import CreateTokenEncodeFields
+
     org = str(uuid4())
     agent = str(uuid4())
     expires = datetime(2030, 1, 1, tzinfo=UTC)
     raw = encode_create_token_request(
-        org_id=org,
-        name="ci",
-        permissions=(1 << 0) | (1 << 36),
-        description="d",
-        token_type=TOKEN_TYPE_PAT,
-        expires_at=expires,
-        user_id="user-1",
-        agent_id=agent,
+        CreateTokenEncodeFields(
+            org_id=org,
+            name="ci",
+            permissions=(1 << 0) | (1 << 36),
+            description="d",
+            token_type=TOKEN_TYPE_PAT,
+            expires_at=expires,
+            user_id="user-1",
+            agent_id=agent,
+        )
     )
     assert org.encode() in raw
     assert b"ci" in raw
@@ -89,9 +93,13 @@ def test_decode_list_tokens_response() -> None:
     assert wire.next_cursor == "cursor-next"
 
 
-def test_encode_list_tokens_request() -> None:
-    org = str(uuid4())
-    raw = encode_list_tokens_request(org_id=org, cursor="c1", limit=25)
-    assert org.encode() in raw
-    assert b"c1" in raw
-    assert _tag(3, 0) + encode_varint(25) in raw
+def test_decode_timestamp_rejects_bad_nanos() -> None:
+    from authclient.codec import AuthCodecError, _decode_timestamp, encode_varint
+
+    def _tag(field: int, wire: int) -> bytes:
+        return encode_varint((field << 3) | wire)
+
+    # nanos = 1_000_000_000 (out of range)
+    raw = _tag(1, 0) + encode_varint(1) + _tag(2, 0) + encode_varint(1_000_000_000)
+    with pytest.raises(AuthCodecError, match="nanos"):
+        _decode_timestamp(raw)

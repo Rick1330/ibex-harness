@@ -25,6 +25,15 @@ from app.services.agents import AgentListFilters, ListAgentsArgs
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 
 
+def _optional_user_uuid(raw: str | None) -> UUID | None:
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class _AgentListCtx:
     org_id: UUID
@@ -65,7 +74,7 @@ async def create_agent(
     token: RequireOrgSettings,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> AgentResponse:
-    created_by = UUID(token.user_id) if token.user_id else None
+    created_by = _optional_user_uuid(token.user_id)
     return await agent_service.create_agent(
         session,
         agent_service.CreateAgentArgs(

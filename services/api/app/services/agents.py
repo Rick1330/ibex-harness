@@ -425,7 +425,6 @@ async def patch_agent(
     agent_id: UUID,
     patch: AgentPatch,
 ) -> AgentResponse:
-    await get_agent(session, org_id, agent_id)
     fields_set = set(patch.model_fields_set)
     if not fields_set:
         return await get_agent(session, org_id, agent_id)

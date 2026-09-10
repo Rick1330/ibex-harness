@@ -305,7 +305,7 @@ async def test_patch_agent() -> None:
     updated = _agent_row(id=row.id, org_id=row.org_id, name="Renamed", default_provider="openai")
     session = AsyncMock()
     session.execute = AsyncMock(
-        side_effect=[_MapResult(row), _MapResult({"id": row.id}), _MapResult(updated)]
+        side_effect=[_MapResult({"id": row.id}), _MapResult(updated)]
     )
     session.commit = AsyncMock()
     patch = AgentPatch(name="Renamed", default_provider="openai", default_model="gpt-4o")
@@ -317,7 +317,7 @@ async def test_patch_agent() -> None:
 async def test_patch_noop_returns_current() -> None:
     row = _agent_row()
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[_MapResult(row), _MapResult(row)])
+    session.execute = AsyncMock(side_effect=[_MapResult(row)])
     out = await agent_service.patch_agent(session, row.org_id, row.id, AgentPatch())
     assert out.id == row.id
 
@@ -326,8 +326,8 @@ async def test_patch_noop_returns_current() -> None:
 async def test_patch_not_found_on_update() -> None:
     row = _agent_row()
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[_MapResult(row), _MapResult(None)])
-    patch = AgentPatch(name="X")
+    session.execute = AsyncMock(side_effect=[_MapResult(None)])
+    patch = AgentPatch(name="Renamed")
     await _expect_code(
         agent_service.patch_agent(session, row.org_id, row.id, patch), NOT_FOUND
     )

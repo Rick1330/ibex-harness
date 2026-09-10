@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -19,7 +21,7 @@ from authclient.errors import (
     TokenNotFoundError,
 )
 from authclient.permissions import has_permission
-from authclient.tokens import TokenManager, TokenMetadataWire
+from authclient.tokens import CreateTokenParams, ListTokensWire, TokenManager, TokenMetadataWire
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.client import ValidateResult
@@ -30,7 +32,8 @@ from app.schemas.tokens import TokenCreateRequest, TokenCreateResponse, TokenRes
 from app.services import agents as agent_service
 
 TOKEN_NOT_FOUND_MSG = "Token not found"
-_GET_BY_ID_MAX_PAGES = 100
+_GET_BY_ID_DEADLINE_S = 5.0
+_GET_BY_ID_PAGE_SIZE = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,30 @@ def _meta_to_response(row: TokenMetadataWire) -> TokenResponse:
     )
 
 
+def _map_token_rpc(exc: BaseException) -> ApiError:
+    if isinstance(exc, TokenNotFoundError):
+        return ApiError(code=NOT_FOUND, message=TOKEN_NOT_FOUND_MSG)
+    if isinstance(exc, InsufficientPermissionsError):
+        return ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
+    if isinstance(exc, AuthFailedError):
+        return ApiError(code=INVALID_TOKEN, message="Invalid token")
+    if isinstance(exc, AuthUnavailableError):
+        return ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable")
+    return ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable")
+
+
+async def _call_auth[T](op: Callable[[], Awaitable[T]]) -> T:
+    try:
+        return await op()
+    except (
+        TokenNotFoundError,
+        InsufficientPermissionsError,
+        AuthFailedError,
+        AuthUnavailableError,
+    ) as exc:
+        raise _map_token_rpc(exc) from exc
+
+
 async def create_token(
     session: AsyncSession,
     access: TokenAccess,
@@ -69,25 +96,19 @@ async def create_token(
     if body.agent_id is not None:
         await agent_service.get_agent(session, access.token.org_id, body.agent_id)
 
-    try:
-        created = await access.manager.create(
-            org_id=str(access.token.org_id),
-            name=body.name,
-            permissions=requested,
-            access_token=access.access_token,
-            expires_at=body.expires_at,
-            user_id=access.token.user_id,
-            agent_id=str(body.agent_id) if body.agent_id else None,
+    created = await _call_auth(
+        lambda: access.manager.create(
+            CreateTokenParams(
+                org_id=str(access.token.org_id),
+                name=body.name,
+                permissions=requested,
+                access_token=access.access_token,
+                expires_at=body.expires_at,
+                user_id=access.token.user_id,
+                agent_id=str(body.agent_id) if body.agent_id else None,
+            )
         )
-    except InsufficientPermissionsError as exc:
-        raise ApiError(
-            code=INSUFFICIENT_PERMISSIONS,
-            message="Insufficient permissions",
-        ) from exc
-    except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="Invalid token") from exc
-    except AuthUnavailableError as exc:
-        raise ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable") from exc
+    )
 
     return TokenCreateResponse(
         id=UUID(created.token_id),
@@ -101,25 +122,11 @@ async def create_token(
 
 
 async def list_tokens(access: TokenAccess, query: ListQuery) -> CursorPage[TokenResponse]:
-    try:
-        page = await access.manager.list(
-            org_id=str(access.token.org_id),
-            access_token=access.access_token,
-            cursor=query.cursor or "",
-            limit=query.limit,
-        )
-    except TokenNotFoundError as exc:
-        raise ApiError(code=NOT_FOUND, message=TOKEN_NOT_FOUND_MSG) from exc
-    except InsufficientPermissionsError as exc:
-        raise ApiError(
-            code=INSUFFICIENT_PERMISSIONS,
-            message="Insufficient permissions",
-        ) from exc
-    except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="Invalid token") from exc
-    except AuthUnavailableError as exc:
-        raise ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable") from exc
-
+    page = await _list_page(
+        access,
+        cursor=query.cursor or "",
+        limit=query.limit,
+    )
     next_cursor = page.next_cursor or None
     return CursorPage(
         data=[_meta_to_response(row) for row in page.tokens],
@@ -130,29 +137,27 @@ async def list_tokens(access: TokenAccess, query: ListQuery) -> CursorPage[Token
     )
 
 
+async def _list_page(access: TokenAccess, *, cursor: str, limit: int) -> ListTokensWire:
+    return await _call_auth(
+        lambda: access.manager.list(
+            org_id=str(access.token.org_id),
+            access_token=access.access_token,
+            cursor=cursor,
+            limit=limit,
+        )
+    )
+
+
 async def get_token(access: TokenAccess, token_id: UUID) -> TokenResponse:
     needle = str(token_id)
     cursor = ""
-    for _ in range(_GET_BY_ID_MAX_PAGES):
-        try:
-            page = await access.manager.list(
-                org_id=str(access.token.org_id),
-                access_token=access.access_token,
-                cursor=cursor,
-                limit=100,
-            )
-        except TokenNotFoundError as exc:
-            raise ApiError(code=NOT_FOUND, message=TOKEN_NOT_FOUND_MSG) from exc
-        except InsufficientPermissionsError as exc:
-            raise ApiError(
-                code=INSUFFICIENT_PERMISSIONS,
-                message="Insufficient permissions",
-            ) from exc
-        except AuthFailedError as exc:
-            raise ApiError(code=INVALID_TOKEN, message="Invalid token") from exc
-        except AuthUnavailableError as exc:
-            raise ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable") from exc
-
+    seen: set[str] = set()
+    deadline = time.monotonic() + _GET_BY_ID_DEADLINE_S
+    while time.monotonic() < deadline:
+        if cursor in seen:
+            break
+        seen.add(cursor)
+        page = await _list_page(access, cursor=cursor, limit=_GET_BY_ID_PAGE_SIZE)
         for row in page.tokens:
             if row.token_id == needle:
                 return _meta_to_response(row)
@@ -163,21 +168,15 @@ async def get_token(access: TokenAccess, token_id: UUID) -> TokenResponse:
 
 
 async def revoke_token(access: TokenAccess, token_id: UUID) -> None:
-    try:
-        await access.manager.revoke_strict(
+    await _call_auth(
+        lambda: access.manager.revoke_strict(
             org_id=str(access.token.org_id),
             token_id=str(token_id),
             access_token=access.access_token,
         )
-    except TokenNotFoundError as exc:
-        raise ApiError(code=NOT_FOUND, message=TOKEN_NOT_FOUND_MSG) from exc
-    except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="Invalid token") from exc
-    except AuthUnavailableError as exc:
-        raise ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable") from exc
+    )
 
 
-# Re-export for tests.
 __all__ = [
     "TOKEN_NOT_FOUND_MSG",
     "TokenAccess",

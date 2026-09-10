@@ -42,6 +42,20 @@ class ValidateAgentWire:
 
 
 @dataclass(frozen=True, slots=True)
+class CreateTokenEncodeFields:
+    """CreateTokenRequest wire fields (single-arg encode keeps CodeScene arity low)."""
+
+    org_id: str
+    name: str
+    permissions: int
+    description: str = ""
+    token_type: int = TOKEN_TYPE_PAT
+    expires_at: datetime | None = None
+    user_id: str | None = None
+    agent_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CreateTokenWire:
     token_id: str
     plaintext: str
@@ -143,31 +157,21 @@ def encode_revoke_token_request(*, org_id: str, token_id: str, reason: str | Non
     return out
 
 
-def encode_create_token_request(
-    *,
-    org_id: str,
-    name: str,
-    permissions: int,
-    description: str = "",
-    token_type: int = TOKEN_TYPE_PAT,
-    expires_at: datetime | None = None,
-    user_id: str | None = None,
-    agent_id: str | None = None,
-) -> bytes:
+def encode_create_token_request(fields: CreateTokenEncodeFields) -> bytes:
     """Encode CreateTokenRequest (org_id=1 … agent_id=8)."""
     out = (
-        _encode_string_field(1, org_id)
-        + _encode_string_field(2, name)
-        + _encode_string_field(3, description)
-        + _encode_varint_field(4, token_type)
-        + _encode_varint_field(5, permissions)
+        _encode_string_field(1, fields.org_id)
+        + _encode_string_field(2, fields.name)
+        + _encode_string_field(3, fields.description)
+        + _encode_varint_field(4, fields.token_type)
+        + _encode_varint_field(5, fields.permissions)
     )
-    if expires_at is not None:
-        out += _encode_message_field(6, _encode_timestamp(expires_at))
-    if user_id:
-        out += _encode_string_field(7, user_id)
-    if agent_id:
-        out += _encode_string_field(8, agent_id)
+    if fields.expires_at is not None:
+        out += _encode_message_field(6, _encode_timestamp(fields.expires_at))
+    if fields.user_id:
+        out += _encode_string_field(7, fields.user_id)
+    if fields.agent_id:
+        out += _encode_string_field(8, fields.agent_id)
     return out
 
 
@@ -179,8 +183,18 @@ def decode_create_token_response(payload: bytes) -> CreateTokenWire:
         lambda buf, idx: _decode_create_field(buf, idx, state),
         max_bytes=MAX_MESSAGE_BYTES,
     )
-    if not state.token_id or not state.plaintext or not state.prefix or state.created_at is None:
-        raise AuthCodecError("create token response incomplete")
+    return _finish_create_wire(state)
+
+
+def _finish_create_wire(state: _CreateDecodeState) -> CreateTokenWire:
+    if state.token_id is None:
+        raise AuthCodecError("create token response missing token_id")
+    if state.plaintext is None:
+        raise AuthCodecError("create token response missing plaintext")
+    if state.prefix is None:
+        raise AuthCodecError("create token response missing prefix")
+    if state.created_at is None:
+        raise AuthCodecError("create token response missing created_at")
     return CreateTokenWire(
         token_id=state.token_id,
         plaintext=state.plaintext,
@@ -348,19 +362,26 @@ def _decode_create_field(buf: bytes, idx: int, state: _CreateDecodeState) -> int
     field, wire = key >> 3, key & 0x07
     if wire == _WIRE_LEN:
         raw, idx = _read_bytes(buf, idx, max_len=MAX_TOKEN_BYTES)
-        if field == 1:
-            state.token_id = _bounded_string(_decode_utf8(raw), "token_id")
-        elif field == 2:
-            text = _decode_utf8(raw)
-            if len(text) > MAX_TOKEN_BYTES:
-                raise AuthCodecError("plaintext exceeds limit")
-            state.plaintext = text
-        elif field == 3:
-            state.prefix = _bounded_string(_decode_utf8(raw), "prefix")
-        elif field == 4:
-            state.created_at = _decode_timestamp(raw)
+        _apply_create_len(state, field, raw)
         return idx
     return _skip_unknown(buf, idx, wire)
+
+
+def _apply_create_len(state: _CreateDecodeState, field: int, raw: bytes) -> None:
+    if field == 1:
+        state.token_id = _bounded_string(_decode_utf8(raw), "token_id")
+        return
+    if field == 2:
+        text = _decode_utf8(raw)
+        if len(text) > MAX_TOKEN_BYTES:
+            raise AuthCodecError("plaintext exceeds limit")
+        state.plaintext = text
+        return
+    if field == 3:
+        state.prefix = _bounded_string(_decode_utf8(raw), "prefix")
+        return
+    if field == 4:
+        state.created_at = _decode_timestamp(raw)
 
 
 def _decode_list_field(buf: bytes, idx: int, state: _ListDecodeState) -> int:
@@ -384,31 +405,56 @@ def _decode_token_metadata(raw: bytes) -> TokenMetadataWire:
         field, wire = key >> 3, key & 0x07
         if wire == _WIRE_LEN:
             data, idx = _read_bytes(buf, idx, max_len=MAX_SUBMESSAGE_BYTES)
-            if field == 1:
-                state.token_id = _bounded_string(_decode_utf8(data), "token_id")
-            elif field == 2:
-                state.name = _bounded_string(_decode_utf8(data), "name")
-            elif field == 3:
-                state.prefix = _bounded_string(_decode_utf8(data), "prefix")
-            elif field == 5:
-                state.expires_at = _decode_timestamp(data)
-            elif field == 6:
-                state.created_at = _decode_timestamp(data)
-            elif field == 7:
-                state.revoked_at = _decode_timestamp(data)
+            _apply_meta_len(state, field, data)
             return idx
         if wire == _WIRE_VARINT:
-            num, idx = _decode_varint(buf, idx)
-            if field == 4:
-                state.permissions = int(num)
-            elif field == 8:
-                state.is_revoked = bool(num)
-            return idx
+            return _apply_meta_varint(buf, idx, state, field)
         return _skip_unknown(buf, idx, wire)
 
     _walk_fields(raw, _one, max_bytes=MAX_SUBMESSAGE_BYTES)
-    if not state.token_id or not state.name or not state.prefix or state.created_at is None:
-        raise AuthCodecError("token metadata incomplete")
+    return _finish_meta_wire(state)
+
+
+def _apply_meta_len(state: _MetaDecodeState, field: int, data: bytes) -> None:
+    if field == 1:
+        state.token_id = _bounded_string(_decode_utf8(data), "token_id")
+        return
+    if field == 2:
+        state.name = _bounded_string(_decode_utf8(data), "name")
+        return
+    if field == 3:
+        state.prefix = _bounded_string(_decode_utf8(data), "prefix")
+        return
+    if field == 5:
+        state.expires_at = _decode_timestamp(data)
+        return
+    if field == 6:
+        state.created_at = _decode_timestamp(data)
+        return
+    if field == 7:
+        state.revoked_at = _decode_timestamp(data)
+
+
+def _apply_meta_varint(
+    buf: bytes, idx: int, state: _MetaDecodeState, field: int
+) -> int:
+    num, idx = _decode_varint(buf, idx)
+    if field == 4:
+        state.permissions = int(num)
+    elif field == 8:
+        state.is_revoked = bool(num)
+    return idx
+
+
+def _finish_meta_wire(state: _MetaDecodeState) -> TokenMetadataWire:
+    if state.token_id is None:
+        raise AuthCodecError("token metadata missing token_id")
+    if state.name is None:
+        raise AuthCodecError("token metadata missing name")
+    if state.prefix is None:
+        raise AuthCodecError("token metadata missing prefix")
+    if state.created_at is None:
+        raise AuthCodecError("token metadata missing created_at")
     return TokenMetadataWire(
         token_id=state.token_id,
         name=state.name,
@@ -436,7 +482,12 @@ def _decode_timestamp(raw: bytes) -> datetime:
             seconds = int(num)
         elif field == 2:
             nanos = int(num)
-    return datetime.fromtimestamp(seconds + nanos / 1_000_000_000, tz=UTC)
+    if nanos < 0 or nanos > 999_999_999:
+        raise AuthCodecError("timestamp nanos out of range")
+    try:
+        return datetime.fromtimestamp(seconds + nanos / 1_000_000_000, tz=UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise AuthCodecError("invalid timestamp") from exc
 
 
 def _tag(field: int, wire: int) -> bytes:
