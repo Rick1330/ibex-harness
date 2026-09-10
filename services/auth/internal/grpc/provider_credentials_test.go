@@ -163,56 +163,60 @@ func TestUnit_CreateProviderCredential_AuthzAndMappedErrors(t *testing.T) {
 	org := uuid.NewString()
 	cases := []struct {
 		name     string
-		ctx      context.Context
+		ctxFn    func() context.Context
 		createFn func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error)
 		want     codes.Code
 	}{
 		{
-			name: "unauthenticated",
-			ctx:  context.Background(),
-			want: codes.Unauthenticated,
+			name:  "unauthenticated",
+			ctxFn: context.Background,
+			want:  codes.Unauthenticated,
 		},
 		{
 			name: "wrong_org",
-			ctx: ContextWithCaller(context.Background(), CallerContext{
-				OrgID: uuid.NewString(), Permissions: permissions.Admin,
-			}),
+			ctxFn: func() context.Context {
+				return ContextWithCaller(context.Background(), CallerContext{
+					OrgID: uuid.NewString(), Permissions: permissions.Admin,
+				})
+			},
 			want: codes.PermissionDenied,
 		},
 		{
 			name: "missing_permission",
-			ctx: ContextWithCaller(context.Background(), CallerContext{
-				OrgID: org, Permissions: permissions.ReadOnly,
-			}),
+			ctxFn: func() context.Context {
+				return ContextWithCaller(context.Background(), CallerContext{
+					OrgID: org, Permissions: permissions.ReadOnly,
+				})
+			},
 			want: codes.PermissionDenied,
 		},
 		{
-			name: "invalid_provider",
-			ctx:  settingsWriteCtx(org),
+			name:  "invalid_provider",
+			ctxFn: func() context.Context { return settingsWriteCtx(org) },
 			createFn: func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error) {
 				return service.ProviderCredentialMetadata{}, service.ErrInvalidProviderName
 			},
 			want: codes.InvalidArgument,
 		},
 		{
-			name: "empty_key",
-			ctx:  settingsWriteCtx(org),
+			name:  "empty_key",
+			ctxFn: func() context.Context { return settingsWriteCtx(org) },
 			createFn: func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error) {
 				return service.ProviderCredentialMetadata{}, service.ErrEmptyAPIKey
 			},
 			want: codes.InvalidArgument,
 		},
 		{
-			name: "master_missing",
-			ctx:  settingsWriteCtx(org),
+			name:  "master_missing",
+			ctxFn: func() context.Context { return settingsWriteCtx(org) },
 			createFn: func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error) {
 				return service.ProviderCredentialMetadata{}, service.ErrCredentialsMasterKeyMissing
 			},
 			want: codes.FailedPrecondition,
 		},
 		{
-			name: "internal",
-			ctx:  settingsWriteCtx(org),
+			name:  "internal",
+			ctxFn: func() context.Context { return settingsWriteCtx(org) },
 			createFn: func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error) {
 				return service.ProviderCredentialMetadata{}, errors.New("db down")
 			},
@@ -223,7 +227,7 @@ func TestUnit_CreateProviderCredential_AuthzAndMappedErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := newCredServer(t, &fakeCredAPI{createFn: tc.createFn}).CreateProviderCredential(
-				tc.ctx,
+				tc.ctxFn(),
 				&authv1.CreateProviderCredentialRequest{OrgId: org, ProviderName: "openai", ApiKey: "sk"},
 			)
 			assertGRPCCode(t, err, tc.want)

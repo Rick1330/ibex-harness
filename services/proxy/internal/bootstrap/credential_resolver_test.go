@@ -13,10 +13,10 @@ type stubAuthClient struct {
 
 func TestUnit_NewCredentialResolver(t *testing.T) {
 	t.Parallel()
-	if got := newCredentialResolver(nil, time.Second); got != nil {
+	if newCredentialResolver(nil, time.Second) != nil {
 		t.Fatal("nil client should yield nil resolver")
 	}
-	if got := newCredentialResolver(stubAuthClient{}, 0); got == nil {
+	if newCredentialResolver(stubAuthClient{}, 0) == nil {
 		t.Fatal("expected resolver")
 	}
 }

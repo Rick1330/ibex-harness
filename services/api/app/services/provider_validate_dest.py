@@ -24,7 +24,7 @@ async def assert_probe_destination(provider_name: str, url: str) -> ProbeDial:
     if not host or parsed.scheme not in {"http", "https"}:
         raise invalid()
     if provider_name == "vllm_self_hosted":
-        return await _assert_self_hosted_destination(parsed.scheme, host)
+        return _assert_self_hosted_destination(parsed.scheme, host)
     return await _assert_cloud_destination(provider_name, parsed.scheme, host)
 
 
@@ -47,7 +47,7 @@ async def _assert_azure_host(host: str) -> ProbeDial:
     return await assert_public_resolved_host(host)
 
 
-async def _assert_self_hosted_destination(scheme: str, host: str) -> ProbeDial:
+def _assert_self_hosted_destination(scheme: str, host: str) -> ProbeDial:
     if scheme not in {"http", "https"}:
         raise invalid()
     # Both plaintext and TLS self-hosted probes are limited to literal loopback.

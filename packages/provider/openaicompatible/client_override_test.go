@@ -46,7 +46,7 @@ func TestUnit_APIKeyOverride_DoesNotMutateConfig(t *testing.T) {
 	if got, _ := sawAuth.Load().(string); got != "Bearer sk-override" {
 		t.Fatalf("auth=%q", got)
 	}
-	if clientCfgKey := cfgKey; clientCfgKey != "sk-platform" {
+	if cfgKey != "sk-platform" {
 		t.Fatalf("config mutated")
 	}
 	// Second call without override uses platform key.

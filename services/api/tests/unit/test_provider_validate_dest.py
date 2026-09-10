@@ -19,10 +19,9 @@ from app.services.provider_validate_net import (
 )
 
 
-@pytest.mark.asyncio
-async def test_dest_self_hosted_rejects_non_http_scheme() -> None:
+def test_dest_self_hosted_rejects_non_http_scheme() -> None:
     with pytest.raises(ApiError) as exc:
-        await _assert_self_hosted_destination("ftp", "127.0.0.1")
+        _assert_self_hosted_destination("ftp", "127.0.0.1")
     assert exc.value.code == INVALID_CREDENTIAL
 
 

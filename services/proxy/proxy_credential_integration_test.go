@@ -80,9 +80,9 @@ func setupCredentialProxyFixture(t *testing.T) credProxyFixture {
 	chatA, _ := testutil.SeedToken(t, db, orgA, permissions.ProxyChatCompletion)
 	chatB, _ := testutil.SeedToken(t, db, orgB, permissions.ProxyChatCompletion)
 
-	cap := &captureOpenAI{}
+	openaiCap := &captureOpenAI{}
 	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{
-		providers:              []provider.Provider{cap},
+		providers:              []provider.Provider{openaiCap},
 		withCredentialResolver: true,
 	})
 	t.Cleanup(srv.Close)
@@ -93,7 +93,7 @@ func setupCredentialProxyFixture(t *testing.T) credProxyFixture {
 	return credProxyFixture{
 		db: db, authFx: authFx, srv: srv,
 		orgA: orgA, orgB: orgB, agentA: agentA, agentB: agentB,
-		chatA: chatA, chatB: chatB, capture: cap, byoAPIKey: byoKey,
+		chatA: chatA, chatB: chatB, capture: openaiCap, byoAPIKey: byoKey,
 	}
 }
 
