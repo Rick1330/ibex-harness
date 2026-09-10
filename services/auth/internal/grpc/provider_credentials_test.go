@@ -248,9 +248,7 @@ func TestUnit_GetProviderCredential_Paths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.GetApiKey() != "sk-ant" || resp.GetBaseUrl() != "https://byo.example" || resp.GetIsPlatformDefault() {
-		t.Fatalf("resp=%+v", resp)
-	}
+	assertGetCredResponse(t, resp)
 
 	fake.getFn = func(context.Context, service.OrgProviderRef) (service.GetProviderCredentialResult, error) {
 		return service.GetProviderCredentialResult{}, service.ErrProviderCredentialNotFound
@@ -261,7 +259,20 @@ func TestUnit_GetProviderCredential_Paths(t *testing.T) {
 	assertGRPCCode(t, err, codes.NotFound)
 }
 
-func TestUnit_ListAndDeleteProviderCredentials(t *testing.T) {
+func assertGetCredResponse(t *testing.T, resp *authv1.GetProviderCredentialResponse) {
+	t.Helper()
+	if resp.GetApiKey() != "sk-ant" {
+		t.Fatalf("api_key=%q", resp.GetApiKey())
+	}
+	if resp.GetBaseUrl() != "https://byo.example" {
+		t.Fatalf("base=%q", resp.GetBaseUrl())
+	}
+	if resp.GetIsPlatformDefault() {
+		t.Fatal("expected BYO")
+	}
+}
+
+func TestUnit_ListProviderCredentials_OK(t *testing.T) {
 	t.Parallel()
 	org := uuid.NewString()
 	validated := time.Unix(1_700_000_000, 0).UTC()
@@ -275,6 +286,28 @@ func TestUnit_ListAndDeleteProviderCredentials(t *testing.T) {
 				EncryptionKeyID: "v1", LastValidatedAt: &validated,
 			}}, nil
 		},
+	}
+	listed, err := newCredServer(t, fake).ListProviderCredentials(
+		settingsWriteCtx(org), &authv1.ListProviderCredentialsRequest{OrgId: org},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.GetCredentials()) != 1 {
+		t.Fatalf("len=%d", len(listed.GetCredentials()))
+	}
+	if listed.GetCredentials()[0].GetKeyHint() != "cdef" {
+		t.Fatalf("hint=%q", listed.GetCredentials()[0].GetKeyHint())
+	}
+	if listed.GetCredentials()[0].GetLastValidatedAt() == nil {
+		t.Fatal("expected last_validated_at")
+	}
+}
+
+func TestUnit_DeleteProviderCredentials_Paths(t *testing.T) {
+	t.Parallel()
+	org := uuid.NewString()
+	fake := &fakeCredAPI{
 		deleteFn: func(_ context.Context, ref service.OrgProviderRef) error {
 			if ref.OrgID != org || ref.ProviderName != "openai" {
 				t.Fatalf("ref=%+v", ref)
@@ -283,25 +316,12 @@ func TestUnit_ListAndDeleteProviderCredentials(t *testing.T) {
 		},
 	}
 	srv := newCredServer(t, fake)
-
-	listed, err := srv.ListProviderCredentials(settingsWriteCtx(org), &authv1.ListProviderCredentialsRequest{OrgId: org})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(listed.GetCredentials()) != 1 || listed.GetCredentials()[0].GetKeyHint() != "cdef" {
-		t.Fatalf("listed=%+v", listed)
-	}
-	if listed.GetCredentials()[0].GetLastValidatedAt() == nil {
-		t.Fatal("expected last_validated_at")
-	}
-
-	_, err = srv.DeleteProviderCredential(settingsWriteCtx(org), &authv1.DeleteProviderCredentialRequest{
+	_, err := srv.DeleteProviderCredential(settingsWriteCtx(org), &authv1.DeleteProviderCredentialRequest{
 		OrgId: org, ProviderName: "openai",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	fake.deleteFn = func(context.Context, service.OrgProviderRef) error {
 		return service.ErrProviderCredentialNotFound
 	}
@@ -309,11 +329,19 @@ func TestUnit_ListAndDeleteProviderCredentials(t *testing.T) {
 		OrgId: org, ProviderName: "openai",
 	})
 	assertGRPCCode(t, err, codes.NotFound)
+}
 
-	fake.listFn = func(context.Context, string) ([]service.ProviderCredentialMetadata, error) {
-		return nil, errors.New("boom")
+func TestUnit_ListProviderCredentials_Internal(t *testing.T) {
+	t.Parallel()
+	org := uuid.NewString()
+	fake := &fakeCredAPI{
+		listFn: func(context.Context, string) ([]service.ProviderCredentialMetadata, error) {
+			return nil, errors.New("boom")
+		},
 	}
-	_, err = srv.ListProviderCredentials(settingsWriteCtx(org), &authv1.ListProviderCredentialsRequest{OrgId: org})
+	_, err := newCredServer(t, fake).ListProviderCredentials(
+		settingsWriteCtx(org), &authv1.ListProviderCredentialsRequest{OrgId: org},
+	)
 	assertGRPCCode(t, err, codes.Internal)
 }
 

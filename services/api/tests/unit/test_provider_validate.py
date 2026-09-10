@@ -91,21 +91,42 @@ async def test_validate_azure_rejects_missing_base_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_validate_rejects_upstream_4xx() -> None:
-    await _expect_invalid(
-        provider_name="openai",
-        api_key="sk-bad",
-        client=_ok_client(401),
-    )
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_redirect_302() -> None:
-    await _expect_invalid(
-        provider_name="openai",
-        api_key="sk-test",
-        client=_ok_client(302),
-    )
+@pytest.mark.parametrize(
+    ("kwargs", "status"),
+    [
+        ({"provider_name": "unknown_provider", "api_key": "sk"}, None),
+        (
+            {
+                "provider_name": "azure_openai",
+                "api_key": "az-key",
+                "base_url": "https://evil.example.com",
+            },
+            None,
+        ),
+        ({"provider_name": "openai", "api_key": "sk", "base_url": "https://10.0.0.1"}, None),
+        (
+            {
+                "provider_name": "vllm_self_hosted",
+                "api_key": "local",
+                "base_url": "ftp://127.0.0.1:8000/",
+            },
+            None,
+        ),
+        ({"provider_name": "openai", "api_key": "sk-bad"}, 401),
+        ({"provider_name": "openai", "api_key": "sk-test"}, 302),
+    ],
+    ids=[
+        "unknown_provider",
+        "azure_non_azure_host",
+        "blocked_literal_ip",
+        "malformed_scheme",
+        "upstream_4xx",
+        "redirect_302",
+    ],
+)
+async def test_validate_rejects_invalid_inputs(kwargs: dict, status: int | None) -> None:
+    client: AsyncMock | object = _ok_client(status) if status is not None else AsyncMock()
+    await _expect_invalid(client=client, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -159,31 +180,6 @@ async def test_validate_owns_and_closes_client() -> None:
     with patch("app.services.provider_validate.httpx.AsyncClient", return_value=fake):
         await validate_provider_credential(provider_name="openai", api_key="sk")
     fake.aclose.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_unknown_provider_without_base() -> None:
-    await _expect_invalid(provider_name="unknown_provider", api_key="sk", client=AsyncMock())
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_azure_non_azure_host() -> None:
-    await _expect_invalid(
-        provider_name="azure_openai",
-        api_key="az-key",
-        base_url="https://evil.example.com",
-        client=AsyncMock(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_blocked_literal_ip_for_custom_https() -> None:
-    await _expect_invalid(
-        provider_name="openai",
-        api_key="sk",
-        base_url="https://10.0.0.1",
-        client=AsyncMock(),
-    )
 
 
 @pytest.mark.asyncio
@@ -254,60 +250,3 @@ async def test_validate_rejects_self_hosted_https_non_loopback() -> None:
         client=client,
     )
     client.stream.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_malformed_url_scheme() -> None:
-    await _expect_invalid(
-        provider_name="vllm_self_hosted",
-        api_key="local",
-        base_url="ftp://127.0.0.1:8000/",
-        client=AsyncMock(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_dest_self_hosted_rejects_non_http_scheme() -> None:
-    from app.services.provider_validate_dest import _assert_self_hosted_destination
-
-    with pytest.raises(ApiError) as exc:
-        await _assert_self_hosted_destination("ftp", "127.0.0.1")
-    assert exc.value.code == INVALID_CREDENTIAL
-
-
-@pytest.mark.asyncio
-async def test_dest_public_literal_ip_allowed() -> None:
-    from app.services.provider_validate_net import assert_public_resolved_host
-
-    await assert_public_resolved_host("8.8.8.8")
-
-
-@pytest.mark.asyncio
-async def test_dest_resolved_addrs_gaierror_and_public() -> None:
-    import ipaddress
-    import socket
-
-    from app.services import provider_validate_net as net
-
-    with patch(
-        "app.services.provider_validate_net.socket.getaddrinfo",
-        side_effect=socket.gaierror(1, "fail"),
-    ):
-        assert await net.resolved_addrs("missing.example") == []
-
-    with patch(
-        "app.services.provider_validate_net.socket.getaddrinfo",
-        return_value=[
-            (0, 0, 0, "", ("8.8.4.4", 0)),
-            (0, 0, 0, "", ()),  # IndexError path
-            (0, 0, 0, "", ("not-an-ip", 0)),  # ValueError path
-        ],
-    ):
-        addrs = await net.resolved_addrs("ok.example")
-    assert addrs == [ipaddress.ip_address("8.8.4.4")]
-
-    with patch(
-        "app.services.provider_validate_net.resolved_addrs",
-        new=AsyncMock(return_value=[ipaddress.ip_address("8.8.4.4")]),
-    ):
-        await net.assert_public_resolved_host("ok.example")

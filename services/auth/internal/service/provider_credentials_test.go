@@ -90,7 +90,9 @@ func TestUnit_ProviderCredentialService_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertMetaHint(t, meta, "cdef")
-	assertGetKey(t, svc, "org-1", "openai", "sk-test-abcdef", "https://example.com")
+	assertGetKey(t, svc, getKeyWant{
+		org: "org-1", provider: "openai", key: "sk-test-abcdef", base: "https://example.com",
+	})
 	assertListCount(t, svc, "org-1", 1)
 	if err := svc.Delete(context.Background(), service.OrgProviderRef{OrgID: "org-1", ProviderName: "openai"}); err != nil {
 		t.Fatal(err)
@@ -119,21 +121,25 @@ func assertMetaHint(t *testing.T, meta service.ProviderCredentialMetadata, hint 
 	}
 }
 
-func assertGetKey(t *testing.T, svc *service.ProviderCredentialService, org, provider, key, base string) {
+func assertGetKey(t *testing.T, svc *service.ProviderCredentialService, want getKeyWant) {
 	t.Helper()
-	got, err := svc.Get(context.Background(), service.OrgProviderRef{OrgID: org, ProviderName: provider})
+	got, err := svc.Get(context.Background(), service.OrgProviderRef{OrgID: want.org, ProviderName: want.provider})
 	if err != nil {
 		t.Fatalf("get err=%v", err)
 	}
 	if got.IsPlatformDefault {
 		t.Fatal("expected BYO credential")
 	}
-	if got.APIKey != key {
-		t.Fatalf("APIKey=%q want %q", got.APIKey, key)
+	if got.APIKey != want.key {
+		t.Fatalf("APIKey=%q want %q", got.APIKey, want.key)
 	}
-	if got.BaseURL != base {
-		t.Fatalf("BaseURL=%q want %q", got.BaseURL, base)
+	if got.BaseURL != want.base {
+		t.Fatalf("BaseURL=%q want %q", got.BaseURL, want.base)
 	}
+}
+
+type getKeyWant struct {
+	org, provider, key, base string
 }
 
 func assertListCount(t *testing.T, svc *service.ProviderCredentialService, org string, n int) {

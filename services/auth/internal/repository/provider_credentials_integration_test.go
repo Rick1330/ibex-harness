@@ -30,7 +30,6 @@ func TestIntegration_ProviderCredentialsRepository_CRUD(t *testing.T) {
 	repo, db := setupProviderCredRepo(t)
 	orgA := testutil.SeedOrganization(t, db, "Cred Org A", "cred-a-"+uuid.NewString()[:8])
 	orgB := testutil.SeedOrganization(t, db, "Cred Org B", "cred-b-"+uuid.NewString()[:8])
-	ctx := context.Background()
 
 	mustUpsertActive(t, repo, orgA)
 	assertFindOpenAI(t, repo, orgA)
@@ -52,8 +51,14 @@ func mustUpsertActive(t *testing.T, repo *repository.ProviderCredentialsReposito
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if upserted.ID == "" || upserted.OrgID != orgID || !upserted.BaseURL.Valid {
-		t.Fatalf("upserted=%+v", upserted)
+	if upserted.ID == "" {
+		t.Fatal("missing id")
+	}
+	if upserted.OrgID != orgID {
+		t.Fatalf("org=%s want %s", upserted.OrgID, orgID)
+	}
+	if !upserted.BaseURL.Valid {
+		t.Fatal("expected base_url")
 	}
 }
 
@@ -63,16 +68,22 @@ func assertFindOpenAI(t *testing.T, repo *repository.ProviderCredentialsReposito
 	if err != nil {
 		t.Fatalf("Find: %v", err)
 	}
-	if string(found.Ciphertext) != "nonce-ciphertext" || found.KeyHint != "cdef" {
-		t.Fatalf("found=%+v", found)
+	if string(found.Ciphertext) != "nonce-ciphertext" {
+		t.Fatalf("ciphertext=%q", found.Ciphertext)
+	}
+	if found.KeyHint != "cdef" {
+		t.Fatalf("hint=%q", found.KeyHint)
 	}
 }
 
 func assertListLen(t *testing.T, repo *repository.ProviderCredentialsRepository, orgID string, n int) {
 	t.Helper()
 	listed, err := repo.ListByOrg(context.Background(), orgID)
-	if err != nil || len(listed) != n {
-		t.Fatalf("list=%+v err=%v", listed, err)
+	if err != nil {
+		t.Fatalf("list err=%v", err)
+	}
+	if len(listed) != n {
+		t.Fatalf("list len=%d want %d", len(listed), n)
 	}
 }
 
@@ -95,8 +106,11 @@ func mustRotateClearBaseURL(t *testing.T, repo *repository.ProviderCredentialsRe
 	if err != nil {
 		t.Fatalf("Upsert rotate: %v", err)
 	}
-	if string(updated.Ciphertext) != "rotated-ct" || updated.BaseURL.Valid {
-		t.Fatalf("updated=%+v", updated)
+	if string(updated.Ciphertext) != "rotated-ct" {
+		t.Fatalf("ciphertext=%q", updated.Ciphertext)
+	}
+	if updated.BaseURL.Valid {
+		t.Fatal("expected cleared base_url")
 	}
 }
 
