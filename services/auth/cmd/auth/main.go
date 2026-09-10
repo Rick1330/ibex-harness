@@ -148,6 +148,7 @@ func loadAuthBootstrap() (config.Config, *logger.Logger, bool) {
 type authServiceDeps struct {
 	validator       *token.Validator
 	tokenSvc        *service.TokenService
+	credSvc         *service.ProviderCredentialService
 	agentsRepo      *repository.AgentsRepository
 	redisClient     redis.UniversalClient
 	validateLimiter ratelimit.KeyedLimiter
@@ -160,38 +161,84 @@ func initAuthServices(
 	log *logger.Logger,
 	reg *ibexmetrics.AuthRegistry,
 ) (authServiceDeps, error) {
-	repo, err := repository.NewTokensRepository(db, reg)
+	core, err := initAuthTokenCore(cfg, db, log, reg)
 	if err != nil {
 		return authServiceDeps{}, err
+	}
+	credSvc, err := newProviderCredentialService(cfg, db, reg)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
+	return authServiceDeps{
+		validator: core.validator, tokenSvc: core.tokenSvc, credSvc: credSvc,
+		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
+		validateLimiter: core.validateLimiter, log: log,
+	}, nil
+}
+
+type authTokenCore struct {
+	validator       *token.Validator
+	tokenSvc        *service.TokenService
+	agentsRepo      *repository.AgentsRepository
+	redisClient     redis.UniversalClient
+	validateLimiter ratelimit.KeyedLimiter
+}
+
+func initAuthTokenCore(
+	cfg config.Config,
+	db *sql.DB,
+	log *logger.Logger,
+	reg *ibexmetrics.AuthRegistry,
+) (authTokenCore, error) {
+	repo, err := repository.NewTokensRepository(db, reg)
+	if err != nil {
+		return authTokenCore{}, err
 	}
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	usersRepo := repository.NewUsersRepository(db, reg)
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {
-		return authServiceDeps{}, err
+		return authTokenCore{}, err
 	}
 	validator, err := token.NewValidator(lookup, cfg.Argon2)
 	if err != nil {
-		return authServiceDeps{}, fmt.Errorf("token validator: %w", err)
+		return authTokenCore{}, fmt.Errorf("token validator: %w", err)
 	}
-
 	redisClient, publisher, err := setupRevocationPublisher(cfg, log, reg)
 	if err != nil {
-		return authServiceDeps{}, err
+		return authTokenCore{}, err
 	}
 	validateLimiter, err := newValidateTokenLimiter(cfg, redisClient, log)
 	if err != nil {
-		return authServiceDeps{}, fmt.Errorf("validate token rate limiter: %w", err)
+		return authTokenCore{}, fmt.Errorf("validate token rate limiter: %w", err)
 	}
 	subjects, err := service.NewRepoTokenSubjects(agentsRepo, service.UsersFinder(usersRepo))
 	if err != nil {
-		return authServiceDeps{}, err
+		return authTokenCore{}, err
 	}
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher).WithSubjectLookup(subjects)
-	return authServiceDeps{
+	return authTokenCore{
 		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
-		redisClient: redisClient, validateLimiter: validateLimiter, log: log,
+		redisClient: redisClient, validateLimiter: validateLimiter,
 	}, nil
+}
+
+func newProviderCredentialService(
+	cfg config.Config,
+	db *sql.DB,
+	reg *ibexmetrics.AuthRegistry,
+) (*service.ProviderCredentialService, error) {
+	credRepo, err := repository.NewProviderCredentialsRepository(db, reg)
+	if err != nil {
+		return nil, err
+	}
+	return service.NewProviderCredentialService(
+		credRepo,
+		service.MasterKeyConfig{
+			Encoded: cfg.CredentialsMasterKey,
+			KeyID:   cfg.CredentialsMasterKeyID,
+		},
+	)
 }
 
 const (
@@ -337,6 +384,7 @@ func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetri
 		Validator:    deps.validator,
 		TokenService: deps.tokenSvc,
 		AgentService: agentSvc,
+		CredService:  deps.credSvc,
 		Metrics:      reg,
 		Log:          deps.log,
 	})

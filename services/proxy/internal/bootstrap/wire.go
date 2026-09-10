@@ -22,6 +22,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
@@ -51,6 +52,8 @@ type proxyCore struct {
 	revCancel         context.CancelFunc
 	dirSub            *directive.Subscriber
 	dirCancel         context.CancelFunc
+	rlConfigSub       *ratelimit.ConfigSubscriber
+	rlConfigCancel    context.CancelFunc
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -83,11 +86,25 @@ func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
 		stopRevocationOnFailure(revSub, revCancel)
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
+	rlSub, rlCancel, err := startRateLimitConfigSubscriber(
+		assembled.redisClient, assembled.pgDB, assembled.limiter, in.log,
+	)
+	if err != nil {
+		stopRevocationOnFailure(revSub, revCancel)
+		if dirCancel != nil {
+			dirCancel()
+		}
+		if dirSub != nil {
+			dirSub.Stop()
+		}
+		return nil, fmt.Errorf("rate-limit config subscriber: %w", err)
+	}
 	startSessionSweeper(assembled.sessionSweeper, in.cfg, in.log)
 	return finishProxyCore(proxyCoreParts{
 		assembled: assembled,
 		revSub:    revSub, revCancel: revCancel,
 		dirSub: dirSub, dirCancel: dirCancel,
+		rlConfigSub: rlSub, rlConfigCancel: rlCancel,
 	}), nil
 }
 
@@ -101,11 +118,13 @@ func stopRevocationOnFailure(sub *revocation.Subscriber, cancel context.CancelFu
 }
 
 type proxyCoreParts struct {
-	assembled assembledProxyCore
-	revSub    *revocation.Subscriber
-	revCancel context.CancelFunc
-	dirSub    *directive.Subscriber
-	dirCancel context.CancelFunc
+	assembled      assembledProxyCore
+	revSub         *revocation.Subscriber
+	revCancel      context.CancelFunc
+	dirSub         *directive.Subscriber
+	dirCancel      context.CancelFunc
+	rlConfigSub    *ratelimit.ConfigSubscriber
+	rlConfigCancel context.CancelFunc
 }
 
 func finishProxyCore(parts proxyCoreParts) *proxyCore {
@@ -116,6 +135,7 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 		directiveResolver: parts.assembled.directiveResolver,
 		revSub:            parts.revSub, revCancel: parts.revCancel,
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
+		rlConfigSub: parts.rlConfigSub, rlConfigCancel: parts.rlConfigCancel,
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,
 		traceWriter:    parts.assembled.traceWriter,
@@ -130,6 +150,7 @@ type assembledProxyCore struct {
 	redisClient       redis.UniversalClient
 	pgDB              *sql.DB
 	validator         auth.TokenValidator
+	limiter           ratelimit.Limiter
 	directiveResolver directive.Resolver
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
@@ -240,8 +261,9 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		server: server, grpcConns: collectGRPCConns(in.infra.auth.conn, in.infra.ctxClients.conn),
 		contextClient: in.infra.ctxClients.client,
 		redisClient:   in.infra.redisClient, pgDB: in.infra.pgDB,
-		validator: in.infra.auth.validator, directiveResolver: in.infra.directiveResolver,
-		checkpointPool: in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
+		validator: in.infra.auth.validator, limiter: in.infra.limiter,
+		directiveResolver: in.infra.directiveResolver,
+		checkpointPool:    in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
 		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
 	}, nil
 }
@@ -273,6 +295,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 			Token:   in.cfg.WorkerEnqueueAPIToken,
 			Timeout: extractionenqueue.DefaultTimeout,
 		}),
+		CredentialResolver: newCredentialResolver(in.infra.auth.client, in.cfg.AuthValidateTimeout),
 	}
 	assignTraceWriter(&deps, p.traceWriter)
 	return deps
@@ -301,6 +324,19 @@ func assignTraceWriter(deps *proxyhttp.RouterDeps, w *ibexch.Writer) {
 		return
 	}
 	deps.TraceWriter = w
+}
+
+func newCredentialResolver(client authv1.AuthServiceClient, rpcTimeout time.Duration) proxyhttp.CredentialResolver {
+	if client == nil {
+		return nil
+	}
+	resolver, err := credentials.NewCachedResolverWithTimeout(
+		client, credentials.DefaultCacheTTL, rpcTimeout,
+	)
+	if err != nil {
+		return nil
+	}
+	return resolver
 }
 
 func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB, tokenizerReg *tokenizer.Registry) *healthcheck.Server {

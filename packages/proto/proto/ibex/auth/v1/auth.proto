@@ -24,6 +24,18 @@ service AuthService {
 
   // ListTokens returns token metadata for an org (never plaintext or hash).
   rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+
+  // CreateProviderCredential seals and upserts an org-scoped provider API key.
+  rpc CreateProviderCredential(CreateProviderCredentialRequest) returns (CreateProviderCredentialResponse);
+
+  // GetProviderCredential decrypts a stored key or reports platform-default fallback.
+  rpc GetProviderCredential(GetProviderCredentialRequest) returns (GetProviderCredentialResponse);
+
+  // DeleteProviderCredential removes a stored org provider credential.
+  rpc DeleteProviderCredential(DeleteProviderCredentialRequest) returns (DeleteProviderCredentialResponse);
+
+  // ListProviderCredentials returns non-secret metadata for an org's provider keys.
+  rpc ListProviderCredentials(ListProviderCredentialsRequest) returns (ListProviderCredentialsResponse);
 }
 
 enum TokenType {
@@ -120,4 +132,57 @@ message TokenMetadata {
 message ListTokensResponse {
   repeated TokenMetadata tokens = 1;
   string next_cursor = 2;
+}
+
+message CreateProviderCredentialRequest {
+  string org_id = 1;
+  string provider_name = 2;
+  // Plaintext provider API key — internal channel only; never logged.
+  string api_key = 3;
+  string base_url = 4;
+}
+
+message CreateProviderCredentialResponse {
+  string provider_name = 1;
+  string status = 2;
+  string key_hint = 3;
+  string base_url = 4;
+  string encryption_key_id = 5;
+  google.protobuf.Timestamp last_validated_at = 6;
+}
+
+message GetProviderCredentialRequest {
+  string org_id = 1;
+  string provider_name = 2;
+}
+
+message GetProviderCredentialResponse {
+  // Decrypted key when is_platform_default is false; empty otherwise.
+  string api_key = 1;
+  string base_url = 2;
+  bool is_platform_default = 3;
+}
+
+message DeleteProviderCredentialRequest {
+  string org_id = 1;
+  string provider_name = 2;
+}
+
+message DeleteProviderCredentialResponse {}
+
+message ListProviderCredentialsRequest {
+  string org_id = 1;
+}
+
+message ProviderCredentialMetadata {
+  string provider_name = 1;
+  string status = 2;
+  string key_hint = 3;
+  string base_url = 4;
+  string encryption_key_id = 5;
+  optional google.protobuf.Timestamp last_validated_at = 6;
+}
+
+message ListProviderCredentialsResponse {
+  repeated ProviderCredentialMetadata credentials = 1;
 }

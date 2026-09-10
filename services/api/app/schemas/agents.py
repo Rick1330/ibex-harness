@@ -121,6 +121,8 @@ class AgentResponse(BaseModel):
 class _AgentWritable(BaseModel):
     """Shared create/patch fields — validators live once to avoid Sonar clones."""
 
+    model_config = ConfigDict(extra="forbid")
+
     description: str | None = None
     config: dict[str, Any] | None = None
     tags: list[TagStr] | None = Field(default=None, max_length=_MAX_TAGS)

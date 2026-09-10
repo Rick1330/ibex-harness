@@ -30,6 +30,7 @@ type envConfig struct {
 	ErrorDocsBase           string            `env:"IBEX_ERROR_DOCS_BASE"`
 	RateLimitDefaultRPM     int               `env:"IBEX_RATE_LIMIT_DEFAULT_RPM"`
 	RateLimitOrgOverrides   string            `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
+	RateLimitGlobalRPM      int               `env:"IBEX_RATE_LIMIT_GLOBAL_RPM"`
 	ShutdownTimeoutRaw      string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
 	LLMMode                 string            `env:"IBEX_LLM_MODE" envDefault:"mock"`
 	LLMExtraModels          string            `env:"IBEX_LLM_EXTRA_MODELS"`
@@ -190,6 +191,7 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		RateLimit: RateLimitConfig{
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
+			GlobalRPM:    defaultRateLimitGlobalRPM,
 		},
 		LLMMode:   strings.TrimSpace(envCfg.LLMMode),
 		OpenAI:    openAIConfigFromEnv(envCfg),
@@ -245,6 +247,9 @@ func applyProxyNumericEnv(cfg *Config, envCfg envConfig) {
 	}
 	if envCfg.RateLimitDefaultRPM > 0 {
 		cfg.RateLimit.DefaultRPM = envCfg.RateLimitDefaultRPM
+	}
+	if envCfg.RateLimitGlobalRPM > 0 {
+		cfg.RateLimit.GlobalRPM = envCfg.RateLimitGlobalRPM
 	}
 }
 

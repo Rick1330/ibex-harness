@@ -28,6 +28,12 @@ from app.http_metrics import HTTPMetricsMiddleware
 from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.middleware.request_id import RequestIdMiddleware
 from app.probes import probe_router
+from app.rate_limit_publish import (
+    NoopRateLimitConfigPublisher,
+    RateLimitConfigPublisher,
+    RedisRateLimitConfigPublisher,
+    RedisRateLimitCounter,
+)
 from app.revocation_publish import (
     NoopOrgSuspendPublisher,
     OrgSuspendPublisher,
@@ -35,7 +41,10 @@ from app.revocation_publish import (
 )
 from app.routers.agents import router as agents_router
 from app.routers.organizations import router as organizations_router
+from app.routers.providers import router as providers_router
+from app.routers.rate_limits import router as rate_limits_router
 from app.routers.tenant import router as tenant_router
+from app.routers.tokens import router as tokens_router
 from app.routers.users import router as users_router
 
 logger = logging.getLogger(__name__)
@@ -47,7 +56,11 @@ class ApiRuntimeOverrides:
     """Optional test/runtime wiring for revokers, publishers, and enqueue hooks."""
 
     token_revoker: object | None = None
+    token_manager: object | None = None
+    provider_credential_manager: object | None = None
     org_suspend_publisher: OrgSuspendPublisher | None = None
+    rate_limit_config_publisher: RateLimitConfigPublisher | None = None
+    rate_limit_counter: RedisRateLimitCounter | None = None
     enqueue_org_deletion: Callable[[str, str], None] | None = None
 
 
@@ -60,7 +73,11 @@ class ApiAppState:
     session_factory: async_sessionmaker[AsyncSession] | None = field(default=None, repr=False)
     validator: TokenValidator | None = field(default=None, repr=False)
     token_revoker: object | None = field(default=None, repr=False)
+    token_manager: object | None = field(default=None, repr=False)
+    provider_credential_manager: object | None = field(default=None, repr=False)
     org_suspend_publisher: OrgSuspendPublisher | None = field(default=None, repr=False)
+    rate_limit_config_publisher: RateLimitConfigPublisher | None = field(default=None, repr=False)
+    rate_limit_counter: RedisRateLimitCounter | None = field(default=None, repr=False)
     enqueue_org_deletion: Callable[[str, str], None] | None = field(default=None, repr=False)
 
 
@@ -75,7 +92,11 @@ def create_app(
     state = ApiAppState(
         settings=cfg,
         token_revoker=hooks.token_revoker,
+        token_manager=hooks.token_manager,
+        provider_credential_manager=hooks.provider_credential_manager,
         org_suspend_publisher=hooks.org_suspend_publisher,
+        rate_limit_config_publisher=hooks.rate_limit_config_publisher,
+        rate_limit_counter=hooks.rate_limit_counter,
         enqueue_org_deletion=hooks.enqueue_org_deletion,
     )
 
@@ -100,6 +121,9 @@ def create_app(
     application.include_router(organizations_router)
     application.include_router(users_router)
     application.include_router(agents_router)
+    application.include_router(tokens_router)
+    application.include_router(providers_router)
+    application.include_router(rate_limits_router)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(RequestIdMiddleware)
     return application
@@ -119,12 +143,34 @@ def _wire_runtime_defaults(state: ApiAppState, cfg: Settings) -> None:
             cfg.auth_grpc_addr,
             timeout_seconds=max(cfg.auth_timeout_ms / 1000.0, 0.2),
         )
+    if state.token_manager is None:
+        from authclient.tokens import GRPCTokenManager
+
+        state.token_manager = GRPCTokenManager(
+            cfg.auth_grpc_addr,
+            timeout_seconds=max(cfg.auth_timeout_ms / 1000.0, 0.2),
+        )
+    if state.provider_credential_manager is None:
+        from authclient.provider_credentials import GRPCProviderCredentialManager
+
+        state.provider_credential_manager = GRPCProviderCredentialManager(
+            cfg.auth_grpc_addr,
+            timeout_seconds=max(cfg.auth_timeout_ms / 1000.0, 0.2),
+        )
     if state.org_suspend_publisher is None:
         state.org_suspend_publisher = (
             RedisOrgSuspendPublisher(cfg.redis_url)
             if cfg.redis_url
             else NoopOrgSuspendPublisher()
         )
+    if state.rate_limit_config_publisher is None:
+        state.rate_limit_config_publisher = (
+            RedisRateLimitConfigPublisher(cfg.redis_url)
+            if cfg.redis_url
+            else NoopRateLimitConfigPublisher()
+        )
+    if state.rate_limit_counter is None:
+        state.rate_limit_counter = RedisRateLimitCounter(cfg.redis_url)
     if state.enqueue_org_deletion is None:
         from app.services.organizations import unconfigured_org_deletion_enqueue
 
@@ -140,9 +186,21 @@ async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
     closer = getattr(state.token_revoker, "aclose", None)
     if closer is not None:
         await closer()
+    mgr_close = getattr(state.token_manager, "aclose", None)
+    if mgr_close is not None:
+        await mgr_close()
+    cred_close = getattr(state.provider_credential_manager, "aclose", None)
+    if cred_close is not None:
+        await cred_close()
     pub_close = getattr(state.org_suspend_publisher, "aclose", None)
     if pub_close is not None:
         await pub_close()
+    rl_pub_close = getattr(state.rate_limit_config_publisher, "aclose", None)
+    if rl_pub_close is not None:
+        await rl_pub_close()
+    rl_counter_close = getattr(state.rate_limit_counter, "aclose", None)
+    if rl_counter_close is not None:
+        await rl_counter_close()
     if state.engine is not None:
         await state.engine.dispose()
         logger.info("api service stopped request_id=%s", request_id_for_log())

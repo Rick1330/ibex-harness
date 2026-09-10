@@ -24,6 +24,7 @@ func baseLoadCases() []loadCase {
 			env: map[string]string{
 				"IBEX_ENV": "development", "IBEX_LOG_LEVEL": "WARN",
 				"IBEX_RATE_LIMIT_DEFAULT_RPM":   "500",
+				"IBEX_RATE_LIMIT_GLOBAL_RPM":    "250000",
 				"IBEX_RATE_LIMIT_ORG_OVERRIDES": "550e8400-e29b-41d4-a716-446655440000=1000",
 				"REDIS_URL":                     "redis://127.0.0.1:6379/0",
 			},
@@ -105,6 +106,9 @@ func checkHappyPathLoad(t *testing.T, cfg Config) {
 	}
 	if cfg.RateLimit.DefaultRPM != 500 || len(cfg.RateLimit.OrgOverrides) != 1 {
 		t.Fatalf("rate limit: %+v", cfg.RateLimit)
+	}
+	if cfg.RateLimit.GlobalRPM != 250000 {
+		t.Fatalf("GlobalRPM=%d want 250000", cfg.RateLimit.GlobalRPM)
 	}
 	if cfg.ContextGRPCTarget != defaultContextGRPCTarget {
 		t.Fatalf("ContextGRPCTarget = %q, want default %q", cfg.ContextGRPCTarget, defaultContextGRPCTarget)

@@ -12,6 +12,7 @@ import (
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -38,6 +39,8 @@ type shutdownOpts struct {
 	revCancel         context.CancelFunc
 	dirSub            *directive.Subscriber
 	dirCancel         context.CancelFunc
+	rlConfigSub       *ratelimit.ConfigSubscriber
+	rlConfigCancel    context.CancelFunc
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -131,24 +134,42 @@ func logImmediateCleanupErr(log *logger.Logger, op string, err error) {
 
 func stopPubSubSubscribers(opts shutdownOpts) {
 	run := func() {
-		if opts.revCancel != nil {
-			opts.revCancel()
-		}
-		if opts.revSub != nil {
-			opts.revSub.Stop()
-		}
-		if opts.dirCancel != nil {
-			opts.dirCancel()
-		}
-		if opts.dirSub != nil {
-			opts.dirSub.Stop()
-		}
+		stopRevocationPubSub(opts)
+		stopDirectivePubSub(opts)
+		stopRateLimitPubSub(opts)
 	}
 	if opts.stopPubSubOnce != nil {
 		opts.stopPubSubOnce.Do(run)
 		return
 	}
 	run()
+}
+
+func stopRevocationPubSub(opts shutdownOpts) {
+	if opts.revCancel != nil {
+		opts.revCancel()
+	}
+	if opts.revSub != nil {
+		opts.revSub.Stop()
+	}
+}
+
+func stopDirectivePubSub(opts shutdownOpts) {
+	if opts.dirCancel != nil {
+		opts.dirCancel()
+	}
+	if opts.dirSub != nil {
+		opts.dirSub.Stop()
+	}
+}
+
+func stopRateLimitPubSub(opts shutdownOpts) {
+	if opts.rlConfigCancel != nil {
+		opts.rlConfigCancel()
+	}
+	if opts.rlConfigSub != nil {
+		opts.rlConfigSub.Stop()
+	}
 }
 
 func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {

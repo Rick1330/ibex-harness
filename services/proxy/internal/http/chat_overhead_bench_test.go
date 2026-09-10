@@ -162,9 +162,12 @@ func newBenchRedisLimiter(b *testing.B) ratelimit.Limiter {
 	mr := miniredis.RunT(b)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	b.Cleanup(func() { _ = client.Close() })
-	limiter, err := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
+	limiter, err := ratelimit.NewHierarchicalLimiter(client, ratelimit.HierarchicalConfig{
+		DefaultRPM: 1_000_000,
+		GlobalRPM:  1_000_000,
+	})
 	if err != nil {
-		b.Fatalf("NewRedisSlider: %v", err)
+		b.Fatalf("NewHierarchicalLimiter: %v", err)
 	}
 	return limiter
 }

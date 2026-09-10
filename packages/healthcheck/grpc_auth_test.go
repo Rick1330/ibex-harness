@@ -36,6 +36,30 @@ func (m *mockAuthClient) ListTokens(context.Context, *authv1.ListTokensRequest, 
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthClient) CreateProviderCredential(
+	context.Context, *authv1.CreateProviderCredentialRequest, ...grpc.CallOption,
+) (*authv1.CreateProviderCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) GetProviderCredential(
+	context.Context, *authv1.GetProviderCredentialRequest, ...grpc.CallOption,
+) (*authv1.GetProviderCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) DeleteProviderCredential(
+	context.Context, *authv1.DeleteProviderCredentialRequest, ...grpc.CallOption,
+) (*authv1.DeleteProviderCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) ListProviderCredentials(
+	context.Context, *authv1.ListProviderCredentialsRequest, ...grpc.CallOption,
+) (*authv1.ListProviderCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
 func TestAuthGRPC_UnauthenticatedIsHealthy(t *testing.T) {
 	t.Parallel()
 	client := &mockAuthClient{err: status.Error(codes.Unauthenticated, "invalid token")}

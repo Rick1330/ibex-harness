@@ -18,6 +18,7 @@ exclude_paths:
   - "infra/migrations/postgres/*_test.go"
   - "packages/directive/store_integration_test.go"
   - "packages/session/store_integration_test.go"
+  - "services/auth/internal/repository/provider_credentials_integration_test.go"
   # ClickHouse / Postgres migrations are not T-SQL. Codacy still runs TSQLLint
   # on *.sql despite engines.tsqllint.enabled=false; SET QUOTED_IDENTIFIER would
   # break golang-migrate, so exclude all migration SQL.

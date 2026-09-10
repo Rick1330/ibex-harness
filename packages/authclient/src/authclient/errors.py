@@ -13,3 +13,15 @@ class OrgSuspendedError(AuthFailedError):
 
 class AuthUnavailableError(Exception):
     """Auth gRPC unreachable or response unusable (fail-closed)."""
+
+
+class TokenNotFoundError(Exception):
+    """Strict revoke/list: token missing or cross-tenant (anti-enumeration)."""
+
+
+class InsufficientPermissionsError(Exception):
+    """Caller lacks TokenCreate (or equivalent) for a management RPC."""
+
+
+class ProviderCredentialNotFoundError(Exception):
+    """Provider credential missing or cross-tenant (anti-enumeration)."""

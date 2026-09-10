@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,19 @@ func TestUnit_currentMinuteWindow_retryAfterClamped(t *testing.T) {
 	res := resultFromCount(5, 3, w)
 	if res.Allowed || res.Remaining != 0 {
 		t.Fatalf("over-limit result: %+v", res)
+	}
+}
+
+func TestUnit_clampInt64ToInt(t *testing.T) {
+	t.Parallel()
+	if clampInt64ToInt(42) != 42 {
+		t.Fatal("passthrough")
+	}
+	if clampInt64ToInt(math.MaxInt64) != math.MaxInt {
+		t.Fatal("upper clamp")
+	}
+	if clampInt64ToInt(math.MinInt64) != math.MinInt {
+		t.Fatal("lower clamp")
 	}
 }
 

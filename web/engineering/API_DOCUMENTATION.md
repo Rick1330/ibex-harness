@@ -203,6 +203,7 @@ HTTP 422 - Unprocessable Entity
   CONTENT_TOO_LONG         -- Memory content exceeds limit
   EMBEDDING_FAILED         -- Could not generate embedding
   PII_DETECTED             -- PII detected, manual review required
+  INVALID_CREDENTIAL       -- Provider API key failed upstream validation (422)
 
 HTTP 429 - Too Many Requests
   RATE_LIMIT_EXCEEDED      -- Per-minute rate limit hit
@@ -1925,107 +1926,230 @@ Content-Type: application/json
 
 ## Tokens API
 
+Scoped Personal Access Tokens (PATs). The management API never writes the token hash
+table directly — create/list/revoke call AuthService gRPC. Permission strings map to the
+ADR-0009 bitmap (see Permissions Reference below).
+
+Auth gates: AuthService enforces `TokenCreate` (bit 36) for create/list and
+`TokenRevoke` (bit 37) / own-token for revoke. Elevation (granting bits the caller does
+not hold) returns `403 PERMISSION_ELEVATION_DENIED`. Cross-tenant access returns `404 NOT_FOUND`.
+
+### GET /v1/tokens
+
+**List tokens for the caller's organization** (cursor pagination; plaintext never returned).
+
+**Query:** `cursor` (opaque auth cursor), `limit` (1–100, default 50).
+
+**Response: 200 OK** — `CursorPage[TokenResponse]` (`data` + `pagination`).
+
 ### POST /v1/tokens
 
-**Create an API token**
-
-**Required Permission:** `admin:token_create`
+**Create a PAT** (plaintext returned exactly once).
 
 **Request:**
 
 ```http
 POST /v1/tokens
 Authorization: Bearer {token}
-X-MFA-Code: 123456
 Content-Type: application/json
 
 {
   "name": "Production SDK Token",
-  "description": "Token for production agent deployment",
-  "type": "org_token",
-  "agent_id": "550e8400-...",
   "permissions": ["memory:read", "memory:write", "session:create"],
   "expires_at": null,
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "allowed_ips": ["10.0.0.0/8"]
 }
 ```
 
-**Permissions Reference:**
+Notes:
+
+- `user_id` is bound from the caller's verified token — never accepted in the body.
+- `allowed_ips` is **syntax-validated only** (invalid CIDR → `VALIDATION_ERROR`). Values are
+  **not persisted** and are omitted from all responses until Auth proto/schema enforcement lands.
+- Token type is always PAT (`ibex_pat_…` prefix).
+
+**Permissions Reference** (ADR-0009; string ↔ bit):
 
 ```text
-memory:read              -- Read and search memories
-memory:write             -- Create and update memories
-memory:delete            -- Delete memories
-directive:read           -- Read directives
-directive:write          -- Create and update directives
-directive:promote        -- Promote directives to active
-directive:revoke         -- Emergency revoke directives
-session:create           -- Create and manage sessions
-session:read             -- Read session data
-session:terminate        -- Terminate sessions
-trace:read               -- Read inference traces
-trace:export             -- Export trace data
-agent:read               -- Read agent data
-agent:write              -- Create and update agents
-admin:token_create       -- Create API tokens
-admin:user_manage        -- Manage organization users
-admin:billing            -- Access billing data
-admin:audit_log          -- Read audit log
+memory:read                 bit 0
+memory:write                bit 1
+memory:delete               bit 2
+memory:bulk_export          bit 3
+directive:read              bit 8
+directive:write             bit 9
+directive:promote           bit 10   (MFA)
+directive:revoke            bit 11   (MFA)
+session:create              bit 16
+session:read                bit 17
+session:terminate           bit 18
+trace:read                  bit 24
+trace:export                bit 25
+admin:user_manage           bit 32
+admin:billing_read          bit 33
+admin:billing_manage        bit 34
+admin:org_manage            bit 35   (alias for OrgSettingsWrite)
+admin:token_create          bit 36
+admin:token_revoke          bit 37
+marketplace:publish         bit 40
+marketplace:install         bit 41
+federation:share            bit 48
 ```
+
+Dropped (no backing bit): `agent:read`, `agent:write`, `admin:billing`, `admin:audit_log`.
 
 **Response: 201 Created**
 
 ```json
 {
-  "data": {
-    "id": "tok_abc123",
-    "name": "Production SDK Token",
-    "type": "org_token",
-    "prefix": "ibex_org_7f3k",
-    "token": "ibex_org_7f3k2m9x...",
-    "permissions": ["memory:read", "memory:write", "session:create"],
-    "expires_at": null,
-    "allowed_ips": ["10.0.0.0/8"],
-    "created_at": "2024-01-20T15:00:00.000Z"
-  },
-  "meta": {
-    "warning": "Store this token securely. It will not be shown again."
-  }
+  "id": "0190abcd-0000-7000-8000-000000000001",
+  "name": "Production SDK Token",
+  "token": "ibex_pat_0190abcd_…",
+  "prefix": "ibex_pat_0190abcd",
+  "permissions": ["memory:read", "memory:write", "session:create"],
+  "expires_at": null,
+  "created_at": "2024-01-20T15:00:00.000Z"
 }
 ```
 
----
+Store the `token` field securely — it is not returned by list/get.
+
+### GET /v1/tokens/{token_id}
+
+**Get one token** by filtering Auth `ListTokens` (no GetToken RPC). Missing/cross-tenant → `404`.
+
+**Response: 200 OK** — `TokenResponse` (no plaintext; includes `prefix`, `is_revoked`, `revoked_at`).
 
 ### DELETE /v1/tokens/{token_id}
 
-**Revoke a token**
+**Revoke a token** via `AuthService.RevokeToken` (Redis pub/sub propagation to proxy auth-cache).
 
-**Required Permission:** `admin:token_create`
+**Required permission (Auth):** `admin:token_revoke` (bit 37), or revoking one's own token.
 
-**Request:**
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
 
-```http
-DELETE /v1/tokens/tok_abc123
-Authorization: Bearer {token}
-Content-Type: application/json
+PATCH is not supported yet (follow-up issue).
 
-{
-  "reason": "Token compromised in security incident"
-}
-```
+---
+
+## Provider Credentials API
+
+Org-scoped BYO LLM provider keys. Plaintext is accepted only on write, validated upstream, then sealed in Auth. Responses never include `api_key`, ciphertext, or wrapped DEKs.
+
+**Required permission:** `admin:org_manage` / OrgSettingsWrite (bit 35). Path `org_id` must match the bearer org (cross-tenant → `404 NOT_FOUND`).
+
+### GET /v1/organizations/{org_id}/providers
+
+**List** stored credentials (metadata only). This is a **bounded, non-paginated**
+exception: the response returns the full credentials metadata list for the org
+(no `limit`, `cursor`, or pagination fields).
 
 **Response: 200 OK**
 
 ```json
 {
-  "data": {
-    "token_id": "tok_abc123",
-    "revoked": true,
-    "revoked_at": "2024-01-20T17:00:00.000Z",
-    "propagation_estimated_ms": 100
-  }
+  "credentials": [
+    {
+      "provider_name": "openai",
+      "status": "active",
+      "key_hint": "abcd",
+      "base_url": null,
+      "last_validated_at": "2026-09-10T12:00:00.000Z"
+    }
+  ]
 }
 ```
+
+### POST /v1/organizations/{org_id}/providers
+
+**Upsert** a credential. Body always includes plaintext `api_key`. Management API
+validates provider-specifically (≤5s total deadline, no redirects) then calls Auth
+`CreateProviderCredential`.
+
+Validation probes:
+
+| `provider_name` | Probe | Auth headers | Notes |
+| --- | --- | --- | --- |
+| `azure_openai` | `GET {base_url}/openai/models?api-version=…` | `api-key` | `base_url` **required** (`*.openai.azure.com`); missing/invalid → `422 INVALID_CREDENTIAL` |
+| `anthropic` | `GET {base}/v1/models` | `x-api-key`, `anthropic-version` | Default base `https://api.anthropic.com` |
+| others | `GET {base}/v1/models` | `Authorization: Bearer …` | Upstream rejection / unsafe destination → `422 INVALID_CREDENTIAL` |
+
+`vllm_self_hosted` may use plaintext `http://` only for literal loopback addresses;
+mesh/private/localhost names require HTTPS.
+
+```json
+{
+  "provider_name": "openai",
+  "api_key": "sk-…",
+  "base_url": null
+}
+```
+
+`provider_name`: `openai` | `anthropic` | `azure_openai` | `bedrock` | `vllm_self_hosted`.
+
+**Response: 201 Created** — metadata (`provider_name`, `status`, `key_hint`, optional `base_url`, `last_validated_at`). Upstream rejection → `422 INVALID_CREDENTIAL`.
+
+### DELETE /v1/organizations/{org_id}/providers/{provider_name}
+
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
+
+A separate re-validate endpoint is deferred.
+
+---
+
+## Rate Limits API (m4.B.2)
+
+Org- and agent-scoped **RPM** overrides for the proxy hierarchical limiter. Token-month ceilings are deferred ([#806](https://github.com/Rick1330/ibex-harness/issues/806)). There is **no** usage time-series endpoint in this milestone.
+
+**Authz:**
+- `GET` — any valid bearer for the path org (`require_token` + `assert_path_org`)
+- `PATCH` — owner/admin + `OrgSettingsWrite` (bit 35)
+
+Cross-tenant path org → `404 NOT_FOUND`.
+
+Platform default RPM: `IBEX_API_RATE_LIMIT_DEFAULT_RPM` (default `60`). Live `current_minute_requests` reads Redis key `ratelimit:{org_id}:rpm:{unix_minute}`; when Redis is unset/unavailable the field is `0`.
+
+After a successful `PATCH`, the API best-effort `PUBLISH`es `{"v":1,"org_id":"..."}` on `ratelimit_config_updates:{org_id}`. Publish failure does **not** roll back Postgres (30s proxy poll converges).
+
+### GET /v1/organizations/{org_id}/rate-limits
+
+**Response: 200 OK**
+
+```json
+{
+  "org_id": "550e8400-e29b-41d4-a716-446655440000",
+  "requests_per_minute": 120,
+  "source": "override",
+  "platform_default_rpm": 60,
+  "current_minute_requests": 3,
+  "agent_overrides": [
+    {
+      "agent_id": "550e8400-e29b-41d4-a716-446655440001",
+      "requests_per_minute": 30,
+      "source": "override"
+    }
+  ]
+}
+```
+
+### PATCH /v1/organizations/{org_id}/rate-limits
+
+```json
+{
+  "requests_per_minute": 120,
+  "clear_org_override": false,
+  "agent_overrides": [
+    { "agent_id": "550e8400-e29b-41d4-a716-446655440001", "requests_per_minute": 30 },
+    { "agent_id": "550e8400-e29b-41d4-a716-446655440002", "requests_per_minute": null }
+  ]
+}
+```
+
+- `requests_per_minute` — set org-level override (1..1_000_000); omit to leave unchanged
+- `clear_org_override: true` — delete org-level row (revert to platform default); cannot combine with `requests_per_minute`
+- `agent_overrides[].requests_per_minute: null` — clear that agent override
+
+**Response: 200 OK** — same shape as GET (effective limits after write).
 
 ---
 

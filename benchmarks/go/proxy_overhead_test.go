@@ -97,9 +97,12 @@ func newTestRateLimiter(tb testing.TB) ratelimit.Limiter {
 	mr := miniredis.RunT(tb)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	tb.Cleanup(func() { _ = client.Close() })
-	limiter, err := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
+	limiter, err := ratelimit.NewHierarchicalLimiter(client, ratelimit.HierarchicalConfig{
+		DefaultRPM: 1_000_000,
+		GlobalRPM:  1_000_000,
+	})
 	if err != nil {
-		tb.Fatalf("NewRedisSlider: %v", err)
+		tb.Fatalf("NewHierarchicalLimiter: %v", err)
 	}
 	return limiter
 }

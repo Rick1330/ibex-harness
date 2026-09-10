@@ -232,6 +232,9 @@ func (c Config) validateRateLimit() error {
 	if c.RateLimit.DefaultRPM < 1 {
 		return fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be positive")
 	}
+	if c.RateLimit.GlobalRPM < 1 {
+		return fmt.Errorf("IBEX_RATE_LIMIT_GLOBAL_RPM must be positive")
+	}
 	for orgID, rpm := range c.RateLimit.OrgOverrides {
 		if rpm < 1 {
 			return fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES org %s must have positive RPM", orgID)

@@ -143,3 +143,40 @@ func TestListenAddress(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestValidate_CredentialsMasterKey(t *testing.T) {
+	t.Parallel()
+	t.Run("production_requires_key", func(t *testing.T) {
+		t.Parallel()
+		cfg := validAuthConfig()
+		cfg.Environment = "production"
+		cfg.CredentialsMasterKey = ""
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected production master key error")
+		}
+	})
+	t.Run("development_allows_empty", func(t *testing.T) {
+		t.Parallel()
+		cfg := validAuthConfig()
+		cfg.CredentialsMasterKey = ""
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+	})
+	t.Run("rejects_invalid_base64", func(t *testing.T) {
+		t.Parallel()
+		cfg := validAuthConfig()
+		cfg.CredentialsMasterKey = "not-a-key"
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected invalid master key error")
+		}
+	})
+	t.Run("accepts_valid_key", func(t *testing.T) {
+		t.Parallel()
+		cfg := validAuthConfig()
+		cfg.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+	})
+}

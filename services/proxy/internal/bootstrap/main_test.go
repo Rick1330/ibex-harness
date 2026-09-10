@@ -34,19 +34,23 @@ func TestRun_InvalidConfigReturns1(t *testing.T) {
 	}
 }
 
-func TestRateLimitSliderConfig(t *testing.T) {
+func TestRateLimitHierarchicalConfig(t *testing.T) {
 	t.Parallel()
 	orgID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	otherOrg := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	cfg := config.Config{
 		RateLimit: config.RateLimitConfig{
 			DefaultRPM:   120,
+			GlobalRPM:    50000,
 			OrgOverrides: map[uuid.UUID]int{orgID: 30, otherOrg: 45},
 		},
 	}
-	got := rateLimitSliderConfig(cfg)
+	got := rateLimitHierarchicalConfig(cfg)
 	if got.DefaultRPM != 120 {
 		t.Fatalf("DefaultRPM = %d, want 120", got.DefaultRPM)
+	}
+	if got.GlobalRPM != 50000 {
+		t.Fatalf("GlobalRPM = %d, want 50000", got.GlobalRPM)
 	}
 	if got.OrgOverrides[orgID] != 30 {
 		t.Fatalf("org override = %d, want 30", got.OrgOverrides[orgID])
@@ -425,13 +429,81 @@ func TestUnit_StartDirectiveSubscriber_StartsForCachedResolver(t *testing.T) {
 	<-sub.Done()
 }
 
+func TestUnit_StartRateLimitConfigSubscriber_SkippedWithoutDeps(t *testing.T) {
+	t.Parallel()
+	log := logger.Discard("proxy")
+	sub, cancel, err := startRateLimitConfigSubscriber(nil, nil, ratelimit.Noop(), log)
+	assertRLWatcherSkipped(t, sub, cancel, err)
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	sub, cancel, err = startRateLimitConfigSubscriber(client, nil, ratelimit.Noop(), log)
+	assertRLWatcherSkipped(t, sub, cancel, err)
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sub, cancel, err = startRateLimitConfigSubscriber(client, db, ratelimit.Noop(), log)
+	assertRLWatcherSkipped(t, sub, cancel, err)
+}
+
+func assertRLWatcherSkipped(t *testing.T, sub *ratelimit.ConfigSubscriber, cancel context.CancelFunc, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("expected skip, got err=%v", err)
+	}
+	if sub != nil {
+		t.Fatalf("expected nil subscriber, got %v", sub)
+	}
+	if cancel != nil {
+		t.Fatal("expected nil cancel")
+	}
+}
+
+func TestUnit_StartRateLimitConfigSubscriber_StartsForHierarchical(t *testing.T) {
+	t.Parallel()
+	log := logger.Discard("proxy")
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	lim, err := ratelimit.NewHierarchicalLimiter(client, ratelimit.HierarchicalConfig{
+		DefaultRPM: 60, GlobalRPM: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sub, cancel, err := startRateLimitConfigSubscriber(client, db, lim, log)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sub == nil || cancel == nil {
+		t.Fatal("expected subscriber")
+	}
+	cancel()
+	sub.Stop()
+	<-sub.Done()
+}
+
 func TestUnit_StopPubSubSubscribers_NilSafe(t *testing.T) {
 	t.Parallel()
 	stopPubSubSubscribers(shutdownOpts{})
 	called := false
 	stopPubSubSubscribers(shutdownOpts{
-		revCancel: func() { called = true },
-		dirCancel: func() { called = true },
+		revCancel:      func() { called = true },
+		dirCancel:      func() { called = true },
+		rlConfigCancel: func() { called = true },
 	})
 	if !called {
 		t.Fatal("expected cancel hooks")

@@ -1084,6 +1084,49 @@ CREATE POLICY tokens_isolation ON ibex_core.tokens
     );
 
 -- ================================================================
+-- RATE LIMIT OVERRIDES (m4.B.2)
+-- Org- and agent-scoped RPM overrides for the proxy hierarchical limiter.
+-- agent_id NULL = org-level row (exactly one via partial unique index).
+-- ================================================================
+CREATE TABLE ibex_core.rate_limit_overrides (
+    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id               UUID NOT NULL
+                         REFERENCES ibex_core.organizations(id)
+                         ON DELETE CASCADE,
+    agent_id             UUID,
+    requests_per_minute  INTEGER NOT NULL
+                         CHECK (requests_per_minute >= 1),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT rate_limit_overrides_agent_unique UNIQUE (org_id, agent_id),
+    CONSTRAINT rate_limit_overrides_agent_org_fk
+        FOREIGN KEY (agent_id, org_id)
+        REFERENCES ibex_core.agents (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX rate_limit_overrides_org_level_uidx
+    ON ibex_core.rate_limit_overrides (org_id)
+    WHERE agent_id IS NULL;
+
+CREATE INDEX idx_rate_limit_overrides_org_id
+    ON ibex_core.rate_limit_overrides (org_id);
+
+ALTER TABLE ibex_core.rate_limit_overrides ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.rate_limit_overrides FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY rate_limit_overrides_isolation ON ibex_core.rate_limit_overrides
+    USING (
+        (
+            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+            AND org_id = current_setting('app.current_org_id', true)::UUID
+        )
+        OR current_setting('app.is_service_account', true) = 'true'
+    );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.rate_limit_overrides TO ibex_app;
+
+-- ================================================================
 -- MFA CHALLENGES
 -- Temporary MFA verification challenges
 -- ================================================================
@@ -2028,26 +2071,26 @@ Authentication:
   Value: "1"
   Use:   Token revocation (checked even if in bloom filter)
 
-Rate Limiting:
-  Key:   ratelimit:{org_id}:agent:{agent_id}:minute
+Rate Limiting (m4.B.1 hierarchical RPM; counters are fail-open):
+  Key:   ratelimit:{org_id}:rpm:{unix_minute}
   Type:  String (integer counter)
-  TTL:   60 seconds
-  Use:   Per-agent per-minute rate limit
+  TTL:   ~60 seconds
+  Use:   Per-org current-minute RPM counter (proxy Lua + Management API live read)
 
-  Key:   ratelimit:{org_id}:minute
+  Key:   ratelimit:{org_id}:agent:{agent_id}:rpm:{unix_minute}
   Type:  String (integer counter)
-  TTL:   60 seconds
-  Use:   Per-org per-minute rate limit
+  TTL:   ~60 seconds
+  Use:   Per-agent current-minute RPM counter
 
-  Key:   ratelimit:{org_id}:day
+  Key:   ratelimit:global:rpm:{unix_minute}
   Type:  String (integer counter)
-  TTL:   86400 seconds
-  Use:   Per-org daily limit
+  TTL:   ~60 seconds
+  Use:   Deployment-wide RPM ceiling
 
-  Key:   ratelimit:{org_id}:month_tokens
-  Type:  String (integer counter)
-  TTL:   Expires at end of billing month
-  Use:   Monthly token quota tracking
+  Channel: ratelimit_config_updates:{org_id}
+  Type:  Pub/Sub
+  Payload: {"v":1,"org_id":"<uuid>"}
+  Use:   Management API PATCH notifies proxy config subscriber (m4.B.2); 30s poll is backup
 
 Chat Idempotency (m2.1.6):
   Key:   idempotency:{org_id}:{key}

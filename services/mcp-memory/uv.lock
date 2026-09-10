@@ -50,8 +50,12 @@ wheels = [
 
 [[package]]
 name = "authclient"
-version = "0.1.0"
+version = "0.1.4"
 source = { directory = "../../packages/authclient" }
+
+[package.metadata]
+requires-dist = [{ name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.60,<2" }]
+provides-extras = ["grpc"]
 
 [[package]]
 name = "certifi"

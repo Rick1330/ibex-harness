@@ -23,6 +23,7 @@ const (
 	defaultTraceIDHeader          = "X-Trace-ID"
 	defaultMaxRequestBodyBytes    = 1 * 1024 * 1024
 	defaultRateLimitRPM           = 60
+	defaultRateLimitGlobalRPM     = 100_000
 	defaultShutdownTimeout        = 30 * time.Second
 	defaultLLMMode                = envLLMModeMock
 	defaultOpenAIBaseURL          = "https://api.openai.com/v1"
@@ -55,10 +56,11 @@ const (
 	envLLMModeLive = "live"
 )
 
-// RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
+// RateLimitConfig holds org-level and global rate limit settings (Phase 4.B.1).
 type RateLimitConfig struct {
 	DefaultRPM   int
 	OrgOverrides map[uuid.UUID]int
+	GlobalRPM    int
 }
 
 // AuthCacheConfig holds in-process bloom + LRU settings for token validation.
@@ -214,6 +216,9 @@ func (c *Config) applyContextClientDefaults() {
 func (c *Config) applyRateLimitDefaults() {
 	if c.RateLimit.DefaultRPM < 1 {
 		c.RateLimit.DefaultRPM = defaultRateLimitRPM
+	}
+	if c.RateLimit.GlobalRPM < 1 {
+		c.RateLimit.GlobalRPM = defaultRateLimitGlobalRPM
 	}
 	if c.RateLimit.OrgOverrides == nil {
 		c.RateLimit.OrgOverrides = map[uuid.UUID]int{}

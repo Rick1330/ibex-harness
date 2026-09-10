@@ -98,6 +98,31 @@ func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
 	}
 }
 
+// TestSecurity_SEC7_2b_TokenRevokePropagatesWithin5s is the 4.A.4 product exit gate:
+// AuthService.RevokeToken (the only path API DELETE /v1/tokens/{id} uses) must invalidate
+// proxy auth-cache within 5s. CI has no Python API process; HTTP DELETE is covered by API tests.
+func TestSecurity_SEC7_2b_TokenRevokePropagatesWithin5s(t *testing.T) {
+	env := setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60, withAuthCache: true})
+	p := newSec7TokenProbe(t, env, "sec7-m4a4-revoke")
+
+	requireProbeOKCached(t, p.opts, false)
+	requireProbeOKCached(t, p.opts, true)
+
+	start := time.Now()
+	p.revoke(t)
+	env.authFx.WaitPendingPublishes()
+	requireProbeUnauthorizedEventually(t, p.opts, p.plain, productSuspensionSLA)
+	elapsed := time.Since(start)
+	t.Logf(
+		"token_revoke_propagation_latency_ms=%d (limit_ms=%d)",
+		elapsed.Milliseconds(),
+		productSuspensionSLA.Milliseconds(),
+	)
+	if elapsed > productSuspensionSLA {
+		t.Fatalf("token revoke SLA exceeded: %v (limit %v)", elapsed, productSuspensionSLA)
+	}
+}
+
 // SEC7.3: IBEX_AUTH_CACHE_ENABLED without Redis must not wrap LRU (no stale allow).
 func TestSecurity_SEC7_3_AuthCacheEnabledWithoutRedisImmediateRevoke(t *testing.T) {
 	env := setupSecurityTestEnv(t, proxyServerOpts{

@@ -37,6 +37,11 @@ Python FastAPI management-plane service.
 | POST | `/v1/agents/{id}/activate` | owner/admin + `OrgSettingsWrite` | From paused/archived/suspended |
 | POST | `/v1/agents/{id}/pause` | owner/admin + `OrgSettingsWrite` | From active; proxy → `AGENT_SUSPENDED` |
 | POST | `/v1/agents/{id}/archive` | owner/admin + `OrgSettingsWrite` | From non-archived |
+| GET | `/v1/organizations/{id}/providers` | owner/admin + `OrgSettingsWrite` | List provider credential metadata |
+| POST | `/v1/organizations/{id}/providers` | owner/admin + `OrgSettingsWrite` | Upsert credential (validate then Auth seal) |
+| DELETE | `/v1/organizations/{id}/providers/{name}` | owner/admin + `OrgSettingsWrite` | Delete credential |
+| GET | `/v1/organizations/{id}/rate-limits` | Bearer (path org) | Effective RPM + live org counter |
+| PATCH | `/v1/organizations/{id}/rate-limits` | owner/admin + `OrgSettingsWrite` | Upsert/clear org/agent RPM; pub/sub invalidate |
 | GET | `/openapi.json` / `/docs` | no | FastAPI defaults |
 
 ## Environment
@@ -44,9 +49,10 @@ Python FastAPI management-plane service.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `IBEX_API_DATABASE_URL` | for ready/tenant | `postgresql+asyncpg://...` |
-| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | yes (default `127.0.0.1:8081`) | Auth ValidateToken/RevokeToken target |
+| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | yes (default `127.0.0.1:9091`) | Auth ValidateToken/RevokeToken gRPC target (Auth HTTP is `:8081`) |
 | `IBEX_API_AUTH_TIMEOUT_MS` | no | default 50 |
-| `IBEX_API_REDIS_URL` | for suspend SLA | Redis pub/sub for `ibex:token:revocations` |
+| `IBEX_API_REDIS_URL` | for suspend + rate-limit pub/sub | Redis for `org_suspend` and `ratelimit_config_updates:{org_id}`; optional for live RPM counters |
+| `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | no | Platform default org/agent RPM when no override row (default **60**) |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | Required for delete; missing/fail → 503, org not cancelled |
 | `IBEX_API_HOST` / `IBEX_API_PORT` | no | bind (default port **8010**) |
 | `IBEX_API_DOCS_BASE_URL` | no | error `docs_url` prefix |

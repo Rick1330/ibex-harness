@@ -12,10 +12,9 @@ import (
 var ErrNilClient = errors.New("ratelimit: nil redis client")
 
 // Limiter checks and enforces rate limits.
-// Phase 4 will add hierarchical Lua-based limits without changing callers.
 type Limiter interface {
 	// Check checks the rate limit for the given org and agent.
-	// agentID is reserved for Phase 4 agent-level limits; Phase 1 uses org-level only.
+	// A nil agentID skips the agent tier (org + global only).
 	// Returns Result and a non-nil error only for infrastructure failures (Redis down, etc.).
 	Check(ctx context.Context, orgID, agentID uuid.UUID) (Result, error)
 }
@@ -27,6 +26,9 @@ type Result struct {
 	Remaining  int
 	ResetUnix  int64
 	RetryAfter time.Duration
+	// DeniedTier is set when Allowed is false: "agent", "org", or "global".
+	// Empty when Allowed is true. Internal only — not exposed as an HTTP header.
+	DeniedTier string
 }
 
 type noopLimiter struct{}

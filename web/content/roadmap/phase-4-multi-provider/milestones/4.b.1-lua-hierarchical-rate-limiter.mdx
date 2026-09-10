@@ -1,8 +1,8 @@
 ---
 title: "4.B.1 Lua Hierarchical Rate Limiter"
-description: "Replace the non-atomic INCR+EXPIRE counter with a single atomic Redis Lua script that checks and decrements three nested budgets in one round trip: agent → org → global."
-summary: "Replace the non-atomic INCR+EXPIRE counter with a single atomic Redis Lua script that checks and decrements three nested budgets in one round trip: agent → org → global."
-status: "planned"
+description: "Atomic Redis Lua hierarchical RPM limiter: agent → org → global in one round trip behind the unchanged Limiter interface."
+summary: "Atomic Redis Lua hierarchical RPM limiter: agent → org → global in one round trip behind the unchanged Limiter interface."
+status: "completed"
 milestoneId: "4.B.1"
 track: "B"
 trackTitle: "Rate Limiting & Quota Enforcement"
@@ -15,13 +15,25 @@ fullTitle: "Milestone 4.B.1 — Lua-Based Atomic Hierarchical Rate Limiter"
 
 # Milestone 4.B.1 — Lua-Based Atomic Hierarchical Rate Limiter
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 3 days  
 **Track:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)
 
 ---
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Implementation diverged from the original sketch in these ways:
+
+  - **`month_tokens` deferred:** monthly token-spend ceiling and post-response decrement are **out of scope** for 4.B.1 (lifecycle mismatch: RPM is admit-time; tokens are known only after the provider responds). Tracked as [#806](https://github.com/Rick1330/ibex-harness/issues/806) (not 4.B.2 — config API is RPM-only). The sketch's own Lua sample and non-goals already omit tokens.
+  - **Phase 1 was already Lua-atomic:** `RedisSlider` used `incrExpireLua` before this milestone; 4.B.1 adds **hierarchy**, not first Lua.
+  - **Keep org Redis key** `ratelimit:{{org_id}}:rpm:{{unix_minute}}` unchanged; add agent and global keys alongside it.
+  - **`redis.NewScript` + `.Run()`** (EVALSHA with EVAL fallback) — do not hand-roll `SCRIPT LOAD` / SHA cache.
+  - **INCR-then-compare** (matching live `window.go`), not the sketch's GET-then-conditionally-INCR; `EXPIRE` only on first increment (90s).
+  - **Public HTTP contract unchanged**; `Result.DeniedTier` is internal only (no new response header).
+  - **Redis Cluster** not supported in this milestone — multi-key Lua without hash tags is not Cluster-slot-safe ([#803](https://github.com/Rick1330/ibex-harness/issues/803)).
+</Callout>
 
 <Callout type="note" title="Planning baseline">
   This page is a planning sketch, not an implementation script. Named paths, package layouts,
@@ -43,6 +55,7 @@ Rate limiting sits in the proxy's hot path and directly gates cost — it should
 - Rate-limit config API (Milestone 4.B.2)
 - Load benchmark (Milestone 4.B.3)
 - Per-user (as opposed to per-agent/per-org) rate limits
+- Monthly token-spend ceiling / post-response decrement (`month_tokens`) — deferred to [#806](https://github.com/Rick1330/ibex-harness/issues/806)
 
 ---
 
@@ -74,21 +87,55 @@ Rename freely to match the change that actually lands.
 
 ## The Lua Script (Atomic Three-Level Check)
 
+As shipped in `packages/ratelimit/hierarchical.go` (INCR-then-compare; EXPIRE only on first increment; rollback inner keys on deeper-tier deny):
+
 ```lua
--- KEYS[1] = agent key, KEYS[2] = org key, KEYS[3] = global key
--- ARGV[1] = agent_limit, ARGV[2] = org_limit, ARGV[3] = global_limit, ARGV[4] = window_seconds
-local agent_count = tonumber(redis.call('GET', KEYS[1]) or '0')
-local org_count = tonumber(redis.call('GET', KEYS[2]) or '0')
-local global_count = tonumber(redis.call('GET', KEYS[3]) or '0')
+-- KEYS[1]=agent (unused when disabled), KEYS[2]=org, KEYS[3]=global
+-- ARGV[1]=agent_limit, ARGV[2]=org_limit, ARGV[3]=global_limit, ARGV[4]=ttl_sec, ARGV[5]=agent_enabled ("0"|"1")
+-- Returns: {allowed (0|1), tier, org_count, org_limit}
+local agent_enabled = ARGV[5] == "1"
+local agent_limit = tonumber(ARGV[1])
+local org_limit = tonumber(ARGV[2])
+local global_limit = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
 
-if agent_count >= tonumber(ARGV[1]) then return {0, 'agent', agent_count} end
-if org_count >= tonumber(ARGV[2]) then return {0, 'org', org_count} end
-if global_count >= tonumber(ARGV[3]) then return {0, 'global', global_count} end
+local function incr_expire(key)
+  local n = redis.call("INCR", key)
+  if n == 1 then
+    redis.call("EXPIRE", key, ttl)
+  end
+  return n
+end
 
-redis.call('INCR', KEYS[1]); redis.call('EXPIRE', KEYS[1], ARGV[4])
-redis.call('INCR', KEYS[2]); redis.call('EXPIRE', KEYS[2], ARGV[4])
-redis.call('INCR', KEYS[3]); redis.call('EXPIRE', KEYS[3], ARGV[4])
-return {1, 'ok', agent_count + 1}
+local function org_get()
+  return tonumber(redis.call("GET", KEYS[2]) or "0")
+end
+
+if agent_enabled then
+  local agent_count = incr_expire(KEYS[1])
+  if agent_count > agent_limit then
+    return {0, "agent", org_get(), org_limit}
+  end
+end
+
+local org_count = incr_expire(KEYS[2])
+if org_count > org_limit then
+  if agent_enabled then
+    redis.call("DECR", KEYS[1])
+  end
+  return {0, "org", org_count, org_limit}
+end
+
+local global_count = incr_expire(KEYS[3])
+if global_count > global_limit then
+  if agent_enabled then
+    redis.call("DECR", KEYS[1])
+  end
+  redis.call("DECR", KEYS[2])
+  return {0, "global", org_count - 1, org_limit}
+end
+
+return {1, "", org_count, org_limit}
 ```
 
 ---
@@ -125,18 +172,19 @@ func (l *HierarchicalLuaLimiter) Allow(ctx context.Context, req RateLimitRequest
 
 3. **Fail-open on Redis error is preserved, unchanged** — rate limiting remains "cost control, not a security boundary" per ADR-0015. This redesign makes the *allowed* path atomic; it does not change the *degraded* path's philosophy.
 
-4. **Token-spend budgets, not just RPM**: add a fourth tier — `ratelimit:{org_id}:month_tokens` — checked in the same Lua script as a hard monthly token ceiling, decremented post-response (separate script, since token count isn't known until the provider responds). This is the first real building block for usage-based billing enforcement.
+4. **Token-spend budgets (`month_tokens`):** deferred — see [#806](https://github.com/Rick1330/ibex-harness/issues/806). RPM hierarchy only in this milestone.
 
 ---
 
-## Redis Key Namespace
+## Redis Key Namespace (as implemented)
 
 ```
-ratelimit:{org_id}:agent:{agent_id}:minute → per-agent RPM counter
-ratelimit:{org_id}:minute → per-org RPM counter
-ratelimit:global:minute → global RPM counter
-ratelimit:{org_id}:month_tokens → per-org monthly token ceiling
+ratelimit:{org_id}:agent:{agent_id}:rpm:{unix_minute} → per-agent RPM counter
+ratelimit:{org_id}:rpm:{unix_minute} → per-org RPM counter (unchanged from Phase 1)
+ratelimit:global:rpm:{unix_minute} → global RPM counter
 ```
+
+`month_tokens` keys are deferred ([#806](https://github.com/Rick1330/ibex-harness/issues/806)).
 
 ---
 
@@ -144,11 +192,11 @@ ratelimit:{org_id}:month_tokens → per-org monthly token ceiling
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Lua script loaded via `SCRIPT LOAD` at proxy startup; SHA cached; `EVALSHA`→`NOSCRIPT`→reload path unit-tested
-- [ ] `RateLimiter` interface signature **unchanged** — proxy handler code requires zero modification, only the constructor call at bootstrap swaps `RedisSlider` for `HierarchicalLuaLimiter`
-- [ ] Fail-open behavior on Redis outage verified unchanged via existing cross-tenant isolation test-style integration test
-- [ ] All three levels (`agent`, `org`, `global`) tested independently — tripping one does not affect the others' counters
-- [ ] Token-spend post-response decrement script written and unit-tested (functional correctness; load test is 4.B.3)
+- [x] Lua script via `redis.NewScript` + `.Run()` (EVALSHA→EVAL); hierarchical unit tests cover deny paths
+- [x] `Limiter.Check` signature **unchanged** — bootstrap swaps `RedisSlider` for `HierarchicalLimiter`
+- [x] Fail-open on Redis outage verified unchanged (SEC-4.6)
+- [x] All three levels (`agent`, `org`, `global`) tested independently
+- [ ] Token-spend post-response decrement — **deferred** (see sketch deviations)
 
 ## Prerequisites
 

@@ -42,6 +42,30 @@ func (m *mockAuthServiceClient) ListTokens(context.Context, *authv1.ListTokensRe
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthServiceClient) CreateProviderCredential(
+	context.Context, *authv1.CreateProviderCredentialRequest, ...grpc.CallOption,
+) (*authv1.CreateProviderCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) GetProviderCredential(
+	context.Context, *authv1.GetProviderCredentialRequest, ...grpc.CallOption,
+) (*authv1.GetProviderCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) DeleteProviderCredential(
+	context.Context, *authv1.DeleteProviderCredentialRequest, ...grpc.CallOption,
+) (*authv1.DeleteProviderCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) ListProviderCredentials(
+	context.Context, *authv1.ListProviderCredentialsRequest, ...grpc.CallOption,
+) (*authv1.ListProviderCredentialsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
 func assertWantError(t *testing.T, err, want error) {
 	t.Helper()
 	if !errors.Is(err, want) {
