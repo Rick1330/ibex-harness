@@ -2097,6 +2097,62 @@ A separate re-validate endpoint is deferred.
 
 ---
 
+## Rate Limits API (m4.B.2)
+
+Org- and agent-scoped **RPM** overrides for the proxy hierarchical limiter. Token-month ceilings are deferred ([#806](https://github.com/Rick1330/ibex-harness/issues/806)). There is **no** usage time-series endpoint in this milestone.
+
+**Authz:**
+- `GET` — any valid bearer for the path org (`require_token` + `assert_path_org`)
+- `PATCH` — owner/admin + `OrgSettingsWrite` (bit 35)
+
+Cross-tenant path org → `404 NOT_FOUND`.
+
+Platform default RPM: `IBEX_API_RATE_LIMIT_DEFAULT_RPM` (default `60`). Live `current_minute_requests` reads Redis key `ratelimit:{org_id}:rpm:{unix_minute}`; when Redis is unset/unavailable the field is `0`.
+
+After a successful `PATCH`, the API best-effort `PUBLISH`es `{"v":1,"org_id":"..."}` on `ratelimit_config_updates:{org_id}`. Publish failure does **not** roll back Postgres (30s proxy poll converges).
+
+### GET /v1/organizations/{org_id}/rate-limits
+
+**Response: 200 OK**
+
+```json
+{
+  "org_id": "550e8400-e29b-41d4-a716-446655440000",
+  "requests_per_minute": 120,
+  "source": "override",
+  "platform_default_rpm": 60,
+  "current_minute_requests": 3,
+  "agent_overrides": [
+    {
+      "agent_id": "550e8400-e29b-41d4-a716-446655440001",
+      "requests_per_minute": 30,
+      "source": "override"
+    }
+  ]
+}
+```
+
+### PATCH /v1/organizations/{org_id}/rate-limits
+
+```json
+{
+  "requests_per_minute": 120,
+  "clear_org_override": false,
+  "agent_overrides": [
+    { "agent_id": "550e8400-e29b-41d4-a716-446655440001", "requests_per_minute": 30 },
+    { "agent_id": "550e8400-e29b-41d4-a716-446655440002", "requests_per_minute": null }
+  ]
+}
+```
+
+- `requests_per_minute` — set org-level override (1..1_000_000); omit to leave unchanged
+- `clear_org_override: true` — delete org-level row (revert to platform default); cannot combine with `requests_per_minute`
+- `agent_overrides[].requests_per_minute: null` — clear that agent override
+
+**Response: 200 OK** — same shape as GET (effective limits after write).
+
+---
+
 ## Organizations API
 
 ### GET /v1/organizations/me
