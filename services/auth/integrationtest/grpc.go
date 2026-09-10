@@ -60,6 +60,37 @@ type authGRPCOpts struct {
 	validateLimiter ratelimit.KeyedLimiter
 }
 
+// StartAuthGRPCWithCredentials starts AuthService with envelope credential RPCs enabled.
+// masterKeyB64 must be standard base64 of 32 raw bytes (IBEX_CREDENTIALS_MASTER_KEY shape).
+func StartAuthGRPCWithCredentials(t testing.TB, dbDSN, masterKeyB64 string) *AuthGRPCFixture {
+	t.Helper()
+	db := testutil.OpenDB(t, dbDSN)
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
+	credRepo, err := repository.NewProviderCredentialsRepository(db, reg)
+	if err != nil {
+		t.Fatalf("NewProviderCredentialsRepository: %v", err)
+	}
+	credSvc, err := service.NewProviderCredentialService(credRepo, service.MasterKeyConfig{
+		Encoded: masterKeyB64, KeyID: "v1",
+	})
+	if err != nil {
+		t.Fatalf("NewProviderCredentialService: %v", err)
+	}
+	repo := repository.RequireTokensRepository(t, db, reg)
+	agentsRepo := repository.NewAgentsRepository(db, reg)
+	argon2 := token.DefaultArgon2Params()
+	return serveAuthFixture(t, authServeParts{
+		db: db, reg: reg,
+		validator: mustTokenValidator(t, repo, argon2),
+		tokenSvc: mustTokenService(t, tokenServiceParts{
+			repo: repo, agents: agentsRepo, users: repository.NewUsersRepository(db, reg),
+			argon2: argon2, publisher: revocation.NoopPublisher{},
+		}),
+		agentSvc: mustAgentService(t, agentsRepo),
+		credSvc:  credSvc,
+	})
+}
+
 func startAuthGRPC(t testing.TB, dbDSN string, opts authGRPCOpts) *AuthGRPCFixture {
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
@@ -86,6 +117,7 @@ type authServeParts struct {
 	tokenSvc        *service.TokenService
 	agentSvc        *service.AgentService
 	validateLimiter ratelimit.KeyedLimiter
+	credSvc         *service.ProviderCredentialService
 }
 
 func serveAuthFixture(t testing.TB, p authServeParts) *AuthGRPCFixture {
@@ -120,7 +152,7 @@ func newAuthGRPCServer(t testing.TB, p authServeParts) *grpc.Server {
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
 		Validator: p.validator, TokenService: p.tokenSvc, AgentService: p.agentSvc,
-		Metrics: p.reg, Log: logger.Discard("auth"),
+		CredService: p.credSvc, Metrics: p.reg, Log: logger.Discard("auth"),
 	})
 	if err != nil {
 		t.Fatalf("grpc server init: %v", err)

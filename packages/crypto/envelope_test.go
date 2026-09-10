@@ -28,6 +28,9 @@ func TestEnvelope_RoundTrip(t *testing.T) {
 	if len(sealed.Ciphertext) <= NonceSizeGCM || len(sealed.WrappedDEK) <= NonceSizeGCM {
 		t.Fatalf("blobs too short: ct=%d wrap=%d", len(sealed.Ciphertext), len(sealed.WrappedDEK))
 	}
+	if bytes.Equal(sealed.Ciphertext, plain) {
+		t.Fatal("ciphertext must not equal plaintext")
+	}
 	got, err := Open(mk, sealed)
 	if err != nil {
 		t.Fatalf("Open: %v", err)

@@ -128,3 +128,51 @@ func mustDeleteTwice(t *testing.T, repo *repository.ProviderCredentialsRepositor
 		t.Fatalf("after delete: %v", err)
 	}
 }
+
+// TestIntegration_ProviderCredentials_RLSBackstop proves Postgres RLS alone blocks
+// cross-org reads when the service-account GUC is unset (ibex_app + app.current_org_id).
+func TestIntegration_ProviderCredentials_RLSBackstop(t *testing.T) {
+	repo, db := setupProviderCredRepo(t)
+	orgA := testutil.SeedOrganization(t, db, "RLS Org A", "rls-a-"+uuid.NewString()[:8])
+	orgB := testutil.SeedOrganization(t, db, "RLS Org B", "rls-b-"+uuid.NewString()[:8])
+	mustUpsertActive(t, repo, orgA)
+
+	ctx := context.Background()
+	assertCredCountAsApp(t, ctx, db, "", 0)   // no org GUC → invisible
+	assertCredCountAsApp(t, ctx, db, orgB, 0) // other org → invisible
+	assertCredCountAsApp(t, ctx, db, orgA, 1) // owning org → visible
+}
+
+func assertCredCountAsApp(t *testing.T, ctx context.Context, db *sql.DB, orgID string, want int) {
+	t.Helper()
+	var count int
+	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
+		if orgID != "" {
+			if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
+				return err
+			}
+		}
+		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.provider_credentials`).Scan(&count)
+	})
+	if err != nil {
+		t.Fatalf("count org=%q: %v", orgID, err)
+	}
+	if count != want {
+		t.Fatalf("count org=%q: got %d want %d (RLS backstop)", orgID, count, want)
+	}
+}
+
+func withAppRole(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
