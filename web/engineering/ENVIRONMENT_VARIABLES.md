@@ -211,7 +211,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
 | `IBEX_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Default org RPM (also default agent RPM until 4.B.2) | |
-| `IBEX_RATE_LIMIT_GLOBAL_RPM` | No | `100000` | Process-wide global RPM ceiling | |
+| `IBEX_RATE_LIMIT_GLOBAL_RPM` | No | `100000` | Shared RPM ceiling across all proxy instances using the same Redis namespace/deployment | |
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs | |
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |

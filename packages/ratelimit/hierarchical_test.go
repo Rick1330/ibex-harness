@@ -60,107 +60,158 @@ func TestHierarchical_nilAgentSkipsAgentTier(t *testing.T) {
 	assertRedisInt(t, mr, globalKey, 1)
 }
 
-func TestHierarchical_agentTripIndependent(t *testing.T) {
+func TestHierarchical_tierTripsIndependent(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440102")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440202")
-	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
-		DefaultRPM:   2,
-		OrgOverrides: map[uuid.UUID]int64{org: 100},
-		GlobalRPM:    1000,
-	})
-	assertHierarchicalAllowed(t, lim, org, agent, true)
-	assertHierarchicalAllowed(t, lim, org, agent, true)
-	res := assertHierarchicalAllowed(t, lim, org, agent, false)
-	if res.DeniedTier != tierAgent {
-		t.Fatalf("DeniedTier=%q want agent", res.DeniedTier)
+	type counters struct{ agent, org, global int64 }
+	cases := []struct {
+		name      string
+		org       uuid.UUID
+		agent     uuid.UUID
+		cfg       HierarchicalConfig
+		wantTier  string
+		wantCount counters
+	}{
+		{
+			name:  "agent",
+			org:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440102"),
+			agent: uuid.MustParse("550e8400-e29b-41d4-a716-446655440202"),
+			cfg: HierarchicalConfig{
+				DefaultRPM: 2, OrgOverrides: map[uuid.UUID]int64{
+					uuid.MustParse("550e8400-e29b-41d4-a716-446655440102"): 100,
+				}, GlobalRPM: 1000,
+			},
+			wantTier:  tierAgent,
+			wantCount: counters{agent: 3, org: 2, global: 2},
+		},
+		{
+			name:  "org",
+			org:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440103"),
+			agent: uuid.MustParse("550e8400-e29b-41d4-a716-446655440203"),
+			cfg: HierarchicalConfig{
+				DefaultRPM: 100, OrgOverrides: map[uuid.UUID]int64{
+					uuid.MustParse("550e8400-e29b-41d4-a716-446655440103"): 2,
+				}, GlobalRPM: 1000,
+			},
+			wantTier:  tierOrg,
+			wantCount: counters{agent: 2, org: 3, global: 2},
+		},
+		{
+			name:      "global",
+			org:       uuid.MustParse("550e8400-e29b-41d4-a716-446655440104"),
+			agent:     uuid.MustParse("550e8400-e29b-41d4-a716-446655440204"),
+			cfg:       HierarchicalConfig{DefaultRPM: 100, GlobalRPM: 2},
+			wantTier:  tierGlobal,
+			wantCount: counters{agent: 2, org: 2, global: 3},
+		},
 	}
-	window := currentMinuteWindow(time.Now().UTC())
-	assertRedisInt(t, mr, agentRPMKey(org, agent, window.unixMinute), 3)
-	assertRedisInt(t, mr, orgRPMKey(org, window.unixMinute), 2)
-	assertRedisInt(t, mr, globalRPMKey(window.unixMinute), 2)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mr, lim := newTestHierarchicalMR(t, tc.cfg)
+			assertHierarchicalAllowed(t, lim, tc.org, tc.agent, true)
+			assertHierarchicalAllowed(t, lim, tc.org, tc.agent, true)
+			res := assertHierarchicalAllowed(t, lim, tc.org, tc.agent, false)
+			if res.DeniedTier != tc.wantTier {
+				t.Fatalf("DeniedTier=%q want %q", res.DeniedTier, tc.wantTier)
+			}
+			window := currentMinuteWindow(time.Now().UTC())
+			assertRedisInt(t, mr, agentRPMKey(tc.org, tc.agent, window.unixMinute), tc.wantCount.agent)
+			assertRedisInt(t, mr, orgRPMKey(tc.org, window.unixMinute), tc.wantCount.org)
+			assertRedisInt(t, mr, globalRPMKey(window.unixMinute), tc.wantCount.global)
+		})
+	}
 }
 
-func TestHierarchical_orgTripIndependent(t *testing.T) {
+func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440103")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440203")
+	orgA := uuid.MustParse("550e8400-e29b-41d4-a716-446655440130")
+	orgB := uuid.MustParse("550e8400-e29b-41d4-a716-446655440131")
+	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440230")
 	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
-		DefaultRPM:   100,
-		OrgOverrides: map[uuid.UUID]int64{org: 2},
-		GlobalRPM:    1000,
+		DefaultRPM: 100,
+		OrgOverrides: map[uuid.UUID]int64{
+			orgA: 2,
+			orgB: 100,
+		},
+		GlobalRPM: 10_000,
 	})
-	assertHierarchicalAllowed(t, lim, org, agent, true)
-	assertHierarchicalAllowed(t, lim, org, agent, true)
-	res := assertHierarchicalAllowed(t, lim, org, agent, false)
+	assertHierarchicalAllowed(t, lim, orgA, agent, true)
+	assertHierarchicalAllowed(t, lim, orgA, agent, true)
+	res := assertHierarchicalAllowed(t, lim, orgA, agent, false)
 	if res.DeniedTier != tierOrg {
 		t.Fatalf("DeniedTier=%q want org", res.DeniedTier)
 	}
+	assertHierarchicalAllowed(t, lim, orgB, agent, true)
 	window := currentMinuteWindow(time.Now().UTC())
-	assertRedisInt(t, mr, agentRPMKey(org, agent, window.unixMinute), 2) // rolled back on org deny
-	assertRedisInt(t, mr, orgRPMKey(org, window.unixMinute), 3)
-	assertRedisInt(t, mr, globalRPMKey(window.unixMinute), 2)
+	assertRedisInt(t, mr, agentRPMKey(orgA, agent, window.unixMinute), 2)
+	assertRedisInt(t, mr, orgRPMKey(orgA, window.unixMinute), 3)
+	assertRedisInt(t, mr, agentRPMKey(orgB, agent, window.unixMinute), 1)
+	assertRedisInt(t, mr, orgRPMKey(orgB, window.unixMinute), 1)
 }
 
-func TestHierarchical_globalTripIndependent(t *testing.T) {
+func TestHierarchical_ConcurrentBurst_tiers(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440104")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440204")
-	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
-		DefaultRPM: 100,
-		GlobalRPM:  2,
-	})
-	assertHierarchicalAllowed(t, lim, org, agent, true)
-	assertHierarchicalAllowed(t, lim, org, agent, true)
-	res := assertHierarchicalAllowed(t, lim, org, agent, false)
-	if res.DeniedTier != tierGlobal {
-		t.Fatalf("DeniedTier=%q want global", res.DeniedTier)
-	}
-	window := currentMinuteWindow(time.Now().UTC())
-	assertRedisInt(t, mr, agentRPMKey(org, agent, window.unixMinute), 2)
-	assertRedisInt(t, mr, orgRPMKey(org, window.unixMinute), 2)
-	assertRedisInt(t, mr, globalRPMKey(window.unixMinute), 3)
-}
-
-func TestHierarchical_ConcurrentBurst_orgTier(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440110")
 	const rpm = 20
-	lim := newTestHierarchical(t, HierarchicalConfig{
-		DefaultRPM:   10_000,
-		OrgOverrides: map[uuid.UUID]int64{org: rpm},
-		GlobalRPM:    10_000,
-	})
-	results := burstCheckHierarchical(t, lim, org, uuid.Nil, concurrentBurstWorkers)
-	allowed := countAllowed(results)
-	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-	assertSomeDenied(t, allowed, concurrentBurstWorkers)
-	if allowed != int(rpm) {
-		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
+	cases := []struct {
+		name     string
+		org      uuid.UUID
+		agent    uuid.UUID
+		cfg      HierarchicalConfig
+		wantTier string
+	}{
+		{
+			name: "org",
+			org:  uuid.MustParse("550e8400-e29b-41d4-a716-446655440110"),
+			cfg: HierarchicalConfig{
+				DefaultRPM: 10_000,
+				OrgOverrides: map[uuid.UUID]int64{
+					uuid.MustParse("550e8400-e29b-41d4-a716-446655440110"): rpm,
+				},
+				GlobalRPM: 10_000,
+			},
+		},
+		{
+			name:  "agent",
+			org:   uuid.MustParse("550e8400-e29b-41d4-a716-446655440111"),
+			agent: uuid.MustParse("550e8400-e29b-41d4-a716-446655440211"),
+			cfg: HierarchicalConfig{
+				DefaultRPM: rpm,
+				OrgOverrides: map[uuid.UUID]int64{
+					uuid.MustParse("550e8400-e29b-41d4-a716-446655440111"): 10_000,
+				},
+				GlobalRPM: 10_000,
+			},
+			wantTier: tierAgent,
+		},
+		{
+			name:     "global",
+			org:      uuid.MustParse("550e8400-e29b-41d4-a716-446655440112"),
+			cfg:      HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
+			wantTier: tierGlobal,
+		},
 	}
-}
-
-func TestHierarchical_ConcurrentBurst_agentTier(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440111")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440211")
-	const rpm = 20
-	lim := newTestHierarchical(t, HierarchicalConfig{
-		DefaultRPM:   rpm,
-		OrgOverrides: map[uuid.UUID]int64{org: 10_000},
-		GlobalRPM:    10_000,
-	})
-	results := burstCheckHierarchical(t, lim, org, agent, concurrentBurstWorkers)
-	allowed := countAllowed(results)
-	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-	assertSomeDenied(t, allowed, concurrentBurstWorkers)
-	if allowed != int(rpm) {
-		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
-	}
-	for _, r := range results {
-		if !r.Allowed && r.DeniedTier != tierAgent {
-			t.Fatalf("denied tier=%q want agent", r.DeniedTier)
-		}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lim := newTestHierarchical(t, tc.cfg)
+			results := burstCheckHierarchical(t, lim, tc.org, tc.agent, concurrentBurstWorkers)
+			allowed := countAllowed(results)
+			assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
+			assertSomeDenied(t, allowed, concurrentBurstWorkers)
+			if allowed != int(rpm) {
+				t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
+			}
+			if tc.wantTier == "" {
+				return
+			}
+			for _, r := range results {
+				if !r.Allowed && r.DeniedTier != tc.wantTier {
+					t.Fatalf("denied tier=%q want %q", r.DeniedTier, tc.wantTier)
+				}
+			}
+		})
 	}
 }
 
@@ -314,27 +365,5 @@ func TestUnit_asString_asInt64(t *testing.T) {
 	_, err = asInt64(struct{}{})
 	if err == nil {
 		t.Fatal("expected type error")
-	}
-}
-
-func TestHierarchical_ConcurrentBurst_globalTier(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440112")
-	const rpm = 20
-	lim := newTestHierarchical(t, HierarchicalConfig{
-		DefaultRPM: 10_000,
-		GlobalRPM:  rpm,
-	})
-	results := burstCheckHierarchical(t, lim, org, uuid.Nil, concurrentBurstWorkers)
-	allowed := countAllowed(results)
-	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-	assertSomeDenied(t, allowed, concurrentBurstWorkers)
-	if allowed != int(rpm) {
-		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
-	}
-	for _, r := range results {
-		if !r.Allowed && r.DeniedTier != tierGlobal {
-			t.Fatalf("denied tier=%q want global", r.DeniedTier)
-		}
 	}
 }

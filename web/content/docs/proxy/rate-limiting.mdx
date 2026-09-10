@@ -40,7 +40,8 @@ Implementation lives in `packages/ratelimit` (`HierarchicalLimiter`) — service
       name: "IBEX_RATE_LIMIT_GLOBAL_RPM",
       type: "integer",
       required: false,
-      description: "Process-wide global requests-per-minute ceiling shared across all orgs.",
+      description:
+        "Shared RPM ceiling across all proxy instances using the same Redis namespace/deployment (applies to all orgs).",
       defaultValue: "100000",
     },
     {
