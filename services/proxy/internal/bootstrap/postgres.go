@@ -10,6 +10,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -288,4 +289,56 @@ func startDirectiveSubscriber(
 		log.InfoCtx(context.Background(), "directive subscriber started", "pattern", directive.ChannelPattern)
 	}
 	return sub, cancel, nil
+}
+
+// startRateLimitConfigSubscriber reloads DB RPM overrides via pub/sub + 30s poll.
+// Skips (env-only limiter) when Redis, Postgres, or a HierarchicalLimiter is missing.
+func startRateLimitConfigSubscriber(
+	redisClient redis.UniversalClient,
+	pgDB *sql.DB,
+	limiter ratelimit.Limiter,
+	log *logger.Logger,
+) (*ratelimit.ConfigSubscriber, context.CancelFunc, error) {
+	if skip, reason := rateLimitWatcherSkipReason(redisClient, pgDB, limiter); skip {
+		if log != nil {
+			log.InfoCtx(context.Background(), "rate-limit config watcher skipped; env defaults only",
+				"reason", reason)
+		}
+		return nil, nil, nil
+	}
+	hier, _ := ratelimit.AsHierarchical(limiter)
+	store, err := ratelimit.NewConfigStore(pgDB)
+	if err != nil {
+		return nil, nil, err
+	}
+	sub, err := ratelimit.NewConfigSubscriber(ratelimit.ConfigSubscriberDeps{
+		Client: redisClient, Store: store, Applier: hier, Log: log,
+		PollEvery: ratelimit.DefaultConfigPollInterval,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
+	if log != nil {
+		log.InfoCtx(context.Background(), "rate-limit config subscriber started",
+			"pattern", ratelimit.ChannelPattern,
+			"poll", ratelimit.DefaultConfigPollInterval.String())
+	}
+	return sub, cancel, nil
+}
+
+func rateLimitWatcherSkipReason(
+	redisClient redis.UniversalClient, pgDB *sql.DB, limiter ratelimit.Limiter,
+) (skip bool, reason string) {
+	if redisClient == nil {
+		return true, "redis_missing"
+	}
+	if pgDB == nil {
+		return true, "postgres_missing"
+	}
+	if _, ok := ratelimit.AsHierarchical(limiter); !ok {
+		return true, "limiter_not_hierarchical"
+	}
+	return false, ""
 }

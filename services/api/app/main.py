@@ -28,6 +28,12 @@ from app.http_metrics import HTTPMetricsMiddleware
 from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.middleware.request_id import RequestIdMiddleware
 from app.probes import probe_router
+from app.rate_limit_publish import (
+    NoopRateLimitConfigPublisher,
+    RateLimitConfigPublisher,
+    RedisRateLimitConfigPublisher,
+    RedisRateLimitCounter,
+)
 from app.revocation_publish import (
     NoopOrgSuspendPublisher,
     OrgSuspendPublisher,
@@ -36,6 +42,7 @@ from app.revocation_publish import (
 from app.routers.agents import router as agents_router
 from app.routers.organizations import router as organizations_router
 from app.routers.providers import router as providers_router
+from app.routers.rate_limits import router as rate_limits_router
 from app.routers.tenant import router as tenant_router
 from app.routers.tokens import router as tokens_router
 from app.routers.users import router as users_router
@@ -52,6 +59,8 @@ class ApiRuntimeOverrides:
     token_manager: object | None = None
     provider_credential_manager: object | None = None
     org_suspend_publisher: OrgSuspendPublisher | None = None
+    rate_limit_config_publisher: RateLimitConfigPublisher | None = None
+    rate_limit_counter: RedisRateLimitCounter | None = None
     enqueue_org_deletion: Callable[[str, str], None] | None = None
 
 
@@ -67,6 +76,8 @@ class ApiAppState:
     token_manager: object | None = field(default=None, repr=False)
     provider_credential_manager: object | None = field(default=None, repr=False)
     org_suspend_publisher: OrgSuspendPublisher | None = field(default=None, repr=False)
+    rate_limit_config_publisher: RateLimitConfigPublisher | None = field(default=None, repr=False)
+    rate_limit_counter: RedisRateLimitCounter | None = field(default=None, repr=False)
     enqueue_org_deletion: Callable[[str, str], None] | None = field(default=None, repr=False)
 
 
@@ -84,6 +95,8 @@ def create_app(
         token_manager=hooks.token_manager,
         provider_credential_manager=hooks.provider_credential_manager,
         org_suspend_publisher=hooks.org_suspend_publisher,
+        rate_limit_config_publisher=hooks.rate_limit_config_publisher,
+        rate_limit_counter=hooks.rate_limit_counter,
         enqueue_org_deletion=hooks.enqueue_org_deletion,
     )
 
@@ -110,6 +123,7 @@ def create_app(
     application.include_router(agents_router)
     application.include_router(tokens_router)
     application.include_router(providers_router)
+    application.include_router(rate_limits_router)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(RequestIdMiddleware)
     return application
@@ -149,6 +163,14 @@ def _wire_runtime_defaults(state: ApiAppState, cfg: Settings) -> None:
             if cfg.redis_url
             else NoopOrgSuspendPublisher()
         )
+    if state.rate_limit_config_publisher is None:
+        state.rate_limit_config_publisher = (
+            RedisRateLimitConfigPublisher(cfg.redis_url)
+            if cfg.redis_url
+            else NoopRateLimitConfigPublisher()
+        )
+    if state.rate_limit_counter is None:
+        state.rate_limit_counter = RedisRateLimitCounter(cfg.redis_url)
     if state.enqueue_org_deletion is None:
         from app.services.organizations import unconfigured_org_deletion_enqueue
 
@@ -173,6 +195,12 @@ async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
     pub_close = getattr(state.org_suspend_publisher, "aclose", None)
     if pub_close is not None:
         await pub_close()
+    rl_pub_close = getattr(state.rate_limit_config_publisher, "aclose", None)
+    if rl_pub_close is not None:
+        await rl_pub_close()
+    rl_counter_close = getattr(state.rate_limit_counter, "aclose", None)
+    if rl_counter_close is not None:
+        await rl_counter_close()
     if state.engine is not None:
         await state.engine.dispose()
         logger.info("api service stopped request_id=%s", request_id_for_log())

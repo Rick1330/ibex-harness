@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     auth_grpc_addr: str = Field(
-        default="127.0.0.1:8081",
+        default="127.0.0.1:9091",
         validation_alias=AliasChoices("IBEX_AUTH_GRPC_ADDR", "IBEX_API_AUTH_GRPC_ADDR"),
         description="Auth service gRPC target for ValidateToken",
     )
@@ -33,7 +33,13 @@ class Settings(BaseSettings):
 
     redis_url: str | None = Field(
         default=None,
-        description="Redis URL for org_suspend pub/sub (optional; best-effort)",
+        description="Redis URL for org_suspend + rate-limit config pub/sub (optional; best-effort)",
+    )
+    rate_limit_default_rpm: int = Field(
+        default=60,
+        ge=1,
+        le=1_000_000,
+        description="Platform default org/agent RPM when no override row exists",
     )
     celery_broker_url: str | None = Field(
         default=None,

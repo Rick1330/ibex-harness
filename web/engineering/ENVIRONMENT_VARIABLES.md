@@ -210,9 +210,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
-| `IBEX_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Default org RPM (also default agent RPM until 4.B.2) | |
+| `IBEX_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Default org RPM (also default agent RPM when no per-agent DB override) | |
 | `IBEX_RATE_LIMIT_GLOBAL_RPM` | No | `100000` | Shared RPM ceiling across all proxy instances using the same Redis namespace/deployment | |
-| `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs | |
+| `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs (env seed; DB overrides from m4.B.2 win when present) | |
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](adr/ADR-0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
@@ -317,6 +317,18 @@ Used by: **auth** (`services/auth`)
 | `IBEX_CREDENTIALS_MASTER_KEY_ID` | No | `v1` | Logical KEK version stored with each sealed blob | Rotation metadata only |
 
 Auth stores ciphertext only. Management API validate-before-store then calls `CreateProviderCredential`; proxy resolves via `GetProviderCredential` with a 30s cache ([ADR-0074](/docs/adr/0074-provider-credential-storage)).
+
+### Management API (`services/api`)
+
+| Variable | Required | Default | Description | Security Notes |
+|----------|----------|---------|-------------|----------------|
+| `IBEX_API_DATABASE_URL` | for ready | (none) | Async Postgres DSN (`postgresql+asyncpg://...`) | Secret |
+| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
+| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
+| `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
+| `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
+| `IBEX_API_HOST` / `IBEX_API_PORT` | No | `127.0.0.1` / `8010` | Bind address | |
+| `IBEX_API_DOCS_BASE_URL` | No | `https://docs.ibexharness.com` | Error `docs_url` prefix | |
 
 ### JWT signing and verification
 

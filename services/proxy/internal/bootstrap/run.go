@@ -68,6 +68,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal, deps bootstrapDeps) int {
 		directiveResolver: core.directiveResolver,
 		revSub:            core.revSub, revCancel: core.revCancel,
 		dirSub: core.dirSub, dirCancel: core.dirCancel,
+		rlConfigSub: core.rlConfigSub, rlConfigCancel: core.rlConfigCancel,
 		checkpointPool: core.checkpointPool, sessionSweeper: core.sessionSweeper,
 		traceWriter: core.traceWriter,
 		signalCh:    signalCh,

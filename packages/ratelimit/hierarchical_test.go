@@ -418,3 +418,25 @@ func assertAsInt64(t *testing.T, in any, want int64) {
 		t.Fatalf("%T=%d want %d", in, n, want)
 	}
 }
+
+// BenchmarkHierarchical_ReplaceAllOverrides justifies building maps off-lock:
+// Check holds dbMu.RLock on every request; poll must not rebuild under Lock.
+func BenchmarkHierarchical_ReplaceAllOverrides(b *testing.B) {
+	limIface := newTestHierarchical(b, HierarchicalConfig{DefaultRPM: 60, GlobalRPM: 100_000})
+	lim, ok := AsHierarchical(limIface)
+	if !ok {
+		b.Fatal("expected HierarchicalLimiter")
+	}
+	all := make(map[uuid.UUID]OrgOverrideSet, 64)
+	for i := 0; i < 64; i++ {
+		org := uuid.New()
+		rpm := int64(10 + i)
+		agent := uuid.New()
+		all[org] = OrgOverrideSet{OrgRPM: &rpm, AgentRPM: map[uuid.UUID]int64{agent: rpm}}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lim.ReplaceAllOverrides(all)
+	}
+}
