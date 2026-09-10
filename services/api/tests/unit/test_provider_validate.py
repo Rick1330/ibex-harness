@@ -232,16 +232,28 @@ async def test_validate_deadline_exceeded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_validate_self_hosted_https_allowed() -> None:
+async def test_validate_self_hosted_https_loopback_allowed() -> None:
     client = _ok_client()
     await validate_provider_credential(
+        provider_name="vllm_self_hosted",
+        api_key="local",
+        base_url="https://127.0.0.1:8000/",
+        client=client,
+    )
+    args, _ = client.stream.call_args
+    assert args[1] == "https://127.0.0.1:8000/v1/models"
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_self_hosted_https_non_loopback() -> None:
+    client = AsyncMock()
+    await _expect_invalid(
         provider_name="vllm_self_hosted",
         api_key="local",
         base_url="https://llm.internal/",
         client=client,
     )
-    args, _ = client.stream.call_args
-    assert args[1] == "https://llm.internal/v1/models"
+    client.stream.assert_not_called()
 
 
 @pytest.mark.asyncio

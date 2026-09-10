@@ -53,10 +53,9 @@ async def _assert_azure_host(host: str) -> None:
 
 
 async def _assert_self_hosted_destination(scheme: str, host: str) -> None:
-    if scheme == "https":
-        return
-    if scheme != "http":
+    if scheme not in {"http", "https"}:
         raise _invalid()
+    # Both plaintext and TLS self-hosted probes are limited to literal loopback.
     literal = literal_ip(host)
     if literal is None or not literal.is_loopback:
         raise _invalid()
