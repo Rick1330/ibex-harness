@@ -52,6 +52,17 @@ class CreateTokenParams:
     agent_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _UnaryBytesCall[T]:
+    """Bundled unary RPC args (keeps dial helpers ≤4 parameters)."""
+
+    stub: Callable[..., Awaitable[object]]
+    payload: bytes
+    access_token: str
+    op: str
+    decode: Callable[[bytes], T]
+
+
 class TokenManager(Protocol):
     """Create / list / strict-revoke tokens via AuthService."""
 
@@ -121,11 +132,13 @@ class GRPCTokenManager:
             )
         )
         return await self._unary_bytes(
-            self._create,
-            payload,
-            access_token=params.access_token,
-            op="create",
-            decode=decode_create_token_response,
+            _UnaryBytesCall(
+                stub=self._create,
+                payload=payload,
+                access_token=params.access_token,
+                op="create",
+                decode=decode_create_token_response,
+            )
         )
 
     async def list(
@@ -138,11 +151,13 @@ class GRPCTokenManager:
     ) -> ListTokensWire:
         payload = encode_list_tokens_request(org_id=org_id, cursor=cursor, limit=limit)
         return await self._unary_bytes(
-            self._list,
-            payload,
-            access_token=access_token,
-            op="list",
-            decode=decode_list_tokens_response,
+            _UnaryBytesCall(
+                stub=self._list,
+                payload=payload,
+                access_token=access_token,
+                op="list",
+                decode=decode_list_tokens_response,
+            )
         )
 
     async def revoke_strict(
@@ -157,42 +172,33 @@ class GRPCTokenManager:
         payload = encode_revoke_token_request(
             org_id=org_id, token_id=token_id, reason=reason
         )
-        metadata = (("authorization", f"Bearer {access_token}"),)
-        try:
-            await self._revoke(payload, timeout=self._timeout, metadata=metadata)
-        except grpc.aio.AioRpcError as exc:
-            raise _map_management_rpc(exc, op="revoke") from exc
-        except OSError as exc:
-            logger.warning("auth revoke unavailable error_class=%s", type(exc).__name__)
-            raise AuthUnavailableError() from exc
+        await self._unary_bytes(
+            _UnaryBytesCall(
+                stub=self._revoke,
+                payload=payload,
+                access_token=access_token,
+                op="revoke",
+                decode=_decode_empty_revoke,
+            )
+        )
 
     async def aclose(self) -> None:
         await self._channel.close()
 
-    async def _unary_bytes[T](
-        self,
-        stub: Callable[..., Awaitable[object]],
-        payload: bytes,
-        *,
-        access_token: str,
-        op: str,
-        decode: Callable[[bytes], T],
-    ) -> T:
-        metadata = (("authorization", f"Bearer {access_token}"),)
+    async def _unary_bytes[T](self, call: _UnaryBytesCall[T]) -> T:
+        metadata = (("authorization", f"Bearer {call.access_token}"),)
         try:
-            raw = await stub(payload, timeout=self._timeout, metadata=metadata)
+            raw = await call.stub(
+                call.payload, timeout=self._timeout, metadata=metadata
+            )
         except grpc.aio.AioRpcError as exc:
-            raise _map_management_rpc(exc, op=op) from exc
+            raise _map_management_rpc(exc, op=call.op) from exc
         except OSError as exc:
-            logger.warning("auth %s unavailable error_class=%s", op, type(exc).__name__)
+            logger.warning(
+                "auth %s unavailable error_class=%s", call.op, type(exc).__name__
+            )
             raise AuthUnavailableError() from exc
-        try:
-            if not isinstance(raw, (bytes, bytearray)):
-                raise AuthCodecError(f"{op} response is not bytes")
-            return decode(bytes(raw))
-        except AuthCodecError as exc:
-            logger.warning("auth %s decode failed", op)
-            raise AuthUnavailableError() from exc
+        return _decode_unary_payload(call.op, call.decode, raw)
 
 
 class FakeTokenManager:
@@ -291,7 +297,33 @@ def _parse_offset_cursor(cursor: str) -> int:
     return offset
 
 
-def _map_management_rpc(exc: grpc.aio.AioRpcError, *, op: str) -> Exception:
+_ManagementRpcError = (
+    AuthFailedError
+    | TokenNotFoundError
+    | InsufficientPermissionsError
+    | AuthUnavailableError
+)
+
+
+def _decode_empty_revoke(raw: bytes) -> None:
+    del raw
+
+
+def _decode_unary_payload[T](
+    op: str, decode: Callable[[bytes], T], raw: object
+) -> T:
+    try:
+        if raw is None:
+            return decode(b"")
+        if not isinstance(raw, (bytes, bytearray)):
+            raise AuthCodecError(f"{op} response is not bytes")
+        return decode(bytes(raw))
+    except AuthCodecError as exc:
+        logger.warning("auth %s decode failed", op)
+        raise AuthUnavailableError() from exc
+
+
+def _map_management_rpc(exc: grpc.aio.AioRpcError, *, op: str) -> _ManagementRpcError:
     code = exc.code()
     if code == grpc.StatusCode.UNAUTHENTICATED:
         return AuthFailedError("invalid or revoked token")

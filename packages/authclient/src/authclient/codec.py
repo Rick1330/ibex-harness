@@ -187,19 +187,12 @@ def decode_create_token_response(payload: bytes) -> CreateTokenWire:
 
 
 def _finish_create_wire(state: _CreateDecodeState) -> CreateTokenWire:
-    if state.token_id is None:
-        raise AuthCodecError("create token response missing token_id")
-    if state.plaintext is None:
-        raise AuthCodecError("create token response missing plaintext")
-    if state.prefix is None:
-        raise AuthCodecError("create token response missing prefix")
-    if state.created_at is None:
-        raise AuthCodecError("create token response missing created_at")
+    ctx = "create token response"
     return CreateTokenWire(
-        token_id=state.token_id,
-        plaintext=state.plaintext,
-        prefix=state.prefix,
-        created_at=state.created_at,
+        token_id=_require_present(state.token_id, ctx, "token_id"),
+        plaintext=_require_present(state.plaintext, ctx, "plaintext"),
+        prefix=_require_present(state.prefix, ctx, "prefix"),
+        created_at=_require_present(state.created_at, ctx, "created_at"),
     )
 
 
@@ -447,24 +440,23 @@ def _apply_meta_varint(
 
 
 def _finish_meta_wire(state: _MetaDecodeState) -> TokenMetadataWire:
-    if state.token_id is None:
-        raise AuthCodecError("token metadata missing token_id")
-    if state.name is None:
-        raise AuthCodecError("token metadata missing name")
-    if state.prefix is None:
-        raise AuthCodecError("token metadata missing prefix")
-    if state.created_at is None:
-        raise AuthCodecError("token metadata missing created_at")
+    ctx = "token metadata"
     return TokenMetadataWire(
-        token_id=state.token_id,
-        name=state.name,
-        prefix=state.prefix,
+        token_id=_require_present(state.token_id, ctx, "token_id"),
+        name=_require_present(state.name, ctx, "name"),
+        prefix=_require_present(state.prefix, ctx, "prefix"),
         permissions=state.permissions,
-        created_at=state.created_at,
+        created_at=_require_present(state.created_at, ctx, "created_at"),
         expires_at=state.expires_at,
         revoked_at=state.revoked_at,
         is_revoked=state.is_revoked,
     )
+
+
+def _require_present[T](value: T | None, context: str, field: str) -> T:
+    if value is None:
+        raise AuthCodecError(f"{context} missing {field}")
+    return value
 
 
 def _decode_timestamp(raw: bytes) -> datetime:

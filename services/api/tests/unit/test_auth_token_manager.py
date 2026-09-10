@@ -8,7 +8,11 @@ from uuid import uuid4
 
 import grpc
 import pytest
-from authclient.errors import InsufficientPermissionsError, TokenNotFoundError
+from authclient.errors import (
+    AuthUnavailableError,
+    InsufficientPermissionsError,
+    TokenNotFoundError,
+)
 from authclient.tokens import (
     CreateTokenParams,
     FakeTokenManager,
@@ -44,54 +48,74 @@ async def test_fake_manager_offset_cursor_advances() -> None:
     assert page2.tokens[0].token_id != page1.tokens[0].token_id
 
 
+def _patched_manager(*, create=None, list_stub=None, revoke=None) -> GRPCTokenManager:
+    channel = MagicMock()
+    channel.unary_unary.side_effect = [
+        create or AsyncMock(),
+        list_stub or AsyncMock(),
+        revoke or AsyncMock(),
+    ]
+    with patch("authclient.tokens.grpc.aio.insecure_channel", return_value=channel):
+        return GRPCTokenManager("127.0.0.1:50051", timeout_seconds=0.05)
+
+
 @pytest.mark.asyncio
 async def test_grpc_token_manager_maps_create_permission_denied() -> None:
-    with patch("authclient.tokens.grpc.aio.insecure_channel") as chan_mock:
-        channel = MagicMock()
-        create_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED))
-        list_stub = AsyncMock()
-        revoke_stub = AsyncMock()
-        channel.unary_unary.side_effect = [create_stub, list_stub, revoke_stub]
-        chan_mock.return_value = channel
-        mgr = GRPCTokenManager("127.0.0.1:50051", timeout_seconds=0.05)
-        with pytest.raises(InsufficientPermissionsError):
-            await mgr.create(
-                CreateTokenParams(
-                    org_id=str(uuid4()),
-                    name="x",
-                    permissions=1,
-                    access_token="tok",
-                )
-            )
+    create_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED))
+    mgr = _patched_manager(create=create_stub)
+    params = CreateTokenParams(
+        org_id=str(uuid4()),
+        name="x",
+        permissions=1,
+        access_token="tok",
+    )
+    with pytest.raises(InsufficientPermissionsError):
+        await mgr.create(params)
 
 
 @pytest.mark.asyncio
 async def test_grpc_token_manager_strict_revoke_not_found() -> None:
-    with patch("authclient.tokens.grpc.aio.insecure_channel") as chan_mock:
-        channel = MagicMock()
-        create_stub = AsyncMock()
-        list_stub = AsyncMock()
-        revoke_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.NOT_FOUND))
-        channel.unary_unary.side_effect = [create_stub, list_stub, revoke_stub]
-        chan_mock.return_value = channel
-        mgr = GRPCTokenManager("127.0.0.1:50051", timeout_seconds=0.05)
-        with pytest.raises(TokenNotFoundError):
-            await mgr.revoke_strict(
-                org_id=str(uuid4()),
-                token_id=str(uuid4()),
-                access_token="tok",
-            )
+    revoke_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.NOT_FOUND))
+    mgr = _patched_manager(revoke=revoke_stub)
+    with pytest.raises(TokenNotFoundError):
+        await mgr.revoke_strict(
+            org_id=str(uuid4()),
+            token_id=str(uuid4()),
+            access_token="tok",
+        )
 
 
 @pytest.mark.asyncio
 async def test_grpc_token_manager_list_permission_denied_is_not_found() -> None:
-    with patch("authclient.tokens.grpc.aio.insecure_channel") as chan_mock:
-        channel = MagicMock()
-        create_stub = AsyncMock()
-        list_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED))
-        revoke_stub = AsyncMock()
-        channel.unary_unary.side_effect = [create_stub, list_stub, revoke_stub]
-        chan_mock.return_value = channel
-        mgr = GRPCTokenManager("127.0.0.1:50051", timeout_seconds=0.05)
-        with pytest.raises(TokenNotFoundError):
-            await mgr.list(org_id=str(uuid4()), access_token="tok")
+    list_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED))
+    mgr = _patched_manager(list_stub=list_stub)
+    with pytest.raises(TokenNotFoundError):
+        await mgr.list(org_id=str(uuid4()), access_token="tok")
+
+
+@pytest.mark.asyncio
+async def test_grpc_token_manager_oserror_is_unavailable() -> None:
+    create_stub = AsyncMock(side_effect=OSError("down"))
+    mgr = _patched_manager(create=create_stub)
+    params = CreateTokenParams(
+        org_id=str(uuid4()),
+        name="x",
+        permissions=1,
+        access_token="tok",
+    )
+    with pytest.raises(AuthUnavailableError):
+        await mgr.create(params)
+
+
+@pytest.mark.asyncio
+async def test_grpc_token_manager_non_bytes_response_is_unavailable() -> None:
+    create_stub = AsyncMock(return_value="not-bytes")
+    mgr = _patched_manager(create=create_stub)
+    params = CreateTokenParams(
+        org_id=str(uuid4()),
+        name="x",
+        permissions=1,
+        access_token="tok",
+    )
+    with pytest.raises(AuthUnavailableError):
+        await mgr.create(params)

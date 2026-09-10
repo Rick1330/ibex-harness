@@ -31,7 +31,7 @@ from app.permissions_codec import bitmap_to_strings, strings_to_bitmap
 from app.schemas.tokens import TokenCreateRequest, TokenCreateResponse, TokenResponse
 from app.services import agents as agent_service
 
-TOKEN_NOT_FOUND_MSG = "Token not found"
+TOKEN_NOT_FOUND_MSG = "Token not found"  # nosec B105 — user-facing error text, not a credential
 _GET_BY_ID_DEADLINE_S = 5.0
 _GET_BY_ID_PAGE_SIZE = 100
 
@@ -149,22 +149,26 @@ async def _list_page(access: TokenAccess, *, cursor: str, limit: int) -> ListTok
 
 
 async def get_token(access: TokenAccess, token_id: UUID) -> TokenResponse:
-    needle = str(token_id)
+    row = await _scan_token_meta(access, str(token_id))
+    if row is None:
+        raise ApiError(code=NOT_FOUND, message=TOKEN_NOT_FOUND_MSG)
+    return _meta_to_response(row)
+
+
+async def _scan_token_meta(access: TokenAccess, needle: str) -> TokenMetadataWire | None:
     cursor = ""
     seen: set[str] = set()
     deadline = time.monotonic() + _GET_BY_ID_DEADLINE_S
-    while time.monotonic() < deadline:
-        if cursor in seen:
-            break
+    while time.monotonic() < deadline and cursor not in seen:
         seen.add(cursor)
         page = await _list_page(access, cursor=cursor, limit=_GET_BY_ID_PAGE_SIZE)
         for row in page.tokens:
             if row.token_id == needle:
-                return _meta_to_response(row)
+                return row
         if not page.next_cursor:
-            break
+            return None
         cursor = page.next_cursor
-    raise ApiError(code=NOT_FOUND, message=TOKEN_NOT_FOUND_MSG)
+    return None
 
 
 async def revoke_token(access: TokenAccess, token_id: UUID) -> None:

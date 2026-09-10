@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+from authclient.permissions import ADMIN
+
+from app.auth.client import ValidateResult
 from app.pagination import CursorPage, PaginationMeta
 from app.schemas.agents import AgentResponse
 from tests.unit.org_user_test_support import (
@@ -134,3 +137,38 @@ def test_soft_provider_validation_on_create() -> None:
         )
         assert resp.status_code == 400
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_optional_user_uuid_parsing() -> None:
+    from app.routers.agents import _optional_user_uuid
+
+    assert _optional_user_uuid(None) is None
+    assert _optional_user_uuid("") is None
+    assert _optional_user_uuid("not-a-uuid") is None
+    uid = uuid4()
+    assert _optional_user_uuid(str(uid)) == uid
+
+
+def test_create_agent_tolerates_invalid_user_id() -> None:
+    org_id = uuid4()
+    agent = _agent_response(org_id=org_id)
+    create_fake = AsyncMock(return_value=agent)
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            result=ValidateResult(
+                org_id=org_id,
+                permissions=ADMIN,
+                user_id="not-a-uuid",
+            ),
+        ),
+        "app.routers.agents.agent_service.create_agent",
+        create_fake,
+    ) as (client, _res, _pub):
+        created = client.post(
+            "/v1/agents",
+            headers=bearer_headers(),
+            json={"name": "Support", "slug": "support"},
+        )
+        assert created.status_code == 201
+        assert create_fake.await_args.args[1].created_by is None

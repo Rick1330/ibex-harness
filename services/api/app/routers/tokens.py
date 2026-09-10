@@ -38,7 +38,7 @@ class _TokenCtx:
     session: AsyncSession
 
 
-async def _token_ctx(
+def _token_ctx(
     request: Request,
     token: Annotated[ValidateResult, Depends(require_token)],
     access_token: Annotated[str, Depends(_bearer_token)],
