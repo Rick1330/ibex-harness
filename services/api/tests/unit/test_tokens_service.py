@@ -144,7 +144,31 @@ async def test_get_token_paginates_until_match() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_token_stops_on_cursor_cycle() -> None:
+async def test_get_token_complete_miss_is_not_found() -> None:
+    org = uuid4()
+    mgr = FakeTokenManager()
+    mgr.seed(
+        str(org),
+        TokenMetadataWire(
+            token_id=str(uuid4()),
+            name="other",
+            prefix="p",
+            permissions=MEMORY_READ,
+            created_at=datetime.now(UTC),
+        ),
+    )
+    access = TokenAccess(
+        token=ValidateResult(org_id=org, permissions=ADMIN, user_id=str(uuid4())),
+        access_token="secret",
+        manager=mgr,
+    )
+    with pytest.raises(ApiError) as raised:
+        await get_token(access, uuid4())
+    assert raised.value.code == NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_get_token_cursor_cycle_is_auth_unavailable() -> None:
     org = uuid4()
     mgr = FakeTokenManager()
 
@@ -171,11 +195,11 @@ async def test_get_token_stops_on_cursor_cycle() -> None:
     )
     with pytest.raises(ApiError) as raised:
         await get_token(access, uuid4())
-    assert raised.value.code == NOT_FOUND
+    assert raised.value.code == AUTH_UNAVAILABLE
 
 
 @pytest.mark.asyncio
-async def test_get_token_deadline_exhausted() -> None:
+async def test_get_token_deadline_exhausted_is_auth_unavailable() -> None:
     org = uuid4()
     mgr = FakeTokenManager()
     calls = {"n": 0}
@@ -199,7 +223,7 @@ async def test_get_token_deadline_exhausted() -> None:
         pytest.raises(ApiError) as raised,
     ):
         await get_token(access, uuid4())
-    assert raised.value.code == NOT_FOUND
+    assert raised.value.code == AUTH_UNAVAILABLE
 
 
 @pytest.mark.asyncio

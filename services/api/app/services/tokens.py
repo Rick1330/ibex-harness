@@ -156,6 +156,11 @@ async def get_token(access: TokenAccess, token_id: UUID) -> TokenResponse:
 
 
 async def _scan_token_meta(access: TokenAccess, needle: str) -> TokenMetadataWire | None:
+    """Return matching metadata, or None only after a fully exhausted list.
+
+    Deadline expiry or a repeated cursor means the scan did not finish; those
+    map to AUTH_UNAVAILABLE rather than a definitive NOT_FOUND.
+    """
     cursor = ""
     seen: set[str] = set()
     deadline = time.monotonic() + _GET_BY_ID_DEADLINE_S
@@ -168,7 +173,7 @@ async def _scan_token_meta(access: TokenAccess, needle: str) -> TokenMetadataWir
         if not page.next_cursor:
             return None
         cursor = page.next_cursor
-    return None
+    raise ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable")
 
 
 async def revoke_token(access: TokenAccess, token_id: UUID) -> None:
