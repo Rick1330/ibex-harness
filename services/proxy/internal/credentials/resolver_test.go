@@ -162,24 +162,32 @@ func TestUnit_CachedResolver_EvictsWhenFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.SetMaxCacheForTest(2)
-	inputs := make([]credentials.ResolveInput, 3)
-	for i := 0; i < 3; i++ {
-		inputs[i] = credentials.ResolveInput{
-			OrgID: "org", ProviderName: "p" + string(rune('a'+i)), AccessToken: "t",
-		}
-		if _, err := r.Resolve(context.Background(), inputs[i]); err != nil {
-			t.Fatal(err)
-		}
-	}
+	inputs := evictionInputs()
+	mustResolveAll(t, r, inputs)
 	if fake.calls != 3 {
 		t.Fatalf("calls=%d", fake.calls)
 	}
+	mustResolveAll(t, r, inputs)
+	if fake.calls <= 3 {
+		t.Fatalf("expected eviction refetch calls>3, got %d", fake.calls)
+	}
+}
+
+func evictionInputs() []credentials.ResolveInput {
+	out := make([]credentials.ResolveInput, 3)
+	for i := range out {
+		out[i] = credentials.ResolveInput{
+			OrgID: "org", ProviderName: "p" + string(rune('a'+i)), AccessToken: "t",
+		}
+	}
+	return out
+}
+
+func mustResolveAll(t *testing.T, r *credentials.CachedResolver, inputs []credentials.ResolveInput) {
+	t.Helper()
 	for _, in := range inputs {
 		if _, err := r.Resolve(context.Background(), in); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if fake.calls <= 3 {
-		t.Fatalf("expected eviction refetch calls>3, got %d", fake.calls)
 	}
 }

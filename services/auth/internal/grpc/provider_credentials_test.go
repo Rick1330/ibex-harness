@@ -105,25 +105,39 @@ func TestUnit_CreateProviderCredential_HappyPath(t *testing.T) {
 	t.Parallel()
 	org := uuid.NewString()
 	validated := time.Now().UTC().Truncate(time.Second)
-	fake := &fakeCredAPI{
-		createFn: func(_ context.Context, in service.CreateInput) (service.ProviderCredentialMetadata, error) {
-			if in.OrgID != org || in.ProviderName != "openai" || in.APIKey != "sk-live" {
-				t.Fatalf("input=%+v", in)
-			}
-			return service.ProviderCredentialMetadata{
-				ProviderName: "openai", Status: "active", KeyHint: "live",
-				BaseURL: in.BaseURL, EncryptionKeyID: "v1", LastValidatedAt: &validated,
-			}, nil
-		},
-	}
+	fake := &fakeCredAPI{createFn: happyCreateFn(t, org, validated)}
 	resp, err := newCredServer(t, fake).CreateProviderCredential(settingsWriteCtx(org), &authv1.CreateProviderCredentialRequest{
 		OrgId: org, ProviderName: "openai", ApiKey: "sk-live", BaseUrl: "https://example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.GetProviderName() != "openai" || resp.GetKeyHint() != "live" || resp.GetBaseUrl() != "https://example.com" {
-		t.Fatalf("resp=%+v", resp)
+	assertCreateCredResponse(t, resp, validated)
+}
+
+func happyCreateFn(t *testing.T, org string, validated time.Time) func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error) {
+	t.Helper()
+	return func(_ context.Context, in service.CreateInput) (service.ProviderCredentialMetadata, error) {
+		if in.OrgID != org || in.ProviderName != "openai" || in.APIKey != "sk-live" {
+			t.Fatalf("input=%+v", in)
+		}
+		return service.ProviderCredentialMetadata{
+			ProviderName: "openai", Status: "active", KeyHint: "live",
+			BaseURL: in.BaseURL, EncryptionKeyID: "v1", LastValidatedAt: &validated,
+		}, nil
+	}
+}
+
+func assertCreateCredResponse(t *testing.T, resp *authv1.CreateProviderCredentialResponse, validated time.Time) {
+	t.Helper()
+	if resp.GetProviderName() != "openai" {
+		t.Fatalf("provider=%q", resp.GetProviderName())
+	}
+	if resp.GetKeyHint() != "live" {
+		t.Fatalf("hint=%q", resp.GetKeyHint())
+	}
+	if resp.GetBaseUrl() != "https://example.com" {
+		t.Fatalf("base=%q", resp.GetBaseUrl())
 	}
 	if resp.GetLastValidatedAt() == nil || !resp.GetLastValidatedAt().AsTime().Equal(validated) {
 		t.Fatalf("last_validated_at=%v", resp.GetLastValidatedAt())

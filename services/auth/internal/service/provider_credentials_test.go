@@ -122,8 +122,17 @@ func assertMetaHint(t *testing.T, meta service.ProviderCredentialMetadata, hint 
 func assertGetKey(t *testing.T, svc *service.ProviderCredentialService, org, provider, key, base string) {
 	t.Helper()
 	got, err := svc.Get(context.Background(), service.OrgProviderRef{OrgID: org, ProviderName: provider})
-	if err != nil || got.IsPlatformDefault || got.APIKey != key || got.BaseURL != base {
-		t.Fatalf("got=%+v err=%v", got, err)
+	if err != nil {
+		t.Fatalf("get err=%v", err)
+	}
+	if got.IsPlatformDefault {
+		t.Fatal("expected BYO credential")
+	}
+	if got.APIKey != key {
+		t.Fatalf("APIKey=%q want %q", got.APIKey, key)
+	}
+	if got.BaseURL != base {
+		t.Fatalf("BaseURL=%q want %q", got.BaseURL, base)
 	}
 }
 

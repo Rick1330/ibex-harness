@@ -189,7 +189,7 @@ async def test_validate_rejects_blocked_literal_ip_for_custom_https() -> None:
 @pytest.mark.asyncio
 async def test_validate_rejects_dns_failure_for_custom_host() -> None:
     with patch(
-        "app.services.provider_validate_dest.resolved_addrs",
+        "app.services.provider_validate_net.resolved_addrs",
         new=AsyncMock(return_value=[]),
     ):
         await _expect_invalid(
@@ -205,7 +205,7 @@ async def test_validate_rejects_private_resolved_host() -> None:
     import ipaddress
 
     with patch(
-        "app.services.provider_validate_dest.resolved_addrs",
+        "app.services.provider_validate_net.resolved_addrs",
         new=AsyncMock(return_value=[ipaddress.ip_address("10.1.2.3")]),
     ):
         await _expect_invalid(
@@ -277,7 +277,7 @@ async def test_dest_self_hosted_rejects_non_http_scheme() -> None:
 
 @pytest.mark.asyncio
 async def test_dest_public_literal_ip_allowed() -> None:
-    from app.services.provider_validate_dest import assert_public_resolved_host
+    from app.services.provider_validate_net import assert_public_resolved_host
 
     await assert_public_resolved_host("8.8.8.8")
 
@@ -287,27 +287,27 @@ async def test_dest_resolved_addrs_gaierror_and_public() -> None:
     import ipaddress
     import socket
 
-    from app.services import provider_validate_dest as dest
+    from app.services import provider_validate_net as net
 
     with patch(
-        "app.services.provider_validate_dest.socket.getaddrinfo",
+        "app.services.provider_validate_net.socket.getaddrinfo",
         side_effect=socket.gaierror(1, "fail"),
     ):
-        assert await dest.resolved_addrs("missing.example") == []
+        assert await net.resolved_addrs("missing.example") == []
 
     with patch(
-        "app.services.provider_validate_dest.socket.getaddrinfo",
+        "app.services.provider_validate_net.socket.getaddrinfo",
         return_value=[
             (0, 0, 0, "", ("8.8.4.4", 0)),
             (0, 0, 0, "", ()),  # IndexError path
             (0, 0, 0, "", ("not-an-ip", 0)),  # ValueError path
         ],
     ):
-        addrs = await dest.resolved_addrs("ok.example")
+        addrs = await net.resolved_addrs("ok.example")
     assert addrs == [ipaddress.ip_address("8.8.4.4")]
 
     with patch(
-        "app.services.provider_validate_dest.resolved_addrs",
+        "app.services.provider_validate_net.resolved_addrs",
         new=AsyncMock(return_value=[ipaddress.ip_address("8.8.4.4")]),
     ):
-        await dest.assert_public_resolved_host("ok.example")
+        await net.assert_public_resolved_host("ok.example")

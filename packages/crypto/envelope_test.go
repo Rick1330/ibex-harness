@@ -160,18 +160,22 @@ func TestOpen_ShortBlobsAndBadDEKLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	shortCases := []SealedBlob{
-		{Ciphertext: []byte("short"), WrappedDEK: sealed.WrappedDEK, KeyID: "v1"},
-		{Ciphertext: sealed.Ciphertext, WrappedDEK: []byte("short"), KeyID: "v1"},
-		{Ciphertext: make([]byte, NonceSizeGCM), WrappedDEK: sealed.WrappedDEK, KeyID: "v1"},
-	}
-	for i, blob := range shortCases {
-		if _, err := Open(mk, blob); !errors.Is(err, ErrInvalidSealedBlob) && !errors.Is(err, ErrOpenFailed) {
-			t.Fatalf("case %d: err=%v", i, err)
-		}
-	}
+	assertOpenRejects(t, mk, SealedBlob{Ciphertext: []byte("short"), WrappedDEK: sealed.WrappedDEK, KeyID: "v1"})
+	assertOpenRejects(t, mk, SealedBlob{Ciphertext: sealed.Ciphertext, WrappedDEK: []byte("short"), KeyID: "v1"})
+	assertOpenRejects(t, mk, SealedBlob{Ciphertext: make([]byte, NonceSizeGCM), WrappedDEK: sealed.WrappedDEK, KeyID: "v1"})
+	assertBadDEKLength(t, mk, sealed)
+	assertGCMHelpers(t, mk)
+}
 
-	// Valid GCM unwrap of a non-32-byte DEK payload yields ErrInvalidSealedBlob.
+func assertOpenRejects(t *testing.T, mk MasterKey, blob SealedBlob) {
+	t.Helper()
+	if _, err := Open(mk, blob); !errors.Is(err, ErrInvalidSealedBlob) && !errors.Is(err, ErrOpenFailed) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func assertBadDEKLength(t *testing.T, mk MasterKey, sealed SealedBlob) {
+	t.Helper()
 	shortDEK := []byte("not-32-bytes----------------") // 28 bytes
 	wrappedShort, err := gcmSeal(mk[:], shortDEK)
 	if err != nil {
@@ -182,7 +186,10 @@ func TestOpen_ShortBlobsAndBadDEKLength(t *testing.T) {
 	}); !errors.Is(err, ErrInvalidSealedBlob) {
 		t.Fatalf("bad dek length: %v", err)
 	}
+}
 
+func assertGCMHelpers(t *testing.T, mk MasterKey) {
+	t.Helper()
 	if _, err := gcmOpen(mk[:], []byte("tiny")); !errors.Is(err, ErrInvalidSealedBlob) {
 		t.Fatalf("gcmOpen short: %v", err)
 	}

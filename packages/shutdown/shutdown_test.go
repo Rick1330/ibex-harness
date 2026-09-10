@@ -162,17 +162,43 @@ func TestGracefulStopGRPC_completesWhenIdle(t *testing.T) {
 
 func TestGracefulStopGRPC_returnsAfterDeadlineWithBlockingRPC(t *testing.T) {
 	t.Parallel()
+	lis := mustListenLocal(t)
+	entered, release, srv := startHangServer(t, lis)
+	conn := mustDialInsecure(t, lis.Addr().String())
+	go func() {
+		_ = conn.Invoke(context.Background(), "/shutdown.test.Hang/Block", &emptypb.Empty{}, &emptypb.Empty{})
+	}()
+	waitEntered(t, entered)
+	assertForcedStopWithin(t, srv, 50*time.Millisecond, 500*time.Millisecond)
+	closeRelease(release)
+}
 
+func mustListenLocal(t *testing.T) net.Listener {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = lis.Close() })
+	return lis
+}
 
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	srv := grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection
-	srv.RegisterService(&grpc.ServiceDesc{
+func startHangServer(t *testing.T, lis net.Listener) (entered, release chan struct{}, srv *grpc.Server) {
+	t.Helper()
+	entered = make(chan struct{})
+	release = make(chan struct{})
+	srv = grpc.NewServer() // nosemgrep: go.grpc.security.grpc-server-insecure-connection
+	srv.RegisterService(hangServiceDesc(entered, release), hangImpl{})
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() {
+		closeRelease(release)
+		srv.Stop()
+	})
+	return entered, release, srv
+}
+
+func hangServiceDesc(entered, release chan struct{}) *grpc.ServiceDesc {
+	return &grpc.ServiceDesc{
 		ServiceName: "shutdown.test.Hang",
 		HandlerType: (*hangServer)(nil),
 		Methods: []grpc.MethodDesc{{
@@ -183,53 +209,51 @@ func TestGracefulStopGRPC_returnsAfterDeadlineWithBlockingRPC(t *testing.T) {
 					return nil, err
 				}
 				close(entered)
-				// Ignore RPC context cancellation to simulate a stuck handler.
-				<-release
+				<-release // ignore RPC context cancellation
 				return &emptypb.Empty{}, nil
 			},
 		}},
-	}, hangImpl{})
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(func() {
-		select {
-		case <-release:
-		default:
-			close(release)
-		}
-		srv.Stop()
-	})
+	}
+}
 
+func mustDialInsecure(t *testing.T, addr string) *grpc.ClientConn {
+	t.Helper()
 	conn, err := grpc.NewClient(
-		lis.Addr().String(),
+		addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()), // nosemgrep: go.grpc.security.grpc-client-insecure-connection
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- conn.Invoke(context.Background(), "/shutdown.test.Hang/Block", &emptypb.Empty{}, &emptypb.Empty{})
-	}()
+func waitEntered(t *testing.T, entered <-chan struct{}) {
+	t.Helper()
 	select {
 	case <-entered:
 	case <-time.After(2 * time.Second):
 		t.Fatal("blocking RPC never entered handler")
 	}
+}
 
-	deadline, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+func assertForcedStopWithin(t *testing.T, srv *grpc.Server, deadline, maxElapsed time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	started := time.Now()
-	err = GracefulStopGRPC(srv, deadline)
+	err := GracefulStopGRPC(srv, ctx)
 	elapsed := time.Since(started)
 	if err == nil {
 		t.Fatal("expected deadline error")
 	}
-	if elapsed > 500*time.Millisecond {
+	if elapsed > maxElapsed {
 		t.Fatalf("shutdown waited too long with stuck RPC: %v", elapsed)
 	}
-	// Release the stuck handler so the GracefulStop goroutine can finish.
+}
+
+func closeRelease(release chan struct{}) {
 	select {
 	case <-release:
 	default:
