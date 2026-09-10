@@ -165,6 +165,7 @@ Every error uses this structure:
 ```text
 HTTP 400 - Bad Request
   VALIDATION_ERROR         -- Request body/params failed validation
+  INVALID_CREDENTIAL       -- Provider API key failed upstream validation (422)
   INVALID_JSON             -- Malformed JSON in request body
   MISSING_REQUIRED_FIELD   -- Required field not provided
   INVALID_FIELD_VALUE      -- Field value out of allowed range/enum
@@ -2028,6 +2029,56 @@ Store the `token` field securely — it is not returned by list/get.
 **Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
 
 PATCH is not supported yet (follow-up issue).
+
+---
+
+## Provider Credentials API
+
+Org-scoped BYO LLM provider keys. Plaintext is accepted only on write, validated upstream, then sealed in Auth. Responses never include `api_key`, ciphertext, or wrapped DEKs.
+
+**Required permission:** `admin:org_manage` / OrgSettingsWrite (bit 35). Path `org_id` must match the bearer org (cross-tenant → `404 NOT_FOUND`).
+
+### GET /v1/organizations/{org_id}/providers
+
+**List** stored credentials (metadata only).
+
+**Response: 200 OK**
+
+```json
+{
+  "credentials": [
+    {
+      "provider_name": "openai",
+      "status": "active",
+      "key_hint": "abcd",
+      "base_url": null,
+      "last_validated_at": "2026-09-10T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### POST /v1/organizations/{org_id}/providers
+
+**Upsert** a credential. Body always includes plaintext `api_key`. Management API probes the provider (`GET …/v1/models`, ≤5s) then calls Auth `CreateProviderCredential`.
+
+```json
+{
+  "provider_name": "openai",
+  "api_key": "sk-…",
+  "base_url": null
+}
+```
+
+`provider_name`: `openai` | `anthropic` | `azure_openai` | `bedrock` | `vllm_self_hosted`.
+
+**Response: 201 Created** — metadata (`provider_name`, `status`, `key_hint`, optional `base_url`, `last_validated_at`). Upstream rejection → `422 INVALID_CREDENTIAL`.
+
+### DELETE /v1/organizations/{org_id}/providers/{provider_name}
+
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
+
+A separate re-validate endpoint is deferred.
 
 ---
 

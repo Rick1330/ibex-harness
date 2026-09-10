@@ -298,9 +298,10 @@ func exhaustedRetry(span trace.Span, lastErr error, exhaustedMsg string) (Respon
 
 // UpstreamCall is the HTTP payload for one provider attempt.
 type UpstreamCall struct {
-	URL    string
-	Body   []byte
-	Stream bool
+	URL            string
+	Body           []byte
+	Stream         bool
+	APIKeyOverride string
 }
 
 // DoUpstream builds and executes one upstream request with stream-aware context/cancel.

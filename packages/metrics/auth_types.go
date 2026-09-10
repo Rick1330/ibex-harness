@@ -41,6 +41,10 @@ const (
 	DBOpListTokens        DBOperation = "list_tokens"
 	DBOpGetAgentByID      DBOperation = "get_agent_by_id"
 	DBOpGetUserByID       DBOperation = "get_user_by_id"
+	DBOpUpsertProviderCredential DBOperation = "upsert_provider_credential"
+	DBOpFindProviderCredential   DBOperation = "find_provider_credential"
+	DBOpListProviderCredentials  DBOperation = "list_provider_credentials"
+	DBOpDeleteProviderCredential DBOperation = "delete_provider_credential"
 )
 
 // ValidateToken results for ibex_auth_validate_token_duration_seconds.

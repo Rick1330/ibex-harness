@@ -12,18 +12,20 @@ import (
 )
 
 type envConfig struct {
-	Environment        string            `env:"IBEX_ENV" envDefault:"development"`
-	ServiceName        string            `env:"IBEX_SERVICE_NAME" envDefault:"auth"`
-	LogLevel           string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
-	Port               string            `env:"IBEX_PORT" envDefault:"8081"`
-	GRPCPort           string            `env:"IBEX_GRPC_PORT" envDefault:"9091"`
-	PostgresDSN        ibexconfig.Secret `env:"POSTGRES_DSN,required" secret:"true"`
-	RedisURL           ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
-	ValidateTokenRPM   int64             `env:"IBEX_AUTH_VALIDATE_RPM" envDefault:"6000"`
-	ShutdownTimeoutRaw string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
-	Argon2MemoryKiB    uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
-	Argon2Time         uint32            `env:"IBEX_ARGON2_TIME"`
-	Argon2Parallelism  uint8             `env:"IBEX_ARGON2_PARALLELISM"`
+	Environment            string            `env:"IBEX_ENV" envDefault:"development"`
+	ServiceName            string            `env:"IBEX_SERVICE_NAME" envDefault:"auth"`
+	LogLevel               string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
+	Port                   string            `env:"IBEX_PORT" envDefault:"8081"`
+	GRPCPort               string            `env:"IBEX_GRPC_PORT" envDefault:"9091"`
+	PostgresDSN            ibexconfig.Secret `env:"POSTGRES_DSN,required" secret:"true"`
+	RedisURL               ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
+	ValidateTokenRPM       int64             `env:"IBEX_AUTH_VALIDATE_RPM" envDefault:"6000"`
+	CredentialsMasterKey   ibexconfig.Secret `env:"IBEX_CREDENTIALS_MASTER_KEY" secret:"true"`
+	CredentialsMasterKeyID string            `env:"IBEX_CREDENTIALS_MASTER_KEY_ID" envDefault:"v1"`
+	ShutdownTimeoutRaw     string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
+	Argon2MemoryKiB        uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
+	Argon2Time             uint32            `env:"IBEX_ARGON2_TIME"`
+	Argon2Parallelism      uint8             `env:"IBEX_ARGON2_PARALLELISM"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -46,15 +48,17 @@ func loadFromEnv() (Config, error) {
 
 func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 	cfg := Config{
-		Environment:      envCfg.Environment,
-		ServiceName:      envCfg.ServiceName,
-		LogLevel:         level,
-		Port:             envCfg.Port,
-		GRPCPort:         envCfg.GRPCPort,
-		PostgresDSN:      envCfg.PostgresDSN.String(),
-		RedisURL:         envCfg.RedisURL.String(),
-		ValidateTokenRPM: envCfg.ValidateTokenRPM,
-		Argon2:           crypto.ProductionParams(),
+		Environment:            envCfg.Environment,
+		ServiceName:            envCfg.ServiceName,
+		LogLevel:               level,
+		Port:                   envCfg.Port,
+		GRPCPort:               envCfg.GRPCPort,
+		PostgresDSN:            envCfg.PostgresDSN.String(),
+		RedisURL:               envCfg.RedisURL.String(),
+		ValidateTokenRPM:       envCfg.ValidateTokenRPM,
+		CredentialsMasterKey:   envCfg.CredentialsMasterKey.String(),
+		CredentialsMasterKeyID: credentialKeyID(envCfg.CredentialsMasterKeyID),
+		Argon2:                 crypto.ProductionParams(),
 	}
 	if err := applyAuthEnvOverrides(&cfg, envCfg); err != nil {
 		return Config{}, err
@@ -111,4 +115,11 @@ func parseLogLevel(value string) (slog.Level, error) {
 	default:
 		return 0, fmt.Errorf("IBEX_LOG_LEVEL must be DEBUG, INFO, WARN, or ERROR")
 	}
+}
+
+func credentialKeyID(raw string) string {
+	if id := strings.TrimSpace(raw); id != "" {
+		return id
+	}
+	return "v1"
 }

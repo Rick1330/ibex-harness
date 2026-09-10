@@ -22,6 +22,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
@@ -273,6 +274,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 			Token:   in.cfg.WorkerEnqueueAPIToken,
 			Timeout: extractionenqueue.DefaultTimeout,
 		}),
+		CredentialResolver: newCredentialResolver(in.infra.auth.client),
 	}
 	assignTraceWriter(&deps, p.traceWriter)
 	return deps
@@ -301,6 +303,17 @@ func assignTraceWriter(deps *proxyhttp.RouterDeps, w *ibexch.Writer) {
 		return
 	}
 	deps.TraceWriter = w
+}
+
+func newCredentialResolver(client authv1.AuthServiceClient) proxyhttp.CredentialResolver {
+	if client == nil {
+		return nil
+	}
+	resolver, err := credentials.NewCachedResolver(client, credentials.DefaultCacheTTL)
+	if err != nil {
+		return nil
+	}
+	return resolver
 }
 
 func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB, tokenizerReg *tokenizer.Registry) *healthcheck.Server {

@@ -148,6 +148,7 @@ func loadAuthBootstrap() (config.Config, *logger.Logger, bool) {
 type authServiceDeps struct {
 	validator       *token.Validator
 	tokenSvc        *service.TokenService
+	credSvc         *service.ProviderCredentialService
 	agentsRepo      *repository.AgentsRepository
 	redisClient     redis.UniversalClient
 	validateLimiter ratelimit.KeyedLimiter
@@ -188,8 +189,20 @@ func initAuthServices(
 		return authServiceDeps{}, err
 	}
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher).WithSubjectLookup(subjects)
+	credRepo, err := repository.NewProviderCredentialsRepository(db, reg)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
+	credSvc, err := service.NewProviderCredentialService(
+		credRepo,
+		cfg.CredentialsMasterKey,
+		cfg.CredentialsMasterKeyID,
+	)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 	return authServiceDeps{
-		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
+		validator: validator, tokenSvc: tokenSvc, credSvc: credSvc, agentsRepo: agentsRepo,
 		redisClient: redisClient, validateLimiter: validateLimiter, log: log,
 	}, nil
 }
@@ -337,6 +350,7 @@ func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetri
 		Validator:    deps.validator,
 		TokenService: deps.tokenSvc,
 		AgentService: agentSvc,
+		CredService:  deps.credSvc,
 		Metrics:      reg,
 		Log:          deps.log,
 	})

@@ -130,16 +130,18 @@ func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provid
 	}
 
 	return c.executeWithRetry(ctx, span, upstreamCall{
-		URL:    provider.JoinBaseURL(c.cfg.BaseURL, "/chat/completions"),
-		Body:   body,
-		Stream: req.Stream,
+		URL:            provider.JoinBaseURL(c.cfg.BaseURL, "/chat/completions"),
+		Body:           body,
+		Stream:         req.Stream,
+		APIKeyOverride: req.APIKeyOverride,
 	})
 }
 
 type upstreamCall struct {
-	URL    string
-	Body   []byte
-	Stream bool
+	URL            string
+	Body           []byte
+	Stream         bool
+	APIKeyOverride string
 }
 
 func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call upstreamCall) (provider.Response, error) {
@@ -194,13 +196,19 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 		c.httpClient,
 		c.streamClient,
 		c.newChatRequest,
-		provider.UpstreamCall{URL: call.URL, Body: call.Body, Stream: call.Stream},
+		provider.UpstreamCall{
+			URL: call.URL, Body: call.Body, Stream: call.Stream,
+			APIKeyOverride: call.APIKeyOverride,
+		},
 	)
 }
 
 func (c *Client) newChatRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
 	headers := map[string]string{"Content-Type": "application/json"}
-	key := strings.TrimSpace(c.cfg.APIKey)
+	key := strings.TrimSpace(call.APIKeyOverride)
+	if key == "" {
+		key = strings.TrimSpace(c.cfg.APIKey)
+	}
 	switch c.cfg.AuthMode {
 	case AuthBearerOmitEmpty:
 		if key != "" {

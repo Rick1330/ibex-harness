@@ -21,3 +21,7 @@ class TokenNotFoundError(Exception):
 
 class InsufficientPermissionsError(Exception):
     """Caller lacks TokenCreate (or equivalent) for a management RPC."""
+
+
+class ProviderCredentialNotFoundError(Exception):
+    """Provider credential missing or cross-tenant (anti-enumeration)."""

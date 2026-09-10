@@ -81,6 +81,57 @@ class ListTokensWire:
     next_cursor: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class CreateProviderCredentialEncodeFields:
+    org_id: str
+    provider_name: str
+    api_key: str
+    base_url: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderCredentialMetadataWire:
+    provider_name: str
+    status: str
+    key_hint: str
+    base_url: str = ""
+    encryption_key_id: str = ""
+    last_validated_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GetProviderCredentialWire:
+    api_key: str = ""
+    base_url: str = ""
+    is_platform_default: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ListProviderCredentialsWire:
+    credentials: list[ProviderCredentialMetadataWire]
+
+
+@dataclass(slots=True)
+class _CredMetaDecodeState:
+    provider_name: str | None = None
+    status: str | None = None
+    key_hint: str | None = None
+    base_url: str = ""
+    encryption_key_id: str = ""
+    last_validated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class _GetCredDecodeState:
+    api_key: str = ""
+    base_url: str = ""
+    is_platform_default: bool = False
+
+
+@dataclass(slots=True)
+class _ListCredDecodeState:
+    credentials: list[ProviderCredentialMetadataWire] = field(default_factory=list)
+
 @dataclass(slots=True)
 class _TokenDecodeState:
     org_id: UUID | None = None
@@ -217,6 +268,65 @@ def decode_list_tokens_response(payload: bytes) -> ListTokensWire:
     return ListTokensWire(tokens=state.tokens, next_cursor=state.next_cursor)
 
 
+def encode_create_provider_credential_request(
+    fields: CreateProviderCredentialEncodeFields,
+) -> bytes:
+    """Encode CreateProviderCredentialRequest."""
+    out = (
+        _encode_string_field(1, fields.org_id)
+        + _encode_string_field(2, fields.provider_name)
+        + _encode_api_key_field(3, fields.api_key)
+    )
+    if fields.base_url:
+        out += _encode_string_field(4, fields.base_url)
+    return out
+
+
+def decode_create_provider_credential_response(
+    payload: bytes,
+) -> ProviderCredentialMetadataWire:
+    """Decode CreateProviderCredentialResponse (metadata only)."""
+    return _decode_cred_metadata(payload)
+
+
+def encode_get_provider_credential_request(*, org_id: str, provider_name: str) -> bytes:
+    return _encode_string_field(1, org_id) + _encode_string_field(2, provider_name)
+
+
+def decode_get_provider_credential_response(payload: bytes) -> GetProviderCredentialWire:
+    state = _GetCredDecodeState()
+    _walk_fields(
+        payload,
+        lambda buf, idx: _decode_get_cred_field(buf, idx, state),
+        max_bytes=MAX_MESSAGE_BYTES,
+    )
+    return GetProviderCredentialWire(
+        api_key=state.api_key,
+        base_url=state.base_url,
+        is_platform_default=state.is_platform_default,
+    )
+
+
+def encode_delete_provider_credential_request(*, org_id: str, provider_name: str) -> bytes:
+    return _encode_string_field(1, org_id) + _encode_string_field(2, provider_name)
+
+
+def encode_list_provider_credentials_request(*, org_id: str) -> bytes:
+    return _encode_string_field(1, org_id)
+
+
+def decode_list_provider_credentials_response(
+    payload: bytes,
+) -> ListProviderCredentialsWire:
+    state = _ListCredDecodeState()
+    _walk_fields(
+        payload,
+        lambda buf, idx: _decode_list_cred_field(buf, idx, state),
+        max_bytes=MAX_LIST_MESSAGE_BYTES,
+    )
+    return ListProviderCredentialsWire(credentials=state.credentials)
+
+
 def decode_validate_agent_response(payload: bytes) -> ValidateAgentWire:
     """Decode ValidateAgentResponse (agent_id=1, org_id=2, status=3)."""
     state = _AgentDecodeState()
@@ -255,6 +365,13 @@ def _encode_string_field(field: int, value: str) -> bytes:
     data = value.encode("utf-8")
     if len(data) > MAX_STRING_BYTES:
         raise AuthCodecError("string field exceeds codec limit")
+    return _tag(field, _WIRE_LEN) + encode_varint(len(data)) + data
+
+
+def _encode_api_key_field(field: int, value: str) -> bytes:
+    data = value.encode("utf-8")
+    if len(data) > MAX_TOKEN_BYTES:
+        raise AuthCodecError("api_key exceeds codec limit")
     return _tag(field, _WIRE_LEN) + encode_varint(len(data)) + data
 
 
@@ -562,3 +679,80 @@ def _bounded_string(text: str, label: str) -> str:
     if len(text) > MAX_STRING_BYTES:
         raise AuthCodecError(f"{label} exceeds limit")
     return text
+
+
+def _decode_cred_metadata(raw: bytes) -> ProviderCredentialMetadataWire:
+    state = _CredMetaDecodeState()
+    _walk_fields(
+        raw,
+        lambda buf, idx: _decode_cred_meta_field(buf, idx, state),
+        max_bytes=MAX_SUBMESSAGE_BYTES,
+    )
+    ctx = "provider credential metadata"
+    return ProviderCredentialMetadataWire(
+        provider_name=_require_present(state.provider_name, ctx, "provider_name"),
+        status=_require_present(state.status, ctx, "status"),
+        key_hint=_require_present(state.key_hint, ctx, "key_hint"),
+        base_url=state.base_url,
+        encryption_key_id=state.encryption_key_id,
+        last_validated_at=state.last_validated_at,
+    )
+
+
+def _decode_cred_meta_field(buf: bytes, idx: int, state: _CredMetaDecodeState) -> int:
+    key, idx = _decode_varint(buf, idx)
+    field, wire = key >> 3, key & 0x07
+    if wire == _WIRE_LEN:
+        data, idx = _read_bytes(buf, idx, max_len=MAX_SUBMESSAGE_BYTES)
+        _apply_cred_meta_len(state, field, data)
+        return idx
+    return _skip_unknown(buf, idx, wire)
+
+
+def _apply_cred_meta_len(state: _CredMetaDecodeState, field: int, data: bytes) -> None:
+    if field == 1:
+        state.provider_name = _bounded_string(_decode_utf8(data), "provider_name")
+        return
+    if field == 2:
+        state.status = _bounded_string(_decode_utf8(data), "status")
+        return
+    if field == 3:
+        state.key_hint = _bounded_string(_decode_utf8(data), "key_hint")
+        return
+    if field == 4:
+        state.base_url = _bounded_string(_decode_utf8(data), "base_url")
+        return
+    if field == 5:
+        state.encryption_key_id = _bounded_string(_decode_utf8(data), "encryption_key_id")
+        return
+    if field == 6:
+        state.last_validated_at = _decode_timestamp(data)
+
+
+def _decode_get_cred_field(buf: bytes, idx: int, state: _GetCredDecodeState) -> int:
+    key, idx = _decode_varint(buf, idx)
+    field, wire = key >> 3, key & 0x07
+    if wire == _WIRE_LEN:
+        data, idx = _read_bytes(buf, idx, max_len=MAX_TOKEN_BYTES)
+        if field == 1:
+            state.api_key = _decode_plaintext(data)
+        elif field == 2:
+            state.base_url = _bounded_string(_decode_utf8(data), "base_url")
+        return idx
+    if wire == _WIRE_VARINT:
+        num, idx = _decode_varint(buf, idx)
+        if field == 3:
+            state.is_platform_default = bool(num)
+        return idx
+    return _skip_unknown(buf, idx, wire)
+
+
+def _decode_list_cred_field(buf: bytes, idx: int, state: _ListCredDecodeState) -> int:
+    key, idx = _decode_varint(buf, idx)
+    field, wire = key >> 3, key & 0x07
+    if wire == _WIRE_LEN:
+        raw, idx = _read_bytes(buf, idx, max_len=MAX_SUBMESSAGE_BYTES)
+        if field == 1:
+            state.credentials.append(_decode_cred_metadata(raw))
+        return idx
+    return _skip_unknown(buf, idx, wire)

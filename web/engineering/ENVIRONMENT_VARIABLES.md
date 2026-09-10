@@ -273,7 +273,7 @@ Used by: **proxy** (`services/proxy`)
 
 **BYOK (Bring your own key) — Phase 4:**
 
-- Org-scoped provider credentials are encrypted at rest and resolved via Auth gRPC — never returned to clients or logged. Exact env names for KMS/envelope keys belong with the auth/API surfaces when that milestone lands.
+- Org-scoped provider credentials use Auth envelope encryption (`IBEX_CREDENTIALS_MASTER_KEY`); see §10 and [ADR-0074](/docs/adr/0074-provider-credential-storage). Keys are never returned to clients or logged.
 
 ---
 
@@ -307,6 +307,15 @@ Used by: **auth** (`services/auth`)
 | `IBEX_ARGON2_MEMORY_KIB` | No | `65536` | Argon2 memory | Tune for security |
 | `IBEX_ARGON2_TIME` | No | `3` | Argon2 iterations | |
 | `IBEX_ARGON2_PARALLELISM` | No | `4` | Argon2 parallelism | See [ADR-0010](adr/ADR-0010-cryptography-policy.md) |
+
+### Provider credential envelope (KEK)
+
+| Variable | Required | Default | Description | Security Notes |
+|----------|----------|---------|-------------|----------------|
+| `IBEX_CREDENTIALS_MASTER_KEY` | Conditional | (empty) | Base64-encoded 32-byte AES-256 KEK for sealing org provider API keys | **Secret.** Required when `IBEX_ENV=production`. Auth-only; never ship to API/proxy |
+| `IBEX_CREDENTIALS_MASTER_KEY_ID` | No | `v1` | Logical KEK version stored with each sealed blob | Rotation metadata only |
+
+Auth stores ciphertext only. Management API validate-before-store then calls `CreateProviderCredential`; proxy resolves via `GetProviderCredential` with a 30s cache ([ADR-0074](/docs/adr/0074-provider-credential-storage)).
 
 ### JWT signing and verification
 

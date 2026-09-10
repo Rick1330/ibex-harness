@@ -73,8 +73,16 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 	}
 	tokenSvc := service.NewTokenService(repo, token.TestArgon2Params(), logger.Discard("auth"), nil).
 		WithSubjectLookup(subjects)
+	credRepo, err := repository.NewProviderCredentialsRepository(db, reg)
+	if err != nil {
+		t.Fatalf("NewProviderCredentialsRepository: %v", err)
+	}
+	credSvc, err := service.NewProviderCredentialService(credRepo, "", "v1")
+	if err != nil {
+		t.Fatalf("NewProviderCredentialService: %v", err)
+	}
 	return authServiceDeps{
-		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
+		validator: validator, tokenSvc: tokenSvc, credSvc: credSvc, agentsRepo: agentsRepo,
 		validateLimiter: ratelimit.NoopKeyed(),
 		log:             logger.Discard("auth"),
 	}

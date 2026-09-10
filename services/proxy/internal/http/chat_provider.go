@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
@@ -73,6 +75,9 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 	provReq.Messages = inj.Messages
 	ctx = withContextAssembleMeta(ctx, inj.Meta)
 	p.r = p.r.WithContext(ctx)
+	if !h.applyCredentialOverride(p.w, p.r, p.prov, &provReq) {
+		return
+	}
 	start := time.Now()
 	resp, err := p.prov.Complete(p.r.Context(), provReq)
 	providerElapsed := time.Since(start)
@@ -104,6 +109,51 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 		w: p.w, r: p.r, parsed: p.parsed, providerName: p.prov.Name(), resp: resp,
 		claim: claim,
 	})
+}
+
+// applyCredentialOverride sets APIKeyOverride for org BYO keys.
+// Returns false when a fail-closed error response was already written.
+func (h chatCompletionHandler) applyCredentialOverride(
+	w http.ResponseWriter,
+	r *http.Request,
+	prov provider.Provider,
+	provReq *provider.Request,
+) bool {
+	if h.credentialResolver == nil || strings.EqualFold(prov.Name(), "mock") {
+		return true
+	}
+	requestID := requestIDFromContext(r.Context())
+	authRes, ok := auth.FromContext(r.Context())
+	if !ok || authRes.OrgID.String() == "" {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+			"Auth service unavailable", requestID,
+			apierror.WriteOpts{Detail: "missing org context for credential resolve", DocsBase: h.docsBase})
+		return false
+	}
+	bearer, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
+	if err != nil || strings.TrimSpace(bearer) == "" {
+		apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
+			"Invalid Authorization header", requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return false
+	}
+	result, err := h.credentialResolver.Resolve(
+		r.Context(), authRes.OrgID.String(), prov.Name(), bearer,
+	)
+	if err != nil {
+		if h.log != nil {
+			h.log.WarnCtx(r.Context(), "provider credential resolve failed",
+				"provider", prov.Name(), "org_id", authRes.OrgID.String())
+		}
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+			"Auth service unavailable", requestID,
+			apierror.WriteOpts{Detail: "provider credential resolve failed", DocsBase: h.docsBase})
+		return false
+	}
+	if !result.PlatformDefault {
+		provReq.APIKeyOverride = result.APIKey
+	}
+	return true
 }
 
 // applyDirectiveInjection splices the resolved agent directive into messages.

@@ -81,6 +81,9 @@ jobs:
       - name: Static export guards
         run: bash .github/scripts/check-static-export.sh
 
+      - name: Provider credential schema leak guard
+        run: bash .github/scripts/check-provider-credential-leak.sh
+
       - name: Validate action pins
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
