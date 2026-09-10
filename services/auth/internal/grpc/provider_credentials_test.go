@@ -118,13 +118,24 @@ func TestUnit_CreateProviderCredential_HappyPath(t *testing.T) {
 func happyCreateFn(t *testing.T, org string, validated time.Time) func(context.Context, service.CreateInput) (service.ProviderCredentialMetadata, error) {
 	t.Helper()
 	return func(_ context.Context, in service.CreateInput) (service.ProviderCredentialMetadata, error) {
-		if in.OrgID != org || in.ProviderName != "openai" || in.APIKey != "sk-live" {
-			t.Fatalf("input=%+v", in)
-		}
+		assertCreateInput(t, in, org)
 		return service.ProviderCredentialMetadata{
 			ProviderName: "openai", Status: "active", KeyHint: "live",
 			BaseURL: in.BaseURL, EncryptionKeyID: "v1", LastValidatedAt: &validated,
 		}, nil
+	}
+}
+
+func assertCreateInput(t *testing.T, in service.CreateInput, org string) {
+	t.Helper()
+	if in.OrgID != org {
+		t.Fatalf("org=%q want %q", in.OrgID, org)
+	}
+	if in.ProviderName != "openai" {
+		t.Fatalf("provider=%q", in.ProviderName)
+	}
+	if in.APIKey != "sk-live" {
+		t.Fatalf("api_key=%q", in.APIKey)
 	}
 }
 
@@ -139,7 +150,10 @@ func assertCreateCredResponse(t *testing.T, resp *authv1.CreateProviderCredentia
 	if resp.GetBaseUrl() != "https://example.com" {
 		t.Fatalf("base=%q", resp.GetBaseUrl())
 	}
-	if resp.GetLastValidatedAt() == nil || !resp.GetLastValidatedAt().AsTime().Equal(validated) {
+	if resp.GetLastValidatedAt() == nil {
+		t.Fatal("missing last_validated_at")
+	}
+	if !resp.GetLastValidatedAt().AsTime().Equal(validated) {
 		t.Fatalf("last_validated_at=%v", resp.GetLastValidatedAt())
 	}
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -114,6 +115,30 @@ async def test_validate_azure_rejects_missing_base_url() -> None:
         ),
         ({"provider_name": "openai", "api_key": "sk-bad"}, 401),
         ({"provider_name": "openai", "api_key": "sk-test"}, 302),
+        (
+            {
+                "provider_name": "vllm_self_hosted",
+                "api_key": "local",
+                "base_url": "http://llm:8000/",
+            },
+            None,
+        ),
+        (
+            {
+                "provider_name": "openai",
+                "api_key": "sk-test",
+                "base_url": "http://evil.example/v1",
+            },
+            None,
+        ),
+        (
+            {
+                "provider_name": "vllm_self_hosted",
+                "api_key": "local",
+                "base_url": "https://llm.internal/",
+            },
+            None,
+        ),
     ],
     ids=[
         "unknown_provider",
@@ -122,10 +147,15 @@ async def test_validate_azure_rejects_missing_base_url() -> None:
         "malformed_scheme",
         "upstream_4xx",
         "redirect_302",
+        "self_hosted_http_mesh",
+        "cloud_http_non_loopback",
+        "self_hosted_https_non_loopback",
     ],
 )
 async def test_validate_rejects_invalid_inputs(kwargs: dict, status: int | None) -> None:
-    client: AsyncMock | object = _ok_client(status) if status is not None else AsyncMock()
+    client: AsyncMock | object = AsyncMock()
+    if status is not None:
+        client = _ok_client(status)
     await _expect_invalid(client=client, **kwargs)
 
 
@@ -137,40 +167,21 @@ async def test_validate_transport_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_validate_self_hosted_http_loopback() -> None:
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://127.0.0.1:8000/", "https://127.0.0.1:8000/"],
+    ids=["http_loopback", "https_loopback"],
+)
+async def test_validate_self_hosted_loopback_ok(base_url: str) -> None:
     client = _ok_client()
     await validate_provider_credential(
         provider_name="vllm_self_hosted",
         api_key="local",
-        base_url="http://127.0.0.1:8000/",
+        base_url=base_url,
         client=client,
     )
     args, _ = client.stream.call_args
-    assert args[1] == "http://127.0.0.1:8000/v1/models"
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_http_mesh_for_self_hosted() -> None:
-    client = AsyncMock()
-    await _expect_invalid(
-        provider_name="vllm_self_hosted",
-        api_key="local",
-        base_url="http://llm:8000/",
-        client=client,
-    )
-    client.stream.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_http_non_loopback_for_cloud() -> None:
-    client = AsyncMock()
-    await _expect_invalid(
-        provider_name="openai",
-        api_key="sk-test",
-        base_url="http://evil.example/v1",
-        client=client,
-    )
-    client.stream.assert_not_called()
+    assert args[1] == f"{base_url.rstrip('/')}/v1/models"
 
 
 @pytest.mark.asyncio
@@ -183,26 +194,15 @@ async def test_validate_owns_and_closes_client() -> None:
 
 
 @pytest.mark.asyncio
-async def test_validate_rejects_dns_failure_for_custom_host() -> None:
+@pytest.mark.parametrize(
+    "resolved",
+    [[], [ipaddress.ip_address("10.1.2.3")]],
+    ids=["dns_empty", "private_addr"],
+)
+async def test_validate_rejects_untrusted_resolved_host(resolved: list) -> None:
     with patch(
         "app.services.provider_validate_net.resolved_addrs",
-        new=AsyncMock(return_value=[]),
-    ):
-        await _expect_invalid(
-            provider_name="openai",
-            api_key="sk",
-            base_url="https://missing.example",
-            client=AsyncMock(),
-        )
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_private_resolved_host() -> None:
-    import ipaddress
-
-    with patch(
-        "app.services.provider_validate_net.resolved_addrs",
-        new=AsyncMock(return_value=[ipaddress.ip_address("10.1.2.3")]),
+        new=AsyncMock(return_value=resolved),
     ):
         await _expect_invalid(
             provider_name="openai",
@@ -225,28 +225,3 @@ async def test_validate_deadline_exceeded() -> None:
         ),
     ):
         await _expect_invalid(provider_name="openai", api_key="sk", client=AsyncMock())
-
-
-@pytest.mark.asyncio
-async def test_validate_self_hosted_https_loopback_allowed() -> None:
-    client = _ok_client()
-    await validate_provider_credential(
-        provider_name="vllm_self_hosted",
-        api_key="local",
-        base_url="https://127.0.0.1:8000/",
-        client=client,
-    )
-    args, _ = client.stream.call_args
-    assert args[1] == "https://127.0.0.1:8000/v1/models"
-
-
-@pytest.mark.asyncio
-async def test_validate_rejects_self_hosted_https_non_loopback() -> None:
-    client = AsyncMock()
-    await _expect_invalid(
-        provider_name="vllm_self_hosted",
-        api_key="local",
-        base_url="https://llm.internal/",
-        client=client,
-    )
-    client.stream.assert_not_called()
