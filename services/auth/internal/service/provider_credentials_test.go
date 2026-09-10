@@ -131,7 +131,7 @@ func assertGetKey(t *testing.T, svc *service.ProviderCredentialService, want get
 		t.Fatal("expected BYO credential")
 	}
 	if got.APIKey != want.key {
-		t.Fatalf("APIKey=%q want %q", got.APIKey, want.key)
+		t.Fatal("APIKey mismatch")
 	}
 	if got.BaseURL != want.base {
 		t.Fatalf("BaseURL=%q want %q", got.BaseURL, want.base)

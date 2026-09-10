@@ -58,8 +58,9 @@ if rg -n 'api_key' "${ROOT}/services/api/app/schemas/providers.py" \
 fi
 
 # Structured-log field keys must not name secrets on credential paths.
-# Matches logger-style key args: "api_key", "ciphertext", "wrapped_dek".
-LOG_KEY_RE='"(api_key|ciphertext|wrapped_dek|encrypted_api_key)"[[:space:]]*,'
+# Matches logger key args ("api_key",) and Python log kwargs (log.info(..., api_key=)).
+LOG_KEY_RE='("(?:api_key|ciphertext|wrapped_dek|encrypted_api_key)"[[:space:]]*,|\.(?:debug|info|warning|warn|error|exception|critical)\([^
+]*\b(?:api_key|ciphertext|wrapped_dek|encrypted_api_key)[[:space:]]*=)'
 log_targets=(
   "${ROOT}/services/api/app/routers/providers.py"
   "${ROOT}/services/api/app/services/providers.py"

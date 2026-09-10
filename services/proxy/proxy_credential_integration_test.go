@@ -88,7 +88,7 @@ func setupCredentialProxyFixture(t *testing.T) credProxyFixture {
 	t.Cleanup(srv.Close)
 
 	const byoKey = "sk-byo-integration-abcdef"
-	mustCreateOrgCredential(t, authFx, adminA, orgA, byoKey)
+	mustCreateOrgCredential(t, authFx, orgCredSeed{admin: adminA, orgID: orgA, apiKey: byoKey})
 
 	return credProxyFixture{
 		db: db, authFx: authFx, srv: srv,
@@ -97,17 +97,21 @@ func setupCredentialProxyFixture(t *testing.T) credProxyFixture {
 	}
 }
 
-func mustCreateOrgCredential(t *testing.T, authFx *integrationtest.AuthGRPCFixture, admin, orgID, apiKey string) {
+type orgCredSeed struct {
+	admin, orgID, apiKey string
+}
+
+func mustCreateOrgCredential(t *testing.T, authFx *integrationtest.AuthGRPCFixture, seed orgCredSeed) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(
 		metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
-			"authorization", "Bearer "+admin,
+			"authorization", "Bearer "+seed.admin,
 		)),
 		5*time.Second,
 	)
 	defer cancel()
 	_, err := authFx.Client.CreateProviderCredential(ctx, &authv1.CreateProviderCredentialRequest{
-		OrgId: orgID, ProviderName: "openai", ApiKey: apiKey, BaseUrl: "https://byo.example/v1",
+		OrgId: seed.orgID, ProviderName: "openai", ApiKey: seed.apiKey, BaseUrl: "https://byo.example/v1",
 	})
 	if err != nil {
 		t.Fatalf("CreateProviderCredential: %v", err)

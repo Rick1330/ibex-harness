@@ -13,6 +13,7 @@ from apierror_py import INVALID_CREDENTIAL
 
 from app.errors import ApiError
 from app.services.provider_validate import validate_provider_credential
+from app.services.provider_validate_net import ProbeDial
 
 
 class _StreamCM:
@@ -69,9 +70,10 @@ async def test_validate_anthropic_headers() -> None:
 @pytest.mark.asyncio
 async def test_validate_azure_requires_base_url_and_api_key_header() -> None:
     client = _ok_client()
+    dial = ProbeDial(server_name="myres.openai.azure.com", connect_ip="20.1.2.3")
     with patch(
         "app.services.provider_validate_dest.assert_public_resolved_host",
-        new=AsyncMock(),
+        new=AsyncMock(return_value=dial),
     ):
         await validate_provider_credential(
             provider_name="azure_openai",
@@ -80,8 +82,10 @@ async def test_validate_azure_requires_base_url_and_api_key_header() -> None:
             client=client,
         )
     args, kwargs = client.stream.call_args
-    assert args[1].startswith("https://myres.openai.azure.com/openai/models?")
+    assert args[1].startswith("https://20.1.2.3/openai/models?")
     assert kwargs["headers"]["api-key"] == "az-key"
+    assert kwargs["headers"]["Host"] == "myres.openai.azure.com"
+    assert kwargs["extensions"]["sni_hostname"] == "myres.openai.azure.com"
 
 
 @pytest.mark.asyncio
@@ -210,6 +214,25 @@ async def test_validate_rejects_untrusted_resolved_host(resolved: list) -> None:
             base_url="https://internal.example",
             client=AsyncMock(),
         )
+
+
+@pytest.mark.asyncio
+async def test_validate_pins_custom_host_to_resolved_ip() -> None:
+    client = _ok_client()
+    with patch(
+        "app.services.provider_validate_net.resolved_addrs",
+        new=AsyncMock(return_value=[ipaddress.ip_address("8.8.4.4")]),
+    ):
+        await validate_provider_credential(
+            provider_name="openai",
+            api_key="sk-test",
+            base_url="https://llm.example.com",
+            client=client,
+        )
+    args, kwargs = client.stream.call_args
+    assert args[1] == "https://8.8.4.4/v1/models"
+    assert kwargs["headers"]["Host"] == "llm.example.com"
+    assert kwargs["extensions"]["sni_hostname"] == "llm.example.com"
 
 
 @pytest.mark.asyncio

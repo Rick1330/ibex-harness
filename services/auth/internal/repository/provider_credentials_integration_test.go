@@ -137,14 +137,14 @@ func TestIntegration_ProviderCredentials_RLSBackstop(t *testing.T) {
 	orgB := testutil.SeedOrganization(t, db, "RLS Org B", "rls-b-"+uuid.NewString()[:8])
 	mustUpsertActive(t, repo, orgA)
 
-	ctx := context.Background()
-	assertCredCountAsApp(t, ctx, db, "", 0)   // no org GUC → invisible
-	assertCredCountAsApp(t, ctx, db, orgB, 0) // other org → invisible
-	assertCredCountAsApp(t, ctx, db, orgA, 1) // owning org → visible
+	assertCredCountAsApp(t, db, "", 0)   // no org GUC → invisible
+	assertCredCountAsApp(t, db, orgB, 0) // other org → invisible
+	assertCredCountAsApp(t, db, orgA, 1) // owning org → visible
 }
 
-func assertCredCountAsApp(t *testing.T, ctx context.Context, db *sql.DB, orgID string, want int) {
+func assertCredCountAsApp(t *testing.T, db *sql.DB, orgID string, want int) {
 	t.Helper()
+	ctx := context.Background()
 	var count int
 	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
 		if orgID != "" {

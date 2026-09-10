@@ -11,6 +11,7 @@ from apierror_py import INVALID_CREDENTIAL
 
 from app.errors import ApiError
 from app.services.provider_validate_dest import assert_probe_destination
+from app.services.provider_validate_net import ProbeDial, url_for_dial
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,9 @@ async def validate_provider_credential(
     try:
         async with asyncio.timeout(_VALIDATE_DEADLINE):
             url = _models_url(provider_name, base_url)
-            await assert_probe_destination(provider_name, url)
+            dial = await assert_probe_destination(provider_name, url)
             headers = _auth_headers(provider_name, api_key)
-            status = await _probe_models(url, headers, client)
+            status = await _probe_models(url, headers, client, dial)
     except TimeoutError:
         logger.info("provider key probe deadline exceeded")
         raise _invalid() from None
@@ -68,14 +69,27 @@ async def _probe_models(
     url: str,
     headers: dict[str, str],
     client: httpx.AsyncClient | None,
+    dial: ProbeDial,
 ) -> int:
     owns_client = client is None
     http = client or httpx.AsyncClient(
         timeout=_VALIDATE_TIMEOUT,
         follow_redirects=False,
     )
+    req_url = url_for_dial(url, dial)
+    req_headers = dict(headers)
+    extensions: dict[str, str] = {}
+    if dial.connect_ip is not None:
+        req_headers["Host"] = dial.server_name
+        if url.startswith("https://"):
+            extensions["sni_hostname"] = dial.server_name
     try:
-        async with http.stream("GET", url, headers=headers) as resp:
+        async with http.stream(
+            "GET",
+            req_url,
+            headers=req_headers,
+            extensions=extensions or None,
+        ) as resp:
             return resp.status_code
     except httpx.HTTPError:
         logger.info("provider key probe transport failure")
