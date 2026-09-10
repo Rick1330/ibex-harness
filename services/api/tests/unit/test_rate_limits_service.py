@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import NOT_FOUND, VALIDATION_ERROR
@@ -27,11 +28,22 @@ def _patch_deps(**kwargs):
     )
 
 
-async def _expect_patch_error(session, org_id, body, deps, code: str) -> None:
-    coro = rate_limit_service.patch_rate_limits(session, org_id, body, deps=deps)
+@dataclass(frozen=True, slots=True)
+class _PatchErrorCase:
+    session: object
+    org_id: UUID
+    body: RateLimitsPatchRequest
+    deps: rate_limit_service.PatchDeps
+    code: str
+
+
+async def _expect_patch_error(case: _PatchErrorCase) -> None:
+    coro = rate_limit_service.patch_rate_limits(
+        case.session, case.org_id, case.body, deps=case.deps
+    )
     with pytest.raises(ApiError) as exc:
         await coro
-    assert exc.value.code == code
+    assert exc.value.code == case.code
 
 
 @pytest.mark.asyncio
@@ -89,11 +101,15 @@ async def test_patch_rate_limits_publish_failure_does_not_raise() -> None:
 @pytest.mark.asyncio
 async def test_patch_clear_org_and_agent_validation() -> None:
     await _expect_patch_error(
-        AsyncMock(),
-        uuid4(),
-        RateLimitsPatchRequest(requests_per_minute=10, clear_org_override=True),
-        _patch_deps(),
-        VALIDATION_ERROR,
+        _PatchErrorCase(
+            session=AsyncMock(),
+            org_id=uuid4(),
+            body=RateLimitsPatchRequest(
+                requests_per_minute=10, clear_org_override=True
+            ),
+            deps=_patch_deps(),
+            code=VALIDATION_ERROR,
+        )
     )
 
 
@@ -106,13 +122,15 @@ async def test_patch_unknown_agent_404() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=_ScalarNone())
     await _expect_patch_error(
-        session,
-        uuid4(),
-        RateLimitsPatchRequest(
-            agent_overrides=[{"agent_id": uuid4(), "requests_per_minute": 5}]
-        ),
-        _patch_deps(),
-        NOT_FOUND,
+        _PatchErrorCase(
+            session=session,
+            org_id=uuid4(),
+            body=RateLimitsPatchRequest(
+                agent_overrides=[{"agent_id": uuid4(), "requests_per_minute": 5}]
+            ),
+            deps=_patch_deps(),
+            code=NOT_FOUND,
+        )
     )
 
 
