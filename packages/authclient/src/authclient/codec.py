@@ -710,20 +710,16 @@ def _decode_cred_meta_field(buf: bytes, idx: int, state: _CredMetaDecodeState) -
 
 
 def _apply_cred_meta_len(state: _CredMetaDecodeState, field: int, data: bytes) -> None:
-    if field == 1:
-        state.provider_name = _bounded_string(_decode_utf8(data), "provider_name")
-        return
-    if field == 2:
-        state.status = _bounded_string(_decode_utf8(data), "status")
-        return
-    if field == 3:
-        state.key_hint = _bounded_string(_decode_utf8(data), "key_hint")
-        return
-    if field == 4:
-        state.base_url = _bounded_string(_decode_utf8(data), "base_url")
-        return
-    if field == 5:
-        state.encryption_key_id = _bounded_string(_decode_utf8(data), "encryption_key_id")
+    strings = {
+        1: ("provider_name", "provider_name"),
+        2: ("status", "status"),
+        3: ("key_hint", "key_hint"),
+        4: ("base_url", "base_url"),
+        5: ("encryption_key_id", "encryption_key_id"),
+    }
+    if field in strings:
+        attr, label = strings[field]
+        setattr(state, attr, _bounded_string(_decode_utf8(data), label))
         return
     if field == 6:
         state.last_validated_at = _decode_timestamp(data)

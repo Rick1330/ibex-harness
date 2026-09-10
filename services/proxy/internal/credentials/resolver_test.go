@@ -31,6 +31,10 @@ func (f *fakeGetter) GetProviderCredential(
 	return f.resp, nil
 }
 
+func resolveIn() credentials.ResolveInput {
+	return credentials.ResolveInput{OrgID: "org", ProviderName: "openai", AccessToken: "tok"}
+}
+
 func TestUnit_CachedResolver_PlatformDefaultCached(t *testing.T) {
 	t.Parallel()
 	fake := &fakeGetter{resp: &authv1.GetProviderCredentialResponse{IsPlatformDefault: true}}
@@ -38,11 +42,11 @@ func TestUnit_CachedResolver_PlatformDefaultCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.Resolve(context.Background(), "org", "openai", "tok")
+	got, err := r.Resolve(context.Background(), resolveIn())
 	if err != nil || !got.PlatformDefault {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
-	_, _ = r.Resolve(context.Background(), "org", "openai", "tok")
+	_, _ = r.Resolve(context.Background(), resolveIn())
 	if fake.calls != 1 {
 		t.Fatalf("calls=%d want 1", fake.calls)
 	}
@@ -55,7 +59,7 @@ func TestUnit_CachedResolver_BYOCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := r.Resolve(context.Background(), "org", "openai", "tok")
+	got, err := r.Resolve(context.Background(), resolveIn())
 	if err != nil {
 		t.Fatalf("resolve err=%v", err)
 	}
@@ -65,7 +69,7 @@ func TestUnit_CachedResolver_BYOCached(t *testing.T) {
 	if got.APIKey != "sk-byo" {
 		t.Fatalf("APIKey=%q", got.APIKey)
 	}
-	_, _ = r.Resolve(context.Background(), "org", "openai", "tok")
+	_, _ = r.Resolve(context.Background(), resolveIn())
 	if fake.calls != 1 {
 		t.Fatalf("calls=%d want 1", fake.calls)
 	}
@@ -78,13 +82,13 @@ func TestUnit_CachedResolver_ErrorsNotCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = r.Resolve(context.Background(), "org", "openai", "tok")
+	_, err = r.Resolve(context.Background(), resolveIn())
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	fake.err = nil
 	fake.resp = &authv1.GetProviderCredentialResponse{IsPlatformDefault: true}
-	got, err := r.Resolve(context.Background(), "org", "openai", "tok")
+	got, err := r.Resolve(context.Background(), resolveIn())
 	if err != nil || !got.PlatformDefault {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
@@ -108,7 +112,9 @@ func TestUnit_CachedResolver_WrapsRPCError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = r.Resolve(context.Background(), "o", "openai", "t")
+	_, err = r.Resolve(context.Background(), credentials.ResolveInput{
+		OrgID: "o", ProviderName: "openai", AccessToken: "t",
+	})
 	if err == nil {
 		t.Fatal("expected error")
 	}

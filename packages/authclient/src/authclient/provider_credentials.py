@@ -133,16 +133,14 @@ class GRPCProviderCredentialManager:
     async def get(
         self, *, org_id: str, provider_name: str, access_token: str
     ) -> GetProviderCredentialWire:
-        return await self._unary_bytes(
-            _UnaryBytesCall(
-                stub=self._get,
-                payload=encode_get_provider_credential_request(
-                    org_id=org_id, provider_name=provider_name
-                ),
-                access_token=access_token,
-                op="get",
-                decode=decode_get_provider_credential_response,
-            )
+        return await self._org_provider_unary(
+            stub=self._get,
+            org_id=org_id,
+            provider_name=provider_name,
+            access_token=access_token,
+            op="get",
+            encode=encode_get_provider_credential_request,
+            decode=decode_get_provider_credential_response,
         )
 
     async def list(
@@ -161,21 +159,39 @@ class GRPCProviderCredentialManager:
     async def delete(
         self, *, org_id: str, provider_name: str, access_token: str
     ) -> None:
-        await self._unary_bytes(
-            _UnaryBytesCall(
-                stub=self._delete,
-                payload=encode_delete_provider_credential_request(
-                    org_id=org_id, provider_name=provider_name
-                ),
-                access_token=access_token,
-                op="delete",
-                decode=_decode_empty,
-            )
+        await self._org_provider_unary(
+            stub=self._delete,
+            org_id=org_id,
+            provider_name=provider_name,
+            access_token=access_token,
+            op="delete",
+            encode=encode_delete_provider_credential_request,
+            decode=_decode_empty,
         )
 
     async def aclose(self) -> None:
         await self._channel.close()
 
+    async def _org_provider_unary[T](
+        self,
+        *,
+        stub: Callable[..., Awaitable[object]],
+        org_id: str,
+        provider_name: str,
+        access_token: str,
+        op: str,
+        encode: Callable[..., bytes],
+        decode: Callable[[bytes], T],
+    ) -> T:
+        return await self._unary_bytes(
+            _UnaryBytesCall(
+                stub=stub,
+                payload=encode(org_id=org_id, provider_name=provider_name),
+                access_token=access_token,
+                op=op,
+                decode=decode,
+            )
+        )
     async def _unary_bytes[T](self, call: _UnaryBytesCall[T]) -> T:
         metadata = (("authorization", f"Bearer {call.access_token}"),)
         try:

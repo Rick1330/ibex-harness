@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
@@ -126,7 +127,9 @@ func (h chatCompletionHandler) applyCredentialOverride(
 	if !ok {
 		return false
 	}
-	result, err := h.credentialResolver.Resolve(r.Context(), orgID, prov.Name(), bearer)
+	result, err := h.credentialResolver.Resolve(r.Context(), credentials.ResolveInput{
+		OrgID: orgID, ProviderName: prov.Name(), AccessToken: bearer,
+	})
 	if err != nil {
 		h.writeCredentialResolveFailure(w, r, prov.Name(), orgID)
 		return false

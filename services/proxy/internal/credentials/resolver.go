@@ -27,6 +27,13 @@ type Result struct {
 	BaseURL         string
 }
 
+// ResolveInput is the chat-path lookup key for one org/provider pair.
+type ResolveInput struct {
+	OrgID        string
+	ProviderName string
+	AccessToken  string
+}
+
 // Getter is the AuthService GetProviderCredential port.
 type Getter interface {
 	GetProviderCredential(
@@ -38,7 +45,7 @@ type Getter interface {
 
 // Resolver loads and caches org provider credentials.
 type Resolver interface {
-	Resolve(ctx context.Context, orgID, providerName, accessToken string) (Result, error)
+	Resolve(ctx context.Context, in ResolveInput) (Result, error)
 }
 
 type cacheEntry struct {
@@ -84,15 +91,12 @@ func NewCachedResolverWithTimeout(client Getter, ttl, rpcTimeout time.Duration) 
 }
 
 // Resolve returns platform-default or BYO credentials for the org/provider.
-func (r *CachedResolver) Resolve(
-	ctx context.Context,
-	orgID, providerName, accessToken string,
-) (Result, error) {
-	key := orgID + "\x00" + providerName
+func (r *CachedResolver) Resolve(ctx context.Context, in ResolveInput) (Result, error) {
+	key := in.OrgID + "\x00" + in.ProviderName
 	if hit, ok := r.lookup(key); ok {
 		return hit, nil
 	}
-	result, err := r.fetch(ctx, orgID, providerName, accessToken)
+	result, err := r.fetch(ctx, in)
 	if err != nil {
 		return Result{}, err
 	}
@@ -136,17 +140,14 @@ func (r *CachedResolver) evictExpiredLocked() {
 	}
 }
 
-func (r *CachedResolver) fetch(
-	ctx context.Context,
-	orgID, providerName, accessToken string,
-) (Result, error) {
-	md := metadata.Pairs("authorization", "Bearer "+accessToken)
+func (r *CachedResolver) fetch(ctx context.Context, in ResolveInput) (Result, error) {
+	md := metadata.Pairs("authorization", "Bearer "+in.AccessToken)
 	ctx = metadata.NewOutgoingContext(ctx, md)
 	rpcCtx, cancel := context.WithTimeout(ctx, r.rpcTimeout)
 	defer cancel()
 	resp, err := r.client.GetProviderCredential(rpcCtx, &authv1.GetProviderCredentialRequest{
-		OrgId:        orgID,
-		ProviderName: providerName,
+		OrgId:        in.OrgID,
+		ProviderName: in.ProviderName,
 	})
 	if err != nil {
 		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {

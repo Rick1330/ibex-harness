@@ -29,6 +29,7 @@ _CLOUD_DEFAULT_HOSTS: Final[dict[str, frozenset[str]]] = {
     "bedrock": frozenset({"api.openai.com"}),
 }
 _INVALID_MSG = "Provider key validation failed"
+_IPAddr = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
 def _invalid() -> ApiError:
@@ -72,57 +73,67 @@ def _assert_probe_destination(provider_name: str, url: str) -> None:
     if provider_name == "vllm_self_hosted":
         _assert_self_hosted_destination(parsed.scheme, host)
         return
-    if parsed.scheme != "https":
+    _assert_cloud_destination(provider_name, parsed.scheme, host)
+
+
+def _assert_cloud_destination(provider_name: str, scheme: str, host: str) -> None:
+    if scheme != "https":
         raise _invalid()
     if provider_name == "azure_openai":
-        if not (host.endswith(".openai.azure.com") or host == "openai.azure.com"):
-            raise _invalid()
-        _assert_public_resolved_host(host)
+        _assert_azure_host(host)
         return
-    allowed = _CLOUD_DEFAULT_HOSTS.get(provider_name, frozenset())
-    if host in allowed:
+    if host in _CLOUD_DEFAULT_HOSTS.get(provider_name, frozenset()):
         return
-    # Custom HTTPS base for cloud providers: no private/reserved destinations.
+    _assert_public_resolved_host(host)
+
+
+def _assert_azure_host(host: str) -> None:
+    if not (host.endswith(".openai.azure.com") or host == "openai.azure.com"):
+        raise _invalid()
     _assert_public_resolved_host(host)
 
 
 def _assert_self_hosted_destination(scheme: str, host: str) -> None:
     if scheme == "https":
         return
-    if scheme != "http":
+    if scheme != "http" or not _http_self_hosted_host_ok(host):
         raise _invalid()
-    if host in {"localhost"} or _is_mesh_short_name(host):
-        return
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        addrs = _resolved_addrs(host)
-        # Non-literal host over HTTP must resolve to loopback/private only.
-        if not addrs or not all(addr.is_loopback or addr.is_private for addr in addrs):
-            raise _invalid() from None
-        return
-    if not (ip.is_loopback or ip.is_private):
-        raise _invalid()
+
+
+def _http_self_hosted_host_ok(host: str) -> bool:
+    if host == "localhost" or _is_mesh_short_name(host):
+        return True
+    literal = _literal_ip(host)
+    if literal is not None:
+        return literal.is_loopback or literal.is_private
+    addrs = _resolved_addrs(host)
+    return bool(addrs) and all(a.is_loopback or a.is_private for a in addrs)
 
 
 def _assert_public_resolved_host(host: str) -> None:
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        addrs = _resolved_addrs(host)
-        if not addrs or any(_is_blocked_addr(a) for a in addrs):
-            raise _invalid() from None
+    literal = _literal_ip(host)
+    if literal is not None:
+        if _is_blocked_addr(literal):
+            raise _invalid()
         return
-    if _is_blocked_addr(ip):
+    addrs = _resolved_addrs(host)
+    if not addrs or any(_is_blocked_addr(a) for a in addrs):
         raise _invalid()
 
 
-def _resolved_addrs(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+def _literal_ip(host: str) -> _IPAddr | None:
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        return None
+
+
+def _resolved_addrs(host: str) -> list[_IPAddr]:
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return []
-    out: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    out: list[_IPAddr] = []
     for info in infos:
         try:
             out.append(ipaddress.ip_address(info[4][0]))
@@ -131,7 +142,7 @@ def _resolved_addrs(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Add
     return out
 
 
-def _is_blocked_addr(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+def _is_blocked_addr(addr: _IPAddr) -> bool:
     return bool(
         addr.is_private
         or addr.is_loopback
