@@ -13,6 +13,7 @@ from app.authz import assert_path_org
 from app.errors import ApiError
 from app.schemas.organizations import OrganizationResponse, OrgDeletionJobResponse
 from tests.unit.org_user_test_support import (
+    ApiClientOpts,
     ManagedClientOpts,
     api_client,
     bearer_headers,
@@ -35,7 +36,7 @@ def test_assert_path_org_anti_enumeration() -> None:
 def test_cross_tenant_org_get_returns_404() -> None:
     token_org = uuid4()
     other_org = uuid4()
-    with api_client(result=owner_result(org_id=token_org)) as (client, _res, _pub):
+    with api_client(ApiClientOpts(result=owner_result(org_id=token_org))) as (client, _res, _pub):
         override_org_session(client.app)
         try:
             resp = client.get(f"/v1/organizations/{other_org}", headers=bearer_headers())

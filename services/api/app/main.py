@@ -36,6 +36,7 @@ from app.revocation_publish import (
 from app.routers.agents import router as agents_router
 from app.routers.organizations import router as organizations_router
 from app.routers.tenant import router as tenant_router
+from app.routers.tokens import router as tokens_router
 from app.routers.users import router as users_router
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ class ApiRuntimeOverrides:
     """Optional test/runtime wiring for revokers, publishers, and enqueue hooks."""
 
     token_revoker: object | None = None
+    token_manager: object | None = None
     org_suspend_publisher: OrgSuspendPublisher | None = None
     enqueue_org_deletion: Callable[[str, str], None] | None = None
 
@@ -60,6 +62,7 @@ class ApiAppState:
     session_factory: async_sessionmaker[AsyncSession] | None = field(default=None, repr=False)
     validator: TokenValidator | None = field(default=None, repr=False)
     token_revoker: object | None = field(default=None, repr=False)
+    token_manager: object | None = field(default=None, repr=False)
     org_suspend_publisher: OrgSuspendPublisher | None = field(default=None, repr=False)
     enqueue_org_deletion: Callable[[str, str], None] | None = field(default=None, repr=False)
 
@@ -75,6 +78,7 @@ def create_app(
     state = ApiAppState(
         settings=cfg,
         token_revoker=hooks.token_revoker,
+        token_manager=hooks.token_manager,
         org_suspend_publisher=hooks.org_suspend_publisher,
         enqueue_org_deletion=hooks.enqueue_org_deletion,
     )
@@ -100,6 +104,7 @@ def create_app(
     application.include_router(organizations_router)
     application.include_router(users_router)
     application.include_router(agents_router)
+    application.include_router(tokens_router)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(RequestIdMiddleware)
     return application
@@ -116,6 +121,13 @@ def _wire_runtime_defaults(state: ApiAppState, cfg: Settings) -> None:
         from authclient.revoke import GRPCTokenRevoker
 
         state.token_revoker = GRPCTokenRevoker(
+            cfg.auth_grpc_addr,
+            timeout_seconds=max(cfg.auth_timeout_ms / 1000.0, 0.2),
+        )
+    if state.token_manager is None:
+        from authclient.tokens import GRPCTokenManager
+
+        state.token_manager = GRPCTokenManager(
             cfg.auth_grpc_addr,
             timeout_seconds=max(cfg.auth_timeout_ms / 1000.0, 0.2),
         )
@@ -140,6 +152,9 @@ async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
     closer = getattr(state.token_revoker, "aclose", None)
     if closer is not None:
         await closer()
+    mgr_close = getattr(state.token_manager, "aclose", None)
+    if mgr_close is not None:
+        await mgr_close()
     pub_close = getattr(state.org_suspend_publisher, "aclose", None)
     if pub_close is not None:
         await pub_close()

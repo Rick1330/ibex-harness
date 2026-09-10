@@ -40,12 +40,23 @@ def test_create_app_full_lifespan_mocked() -> None:
     with (
         patch("app.main.create_engine", return_value=mock_engine),
         patch("app.main.create_session_factory", return_value=MagicMock()),
+        patch("authclient.revoke.GRPCTokenRevoker") as revoker_cls,
+        patch("authclient.tokens.GRPCTokenManager") as manager_cls,
     ):
+        revoker = MagicMock()
+        revoker.aclose = AsyncMock()
+        revoker_cls.return_value = revoker
+        manager = MagicMock()
+        manager.aclose = AsyncMock()
+        manager_cls.return_value = manager
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:
             assert client.get("/health").status_code == 200
             assert client.get("/ready").status_code == 200
             assert app.state.api.ready is True
+            assert app.state.api.token_manager is manager
+        manager.aclose.assert_awaited()
+        revoker.aclose.assert_awaited()
 
 
 def test_create_app_auth_unreachable_not_ready() -> None:

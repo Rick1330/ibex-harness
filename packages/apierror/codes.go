@@ -12,6 +12,8 @@ const (
 	CodeInvalidToken Code = "INVALID_TOKEN"
 	// CodeInsufficientPermissions tells clients the token lacks scope for this route or org.
 	CodeInsufficientPermissions Code = "INSUFFICIENT_PERMISSIONS"
+	// CodePermissionElevationDenied tells clients the caller tried to grant bits they do not hold.
+	CodePermissionElevationDenied Code = "PERMISSION_ELEVATION_DENIED"
 	// CodeInvalidJSON tells clients the request body is not valid JSON.
 	CodeInvalidJSON Code = "INVALID_JSON"
 	// CodeInvalidRequest tells clients a generic request field failed validation.

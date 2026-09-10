@@ -1925,107 +1925,109 @@ Content-Type: application/json
 
 ## Tokens API
 
+Scoped Personal Access Tokens (PATs). The management API never writes the token hash
+table directly — create/list/revoke call AuthService gRPC. Permission strings map to the
+ADR-0009 bitmap (see Permissions Reference below).
+
+Auth gates: AuthService enforces `TokenCreate` (bit 36) for create/list and
+`TokenRevoke` (bit 37) / own-token for revoke. Elevation (granting bits the caller does
+not hold) returns `403 PERMISSION_ELEVATION_DENIED`. Cross-tenant access returns `404 NOT_FOUND`.
+
+### GET /v1/tokens
+
+**List tokens for the caller's organization** (cursor pagination; plaintext never returned).
+
+**Query:** `cursor` (opaque auth cursor), `limit` (1–100, default 50).
+
+**Response: 200 OK** — `CursorPage[TokenResponse]` (`data` + `pagination`).
+
 ### POST /v1/tokens
 
-**Create an API token**
-
-**Required Permission:** `admin:token_create`
+**Create a PAT** (plaintext returned exactly once).
 
 **Request:**
 
 ```http
 POST /v1/tokens
 Authorization: Bearer {token}
-X-MFA-Code: 123456
 Content-Type: application/json
 
 {
   "name": "Production SDK Token",
-  "description": "Token for production agent deployment",
-  "type": "org_token",
-  "agent_id": "550e8400-...",
   "permissions": ["memory:read", "memory:write", "session:create"],
   "expires_at": null,
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "allowed_ips": ["10.0.0.0/8"]
 }
 ```
 
-**Permissions Reference:**
+Notes:
+
+- `user_id` is bound from the caller's verified token — never accepted in the body.
+- `allowed_ips` is **syntax-validated only** (invalid CIDR → `VALIDATION_ERROR`). Values are
+  **not persisted** and are omitted from all responses until Auth proto/schema enforcement lands.
+- Token type is always PAT (`ibex_pat_…` prefix).
+
+**Permissions Reference** (ADR-0009; string ↔ bit):
 
 ```text
-memory:read              -- Read and search memories
-memory:write             -- Create and update memories
-memory:delete            -- Delete memories
-directive:read           -- Read directives
-directive:write          -- Create and update directives
-directive:promote        -- Promote directives to active
-directive:revoke         -- Emergency revoke directives
-session:create           -- Create and manage sessions
-session:read             -- Read session data
-session:terminate        -- Terminate sessions
-trace:read               -- Read inference traces
-trace:export             -- Export trace data
-agent:read               -- Read agent data
-agent:write              -- Create and update agents
-admin:token_create       -- Create API tokens
-admin:user_manage        -- Manage organization users
-admin:billing            -- Access billing data
-admin:audit_log          -- Read audit log
+memory:read                 bit 0
+memory:write                bit 1
+memory:delete               bit 2
+memory:bulk_export          bit 3
+directive:read              bit 8
+directive:write             bit 9
+directive:promote           bit 10   (MFA)
+directive:revoke            bit 11   (MFA)
+session:create              bit 16
+session:read                bit 17
+session:terminate           bit 18
+trace:read                  bit 24
+trace:export                bit 25
+admin:user_manage           bit 32
+admin:billing_read          bit 33
+admin:billing_manage        bit 34
+admin:org_manage            bit 35   (alias for OrgSettingsWrite)
+admin:token_create          bit 36
+admin:token_revoke          bit 37
+marketplace:publish         bit 40
+marketplace:install         bit 41
+federation:share            bit 48
 ```
+
+Dropped (no backing bit): `agent:read`, `agent:write`, `admin:billing`, `admin:audit_log`.
 
 **Response: 201 Created**
 
 ```json
 {
-  "data": {
-    "id": "tok_abc123",
-    "name": "Production SDK Token",
-    "type": "org_token",
-    "prefix": "ibex_org_7f3k",
-    "token": "ibex_org_7f3k2m9x...",
-    "permissions": ["memory:read", "memory:write", "session:create"],
-    "expires_at": null,
-    "allowed_ips": ["10.0.0.0/8"],
-    "created_at": "2024-01-20T15:00:00.000Z"
-  },
-  "meta": {
-    "warning": "Store this token securely. It will not be shown again."
-  }
+  "id": "0190abcd-0000-7000-8000-000000000001",
+  "name": "Production SDK Token",
+  "token": "ibex_pat_0190abcd_…",
+  "prefix": "ibex_pat_0190abcd",
+  "permissions": ["memory:read", "memory:write", "session:create"],
+  "expires_at": null,
+  "created_at": "2024-01-20T15:00:00.000Z"
 }
 ```
 
----
+Store the `token` field securely — it is not returned by list/get.
+
+### GET /v1/tokens/{token_id}
+
+**Get one token** by filtering Auth `ListTokens` (no GetToken RPC). Missing/cross-tenant → `404`.
+
+**Response: 200 OK** — `TokenResponse` (no plaintext; includes `prefix`, `is_revoked`, `revoked_at`).
 
 ### DELETE /v1/tokens/{token_id}
 
-**Revoke a token**
+**Revoke a token** via `AuthService.RevokeToken` (Redis pub/sub propagation to proxy auth-cache).
 
-**Required Permission:** `admin:token_create`
+**Required permission (Auth):** `admin:token_revoke` (bit 37), or revoking one's own token.
 
-**Request:**
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
 
-```http
-DELETE /v1/tokens/tok_abc123
-Authorization: Bearer {token}
-Content-Type: application/json
-
-{
-  "reason": "Token compromised in security incident"
-}
-```
-
-**Response: 200 OK**
-
-```json
-{
-  "data": {
-    "token_id": "tok_abc123",
-    "revoked": true,
-    "revoked_at": "2024-01-20T17:00:00.000Z",
-    "propagation_estimated_ms": 100
-  }
-}
-```
+PATCH is not supported yet (follow-up issue).
 
 ---
 
