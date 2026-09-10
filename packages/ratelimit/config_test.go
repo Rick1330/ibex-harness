@@ -147,7 +147,9 @@ func TestConfigSubscriber_pubsubAppliesWithinOneSecond(t *testing.T) {
 	})
 	waitPubSubPatterns(t, client)
 	mustPublishConfig(t, client, org)
-	elapsed := waitOrgRPM(t, lim, org, agent, 2, time.Second)
+	elapsed := waitOrgRPM(t, waitOrgRPMArgs{
+		lim: lim, org: org, agent: agent, want: 2, budget: time.Second,
+	})
 	t.Logf("pubsub override propagation latency: %s", elapsed)
 	if elapsed < 0 {
 		t.Fatalf("override not applied within 1s")
@@ -165,7 +167,9 @@ func TestConfigSubscriber_pollMissConverges(t *testing.T) {
 	})
 	rpm := int64(1)
 	loader.set(org, OrgOverrideSet{OrgRPM: &rpm})
-	elapsed := waitOrgRPM(t, lim, org, agent, 1, 2*time.Second)
+	elapsed := waitOrgRPM(t, waitOrgRPMArgs{
+		lim: lim, org: org, agent: agent, want: 1, budget: 2 * time.Second,
+	})
 	t.Logf("poll-miss override propagation latency: %s (pollEvery=%s)", elapsed, pollEvery)
 	if elapsed < 0 {
 		t.Fatalf("poll did not apply override")
@@ -248,14 +252,20 @@ func mustPublishConfig(t *testing.T, client redis.UniversalClient, org uuid.UUID
 	}
 }
 
-func waitOrgRPM(
-	t *testing.T, lim *HierarchicalLimiter, org, agent uuid.UUID, want int64, budget time.Duration,
-) time.Duration {
+type waitOrgRPMArgs struct {
+	lim    *HierarchicalLimiter
+	org    uuid.UUID
+	agent  uuid.UUID
+	want   int64
+	budget time.Duration
+}
+
+func waitOrgRPM(t *testing.T, a waitOrgRPMArgs) time.Duration {
 	t.Helper()
 	start := time.Now()
-	for time.Since(start) < budget {
-		orgLim, _, _ := lim.resolvedLimits(org, agent)
-		if orgLim == want {
+	for time.Since(start) < a.budget {
+		orgLim, _, _ := a.lim.resolvedLimits(a.org, a.agent)
+		if orgLim == a.want {
 			return time.Since(start)
 		}
 		time.Sleep(10 * time.Millisecond)
