@@ -40,7 +40,7 @@ func NewConfigStore(db *sql.DB) (*ConfigStore, error) {
 }
 
 type loadOverridesParams struct {
-	spanName      string
+	spanName       string
 	setConfigSQL   string
 	setConfigArgs  []any
 	setConfigLabel string
@@ -51,7 +51,7 @@ type loadOverridesParams struct {
 // LoadOrg returns overrides for one org under app.current_org_id RLS.
 func (s *ConfigStore) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgOverrideSet, error) {
 	set, err := s.loadOverrides(ctx, loadOverridesParams{
-		spanName:      "ConfigStore.LoadOrg",
+		spanName:       "ConfigStore.LoadOrg",
 		setConfigSQL:   `SELECT set_config('app.current_org_id', $1, true)`,
 		setConfigArgs:  []any{orgID.String()},
 		setConfigLabel: "set rls",
@@ -70,7 +70,7 @@ func (s *ConfigStore) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgOverride
 // LoadAll returns all overrides using app.is_service_account (full poll).
 func (s *ConfigStore) LoadAll(ctx context.Context) (map[uuid.UUID]OrgOverrideSet, error) {
 	return s.loadOverrides(ctx, loadOverridesParams{
-		spanName:      "ConfigStore.LoadAll",
+		spanName:       "ConfigStore.LoadAll",
 		setConfigSQL:   `SELECT set_config('app.is_service_account', 'true', true)`,
 		setConfigLabel: "set service account",
 		query: `

@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -43,6 +44,9 @@ type ConfigSubscriber struct {
 	log       *logger.Logger
 	loop      *redissub.Loop
 	pollEvery time.Duration
+	// applyMu serializes each Load* → Apply*/Replace* sequence so poll and
+	// pub/sub cannot interleave partial snapshots.
+	applyMu sync.Mutex
 }
 
 // NewConfigSubscriber constructs a ConfigSubscriber. PollEvery defaults to 30s when <= 0.
@@ -124,6 +128,8 @@ func (s *ConfigSubscriber) handleMessage(ctx context.Context, channel, payload s
 	if !ok {
 		return
 	}
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
 	set, err := s.store.LoadOrg(ctx, orgID)
 	if err != nil {
 		s.log.WarnCtx(ctx, "rate-limit config reload failed; keeping prior overrides",
@@ -167,6 +173,8 @@ func (s *ConfigSubscriber) pollLoop(ctx context.Context) {
 }
 
 func (s *ConfigSubscriber) pollOnce(ctx context.Context) {
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
 	all, err := s.store.LoadAll(ctx)
 	if err != nil {
 		s.log.WarnCtx(ctx, "rate-limit config poll failed; keeping prior overrides", "error", err)

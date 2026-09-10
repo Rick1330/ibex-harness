@@ -237,6 +237,7 @@ func waitPubSubPatterns(t *testing.T, client redis.UniversalClient) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	t.Fatal("pubsub pattern not registered within 2s")
 }
 
 func mustPublishConfig(t *testing.T, client redis.UniversalClient, org uuid.UUID) {

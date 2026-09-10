@@ -178,14 +178,18 @@ func (h *HierarchicalLimiter) ApplyOrgOverrides(orgID uuid.UUID, set OrgOverride
 }
 
 // ReplaceAllOverrides replaces the entire DB override cache (30s poll).
+// Maps are built off the hot path, then swapped under dbMu so Check's RLock
+// is held only for pointer assignment (see BenchmarkHierarchical_ReplaceAllOverrides).
 func (h *HierarchicalLimiter) ReplaceAllOverrides(all map[uuid.UUID]OrgOverrideSet) {
-	h.dbMu.Lock()
-	defer h.dbMu.Unlock()
-	h.dbOrgRPM = make(map[uuid.UUID]int64, len(all))
-	h.dbAgentRPM = make(map[agentOverrideKey]int64)
+	orgRPM := make(map[uuid.UUID]int64, len(all))
+	agentRPM := make(map[agentOverrideKey]int64)
 	for orgID, set := range all {
-		h.putOrgSetLocked(orgID, set)
+		putOrgSetInto(orgRPM, agentRPM, orgID, set)
 	}
+	h.dbMu.Lock()
+	h.dbOrgRPM = orgRPM
+	h.dbAgentRPM = agentRPM
+	h.dbMu.Unlock()
 }
 
 func (h *HierarchicalLimiter) clearOrgLocked(orgID uuid.UUID) {
@@ -198,12 +202,21 @@ func (h *HierarchicalLimiter) clearOrgLocked(orgID uuid.UUID) {
 }
 
 func (h *HierarchicalLimiter) putOrgSetLocked(orgID uuid.UUID, set OrgOverrideSet) {
+	putOrgSetInto(h.dbOrgRPM, h.dbAgentRPM, orgID, set)
+}
+
+func putOrgSetInto(
+	orgRPM map[uuid.UUID]int64,
+	agentRPM map[agentOverrideKey]int64,
+	orgID uuid.UUID,
+	set OrgOverrideSet,
+) {
 	if set.OrgRPM != nil && *set.OrgRPM > 0 {
-		h.dbOrgRPM[orgID] = *set.OrgRPM
+		orgRPM[orgID] = *set.OrgRPM
 	}
 	for agentID, rpm := range set.AgentRPM {
 		if rpm > 0 && agentID != uuid.Nil {
-			h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
+			agentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
 		}
 	}
 }
