@@ -58,48 +58,47 @@ func TestHierarchical_nilAgentSkipsAgentTier(t *testing.T) {
 	assertRedisInt(t, mr, globalRPMKey(window.unixMinute), 1)
 }
 
-func TestHierarchical_agentTripIndependent(t *testing.T) {
+func TestHierarchical_tierTripsIndependent(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440102")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440202")
-	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
-		DefaultRPM:   2,
-		OrgOverrides: map[uuid.UUID]int64{org: 100},
-		GlobalRPM:    1000,
-	})
-	runTripAndAssertCounters(t, mr, lim, tripExpect{
-		org: org, agent: agent, wantTier: tierAgent,
-		agentN: 3, orgN: 2, globalN: 2,
-	})
-}
-
-func TestHierarchical_orgTripIndependent(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440103")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440203")
-	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
-		DefaultRPM:   100,
-		OrgOverrides: map[uuid.UUID]int64{org: 2},
-		GlobalRPM:    1000,
-	})
-	runTripAndAssertCounters(t, mr, lim, tripExpect{
-		org: org, agent: agent, wantTier: tierOrg,
-		agentN: 2, orgN: 3, globalN: 2,
-	})
-}
-
-func TestHierarchical_globalTripIndependent(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440104")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440204")
-	mr, lim := newTestHierarchicalMR(t, HierarchicalConfig{
-		DefaultRPM: 100,
-		GlobalRPM:  2,
-	})
-	runTripAndAssertCounters(t, mr, lim, tripExpect{
-		org: org, agent: agent, wantTier: tierGlobal,
-		agentN: 2, orgN: 2, globalN: 3,
-	})
+	orgAgent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440102")
+	agentA := uuid.MustParse("550e8400-e29b-41d4-a716-446655440202")
+	orgOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655440103")
+	agentO := uuid.MustParse("550e8400-e29b-41d4-a716-446655440203")
+	orgGlobal := uuid.MustParse("550e8400-e29b-41d4-a716-446655440104")
+	agentG := uuid.MustParse("550e8400-e29b-41d4-a716-446655440204")
+	cases := []struct {
+		name   string
+		cfg    HierarchicalConfig
+		expect tripExpect
+	}{
+		{
+			name: "agent",
+			cfg: HierarchicalConfig{
+				DefaultRPM: 2, OrgOverrides: map[uuid.UUID]int64{orgAgent: 100}, GlobalRPM: 1000,
+			},
+			expect: tripExpect{org: orgAgent, agent: agentA, wantTier: tierAgent, agentN: 3, orgN: 2, globalN: 2},
+		},
+		{
+			name: "org",
+			cfg: HierarchicalConfig{
+				DefaultRPM: 100, OrgOverrides: map[uuid.UUID]int64{orgOrg: 2}, GlobalRPM: 1000,
+			},
+			expect: tripExpect{org: orgOrg, agent: agentO, wantTier: tierOrg, agentN: 2, orgN: 3, globalN: 2},
+		},
+		{
+			name:   "global",
+			cfg:    HierarchicalConfig{DefaultRPM: 100, GlobalRPM: 2},
+			expect: tripExpect{org: orgGlobal, agent: agentG, wantTier: tierGlobal, agentN: 2, orgN: 2, globalN: 3},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mr, lim := newTestHierarchicalMR(t, tc.cfg)
+			runTripAndAssertCounters(t, mr, lim, tc.expect)
+		})
+	}
 }
 
 func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
@@ -129,42 +128,50 @@ func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
 	assertRedisInt(t, mr, orgRPMKey(orgB, window.unixMinute), 1)
 }
 
-func TestHierarchical_ConcurrentBurst_orgTier(t *testing.T) {
+func TestHierarchical_ConcurrentBurst(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440110")
 	const rpm = 20
-	lim := newTestHierarchical(t, HierarchicalConfig{
-		DefaultRPM:   10_000,
-		OrgOverrides: map[uuid.UUID]int64{org: rpm},
-		GlobalRPM:    10_000,
-	})
-	assertExactBurstRPM(t, checkArgs{lim: lim, org: org}, rpm)
-}
-
-func TestHierarchical_ConcurrentBurst_agentTier(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440111")
+	orgOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655440110")
+	orgAgent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440111")
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440211")
-	const rpm = 20
-	lim := newTestHierarchical(t, HierarchicalConfig{
-		DefaultRPM:   rpm,
-		OrgOverrides: map[uuid.UUID]int64{org: 10_000},
-		GlobalRPM:    10_000,
-	})
-	results := assertExactBurstRPM(t, checkArgs{lim: lim, org: org, agent: agent}, rpm)
-	assertDeniedTier(t, results, tierAgent)
-}
-
-func TestHierarchical_ConcurrentBurst_globalTier(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440112")
-	const rpm = 20
-	lim := newTestHierarchical(t, HierarchicalConfig{
-		DefaultRPM: 10_000,
-		GlobalRPM:  rpm,
-	})
-	results := assertExactBurstRPM(t, checkArgs{lim: lim, org: org}, rpm)
-	assertDeniedTier(t, results, tierGlobal)
+	orgGlobal := uuid.MustParse("550e8400-e29b-41d4-a716-446655440112")
+	cases := []struct {
+		name     string
+		cfg      HierarchicalConfig
+		org      uuid.UUID
+		agent    uuid.UUID
+		wantTier string
+	}{
+		{
+			name: "org",
+			cfg: HierarchicalConfig{
+				DefaultRPM: 10_000, OrgOverrides: map[uuid.UUID]int64{orgOrg: rpm}, GlobalRPM: 10_000,
+			},
+			org: orgOrg, wantTier: tierOrg,
+		},
+		{
+			name: "agent",
+			cfg: HierarchicalConfig{
+				DefaultRPM: rpm, OrgOverrides: map[uuid.UUID]int64{orgAgent: 10_000}, GlobalRPM: 10_000,
+			},
+			org: orgAgent, agent: agent, wantTier: tierAgent,
+		},
+		{
+			name: "global",
+			cfg:  HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
+			org:  orgGlobal, wantTier: tierGlobal,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runBurstExactRPM(t, burstCase{
+				cfg: tc.cfg, args: checkArgs{org: tc.org, agent: tc.agent},
+				rpm: rpm, wantTier: tc.wantTier,
+			})
+		})
+	}
 }
 
 func TestHierarchical_Check_redisError(t *testing.T) {
@@ -346,6 +353,20 @@ func burstCheckHierarchical(t *testing.T, args checkArgs, n int) []Result {
 	wg.Wait()
 	assertNoCheckErrors(t, errs)
 	return results
+}
+
+type burstCase struct {
+	cfg      HierarchicalConfig
+	args     checkArgs
+	rpm      int64
+	wantTier string
+}
+
+func runBurstExactRPM(t *testing.T, bc burstCase) {
+	t.Helper()
+	bc.args.lim = newTestHierarchical(t, bc.cfg)
+	results := assertExactBurstRPM(t, bc.args, bc.rpm)
+	assertDeniedTier(t, results, bc.wantTier)
 }
 
 func assertExactBurstRPM(t *testing.T, args checkArgs, rpm int64) []Result {
