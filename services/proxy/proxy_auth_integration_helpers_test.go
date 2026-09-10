@@ -382,14 +382,15 @@ func mustGRPCAgentVerifier(t *testing.T, client authv1.AuthServiceClient, timeou
 	return v
 }
 
-func mustRedisSlider(t *testing.T, client redis.UniversalClient, defaultRPM int64, orgOverrides map[uuid.UUID]int64) ratelimit.Limiter {
+func mustHierarchicalLimiter(t *testing.T, client redis.UniversalClient, defaultRPM int64, orgOverrides map[uuid.UUID]int64) ratelimit.Limiter {
 	t.Helper()
-	limiter, err := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{
+	limiter, err := ratelimit.NewHierarchicalLimiter(client, ratelimit.HierarchicalConfig{
 		DefaultRPM:   defaultRPM,
 		OrgOverrides: orgOverrides,
+		GlobalRPM:    100_000,
 	})
 	if err != nil {
-		t.Fatalf("NewRedisSlider: %v", err)
+		t.Fatalf("NewHierarchicalLimiter: %v", err)
 	}
 	return limiter
 }
@@ -399,7 +400,7 @@ func mustProxyLimiter(t *testing.T, client redis.UniversalClient, defaultRPM int
 	if client == nil {
 		return ratelimit.Noop()
 	}
-	return mustRedisSlider(t, client, defaultRPM, orgOverrides)
+	return mustHierarchicalLimiter(t, client, defaultRPM, orgOverrides)
 }
 
 func mustProviderRegistry(t *testing.T, providers ...provider.Provider) *provider.Registry {

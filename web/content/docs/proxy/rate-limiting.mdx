@@ -3,7 +3,7 @@ title: Rate limiting
 description: Per-org request budgets enforced at the proxy edge.
 ---
 
-The proxy enforces organization-level requests-per-minute (RPM) limits using a Redis sliding window ([ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton)). Limits apply **after** authentication and agent verification succeed and **before** request normalization hands off to a provider adapter.
+The proxy enforces hierarchical requests-per-minute (RPM) limits (agent → org → global) using an atomic Redis Lua script ([ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton), milestone 4.B.1). Limits apply **after** authentication and agent verification succeed and **before** request normalization hands off to a provider adapter.
 
 Rate limiting is a **cost control**, not a security boundary. Auth and tenant isolation remain fail-closed; the limiter intentionally fails open when Redis is down.
 
@@ -17,13 +17,13 @@ Rate limiting is a **cost control**, not a security boundary. Auth and tenant is
 flowchart TD
   A[Authenticated request] --> B{Redis reachable?}
   B -->|No| C[Allow request — fail-open]
-  B -->|Yes| D[INCR ratelimit:org_id:rpm:minute]
-  D --> E{count ≤ RPM?}
+  B -->|Yes| D[Lua INCR agent then org then global]
+  D --> E{all tiers within RPM?}
   E -->|Yes| F[Allow + set response headers]
   E -->|No| G[429 RATE_LIMITED + Retry-After]
 ```
 
-Implementation lives in `packages/ratelimit` — services must use the `Limiter` interface, not ad-hoc Redis calls. Key format: `ratelimit:{org_id}:rpm:{unix_minute}` with a TTL on first increment.
+Implementation lives in `packages/ratelimit` (`HierarchicalLimiter`) — services must use the `Limiter` interface, not ad-hoc Redis calls. Org key format remains `ratelimit:{org_id}:rpm:{unix_minute}` with a TTL on first increment; agent and global keys use the same minute window.
 
 ## Configuration
 
@@ -33,8 +33,15 @@ Implementation lives in `packages/ratelimit` — services must use the `Limiter`
       name: "IBEX_RATE_LIMIT_DEFAULT_RPM",
       type: "integer",
       required: false,
-      description: "Default requests per minute for all orgs without an override.",
+      description: "Default requests per minute for orgs without an override (also default agent RPM until 4.B.2).",
       defaultValue: "60",
+    },
+    {
+      name: "IBEX_RATE_LIMIT_GLOBAL_RPM",
+      type: "integer",
+      required: false,
+      description: "Process-wide global requests-per-minute ceiling shared across all orgs.",
+      defaultValue: "100000",
     },
     {
       name: "IBEX_RATE_LIMIT_ORG_OVERRIDES",
@@ -56,6 +63,7 @@ Example overrides:
 
 ```bash
 IBEX_RATE_LIMIT_DEFAULT_RPM=60
+IBEX_RATE_LIMIT_GLOBAL_RPM=100000
 IBEX_RATE_LIMIT_ORG_OVERRIDES=00000000-0000-0000-0000-000000000001=120,00000000-0000-0000-0000-000000000002=30
 ```
 
