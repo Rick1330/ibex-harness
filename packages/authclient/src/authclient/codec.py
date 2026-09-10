@@ -365,16 +365,20 @@ def _apply_create_len(state: _CreateDecodeState, field: int, raw: bytes) -> None
         state.token_id = _bounded_string(_decode_utf8(raw), "token_id")
         return
     if field == 2:
-        text = _decode_utf8(raw)
-        if len(text) > MAX_TOKEN_BYTES:
-            raise AuthCodecError("plaintext exceeds limit")
-        state.plaintext = text
+        state.plaintext = _decode_plaintext(raw)
         return
     if field == 3:
         state.prefix = _bounded_string(_decode_utf8(raw), "prefix")
         return
     if field == 4:
         state.created_at = _decode_timestamp(raw)
+
+
+def _decode_plaintext(raw: bytes) -> str:
+    text = _decode_utf8(raw)
+    if len(text) > MAX_TOKEN_BYTES:
+        raise AuthCodecError("plaintext exceeds limit")
+    return text
 
 
 def _decode_list_field(buf: bytes, idx: int, state: _ListDecodeState) -> int:
@@ -392,20 +396,24 @@ def _decode_list_field(buf: bytes, idx: int, state: _ListDecodeState) -> int:
 
 def _decode_token_metadata(raw: bytes) -> TokenMetadataWire:
     state = _MetaDecodeState()
-
-    def _one(buf: bytes, idx: int) -> int:
-        key, idx = _decode_varint(buf, idx)
-        field, wire = key >> 3, key & 0x07
-        if wire == _WIRE_LEN:
-            data, idx = _read_bytes(buf, idx, max_len=MAX_SUBMESSAGE_BYTES)
-            _apply_meta_len(state, field, data)
-            return idx
-        if wire == _WIRE_VARINT:
-            return _apply_meta_varint(buf, idx, state, field)
-        return _skip_unknown(buf, idx, wire)
-
-    _walk_fields(raw, _one, max_bytes=MAX_SUBMESSAGE_BYTES)
+    _walk_fields(
+        raw,
+        lambda buf, idx: _decode_meta_field(buf, idx, state),
+        max_bytes=MAX_SUBMESSAGE_BYTES,
+    )
     return _finish_meta_wire(state)
+
+
+def _decode_meta_field(buf: bytes, idx: int, state: _MetaDecodeState) -> int:
+    key, idx = _decode_varint(buf, idx)
+    field, wire = key >> 3, key & 0x07
+    if wire == _WIRE_LEN:
+        data, idx = _read_bytes(buf, idx, max_len=MAX_SUBMESSAGE_BYTES)
+        _apply_meta_len(state, field, data)
+        return idx
+    if wire == _WIRE_VARINT:
+        return _apply_meta_varint(buf, idx, state, field)
+    return _skip_unknown(buf, idx, wire)
 
 
 def _apply_meta_len(state: _MetaDecodeState, field: int, data: bytes) -> None:

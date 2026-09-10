@@ -59,18 +59,33 @@ def _patched_manager(*, create=None, list_stub=None, revoke=None) -> GRPCTokenMa
         return GRPCTokenManager("127.0.0.1:50051", timeout_seconds=0.05)
 
 
-@pytest.mark.asyncio
-async def test_grpc_token_manager_maps_create_permission_denied() -> None:
-    create_stub = AsyncMock(side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED))
-    mgr = _patched_manager(create=create_stub)
-    params = CreateTokenParams(
+def _create_params() -> CreateTokenParams:
+    return CreateTokenParams(
         org_id=str(uuid4()),
         name="x",
         permissions=1,
         access_token="tok",
     )
-    with pytest.raises(InsufficientPermissionsError):
-        await mgr.create(params)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("create_stub", "exc_type"),
+    [
+        (
+            AsyncMock(side_effect=aio_rpc(grpc.StatusCode.PERMISSION_DENIED)),
+            InsufficientPermissionsError,
+        ),
+        (AsyncMock(side_effect=OSError("down")), AuthUnavailableError),
+        (AsyncMock(return_value="not-bytes"), AuthUnavailableError),
+    ],
+)
+async def test_grpc_create_error_mapping(
+    create_stub: AsyncMock, exc_type: type[BaseException]
+) -> None:
+    mgr = _patched_manager(create=create_stub)
+    with pytest.raises(exc_type):
+        await mgr.create(_create_params())
 
 
 @pytest.mark.asyncio
@@ -91,31 +106,3 @@ async def test_grpc_token_manager_list_permission_denied_is_not_found() -> None:
     mgr = _patched_manager(list_stub=list_stub)
     with pytest.raises(TokenNotFoundError):
         await mgr.list(org_id=str(uuid4()), access_token="tok")
-
-
-@pytest.mark.asyncio
-async def test_grpc_token_manager_oserror_is_unavailable() -> None:
-    create_stub = AsyncMock(side_effect=OSError("down"))
-    mgr = _patched_manager(create=create_stub)
-    params = CreateTokenParams(
-        org_id=str(uuid4()),
-        name="x",
-        permissions=1,
-        access_token="tok",
-    )
-    with pytest.raises(AuthUnavailableError):
-        await mgr.create(params)
-
-
-@pytest.mark.asyncio
-async def test_grpc_token_manager_non_bytes_response_is_unavailable() -> None:
-    create_stub = AsyncMock(return_value="not-bytes")
-    mgr = _patched_manager(create=create_stub)
-    params = CreateTokenParams(
-        org_id=str(uuid4()),
-        name="x",
-        permissions=1,
-        access_token="tok",
-    )
-    with pytest.raises(AuthUnavailableError):
-        await mgr.create(params)
