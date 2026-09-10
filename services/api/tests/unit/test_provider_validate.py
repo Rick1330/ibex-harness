@@ -44,6 +44,43 @@ async def test_validate_anthropic_headers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_validate_azure_requires_base_url_and_api_key_header() -> None:
+    resp = MagicMock(status_code=200)
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    with patch(
+        "app.services.provider_validate._resolved_addrs",
+        return_value=[],
+    ):
+        # Host suffix allowlisted; empty resolve list would fail — stub public.
+        with patch(
+            "app.services.provider_validate._assert_public_resolved_host",
+        ):
+            await validate_provider_credential(
+                provider_name="azure_openai",
+                api_key="az-key",
+                base_url="https://myres.openai.azure.com",
+                client=client,
+            )
+    args, kwargs = client.get.await_args
+    assert args[0].startswith("https://myres.openai.azure.com/openai/models?")
+    assert kwargs["headers"]["api-key"] == "az-key"
+
+
+@pytest.mark.asyncio
+async def test_validate_azure_rejects_missing_base_url() -> None:
+    client = AsyncMock()
+    with pytest.raises(ApiError) as exc:
+        await validate_provider_credential(
+            provider_name="azure_openai",
+            api_key="az-key",
+            client=client,
+        )
+    assert exc.value.code == INVALID_CREDENTIAL
+    client.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_validate_rejects_upstream_4xx() -> None:
     resp = MagicMock(status_code=401)
     client = AsyncMock()
@@ -52,6 +89,20 @@ async def test_validate_rejects_upstream_4xx() -> None:
         await validate_provider_credential(
             provider_name="openai",
             api_key="sk-bad",
+            client=client,
+        )
+    assert exc.value.code == INVALID_CREDENTIAL
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_redirect_302() -> None:
+    resp = MagicMock(status_code=302)
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=resp)
+    with pytest.raises(ApiError) as exc:
+        await validate_provider_credential(
+            provider_name="openai",
+            api_key="sk-test",
             client=client,
         )
     assert exc.value.code == INVALID_CREDENTIAL
@@ -71,7 +122,7 @@ async def test_validate_transport_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_validate_custom_base_url() -> None:
+async def test_validate_custom_base_url_self_hosted_mesh() -> None:
     resp = MagicMock(status_code=200)
     client = AsyncMock()
     client.get = AsyncMock(return_value=resp)
@@ -83,6 +134,20 @@ async def test_validate_custom_base_url() -> None:
     )
     args, _ = client.get.await_args
     assert args[0] == "http://llm:8000/v1/models"
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_http_non_loopback_for_cloud() -> None:
+    client = AsyncMock()
+    with pytest.raises(ApiError) as exc:
+        await validate_provider_credential(
+            provider_name="openai",
+            api_key="sk-test",
+            base_url="http://evil.example/v1",
+            client=client,
+        )
+    assert exc.value.code == INVALID_CREDENTIAL
+    client.get.assert_not_awaited()
 
 
 @pytest.mark.asyncio

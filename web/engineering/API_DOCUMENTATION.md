@@ -165,7 +165,6 @@ Every error uses this structure:
 ```text
 HTTP 400 - Bad Request
   VALIDATION_ERROR         -- Request body/params failed validation
-  INVALID_CREDENTIAL       -- Provider API key failed upstream validation (422)
   INVALID_JSON             -- Malformed JSON in request body
   MISSING_REQUIRED_FIELD   -- Required field not provided
   INVALID_FIELD_VALUE      -- Field value out of allowed range/enum
@@ -204,6 +203,7 @@ HTTP 422 - Unprocessable Entity
   CONTENT_TOO_LONG         -- Memory content exceeds limit
   EMBEDDING_FAILED         -- Could not generate embedding
   PII_DETECTED             -- PII detected, manual review required
+  INVALID_CREDENTIAL       -- Provider API key failed upstream validation (422)
 
 HTTP 429 - Too Many Requests
   RATE_LIMIT_EXCEEDED      -- Per-minute rate limit hit

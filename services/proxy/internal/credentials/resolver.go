@@ -14,7 +14,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const DefaultCacheTTL = 30 * time.Second
+const (
+	DefaultCacheTTL      = 30 * time.Second
+	defaultRPCTimeout    = 50 * time.Millisecond
+	maxCachedCredentials = 1024
+)
 
 // Result is the resolved credential for one (org, provider) pair.
 type Result struct {
@@ -45,9 +49,10 @@ type cacheEntry struct {
 // CachedResolver wraps Auth Get with a 30s in-memory cache.
 // Transport/RPC failures are never cached.
 type CachedResolver struct {
-	client Getter
-	ttl    time.Duration
-	now    func() time.Time
+	client     Getter
+	ttl        time.Duration
+	rpcTimeout time.Duration
+	now        func() time.Time
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -55,17 +60,26 @@ type CachedResolver struct {
 
 // NewCachedResolver constructs a resolver. client must be non-nil.
 func NewCachedResolver(client Getter, ttl time.Duration) (*CachedResolver, error) {
+	return NewCachedResolverWithTimeout(client, ttl, defaultRPCTimeout)
+}
+
+// NewCachedResolverWithTimeout constructs a resolver with an explicit Auth RPC deadline.
+func NewCachedResolverWithTimeout(client Getter, ttl, rpcTimeout time.Duration) (*CachedResolver, error) {
 	if client == nil {
 		return nil, fmt.Errorf("credentials: nil auth client")
 	}
 	if ttl <= 0 {
 		ttl = DefaultCacheTTL
 	}
+	if rpcTimeout <= 0 {
+		rpcTimeout = defaultRPCTimeout
+	}
 	return &CachedResolver{
-		client: client,
-		ttl:    ttl,
-		now:    time.Now,
-		cache:  make(map[string]cacheEntry),
+		client:     client,
+		ttl:        ttl,
+		rpcTimeout: rpcTimeout,
+		now:        time.Now,
+		cache:      make(map[string]cacheEntry),
 	}, nil
 }
 
@@ -89,11 +103,9 @@ func (r *CachedResolver) Resolve(
 func (r *CachedResolver) lookup(key string) (Result, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.evictExpiredLocked()
 	entry, ok := r.cache[key]
-	if !ok || !r.now().Before(entry.expiresAt) {
-		if ok {
-			delete(r.cache, key)
-		}
+	if !ok {
 		return Result{}, false
 	}
 	return entry.result, true
@@ -102,7 +114,26 @@ func (r *CachedResolver) lookup(key string) (Result, bool) {
 func (r *CachedResolver) store(key string, result Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.evictExpiredLocked()
+	if len(r.cache) >= maxCachedCredentials {
+		// Drop an arbitrary entry to keep the map bounded under churn.
+		for existing := range r.cache {
+			if existing != key {
+				delete(r.cache, existing)
+				break
+			}
+		}
+	}
 	r.cache[key] = cacheEntry{result: result, expiresAt: r.now().Add(r.ttl)}
+}
+
+func (r *CachedResolver) evictExpiredLocked() {
+	now := r.now()
+	for key, entry := range r.cache {
+		if !now.Before(entry.expiresAt) {
+			delete(r.cache, key)
+		}
+	}
 }
 
 func (r *CachedResolver) fetch(
@@ -111,7 +142,9 @@ func (r *CachedResolver) fetch(
 ) (Result, error) {
 	md := metadata.Pairs("authorization", "Bearer "+accessToken)
 	ctx = metadata.NewOutgoingContext(ctx, md)
-	resp, err := r.client.GetProviderCredential(ctx, &authv1.GetProviderCredentialRequest{
+	rpcCtx, cancel := context.WithTimeout(ctx, r.rpcTimeout)
+	defer cancel()
+	resp, err := r.client.GetProviderCredential(rpcCtx, &authv1.GetProviderCredentialRequest{
 		OrgId:        orgID,
 		ProviderName: providerName,
 	})

@@ -12,12 +12,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const errMsgProviderCredentialsNotConfigured = "provider credentials not configured"
+
 // providerCredentialAPI is the service port for provider credential RPCs.
 type providerCredentialAPI interface {
 	Create(ctx context.Context, in service.CreateInput) (service.ProviderCredentialMetadata, error)
-	Get(ctx context.Context, orgID, providerName string) (service.GetProviderCredentialResult, error)
+	Get(ctx context.Context, ref service.OrgProviderRef) (service.GetProviderCredentialResult, error)
 	List(ctx context.Context, orgID string) ([]service.ProviderCredentialMetadata, error)
-	Delete(ctx context.Context, orgID, providerName string) error
+	Delete(ctx context.Context, ref service.OrgProviderRef) error
 }
 
 func (s *Server) CreateProviderCredential(
@@ -25,7 +27,7 @@ func (s *Server) CreateProviderCredential(
 	req *authv1.CreateProviderCredentialRequest,
 ) (*authv1.CreateProviderCredentialResponse, error) {
 	if s.credService == nil {
-		return nil, status.Error(codes.FailedPrecondition, "provider credentials not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
 	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
@@ -58,7 +60,7 @@ func (s *Server) GetProviderCredential(
 	req *authv1.GetProviderCredentialRequest,
 ) (*authv1.GetProviderCredentialResponse, error) {
 	if s.credService == nil {
-		return nil, status.Error(codes.FailedPrecondition, "provider credentials not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
 	caller, ok := CallerFromContext(ctx)
@@ -68,7 +70,9 @@ func (s *Server) GetProviderCredential(
 	if caller.OrgID != orgID {
 		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
-	result, err := s.credService.Get(ctx, orgID, req.GetProviderName())
+	result, err := s.credService.Get(ctx, service.OrgProviderRef{
+		OrgID: orgID, ProviderName: req.GetProviderName(),
+	})
 	if err != nil {
 		return nil, mapProviderCredentialErr(err)
 	}
@@ -84,13 +88,15 @@ func (s *Server) DeleteProviderCredential(
 	req *authv1.DeleteProviderCredentialRequest,
 ) (*authv1.DeleteProviderCredentialResponse, error) {
 	if s.credService == nil {
-		return nil, status.Error(codes.FailedPrecondition, "provider credentials not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
 	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
 		return nil, err
 	}
-	if err := s.credService.Delete(ctx, orgID, req.GetProviderName()); err != nil {
+	if err := s.credService.Delete(ctx, service.OrgProviderRef{
+		OrgID: orgID, ProviderName: req.GetProviderName(),
+	}); err != nil {
 		return nil, mapProviderCredentialErr(err)
 	}
 	return &authv1.DeleteProviderCredentialResponse{}, nil
@@ -101,7 +107,7 @@ func (s *Server) ListProviderCredentials(
 	req *authv1.ListProviderCredentialsRequest,
 ) (*authv1.ListProviderCredentialsResponse, error) {
 	if s.credService == nil {
-		return nil, status.Error(codes.FailedPrecondition, "provider credentials not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
 	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
@@ -133,7 +139,7 @@ func mapProviderCredentialErr(err error) error {
 	case errors.Is(err, service.ErrProviderCredentialNotFound):
 		return status.Error(codes.NotFound, "provider credential not found")
 	case errors.Is(err, service.ErrCredentialsMasterKeyMissing):
-		return status.Error(codes.FailedPrecondition, "provider credentials not configured")
+		return status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	case errors.Is(err, service.ErrInvalidProviderName), errors.Is(err, service.ErrEmptyAPIKey):
 		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
 	default:

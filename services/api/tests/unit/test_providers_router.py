@@ -67,6 +67,8 @@ def test_upsert_invalid_credential_returns_422() -> None:
 
     from app.errors import ApiError
 
+    mgr = FakeProviderCredentialManager()
+
     async def _fail(**_kwargs):
         raise ApiError(code=INVALID_CREDENTIAL, message="Provider credential validation failed")
 
@@ -74,7 +76,7 @@ def test_upsert_invalid_credential_returns_422() -> None:
         managed_org_client(
             ManagedClientOpts(
                 org_id=org_id,
-                provider_credential_manager=FakeProviderCredentialManager(),
+                provider_credential_manager=mgr,
             )
         ) as (client, _, _),
         patch(
@@ -89,6 +91,8 @@ def test_upsert_invalid_credential_returns_422() -> None:
         )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "INVALID_CREDENTIAL"
+    assert (str(org_id), "openai") not in mgr.rows
+    assert mgr.created == []
 
 
 def test_cross_tenant_providers_return_404() -> None:
@@ -148,6 +152,4 @@ def test_delete_provider_credential() -> None:
             headers=bearer_headers(),
         )
     assert resp.status_code == 204
-    assert ("openai" in {name for _, name in mgr.deleted}) or (
-        (str(org_id), "openai") in mgr.deleted
-    )
+    assert (str(org_id), "openai") in mgr.deleted

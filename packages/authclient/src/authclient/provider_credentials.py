@@ -133,13 +133,12 @@ class GRPCProviderCredentialManager:
     async def get(
         self, *, org_id: str, provider_name: str, access_token: str
     ) -> GetProviderCredentialWire:
-        payload = encode_get_provider_credential_request(
-            org_id=org_id, provider_name=provider_name
-        )
         return await self._unary_bytes(
             _UnaryBytesCall(
                 stub=self._get,
-                payload=payload,
+                payload=encode_get_provider_credential_request(
+                    org_id=org_id, provider_name=provider_name
+                ),
                 access_token=access_token,
                 op="get",
                 decode=decode_get_provider_credential_response,
@@ -149,11 +148,10 @@ class GRPCProviderCredentialManager:
     async def list(
         self, *, org_id: str, access_token: str
     ) -> ListProviderCredentialsWire:
-        payload = encode_list_provider_credentials_request(org_id=org_id)
         return await self._unary_bytes(
             _UnaryBytesCall(
                 stub=self._list,
-                payload=payload,
+                payload=encode_list_provider_credentials_request(org_id=org_id),
                 access_token=access_token,
                 op="list",
                 decode=decode_list_provider_credentials_response,
@@ -163,13 +161,12 @@ class GRPCProviderCredentialManager:
     async def delete(
         self, *, org_id: str, provider_name: str, access_token: str
     ) -> None:
-        payload = encode_delete_provider_credential_request(
-            org_id=org_id, provider_name=provider_name
-        )
         await self._unary_bytes(
             _UnaryBytesCall(
                 stub=self._delete,
-                payload=payload,
+                payload=encode_delete_provider_credential_request(
+                    org_id=org_id, provider_name=provider_name
+                ),
                 access_token=access_token,
                 op="delete",
                 decode=_decode_empty,
@@ -225,7 +222,11 @@ class FakeProviderCredentialManager:
         if self.create_error is not None:
             raise self.create_error
         await asyncio.sleep(0)
-        hint = params.api_key[-4:] if len(params.api_key) >= 4 else params.api_key
+        hint = (
+            params.api_key[-4:]
+            if len(params.api_key) >= 5
+            else "[REDACTED]"
+        )
         meta = ProviderCredentialMetadataWire(
             provider_name=params.provider_name,
             status="active",

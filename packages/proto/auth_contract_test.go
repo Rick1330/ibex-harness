@@ -94,7 +94,17 @@ func TestAuthProtoContractADR0006(t *testing.T) {
 	if svc == nil {
 		t.Fatal("AuthService not found")
 	}
-	wantMethods := []string{"ValidateToken", "ValidateAgent", "CreateToken", "RevokeToken", "ListTokens"}
+	wantMethods := []string{
+		"ValidateToken",
+		"ValidateAgent",
+		"CreateToken",
+		"RevokeToken",
+		"ListTokens",
+		"CreateProviderCredential",
+		"GetProviderCredential",
+		"DeleteProviderCredential",
+		"ListProviderCredentials",
+	}
 	if svc.Methods().Len() != len(wantMethods) {
 		t.Fatalf("AuthService methods: got %d want %d", svc.Methods().Len(), len(wantMethods))
 	}

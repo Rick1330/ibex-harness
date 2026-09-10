@@ -189,15 +189,7 @@ func initAuthServices(
 		return authServiceDeps{}, err
 	}
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher).WithSubjectLookup(subjects)
-	credRepo, err := repository.NewProviderCredentialsRepository(db, reg)
-	if err != nil {
-		return authServiceDeps{}, err
-	}
-	credSvc, err := service.NewProviderCredentialService(
-		credRepo,
-		cfg.CredentialsMasterKey,
-		cfg.CredentialsMasterKeyID,
-	)
+	credSvc, err := newProviderCredentialService(cfg, db, reg)
 	if err != nil {
 		return authServiceDeps{}, err
 	}
@@ -205,6 +197,22 @@ func initAuthServices(
 		validator: validator, tokenSvc: tokenSvc, credSvc: credSvc, agentsRepo: agentsRepo,
 		redisClient: redisClient, validateLimiter: validateLimiter, log: log,
 	}, nil
+}
+
+func newProviderCredentialService(
+	cfg config.Config,
+	db *sql.DB,
+	reg *ibexmetrics.AuthRegistry,
+) (*service.ProviderCredentialService, error) {
+	credRepo, err := repository.NewProviderCredentialsRepository(db, reg)
+	if err != nil {
+		return nil, err
+	}
+	return service.NewProviderCredentialService(
+		credRepo,
+		cfg.CredentialsMasterKey,
+		cfg.CredentialsMasterKeyID,
+	)
 }
 
 const (

@@ -274,7 +274,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 			Token:   in.cfg.WorkerEnqueueAPIToken,
 			Timeout: extractionenqueue.DefaultTimeout,
 		}),
-		CredentialResolver: newCredentialResolver(in.infra.auth.client),
+		CredentialResolver: newCredentialResolver(in.infra.auth.client, in.cfg.AuthValidateTimeout),
 	}
 	assignTraceWriter(&deps, p.traceWriter)
 	return deps
@@ -305,11 +305,13 @@ func assignTraceWriter(deps *proxyhttp.RouterDeps, w *ibexch.Writer) {
 	deps.TraceWriter = w
 }
 
-func newCredentialResolver(client authv1.AuthServiceClient) proxyhttp.CredentialResolver {
+func newCredentialResolver(client authv1.AuthServiceClient, rpcTimeout time.Duration) proxyhttp.CredentialResolver {
 	if client == nil {
 		return nil
 	}
-	resolver, err := credentials.NewCachedResolver(client, credentials.DefaultCacheTTL)
+	resolver, err := credentials.NewCachedResolverWithTimeout(
+		client, credentials.DefaultCacheTTL, rpcTimeout,
+	)
 	if err != nil {
 		return nil
 	}

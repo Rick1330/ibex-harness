@@ -122,38 +122,55 @@ func (h chatCompletionHandler) applyCredentialOverride(
 	if h.credentialResolver == nil || strings.EqualFold(prov.Name(), "mock") {
 		return true
 	}
-	requestID := requestIDFromContext(r.Context())
-	authRes, ok := auth.FromContext(r.Context())
-	if !ok || authRes.OrgID.String() == "" {
-		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Auth service unavailable", requestID,
-			apierror.WriteOpts{Detail: "missing org context for credential resolve", DocsBase: h.docsBase})
+	orgID, bearer, ok := h.credentialResolveInputs(w, r)
+	if !ok {
 		return false
 	}
-	bearer, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
-	if err != nil || strings.TrimSpace(bearer) == "" {
-		apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
-			"Invalid Authorization header", requestID,
-			apierror.WriteOpts{DocsBase: h.docsBase})
-		return false
-	}
-	result, err := h.credentialResolver.Resolve(
-		r.Context(), authRes.OrgID.String(), prov.Name(), bearer,
-	)
+	result, err := h.credentialResolver.Resolve(r.Context(), orgID, prov.Name(), bearer)
 	if err != nil {
-		if h.log != nil {
-			h.log.WarnCtx(r.Context(), "provider credential resolve failed",
-				"provider", prov.Name(), "org_id", authRes.OrgID.String())
-		}
-		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Auth service unavailable", requestID,
-			apierror.WriteOpts{Detail: "provider credential resolve failed", DocsBase: h.docsBase})
+		h.writeCredentialResolveFailure(w, r, prov.Name(), orgID)
 		return false
 	}
 	if !result.PlatformDefault {
 		provReq.APIKeyOverride = result.APIKey
 	}
 	return true
+}
+
+func (h chatCompletionHandler) credentialResolveInputs(
+	w http.ResponseWriter,
+	r *http.Request,
+) (orgID, bearer string, ok bool) {
+	requestID := requestIDFromContext(r.Context())
+	authRes, authed := auth.FromContext(r.Context())
+	if !authed || authRes.OrgID.String() == "" {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+			"Auth service unavailable", requestID,
+			apierror.WriteOpts{Detail: "missing org context for key resolve", DocsBase: h.docsBase})
+		return "", "", false
+	}
+	token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
+	if err != nil || strings.TrimSpace(token) == "" {
+		apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
+			"Invalid Authorization header", requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return "", "", false
+	}
+	return authRes.OrgID.String(), token, true
+}
+
+func (h chatCompletionHandler) writeCredentialResolveFailure(
+	w http.ResponseWriter,
+	r *http.Request,
+	providerName, orgID string,
+) {
+	if h.log != nil {
+		h.log.WarnCtx(r.Context(), "provider key resolve failed",
+			"provider", providerName, "org_id", orgID)
+	}
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+		"Auth service unavailable", requestIDFromContext(r.Context()),
+		apierror.WriteOpts{Detail: "provider key resolve failed", DocsBase: h.docsBase})
 }
 
 // applyDirectiveInjection splices the resolved agent directive into messages.

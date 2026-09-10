@@ -23,6 +23,10 @@ dependencies = [
   "uuid6>=2024.7.10",
   "redis>=5.0.1",
   "celery>=5.4,<6",
+  # Runtime httpx: provider_validate probes upstream /models before Auth store.
+  # Alternatives rejected: urllib (sync/blocking in async path), aiohttp (extra
+  # stack; httpx already in dev deps and matches FastAPI TestClient ecosystem).
+  # Security: timeouts + follow_redirects=False in call sites; size impact small.
   "httpx>=0.27.0",
 ]
 

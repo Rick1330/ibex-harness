@@ -55,27 +55,59 @@ func TestEnvelope_DistinctNonces(t *testing.T) {
 	}
 }
 
-func TestEnvelope_TamperRejected(t *testing.T) {
+func TestEnvelope_OpenRejected(t *testing.T) {
 	mk := testMaster(t)
 	sealed, err := Seal(mk, "v1", []byte("secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed.Ciphertext[len(sealed.Ciphertext)-1] ^= 0xff
-	if _, err := Open(mk, sealed); err == nil {
-		t.Fatal("expected open failure on tampered ciphertext")
+
+	tests := []struct {
+		name string
+		blob func() SealedBlob
+	}{
+		{
+			name: "tampered_ciphertext",
+			blob: func() SealedBlob {
+				b := cloneSealed(sealed)
+				b.Ciphertext[len(b.Ciphertext)-1] ^= 0xff
+				return b
+			},
+		},
+		{
+			name: "tampered_wrapped_dek",
+			blob: func() SealedBlob {
+				b := cloneSealed(sealed)
+				b.WrappedDEK[len(b.WrappedDEK)-1] ^= 0xff
+				return b
+			},
+		},
+		{
+			name: "wrong_master_key",
+			blob: func() SealedBlob {
+				return cloneSealed(sealed)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			blob := tc.blob()
+			key := mk
+			if tc.name == "wrong_master_key" {
+				key = testMaster(t)
+			}
+			if _, err := Open(key, blob); err == nil {
+				t.Fatal("expected open failure")
+			}
+		})
 	}
 }
 
-func TestEnvelope_WrongKeyRejected(t *testing.T) {
-	mk := testMaster(t)
-	sealed, err := Seal(mk, "v1", []byte("secret"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := testMaster(t)
-	if _, err := Open(other, sealed); err == nil {
-		t.Fatal("expected open failure with wrong master key")
+func cloneSealed(in SealedBlob) SealedBlob {
+	return SealedBlob{
+		Ciphertext: append([]byte(nil), in.Ciphertext...),
+		WrappedDEK: append([]byte(nil), in.WrappedDEK...),
+		KeyID:      in.KeyID,
 	}
 }
 

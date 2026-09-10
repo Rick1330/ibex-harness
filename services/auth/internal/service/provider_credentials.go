@@ -94,6 +94,12 @@ type CreateInput struct {
 	BaseURL      string
 }
 
+// OrgProviderRef identifies one org-scoped provider credential row.
+type OrgProviderRef struct {
+	OrgID        string
+	ProviderName string
+}
+
 // Create seals and upserts a provider credential.
 func (s *ProviderCredentialService) Create(ctx context.Context, in CreateInput) (ProviderCredentialMetadata, error) {
 	if !s.ready {
@@ -128,12 +134,12 @@ func (s *ProviderCredentialService) Create(ctx context.Context, in CreateInput) 
 }
 
 // Get decrypts a credential or reports platform-default when no row exists.
-func (s *ProviderCredentialService) Get(ctx context.Context, orgID, providerName string) (GetProviderCredentialResult, error) {
-	provider, err := normalizeProviderName(providerName)
+func (s *ProviderCredentialService) Get(ctx context.Context, ref OrgProviderRef) (GetProviderCredentialResult, error) {
+	provider, err := normalizeProviderName(ref.ProviderName)
 	if err != nil {
 		return GetProviderCredentialResult{}, err
 	}
-	row, err := s.repo.FindByOrgProvider(ctx, strings.TrimSpace(orgID), provider)
+	row, err := s.repo.FindByOrgProvider(ctx, strings.TrimSpace(ref.OrgID), provider)
 	if errors.Is(err, repository.ErrProviderCredentialNotFound) {
 		return GetProviderCredentialResult{IsPlatformDefault: true}, nil
 	}
@@ -175,12 +181,12 @@ func (s *ProviderCredentialService) List(ctx context.Context, orgID string) ([]P
 }
 
 // Delete removes a credential row.
-func (s *ProviderCredentialService) Delete(ctx context.Context, orgID, providerName string) error {
-	provider, err := normalizeProviderName(providerName)
+func (s *ProviderCredentialService) Delete(ctx context.Context, ref OrgProviderRef) error {
+	provider, err := normalizeProviderName(ref.ProviderName)
 	if err != nil {
 		return err
 	}
-	return s.repo.Delete(ctx, strings.TrimSpace(orgID), provider)
+	return s.repo.Delete(ctx, strings.TrimSpace(ref.OrgID), provider)
 }
 
 func normalizeProviderName(raw string) (string, error) {
@@ -192,8 +198,8 @@ func normalizeProviderName(raw string) (string, error) {
 }
 
 func keyHint(apiKey string) string {
-	if len(apiKey) <= 4 {
-		return apiKey
+	if len(apiKey) < 5 {
+		return "[REDACTED]"
 	}
 	return apiKey[len(apiKey)-4:]
 }

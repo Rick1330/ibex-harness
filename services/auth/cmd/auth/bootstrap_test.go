@@ -47,6 +47,9 @@ func assertAuthServiceDeps(t *testing.T, deps authServiceDeps) {
 	if deps.validateLimiter == nil {
 		t.Fatal("expected validate limiter")
 	}
+	if deps.credSvc == nil {
+		t.Fatal("expected provider credential service")
+	}
 }
 
 func newTestAuthRegistry(t *testing.T, db *sql.DB) *ibexmetrics.AuthRegistry {

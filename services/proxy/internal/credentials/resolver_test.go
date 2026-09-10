@@ -56,8 +56,14 @@ func TestUnit_CachedResolver_BYOCached(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := r.Resolve(context.Background(), "org", "openai", "tok")
-	if err != nil || got.PlatformDefault || got.APIKey != "sk-byo" {
-		t.Fatalf("got=%+v err=%v", got, err)
+	if err != nil {
+		t.Fatalf("resolve err=%v", err)
+	}
+	if got.PlatformDefault {
+		t.Fatalf("expected BYO, got platform default")
+	}
+	if got.APIKey != "sk-byo" {
+		t.Fatalf("APIKey=%q", got.APIKey)
 	}
 	_, _ = r.Resolve(context.Background(), "org", "openai", "tok")
 	if fake.calls != 1 {

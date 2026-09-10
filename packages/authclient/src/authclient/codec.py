@@ -734,17 +734,28 @@ def _decode_get_cred_field(buf: bytes, idx: int, state: _GetCredDecodeState) -> 
     field, wire = key >> 3, key & 0x07
     if wire == _WIRE_LEN:
         data, idx = _read_bytes(buf, idx, max_len=MAX_TOKEN_BYTES)
-        if field == 1:
-            state.api_key = _decode_plaintext(data)
-        elif field == 2:
-            state.base_url = _bounded_string(_decode_utf8(data), "base_url")
+        _apply_get_cred_len(state, field, data)
         return idx
     if wire == _WIRE_VARINT:
-        num, idx = _decode_varint(buf, idx)
-        if field == 3:
-            state.is_platform_default = bool(num)
-        return idx
+        return _apply_get_cred_varint(buf, idx, state, field)
     return _skip_unknown(buf, idx, wire)
+
+
+def _apply_get_cred_len(state: _GetCredDecodeState, field: int, data: bytes) -> None:
+    if field == 1:
+        state.api_key = _decode_plaintext(data)
+        return
+    if field == 2:
+        state.base_url = _bounded_string(_decode_utf8(data), "base_url")
+
+
+def _apply_get_cred_varint(
+    buf: bytes, idx: int, state: _GetCredDecodeState, field: int
+) -> int:
+    num, idx = _decode_varint(buf, idx)
+    if field == 3:
+        state.is_platform_default = bool(num)
+    return idx
 
 
 def _decode_list_cred_field(buf: bytes, idx: int, state: _ListCredDecodeState) -> int:
