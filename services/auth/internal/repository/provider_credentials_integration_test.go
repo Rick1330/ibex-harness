@@ -146,11 +146,9 @@ func assertCredCountAsApp(t *testing.T, db *sql.DB, orgID string, want int) {
 	t.Helper()
 	ctx := context.Background()
 	var count int
-	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
+	err := testutil.WithAppRole(ctx, db, func(tx *sql.Tx) error {
 		if orgID != "" {
-			if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
-				return err
-			}
+			testutil.MustSetOrgContext(t, tx, orgID)
 		}
 		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.provider_credentials`).Scan(&count)
 	})
@@ -160,19 +158,4 @@ func assertCredCountAsApp(t *testing.T, db *sql.DB, orgID string, want int) {
 	if count != want {
 		t.Fatalf("count org=%q: got %d want %d (RLS backstop)", orgID, count, want)
 	}
-}
-
-func withAppRole(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
-		return err
-	}
-	if err := fn(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
