@@ -41,10 +41,12 @@ type validateForOrger interface {
 // ServerDeps groups AuthService construction dependencies.
 // Validator, TokenService, AgentService, Metrics, and Log are required;
 // NewServer rejects nil interfaces and typed-nil service pointers.
+// CredService is optional; when nil, provider-credential RPCs return FailedPrecondition.
 type ServerDeps struct {
 	Validator    tokenValidator
 	TokenService tokenAPI
 	AgentService validateForOrger
+	CredService  providerCredentialAPI
 	Metrics      *metrics.AuthRegistry
 	Log          *logger.Logger
 }
@@ -56,6 +58,7 @@ type Server struct {
 	tokenService tokenAPI
 	metrics      *metrics.AuthRegistry
 	agentService validateForOrger
+	credService  providerCredentialAPI
 	log          *logger.Logger
 }
 
@@ -85,6 +88,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		tokenService: deps.TokenService,
 		metrics:      deps.Metrics,
 		agentService: deps.AgentService,
+		credService:  deps.CredService,
 		log:          deps.Log,
 	}, nil
 }

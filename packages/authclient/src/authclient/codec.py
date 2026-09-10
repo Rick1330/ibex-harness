@@ -258,6 +258,13 @@ def _encode_string_field(field: int, value: str) -> bytes:
     return _tag(field, _WIRE_LEN) + encode_varint(len(data)) + data
 
 
+def _encode_api_key_field(field: int, value: str) -> bytes:
+    data = value.encode("utf-8")
+    if len(data) > MAX_TOKEN_BYTES:
+        raise AuthCodecError("api_key exceeds codec limit")
+    return _tag(field, _WIRE_LEN) + encode_varint(len(data)) + data
+
+
 def _encode_varint_field(field: int, value: int) -> bytes:
     return _tag(field, _WIRE_VARINT) + encode_varint(value)
 

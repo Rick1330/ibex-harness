@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 from authclient.permissions import ADMIN, USER_MANAGE
+from authclient.provider_credentials import FakeProviderCredentialManager
 from authclient.revoke import NoopTokenRevoker
 from authclient.tokens import FakeTokenManager
 from fastapi import FastAPI
@@ -48,6 +49,7 @@ class ManagedClientOpts:
     publisher: RecordingOrgSuspendPublisher | None = None
     enqueue_calls: list[tuple[str, str]] | None = None
     token_manager: FakeTokenManager | None = None
+    provider_credential_manager: FakeProviderCredentialManager | None = None
 
 
 @contextmanager
@@ -62,6 +64,7 @@ def managed_org_client(
             publisher=opts.publisher,
             enqueue_calls=opts.enqueue_calls,
             token_manager=opts.token_manager,
+            provider_credential_manager=opts.provider_credential_manager,
         )
     ) as (client, res, pub):
         override_org_session(client.app)
@@ -102,6 +105,7 @@ class ApiClientOpts:
     publisher: RecordingOrgSuspendPublisher | None = None
     enqueue_calls: list[tuple[str, str]] | None = None
     token_manager: FakeTokenManager | None = None
+    provider_credential_manager: FakeProviderCredentialManager | None = None
 
 
 @contextmanager
@@ -123,6 +127,9 @@ def api_client(
         runtime=ApiRuntimeOverrides(
             token_revoker=NoopTokenRevoker(),
             token_manager=cfg.token_manager or FakeTokenManager(),
+            provider_credential_manager=(
+                cfg.provider_credential_manager or FakeProviderCredentialManager()
+            ),
             org_suspend_publisher=pub,
             enqueue_org_deletion=_enqueue,
         ),

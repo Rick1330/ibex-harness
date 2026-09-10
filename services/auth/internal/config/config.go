@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -23,17 +24,19 @@ const (
 )
 
 type Config struct {
-	Environment      string
-	ServiceName      string
-	LogLevel         slog.Level
-	Port             string
-	GRPCPort         string
-	PostgresDSN      string
-	RedisURL         string
-	ValidateTokenRPM int64
-	Argon2           token.Argon2Params
-	ShutdownTimeout  time.Duration
-	Telemetry        telemetry.Config
+	Environment            string
+	ServiceName            string
+	LogLevel               slog.Level
+	Port                   string
+	GRPCPort               string
+	PostgresDSN            string
+	RedisURL               string
+	ValidateTokenRPM       int64
+	CredentialsMasterKey   string
+	CredentialsMasterKeyID string
+	Argon2                 token.Argon2Params
+	ShutdownTimeout        time.Duration
+	Telemetry              telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -56,10 +59,27 @@ func (c Config) Validate() error {
 	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
+	if err := validateCredentialsMasterKey(c); err != nil {
+		return err
+	}
 	if err := validateValidateTokenRPM(c.ValidateTokenRPM); err != nil {
 		return err
 	}
 	return shutdown.ValidateTimeout(c.ShutdownTimeout)
+}
+
+func validateCredentialsMasterKey(c Config) error {
+	raw := strings.TrimSpace(c.CredentialsMasterKey)
+	if raw == "" {
+		if c.Environment == "production" {
+			return fmt.Errorf("IBEX_CREDENTIALS_MASTER_KEY is required when IBEX_ENV=production")
+		}
+		return nil
+	}
+	if _, err := crypto.ParseMasterKeyBase64(raw); err != nil {
+		return fmt.Errorf("IBEX_CREDENTIALS_MASTER_KEY: %w", err)
+	}
+	return nil
 }
 
 func validateEnvironment(env string) error {

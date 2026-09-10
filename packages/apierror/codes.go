@@ -26,6 +26,8 @@ const (
 	CodeUnsupportedMediaType Code = "UNSUPPORTED_MEDIA_TYPE"
 	// CodeValidationError tells clients one or more fields failed semantic validation (see field_errors).
 	CodeValidationError Code = "VALIDATION_ERROR"
+	// CodeInvalidCredential tells clients a provider API key failed upstream validation.
+	CodeInvalidCredential Code = "INVALID_CREDENTIAL"
 	// CodeMethodNotAllowed tells clients to use the HTTP method documented for the route.
 	CodeMethodNotAllowed Code = "METHOD_NOT_ALLOWED"
 	// CodeMissingAgentID tells clients to set X-IBEX-Agent-ID on protected proxy routes.

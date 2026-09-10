@@ -90,6 +90,12 @@ func GracefulStopGRPC(srv *grpc.Server, ctx context.Context) error {
 	if srv == nil {
 		return nil
 	}
+	// Prefer forced stop when the drain deadline is already expired so select
+	// does not race an idle GracefulStop completion against ctx.Done().
+	if err := ctx.Err(); err != nil {
+		go srv.Stop()
+		return err
+	}
 	done := make(chan struct{})
 	go func() {
 		srv.GracefulStop()
@@ -99,7 +105,8 @@ func GracefulStopGRPC(srv *grpc.Server, ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
-		srv.Stop()
+		// Stop can block while handlers ignore cancellation; never wait on it.
+		go srv.Stop()
 		return ctx.Err()
 	}
 }

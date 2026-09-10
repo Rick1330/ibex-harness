@@ -11,10 +11,11 @@ import (
 )
 
 type upstreamCall struct {
-	URL    string
-	Body   []byte
-	Stream bool
-	Model  string
+	URL            string
+	Body           []byte
+	Stream         bool
+	Model          string
+	APIKeyOverride string
 }
 
 func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call upstreamCall) (provider.Response, error) {

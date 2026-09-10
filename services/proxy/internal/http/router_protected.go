@@ -44,6 +44,7 @@ type protectedRouteDeps struct {
 	contextEnabled           bool
 	turnBuffer               *extractionbuffer.Buffer
 	extractionEnqueue        *extractionenqueue.Client
+	credentialResolver       credentialResolver
 }
 
 type routeMiddleware = func(http.Handler) http.Handler
@@ -152,5 +153,6 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		contextClient:            deps.contextClient,
 		contextEnabled:           deps.contextEnabled,
 		turnBuffer:               deps.turnBuffer,
+		credentialResolver:       deps.credentialResolver,
 	}
 }

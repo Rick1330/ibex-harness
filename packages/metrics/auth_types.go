@@ -35,12 +35,16 @@ type DBQueryObservation struct {
 
 // DB operation names for ibex_db_query_duration_seconds.
 const (
-	DBOpFindTokenByPrefix DBOperation = "find_token_by_prefix"
-	DBOpCreateToken       DBOperation = "create_token"
-	DBOpRevokeToken       DBOperation = "revoke_token"
-	DBOpListTokens        DBOperation = "list_tokens"
-	DBOpGetAgentByID      DBOperation = "get_agent_by_id"
-	DBOpGetUserByID       DBOperation = "get_user_by_id"
+	DBOpFindTokenByPrefix        DBOperation = "find_token_by_prefix"
+	DBOpCreateToken              DBOperation = "create_token"
+	DBOpRevokeToken              DBOperation = "revoke_token"
+	DBOpListTokens               DBOperation = "list_tokens"
+	DBOpGetAgentByID             DBOperation = "get_agent_by_id"
+	DBOpGetUserByID              DBOperation = "get_user_by_id"
+	DBOpUpsertProviderCredential DBOperation = "upsert_provider_credential"
+	DBOpFindProviderCredential   DBOperation = "find_provider_credential"
+	DBOpListProviderCredentials  DBOperation = "list_provider_credentials"
+	DBOpDeleteProviderCredential DBOperation = "delete_provider_credential"
 )
 
 // ValidateToken results for ibex_auth_validate_token_duration_seconds.

@@ -28,6 +28,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/alicebob/miniredis/v2"
@@ -119,13 +120,14 @@ type redisFixture struct {
 }
 
 type proxyServerOpts struct {
-	defaultRPM     int64
-	orgOverrides   map[uuid.UUID]int64
-	providers      []provider.Provider
-	withAuthCache  bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
-	skipRedis      bool // empty REDIS_URL — Wave 4: cache must not wrap
-	contextClient  *contextclient.Client
-	contextEnabled bool
+	defaultRPM             int64
+	orgOverrides           map[uuid.UUID]int64
+	providers              []provider.Provider
+	withAuthCache          bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
+	skipRedis              bool // empty REDIS_URL — Wave 4: cache must not wrap
+	contextClient          *contextclient.Client
+	contextEnabled         bool
+	withCredentialResolver bool // wire real Auth GetProviderCredential via CachedResolver
 }
 
 func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
@@ -283,22 +285,36 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 	if opts.cfg.RedisURL != "" {
 		healthCheckers["redis"] = healthcheck.RedisPing(opts.cfg.RedisURL)
 	}
+	var credResolver proxyhttp.CredentialResolver
+	if opts.srvOpts.withCredentialResolver {
+		credResolver = mustCredentialResolver(t, opts.client, opts.cfg.AuthValidateTimeout)
+	}
 	handler, err := proxyhttp.NewRouter(proxyhttp.RouterDeps{
-		Config:           opts.cfg,
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        validator,
-		AgentVerifier:    agentVerifier,
-		Limiter:          limiter,
-		Health:           &healthcheck.Server{CriticalCheckers: healthCheckers},
-		ProviderRegistry: providerReg,
-		ContextClient:    opts.srvOpts.contextClient,
+		Config:             opts.cfg,
+		Logger:             logger.Discard("proxy"),
+		Metrics:            metrics.NewProxy("test"),
+		Tracer:             telemetry.NoopTracer("proxy"),
+		Validator:          validator,
+		AgentVerifier:      agentVerifier,
+		Limiter:            limiter,
+		Health:             &healthcheck.Server{CriticalCheckers: healthCheckers},
+		ProviderRegistry:   providerReg,
+		ContextClient:      opts.srvOpts.contextClient,
+		CredentialResolver: credResolver,
 	})
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}
 	return handler
+}
+
+func mustCredentialResolver(t *testing.T, client authv1.AuthServiceClient, timeout time.Duration) proxyhttp.CredentialResolver {
+	t.Helper()
+	r, err := credentials.NewCachedResolverWithTimeout(client, credentials.DefaultCacheTTL, timeout)
+	if err != nil {
+		t.Fatalf("NewCachedResolverWithTimeout: %v", err)
+	}
+	return r
 }
 
 func mustCachedValidator(t *testing.T, inner auth.TokenValidator) auth.TokenValidator {

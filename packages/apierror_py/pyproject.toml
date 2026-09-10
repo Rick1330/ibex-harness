@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apierror-py"
-version = "0.1.0"
+version = "0.1.1"
 description = "IBEX HTTP error envelope (Python) matching packages/apierror and API_DOCUMENTATION.md"
 readme = "README.md"
 requires-python = ">=3.12"

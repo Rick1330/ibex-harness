@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -66,11 +67,16 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		return provider.Response{}, err
 	}
 
+	base := c.cfg.BaseURL
+	if strings.TrimSpace(req.BaseURLOverride) != "" {
+		base = strings.TrimSpace(req.BaseURLOverride)
+	}
 	return c.executeWithRetry(ctx, span, upstreamCall{
-		URL:    provider.JoinBaseURL(c.cfg.BaseURL, "/v1/messages"),
-		Body:   body,
-		Stream: req.Stream,
-		Model:  req.Model,
+		URL:            provider.JoinBaseURL(base, "/v1/messages"),
+		Body:           body,
+		Stream:         req.Stream,
+		Model:          req.Model,
+		APIKeyOverride: req.APIKeyOverride,
 	})
 }
 
@@ -81,14 +87,21 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 		c.clients.Sync,
 		c.clients.Stream,
 		c.newMessagesRequest,
-		provider.UpstreamCall{URL: call.URL, Body: call.Body, Stream: call.Stream},
+		provider.UpstreamCall{
+			URL: call.URL, Body: call.Body, Stream: call.Stream,
+			APIKeyOverride: call.APIKeyOverride,
+		},
 	)
 }
 
 func (c *Client) newMessagesRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
+	key := call.APIKeyOverride
+	if key == "" {
+		key = c.cfg.APIKey
+	}
 	return provider.NewJSONPostRequest(ctx, call, map[string]string{
 		"Content-Type":      "application/json",
-		"x-api-key":         c.cfg.APIKey,
+		"x-api-key":         key,
 		"anthropic-version": c.cfg.APIVersion,
 	})
 }

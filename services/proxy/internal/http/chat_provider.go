@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
@@ -64,15 +67,25 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 
 func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, claim *idempotencyClaim) {
 	ctx := p.r.Context()
-	requestID := requestIDFromContext(ctx)
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
 	inj := h.applyContextOrDirectiveInjection(ctx, p.r, provReq.Model, provReq.Messages)
 	provReq.Messages = inj.Messages
-	ctx = withContextAssembleMeta(ctx, inj.Meta)
-	p.r = p.r.WithContext(ctx)
+	p.r = p.r.WithContext(withContextAssembleMeta(ctx, inj.Meta))
+	if !h.applyCredentialOverride(p.w, p.r, p.prov, &provReq) {
+		return
+	}
+	h.completeAndRespond(p, claim, provReq)
+}
+
+func (h chatCompletionHandler) completeAndRespond(
+	p chatForwardParams,
+	claim *idempotencyClaim,
+	provReq provider.Request,
+) {
+	requestID := requestIDFromContext(p.r.Context())
 	start := time.Now()
 	resp, err := p.prov.Complete(p.r.Context(), provReq)
 	providerElapsed := time.Since(start)
@@ -104,6 +117,73 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 		w: p.w, r: p.r, parsed: p.parsed, providerName: p.prov.Name(), resp: resp,
 		claim: claim,
 	})
+}
+
+// applyCredentialOverride sets APIKeyOverride for org BYO keys.
+// Returns false when a fail-closed error response was already written.
+func (h chatCompletionHandler) applyCredentialOverride(
+	w http.ResponseWriter,
+	r *http.Request,
+	prov provider.Provider,
+	provReq *provider.Request,
+) bool {
+	if h.credentialResolver == nil || strings.EqualFold(prov.Name(), "mock") {
+		return true
+	}
+	orgID, bearer, ok := h.credentialResolveInputs(w, r)
+	if !ok {
+		return false
+	}
+	result, err := h.credentialResolver.Resolve(r.Context(), credentials.ResolveInput{
+		OrgID: orgID, ProviderName: prov.Name(), AccessToken: bearer,
+	})
+	if err != nil {
+		h.writeCredentialResolveFailure(w, r, prov.Name(), orgID)
+		return false
+	}
+	if !result.PlatformDefault {
+		provReq.APIKeyOverride = result.APIKey
+		if strings.TrimSpace(result.BaseURL) != "" {
+			provReq.BaseURLOverride = strings.TrimSpace(result.BaseURL)
+		}
+	}
+	return true
+}
+
+func (h chatCompletionHandler) credentialResolveInputs(
+	w http.ResponseWriter,
+	r *http.Request,
+) (orgID, bearer string, ok bool) {
+	requestID := requestIDFromContext(r.Context())
+	authRes, authed := auth.FromContext(r.Context())
+	if !authed || authRes.OrgID.String() == "" {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+			"Auth service unavailable", requestID,
+			apierror.WriteOpts{Detail: "missing org context for key resolve", DocsBase: h.docsBase})
+		return "", "", false
+	}
+	token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
+	if err != nil || strings.TrimSpace(token) == "" {
+		apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
+			"Invalid Authorization header", requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return "", "", false
+	}
+	return authRes.OrgID.String(), token, true
+}
+
+func (h chatCompletionHandler) writeCredentialResolveFailure(
+	w http.ResponseWriter,
+	r *http.Request,
+	providerName, orgID string,
+) {
+	if h.log != nil {
+		h.log.WarnCtx(r.Context(), "provider key resolve failed",
+			"provider", providerName, "org_id", orgID)
+	}
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+		"Auth service unavailable", requestIDFromContext(r.Context()),
+		apierror.WriteOpts{Detail: "provider key resolve failed", DocsBase: h.docsBase})
 }
 
 // applyDirectiveInjection splices the resolved agent directive into messages.

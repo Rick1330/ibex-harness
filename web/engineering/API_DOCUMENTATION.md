@@ -203,6 +203,7 @@ HTTP 422 - Unprocessable Entity
   CONTENT_TOO_LONG         -- Memory content exceeds limit
   EMBEDDING_FAILED         -- Could not generate embedding
   PII_DETECTED             -- PII detected, manual review required
+  INVALID_CREDENTIAL       -- Provider API key failed upstream validation (422)
 
 HTTP 429 - Too Many Requests
   RATE_LIMIT_EXCEEDED      -- Per-minute rate limit hit
@@ -2028,6 +2029,71 @@ Store the `token` field securely — it is not returned by list/get.
 **Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
 
 PATCH is not supported yet (follow-up issue).
+
+---
+
+## Provider Credentials API
+
+Org-scoped BYO LLM provider keys. Plaintext is accepted only on write, validated upstream, then sealed in Auth. Responses never include `api_key`, ciphertext, or wrapped DEKs.
+
+**Required permission:** `admin:org_manage` / OrgSettingsWrite (bit 35). Path `org_id` must match the bearer org (cross-tenant → `404 NOT_FOUND`).
+
+### GET /v1/organizations/{org_id}/providers
+
+**List** stored credentials (metadata only). This is a **bounded, non-paginated**
+exception: the response returns the full credentials metadata list for the org
+(no `limit`, `cursor`, or pagination fields).
+
+**Response: 200 OK**
+
+```json
+{
+  "credentials": [
+    {
+      "provider_name": "openai",
+      "status": "active",
+      "key_hint": "abcd",
+      "base_url": null,
+      "last_validated_at": "2026-09-10T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### POST /v1/organizations/{org_id}/providers
+
+**Upsert** a credential. Body always includes plaintext `api_key`. Management API
+validates provider-specifically (≤5s total deadline, no redirects) then calls Auth
+`CreateProviderCredential`.
+
+Validation probes:
+
+| `provider_name` | Probe | Auth headers | Notes |
+| --- | --- | --- | --- |
+| `azure_openai` | `GET {base_url}/openai/models?api-version=…` | `api-key` | `base_url` **required** (`*.openai.azure.com`); missing/invalid → `422 INVALID_CREDENTIAL` |
+| `anthropic` | `GET {base}/v1/models` | `x-api-key`, `anthropic-version` | Default base `https://api.anthropic.com` |
+| others | `GET {base}/v1/models` | `Authorization: Bearer …` | Upstream rejection / unsafe destination → `422 INVALID_CREDENTIAL` |
+
+`vllm_self_hosted` may use plaintext `http://` only for literal loopback addresses;
+mesh/private/localhost names require HTTPS.
+
+```json
+{
+  "provider_name": "openai",
+  "api_key": "sk-…",
+  "base_url": null
+}
+```
+
+`provider_name`: `openai` | `anthropic` | `azure_openai` | `bedrock` | `vllm_self_hosted`.
+
+**Response: 201 Created** — metadata (`provider_name`, `status`, `key_hint`, optional `base_url`, `last_validated_at`). Upstream rejection → `422 INVALID_CREDENTIAL`.
+
+### DELETE /v1/organizations/{org_id}/providers/{provider_name}
+
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
+
+A separate re-validate endpoint is deferred.
 
 ---
 

@@ -62,6 +62,8 @@ type RouterDeps struct {
 	ContextClient     contextAssembler
 	TurnBuffer        *extractionbuffer.Buffer
 	ExtractionEnqueue *extractionenqueue.Client
+	// CredentialResolver resolves org BYO provider keys (nil skips; mock providers skip).
+	CredentialResolver credentialResolver
 }
 
 // NewRouter builds the proxy HTTP handler. A non-nil error means the router
@@ -127,6 +129,7 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) pr
 		contextEnabled:           deps.Config.ContextEnabled,
 		turnBuffer:               deps.TurnBuffer,
 		extractionEnqueue:        deps.ExtractionEnqueue,
+		credentialResolver:       deps.CredentialResolver,
 	}
 }
 
@@ -204,6 +207,7 @@ type chatCompletionHandler struct {
 	contextClient            contextAssembler
 	contextEnabled           bool
 	turnBuffer               *extractionbuffer.Buffer
+	credentialResolver       credentialResolver
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
