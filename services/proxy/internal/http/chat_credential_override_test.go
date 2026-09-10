@@ -82,8 +82,14 @@ func TestUnit_ApplyCredentialOverride_PlatformDefault(t *testing.T) {
 	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
 	provReq := &provider.Request{}
 	ok := h.applyCredentialOverride(httptest.NewRecorder(), req, &captureProvider{name: "openai"}, provReq)
-	if !ok || provReq.APIKeyOverride != "" || provReq.BaseURLOverride != "" {
-		t.Fatalf("ok=%v provReq=%+v", ok, provReq)
+	if !ok {
+		t.Fatal("expected success")
+	}
+	if provReq.APIKeyOverride != "" {
+		t.Fatalf("APIKeyOverride=%q", provReq.APIKeyOverride)
+	}
+	if provReq.BaseURLOverride != "" {
+		t.Fatalf("BaseURLOverride=%q", provReq.BaseURLOverride)
 	}
 }
 

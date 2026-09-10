@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from authclient.codec import ProviderCredentialMetadataWire
 from authclient.permissions import MEMORY_READ
+from authclient.provider_credential_codec import ProviderCredentialMetadataWire
 from authclient.provider_credentials import FakeProviderCredentialManager
 
 from app.auth.client import ValidateResult

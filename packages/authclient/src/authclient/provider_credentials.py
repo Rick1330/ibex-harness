@@ -11,8 +11,14 @@ from typing import Protocol
 
 import grpc
 
-from authclient.codec import (
-    AuthCodecError,
+from authclient.codec import AuthCodecError
+from authclient.errors import (
+    AuthFailedError,
+    AuthUnavailableError,
+    InsufficientPermissionsError,
+    ProviderCredentialNotFoundError,
+)
+from authclient.provider_credential_codec import (
     CreateProviderCredentialEncodeFields,
     GetProviderCredentialWire,
     ListProviderCredentialsWire,
@@ -24,12 +30,6 @@ from authclient.codec import (
     encode_delete_provider_credential_request,
     encode_get_provider_credential_request,
     encode_list_provider_credentials_request,
-)
-from authclient.errors import (
-    AuthFailedError,
-    AuthUnavailableError,
-    InsufficientPermissionsError,
-    ProviderCredentialNotFoundError,
 )
 from authclient.target import assert_trusted_insecure_auth_target
 

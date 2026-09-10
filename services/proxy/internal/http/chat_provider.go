@@ -67,18 +67,25 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 
 func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, claim *idempotencyClaim) {
 	ctx := p.r.Context()
-	requestID := requestIDFromContext(ctx)
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
 	inj := h.applyContextOrDirectiveInjection(ctx, p.r, provReq.Model, provReq.Messages)
 	provReq.Messages = inj.Messages
-	ctx = withContextAssembleMeta(ctx, inj.Meta)
-	p.r = p.r.WithContext(ctx)
+	p.r = p.r.WithContext(withContextAssembleMeta(ctx, inj.Meta))
 	if !h.applyCredentialOverride(p.w, p.r, p.prov, &provReq) {
 		return
 	}
+	h.completeAndRespond(p, claim, provReq)
+}
+
+func (h chatCompletionHandler) completeAndRespond(
+	p chatForwardParams,
+	claim *idempotencyClaim,
+	provReq provider.Request,
+) {
+	requestID := requestIDFromContext(p.r.Context())
 	start := time.Now()
 	resp, err := p.prov.Complete(p.r.Context(), provReq)
 	providerElapsed := time.Since(start)

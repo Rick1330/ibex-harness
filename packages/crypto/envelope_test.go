@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"testing"
 )
 
@@ -133,5 +134,59 @@ func TestSeal_RequiresKeyID(t *testing.T) {
 	mk := testMaster(t)
 	if _, err := Seal(mk, "", []byte("x")); err == nil {
 		t.Fatal("expected key id required")
+	}
+}
+
+func TestParseMasterKeyBase64_EmptyAndRaw(t *testing.T) {
+	t.Parallel()
+	if _, err := ParseMasterKeyBase64(""); err == nil {
+		t.Fatal("expected empty key error")
+	}
+	raw := GenerateRandomBytes(MasterKeySize)
+	enc := base64.RawStdEncoding.EncodeToString(raw)
+	mk, err := ParseMasterKeyBase64(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(mk[:], raw) {
+		t.Fatal("raw base64 mismatch")
+	}
+}
+
+func TestOpen_ShortBlobsAndBadDEKLength(t *testing.T) {
+	t.Parallel()
+	mk := testMaster(t)
+	sealed, err := Seal(mk, "v1", []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortCases := []SealedBlob{
+		{Ciphertext: []byte("short"), WrappedDEK: sealed.WrappedDEK, KeyID: "v1"},
+		{Ciphertext: sealed.Ciphertext, WrappedDEK: []byte("short"), KeyID: "v1"},
+		{Ciphertext: make([]byte, NonceSizeGCM), WrappedDEK: sealed.WrappedDEK, KeyID: "v1"},
+	}
+	for i, blob := range shortCases {
+		if _, err := Open(mk, blob); !errors.Is(err, ErrInvalidSealedBlob) && !errors.Is(err, ErrOpenFailed) {
+			t.Fatalf("case %d: err=%v", i, err)
+		}
+	}
+
+	// Valid GCM unwrap of a non-32-byte DEK payload yields ErrInvalidSealedBlob.
+	shortDEK := []byte("not-32-bytes----------------") // 28 bytes
+	wrappedShort, err := gcmSeal(mk[:], shortDEK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(mk, SealedBlob{
+		Ciphertext: sealed.Ciphertext, WrappedDEK: wrappedShort, KeyID: "v1",
+	}); !errors.Is(err, ErrInvalidSealedBlob) {
+		t.Fatalf("bad dek length: %v", err)
+	}
+
+	if _, err := gcmOpen(mk[:], []byte("tiny")); !errors.Is(err, ErrInvalidSealedBlob) {
+		t.Fatalf("gcmOpen short: %v", err)
+	}
+	if _, err := gcmSeal([]byte("bad-key-len"), []byte("x")); err == nil {
+		t.Fatal("expected gcmSeal key length error")
 	}
 }

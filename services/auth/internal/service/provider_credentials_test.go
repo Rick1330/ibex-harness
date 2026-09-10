@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"testing"
@@ -81,35 +82,56 @@ func testMasterEncoded(t *testing.T) string {
 func TestUnit_ProviderCredentialService_RoundTrip(t *testing.T) {
 	t.Parallel()
 	store := &memCredStore{}
-	svc, err := service.NewProviderCredentialService(store, service.MasterKeyConfig{
-		Encoded: testMasterEncoded(t), KeyID: "v1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc := mustCredService(t, store)
 	meta, err := svc.Create(context.Background(), service.CreateInput{
 		OrgID: "org-1", ProviderName: "openai", APIKey: "sk-test-abcdef", BaseURL: "https://example.com",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.KeyHint != "cdef" || meta.ProviderName != "openai" {
-		t.Fatalf("meta=%+v", meta)
-	}
-	got, err := svc.Get(context.Background(), service.OrgProviderRef{OrgID: "org-1", ProviderName: "openai"})
-	if err != nil || got.IsPlatformDefault || got.APIKey != "sk-test-abcdef" || got.BaseURL != "https://example.com" {
-		t.Fatalf("got=%+v err=%v", got, err)
-	}
-	listed, err := svc.List(context.Background(), "org-1")
-	if err != nil || len(listed) != 1 {
-		t.Fatalf("list=%+v err=%v", listed, err)
-	}
+	assertMetaHint(t, meta, "cdef")
+	assertGetKey(t, svc, "org-1", "openai", "sk-test-abcdef", "https://example.com")
+	assertListCount(t, svc, "org-1", 1)
 	if err := svc.Delete(context.Background(), service.OrgProviderRef{OrgID: "org-1", ProviderName: "openai"}); err != nil {
 		t.Fatal(err)
 	}
-	got, err = svc.Get(context.Background(), service.OrgProviderRef{OrgID: "org-1", ProviderName: "openai"})
+	got, err := svc.Get(context.Background(), service.OrgProviderRef{OrgID: "org-1", ProviderName: "openai"})
 	if err != nil || !got.IsPlatformDefault {
 		t.Fatalf("expected platform default after delete: %+v err=%v", got, err)
+	}
+}
+
+func mustCredService(t *testing.T, store *memCredStore) *service.ProviderCredentialService {
+	t.Helper()
+	svc, err := service.NewProviderCredentialService(store, service.MasterKeyConfig{
+		Encoded: testMasterEncoded(t), KeyID: "v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+func assertMetaHint(t *testing.T, meta service.ProviderCredentialMetadata, hint string) {
+	t.Helper()
+	if meta.KeyHint != hint || meta.ProviderName != "openai" {
+		t.Fatalf("meta=%+v", meta)
+	}
+}
+
+func assertGetKey(t *testing.T, svc *service.ProviderCredentialService, org, provider, key, base string) {
+	t.Helper()
+	got, err := svc.Get(context.Background(), service.OrgProviderRef{OrgID: org, ProviderName: provider})
+	if err != nil || got.IsPlatformDefault || got.APIKey != key || got.BaseURL != base {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+func assertListCount(t *testing.T, svc *service.ProviderCredentialService, org string, n int) {
+	t.Helper()
+	listed, err := svc.List(context.Background(), org)
+	if err != nil || len(listed) != n {
+		t.Fatalf("list=%+v err=%v", listed, err)
 	}
 }
 
@@ -197,5 +219,70 @@ func TestUnit_ProviderCredentialService_NilRepo(t *testing.T) {
 	_, err := service.NewProviderCredentialService(nil, service.MasterKeyConfig{})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestUnit_ProviderCredentialService_StoreAndDecryptErrors(t *testing.T) {
+	t.Parallel()
+	store := &memCredStore{err: errors.New("db down")}
+	svc := mustCredService(t, store)
+	_, err := svc.Create(context.Background(), service.CreateInput{
+		OrgID: "o", ProviderName: "openai", APIKey: "sk-long-enough",
+	})
+	if err == nil {
+		t.Fatal("expected upsert error")
+	}
+	_, err = svc.List(context.Background(), "o")
+	if err == nil {
+		t.Fatal("expected list error")
+	}
+	if err := svc.Delete(context.Background(), service.OrgProviderRef{OrgID: "o", ProviderName: "openai"}); err == nil {
+		t.Fatal("expected delete error")
+	}
+	if err := svc.Delete(context.Background(), service.OrgProviderRef{OrgID: "o", ProviderName: "nope"}); !errors.Is(err, service.ErrInvalidProviderName) {
+		t.Fatalf("err=%v", err)
+	}
+
+	ok := &memCredStore{}
+	ready := mustCredService(t, ok)
+	_, err = ready.Create(context.Background(), service.CreateInput{
+		OrgID: "o", ProviderName: "openai", APIKey: "sk-seed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := ok.rows[ok.key("o", "openai")]
+	row.Ciphertext[len(row.Ciphertext)-1] ^= 0xff
+	ok.rows[ok.key("o", "openai")] = row
+	_, err = ready.Get(context.Background(), service.OrgProviderRef{OrgID: "o", ProviderName: "openai"})
+	if err == nil {
+		t.Fatal("expected open failure")
+	}
+}
+
+func TestUnit_ProviderCredentialService_MetadataValidatedAt(t *testing.T) {
+	t.Parallel()
+	store := &memCredStore{}
+	svc := mustCredService(t, store)
+	_, err := svc.Create(context.Background(), service.CreateInput{
+		OrgID: "o", ProviderName: "anthropic", APIKey: "sk-ant-xxxx",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := store.rows[store.key("o", "anthropic")]
+	now := time.Now().UTC().Truncate(time.Second)
+	row.LastValidatedAt = sql.NullTime{Time: now, Valid: true}
+	row.BaseURL = sql.NullString{String: "https://example.com", Valid: true}
+	store.rows[store.key("o", "anthropic")] = row
+	listed, err := svc.List(context.Background(), "o")
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("list=%+v err=%v", listed, err)
+	}
+	if listed[0].LastValidatedAt == nil || !listed[0].LastValidatedAt.Equal(now) {
+		t.Fatalf("meta=%+v", listed[0])
+	}
+	if listed[0].BaseURL != "https://example.com" {
+		t.Fatalf("base=%q", listed[0].BaseURL)
 	}
 }

@@ -71,6 +71,22 @@ func fieldByNumber(md protoreflect.MessageDescriptor, num protoreflect.FieldNumb
 	return nil
 }
 
+func assertUnaryAuthMethods(t *testing.T, svc protoreflect.ServiceDescriptor, want []string) {
+	t.Helper()
+	if svc.Methods().Len() != len(want) {
+		t.Fatalf("AuthService methods: got %d want %d", svc.Methods().Len(), len(want))
+	}
+	for i, name := range want {
+		method := svc.Methods().Get(i)
+		if string(method.Name()) != name {
+			t.Errorf("RPC %d: got %q want %q", i, method.Name(), name)
+		}
+		if method.IsStreamingClient() || method.IsStreamingServer() {
+			t.Errorf("%s must be unary", name)
+		}
+	}
+}
+
 func TestAuthProtoContractADR0006(t *testing.T) {
 	fd := compileProto(t, "ibex/auth/v1/auth.proto")
 
@@ -94,7 +110,7 @@ func TestAuthProtoContractADR0006(t *testing.T) {
 	if svc == nil {
 		t.Fatal("AuthService not found")
 	}
-	wantMethods := []string{
+	assertUnaryAuthMethods(t, svc, []string{
 		"ValidateToken",
 		"ValidateAgent",
 		"CreateToken",
@@ -104,19 +120,7 @@ func TestAuthProtoContractADR0006(t *testing.T) {
 		"GetProviderCredential",
 		"DeleteProviderCredential",
 		"ListProviderCredentials",
-	}
-	if svc.Methods().Len() != len(wantMethods) {
-		t.Fatalf("AuthService methods: got %d want %d", svc.Methods().Len(), len(wantMethods))
-	}
-	for i, name := range wantMethods {
-		method := svc.Methods().Get(i)
-		if string(method.Name()) != name {
-			t.Errorf("RPC %d: got %q want %q", i, method.Name(), name)
-		}
-		if method.IsStreamingClient() || method.IsStreamingServer() {
-			t.Errorf("%s must be unary", name)
-		}
-	}
+	})
 
 	createResp := findMessage(fd, "CreateTokenResponse")
 	if createResp == nil {

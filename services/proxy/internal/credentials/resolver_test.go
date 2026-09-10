@@ -119,3 +119,58 @@ func TestUnit_CachedResolver_WrapsRPCError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestUnit_CachedResolver_TTLExpiryAndDefaults(t *testing.T) {
+	t.Parallel()
+	fake := &fakeGetter{resp: &authv1.GetProviderCredentialResponse{ApiKey: "sk"}}
+	r, err := credentials.NewCachedResolverWithTimeout(fake, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	r.SetClockForTest(func() time.Time { return now })
+	if _, err := r.Resolve(context.Background(), resolveIn()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(credentials.DefaultCacheTTL + time.Second)
+	if _, err := r.Resolve(context.Background(), resolveIn()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.calls != 2 {
+		t.Fatalf("calls=%d want 2 after TTL expiry", fake.calls)
+	}
+}
+
+func TestUnit_CachedResolver_NotFoundMapped(t *testing.T) {
+	t.Parallel()
+	fake := &fakeGetter{err: status.Error(codes.NotFound, "missing")}
+	r, err := credentials.NewCachedResolver(fake, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Resolve(context.Background(), resolveIn())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestUnit_CachedResolver_EvictsWhenFull(t *testing.T) {
+	t.Parallel()
+	fake := &fakeGetter{resp: &authv1.GetProviderCredentialResponse{ApiKey: "sk"}}
+	r, err := credentials.NewCachedResolver(fake, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetMaxCacheForTest(2)
+	for i := 0; i < 3; i++ {
+		in := credentials.ResolveInput{
+			OrgID: "org", ProviderName: "p" + string(rune('a'+i)), AccessToken: "t",
+		}
+		if _, err := r.Resolve(context.Background(), in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fake.calls != 3 {
+		t.Fatalf("calls=%d", fake.calls)
+	}
+}

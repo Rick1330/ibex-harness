@@ -7,13 +7,13 @@ from uuid import uuid4
 
 import pytest
 from apierror_py import AUTH_UNAVAILABLE, INSUFFICIENT_PERMISSIONS, INVALID_TOKEN, NOT_FOUND
-from authclient.codec import ProviderCredentialMetadataWire
 from authclient.errors import (
     AuthFailedError,
     AuthUnavailableError,
     InsufficientPermissionsError,
     ProviderCredentialNotFoundError,
 )
+from authclient.provider_credential_codec import ProviderCredentialMetadataWire
 from authclient.provider_credentials import FakeProviderCredentialManager
 
 from app.auth.client import ValidateResult

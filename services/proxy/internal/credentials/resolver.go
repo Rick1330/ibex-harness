@@ -59,6 +59,7 @@ type CachedResolver struct {
 	client     Getter
 	ttl        time.Duration
 	rpcTimeout time.Duration
+	maxEntries int
 	now        func() time.Time
 
 	mu    sync.Mutex
@@ -85,9 +86,24 @@ func NewCachedResolverWithTimeout(client Getter, ttl, rpcTimeout time.Duration) 
 		client:     client,
 		ttl:        ttl,
 		rpcTimeout: rpcTimeout,
+		maxEntries: maxCachedCredentials,
 		now:        time.Now,
 		cache:      make(map[string]cacheEntry),
 	}, nil
+}
+
+// SetClockForTest overrides the wall clock used for TTL (tests only).
+func (r *CachedResolver) SetClockForTest(now func() time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = now
+}
+
+// SetMaxCacheForTest bounds the in-memory cache size (tests only).
+func (r *CachedResolver) SetMaxCacheForTest(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.maxEntries = n
 }
 
 // Resolve returns platform-default or BYO credentials for the org/provider.
@@ -122,7 +138,7 @@ func (r *CachedResolver) store(key string, result Result) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evictExpiredLocked()
-	if len(r.cache) >= maxCachedCredentials {
+	if len(r.cache) >= r.maxEntries {
 		// Drop an arbitrary entry to keep the map bounded under churn.
 		for existing := range r.cache {
 			if existing != key {
