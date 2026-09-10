@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from authclient.permissions import ADMIN, USER_MANAGE
 from authclient.revoke import NoopTokenRevoker
+from authclient.tokens import FakeTokenManager
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -46,6 +47,7 @@ class ManagedClientOpts:
     result: ValidateResult | None = None
     publisher: RecordingOrgSuspendPublisher | None = None
     enqueue_calls: list[tuple[str, str]] | None = None
+    token_manager: FakeTokenManager | None = None
 
 
 @contextmanager
@@ -58,6 +60,7 @@ def managed_org_client(
         result=opts.result or owner_result(org_id=opts.org_id),
         publisher=opts.publisher,
         enqueue_calls=opts.enqueue_calls,
+        token_manager=opts.token_manager,
     ) as (client, res, pub):
         override_org_session(client.app)
 
@@ -97,6 +100,7 @@ def api_client(
     result: ValidateResult | None = None,
     publisher: RecordingOrgSuspendPublisher | None = None,
     enqueue_calls: list[tuple[str, str]] | None = None,
+    token_manager: FakeTokenManager | None = None,
 ) -> Iterator[tuple[TestClient, ValidateResult, RecordingOrgSuspendPublisher]]:
     res = result or owner_result()
     pub = publisher or RecordingOrgSuspendPublisher()
@@ -111,6 +115,7 @@ def api_client(
         validator=StaticTokenValidator({token: res}),
         runtime=ApiRuntimeOverrides(
             token_revoker=NoopTokenRevoker(),
+            token_manager=token_manager or FakeTokenManager(),
             org_suspend_publisher=pub,
             enqueue_org_deletion=_enqueue,
         ),
