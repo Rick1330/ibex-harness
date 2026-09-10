@@ -12,6 +12,7 @@ import (
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -38,6 +39,8 @@ type shutdownOpts struct {
 	revCancel         context.CancelFunc
 	dirSub            *directive.Subscriber
 	dirCancel         context.CancelFunc
+	rlConfigSub       *ratelimit.ConfigSubscriber
+	rlConfigCancel    context.CancelFunc
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -142,6 +145,12 @@ func stopPubSubSubscribers(opts shutdownOpts) {
 		}
 		if opts.dirSub != nil {
 			opts.dirSub.Stop()
+		}
+		if opts.rlConfigCancel != nil {
+			opts.rlConfigCancel()
+		}
+		if opts.rlConfigSub != nil {
+			opts.rlConfigSub.Stop()
 		}
 	}
 	if opts.stopPubSubOnce != nil {

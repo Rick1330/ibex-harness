@@ -429,13 +429,74 @@ func TestUnit_StartDirectiveSubscriber_StartsForCachedResolver(t *testing.T) {
 	<-sub.Done()
 }
 
+func TestUnit_StartRateLimitConfigSubscriber_SkippedWithoutDeps(t *testing.T) {
+	t.Parallel()
+	log := logger.Discard("proxy")
+	sub, cancel, err := startRateLimitConfigSubscriber(nil, nil, ratelimit.Noop(), log)
+	if err != nil || sub != nil || cancel != nil {
+		t.Fatalf("skip nil redis: sub=%v cancel=%v err=%v", sub, cancel, err)
+	}
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	sub, cancel, err = startRateLimitConfigSubscriber(client, nil, ratelimit.Noop(), log)
+	if err != nil || sub != nil || cancel != nil {
+		t.Fatalf("skip nil pg: sub=%v cancel=%v err=%v", sub, cancel, err)
+	}
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sub, cancel, err = startRateLimitConfigSubscriber(client, db, ratelimit.Noop(), log)
+	if err != nil || sub != nil || cancel != nil {
+		t.Fatalf("skip noop limiter: sub=%v cancel=%v err=%v", sub, cancel, err)
+	}
+}
+
+func TestUnit_StartRateLimitConfigSubscriber_StartsForHierarchical(t *testing.T) {
+	t.Parallel()
+	log := logger.Discard("proxy")
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	lim, err := ratelimit.NewHierarchicalLimiter(client, ratelimit.HierarchicalConfig{
+		DefaultRPM: 60, GlobalRPM: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	sub, cancel, err := startRateLimitConfigSubscriber(client, db, lim, log)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sub == nil || cancel == nil {
+		t.Fatal("expected subscriber")
+	}
+	cancel()
+	sub.Stop()
+	<-sub.Done()
+}
+
 func TestUnit_StopPubSubSubscribers_NilSafe(t *testing.T) {
 	t.Parallel()
 	stopPubSubSubscribers(shutdownOpts{})
 	called := false
 	stopPubSubSubscribers(shutdownOpts{
-		revCancel: func() { called = true },
-		dirCancel: func() { called = true },
+		revCancel:      func() { called = true },
+		dirCancel:      func() { called = true },
+		rlConfigCancel: func() { called = true },
 	})
 	if !called {
 		t.Fatal("expected cancel hooks")

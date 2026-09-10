@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,17 +74,27 @@ return {1, "", org_count, org_limit}
 `)
 
 // HierarchicalConfig configures agent → org → global per-minute RPM limits.
-// Agent RPM equals DefaultRPM (per-agent overrides are 4.B.2).
+// Env OrgOverrides seed org RPM; DB overrides (4.B.2) win when present.
+// Agent RPM defaults to DefaultRPM unless a DB per-agent override is applied.
 type HierarchicalConfig struct {
 	DefaultRPM   int64
 	OrgOverrides map[uuid.UUID]int64
 	GlobalRPM    int64
 }
 
+type agentOverrideKey struct {
+	OrgID   uuid.UUID
+	AgentID uuid.UUID
+}
+
 // HierarchicalLimiter implements Limiter with one atomic Lua round trip.
 type HierarchicalLimiter struct {
 	client redis.UniversalClient
 	cfg    HierarchicalConfig
+
+	dbMu       sync.RWMutex
+	dbOrgRPM   map[uuid.UUID]int64
+	dbAgentRPM map[agentOverrideKey]int64
 }
 
 // NewHierarchicalLimiter returns a hierarchical RPM limiter backed by Redis.
@@ -97,15 +108,27 @@ func NewHierarchicalLimiter(client redis.UniversalClient, cfg HierarchicalConfig
 	if cfg.GlobalRPM < 1 {
 		cfg.GlobalRPM = defaultGlobalRPM
 	}
-	return &HierarchicalLimiter{client: client, cfg: cfg}, nil
+	if cfg.OrgOverrides == nil {
+		cfg.OrgOverrides = map[uuid.UUID]int64{}
+	}
+	return &HierarchicalLimiter{
+		client:     client,
+		cfg:        cfg,
+		dbOrgRPM:   make(map[uuid.UUID]int64),
+		dbAgentRPM: make(map[agentOverrideKey]int64),
+	}, nil
+}
+
+// AsHierarchical returns the concrete limiter when lim is *HierarchicalLimiter.
+func AsHierarchical(lim Limiter) (*HierarchicalLimiter, bool) {
+	h, ok := lim.(*HierarchicalLimiter)
+	return h, ok
 }
 
 // Check enforces agent → org → global budgets for the current UTC minute.
 // A nil agentID skips the agent tier (org + global only).
 func (h *HierarchicalLimiter) Check(ctx context.Context, orgID, agentID uuid.UUID) (Result, error) {
-	orgLimit := h.effectiveOrgLimit(orgID)
-	agentLimit := h.cfg.DefaultRPM
-	globalLimit := h.cfg.GlobalRPM
+	orgLimit, agentLimit, globalLimit := h.resolvedLimits(orgID, agentID)
 	window := currentMinuteWindow(time.Now().UTC())
 
 	orgKey := orgRPMKey(orgID, window.unixMinute)
@@ -127,11 +150,66 @@ func (h *HierarchicalLimiter) Check(ctx context.Context, orgID, agentID uuid.UUI
 	return resultFromHierarchical(raw, orgLimit, window)
 }
 
-func (h *HierarchicalLimiter) effectiveOrgLimit(orgID uuid.UUID) int64 {
+func (h *HierarchicalLimiter) resolvedLimits(orgID, agentID uuid.UUID) (orgLimit, agentLimit, globalLimit int64) {
+	h.dbMu.RLock()
+	defer h.dbMu.RUnlock()
+	orgLimit = h.cfg.DefaultRPM
 	if rpm, ok := h.cfg.OrgOverrides[orgID]; ok && rpm > 0 {
-		return rpm
+		orgLimit = rpm
 	}
-	return h.cfg.DefaultRPM
+	if rpm, ok := h.dbOrgRPM[orgID]; ok && rpm > 0 {
+		orgLimit = rpm
+	}
+	agentLimit = h.cfg.DefaultRPM
+	if agentID != uuid.Nil {
+		if rpm, ok := h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}]; ok && rpm > 0 {
+			agentLimit = rpm
+		}
+	}
+	return orgLimit, agentLimit, h.cfg.GlobalRPM
+}
+
+// ApplyOrgOverrides replaces DB-sourced overrides for one org (env defaults remain).
+func (h *HierarchicalLimiter) ApplyOrgOverrides(orgID uuid.UUID, set OrgOverrideSet) {
+	h.dbMu.Lock()
+	defer h.dbMu.Unlock()
+	delete(h.dbOrgRPM, orgID)
+	for k := range h.dbAgentRPM {
+		if k.OrgID == orgID {
+			delete(h.dbAgentRPM, k)
+		}
+	}
+	if set.OrgRPM != nil && *set.OrgRPM > 0 {
+		h.dbOrgRPM[orgID] = *set.OrgRPM
+	}
+	for agentID, rpm := range set.AgentRPM {
+		if rpm > 0 && agentID != uuid.Nil {
+			h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
+		}
+	}
+}
+
+// ReplaceAllOverrides replaces the entire DB override cache (30s poll).
+func (h *HierarchicalLimiter) ReplaceAllOverrides(all map[uuid.UUID]OrgOverrideSet) {
+	h.dbMu.Lock()
+	defer h.dbMu.Unlock()
+	h.dbOrgRPM = make(map[uuid.UUID]int64, len(all))
+	h.dbAgentRPM = make(map[agentOverrideKey]int64)
+	for orgID, set := range all {
+		if set.OrgRPM != nil && *set.OrgRPM > 0 {
+			h.dbOrgRPM[orgID] = *set.OrgRPM
+		}
+		for agentID, rpm := range set.AgentRPM {
+			if rpm > 0 && agentID != uuid.Nil {
+				h.dbAgentRPM[agentOverrideKey{OrgID: orgID, AgentID: agentID}] = rpm
+			}
+		}
+	}
+}
+
+// OrgRPMRedisKey returns the live Redis counter key for an org's current-minute RPM.
+func OrgRPMRedisKey(orgID uuid.UUID) string {
+	return orgRPMKey(orgID, currentMinuteWindow(time.Now().UTC()).unixMinute)
 }
 
 func orgRPMKey(orgID uuid.UUID, unixMinute int64) string {
