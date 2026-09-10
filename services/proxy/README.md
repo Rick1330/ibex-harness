@@ -66,7 +66,8 @@ See [.env.example](.env.example).
 | `IBEX_REQUEST_ID_HEADER` | `X-Request-ID` | Incoming/outgoing request ID |
 | `IBEX_TRACE_ID_HEADER` | `X-Trace-ID` | Trace ID header |
 | `IBEX_ERROR_DOCS_BASE` | (empty) | Optional `docs_url` prefix |
-| `IBEX_RATE_LIMIT_DEFAULT_RPM` | `60` | Org requests per minute |
+| `IBEX_RATE_LIMIT_DEFAULT_RPM` | `60` | Org/agent requests per minute (agent uses default until 4.B.2) |
+| `IBEX_RATE_LIMIT_GLOBAL_RPM` | `100000` | Shared RPM ceiling across all proxy instances using the same Redis namespace/deployment |
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | (empty) | `uuid=rpm,uuid2=rpm2` |
 | `POSTGRES_DSN` | (empty) | Postgres for directive reads + session store/lifecycle when set |
 | `IBEX_DIRECTIVE_CACHE_TTL` | `60s` | Redis TTL for directive cache keys `{org_id}:directive:{agent_id}` |

@@ -29,6 +29,7 @@ var invalidProxyConfigCases = []struct {
 		c.ContextAssembleTimeout = 0
 	}},
 	{name: "zero rate limit rpm", mutate: func(c *Config) { c.RateLimit.DefaultRPM = 0 }},
+	{name: "zero global rate limit rpm", mutate: func(c *Config) { c.RateLimit.GlobalRPM = 0 }},
 	{
 		name: "auth grpc required outside development",
 		mutate: func(c *Config) {

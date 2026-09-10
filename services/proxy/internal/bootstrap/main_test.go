@@ -34,19 +34,23 @@ func TestRun_InvalidConfigReturns1(t *testing.T) {
 	}
 }
 
-func TestRateLimitSliderConfig(t *testing.T) {
+func TestRateLimitHierarchicalConfig(t *testing.T) {
 	t.Parallel()
 	orgID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	otherOrg := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	cfg := config.Config{
 		RateLimit: config.RateLimitConfig{
 			DefaultRPM:   120,
+			GlobalRPM:    50000,
 			OrgOverrides: map[uuid.UUID]int{orgID: 30, otherOrg: 45},
 		},
 	}
-	got := rateLimitSliderConfig(cfg)
+	got := rateLimitHierarchicalConfig(cfg)
 	if got.DefaultRPM != 120 {
 		t.Fatalf("DefaultRPM = %d, want 120", got.DefaultRPM)
+	}
+	if got.GlobalRPM != 50000 {
+		t.Fatalf("GlobalRPM = %d, want 50000", got.GlobalRPM)
 	}
 	if got.OrgOverrides[orgID] != 30 {
 		t.Fatalf("org override = %d, want 30", got.OrgOverrides[orgID])

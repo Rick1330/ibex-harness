@@ -46,12 +46,13 @@ func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalCli
 	if err != nil {
 		return nil, nil, fmt.Errorf("redis client init: %w", err)
 	}
-	limiter, err := ratelimit.NewRedisSlider(client, rateLimitSliderConfig(cfg))
+	limiter, err := ratelimit.NewHierarchicalLimiter(client, rateLimitHierarchicalConfig(cfg))
 	if err != nil {
-		return nil, nil, fmt.Errorf("redis slider: %w", err)
+		return nil, nil, fmt.Errorf("hierarchical limiter: %w", err)
 	}
 	log.InfoCtx(context.Background(), "rate limiter configured",
 		"default_rpm", cfg.RateLimit.DefaultRPM,
+		"global_rpm", cfg.RateLimit.GlobalRPM,
 		"org_overrides", len(cfg.RateLimit.OrgOverrides),
 	)
 	return client, limiter, nil
@@ -316,13 +317,14 @@ func startRevocationSubscriber(
 	log.InfoCtx(context.Background(), "revocation subscriber started", "channel", revocation.Channel)
 	return sub, cancel, nil
 }
-func rateLimitSliderConfig(cfg config.Config) ratelimit.RedisSliderConfig {
+func rateLimitHierarchicalConfig(cfg config.Config) ratelimit.HierarchicalConfig {
 	overrides := make(map[uuid.UUID]int64, len(cfg.RateLimit.OrgOverrides))
 	for orgID, rpm := range cfg.RateLimit.OrgOverrides {
 		overrides[orgID] = int64(rpm)
 	}
-	return ratelimit.RedisSliderConfig{
+	return ratelimit.HierarchicalConfig{
 		DefaultRPM:   int64(cfg.RateLimit.DefaultRPM),
 		OrgOverrides: overrides,
+		GlobalRPM:    int64(cfg.RateLimit.GlobalRPM),
 	}
 }

@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -37,14 +38,16 @@ func currentMinuteWindow(now time.Time) minuteWindow {
 }
 
 func resultFromCount(count, limit int64, window minuteWindow) Result {
-	remaining := int(limit) - int(count)
+	limitInt := clampInt64ToInt(limit)
+	countInt := clampInt64ToInt(count)
+	remaining := limitInt - countInt
 	if remaining < 0 {
 		remaining = 0
 	}
 	if count > limit {
 		return Result{
 			Allowed:    false,
-			Limit:      int(limit),
+			Limit:      limitInt,
 			Remaining:  0,
 			ResetUnix:  window.resetUnix,
 			RetryAfter: window.retryAfter,
@@ -52,10 +55,21 @@ func resultFromCount(count, limit int64, window minuteWindow) Result {
 	}
 	return Result{
 		Allowed:   true,
-		Limit:     int(limit),
+		Limit:     limitInt,
 		Remaining: remaining,
 		ResetUnix: window.resetUnix,
 	}
+}
+
+// clampInt64ToInt converts n to int with explicit bounds (CodeQL go/incorrect-integer-conversion).
+func clampInt64ToInt(n int64) int {
+	if n > math.MaxInt {
+		return math.MaxInt
+	}
+	if n < math.MinInt {
+		return math.MinInt
+	}
+	return int(n)
 }
 
 func incrWithExpire(ctx context.Context, client redis.UniversalClient, key string) (int64, error) {
