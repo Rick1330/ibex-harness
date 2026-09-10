@@ -453,8 +453,14 @@ func TestUnit_StartRateLimitConfigSubscriber_SkippedWithoutDeps(t *testing.T) {
 
 func assertRLWatcherSkipped(t *testing.T, sub *ratelimit.ConfigSubscriber, cancel context.CancelFunc, err error) {
 	t.Helper()
-	if err != nil || sub != nil || cancel != nil {
-		t.Fatalf("expected skip: sub=%v cancel=%v err=%v", sub, cancel, err)
+	if err != nil {
+		t.Fatalf("expected skip, got err=%v", err)
+	}
+	if sub != nil {
+		t.Fatalf("expected nil subscriber, got %v", sub)
+	}
+	if cancel != nil {
+		t.Fatal("expected nil cancel")
 	}
 }
 

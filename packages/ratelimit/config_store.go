@@ -39,42 +39,48 @@ func NewConfigStore(db *sql.DB) (*ConfigStore, error) {
 	return &ConfigStore{db: db, tracer: otel.Tracer("ibex-ratelimit")}, nil
 }
 
+type loadOverridesParams struct {
+	spanName      string
+	setConfigSQL   string
+	setConfigArgs  []any
+	setConfigLabel string
+	query          string
+	queryArgs      []any
+}
+
 // LoadOrg returns overrides for one org under app.current_org_id RLS.
 func (s *ConfigStore) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgOverrideSet, error) {
-	ctx, span := s.tracer.Start(ctx, "ConfigStore.LoadOrg",
-		trace.WithAttributes(
-			attribute.String("db.system", "postgresql"),
-			attribute.String("db.operation", "SELECT"),
-		),
-	)
-	defer span.End()
-
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return OrgOverrideSet{}, recordConfigStoreErr(span, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx,
-		`SELECT set_config('app.current_org_id', $1, true)`, orgID.String()); err != nil {
-		return OrgOverrideSet{}, recordConfigStoreErr(span, fmt.Errorf("ratelimit: set rls: %w", err))
-	}
-	set, err := scanOverrides(ctx, tx, `
+	set, err := s.loadOverrides(ctx, loadOverridesParams{
+		spanName:      "ConfigStore.LoadOrg",
+		setConfigSQL:   `SELECT set_config('app.current_org_id', $1, true)`,
+		setConfigArgs:  []any{orgID.String()},
+		setConfigLabel: "set rls",
+		query: `
 		SELECT org_id, agent_id::text, requests_per_minute
 		FROM ibex_core.rate_limit_overrides
-		WHERE org_id = $1`, orgID)
+		WHERE org_id = $1`,
+		queryArgs: []any{orgID},
+	})
 	if err != nil {
-		return OrgOverrideSet{}, recordConfigStoreErr(span, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return OrgOverrideSet{}, recordConfigStoreErr(span, err)
+		return OrgOverrideSet{}, err
 	}
 	return set[orgID], nil
 }
 
 // LoadAll returns all overrides using app.is_service_account (full poll).
 func (s *ConfigStore) LoadAll(ctx context.Context) (map[uuid.UUID]OrgOverrideSet, error) {
-	ctx, span := s.tracer.Start(ctx, "ConfigStore.LoadAll",
+	return s.loadOverrides(ctx, loadOverridesParams{
+		spanName:      "ConfigStore.LoadAll",
+		setConfigSQL:   `SELECT set_config('app.is_service_account', 'true', true)`,
+		setConfigLabel: "set service account",
+		query: `
+		SELECT org_id, agent_id::text, requests_per_minute
+		FROM ibex_core.rate_limit_overrides`,
+	})
+}
+
+func (s *ConfigStore) loadOverrides(ctx context.Context, p loadOverridesParams) (map[uuid.UUID]OrgOverrideSet, error) {
+	ctx, span := s.tracer.Start(ctx, p.spanName,
 		trace.WithAttributes(
 			attribute.String("db.system", "postgresql"),
 			attribute.String("db.operation", "SELECT"),
@@ -88,13 +94,10 @@ func (s *ConfigStore) LoadAll(ctx context.Context) (map[uuid.UUID]OrgOverrideSet
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx,
-		`SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
-		return nil, recordConfigStoreErr(span, fmt.Errorf("ratelimit: set service account: %w", err))
+	if _, err := tx.ExecContext(ctx, p.setConfigSQL, p.setConfigArgs...); err != nil {
+		return nil, recordConfigStoreErr(span, fmt.Errorf("ratelimit: %s: %w", p.setConfigLabel, err))
 	}
-	set, err := scanOverrides(ctx, tx, `
-		SELECT org_id, agent_id::text, requests_per_minute
-		FROM ibex_core.rate_limit_overrides`)
+	set, err := scanOverrides(ctx, tx, p.query, p.queryArgs...)
 	if err != nil {
 		return nil, recordConfigStoreErr(span, err)
 	}

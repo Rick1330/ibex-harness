@@ -28,27 +28,45 @@ class _RateLimitCtx:
     publisher: object
 
 
+def _api_state(request: Request):
+    return getattr(request.app.state, "api", None)
+
+
 def _default_rpm(request: Request) -> int:
-    settings = getattr(request.app.state.api, "settings", None)
+    settings = getattr(_api_state(request), "settings", None)
     if settings is None:
         return 60
     return int(settings.rate_limit_default_rpm)
 
 
 def _counter(request: Request) -> RedisRateLimitCounter:
-    counter = getattr(request.app.state.api, "rate_limit_counter", None)
+    state = _api_state(request)
+    counter = getattr(state, "rate_limit_counter", None)
     if counter is not None:
         return counter  # type: ignore[no-any-return]
-    settings = getattr(request.app.state.api, "settings", None)
+    settings = getattr(state, "settings", None)
     redis_url = settings.redis_url if settings is not None else None
     return RedisRateLimitCounter(redis_url)
 
 
 def _publisher(request: Request):
-    pub = getattr(request.app.state.api, "rate_limit_config_publisher", None)
+    pub = getattr(_api_state(request), "rate_limit_config_publisher", None)
     if pub is not None:
         return pub
     return NoopRateLimitConfigPublisher()
+
+
+def _make_ctx(
+    request: Request, org_id: UUID, token_org_id: UUID, session: AsyncSession
+) -> _RateLimitCtx:
+    assert_path_org(token_org_id, org_id)
+    return _RateLimitCtx(
+        org_id=org_id,
+        session=session,
+        platform_default_rpm=_default_rpm(request),
+        counter=_counter(request),
+        publisher=_publisher(request),
+    )
 
 
 def _rate_limit_read_ctx(
@@ -57,14 +75,7 @@ def _rate_limit_read_ctx(
     token: Annotated[ValidateResult, Depends(require_token)],
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> _RateLimitCtx:
-    assert_path_org(token.org_id, org_id)
-    return _RateLimitCtx(
-        org_id=org_id,
-        session=session,
-        platform_default_rpm=_default_rpm(request),
-        counter=_counter(request),
-        publisher=_publisher(request),
-    )
+    return _make_ctx(request, org_id, token.org_id, session)
 
 
 def _rate_limit_write_ctx(
@@ -73,14 +84,7 @@ def _rate_limit_write_ctx(
     token: RequireOrgSettings,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> _RateLimitCtx:
-    assert_path_org(token.org_id, org_id)
-    return _RateLimitCtx(
-        org_id=org_id,
-        session=session,
-        platform_default_rpm=_default_rpm(request),
-        counter=_counter(request),
-        publisher=_publisher(request),
-    )
+    return _make_ctx(request, org_id, token.org_id, session)
 
 
 @router.get("/{org_id}/rate-limits")

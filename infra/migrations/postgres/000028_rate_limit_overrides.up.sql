@@ -9,9 +9,6 @@ CREATE TABLE ibex_core.rate_limit_overrides (
                          CHECK (requests_per_minute >= 1),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Agent-scoped rows: one override per (org, agent).
-    -- Org-level rows use agent_id IS NULL; NULLs are not unique under this
-    -- constraint — see rate_limit_overrides_org_level_uidx.
     CONSTRAINT rate_limit_overrides_agent_unique UNIQUE (org_id, agent_id),
     CONSTRAINT rate_limit_overrides_agent_org_fk
         FOREIGN KEY (agent_id, org_id)
@@ -19,7 +16,7 @@ CREATE TABLE ibex_core.rate_limit_overrides (
         ON DELETE CASCADE
 );
 
--- Exactly one org-level override row per organization.
+-- One org-level row (agent_id NULL) per org; agent rows use the UNIQUE above.
 CREATE UNIQUE INDEX rate_limit_overrides_org_level_uidx
     ON ibex_core.rate_limit_overrides (org_id)
     WHERE agent_id IS NULL;

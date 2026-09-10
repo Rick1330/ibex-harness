@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND, VALIDATION_ERROR
@@ -27,24 +27,59 @@ from tests.unit.org_user_test_support import (
 )
 
 
+def _response(
+    org_id: UUID,
+    *,
+    rpm: int = 60,
+    source: str = "default",
+    current: int = 0,
+) -> RateLimitsResponse:
+    return RateLimitsResponse(
+        org_id=org_id,
+        requests_per_minute=rpm,
+        source=source,
+        platform_default_rpm=60,
+        current_minute_requests=current,
+        agent_overrides=[],
+    )
+
+
+def _patch_get(org_id: UUID, **kwargs):
+    return patch(
+        "app.services.rate_limits.get_rate_limits",
+        new=AsyncMock(return_value=_response(org_id, **kwargs)),
+    )
+
+
+def _patch_patch(org_id: UUID, **kwargs):
+    return patch(
+        "app.services.rate_limits.patch_rate_limits",
+        new=AsyncMock(return_value=_response(org_id, **kwargs)),
+    )
+
+
+def _iso_foreign_org(method: str) -> None:
+    token_org = uuid4()
+    other_org = uuid4()
+    path = f"/v1/organizations/{other_org}/rate-limits"
+    with managed_org_client(
+        ManagedClientOpts(org_id=token_org, result=owner_result(org_id=token_org))
+    ) as (client, _, _):
+        if method == "GET":
+            resp = client.get(path, headers=bearer_headers())
+        else:
+            resp = client.patch(
+                path, headers=bearer_headers(), json={"requests_per_minute": 5}
+            )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == NOT_FOUND
+
+
 def test_get_rate_limits_defaults() -> None:
     org_id = uuid4()
-    counter = RedisRateLimitCounter(None)
     with (
         managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch(
-            "app.services.rate_limits.get_rate_limits",
-            new=AsyncMock(
-                return_value=RateLimitsResponse(
-                    org_id=org_id,
-                    requests_per_minute=60,
-                    source="default",
-                    platform_default_rpm=60,
-                    current_minute_requests=0,
-                    agent_overrides=[],
-                )
-            ),
-        ),
+        _patch_get(org_id),
     ):
         resp = client.get(
             f"/v1/organizations/{org_id}/rate-limits", headers=bearer_headers()
@@ -54,7 +89,6 @@ def test_get_rate_limits_defaults() -> None:
     assert body["requests_per_minute"] == 60
     assert body["source"] == "default"
     assert body["current_minute_requests"] == 0
-    del counter
 
 
 def test_patch_rate_limits_owner_ok() -> None:
@@ -62,19 +96,7 @@ def test_patch_rate_limits_owner_ok() -> None:
     pub = RecordingRateLimitConfigPublisher()
     with (
         managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch(
-            "app.services.rate_limits.patch_rate_limits",
-            new=AsyncMock(
-                return_value=RateLimitsResponse(
-                    org_id=org_id,
-                    requests_per_minute=120,
-                    source="override",
-                    platform_default_rpm=60,
-                    current_minute_requests=3,
-                    agent_overrides=[],
-                )
-            ),
-        ) as patched,
+        _patch_patch(org_id, rpm=120, source="override", current=3) as patched,
     ):
         client.app.state.api.rate_limit_config_publisher = pub
         resp = client.patch(
@@ -118,18 +140,7 @@ def test_admin_patch_allowed() -> None:
             _,
             _,
         ),
-        patch(
-            "app.services.rate_limits.patch_rate_limits",
-            new=AsyncMock(
-                return_value=RateLimitsResponse(
-                    org_id=org_id,
-                    requests_per_minute=90,
-                    source="override",
-                    platform_default_rpm=60,
-                    current_minute_requests=0,
-                )
-            ),
-        ),
+        _patch_patch(org_id, rpm=90, source="override"),
     ):
         resp = client.patch(
             f"/v1/organizations/{org_id}/rate-limits",
@@ -140,31 +151,11 @@ def test_admin_patch_allowed() -> None:
 
 
 def test_TestAPI_ISO_RATELIMIT_get_foreign_org_404() -> None:
-    token_org = uuid4()
-    other_org = uuid4()
-    with managed_org_client(
-        ManagedClientOpts(org_id=token_org, result=owner_result(org_id=token_org))
-    ) as (client, _, _):
-        resp = client.get(
-            f"/v1/organizations/{other_org}/rate-limits", headers=bearer_headers()
-        )
-    assert resp.status_code == 404
-    assert resp.json()["error"]["code"] == NOT_FOUND
+    _iso_foreign_org("GET")
 
 
 def test_TestAPI_ISO_RATELIMIT_patch_foreign_org_404() -> None:
-    token_org = uuid4()
-    other_org = uuid4()
-    with managed_org_client(
-        ManagedClientOpts(org_id=token_org, result=owner_result(org_id=token_org))
-    ) as (client, _, _):
-        resp = client.patch(
-            f"/v1/organizations/{other_org}/rate-limits",
-            headers=bearer_headers(),
-            json={"requests_per_minute": 5},
-        )
-    assert resp.status_code == 404
-    assert resp.json()["error"]["code"] == NOT_FOUND
+    _iso_foreign_org("PATCH")
 
 
 @pytest.mark.asyncio
@@ -226,17 +217,15 @@ async def test_patch_rate_limits_publish_failure_does_not_raise() -> None:
 async def test_patch_clear_org_and_agent_validation() -> None:
     org_id = uuid4()
     session = AsyncMock()
+    body = RateLimitsPatchRequest(requests_per_minute=10, clear_org_override=True)
+    deps = rate_limit_service.PatchDeps(
+        platform_default_rpm=60,
+        counter=AsyncMock(),
+        publisher=NoopRateLimitConfigPublisher(),
+    )
+    coro = rate_limit_service.patch_rate_limits(session, org_id, body, deps=deps)
     with pytest.raises(ApiError) as exc:
-        await rate_limit_service.patch_rate_limits(
-            session,
-            org_id,
-            RateLimitsPatchRequest(requests_per_minute=10, clear_org_override=True),
-            deps=rate_limit_service.PatchDeps(
-                platform_default_rpm=60,
-                counter=AsyncMock(),
-                publisher=NoopRateLimitConfigPublisher(),
-            ),
-        )
+        await coro
     assert exc.value.code == VALIDATION_ERROR
 
 
@@ -251,19 +240,17 @@ async def test_patch_unknown_agent_404() -> None:
 
     session = AsyncMock()
     session.execute = AsyncMock(return_value=_ScalarNone())
+    body = RateLimitsPatchRequest(
+        agent_overrides=[{"agent_id": agent_id, "requests_per_minute": 5}]
+    )
+    deps = rate_limit_service.PatchDeps(
+        platform_default_rpm=60,
+        counter=AsyncMock(),
+        publisher=NoopRateLimitConfigPublisher(),
+    )
+    coro = rate_limit_service.patch_rate_limits(session, org_id, body, deps=deps)
     with pytest.raises(ApiError) as exc:
-        await rate_limit_service.patch_rate_limits(
-            session,
-            org_id,
-            RateLimitsPatchRequest(
-                agent_overrides=[{"agent_id": agent_id, "requests_per_minute": 5}]
-            ),
-            deps=rate_limit_service.PatchDeps(
-                platform_default_rpm=60,
-                counter=AsyncMock(),
-                publisher=NoopRateLimitConfigPublisher(),
-            ),
-        )
+        await coro
     assert exc.value.code == NOT_FOUND
 
 
@@ -349,18 +336,7 @@ def test_router_uses_settings_defaults() -> None:
     org_id = uuid4()
     with (
         managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch(
-            "app.services.rate_limits.get_rate_limits",
-            new=AsyncMock(
-                return_value=RateLimitsResponse(
-                    org_id=org_id,
-                    requests_per_minute=60,
-                    source="default",
-                    platform_default_rpm=60,
-                    current_minute_requests=0,
-                )
-            ),
-        ),
+        _patch_get(org_id),
     ):
         client.app.state.api.settings = None
         resp = client.get(

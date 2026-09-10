@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     )
 
     auth_grpc_addr: str = Field(
-        default="127.0.0.1:8081",
+        default="127.0.0.1:9091",
         validation_alias=AliasChoices("IBEX_AUTH_GRPC_ADDR", "IBEX_API_AUTH_GRPC_ADDR"),
         description="Auth service gRPC target for ValidateToken",
     )

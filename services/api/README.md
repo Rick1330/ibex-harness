@@ -49,7 +49,7 @@ Python FastAPI management-plane service.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `IBEX_API_DATABASE_URL` | for ready/tenant | `postgresql+asyncpg://...` |
-| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | yes (default `127.0.0.1:8081`) | Auth ValidateToken/RevokeToken target |
+| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | yes (default `127.0.0.1:9091`) | Auth ValidateToken/RevokeToken gRPC target (Auth HTTP is `:8081`) |
 | `IBEX_API_AUTH_TIMEOUT_MS` | no | default 50 |
 | `IBEX_API_REDIS_URL` | for suspend + rate-limit pub/sub | Redis for `org_suspend` and `ratelimit_config_updates:{org_id}`; optional for live RPM counters |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | no | Platform default org/agent RPM when no override row (default **60**) |

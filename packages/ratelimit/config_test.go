@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	// Register the lib/pq "postgres" driver for sql.Open in unit tests.
 	_ "github.com/lib/pq"
 )
 
@@ -141,7 +142,9 @@ func TestConfigSubscriber_pubsubAppliesWithinOneSecond(t *testing.T) {
 	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440320")
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440420")
 	client, lim, loader := newSubscriberHarness(t, org, 2)
-	_ = startTestSubscriber(t, client, loader, lim, time.Hour)
+	_ = startTestSubscriber(t, testSubOpts{
+		client: client, loader: loader, lim: lim, pollEvery: time.Hour,
+	})
 	waitPubSubPatterns(t, client)
 	mustPublishConfig(t, client, org)
 	elapsed := waitOrgRPM(t, lim, org, agent, 2, time.Second)
@@ -157,7 +160,9 @@ func TestConfigSubscriber_pollMissConverges(t *testing.T) {
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440421")
 	client, lim, loader := newSubscriberHarness(t, org, 0)
 	pollEvery := 50 * time.Millisecond
-	_ = startTestSubscriber(t, client, loader, lim, pollEvery)
+	_ = startTestSubscriber(t, testSubOpts{
+		client: client, loader: loader, lim: lim, pollEvery: pollEvery,
+	})
 	rpm := int64(1)
 	loader.set(org, OrgOverrideSet{OrgRPM: &rpm})
 	elapsed := waitOrgRPM(t, lim, org, agent, 1, 2*time.Second)
@@ -192,26 +197,27 @@ func newSubscriberHarness(
 	return client, lim, loader
 }
 
-func startTestSubscriber(
-	t *testing.T,
-	client redis.UniversalClient,
-	loader OverrideLoader,
-	lim *HierarchicalLimiter,
-	pollEvery time.Duration,
-) *ConfigSubscriber {
+type testSubOpts struct {
+	client    redis.UniversalClient
+	loader    OverrideLoader
+	lim       *HierarchicalLimiter
+	pollEvery time.Duration
+}
+
+func startTestSubscriber(t *testing.T, opts testSubOpts) *ConfigSubscriber {
 	t.Helper()
 	sub, err := NewConfigSubscriber(ConfigSubscriberDeps{
-		Client: client, Store: loader, Applier: lim, Log: logger.Discard("rl"),
-		PollEvery: pollEvery,
+		Client: opts.client, Store: opts.loader, Applier: opts.lim,
+		Log: logger.Discard("rl"), PollEvery: opts.pollEvery,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	go sub.Run(ctx)
 	t.Cleanup(func() {
 		sub.Stop()
-		cancel()
 		<-sub.Done()
 	})
 	return sub

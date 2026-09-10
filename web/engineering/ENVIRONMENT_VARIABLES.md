@@ -323,7 +323,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
 | `IBEX_API_DATABASE_URL` | for ready | (none) | Async Postgres DSN (`postgresql+asyncpg://...`) | Secret |
-| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:8081` | Auth ValidateToken target | Internal |
+| `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
 | `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
