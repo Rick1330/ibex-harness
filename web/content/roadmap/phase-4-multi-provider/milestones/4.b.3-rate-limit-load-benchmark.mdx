@@ -27,7 +27,7 @@ fullTitle: "Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark"
   Shipped shape differs from the early sketch:
 
   1. **Real API** — `NewHierarchicalLimiter` + `Check(ctx, orgID, agentID)` (not sketch `NewHierarchicalLuaLimiter` / `Allow` / `RateLimitRequest`).
-  2. **Compose Redis** via `REDIS_URL` (default `redis://127.0.0.1:6379/14`) with **Ping then skip** if unreachable — not testcontainers. Coverage CI runs `-tags=integration` without Redis and **skips** this file until a follow-up adds Redis to that job.
+  2. **Compose Redis** via `REDIS_URL` (default `redis://127.0.0.1:6379/14`; **DB 14 required** before `FlushDB`) with **Ping then skip** if unreachable — not testcontainers. Malformed/`REDIS_URL` rejects fail the test; coverage CI runs `-tags=integration` without Redis and **skips** on Ping failure until a follow-up adds Redis to that job.
   3. **200 workers / RPM 100** permanent gate in `packages/ratelimit/hierarchical_integration_test.go`; unit burst remains 80/20 on miniredis.
   4. **Latency** — no dedicated k6 `stage:ratelimit` / no unverified `&lt;5ms` SLA. Stage cost is pinned via `BenchmarkStageRateLimit` → `baseline.synthetic_rate_limit_us` + 20% regression in `regression_gate.py`. Full-path SLA remains Phase 2 **p99 &lt; 20ms**.
   5. **Fail-open** — re-cite existing `TestSecurity_SEC4_6_RedisFailOpen` (`mustProxyLimiter` → `NewHierarchicalLimiter`); no new hierarchical fail-open case.
