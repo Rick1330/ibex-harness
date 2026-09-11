@@ -21,8 +21,9 @@ const (
 	integrationBurstWorkers = 200
 	integrationBurstRPM     = 100
 	// Dedicated DB so FLUSHDB cannot wipe shared DB 0 used by other packages.
+	// Host port 6380 matches infra/compose/test Redis publish mapping.
 	integrationRedisDB         = 14
-	integrationRedisURLDefault = "redis://127.0.0.1:6379/14"
+	integrationRedisURLDefault = "redis://127.0.0.1:6380/14"
 )
 
 func requireIntegrationRedis(t *testing.T) redis.UniversalClient {

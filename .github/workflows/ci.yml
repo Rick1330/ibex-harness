@@ -796,6 +796,52 @@ jobs:
         env:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
+  # Milestone 4.B.3: real-Redis 200/100 zero-over-admission must execute (not skip).
+  ratelimit-hierarchical-integration:
+    name: ratelimit-hierarchical-integration
+    needs: [changes]
+    if: needs.changes.outputs.run_go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/14
+    services:
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/setup-gotestsum
+      - name: Hierarchical rate-limit 200/100 gate (fail on skip)
+        run: bash infra/scripts/ratelimit-hierarchical-integration-ci.sh
+      - name: Upload test results to Trunk (ratelimit-hierarchical-integration)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/trunk-upload-junit
+        with:
+          junit-paths: test-results/junit/ratelimit-hierarchical-integration.xml
+          variant: ratelimit-hierarchical-integration
+          org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
+        env:
+          TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
+
   go-race:
     name: go-race
     needs: [changes, proto-contract]
@@ -2345,6 +2391,7 @@ jobs:
       - proxy-auth-smoke
       - proxy-agent-verify-smoke
       - security-integration
+      - ratelimit-hierarchical-integration
       - go-race
       - go-services
       - embedder-test
@@ -2382,6 +2429,7 @@ jobs:
             "${{ needs.proxy-auth-smoke.result }}" \
             "${{ needs.proxy-agent-verify-smoke.result }}" \
             "${{ needs.security-integration.result }}" \
+            "${{ needs.ratelimit-hierarchical-integration.result }}" \
             "${{ needs.go-race.result }}" \
             "${{ needs.go-services.result }}" \
             "${{ needs.embedder-test.result }}" \

@@ -27,7 +27,7 @@ fullTitle: "Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark"
   Shipped shape differs from the early sketch:
 
   1. **Real API** — `NewHierarchicalLimiter` + `Check(ctx, orgID, agentID)` (not sketch `NewHierarchicalLuaLimiter` / `Allow` / `RateLimitRequest`).
-  2. **Compose Redis** via `REDIS_URL` (default `redis://127.0.0.1:6379/14`; **DB 14 required** before `FlushDB`) with **Ping then skip** if unreachable — not testcontainers. Malformed/`REDIS_URL` rejects fail the test; coverage CI runs `-tags=integration` without Redis and **skips** on Ping failure until a follow-up adds Redis to that job.
+  2. **Compose Redis** via `REDIS_URL` (default `redis://127.0.0.1:6380/14` for local compose-test; **DB 14 required** before `FlushDB`). CI job `ratelimit-hierarchical-integration` uses `redis://127.0.0.1:6379/14` and **fails if the test skips**. Coverage’s broad `-tags=integration` pass may still skip when Redis is absent — the dedicated job is the permanent gate.
   3. **200 workers / RPM 100** permanent gate in `packages/ratelimit/hierarchical_integration_test.go`; unit burst remains 80/20 on miniredis.
   4. **Latency** — no dedicated k6 `stage:ratelimit` / no unverified `&lt;5ms` SLA. Stage cost is pinned via `BenchmarkStageRateLimit` → `baseline.synthetic_rate_limit_us` + 20% regression in `regression_gate.py`. Full-path SLA remains Phase 2 **p99 &lt; 20ms**.
   5. **Fail-open** — re-cite existing `TestSecurity_SEC4_6_RedisFailOpen` (`mustProxyLimiter` → `NewHierarchicalLimiter`); no new hierarchical fail-open case.
@@ -57,7 +57,8 @@ A permanent regression gate proves the Lua hierarchical limiter is atomic under 
 - Per-tier exact admit (agent / org / global): binding tier RPM=100, others high; 200 concurrent `Check`s; exactly 100 allowed / 100 denied; `DeniedTier` matches.
 - Same-agent different-orgs independence under real Redis.
 - One case seeds the binding limit via `ApplyOrgOverrides` (DB-override path from 4.B.2).
-- Joins existing `make test-integration` → `go test -tags=integration ./...`.
+- Joins existing `make test-integration` → `go test -tags=integration ./...` with default `REDIS_URL=redis://127.0.0.1:6380/14` (compose-test host mapping).
+- CI permanent gate: job `ratelimit-hierarchical-integration` (wired into `ci-gate-go`) runs `infra/scripts/ratelimit-hierarchical-integration-ci.sh`, which Ping-fails closed and rejects any `t.Skip`.
 
 ### Latency baseline + gate
 
@@ -76,7 +77,13 @@ Unchanged: `TestSecurity_SEC4_6_RedisFailOpen` builds hierarchical via `mustProx
 - [x] `BenchmarkStageRateLimit` pinned as `synthetic_rate_limit_us` with 20% regression gate
 - [x] Phase 2 proxy p99 &lt; 20ms policy unchanged (no sketch `&lt;5ms` k6)
 - [x] Fail-open covered by SEC-4.6 (no new case)
-- [x] Permanent gate via `make test-integration` (coverage job skips when Redis absent — expected)
+- [x] Permanent gate via CI job `ratelimit-hierarchical-integration` (fail-on-skip) + local `compose-test-up` / `make test-integration` (`REDIS_URL` defaults to `6380/14`)
+
+## Local verification
+
+1. `make compose-test-up` — Redis on host **6380** (prints the default `REDIS_URL`).
+2. `make test-integration` — exports `REDIS_URL=redis://127.0.0.1:6380/14` when unset; hierarchical 200/100 tests run (not skip).
+3. Or CI-equivalent: `REDIS_URL=redis://127.0.0.1:6380/14 bash infra/scripts/ratelimit-hierarchical-integration-ci.sh`
 
 ## Prerequisites
 
