@@ -53,6 +53,7 @@ def normalize_latest(raw: dict[str, Any]) -> dict[str, Any]:
         },
         "stages": {
             "synthetic_total_us": read_float(stage_raw.get("synthetic_total_us")),
+            "synthetic_rate_limit_us": read_float(stage_raw.get("synthetic_rate_limit_us")),
         },
     }
 
@@ -68,6 +69,7 @@ def normalize_baseline(raw: dict[str, Any]) -> dict[str, Any]:
         },
         "baseline": {
             "proxy_overhead_p99_ms": read_float(base_raw.get("proxy_overhead_p99_ms")),
+            "synthetic_rate_limit_us": read_float(base_raw.get("synthetic_rate_limit_us")),
         },
     }
 
@@ -105,6 +107,27 @@ def build_checks(latest: dict[str, Any], baseline: dict[str, Any]) -> list[Check
     if base["proxy_overhead_p99_ms"] > 0:
         reg = pct_change(k6["p99_ms"], base["proxy_overhead_p99_ms"])
         checks.append(("regression vs baseline (%)", reg, policy["max_regression_pct"], reg <= policy["max_regression_pct"]))
+    rate_pin = base["synthetic_rate_limit_us"]
+    rate_cur = latest["stages"]["synthetic_rate_limit_us"]
+    if rate_pin > 0:
+        checks.append(
+            (
+                "stage rate_limit present",
+                rate_cur,
+                0.0,
+                rate_cur > 0.0,
+            )
+        )
+        if rate_cur > 0.0:
+            rate_reg = pct_change(rate_cur, rate_pin)
+            checks.append(
+                (
+                    "stage rate_limit regression (%)",
+                    rate_reg,
+                    policy["max_regression_pct"],
+                    rate_reg <= policy["max_regression_pct"],
+                )
+            )
     return checks
 
 
@@ -141,6 +164,7 @@ def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bo
         f"- allocs/op: {allocs:.3f}",
         f"- bytes/op: {bytes_op:.3f}",
         f"- stage synthetic total: {stage['synthetic_total_us']:.3f} µs",
+        f"- stage rate_limit: {stage['synthetic_rate_limit_us']:.3f} µs",
         "",
     ]
     ok, check_lines = format_check_lines(checks)
