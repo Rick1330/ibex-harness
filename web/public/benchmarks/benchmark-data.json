@@ -3,6 +3,203 @@
   "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
   "runs": [
     {
+      "sha": "116531943fd14c96f2b8f068d8402491e4ace62e",
+      "short_sha": "1165319",
+      "timestamp": "2026-09-11T08:33:26.802039+00:00",
+      "branch": "main",
+      "pr_number": null,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/34579430358",
+      "status": "pass",
+      "regression_vs_baseline_pct": -89.1202154,
+      "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
+      "profile": "fast",
+      "run_number": 1153,
+      "go_version": "1.25.13",
+      "runner_os": "Linux",
+      "runner_cpu": "x86_64",
+      "runner_vcpus": 2,
+      "runner_ram_gb": 7,
+      "k6_version": "0.53.0",
+      "k6": {
+        "vus": 100,
+        "duration_s": 120.0,
+        "p50_ms": 0.753678,
+        "p95_ms": 1.4481690999999999,
+        "p99_ms": 2.175956919999997,
+        "p999_ms": 3.199779600000013,
+        "req_per_s": 2198.049749956112,
+        "error_rate": 0.0,
+        "check_rate": 1.0,
+        "throughput_series": [
+          {
+            "t_s": 0.0,
+            "req_per_s": 0.0
+          },
+          {
+            "t_s": 10.0,
+            "req_per_s": 1281.18
+          },
+          {
+            "t_s": 20.0,
+            "req_per_s": 2031.98
+          },
+          {
+            "t_s": 30.0,
+            "req_per_s": 1884.65
+          },
+          {
+            "t_s": 40.0,
+            "req_per_s": 2196.76
+          },
+          {
+            "t_s": 50.0,
+            "req_per_s": 2263.66
+          },
+          {
+            "t_s": 60.0,
+            "req_per_s": 1934.31
+          },
+          {
+            "t_s": 70.0,
+            "req_per_s": 1952.28
+          },
+          {
+            "t_s": 80.0,
+            "req_per_s": 2277.0
+          },
+          {
+            "t_s": 90.0,
+            "req_per_s": 2175.35
+          },
+          {
+            "t_s": 100.0,
+            "req_per_s": 1876.83
+          },
+          {
+            "t_s": 110.0,
+            "req_per_s": 2055.4
+          },
+          {
+            "t_s": 120.0,
+            "req_per_s": 2307.91
+          }
+        ]
+      },
+      "stages": {
+        "auth_lru_p50_ms": 0.000266,
+        "auth_lru_p95_ms": 0.00041,
+        "auth_lru_p99_ms": 0.000483,
+        "auth_lru_p999_ms": 0.000652,
+        "auth_grpc_p50_ms": 0.000114,
+        "auth_grpc_p95_ms": 0.000176,
+        "auth_grpc_p99_ms": 0.000207,
+        "auth_grpc_p999_ms": 0.000279,
+        "rate_limit_p50_ms": 0.105839,
+        "rate_limit_p95_ms": 0.16357,
+        "rate_limit_p99_ms": 0.192435,
+        "rate_limit_p999_ms": 0.259787,
+        "directive_resolve_p50_ms": 0.043475,
+        "directive_resolve_p95_ms": 0.067188,
+        "directive_resolve_p99_ms": 0.079045,
+        "directive_resolve_p999_ms": 0.106711,
+        "prompt_inject_p50_ms": 2.7e-05,
+        "prompt_inject_p95_ms": 4.2e-05,
+        "prompt_inject_p99_ms": 4.9e-05,
+        "prompt_inject_p999_ms": 6.6e-05,
+        "total_overhead_p50_ms": 0.156466,
+        "total_overhead_p95_ms": 0.241811,
+        "total_overhead_p99_ms": 0.284483,
+        "total_overhead_p999_ms": 0.384052
+      },
+      "metric_deltas": {
+        "k6.p99_ms": -89.1202154
+      },
+      "go_benchmarks": {
+        "BenchmarkStageAuth": {
+          "ns_per_op": 689.7,
+          "allocs_per_op": 5.0,
+          "bytes_per_op": 336.0,
+          "samples": 5,
+          "ci_95_low": 655.215,
+          "ci_95_high": 724.1850000000001,
+          "geomean_ns": 689.7
+        },
+        "BenchmarkStageRateLimit": {
+          "ns_per_op": 192435.0,
+          "allocs_per_op": 823.0,
+          "bytes_per_op": 196375.0,
+          "samples": 5,
+          "ci_95_low": 182813.25,
+          "ci_95_high": 202056.75,
+          "geomean_ns": 192435.0
+        },
+        "BenchmarkStageDirectiveResolve": {
+          "ns_per_op": 79045.0,
+          "allocs_per_op": 38.0,
+          "bytes_per_op": 1568.0,
+          "samples": 5,
+          "ci_95_low": 75092.75,
+          "ci_95_high": 82997.25,
+          "geomean_ns": 79045.0
+        },
+        "BenchmarkStagePromptInject": {
+          "ns_per_op": 49.19,
+          "allocs_per_op": 1.0,
+          "bytes_per_op": 96.0,
+          "samples": 5,
+          "ci_95_low": 46.73049999999999,
+          "ci_95_high": 51.6495,
+          "geomean_ns": 49.19
+        },
+        "BenchmarkProxyOverhead": {
+          "ns_per_op": 284483.0,
+          "allocs_per_op": 867.0,
+          "bytes_per_op": 198381.0,
+          "samples": 5,
+          "ci_95_low": 270258.85,
+          "ci_95_high": 298707.15,
+          "geomean_ns": 284483.0
+        },
+        "BenchmarkProxyChatOverhead": {
+          "ns_per_op": 412245.0,
+          "allocs_per_op": 1101.0,
+          "bytes_per_op": 229615.0,
+          "samples": 5,
+          "ci_95_low": 391632.75,
+          "ci_95_high": 432857.25,
+          "geomean_ns": 412245.0
+        },
+        "BenchmarkProxyChatOverheadParallel": {
+          "ns_per_op": 159801.0,
+          "allocs_per_op": 1101.0,
+          "bytes_per_op": 229675.0,
+          "samples": 5,
+          "ci_95_low": 151810.94999999998,
+          "ci_95_high": 167791.05000000002,
+          "geomean_ns": 159801.0
+        },
+        "BenchmarkProxyChatOverheadWithAssemble": {
+          "ns_per_op": 431386.0,
+          "allocs_per_op": 1111.0,
+          "bytes_per_op": 229935.0,
+          "samples": 5,
+          "ci_95_low": 409816.69999999995,
+          "ci_95_high": 452955.30000000005,
+          "geomean_ns": 431386.0
+        },
+        "BenchmarkProxyHealth": {
+          "ns_per_op": 5159.0,
+          "allocs_per_op": 44.0,
+          "bytes_per_op": 4344.0,
+          "samples": 5,
+          "ci_95_low": 4901.05,
+          "ci_95_high": 5416.95,
+          "geomean_ns": 5159.0
+        }
+      },
+      "stage_model": "go_microbench_warm_path"
+    },
+    {
       "sha": "ad90879619be411d64dfd86a46f86355f6acc256",
       "short_sha": "ad90879",
       "timestamp": "2026-09-10T19:18:06.695715+00:00",
