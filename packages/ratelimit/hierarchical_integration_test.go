@@ -4,6 +4,7 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -24,6 +25,8 @@ const (
 	// Host port 6380 matches infra/compose/test Redis publish mapping.
 	integrationRedisDB         = 14
 	integrationRedisURLDefault = "redis://127.0.0.1:6380/14"
+	// Concurrent Checks must share one UTC minute key; wait if the boundary is near.
+	integrationBurstMinWindowRemain = 10 * time.Second
 )
 
 func requireIntegrationRedis(t *testing.T) redis.UniversalClient {
@@ -34,7 +37,8 @@ func requireIntegrationRedis(t *testing.T) redis.UniversalClient {
 	}
 	opts, err := redis.ParseURL(raw)
 	if err != nil {
-		t.Fatalf("REDIS_URL parse failed: %v", err)
+		// Fixed message: ParseURL errors can echo the raw URL (including credentials).
+		t.Fatalf("REDIS_URL parse failed")
 	}
 	if err := validateIntegrationRedisOpts(opts); err != nil {
 		t.Fatalf("REDIS_URL rejected: %v", err)
@@ -48,7 +52,10 @@ func requireIntegrationRedis(t *testing.T) redis.UniversalClient {
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
-		t.Skipf("Redis unreachable (%s): %v", endpoint, err)
+		if isRedisEndpointUnavailable(err) {
+			t.Skipf("Redis unreachable (%s): %v", endpoint, err)
+		}
+		t.Fatalf("Redis Ping failed (%s): %v", endpoint, err)
 	}
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer flushCancel()
@@ -58,6 +65,44 @@ func requireIntegrationRedis(t *testing.T) redis.UniversalClient {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+// isRedisEndpointUnavailable reports transport/dial failures suitable for t.Skip.
+// Auth, ACL, and protocol errors from a reachable server must fail the test.
+func isRedisEndpointUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"connection refused",
+		"i/o timeout",
+		"no such host",
+		"network is unreachable",
+		"connection reset by peer",
+		"dial tcp",
+		"connect: ",
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateIntegrationRedisOpts(opts *redis.Options) error {
@@ -97,6 +142,20 @@ func redactRedisEndpoint(opts *redis.Options) string {
 	return opts.Addr + "/" + strconv.Itoa(opts.DB)
 }
 
+// awaitStableRPMMinute waits until the next UTC minute when the remaining window
+// is too short for a concurrent burst that must share one RPM key.
+func awaitStableRPMMinute(t *testing.T) {
+	t.Helper()
+	now := time.Now().UTC()
+	remain := now.Truncate(time.Minute).Add(time.Minute).Sub(now)
+	if remain >= integrationBurstMinWindowRemain {
+		return
+	}
+	wait := remain + 25*time.Millisecond
+	t.Logf("waiting %s for next UTC minute window (remain=%s)", wait, remain)
+	time.Sleep(wait)
+}
+
 func newIntegrationHierarchical(t *testing.T, cfg HierarchicalConfig) *HierarchicalLimiter {
 	t.Helper()
 	client := requireIntegrationRedis(t)
@@ -125,6 +184,7 @@ func runIntegrationExactBurst(t *testing.T, run integrationBurstRun) {
 			AgentRPM: map[uuid.UUID]int64{run.tc.agent: run.agentOverride},
 		})
 	}
+	awaitStableRPMMinute(t)
 	results := assertExactBurst(t, checkArgs{lim: lim, org: run.tc.org, agent: run.tc.agent}, run.rpm, integrationBurstWorkers)
 	assertDeniedTier(t, results, run.tc.wantTier)
 	allowed := countAllowed(results)
@@ -179,6 +239,7 @@ func TestIntegration_Hierarchical_sameAgentDifferentOrgsIndependent(t *testing.T
 	lim.ApplyOrgOverrides(orgA, OrgOverrideSet{
 		AgentRPM: map[uuid.UUID]int64{agent: 2},
 	})
+	awaitStableRPMMinute(t)
 	assertCrossOrgAfterExhaust(t, crossOrgExhaust{
 		lim: lim, orgA: orgA, orgB: orgB, agent: agent, wantDenyTier: tierAgent,
 	})
