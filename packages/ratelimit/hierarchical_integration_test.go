@@ -110,66 +110,56 @@ func newIntegrationHierarchical(t *testing.T, cfg HierarchicalConfig) *Hierarchi
 	return lim
 }
 
-func TestIntegration_Hierarchical_ZeroOverAdmission_200x100(t *testing.T) {
-	const rpm = integrationBurstRPM
-	orgOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655441001")
-	orgAgent := uuid.MustParse("550e8400-e29b-41d4-a716-446655441002")
-	orgGlobal := uuid.MustParse("550e8400-e29b-41d4-a716-446655441003")
-	orgDB := uuid.MustParse("550e8400-e29b-41d4-a716-446655441004")
-	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655441101")
-	agentDB := uuid.MustParse("550e8400-e29b-41d4-a716-446655441102")
+type integrationBurstRun struct {
+	tc            tierBurstCase
+	rpm           int64
+	agentOverride int64
+}
 
-	cases := []struct {
-		name          string
-		cfg           HierarchicalConfig
-		org, agent    uuid.UUID
-		agentOverride int64 // when >0, ApplyOrgOverrides seeds binding agent RPM
-		wantTier      string
-	}{
-		{
-			name: "org",
-			cfg: HierarchicalConfig{
-				DefaultRPM: 10_000, OrgOverrides: map[uuid.UUID]int64{orgOrg: rpm}, GlobalRPM: 10_000,
-			},
-			org: orgOrg, wantTier: tierOrg,
-		},
-		{
-			name: "agent",
-			cfg: HierarchicalConfig{
-				DefaultRPM: rpm, OrgOverrides: map[uuid.UUID]int64{orgAgent: 10_000}, GlobalRPM: 10_000,
-			},
-			org: orgAgent, agent: agent, wantTier: tierAgent,
-		},
-		{
-			name: "global",
-			cfg:  HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
-			org:  orgGlobal, wantTier: tierGlobal,
-		},
-		{
-			name: "agent_via_ApplyOrgOverrides",
-			cfg: HierarchicalConfig{
-				DefaultRPM: 10_000, GlobalRPM: 10_000,
-			},
-			org: orgDB, agent: agentDB, agentOverride: rpm, wantTier: tierAgent,
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			lim := newIntegrationHierarchical(t, tc.cfg)
-			if tc.agentOverride > 0 {
-				lim.ApplyOrgOverrides(tc.org, OrgOverrideSet{
-					AgentRPM: map[uuid.UUID]int64{tc.agent: tc.agentOverride},
-				})
-			}
-			results := assertExactBurst(t, checkArgs{lim: lim, org: tc.org, agent: tc.agent}, rpm, integrationBurstWorkers)
-			assertDeniedTier(t, results, tc.wantTier)
-			allowed := countAllowed(results)
-			t.Logf("tier=%s admitted=%d rejected=%d workers=%d rpm=%d",
-				tc.wantTier, allowed, integrationBurstWorkers-allowed, integrationBurstWorkers, rpm)
+func runIntegrationExactBurst(t *testing.T, run integrationBurstRun) {
+	t.Helper()
+	lim := newIntegrationHierarchical(t, run.tc.cfg)
+	if run.agentOverride > 0 {
+		lim.ApplyOrgOverrides(run.tc.org, OrgOverrideSet{
+			AgentRPM: map[uuid.UUID]int64{run.tc.agent: run.agentOverride},
 		})
 	}
+	results := assertExactBurst(t, checkArgs{lim: lim, org: run.tc.org, agent: run.tc.agent}, run.rpm, integrationBurstWorkers)
+	assertDeniedTier(t, results, run.tc.wantTier)
+	allowed := countAllowed(results)
+	t.Logf("tier=%s admitted=%d rejected=%d workers=%d rpm=%d",
+		run.tc.wantTier, allowed, integrationBurstWorkers-allowed, integrationBurstWorkers, run.rpm)
+}
+
+func TestIntegration_Hierarchical_ZeroOverAdmission_200x100(t *testing.T) {
+	const rpm = integrationBurstRPM
+	ids := tierBurstIDs{
+		orgOrg:    uuid.MustParse("550e8400-e29b-41d4-a716-446655441001"),
+		orgAgent:  uuid.MustParse("550e8400-e29b-41d4-a716-446655441002"),
+		orgGlobal: uuid.MustParse("550e8400-e29b-41d4-a716-446655441003"),
+		agent:     uuid.MustParse("550e8400-e29b-41d4-a716-446655441101"),
+	}
+	for _, tc := range hierarchicalTierBurstCases(rpm, ids) {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runIntegrationExactBurst(t, integrationBurstRun{tc: tc, rpm: rpm})
+		})
+	}
+	t.Run("agent_via_ApplyOrgOverrides", func(t *testing.T) {
+		runIntegrationExactBurst(t, integrationBurstRun{
+			tc: tierBurstCase{
+				cfg: HierarchicalConfig{
+					DefaultRPM: 10_000,
+					GlobalRPM:  10_000,
+				},
+				org:      uuid.MustParse("550e8400-e29b-41d4-a716-446655441004"),
+				agent:    uuid.MustParse("550e8400-e29b-41d4-a716-446655441102"),
+				wantTier: tierAgent,
+			},
+			rpm:           rpm,
+			agentOverride: rpm,
+		})
+	})
 }
 
 func TestIntegration_Hierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
@@ -188,11 +178,7 @@ func TestIntegration_Hierarchical_sameAgentDifferentOrgsIndependent(t *testing.T
 	lim.ApplyOrgOverrides(orgA, OrgOverrideSet{
 		AgentRPM: map[uuid.UUID]int64{agent: 2},
 	})
-	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
-	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
-	res := assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, false)
-	if res.DeniedTier != tierAgent {
-		t.Fatalf("DeniedTier=%q want agent", res.DeniedTier)
-	}
-	assertCheckWant(t, checkArgs{lim: lim, org: orgB, agent: agent}, true)
+	assertCrossOrgAfterExhaust(t, crossOrgExhaust{
+		lim: lim, orgA: orgA, orgB: orgB, agent: agent, wantDenyTier: tierAgent,
+	})
 }
