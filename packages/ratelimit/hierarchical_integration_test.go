@@ -76,18 +76,15 @@ func isRedisEndpointUnavailable(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return true
 	}
+	// *net.OpError and *net.DNSError both satisfy net.Error.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return true
 	}
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		return true
-	}
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return true
-	}
+	return redisDialErrorMessage(err)
+}
+
+func redisDialErrorMessage(err error) bool {
 	msg := strings.ToLower(err.Error())
 	for _, needle := range []string{
 		"connection refused",
