@@ -44,33 +44,41 @@ func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 	)
 	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45})
 	defer func() { _ = pipe.Close() }()
-	_, err := io.ReadAll(pipe)
+	body, err := io.ReadAll(pipe)
 	if err == nil {
 		t.Fatal("expected overload error")
 	}
-	if strings.Contains(err.Error(), "Overloaded") {
-		return
+	if !strings.Contains(err.Error(), "Overloaded") && !strings.Contains(err.Error(), "529") {
+		t.Fatalf("err=%v", err)
 	}
-	if strings.Contains(err.Error(), "529") {
-		return
-	}
-	t.Fatalf("err=%v", err)
+	assertIncompleteStreamBody(t, body)
 }
 
 func TestStreamTranslate_IgnoresNonTextDelta(t *testing.T) {
 	t.Parallel()
+	const (
+		leakJSON      = `LEAK_PARTIAL_JSON_XYZ`
+		leakThinking  = `LEAK_THINKING_BLOCK_XYZ`
+		leakSignature = `LEAK_SIGNATURE_BLOCK_XYZ`
+	)
 	anth := anthropicSSEFixture(
 		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{}"}}`,
+		`data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"`+leakJSON+`"}}`,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"`+leakThinking+`"}}`,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"`+leakSignature+`"}}`,
 		`event: content_block_delta`,
 		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}`,
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 	)
 	out := mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
-	out.mustContain(t, `"content":"ok"`)
-	if strings.Contains(string(out), "partial_json") {
-		t.Fatal("leaked tool json into OpenAI stream")
+	out.mustContain(t, `"content":"ok"`, "data: [DONE]")
+	for _, leak := range []string{leakJSON, leakThinking, leakSignature, "partial_json"} {
+		if strings.Contains(string(out), leak) {
+			t.Fatalf("leaked non-text delta into OpenAI stream: %q in %s", leak, out)
+		}
 	}
 }
 
@@ -140,10 +148,33 @@ func TestStreamTranslate_RateLimitError(t *testing.T) {
 	)
 	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	defer func() { _ = pipe.Close() }()
-	_, err := io.ReadAll(pipe)
+	body, err := io.ReadAll(pipe)
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) || pe.StatusCode != 429 {
 		t.Fatalf("err=%v", err)
+	}
+	assertIncompleteStreamBody(t, body)
+}
+
+// assertIncompleteStreamBody checks ADR-0040 mid-stream incomplete semantics:
+// the translate pipe must not emit [DONE] or a fabricated OpenAI-shaped error chunk.
+func assertIncompleteStreamBody(t *testing.T, body []byte) {
+	t.Helper()
+	s := string(body)
+	if strings.Contains(s, "data: [DONE]") || strings.Contains(s, "[DONE]") {
+		t.Fatalf("incomplete mid-stream body must not contain [DONE]: %q", s)
+	}
+	for _, block := range strings.Split(s, "\n\n") {
+		payload, ok := openAIChunkPayload(block)
+		if !ok {
+			continue
+		}
+		trimmed := strings.TrimSpace(payload)
+		if strings.Contains(trimmed, `"object":"error"`) ||
+			strings.HasPrefix(trimmed, `{"error"`) ||
+			strings.HasPrefix(trimmed, `{"error":`) {
+			t.Fatalf("fabricated OpenAI-shaped error chunk in stream body: %q", block)
+		}
 	}
 }
 

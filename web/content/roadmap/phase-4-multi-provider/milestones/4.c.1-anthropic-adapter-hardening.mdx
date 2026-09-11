@@ -1,8 +1,8 @@
 ---
 title: "4.C.1 Anthropic Adapter Hardening"
-description: "Harden the Phase 2.5 Anthropic prototype to production parity with the OpenAI adapter: full SSE dual-write, anthropic-version header handling, and message-role translation (no system role inside messages — it's a top-level field)."
-summary: "Harden the Phase 2.5 Anthropic prototype to production parity with the OpenAI adapter: full SSE dual-write, anthropic-version header handling, and message-role translation (no system role inside messages — it's a top-level field)."
-status: "planned"
+description: "Docs-truth close for the Phase 2.5 / ADR-0040 Anthropic adapter: verification that SSE translation, anthropic-version, and system-role extraction already shipped, plus minor stream-translate test hardening."
+summary: "Docs-truth close for the Phase 2.5 / ADR-0040 Anthropic adapter: verification that SSE translation, anthropic-version, and system-role extraction already shipped, plus minor stream-translate test hardening."
+status: "completed"
 milestoneId: "4.C.1"
 track: "C"
 trackTitle: "Multi-Provider Adapters & Resilience"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.C.1 — Anthropic Adapter Hardening"
 
 # Milestone 4.C.1 — Anthropic Adapter Hardening
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 3 days  
@@ -23,134 +23,68 @@ fullTitle: "Milestone 4.C.1 — Anthropic Adapter Hardening"
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
+<Callout type="note" title="Planning baseline (sketch deviations)">
+  Shipped shape differs from the early “harden a Phase 2.5 prototype” sketch:
+
+  1. **`Registry.For("claude-*")` was never real** — resolution uses exact model IDs (e.g. `Registry.For("claude-sonnet-4-5")`). `NewRegistry` returns `ErrDuplicateModel` on ID collision across providers (not a panic on “duplicate prefixes”).
+  2. **SSE translation, not dual-write** — Anthropic translates Anthropic named SSE → OpenAI-shaped `chat.completion.chunk` + `[DONE]`. ADR-0027 dual-write in the proxy is unaffected because it only ever sees OpenAI-shaped SSE (OpenAI adapter remains verbatim passthrough).
+  3. **Tools / images / thinking passthrough are out of scope** — text-only per ADR-0040. The capability catalog may still advertise `SupportsTools` / `SupportsVision` as vendor truth; that catalog/adapter tension is accepted here, not a bug to fix in this milestone.
+  4. **`ANTHROPIC_API_VERSION` env override was considered and declined** — version stays pinned at `2023-06-01` in `packages/provider/anthropic/config.go` (`defaultAPIVersion`), set on every Messages request via `newMessagesRequest`.
 </Callout>
 
 ## Why This Milestone Exists
 
-Phase 2.5 stood up a first-cut Anthropic adapter to prove the interface generalizes. This milestone hardens it to production parity with the OpenAI adapter: full SSE dual-write, `anthropic-version` header handling, and the message-role translation Anthropic requires (no `system` role inside `messages`; it's a top-level `system` field).
+The Anthropic adapter already shipped in Phase 2.5 (**2.5.G1.M1**) and is documented in [ADR-0040](/docs/adr/0040-anthropic-provider-adapter) (Accepted 2026-08-21): OpenAI-compatible SSE translation, `anthropic-version` on every request, system-role extraction (leading + mid-conversation fold), and mid-stream `event: error` → pipe `CloseWithError` (no JSON-swap). Phase 2.5’s exit gate already checked Anthropic test-depth parity with OpenAI.
 
-This is not new design — it's closing gaps against the same bar OpenAI already cleared. The `packages/provider.Provider` interface (ADR-0025) should be satisfied without any handler/middleware changes.
+This milestone is therefore **not** a greenfield hardening pass. It closes roadmap drift against live code and adds two small, additive stream-translate test assertions (incomplete mid-stream body; explicit ignore of non-text delta types). No adapter behavior change; no proxy handler/middleware changes.
 
 ---
 
 ## Non-Goals
 
+- Tool-use / image / vision / thinking passthrough
+- `ANTHROPIC_API_VERSION` env wiring
+- Shared parameterized OpenAI/Anthropic stream harness
 - Per-org model routing (4.C.2)
 - Circuit breaker (4.C.3)
 - Azure OpenAI or Bedrock adapters (future)
+- Changes to `packages/provider/openai/**` or `services/proxy/**` handlers/middleware
 
 ---
 
-## Orientation (indicative)
+## Shipped surface (already in tree)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+### Request construction
 
-During implementation, expect to:
+- `packages/provider/anthropic/request.go` — peel leading `system` messages + fold mid-conversation systems into top-level `system`; reject `tool` role; deny-by-default passthrough allowlist (text-only).
+- `packages/provider/anthropic/client.go` — `newMessagesRequest` sets `x-api-key`, `anthropic-version`, `Content-Type` on every Messages call.
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+### Streaming translation
 
-Prefer outcomes over matching any particular file tree or command sequence.
+- `packages/provider/anthropic/stream_translate.go` — Anthropic named events → OpenAI-compatible SSE; non-`text_delta` content deltas ignored; mid-stream `event: error` → `CloseWithError` (no `[DONE]`, no fabricated OpenAI error chunk in the pipe body).
+- Retry does not re-issue after a live stream body has started (`retry.go`).
 
-**Areas that may be involved** (situational — not a checklist):
+### Registry / capabilities
 
-- Provider abstraction / adapters
-- Proxy service (HTTP, bootstrap, config)
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m4-c-1-anthropic-adapter-hardening`
-- PR title: `feat(provider): production-hardened Anthropic adapter with SSE dual-write (m4.C.1)`
-
-## Message-Role Translation
-
-Anthropic's API does not accept a `system` role inside the `messages` array. It requires a top-level `system` field:
-
-```go
-// Illustrative — exact path may differ
-
-// toAnthropicRequest translates an IBEX provider.Request to Anthropic's native wire format.
-// Key translation: system messages extracted from Messages array → top-level system field.
-func toAnthropicRequest(req provider.Request) anthropicRequest {
- var systemParts []string
- var messages []anthropicMessage
-
- // Inject directive as first system content
- if req.SystemDirective != "" {
- systemParts = append(systemParts, req.SystemDirective)
- }
-
- for _, m := range req.Messages {
- if m.Role == "system" {
- systemParts = append(systemParts, m.Content)
- } else {
- messages = append(messages, anthropicMessage{
- Role: m.Role,
- Content: m.Content,
- })
- }
- }
-
- return anthropicRequest{
- Model: req.Model,
- System: strings.Join(systemParts, "\n\n"),
- Messages: messages,
- MaxTokens: maxTokensOrDefault(req.MaxTokens),
- Stream: req.Stream,
- }
-}
-```
-
----
-
-## Anthropic SSE Event Mapping
-
-Anthropic's SSE stream uses different event types than OpenAI's:
-
-```go
-// Illustrative — exact path may differ
-
-// Anthropic event types that matter for IBEX:
-// - content_block_delta: contains text delta (maps to OpenAI's delta.content)
-// - message_stop: signals stream completion (maps to OpenAI's [DONE])
-// - error: mid-stream error event — should be forwarded verbatim per ADR-0027
-
-type anthropicStreamEvent struct {
- Type string `json:"type"`
- Delta *anthropicDelta `json:"delta,omitempty"`
- Error *anthropicError `json:"error,omitempty"`
-}
-
-type anthropicDelta struct {
- Type string `json:"type"` // "text_delta"
- Text string `json:"text"`
-}
-```
-
----
+- Built-in IDs: `claude-sonnet-4-5`, `claude-haiku-4-5`, `claude-opus-4-5` (+ `ExtraModels`).
+- Capability rows in `capability_catalog.go` (context window / streaming flags); tools/vision flags are vendor-capability metadata, not a claim that the adapter implements tool/image passthrough.
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+- [x] Exact-ID `Registry.For("claude-sonnet-4-5")` (and sibling Claude IDs) resolves when Anthropic is registered; `NewRegistry` returns `ErrDuplicateModel` on colliding model IDs
+- [x] Streaming translation emits OpenAI-shaped chunks suitable for ADR-0027 dual-write; mid-stream Anthropic `event: error` terminates the translate pipe as incomplete (no `data: [DONE]`, no fabricated OpenAI-shaped error chunk) — asserted in `stream_translate_test.go`
+- [x] Anthropic HTTP / mapped provider errors continue through `provider.MapError` / existing failure paths — no proxy handler special-case for Anthropic
+- [x] Non-streaming and streaming fixture coverage lives in `packages/provider/anthropic` (inline httptest / SSE fixtures; no separate golden-file harness required)
+- [x] Zero proxy handler or middleware changes for this milestone (docs + Anthropic package tests only)
+- [x] Non-text stream deltas (`input_json_delta`, `thinking_delta`, `signature_delta`) are ignored without leaking into OpenAI-shaped output
 
-- [ ] `Registry.For("claude-*")` resolves to the Anthropic adapter; `NewRegistry` panics on duplicate model prefixes across providers
-- [ ] Streaming dual-write behavior matches ADR-0027 exactly (no JSON-swap mid-stream) — same test harness reused from OpenAI, parameterized by provider
-- [ ] `writeProviderFailure`/error mapping paths reused unmodified — Anthropic errors map through the same `provider.MapError` (do not special-case in the handler)
-- [ ] Golden-fixture tests pass for both non-streaming and streaming request/response pairs
-- [ ] Zero changes to any proxy handler or middleware code (pure adapter addition)
+## Local verification
+
+1. `go test ./packages/provider/anthropic/...`
+2. `go test ./packages/provider/...`
+3. `go test ./services/proxy/...` (regression only; no proxy edits)
 
 ## Prerequisites
 
-- Phase 2.5 Anthropic prototype merged
+- Phase 2.5 Anthropic adapter merged (2.5.G1.M1 / ADR-0040)
 - `packages/provider.Provider` interface stable (M2.1.1)
-
