@@ -4,7 +4,10 @@ package ratelimit
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +20,8 @@ import (
 const (
 	integrationBurstWorkers = 200
 	integrationBurstRPM     = 100
-	// Dedicated DB so FLUSHDB does not collide with other packages on DB 0.
+	// Dedicated DB so FLUSHDB cannot wipe shared DB 0 used by other packages.
+	integrationRedisDB         = 14
 	integrationRedisURLDefault = "redis://127.0.0.1:6379/14"
 )
 
@@ -29,17 +33,21 @@ func requireIntegrationRedis(t *testing.T) redis.UniversalClient {
 	}
 	opts, err := redis.ParseURL(raw)
 	if err != nil {
-		t.Skipf("REDIS_URL parse failed: %v", err)
+		t.Fatalf("REDIS_URL parse failed: %v", err)
+	}
+	if err := validateIntegrationRedisOpts(opts); err != nil {
+		t.Fatalf("REDIS_URL rejected: %v", err)
 	}
 	// Keep skip-on-unreachable fast for coverage CI (no Redis service).
 	opts.DialTimeout = 200 * time.Millisecond
 	opts.MaxRetries = 0
 	client := redis.NewClient(opts)
+	endpoint := redactRedisEndpoint(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
-		t.Skipf("Redis unreachable (%s): %v", raw, err)
+		t.Skipf("Redis unreachable (%s): %v", endpoint, err)
 	}
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer flushCancel()
@@ -49,6 +57,43 @@ func requireIntegrationRedis(t *testing.T) redis.UniversalClient {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+func validateIntegrationRedisOpts(opts *redis.Options) error {
+	if opts == nil {
+		return fmt.Errorf("nil redis options")
+	}
+	if opts.DB != integrationRedisDB {
+		return fmt.Errorf("must use DB %d for isolated FlushDB (got %d)", integrationRedisDB, opts.DB)
+	}
+	hasCreds := opts.Username != "" || opts.Password != ""
+	if !hasCreds {
+		return nil
+	}
+	if opts.TLSConfig != nil {
+		return nil
+	}
+	if isLoopbackRedisAddr(opts.Addr) {
+		return nil
+	}
+	return fmt.Errorf("credentialed redis:// to non-loopback requires rediss:// (TLS)")
+}
+
+func isLoopbackRedisAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func redactRedisEndpoint(opts *redis.Options) string {
+	return opts.Addr + "/" + strconv.Itoa(opts.DB)
 }
 
 func newIntegrationHierarchical(t *testing.T, cfg HierarchicalConfig) *HierarchicalLimiter {
@@ -65,23 +110,6 @@ func newIntegrationHierarchical(t *testing.T, cfg HierarchicalConfig) *Hierarchi
 	return lim
 }
 
-func assertExactBurstRPMN(t *testing.T, args checkArgs, rpm int64, workers int, wantTier string) (allowed, denied int) {
-	t.Helper()
-	results := burstCheckHierarchical(t, args, workers)
-	allowed = countAllowed(results)
-	denied = workers - allowed
-	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-	assertSomeDenied(t, allowed, workers)
-	if allowed != int(rpm) {
-		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
-	}
-	if denied != workers-int(rpm) {
-		t.Fatalf("denied=%d want exactly %d", denied, workers-int(rpm))
-	}
-	assertDeniedTier(t, results, wantTier)
-	return allowed, denied
-}
-
 func TestIntegration_Hierarchical_ZeroOverAdmission_200x100(t *testing.T) {
 	const rpm = integrationBurstRPM
 	orgOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655441001")
@@ -92,70 +120,54 @@ func TestIntegration_Hierarchical_ZeroOverAdmission_200x100(t *testing.T) {
 	agentDB := uuid.MustParse("550e8400-e29b-41d4-a716-446655441102")
 
 	cases := []struct {
-		name     string
-		setup    func(t *testing.T) checkArgs
-		wantTier string
+		name          string
+		cfg           HierarchicalConfig
+		org, agent    uuid.UUID
+		agentOverride int64 // when >0, ApplyOrgOverrides seeds binding agent RPM
+		wantTier      string
 	}{
 		{
 			name: "org",
-			setup: func(t *testing.T) checkArgs {
-				lim := newIntegrationHierarchical(t, HierarchicalConfig{
-					DefaultRPM:   10_000,
-					OrgOverrides: map[uuid.UUID]int64{orgOrg: rpm},
-					GlobalRPM:    10_000,
-				})
-				return checkArgs{lim: lim, org: orgOrg, agent: uuid.Nil}
+			cfg: HierarchicalConfig{
+				DefaultRPM: 10_000, OrgOverrides: map[uuid.UUID]int64{orgOrg: rpm}, GlobalRPM: 10_000,
 			},
-			wantTier: tierOrg,
+			org: orgOrg, wantTier: tierOrg,
 		},
 		{
 			name: "agent",
-			setup: func(t *testing.T) checkArgs {
-				lim := newIntegrationHierarchical(t, HierarchicalConfig{
-					DefaultRPM:   rpm,
-					OrgOverrides: map[uuid.UUID]int64{orgAgent: 10_000},
-					GlobalRPM:    10_000,
-				})
-				return checkArgs{lim: lim, org: orgAgent, agent: agent}
+			cfg: HierarchicalConfig{
+				DefaultRPM: rpm, OrgOverrides: map[uuid.UUID]int64{orgAgent: 10_000}, GlobalRPM: 10_000,
 			},
-			wantTier: tierAgent,
+			org: orgAgent, agent: agent, wantTier: tierAgent,
 		},
 		{
 			name: "global",
-			setup: func(t *testing.T) checkArgs {
-				lim := newIntegrationHierarchical(t, HierarchicalConfig{
-					DefaultRPM: 10_000,
-					GlobalRPM:  rpm,
-				})
-				return checkArgs{lim: lim, org: orgGlobal, agent: uuid.Nil}
-			},
-			wantTier: tierGlobal,
+			cfg:  HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
+			org:  orgGlobal, wantTier: tierGlobal,
 		},
 		{
 			name: "agent_via_ApplyOrgOverrides",
-			setup: func(t *testing.T) checkArgs {
-				lim := newIntegrationHierarchical(t, HierarchicalConfig{
-					DefaultRPM: 10_000,
-					GlobalRPM:  10_000,
-				})
-				lim.ApplyOrgOverrides(orgDB, OrgOverrideSet{
-					AgentRPM: map[uuid.UUID]int64{agentDB: rpm},
-				})
-				return checkArgs{lim: lim, org: orgDB, agent: agentDB}
+			cfg: HierarchicalConfig{
+				DefaultRPM: 10_000, GlobalRPM: 10_000,
 			},
-			wantTier: tierAgent,
+			org: orgDB, agent: agentDB, agentOverride: rpm, wantTier: tierAgent,
 		},
 	}
 
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			args := tc.setup(t)
-			allowed, denied := assertExactBurstRPMN(
-				t, args, rpm, integrationBurstWorkers, tc.wantTier,
-			)
+			lim := newIntegrationHierarchical(t, tc.cfg)
+			if tc.agentOverride > 0 {
+				lim.ApplyOrgOverrides(tc.org, OrgOverrideSet{
+					AgentRPM: map[uuid.UUID]int64{tc.agent: tc.agentOverride},
+				})
+			}
+			results := assertExactBurst(t, checkArgs{lim: lim, org: tc.org, agent: tc.agent}, rpm, integrationBurstWorkers)
+			assertDeniedTier(t, results, tc.wantTier)
+			allowed := countAllowed(results)
 			t.Logf("tier=%s admitted=%d rejected=%d workers=%d rpm=%d",
-				tc.wantTier, allowed, denied, integrationBurstWorkers, rpm)
+				tc.wantTier, allowed, integrationBurstWorkers-allowed, integrationBurstWorkers, rpm)
 		})
 	}
 }
@@ -164,19 +176,23 @@ func TestIntegration_Hierarchical_sameAgentDifferentOrgsIndependent(t *testing.T
 	orgA := uuid.MustParse("550e8400-e29b-41d4-a716-446655441010")
 	orgB := uuid.MustParse("550e8400-e29b-41d4-a716-446655441011")
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655441110")
+	// Org limits stay high so Org A denials bind on the per-agent tier (cross-org key isolation).
 	lim := newIntegrationHierarchical(t, HierarchicalConfig{
 		DefaultRPM: 100,
 		OrgOverrides: map[uuid.UUID]int64{
-			orgA: 2,
-			orgB: 100,
+			orgA: 10_000,
+			orgB: 10_000,
 		},
 		GlobalRPM: 10_000,
+	})
+	lim.ApplyOrgOverrides(orgA, OrgOverrideSet{
+		AgentRPM: map[uuid.UUID]int64{agent: 2},
 	})
 	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
 	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
 	res := assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, false)
-	if res.DeniedTier != tierOrg {
-		t.Fatalf("DeniedTier=%q want org", res.DeniedTier)
+	if res.DeniedTier != tierAgent {
+		t.Fatalf("DeniedTier=%q want agent", res.DeniedTier)
 	}
 	assertCheckWant(t, checkArgs{lim: lim, org: orgB, agent: agent}, true)
 }

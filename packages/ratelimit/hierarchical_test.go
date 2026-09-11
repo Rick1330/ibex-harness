@@ -371,10 +371,15 @@ func runBurstExactRPM(t *testing.T, bc burstCase) {
 
 func assertExactBurstRPM(t *testing.T, args checkArgs, rpm int64) []Result {
 	t.Helper()
-	results := burstCheckHierarchical(t, args, concurrentBurstWorkers)
+	return assertExactBurst(t, args, rpm, concurrentBurstWorkers)
+}
+
+func assertExactBurst(t *testing.T, args checkArgs, rpm int64, workers int) []Result {
+	t.Helper()
+	results := burstCheckHierarchical(t, args, workers)
 	allowed := countAllowed(results)
 	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-	assertSomeDenied(t, allowed, concurrentBurstWorkers)
+	assertSomeDenied(t, allowed, workers)
 	if allowed != int(rpm) {
 		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
 	}
