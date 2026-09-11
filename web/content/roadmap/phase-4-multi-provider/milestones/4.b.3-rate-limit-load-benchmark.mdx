@@ -1,8 +1,8 @@
 ---
 title: "4.B.3 Rate Limit Load & Correctness Benchmark"
-description: "k6 + Go benchmark proving the Lua limiter is atomic under concurrency: 200 concurrent goroutines against a limit of 100 must admit exactly 100 and reject exactly 100 — zero over-admission tolerance."
-summary: "k6 + Go benchmark proving the Lua limiter is atomic under concurrency: 200 concurrent goroutines against a limit of 100 must admit exactly 100 and reject exactly 100 — zero over-admission tolerance."
-status: "planned"
+description: "Real-Redis integration gate: 200 concurrent Checks against RPM 100 admit exactly 100 / reject exactly 100 at every hierarchical tier, plus BenchmarkStageRateLimit regression pin and Phase 2 proxy p99 < 20ms."
+summary: "Real-Redis integration gate: 200 concurrent Checks against RPM 100 admit exactly 100 / reject exactly 100 at every hierarchical tier, plus BenchmarkStageRateLimit regression pin and Phase 2 proxy p99 < 20ms."
+status: "completed"
 milestoneId: "4.B.3"
 track: "B"
 trackTitle: "Rate Limiting & Quota Enforcement"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark"
 
 # Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 1 day  
@@ -23,136 +23,69 @@ fullTitle: "Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark"
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
+<Callout type="note" title="Planning baseline (sketch deviations)">
+  Shipped shape differs from the early sketch:
+
+  1. **Real API** — `NewHierarchicalLimiter` + `Check(ctx, orgID, agentID)` (not sketch `NewHierarchicalLuaLimiter` / `Allow` / `RateLimitRequest`).
+  2. **Compose Redis** via `REDIS_URL` (default `redis://127.0.0.1:6380/14` for local compose-test; **DB 14 required** before `FlushDB`). CI job `ratelimit-hierarchical-integration` uses `redis://127.0.0.1:6379/14` and **fails if the test skips**. Coverage’s broad `-tags=integration` pass may still skip when Redis is absent — the dedicated job is the permanent gate.
+  3. **200 workers / RPM 100** permanent gate in `packages/ratelimit/hierarchical_integration_test.go`; unit burst remains 80/20 on miniredis.
+  4. **Latency** — no dedicated k6 `stage:ratelimit` / no unverified `&lt;5ms` SLA. Stage cost is pinned via `BenchmarkStageRateLimit` → `baseline.synthetic_rate_limit_us` + 20% regression in `regression_gate.py`. Full-path SLA remains Phase 2 **p99 &lt; 20ms**.
+  5. **Fail-open** — re-cite existing `TestSecurity_SEC4_6_RedisFailOpen` (`mustProxyLimiter` → `NewHierarchicalLimiter`); no new hierarchical fail-open case.
 </Callout>
 
 ## Why This Milestone Exists
 
-A dedicated k6 + Go benchmark scenario proves the Lua limiter is atomic under concurrency — the thing the Phase 1 version explicitly could not guarantee. This becomes a permanent regression test, not a one-time check, since a future refactor could silently reintroduce a race.
-
-The proof is simple and binary: spin up 200 concurrent goroutines hammering the same agent key with a limit of 100. Assert **exactly** 100 succeed and 100 return 429 — zero over-admission, which is only possible with the atomic script.
+A permanent regression gate proves the Lua hierarchical limiter is atomic under concurrency — the property the Phase 1 soft slider could not guarantee. The proof is binary: 200 concurrent `Check`s against RPM 100 must admit **exactly** 100 and reject **exactly** 100 (`maxAdmitOvershoot=0`) at every binding tier.
 
 ---
 
 ## Non-Goals
 
-- Latency profiling of the full proxy path (that's the Phase 2 exit benchmark)
-- Provider throughput benchmarking
+- New PR-gating k6 scenario or `&lt;5ms` stage SLA
+- testcontainers-go / Makefile target / `ci.yml` Redis for the coverage job
+- Token-spend / month_tokens ([#806](https://github.com/Rick1330/ibex-harness/issues/806))
+- Redis Cluster hash tags ([#803](https://github.com/Rick1330/ibex-harness/issues/803))
 
 ---
 
-## Orientation (indicative)
+## Shipped surface
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+### Real-Redis correctness
 
-During implementation, expect to:
+`packages/ratelimit/hierarchical_integration_test.go` (`//go:build integration`):
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+- Per-tier exact admit (agent / org / global): binding tier RPM=100, others high; 200 concurrent `Check`s; exactly 100 allowed / 100 denied; `DeniedTier` matches.
+- Same-agent different-orgs independence under real Redis.
+- One case seeds the binding limit via `ApplyOrgOverrides` (DB-override path from 4.B.2).
+- Joins existing `make test-integration` → `go test -tags=integration ./...` with default `REDIS_URL=redis://127.0.0.1:6380/14` (compose-test host mapping).
+- CI permanent gate: job `ratelimit-hierarchical-integration` (wired into `ci-gate-go`) runs `infra/scripts/ratelimit-hierarchical-integration-ci.sh`, which Ping-fails closed and rejects any `t.Skip`.
 
-Prefer outcomes over matching any particular file tree or command sequence.
+### Latency baseline + gate
 
-**Areas that may be involved** (situational — not a checklist):
+- `BenchmarkStageRateLimit` (miniredis + `NewHierarchicalLimiter`, huge RPM) unchanged harness.
+- `baseline.json` field `synthetic_rate_limit_us` + `regression_gate.py` `%Δ ≤ max_regression_pct` (20%).
+- Full proxy path remains `policy.max_proxy_overhead_p99_ms: 20`.
 
-- Rate limiting
-- Proxy service (HTTP, bootstrap, config)
+### Fail-open
 
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m4-b-3-rate-limit-benchmark`
-- PR title: `test(ratelimit): atomic concurrency correctness and load benchmark (m4.B.3)`
-
-## Go Concurrency Correctness Test
-
-```go
-// Illustrative — exact path may differ
-
-func TestHierarchicalLuaLimiter_ZeroOverAdmission(t *testing.T) {
- // Spin up a real Redis via testcontainers
- client := startTestRedis(t)
- limiter := NewHierarchicalLuaLimiter(client, 1000 /*global*/)
-
- const limit = 100
- const concurrent = 200
-
- admitted := atomic.Int64{}
- rejected := atomic.Int64{}
-
- var wg sync.WaitGroup
- for i := 0; i < concurrent; i++ {
- wg.Add(1)
- go func() {
- defer wg.Done()
- req := RateLimitRequest{
- OrgID: "test-org",
- AgentID: "test-agent",
- AgentLimit: limit,
- OrgLimit: limit * 10,
- WindowSecs: 60,
- }
- ok, _ := limiter.Allow(context.Background(), req)
- if ok {
- admitted.Add(1)
- } else {
- rejected.Add(1)
- }
- }()
- }
- wg.Wait()
-
- assert.Equal(t, int64(limit), admitted.Load(), "must admit exactly %d", limit)
- assert.Equal(t, int64(concurrent-limit), rejected.Load(), "must reject exactly %d", concurrent-limit)
-}
-```
-
----
-
-## k6 Load Scenario
-
-```javascript
-// benchmarks/k6/ratelimit-load.js
-// Tests rate-limit overhead on the proxy's hot path under sustained load.
-// Expects: p99 rate-limit check overhead < 5ms (the Phase 2 budget target)
-
-import http from 'k6/http';
-import { check } from 'k6';
-
-export const options = {
- scenarios: {
- sustained: {
- executor: 'constant-vus',
- vus: 50,
- duration: '60s',
- }
- },
- thresholds: {
- // Rate-limit check must add < 5ms to proxy overhead (Phase 2 budget preserved)
- 'http_req_duration{tag:stage:ratelimit}': ['p(99)<5'],
- },
-};
-```
-
----
+Unchanged: `TestSecurity_SEC4_6_RedisFailOpen` builds hierarchical via `mustProxyLimiter`, closes miniredis, middleware still admits (fail-open). Package unit `TestHierarchical_Check_redisError` covers the error return.
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+- [x] Real-Redis 200/100 zero over-admission at agent, org, and global tiers (+ ApplyOrgOverrides path)
+- [x] Same-agent different-orgs independent under real Redis
+- [x] `BenchmarkStageRateLimit` pinned as `synthetic_rate_limit_us` with 20% regression gate
+- [x] Phase 2 proxy p99 &lt; 20ms policy unchanged (no sketch `&lt;5ms` k6)
+- [x] Fail-open covered by SEC-4.6 (no new case)
+- [x] Permanent gate via CI job `ratelimit-hierarchical-integration` (fail-on-skip) + local `compose-test-up` / `make test-integration` (`REDIS_URL` defaults to `6380/14`)
 
-- [ ] Cross-tenant isolation test passes in CI with a real Redis container: exactly 100 admitted, exactly 100 rejected
-- [ ] K6 scenario confirms rate-limit check adds < 5ms at p99 (preserving Phase 2 proxy overhead budget)
-- [ ] Test added to `make test-integration` — it is a permanent regression gate, not a one-time benchmark
-- [ ] Fail-open behavior on Redis outage verified unchanged via existing cross-tenant isolation test-style integration test
+## Local verification
+
+1. `make compose-test-up` — Redis on host **6380** (prints the default `REDIS_URL`).
+2. `make test-integration` — exports `REDIS_URL=redis://127.0.0.1:6380/14` when unset; hierarchical 200/100 tests run (not skip).
+3. Or CI-equivalent: `REDIS_URL=redis://127.0.0.1:6380/14 bash infra/scripts/ratelimit-hierarchical-integration-ci.sh`
 
 ## Prerequisites
 
 - M4.B.1 Lua limiter merged
-
+- M4.B.2 config / `ApplyOrgOverrides` merged

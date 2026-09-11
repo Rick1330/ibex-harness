@@ -116,6 +116,9 @@ case "${1:-help}" in
     ;;
   test-integration)
     cd "$ROOT_DIR"
+    # compose-test publishes Redis on host 6380; DB 14 is required by the
+    # hierarchical rate-limit integration gate (FlushDB isolation).
+    export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/14}"
     go test -tags=integration -race -timeout=120s ./...
     ;;
   compose-dev-up)
@@ -142,6 +145,7 @@ case "${1:-help}" in
   compose-test-up)
     require_tool docker "docker is required for compose-test-up."
     docker compose -f "$TEST_COMPOSE" up -d
+    echo "compose-test Redis: REDIS_URL=redis://127.0.0.1:6380/14 (default for make test-integration)"
     ;;
   compose-test-down)
     require_tool docker "docker is required for compose-test-down."

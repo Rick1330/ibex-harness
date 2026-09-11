@@ -114,13 +114,9 @@ func TestHierarchical_sameAgentDifferentOrgsIndependent(t *testing.T) {
 		},
 		GlobalRPM: 10_000,
 	})
-	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
-	assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, true)
-	res := assertCheckWant(t, checkArgs{lim: lim, org: orgA, agent: agent}, false)
-	if res.DeniedTier != tierOrg {
-		t.Fatalf("DeniedTier=%q want org", res.DeniedTier)
-	}
-	assertCheckWant(t, checkArgs{lim: lim, org: orgB, agent: agent}, true)
+	assertCrossOrgAfterExhaust(t, crossOrgExhaust{
+		lim: lim, orgA: orgA, orgB: orgB, agent: agent, wantDenyTier: tierOrg,
+	})
 	window := currentMinuteWindow(time.Now().UTC())
 	assertRedisInt(t, mr, agentRPMKey(orgA, agent, window.unixMinute), 2)
 	assertRedisInt(t, mr, orgRPMKey(orgA, window.unixMinute), 3)
@@ -135,34 +131,9 @@ func TestHierarchical_ConcurrentBurst(t *testing.T) {
 	orgAgent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440111")
 	agent := uuid.MustParse("550e8400-e29b-41d4-a716-446655440211")
 	orgGlobal := uuid.MustParse("550e8400-e29b-41d4-a716-446655440112")
-	cases := []struct {
-		name     string
-		cfg      HierarchicalConfig
-		org      uuid.UUID
-		agent    uuid.UUID
-		wantTier string
-	}{
-		{
-			name: "org",
-			cfg: HierarchicalConfig{
-				DefaultRPM: 10_000, OrgOverrides: map[uuid.UUID]int64{orgOrg: rpm}, GlobalRPM: 10_000,
-			},
-			org: orgOrg, wantTier: tierOrg,
-		},
-		{
-			name: "agent",
-			cfg: HierarchicalConfig{
-				DefaultRPM: rpm, OrgOverrides: map[uuid.UUID]int64{orgAgent: 10_000}, GlobalRPM: 10_000,
-			},
-			org: orgAgent, agent: agent, wantTier: tierAgent,
-		},
-		{
-			name: "global",
-			cfg:  HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
-			org:  orgGlobal, wantTier: tierGlobal,
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range hierarchicalTierBurstCases(rpm, tierBurstIDs{
+		orgOrg: orgOrg, orgAgent: orgAgent, orgGlobal: orgGlobal, agent: agent,
+	}) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -362,6 +333,60 @@ type burstCase struct {
 	wantTier string
 }
 
+type tierBurstCase struct {
+	name     string
+	cfg      HierarchicalConfig
+	org      uuid.UUID
+	agent    uuid.UUID
+	wantTier string
+}
+
+type tierBurstIDs struct {
+	orgOrg, orgAgent, orgGlobal, agent uuid.UUID
+}
+
+// hierarchicalTierBurstCases builds org/agent/global binding-tier cases for a given RPM.
+func hierarchicalTierBurstCases(rpm int64, ids tierBurstIDs) []tierBurstCase {
+	return []tierBurstCase{
+		{
+			name: "org",
+			cfg: HierarchicalConfig{
+				DefaultRPM: 10_000, OrgOverrides: map[uuid.UUID]int64{ids.orgOrg: rpm}, GlobalRPM: 10_000,
+			},
+			org: ids.orgOrg, wantTier: tierOrg,
+		},
+		{
+			name: "agent",
+			cfg: HierarchicalConfig{
+				DefaultRPM: rpm, OrgOverrides: map[uuid.UUID]int64{ids.orgAgent: 10_000}, GlobalRPM: 10_000,
+			},
+			org: ids.orgAgent, agent: ids.agent, wantTier: tierAgent,
+		},
+		{
+			name: "global",
+			cfg:  HierarchicalConfig{DefaultRPM: 10_000, GlobalRPM: rpm},
+			org:  ids.orgGlobal, wantTier: tierGlobal,
+		},
+	}
+}
+
+type crossOrgExhaust struct {
+	lim               Limiter
+	orgA, orgB, agent uuid.UUID
+	wantDenyTier      string
+}
+
+func assertCrossOrgAfterExhaust(t *testing.T, x crossOrgExhaust) {
+	t.Helper()
+	assertCheckWant(t, checkArgs{lim: x.lim, org: x.orgA, agent: x.agent}, true)
+	assertCheckWant(t, checkArgs{lim: x.lim, org: x.orgA, agent: x.agent}, true)
+	res := assertCheckWant(t, checkArgs{lim: x.lim, org: x.orgA, agent: x.agent}, false)
+	if res.DeniedTier != x.wantDenyTier {
+		t.Fatalf("DeniedTier=%q want %q", res.DeniedTier, x.wantDenyTier)
+	}
+	assertCheckWant(t, checkArgs{lim: x.lim, org: x.orgB, agent: x.agent}, true)
+}
+
 func runBurstExactRPM(t *testing.T, bc burstCase) {
 	t.Helper()
 	bc.args.lim = newTestHierarchical(t, bc.cfg)
@@ -371,10 +396,15 @@ func runBurstExactRPM(t *testing.T, bc burstCase) {
 
 func assertExactBurstRPM(t *testing.T, args checkArgs, rpm int64) []Result {
 	t.Helper()
-	results := burstCheckHierarchical(t, args, concurrentBurstWorkers)
+	return assertExactBurst(t, args, rpm, concurrentBurstWorkers)
+}
+
+func assertExactBurst(t *testing.T, args checkArgs, rpm int64, workers int) []Result {
+	t.Helper()
+	results := burstCheckHierarchical(t, args, workers)
 	allowed := countAllowed(results)
 	assertAdmitWithinRaceBound(t, allowed, rpm, maxAdmitOvershoot)
-	assertSomeDenied(t, allowed, concurrentBurstWorkers)
+	assertSomeDenied(t, allowed, workers)
 	if allowed != int(rpm) {
 		t.Fatalf("allowed=%d want exactly RPM=%d (zero overshoot)", allowed, rpm)
 	}
