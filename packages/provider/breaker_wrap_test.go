@@ -41,8 +41,11 @@ func TestMapBreakerError_OpenRetryAfter(t *testing.T) {
 	if !errors.As(err, &pe) {
 		t.Fatalf("err=%v", err)
 	}
-	if pe.Reason != ErrorReasonCircuitOpen || pe.RetryAfter != 30*time.Second {
-		t.Fatalf("pe=%+v", pe)
+	if pe.Reason != ErrorReasonCircuitOpen {
+		t.Fatalf("Reason=%q", pe.Reason)
+	}
+	if pe.RetryAfter != 30*time.Second {
+		t.Fatalf("RetryAfter=%v", pe.RetryAfter)
 	}
 }
 
@@ -53,8 +56,14 @@ func TestCompleteWithBreaker_NilPassthrough(t *testing.T) {
 		Name: "x",
 		Once: func(context.Context, Request) (Response, error) { return want, nil },
 	}, Request{Model: "m"})
-	if err != nil || got.StatusCode != want.StatusCode || got.ProviderRequestID != want.ProviderRequestID {
-		t.Fatalf("got=%+v err=%v", got, err)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.StatusCode != want.StatusCode {
+		t.Fatalf("StatusCode=%d", got.StatusCode)
+	}
+	if got.ProviderRequestID != want.ProviderRequestID {
+		t.Fatalf("ProviderRequestID=%q", got.ProviderRequestID)
 	}
 }
 
@@ -73,9 +82,20 @@ func TestCompleteWithBreaker_OpenMapsRetryAfter(t *testing.T) {
 			return Response{}, nil
 		},
 	}, Request{})
+	assertCircuitOpenPE(t, err, cool)
+}
+
+func assertCircuitOpenPE(t *testing.T, err error, cool time.Duration) {
+	t.Helper()
 	var pe *ProviderError
-	if !errors.As(err, &pe) || pe.Reason != ErrorReasonCircuitOpen || pe.RetryAfter != cool {
-		t.Fatalf("err=%v pe=%+v", err, pe)
+	if !errors.As(err, &pe) {
+		t.Fatalf("err=%v", err)
+	}
+	if pe.Reason != ErrorReasonCircuitOpen {
+		t.Fatalf("Reason=%q", pe.Reason)
+	}
+	if pe.RetryAfter != cool {
+		t.Fatalf("RetryAfter=%v", pe.RetryAfter)
 	}
 }
 
@@ -108,26 +128,32 @@ func assertOverrideBypasses(t *testing.T, br *circuitbreaker.Breaker, req Reques
 			return Response{StatusCode: 200, ProviderRequestID: wantID}, nil
 		},
 	}, req)
-	if err != nil || got.ProviderRequestID != wantID {
-		t.Fatalf("override must bypass open breaker: got=%+v err=%v", got, err)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if got.ProviderRequestID != wantID {
+		t.Fatalf("ProviderRequestID=%q want %q", got.ProviderRequestID, wantID)
 	}
 }
 
 func TestDecodeBreakerResult_InvalidTypeAndPassthrough(t *testing.T) {
 	t.Parallel()
 	_, err := DecodeBreakerResult("openai", "nope", nil)
-	if err == nil || !strings.Contains(err.Error(), "unexpected result") {
+	if err == nil {
+		t.Fatal("want unexpected result error")
+	}
+	if !strings.Contains(err.Error(), "unexpected result") {
 		t.Fatalf("err=%v", err)
 	}
 	_, err = MapBreakerError("openai", errors.New("transport"))
-	if err == nil || err.Error() != "transport" {
+	if err == nil {
+		t.Fatal("want transport error")
+	}
+	if err.Error() != "transport" {
 		t.Fatalf("passthrough err=%v", err)
 	}
 	_, err = MapBreakerError("openai", circuitbreaker.ErrOpen)
-	var pe *ProviderError
-	if !errors.As(err, &pe) || pe.RetryAfter != 0 || pe.Reason != ErrorReasonCircuitOpen {
-		t.Fatalf("bare ErrOpen pe=%+v", pe)
-	}
+	assertCircuitOpenPE(t, err, 0)
 }
 
 func TestProviderError_HTTPStatusNilSafe(t *testing.T) {
