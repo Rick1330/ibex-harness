@@ -32,45 +32,74 @@ func TestStreamTranslate_TextAndDone(t *testing.T) {
 		assertHappy(t, "msg_s")
 }
 
+const (
+	fixtureMidStreamOverloaded = "" +
+		"event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_s\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n" +
+		"event: error\n" +
+		"data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+
+	fixtureRateLimitError = "" +
+		"event: error\n" +
+		"data: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}\n\n"
+
+	// Named Anthropic delta types (Messages streaming docs) that must not leak.
+	leakPartialJSON   = "LEAK_PARTIAL_JSON_XYZ"
+	leakThinkingBlock = "LEAK_THINKING_BLOCK_XYZ"
+	leakSignatureBlk  = "LEAK_SIGNATURE_BLOCK_XYZ"
+
+	fixtureIgnoresNonTextDelta = "" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"" + leakPartialJSON + "\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"" + leakThinkingBlock + "\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"signature_delta\",\"signature\":\"" + leakSignatureBlk + "\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" +
+		"event: message_stop\n" +
+		"data: {\"type\":\"message_stop\"}\n\n"
+)
+
 func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 	t.Parallel()
-	anth := anthropicSSEFixture(
-		`event: message_start`,
-		`data: {"type":"message_start","message":{"id":"msg_s"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}`,
-		`event: error`,
-		`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
-	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45})
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(fixtureMidStreamOverloaded)), streamMeta{Model: modelClaudeSonnet45})
 	defer func() { _ = pipe.Close() }()
-	_, err := io.ReadAll(pipe)
+	body, err := io.ReadAll(pipe)
 	if err == nil {
 		t.Fatal("expected overload error")
 	}
-	if strings.Contains(err.Error(), "Overloaded") {
-		return
+	if !isOverloadStreamErr(err) {
+		t.Fatalf("err=%v", err)
 	}
-	if strings.Contains(err.Error(), "529") {
-		return
+	assertIncompleteStreamBody(t, body)
+}
+
+func isOverloadStreamErr(err error) bool {
+	msg := err.Error()
+	if strings.Contains(msg, "Overloaded") {
+		return true
 	}
-	t.Fatalf("err=%v", err)
+	return strings.Contains(msg, "529")
 }
 
 func TestStreamTranslate_IgnoresNonTextDelta(t *testing.T) {
 	t.Parallel()
-	anth := anthropicSSEFixture(
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{}"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-	)
-	out := mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
+	out := mustTranslate(t, fixtureIgnoresNonTextDelta, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	out.mustContain(t, `"content":"ok"`)
-	if strings.Contains(string(out), "partial_json") {
-		t.Fatal("leaked tool json into OpenAI stream")
+	out.mustContain(t, "data: [DONE]")
+	out.assertNoLeak(t, leakPartialJSON)
+	out.assertNoLeak(t, leakThinkingBlock)
+	out.assertNoLeak(t, leakSignatureBlk)
+	out.assertNoLeak(t, "partial_json")
+}
+
+func (out translatedStream) assertNoLeak(t *testing.T, leak string) {
+	t.Helper()
+	if strings.Contains(string(out), leak) {
+		t.Fatalf("leaked non-text delta into OpenAI stream: %q in %s", leak, out)
 	}
 }
 
@@ -134,17 +163,54 @@ func TestStreamTranslate_CloseUnblocksProducer(t *testing.T) {
 
 func TestStreamTranslate_RateLimitError(t *testing.T) {
 	t.Parallel()
-	anth := anthropicSSEFixture(
-		`event: error`,
-		`data: {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
-	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(fixtureRateLimitError)), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	defer func() { _ = pipe.Close() }()
-	_, err := io.ReadAll(pipe)
+	body, err := io.ReadAll(pipe)
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) || pe.StatusCode != 429 {
 		t.Fatalf("err=%v", err)
 	}
+	assertIncompleteStreamBody(t, body)
+}
+
+// assertIncompleteStreamBody checks ADR-0040 mid-stream incomplete semantics:
+// the translate pipe must not emit [DONE] or a fabricated OpenAI-shaped error chunk.
+func assertIncompleteStreamBody(t *testing.T, body []byte) {
+	t.Helper()
+	s := string(body)
+	if streamBodyHasDoneSentinel(s) {
+		t.Fatalf("incomplete mid-stream body must not contain [DONE]: %q", s)
+	}
+	if block, ok := firstFabricatedOpenAIErrorChunk(s); ok {
+		t.Fatalf("fabricated OpenAI-shaped error chunk in stream body: %q", block)
+	}
+}
+
+func streamBodyHasDoneSentinel(s string) bool {
+	if strings.Contains(s, "data: [DONE]") {
+		return true
+	}
+	return strings.Contains(s, "[DONE]")
+}
+
+func firstFabricatedOpenAIErrorChunk(s string) (string, bool) {
+	for _, block := range strings.Split(s, "\n\n") {
+		payload, ok := openAIChunkPayload(block)
+		if !ok {
+			continue
+		}
+		if isFabricatedOpenAIErrorPayload(strings.TrimSpace(payload)) {
+			return block, true
+		}
+	}
+	return "", false
+}
+
+func isFabricatedOpenAIErrorPayload(payload string) bool {
+	if strings.Contains(payload, `"object":"error"`) {
+		return true
+	}
+	return strings.HasPrefix(payload, `{"error"`)
 }
 
 func anthropicSSEFixture(lines ...sseLine) string {
