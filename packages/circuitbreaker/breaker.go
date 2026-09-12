@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"time"
 
 	gobreaker "github.com/sony/gobreaker/v2"
@@ -157,14 +158,15 @@ func rollingBucketPeriod(s Settings) time.Duration {
 	return 0
 }
 
-// rollingIsExcluded excludes caller cancel/deadline from rolling counts only.
-// Consecutive mode keeps IsExcluded nil so IsSuccessful can reset failure streaks.
+// rollingIsExcluded excludes caller cancel/deadline and client-fault 4xx (except
+// 429) from rolling counts. Consecutive mode keeps IsExcluded nil so
+// IsSuccessful can reset failure streaks (including client-fault 4xx).
 func rollingIsExcluded(s Settings) func(error) bool {
 	if s.Window <= 0 {
 		return nil
 	}
 	return func(err error) bool {
-		return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+		return isCancelOrDeadline(err) || isClientFaultHTTP(err)
 	}
 }
 
@@ -194,11 +196,38 @@ func validRequests(c gobreaker.Counts) uint32 {
 	return c.Requests - c.TotalExclusions
 }
 
+// httpStatusError is implemented by provider.ProviderError (and test stubs).
+type httpStatusError interface {
+	error
+	HTTPStatus() int
+}
+
 func isSuccessfulOutcome(err error) bool {
 	if err == nil {
 		return true
 	}
+	if isCancelOrDeadline(err) {
+		return true
+	}
+	// Client faults (4xx except 429) must not trip consecutive-mode breakers.
+	return isClientFaultHTTP(err)
+}
+
+func isCancelOrDeadline(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// isClientFaultHTTP reports 4xx except 429 (provider rate-limit still trips).
+func isClientFaultHTTP(err error) bool {
+	var hs httpStatusError
+	if !errors.As(err, &hs) {
+		return false
+	}
+	code := hs.HTTPStatus()
+	if code == http.StatusTooManyRequests {
+		return false
+	}
+	return code >= 400 && code < 500
 }
 
 func onStateChangeAdapter(cb func(from, to string)) func(name string, from gobreaker.State, to gobreaker.State) {

@@ -30,9 +30,12 @@ authors: "IBEX Harness team"
 5. **`Retry-After`:** gobreaker does not expose remaining open expiry publicly; circuit-open returns `*OpenError{RetryAfter: CoolDown}` mapped into `ProviderError.RetryAfter` and propagated by `provider.mapReason` into `apierror.Error` so `WriteHTTP` emits the header.
 6. **Anthropic** uses the same local `Breaker` interface + `ErrOpen` mapping shape as `openaicompatible` (no proxy-level interceptor).
 7. **Context Assemble** breaker wrap remains deferred (unchanged).
+8. **Client-fault HTTP classification:** `ProviderError` (or any `HTTPStatus() int` error) with status in **4xx except 429** does **not** count as a breaker failure — consecutive mode treats them as success (streak reset); rolling mode excludes them from window counts (same path as cancel/deadline). **429** and **5xx**/timeouts/transport errors still trip. This avoids false-opens under bad client traffic before 4.C.4 fallback routing.
+9. **Known gobreaker quirk:** when `BucketPeriod > 0`, gobreaker rounds `Interval` up to a multiple of `BucketPeriod`. Operators should prefer Window divisible by BucketPeriod (production default 30s/3s).
 
 ## Consequences
 
 - Operators can tune cloud rolling knobs independently of self-hosted consecutive threshold.
 - Misconfigured rolling settings (`Window > 0` with invalid rate/samples, or rolling fields without `Window`) fail at `circuitbreaker.New` / bootstrap.
 - Client-facing circuit-open detail is provider-agnostic: `"LLM provider circuit breaker is open"`.
+- A burst of `400 Bad Request` from a misconfigured client will not open the breaker; sustained `429`/`500`/timeouts will.

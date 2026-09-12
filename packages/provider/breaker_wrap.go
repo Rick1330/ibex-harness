@@ -11,6 +11,8 @@ import (
 
 // ClassifyForBreaker keeps caller abandonment from tripping the breaker, while
 // ensuring upstream timeouts that wrap DeadlineExceeded still count as failures.
+// Client-fault 4xx (except 429) are left as ProviderError; packages/circuitbreaker
+// treats them as non-failures via IsSuccessful / rolling IsExcluded (ADR-0076).
 func ClassifyForBreaker(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):

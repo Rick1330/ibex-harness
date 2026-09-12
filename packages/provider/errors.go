@@ -35,3 +35,11 @@ const (
 func (e *ProviderError) Error() string {
 	return fmt.Sprintf("provider %s returned %d: %s", e.ProviderName, e.StatusCode, e.ProviderErrMsg)
 }
+
+// HTTPStatus returns the upstream HTTP status for breaker classification (ADR-0076).
+func (e *ProviderError) HTTPStatus() int {
+	if e == nil {
+		return 0
+	}
+	return e.StatusCode
+}

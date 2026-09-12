@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -276,6 +278,147 @@ func TestBreaker_RollingExcludesCanceled(t *testing.T) {
 	assertState(t, b, "closed")
 }
 
+func TestBreaker_HalfOpenSuccessCloses(t *testing.T) {
+	t.Parallel()
+	cool := 25 * time.Millisecond
+	b := mustNew(t, Settings{Name: "ho-ok", MaxFailures: 1, CoolDown: cool})
+	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
+	assertState(t, b, "open")
+	time.Sleep(cool + 20*time.Millisecond)
+	out, err := b.Execute(func() (any, error) { return "ok", nil })
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if out != "ok" {
+		t.Fatalf("out=%v", out)
+	}
+	assertState(t, b, "closed")
+}
+
+func TestBreaker_HalfOpenFailureReopens(t *testing.T) {
+	t.Parallel()
+	cool := 25 * time.Millisecond
+	b := mustNew(t, Settings{Name: "ho-fail", MaxFailures: 1, CoolDown: cool})
+	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
+	assertState(t, b, "open")
+	time.Sleep(cool + 20*time.Millisecond)
+	fail := errors.New("probe-fail")
+	_, err := b.Execute(func() (any, error) { return nil, fail })
+	if !errors.Is(err, fail) {
+		t.Fatalf("probe err=%v", err)
+	}
+	assertState(t, b, "open")
+	_, err = b.Execute(func() (any, error) { return "ok", nil })
+	if !errors.Is(err, ErrOpen) {
+		t.Fatalf("still open: %v", err)
+	}
+}
+
+func TestBreaker_HalfOpenRejectsConcurrentProbe(t *testing.T) {
+	t.Parallel()
+	cool := 25 * time.Millisecond
+	b := mustNew(t, Settings{Name: "ho-race", MaxFailures: 1, CoolDown: cool})
+	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
+	assertState(t, b, "open")
+	time.Sleep(cool + 20*time.Millisecond)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	var probes atomic.Int32
+
+	go func() {
+		defer close(done)
+		_, _ = b.Execute(func() (any, error) {
+			probes.Add(1)
+			close(started)
+			<-release
+			return "ok", nil
+		})
+	}()
+	<-started
+
+	_, err := b.Execute(func() (any, error) {
+		probes.Add(1)
+		return "leak", nil
+	})
+	if !errors.Is(err, ErrOpen) {
+		t.Fatalf("second probe err=%v want ErrOpen", err)
+	}
+	close(release)
+	<-done
+
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("upstream probes=%d want 1", got)
+	}
+	assertState(t, b, "closed")
+}
+
+func TestBreaker_RollingMultiBucketDecay(t *testing.T) {
+	t.Parallel()
+	window := 60 * time.Millisecond
+	bucket := 20 * time.Millisecond
+	b := mustNew(t, Settings{
+		Name: "mb", Window: window, BucketPeriod: bucket,
+		MinSamples: 2, FailureRateThreshold: 0.5, CoolDown: time.Minute,
+	})
+	fail := errors.New("boom")
+	_, _ = b.Execute(func() (any, error) { return nil, fail })
+	assertState(t, b, "closed") // 1 < MinSamples
+	// Age past the full window so multi-bucket rolling drops the failure.
+	time.Sleep(window + bucket)
+	_, err := b.Execute(func() (any, error) { return nil, fail })
+	if !errors.Is(err, fail) {
+		t.Fatalf("aged window fail: %v", err)
+	}
+	assertState(t, b, "closed") // only 1 sample in the new window
+	_, err = b.Execute(func() (any, error) { return nil, fail })
+	if !errors.Is(err, fail) {
+		t.Fatalf("second fail: %v", err)
+	}
+	assertState(t, b, "open") // 2/2 in current window
+}
+
+type stubHTTPStatus struct {
+	code int
+	msg  string
+}
+
+func (e stubHTTPStatus) Error() string   { return e.msg }
+func (e stubHTTPStatus) HTTPStatus() int { return e.code }
+
+func TestBreaker_ClientFault4xxDoesNotTrip(t *testing.T) {
+	t.Parallel()
+	b := mustNew(t, Settings{Name: "4xx", MaxFailures: 2, CoolDown: time.Minute})
+	bad := stubHTTPStatus{code: http.StatusBadRequest, msg: "bad"}
+	for i := 0; i < 5; i++ {
+		_, err := b.Execute(func() (any, error) { return nil, bad })
+		if !errors.Is(err, bad) {
+			t.Fatalf("i=%d err=%v", i, err)
+		}
+	}
+	assertState(t, b, "closed")
+	_, err := b.Execute(func() (any, error) { return "ok", nil })
+	if err != nil {
+		t.Fatalf("still closed path: %v", err)
+	}
+}
+
+func TestBreaker_429And5xxStillTrip(t *testing.T) {
+	t.Parallel()
+	b := mustNew(t, Settings{Name: "429", MaxFailures: 2, CoolDown: time.Minute})
+	limited := stubHTTPStatus{code: http.StatusTooManyRequests, msg: "rl"}
+	_, _ = b.Execute(func() (any, error) { return nil, limited })
+	_, _ = b.Execute(func() (any, error) { return nil, limited })
+	assertState(t, b, "open")
+
+	b5 := mustNew(t, Settings{Name: "5xx", MaxFailures: 2, CoolDown: time.Minute})
+	boom := stubHTTPStatus{code: http.StatusInternalServerError, msg: "boom"}
+	_, _ = b5.Execute(func() (any, error) { return nil, boom })
+	_, _ = b5.Execute(func() (any, error) { return nil, boom })
+	assertState(t, b5, "open")
+}
+
 func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
 	t.Parallel()
 	_, err := New(Settings{Name: "bad", MinSamples: 10})
@@ -303,22 +446,22 @@ func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
 
 func TestBreaker_ConcurrentExecute(t *testing.T) {
 	t.Parallel()
-	b := mustNew(t, Settings{Name: "race", MaxFailures: 100, CoolDown: time.Minute})
+	b := mustNew(t, Settings{Name: "race", MaxFailures: 3, CoolDown: time.Minute})
+	fail := errors.New("fail")
 	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
+	for i := 0; i < 8; i++ {
 		wg.Add(1)
-		go func(i int) {
+		go func() {
 			defer wg.Done()
-			_, _ = b.Execute(func() (any, error) {
-				if i%2 == 0 {
-					return "ok", nil
-				}
-				return nil, errors.New("fail")
-			})
-		}(i)
+			_, _ = b.Execute(func() (any, error) { return nil, fail })
+		}()
 	}
 	wg.Wait()
-	_ = b.State()
+	assertState(t, b, "open")
+	_, err := b.Execute(func() (any, error) { return "ok", nil })
+	if !errors.Is(err, ErrOpen) {
+		t.Fatalf("err=%v want ErrOpen after concurrent failures", err)
+	}
 }
 
 func assertState(t *testing.T, b *Breaker, want string) {
