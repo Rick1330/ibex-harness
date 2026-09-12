@@ -17,6 +17,12 @@ import (
 func TestCircuitOpen_WriteHTTPSetsRetryAfter(t *testing.T) {
 	t.Parallel()
 	cool := 30 * time.Second
+	mapped := mapOpenBreaker(t, cool)
+	assertWriteHTTPCircuitOpen(t, mapped, cool)
+}
+
+func mapOpenBreaker(t *testing.T, cool time.Duration) *apierror.Error {
+	t.Helper()
 	br, err := circuitbreaker.New(circuitbreaker.Settings{
 		Name: "http-ra", MaxFailures: 1, CoolDown: cool,
 	})
@@ -36,7 +42,11 @@ func TestCircuitOpen_WriteHTTPSetsRetryAfter(t *testing.T) {
 	if mapped.RetryAfter != cool {
 		t.Fatalf("RetryAfter=%v want %v", mapped.RetryAfter, cool)
 	}
+	return mapped
+}
 
+func assertWriteHTTPCircuitOpen(t *testing.T, mapped *apierror.Error, cool time.Duration) {
+	t.Helper()
 	rec := httptest.NewRecorder()
 	apierror.WriteHTTP(rec, "req-cb", apierror.WriteOpts{}, mapped)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -57,35 +67,46 @@ func TestCircuitOpen_WriteHTTPSetsRetryAfter(t *testing.T) {
 
 func TestBreaker_ProviderError4xxDoesNotTrip_500Does(t *testing.T) {
 	t.Parallel()
-	br, err := circuitbreaker.New(circuitbreaker.Settings{
-		Name: "pe-4xx", MaxFailures: 2, CoolDown: time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	bad := &provider.ProviderError{ProviderName: "openai", StatusCode: http.StatusBadRequest, ProviderErrMsg: "bad"}
-	for i := 0; i < 5; i++ {
+	assertProviderStatusLeavesClosed(t, http.StatusBadRequest, 5)
+	assertProviderStatusOpens(t, http.StatusInternalServerError, 2)
+}
+
+func assertProviderStatusLeavesClosed(t *testing.T, status int, n int) {
+	t.Helper()
+	br := newNamedBreaker(t, "pe-closed", 2)
+	pe := &provider.ProviderError{ProviderName: "openai", StatusCode: status, ProviderErrMsg: "x"}
+	for i := 0; i < n; i++ {
 		_, err := br.Execute(func() (any, error) {
-			return nil, provider.ClassifyForBreaker(t.Context(), bad)
+			return nil, provider.ClassifyForBreaker(t.Context(), pe)
 		})
 		if !errors.As(err, new(*provider.ProviderError)) {
 			t.Fatalf("i=%d err=%v", i, err)
 		}
 	}
 	if br.State() != "closed" {
-		t.Fatalf("state=%s after 4xx burst", br.State())
+		t.Fatalf("state=%s after status=%d burst", br.State(), status)
 	}
+}
 
-	br5, err := circuitbreaker.New(circuitbreaker.Settings{
-		Name: "pe-5xx", MaxFailures: 2, CoolDown: time.Minute,
+func assertProviderStatusOpens(t *testing.T, status, failures int) {
+	t.Helper()
+	br := newNamedBreaker(t, "pe-open", uint32(failures))
+	pe := &provider.ProviderError{ProviderName: "openai", StatusCode: status, ProviderErrMsg: "x"}
+	for i := 0; i < failures; i++ {
+		_, _ = br.Execute(func() (any, error) { return nil, pe })
+	}
+	if br.State() != "open" {
+		t.Fatalf("state=%s want open after status=%d", br.State(), status)
+	}
+}
+
+func newNamedBreaker(t *testing.T, name string, maxFailures uint32) *circuitbreaker.Breaker {
+	t.Helper()
+	br, err := circuitbreaker.New(circuitbreaker.Settings{
+		Name: name, MaxFailures: maxFailures, CoolDown: time.Minute,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	boom := &provider.ProviderError{ProviderName: "openai", StatusCode: http.StatusInternalServerError, ProviderErrMsg: "boom"}
-	_, _ = br5.Execute(func() (any, error) { return nil, boom })
-	_, _ = br5.Execute(func() (any, error) { return nil, boom })
-	if br5.State() != "open" {
-		t.Fatalf("state=%s want open after 5xx", br5.State())
-	}
+	return br
 }

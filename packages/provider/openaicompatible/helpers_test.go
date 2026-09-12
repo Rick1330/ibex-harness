@@ -43,7 +43,7 @@ func zeroRetries() *int {
 	return &v
 }
 
-func newSelfHostedTestClient(baseURL string, br Breaker) *Client {
+func newSelfHostedTestClient(baseURL string, br provider.CircuitBreaker) *Client {
 	return New(Config{
 		ProviderName: ProviderNameSelfHosted,
 		BaseURL:      baseURL,

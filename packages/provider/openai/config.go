@@ -3,7 +3,7 @@ package openai
 import (
 	"time"
 
-	"github.com/Rick1330/ibex-harness/packages/provider/openaicompatible"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 )
 
 const (
@@ -25,7 +25,7 @@ type Config struct {
 	// ExtraModels are additional model IDs this client accepts (e.g. OpenRouter slugs).
 	ExtraModels []string
 	// Breaker, when non-nil, wraps each Complete attempt (parity with self-hosted).
-	Breaker openaicompatible.Breaker
+	Breaker provider.CircuitBreaker
 }
 
 // ApplyDefaults fills zero-valued fields with production defaults.

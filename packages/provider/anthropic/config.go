@@ -1,6 +1,10 @@
 package anthropic
 
-import "time"
+import (
+	"time"
+
+	"github.com/Rick1330/ibex-harness/packages/provider"
+)
 
 const (
 	defaultBaseURL        = "https://api.anthropic.com"
@@ -13,12 +17,6 @@ const (
 	// HTTP 529 is Anthropic's overloaded_error (not in net/http constants).
 	statusOverloaded = 529
 )
-
-// Breaker is the circuit-breaker surface used by the Anthropic adapter
-// (parity with openaicompatible.Breaker).
-type Breaker interface {
-	Execute(func() (any, error)) (any, error)
-}
 
 // Config tunes upstream Anthropic HTTP behavior for the proxy provider client.
 type Config struct {
@@ -33,7 +31,7 @@ type Config struct {
 	// ExtraModels are additional model IDs this client accepts.
 	ExtraModels []string
 	// Breaker, when non-nil, wraps each Complete attempt.
-	Breaker Breaker
+	Breaker provider.CircuitBreaker
 }
 
 // ApplyDefaults fills zero-valued fields with production defaults.

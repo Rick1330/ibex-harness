@@ -12,11 +12,8 @@ import (
 )
 
 const (
-	defaultMaxFailures          = 5
-	defaultCoolDown             = 30 * time.Second
-	defaultMinSamples           = 10
-	defaultFailureRateThreshold = 0.5
-	defaultBucketPeriod         = 3 * time.Second
+	defaultMaxFailures = 5
+	defaultCoolDown    = 30 * time.Second
 )
 
 // Settings configures a provider circuit breaker.
@@ -47,7 +44,8 @@ type Breaker struct {
 }
 
 // New constructs a Breaker. MaxFailures defaults to 5; CoolDown defaults to 30s.
-// When Window > 0, rolling-window defaults apply (MinSamples=10, rate=0.5, BucketPeriod=3s).
+// When Window > 0, MinSamples, FailureRateThreshold, and BucketPeriod must be set
+// by the caller (bootstrap/config applies operator defaults when env vars are unset).
 func New(s Settings) (*Breaker, error) {
 	s = applyBreakerDefaults(s)
 	if err := validateSettings(s); err != nil {
@@ -77,17 +75,8 @@ func applyBreakerDefaults(s Settings) Settings {
 	if s.CoolDown <= 0 {
 		s.CoolDown = defaultCoolDown
 	}
-	if s.Window > 0 {
-		if s.MinSamples == 0 {
-			s.MinSamples = defaultMinSamples
-		}
-		if s.FailureRateThreshold == 0 {
-			s.FailureRateThreshold = defaultFailureRateThreshold
-		}
-		if s.BucketPeriod == 0 {
-			s.BucketPeriod = defaultBucketPeriod
-		}
-	}
+	// Rolling knobs are not silently filled: bootstrap/config supplies defaults
+	// when env vars are unset; explicit non-positive values fail validation.
 	return s
 }
 

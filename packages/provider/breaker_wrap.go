@@ -5,9 +5,44 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Rick1330/ibex-harness/packages/circuitbreaker"
 )
+
+// CircuitBreaker is the optional Complete wrapper used by provider adapters.
+type CircuitBreaker interface {
+	Execute(func() (any, error)) (any, error)
+}
+
+// BreakerComplete binds breaker + once for CompleteWithBreaker (≤4 call-site args).
+type BreakerComplete struct {
+	Breaker CircuitBreaker
+	Name    string
+	Once    func(context.Context, Request) (Response, error)
+}
+
+// CompleteWithBreaker runs once, or under breaker when Breaker is non-nil.
+// Requests with APIKeyOverride or BaseURLOverride bypass the shared provider
+// breaker so BYO upstreams cannot trip (or be blocked by) platform identity
+// state (ADR-0076).
+func CompleteWithBreaker(ctx context.Context, bc BreakerComplete, req Request) (Response, error) {
+	if bc.Breaker == nil || hasUpstreamOverride(req) {
+		return bc.Once(ctx, req)
+	}
+	out, err := bc.Breaker.Execute(func() (any, error) {
+		resp, err := bc.Once(ctx, req)
+		if err != nil {
+			return nil, ClassifyForBreaker(ctx, err)
+		}
+		return resp, nil
+	})
+	return DecodeBreakerResult(bc.Name, out, err)
+}
+
+func hasUpstreamOverride(req Request) bool {
+	return strings.TrimSpace(req.APIKeyOverride) != "" || strings.TrimSpace(req.BaseURLOverride) != ""
+}
 
 // ClassifyForBreaker keeps caller abandonment from tripping the breaker, while
 // ensuring upstream timeouts that wrap DeadlineExceeded still count as failures.

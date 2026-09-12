@@ -55,21 +55,11 @@ func (c *Client) SupportedModels() []string {
 
 // Complete sends a Messages API request and returns an OpenAI-compatible body.
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
-	if c.cfg.Breaker == nil {
-		return c.completeOnce(ctx, req)
-	}
-	out, err := c.cfg.Breaker.Execute(func() (any, error) {
-		return c.completeUnderBreaker(ctx, req)
-	})
-	return provider.DecodeBreakerResult(c.Name(), out, err)
-}
-
-func (c *Client) completeUnderBreaker(ctx context.Context, req provider.Request) (any, error) {
-	resp, err := c.completeOnce(ctx, req)
-	if err != nil {
-		return nil, provider.ClassifyForBreaker(ctx, err)
-	}
-	return resp, nil
+	return provider.CompleteWithBreaker(ctx, provider.BreakerComplete{
+		Breaker: c.cfg.Breaker,
+		Name:    c.Name(),
+		Once:    c.completeOnce,
+	}, req)
 }
 
 func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provider.Response, error) {

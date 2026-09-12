@@ -45,3 +45,103 @@ func TestMapBreakerError_OpenRetryAfter(t *testing.T) {
 		t.Fatalf("pe=%+v", pe)
 	}
 }
+
+func TestCompleteWithBreaker_NilPassthrough(t *testing.T) {
+	t.Parallel()
+	want := Response{StatusCode: 200, ProviderRequestID: "rid"}
+	got, err := CompleteWithBreaker(context.Background(), BreakerComplete{
+		Name: "x",
+		Once: func(context.Context, Request) (Response, error) { return want, nil },
+	}, Request{Model: "m"})
+	if err != nil || got.StatusCode != want.StatusCode || got.ProviderRequestID != want.ProviderRequestID {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+func TestCompleteWithBreaker_OpenMapsRetryAfter(t *testing.T) {
+	t.Parallel()
+	cool := 12 * time.Second
+	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: "cwb", MaxFailures: 1, CoolDown: cool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = br.Execute(func() (any, error) { return nil, errors.New("fail") })
+	_, err = CompleteWithBreaker(context.Background(), BreakerComplete{
+		Breaker: br,
+		Name:    "openai",
+		Once: func(context.Context, Request) (Response, error) {
+			return Response{}, nil
+		},
+	}, Request{})
+	var pe *ProviderError
+	if !errors.As(err, &pe) || pe.Reason != ErrorReasonCircuitOpen || pe.RetryAfter != cool {
+		t.Fatalf("err=%v pe=%+v", err, pe)
+	}
+}
+
+func TestCompleteWithBreaker_BypassesSharedBreakerOnOverride(t *testing.T) {
+	t.Parallel()
+	cool := time.Minute
+	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: "byo", MaxFailures: 1, CoolDown: cool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = br.Execute(func() (any, error) { return nil, errors.New("fail") })
+	if br.State() != "open" {
+		t.Fatalf("state=%s", br.State())
+	}
+
+	called := false
+	got, err := CompleteWithBreaker(context.Background(), BreakerComplete{
+		Breaker: br,
+		Name:    "openai",
+		Once: func(context.Context, Request) (Response, error) {
+			called = true
+			return Response{StatusCode: 200, ProviderRequestID: "byo"}, nil
+		},
+	}, Request{APIKeyOverride: "sk-byo"})
+	if err != nil || !called || got.ProviderRequestID != "byo" {
+		t.Fatalf("override must bypass open breaker: called=%v got=%+v err=%v", called, got, err)
+	}
+
+	called = false
+	got, err = CompleteWithBreaker(context.Background(), BreakerComplete{
+		Breaker: br,
+		Name:    "openai",
+		Once: func(context.Context, Request) (Response, error) {
+			called = true
+			return Response{StatusCode: 200, ProviderRequestID: "url"}, nil
+		},
+	}, Request{BaseURLOverride: "https://byo.example/v1"})
+	if err != nil || !called || got.ProviderRequestID != "url" {
+		t.Fatalf("BaseURLOverride must bypass: called=%v got=%+v err=%v", called, got, err)
+	}
+}
+
+func TestDecodeBreakerResult_InvalidTypeAndPassthrough(t *testing.T) {
+	t.Parallel()
+	_, err := DecodeBreakerResult("openai", "nope", nil)
+	if err == nil || !strings.Contains(err.Error(), "unexpected result") {
+		t.Fatalf("err=%v", err)
+	}
+	_, err = MapBreakerError("openai", errors.New("transport"))
+	if err == nil || err.Error() != "transport" {
+		t.Fatalf("passthrough err=%v", err)
+	}
+	_, err = MapBreakerError("openai", circuitbreaker.ErrOpen)
+	var pe *ProviderError
+	if !errors.As(err, &pe) || pe.RetryAfter != 0 || pe.Reason != ErrorReasonCircuitOpen {
+		t.Fatalf("bare ErrOpen pe=%+v", pe)
+	}
+}
+
+func TestProviderError_HTTPStatusNilSafe(t *testing.T) {
+	t.Parallel()
+	if (*ProviderError)(nil).HTTPStatus() != 0 {
+		t.Fatal("nil HTTPStatus")
+	}
+	pe := &ProviderError{StatusCode: 429}
+	if pe.HTTPStatus() != 429 {
+		t.Fatalf("got %d", pe.HTTPStatus())
+	}
+}

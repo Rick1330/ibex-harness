@@ -1,6 +1,10 @@
 package openaicompatible
 
-import "time"
+import (
+	"time"
+
+	"github.com/Rick1330/ibex-harness/packages/provider"
+)
 
 const (
 	defaultRequestTimeout = 120 * time.Second
@@ -41,12 +45,7 @@ type Config struct {
 	ExtraModels []string
 	AuthMode    AuthMode
 	// Breaker, when non-nil, wraps each Complete attempt (self-hosted path).
-	Breaker Breaker
-}
-
-// Breaker is the circuit-breaker surface used by the self-hosted adapter.
-type Breaker interface {
-	Execute(func() (any, error)) (any, error)
+	Breaker provider.CircuitBreaker
 }
 
 // ApplyDefaults fills zero-valued fields. ProviderName and BaseURL must be set by caller.

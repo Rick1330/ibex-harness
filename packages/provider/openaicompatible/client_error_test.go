@@ -166,30 +166,6 @@ func TestClient_StreamRequiresEventStream(t *testing.T) {
 	}
 }
 
-func TestClassifyForBreaker_CallerVsUpstreamDeadline(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if !errors.Is(classifyForBreaker(ctx, context.Canceled), context.Canceled) {
-		t.Fatal("canceled")
-	}
-
-	dead, cancelDead := context.WithTimeout(context.Background(), time.Nanosecond)
-	defer cancelDead()
-	<-dead.Done()
-	if !errors.Is(classifyForBreaker(dead, context.DeadlineExceeded), context.DeadlineExceeded) {
-		t.Fatal("caller deadline")
-	}
-
-	up := classifyForBreaker(context.Background(), context.DeadlineExceeded)
-	if errors.Is(up, context.DeadlineExceeded) {
-		t.Fatal("upstream deadline must not match DeadlineExceeded")
-	}
-	if !strings.Contains(up.Error(), "upstream timed out") {
-		t.Fatalf("up=%v", up)
-	}
-}
-
 func statusServer(t *testing.T, code int, body string) *httptest.Server {
 	t.Helper()
 	payload := []byte(body)

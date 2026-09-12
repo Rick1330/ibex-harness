@@ -98,8 +98,63 @@ func TestApplySelfHostedDefaults_Breaker(t *testing.T) {
 	if cfg.ProviderBreakerCoolDown != defaultBreakerCoolDown {
 		t.Fatalf("cool=%s", cfg.ProviderBreakerCoolDown)
 	}
+	if cfg.ProviderBreakerWindow != defaultBreakerWindow {
+		t.Fatalf("window=%s", cfg.ProviderBreakerWindow)
+	}
+	if cfg.ProviderBreakerBucketPeriod != defaultBreakerBucketPeriod {
+		t.Fatalf("bucket=%s", cfg.ProviderBreakerBucketPeriod)
+	}
+	if cfg.ProviderBreakerMinSamples != defaultBreakerMinSamples {
+		t.Fatalf("min=%d", cfg.ProviderBreakerMinSamples)
+	}
+	if cfg.ProviderBreakerFailureRate != defaultBreakerFailureRate {
+		t.Fatalf("rate=%v", cfg.ProviderBreakerFailureRate)
+	}
 	if cfg.SelfHosted.ReadyTimeout != defaultSelfHostedReadyTimeout {
 		t.Fatalf("ready=%s", cfg.SelfHosted.ReadyTimeout)
+	}
+}
+
+func TestApplyProviderBreakerRollingDefaults_PreservesExplicitEnv(t *testing.T) {
+	t.Setenv("IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS", "0")
+	t.Setenv("IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS", "-1")
+	t.Setenv("IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES", "0")
+	t.Setenv("IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE", "0")
+
+	cfg := Config{
+		ProviderBreakerWindow:       durationFromEnvSeconds(0),
+		ProviderBreakerBucketPeriod: durationFromEnvSeconds(-1),
+		ProviderBreakerMinSamples:   0,
+		ProviderBreakerFailureRate:  0,
+	}
+	cfg.applySelfHostedDefaults()
+	if cfg.ProviderBreakerWindow != 0 {
+		t.Fatalf("explicit window=0 overwritten: %s", cfg.ProviderBreakerWindow)
+	}
+	if cfg.ProviderBreakerBucketPeriod != -time.Second {
+		t.Fatalf("explicit bucket=-1s overwritten: %s", cfg.ProviderBreakerBucketPeriod)
+	}
+	if cfg.ProviderBreakerMinSamples != 0 {
+		t.Fatalf("explicit min_samples=0 overwritten: %d", cfg.ProviderBreakerMinSamples)
+	}
+	if cfg.ProviderBreakerFailureRate != 0 {
+		t.Fatalf("explicit failure_rate=0 overwritten: %v", cfg.ProviderBreakerFailureRate)
+	}
+}
+
+func TestDurationFromEnvSeconds(t *testing.T) {
+	t.Parallel()
+	if durationFromEnvSeconds(0) != 0 {
+		t.Fatal("zero")
+	}
+	if durationFromEnvSeconds(-3) != -3*time.Second {
+		t.Fatal("negative preserved")
+	}
+	if durationFromEnvSeconds(30) != 30*time.Second {
+		t.Fatal("30s")
+	}
+	if durationFromEnvSeconds(9223372037) != 0 {
+		t.Fatal("overflow collapses to 0")
 	}
 }
 

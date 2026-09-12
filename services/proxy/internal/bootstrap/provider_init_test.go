@@ -1,9 +1,12 @@
 package bootstrap
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/circuitbreaker"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -353,6 +356,92 @@ func TestBuildProviderRegistry_LiveModeRequiresCredential(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewRollingProviderBreaker_UsesConfigCoolDown(t *testing.T) {
+	t.Parallel()
+	cool := 45 * time.Second
+	br, err := newRollingProviderBreaker("openai", config.Config{
+		ProviderBreakerWindow:       30 * time.Second,
+		ProviderBreakerBucketPeriod: 3 * time.Second,
+		ProviderBreakerMinSamples:   10,
+		ProviderBreakerFailureRate:  0.5,
+		ProviderBreakerCoolDown:     cool,
+	})
+	if err != nil {
+		t.Fatalf("newRollingProviderBreaker: %v", err)
+	}
+	if br.State() != "closed" {
+		t.Fatalf("state=%s", br.State())
+	}
+	for i := 0; i < 20; i++ {
+		_, _ = br.Execute(func() (any, error) { return nil, errors.New("fail") })
+	}
+	if br.State() != "open" {
+		t.Fatalf("state=%s want open after failure burst", br.State())
+	}
+	_, err = br.Execute(func() (any, error) { return "ok", nil })
+	var oe *circuitbreaker.OpenError
+	if !errors.As(err, &oe) || oe.RetryAfter != cool {
+		t.Fatalf("err=%v oe=%+v want RetryAfter=%v", err, oe, cool)
+	}
+}
+
+func TestNewRollingProviderBreaker_RejectsInvalidRollingConfig(t *testing.T) {
+	t.Parallel()
+	_, err := newRollingProviderBreaker("openai", config.Config{
+		ProviderBreakerWindow:       30 * time.Second,
+		ProviderBreakerBucketPeriod: 3 * time.Second,
+		ProviderBreakerMinSamples:   0, // explicit invalid
+		ProviderBreakerFailureRate:  0.5,
+		ProviderBreakerCoolDown:     time.Minute,
+	})
+	if err == nil || !strings.Contains(err.Error(), "circuit breaker") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewProviderBreaker_RejectsNegativeWindow(t *testing.T) {
+	t.Parallel()
+	_, err := newProviderBreaker("openai", circuitbreaker.Settings{
+		Window: -time.Second, MinSamples: 1, FailureRateThreshold: 0.5, CoolDown: time.Second,
+	})
+	if err == nil || !strings.Contains(err.Error(), "circuit breaker") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBuildProviderRegistry_LiveRejectsInvalidRollingBreaker(t *testing.T) {
+	t.Parallel()
+	_, err := buildProviderRegistry(config.Config{
+		LLMMode:                     "live",
+		OpenAI:                      config.OpenAIConfig{APIKey: "k"},
+		ProviderBreakerWindow:       30 * time.Second,
+		ProviderBreakerBucketPeriod: 3 * time.Second,
+		ProviderBreakerMinSamples:   0,
+		ProviderBreakerFailureRate:  0.5,
+		ProviderBreakerCoolDown:     time.Minute,
+	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "circuit breaker") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBuildProviderRegistry_LiveAnthropicRejectsInvalidBreaker(t *testing.T) {
+	t.Parallel()
+	// OpenAI omitted; Anthropic-only path still constructs rolling breaker.
+	_, err := buildProviderRegistry(config.Config{
+		LLMMode:                     "live",
+		Anthropic:                   config.AnthropicConfig{APIKey: "k"},
+		ProviderBreakerWindow:       30 * time.Second,
+		ProviderBreakerBucketPeriod: 60 * time.Second, // > Window
+		ProviderBreakerMinSamples:   10,
+		ProviderBreakerFailureRate:  0.5,
+		ProviderBreakerCoolDown:     time.Minute,
+	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "circuit breaker") {
 		t.Fatalf("err=%v", err)
 	}
 }

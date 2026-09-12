@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	gobreaker "github.com/sony/gobreaker/v2"
 )
 
 func mustNew(t *testing.T, s Settings) *Breaker {
@@ -281,10 +283,7 @@ func TestBreaker_RollingExcludesCanceled(t *testing.T) {
 func TestBreaker_HalfOpenSuccessCloses(t *testing.T) {
 	t.Parallel()
 	cool := 25 * time.Millisecond
-	b := mustNew(t, Settings{Name: "ho-ok", MaxFailures: 1, CoolDown: cool})
-	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
-	assertState(t, b, "open")
-	time.Sleep(cool + 20*time.Millisecond)
+	b := tripThenWaitHalfOpen(t, "ho-ok", cool)
 	out, err := b.Execute(func() (any, error) { return "ok", nil })
 	if err != nil {
 		t.Fatalf("probe: %v", err)
@@ -298,10 +297,7 @@ func TestBreaker_HalfOpenSuccessCloses(t *testing.T) {
 func TestBreaker_HalfOpenFailureReopens(t *testing.T) {
 	t.Parallel()
 	cool := 25 * time.Millisecond
-	b := mustNew(t, Settings{Name: "ho-fail", MaxFailures: 1, CoolDown: cool})
-	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
-	assertState(t, b, "open")
-	time.Sleep(cool + 20*time.Millisecond)
+	b := tripThenWaitHalfOpen(t, "ho-fail", cool)
 	fail := errors.New("probe-fail")
 	_, err := b.Execute(func() (any, error) { return nil, fail })
 	if !errors.Is(err, fail) {
@@ -317,10 +313,7 @@ func TestBreaker_HalfOpenFailureReopens(t *testing.T) {
 func TestBreaker_HalfOpenRejectsConcurrentProbe(t *testing.T) {
 	t.Parallel()
 	cool := 25 * time.Millisecond
-	b := mustNew(t, Settings{Name: "ho-race", MaxFailures: 1, CoolDown: cool})
-	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
-	assertState(t, b, "open")
-	time.Sleep(cool + 20*time.Millisecond)
+	b := tripThenWaitHalfOpen(t, "ho-race", cool)
 
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -352,6 +345,15 @@ func TestBreaker_HalfOpenRejectsConcurrentProbe(t *testing.T) {
 		t.Fatalf("upstream probes=%d want 1", got)
 	}
 	assertState(t, b, "closed")
+}
+
+func tripThenWaitHalfOpen(t *testing.T, name string, cool time.Duration) *Breaker {
+	t.Helper()
+	b := mustNew(t, Settings{Name: name, MaxFailures: 1, CoolDown: cool})
+	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
+	assertState(t, b, "open")
+	time.Sleep(cool + 20*time.Millisecond)
+	return b
 }
 
 func TestBreaker_RollingMultiBucketDecay(t *testing.T) {
@@ -406,17 +408,17 @@ func TestBreaker_ClientFault4xxDoesNotTrip(t *testing.T) {
 
 func TestBreaker_429And5xxStillTrip(t *testing.T) {
 	t.Parallel()
-	b := mustNew(t, Settings{Name: "429", MaxFailures: 2, CoolDown: time.Minute})
-	limited := stubHTTPStatus{code: http.StatusTooManyRequests, msg: "rl"}
-	_, _ = b.Execute(func() (any, error) { return nil, limited })
-	_, _ = b.Execute(func() (any, error) { return nil, limited })
-	assertState(t, b, "open")
+	assertTripsOnStatus(t, "429", http.StatusTooManyRequests)
+	assertTripsOnStatus(t, "5xx", http.StatusInternalServerError)
+}
 
-	b5 := mustNew(t, Settings{Name: "5xx", MaxFailures: 2, CoolDown: time.Minute})
-	boom := stubHTTPStatus{code: http.StatusInternalServerError, msg: "boom"}
-	_, _ = b5.Execute(func() (any, error) { return nil, boom })
-	_, _ = b5.Execute(func() (any, error) { return nil, boom })
-	assertState(t, b5, "open")
+func assertTripsOnStatus(t *testing.T, name string, code int) {
+	t.Helper()
+	b := mustNew(t, Settings{Name: name, MaxFailures: 2, CoolDown: time.Minute})
+	err := stubHTTPStatus{code: code, msg: name}
+	_, _ = b.Execute(func() (any, error) { return nil, err })
+	_, _ = b.Execute(func() (any, error) { return nil, err })
+	assertState(t, b, "open")
 }
 
 func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
@@ -441,6 +443,61 @@ func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("want error for BucketPeriod > Window")
+	}
+	_, err = New(Settings{Name: "bad", Window: -time.Second})
+	if err == nil {
+		t.Fatal("want error for negative Window")
+	}
+	_, err = New(Settings{
+		Name: "bad", Window: time.Second, MinSamples: 0, FailureRateThreshold: 0.5,
+	})
+	if err == nil {
+		t.Fatal("want error for MinSamples == 0")
+	}
+	_, err = New(Settings{
+		Name: "bad", Window: time.Second, MinSamples: 1, FailureRateThreshold: 0,
+	})
+	if err == nil {
+		t.Fatal("want error for FailureRateThreshold == 0")
+	}
+	_, err = New(Settings{
+		Name: "bad", Window: time.Second, MinSamples: 1, FailureRateThreshold: -0.1,
+	})
+	if err == nil {
+		t.Fatal("want error for negative FailureRateThreshold")
+	}
+	_, err = New(Settings{
+		Name: "bad", Window: time.Second, BucketPeriod: -time.Millisecond,
+		MinSamples: 1, FailureRateThreshold: 0.5,
+	})
+	if err == nil {
+		t.Fatal("want error for negative BucketPeriod")
+	}
+}
+
+func TestBreaker_OpenErrorMessageAndValidRequestsGuard(t *testing.T) {
+	t.Parallel()
+	oe := &OpenError{RetryAfter: time.Second}
+	if oe.Error() != ErrOpen.Error() {
+		t.Fatalf("Error=%q", oe.Error())
+	}
+	if validRequests(gobreaker.Counts{Requests: 1, TotalExclusions: 3}) != 0 {
+		t.Fatal("validRequests must floor at 0 when exclusions exceed requests")
+	}
+	if validRequests(gobreaker.Counts{Requests: 5, TotalExclusions: 2}) != 3 {
+		t.Fatal("validRequests arithmetic")
+	}
+}
+
+func TestBreaker_RollingFieldsSetDetectsFailureRateOnly(t *testing.T) {
+	t.Parallel()
+	_, err := New(Settings{Name: "bad", FailureRateThreshold: 0.5})
+	if err == nil || !strings.Contains(err.Error(), "rolling fields require Window") {
+		t.Fatalf("err=%v", err)
+	}
+	_, err = New(Settings{Name: "bad", BucketPeriod: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "rolling fields require Window") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

@@ -102,8 +102,8 @@ func loadFromEnv() (Config, error) {
 	cfg.SelfHosted = sh
 	cfg.ProviderBreakerFailures = envCfg.ProviderBreakerFailures
 	cfg.ProviderBreakerCoolDown = cooldownFromSeconds(envCfg.ProviderBreakerCoolSecs)
-	cfg.ProviderBreakerWindow = cooldownFromSeconds(envCfg.ProviderBreakerWindowSecs)
-	cfg.ProviderBreakerBucketPeriod = cooldownFromSeconds(envCfg.ProviderBreakerBucketSecs)
+	cfg.ProviderBreakerWindow = durationFromEnvSeconds(envCfg.ProviderBreakerWindowSecs)
+	cfg.ProviderBreakerBucketPeriod = durationFromEnvSeconds(envCfg.ProviderBreakerBucketSecs)
 	cfg.ProviderBreakerMinSamples = envCfg.ProviderBreakerMinSamples
 	cfg.ProviderBreakerFailureRate = envCfg.ProviderBreakerFailRate
 	overlays, err := ParseCapabilityOverlays(envCfg.ModelCapabilityOverlays)
@@ -161,6 +161,17 @@ func cooldownFromSeconds(secs int) time.Duration {
 	// Max seconds that fit in time.Duration without overflow (math.MaxInt64 / 1e9).
 	const maxCooldownSeconds = 9223372036
 	if secs <= 0 || secs > maxCooldownSeconds {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// durationFromEnvSeconds preserves explicit non-positive values (including
+// negatives) so ApplyDefaults can leave them for circuitbreaker validation.
+// Values above the Duration-safe second cap collapse to 0 (invalid).
+func durationFromEnvSeconds(secs int) time.Duration {
+	const maxSeconds = 9223372036
+	if secs > maxSeconds {
 		return 0
 	}
 	return time.Duration(secs) * time.Second

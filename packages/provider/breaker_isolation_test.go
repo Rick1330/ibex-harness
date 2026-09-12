@@ -18,47 +18,97 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 )
 
-// Per-provider isolation: tripping Anthropic must not affect OpenAI or self-hosted.
+// Per-provider isolation: tripping any one breaker must not affect the other two.
 func TestPerProviderCircuitBreakerIsolation(t *testing.T) {
 	t.Parallel()
-
 	failSrv, okSrv := isolationServers(t)
-	cool := time.Minute
-	anthBr := mustBreaker(t, circuitbreaker.Settings{
-		Name: "anthropic", Window: time.Minute, BucketPeriod: time.Minute,
-		MinSamples: 2, FailureRateThreshold: 0.5, CoolDown: cool,
-	})
-	oaiBr := mustBreaker(t, circuitbreaker.Settings{
-		Name: "openai", Window: time.Minute, BucketPeriod: time.Minute,
-		MinSamples: 10, FailureRateThreshold: 0.5, CoolDown: cool,
-	})
-	shBr := mustBreaker(t, circuitbreaker.Settings{
-		Name: "openaicompatible", MaxFailures: 5, CoolDown: cool,
-	})
 
+	t.Run("trip_anthropic", func(t *testing.T) {
+		t.Parallel()
+		fx := newIsolationFixture(t, failSrv, okSrv)
+		tripProviderBreaker(t, fx.anthFail, fx.anthReq, fx.cool, 2)
+		assertCompleteOK(t, fx.oaiOK, fx.oaiReq)
+		assertCompleteOK(t, fx.shOK, fx.shReq)
+	})
+	t.Run("trip_openai", func(t *testing.T) {
+		t.Parallel()
+		fx := newIsolationFixture(t, failSrv, okSrv)
+		tripProviderBreaker(t, fx.oaiFail, fx.oaiReq, fx.cool, 2)
+		assertCompleteOK(t, fx.anthOK, fx.anthReq)
+		assertCompleteOK(t, fx.shOK, fx.shReq)
+	})
+	t.Run("trip_selfhosted", func(t *testing.T) {
+		t.Parallel()
+		fx := newIsolationFixture(t, failSrv, okSrv)
+		tripProviderBreaker(t, fx.shFail, fx.shReq, fx.cool, 2)
+		assertCompleteOK(t, fx.anthOK, fx.anthReq)
+		assertCompleteOK(t, fx.oaiOK, fx.oaiReq)
+	})
+}
+
+type isolationFixture struct {
+	cool                   time.Duration
+	anthFail, anthOK       provider.Provider
+	oaiFail, oaiOK         provider.Provider
+	shFail, shOK           provider.Provider
+	anthReq, oaiReq, shReq provider.Request
+}
+
+func newIsolationFixture(t *testing.T, failSrv, okSrv *httptest.Server) isolationFixture {
+	t.Helper()
+	cool := time.Minute
 	zero := 0
 	log := logger.Discard("t")
 	tr := telemetry.NoopTracer("t")
-	anthFail := anthropic.New(anthropic.Config{
-		APIKey: "k", BaseURL: failSrv.URL, MaxRetries: &zero, Breaker: anthBr,
-	}, log, tr, nil)
-	oai := openai.New(openai.Config{
-		APIKey: "k", BaseURL: okSrv.URL + "/v1", MaxRetries: &zero, Breaker: oaiBr,
-	}, log, tr, nil)
-	sh := openaicompatible.New(openaicompatible.Config{
-		ProviderName: openaicompatible.ProviderNameSelfHosted,
-		APIKey:       "", BaseURL: okSrv.URL + "/v1", MaxRetries: &zero,
-		AuthMode: openaicompatible.AuthBearerOmitEmpty, ExtraModels: []string{"local-m"},
-		Breaker: shBr,
-	}, log, tr, nil)
+	suffix := t.Name()
 
-	tripAnthropicBreaker(t, anthFail, cool)
-	assertCompleteOK(t, oai, provider.Request{
-		Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	anthBr := mustBreaker(t, circuitbreaker.Settings{
+		Name: "anthropic-" + suffix, Window: time.Minute, BucketPeriod: time.Minute,
+		MinSamples: 2, FailureRateThreshold: 0.5, CoolDown: cool,
 	})
-	assertCompleteOK(t, sh, provider.Request{
-		Model: "local-m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	oaiBr := mustBreaker(t, circuitbreaker.Settings{
+		Name: "openai-" + suffix, MaxFailures: 2, CoolDown: cool,
 	})
+	shBr := mustBreaker(t, circuitbreaker.Settings{
+		Name: "openaicompatible-" + suffix, MaxFailures: 2, CoolDown: cool,
+	})
+
+	return isolationFixture{
+		cool: cool,
+		anthFail: anthropic.New(anthropic.Config{
+			APIKey: "k", BaseURL: failSrv.URL, MaxRetries: &zero, Breaker: anthBr,
+		}, log, tr, nil),
+		anthOK: anthropic.New(anthropic.Config{
+			APIKey: "k", BaseURL: okSrv.URL, MaxRetries: &zero, Breaker: anthBr,
+		}, log, tr, nil),
+		oaiFail: openai.New(openai.Config{
+			APIKey: "k", BaseURL: failSrv.URL + "/v1", MaxRetries: &zero, Breaker: oaiBr,
+		}, log, tr, nil),
+		oaiOK: openai.New(openai.Config{
+			APIKey: "k", BaseURL: okSrv.URL + "/v1", MaxRetries: &zero, Breaker: oaiBr,
+		}, log, tr, nil),
+		shFail: openaicompatible.New(openaicompatible.Config{
+			ProviderName: openaicompatible.ProviderNameSelfHosted,
+			APIKey:       "", BaseURL: failSrv.URL + "/v1", MaxRetries: &zero,
+			AuthMode: openaicompatible.AuthBearerOmitEmpty, ExtraModels: []string{"local-m"},
+			Breaker: shBr,
+		}, log, tr, nil),
+		shOK: openaicompatible.New(openaicompatible.Config{
+			ProviderName: openaicompatible.ProviderNameSelfHosted,
+			APIKey:       "", BaseURL: okSrv.URL + "/v1", MaxRetries: &zero,
+			AuthMode: openaicompatible.AuthBearerOmitEmpty, ExtraModels: []string{"local-m"},
+			Breaker: shBr,
+		}, log, tr, nil),
+		anthReq: provider.Request{
+			Model: "claude-sonnet-4-5", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		},
+		oaiReq: provider.Request{
+			Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		},
+		shReq: provider.Request{
+			Model: "local-m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		},
+	}
 }
 
 func isolationServers(t *testing.T) (failSrv, okSrv *httptest.Server) {
@@ -93,25 +143,21 @@ func mustBreaker(t *testing.T, s circuitbreaker.Settings) *circuitbreaker.Breake
 	return br
 }
 
-func tripAnthropicBreaker(t *testing.T, c *anthropic.Client, cool time.Duration) {
+func tripProviderBreaker(t *testing.T, p provider.Provider, req provider.Request, cool time.Duration, failures int) {
 	t.Helper()
-	req := provider.Request{
-		Model:    "claude-sonnet-4-5",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	for i := 0; i < failures; i++ {
+		_, _ = p.Complete(context.Background(), req)
 	}
-	for i := 0; i < 2; i++ {
-		_, _ = c.Complete(context.Background(), req)
-	}
-	_, err := c.Complete(context.Background(), req)
+	_, err := p.Complete(context.Background(), req)
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) {
-		t.Fatalf("anthropic want circuit_open, got %v", err)
+		t.Fatalf("%s want circuit_open, got %v", p.Name(), err)
 	}
 	if pe.Reason != provider.ErrorReasonCircuitOpen {
-		t.Fatalf("Reason=%q", pe.Reason)
+		t.Fatalf("%s Reason=%q", p.Name(), pe.Reason)
 	}
 	if pe.RetryAfter != cool {
-		t.Fatalf("RetryAfter=%v", pe.RetryAfter)
+		t.Fatalf("%s RetryAfter=%v", p.Name(), pe.RetryAfter)
 	}
 }
 
@@ -119,7 +165,7 @@ func assertCompleteOK(t *testing.T, p provider.Provider, req provider.Request) {
 	t.Helper()
 	resp, err := p.Complete(context.Background(), req)
 	if err != nil {
-		t.Fatalf("%s affected by anthropic breaker: %v", p.Name(), err)
+		t.Fatalf("%s affected by foreign breaker: %v", p.Name(), err)
 	}
 	_ = resp.Body.Close()
 }

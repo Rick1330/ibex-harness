@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -309,20 +310,32 @@ func (c *Config) applySelfHostedDefaults() {
 	if c.ProviderBreakerCoolDown <= 0 {
 		c.ProviderBreakerCoolDown = defaultBreakerCoolDown
 	}
-	if c.ProviderBreakerWindow <= 0 {
-		c.ProviderBreakerWindow = defaultBreakerWindow
-	}
-	if c.ProviderBreakerBucketPeriod <= 0 {
-		c.ProviderBreakerBucketPeriod = defaultBreakerBucketPeriod
-	}
-	if c.ProviderBreakerMinSamples == 0 {
-		c.ProviderBreakerMinSamples = defaultBreakerMinSamples
-	}
-	if c.ProviderBreakerFailureRate <= 0 {
-		c.ProviderBreakerFailureRate = defaultBreakerFailureRate
-	}
+	applyProviderBreakerRollingDefaults(c)
 	c.SelfHosted.BreakerFailures = c.ProviderBreakerFailures
 	c.SelfHosted.BreakerCoolDown = c.ProviderBreakerCoolDown
+}
+
+// applyProviderBreakerRollingDefaults fills rolling knobs only when the matching
+// env var is unset. Explicit non-positive values are preserved so
+// circuitbreaker.New / bootstrap surfaces a configuration error.
+func applyProviderBreakerRollingDefaults(c *Config) {
+	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS") && c.ProviderBreakerWindow <= 0 {
+		c.ProviderBreakerWindow = defaultBreakerWindow
+	}
+	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS") && c.ProviderBreakerBucketPeriod <= 0 {
+		c.ProviderBreakerBucketPeriod = defaultBreakerBucketPeriod
+	}
+	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES") && c.ProviderBreakerMinSamples == 0 {
+		c.ProviderBreakerMinSamples = defaultBreakerMinSamples
+	}
+	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE") && c.ProviderBreakerFailureRate <= 0 {
+		c.ProviderBreakerFailureRate = defaultBreakerFailureRate
+	}
+}
+
+func envIsSet(key string) bool {
+	_, set := os.LookupEnv(key)
+	return set
 }
 
 func (c *Config) applyOpenAIDefaults() {
