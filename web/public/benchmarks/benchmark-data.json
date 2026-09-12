@@ -3,6 +3,203 @@
   "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
   "runs": [
     {
+      "sha": "082d97d3dae81afff259bf30f108d97126cddc13",
+      "short_sha": "082d97d",
+      "timestamp": "2026-09-12T17:50:07.309423+00:00",
+      "branch": "main",
+      "pr_number": null,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/34709228893",
+      "status": "pass",
+      "regression_vs_baseline_pct": -92.21326525000002,
+      "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
+      "profile": "fast",
+      "run_number": 1197,
+      "go_version": "1.25.13",
+      "runner_os": "Linux",
+      "runner_cpu": "x86_64",
+      "runner_vcpus": 2,
+      "runner_ram_gb": 7,
+      "k6_version": "0.53.0",
+      "k6": {
+        "vus": 100,
+        "duration_s": 120.0,
+        "p50_ms": 0.5228295000000001,
+        "p95_ms": 1.03343775,
+        "p99_ms": 1.5573469499999957,
+        "p999_ms": 2.5239249650000026,
+        "req_per_s": 2261.0009200748545,
+        "error_rate": 0.0,
+        "check_rate": 1.0,
+        "throughput_series": [
+          {
+            "t_s": 0.0,
+            "req_per_s": 0.0
+          },
+          {
+            "t_s": 10.0,
+            "req_per_s": 1317.87
+          },
+          {
+            "t_s": 20.0,
+            "req_per_s": 2090.17
+          },
+          {
+            "t_s": 30.0,
+            "req_per_s": 1938.62
+          },
+          {
+            "t_s": 40.0,
+            "req_per_s": 2259.67
+          },
+          {
+            "t_s": 50.0,
+            "req_per_s": 2328.49
+          },
+          {
+            "t_s": 60.0,
+            "req_per_s": 1989.71
+          },
+          {
+            "t_s": 70.0,
+            "req_per_s": 2008.19
+          },
+          {
+            "t_s": 80.0,
+            "req_per_s": 2342.21
+          },
+          {
+            "t_s": 90.0,
+            "req_per_s": 2237.65
+          },
+          {
+            "t_s": 100.0,
+            "req_per_s": 1930.58
+          },
+          {
+            "t_s": 110.0,
+            "req_per_s": 2114.26
+          },
+          {
+            "t_s": 120.0,
+            "req_per_s": 2374.0
+          }
+        ]
+      },
+      "stages": {
+        "auth_lru_p50_ms": 0.000264,
+        "auth_lru_p95_ms": 0.000408,
+        "auth_lru_p99_ms": 0.00048,
+        "auth_lru_p999_ms": 0.000647,
+        "auth_grpc_p50_ms": 0.000113,
+        "auth_grpc_p95_ms": 0.000175,
+        "auth_grpc_p99_ms": 0.000206,
+        "auth_grpc_p999_ms": 0.000277,
+        "rate_limit_p50_ms": 0.095327,
+        "rate_limit_p95_ms": 0.147323,
+        "rate_limit_p99_ms": 0.173321,
+        "rate_limit_p999_ms": 0.233983,
+        "directive_resolve_p50_ms": 0.044228,
+        "directive_resolve_p95_ms": 0.068353,
+        "directive_resolve_p99_ms": 0.080415,
+        "directive_resolve_p999_ms": 0.10856,
+        "prompt_inject_p50_ms": 2.7e-05,
+        "prompt_inject_p95_ms": 4.1e-05,
+        "prompt_inject_p99_ms": 4.8e-05,
+        "prompt_inject_p999_ms": 6.5e-05,
+        "total_overhead_p50_ms": 0.146342,
+        "total_overhead_p95_ms": 0.226165,
+        "total_overhead_p99_ms": 0.266077,
+        "total_overhead_p999_ms": 0.359204
+      },
+      "metric_deltas": {
+        "k6.p99_ms": -92.21326525000002
+      },
+      "go_benchmarks": {
+        "BenchmarkStageAuth": {
+          "ns_per_op": 685.1,
+          "allocs_per_op": 5.0,
+          "bytes_per_op": 336.0,
+          "samples": 5,
+          "ci_95_low": 650.845,
+          "ci_95_high": 719.355,
+          "geomean_ns": 685.1
+        },
+        "BenchmarkStageRateLimit": {
+          "ns_per_op": 173321.0,
+          "allocs_per_op": 823.0,
+          "bytes_per_op": 196374.0,
+          "samples": 5,
+          "ci_95_low": 164654.94999999998,
+          "ci_95_high": 181987.05000000002,
+          "geomean_ns": 173321.0
+        },
+        "BenchmarkStageDirectiveResolve": {
+          "ns_per_op": 80415.0,
+          "allocs_per_op": 38.0,
+          "bytes_per_op": 1568.0,
+          "samples": 5,
+          "ci_95_low": 76394.25,
+          "ci_95_high": 84435.75,
+          "geomean_ns": 80415.0
+        },
+        "BenchmarkStagePromptInject": {
+          "ns_per_op": 48.2,
+          "allocs_per_op": 1.0,
+          "bytes_per_op": 96.0,
+          "samples": 5,
+          "ci_95_low": 45.79,
+          "ci_95_high": 50.61000000000001,
+          "geomean_ns": 48.2
+        },
+        "BenchmarkProxyOverhead": {
+          "ns_per_op": 266077.0,
+          "allocs_per_op": 867.0,
+          "bytes_per_op": 198383.0,
+          "samples": 5,
+          "ci_95_low": 252773.15,
+          "ci_95_high": 279380.85000000003,
+          "geomean_ns": 266077.0
+        },
+        "BenchmarkProxyChatOverhead": {
+          "ns_per_op": 406766.0,
+          "allocs_per_op": 1101.0,
+          "bytes_per_op": 229616.0,
+          "samples": 5,
+          "ci_95_low": 386427.69999999995,
+          "ci_95_high": 427104.30000000005,
+          "geomean_ns": 406766.0
+        },
+        "BenchmarkProxyChatOverheadParallel": {
+          "ns_per_op": 157696.0,
+          "allocs_per_op": 1101.0,
+          "bytes_per_op": 229668.0,
+          "samples": 5,
+          "ci_95_low": 149811.19999999998,
+          "ci_95_high": 165580.80000000002,
+          "geomean_ns": 157696.0
+        },
+        "BenchmarkProxyChatOverheadWithAssemble": {
+          "ns_per_op": 406935.0,
+          "allocs_per_op": 1111.0,
+          "bytes_per_op": 229936.0,
+          "samples": 5,
+          "ci_95_low": 386588.25,
+          "ci_95_high": 427281.75,
+          "geomean_ns": 406935.0
+        },
+        "BenchmarkProxyHealth": {
+          "ns_per_op": 5037.0,
+          "allocs_per_op": 44.0,
+          "bytes_per_op": 4344.0,
+          "samples": 5,
+          "ci_95_low": 4785.15,
+          "ci_95_high": 5288.85,
+          "geomean_ns": 5037.0
+        }
+      },
+      "stage_model": "go_microbench_warm_path"
+    },
+    {
       "sha": "ad90879619be411d64dfd86a46f86355f6acc256",
       "short_sha": "ad90879",
       "timestamp": "2026-09-10T19:18:06.695715+00:00",
