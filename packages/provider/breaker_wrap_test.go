@@ -81,8 +81,14 @@ func TestCompleteWithBreaker_OpenMapsRetryAfter(t *testing.T) {
 
 func TestCompleteWithBreaker_BypassesSharedBreakerOnOverride(t *testing.T) {
 	t.Parallel()
-	cool := time.Minute
-	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: "byo", MaxFailures: 1, CoolDown: cool})
+	br := openBreaker(t, "byo", time.Minute)
+	assertOverrideBypasses(t, br, Request{APIKeyOverride: "sk-byo"}, "byo")
+	assertOverrideBypasses(t, br, Request{BaseURLOverride: "https://byo.example/v1"}, "url")
+}
+
+func openBreaker(t *testing.T, name string, cool time.Duration) *circuitbreaker.Breaker {
+	t.Helper()
+	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: name, MaxFailures: 1, CoolDown: cool})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,31 +96,20 @@ func TestCompleteWithBreaker_BypassesSharedBreakerOnOverride(t *testing.T) {
 	if br.State() != "open" {
 		t.Fatalf("state=%s", br.State())
 	}
+	return br
+}
 
-	called := false
+func assertOverrideBypasses(t *testing.T, br *circuitbreaker.Breaker, req Request, wantID string) {
+	t.Helper()
 	got, err := CompleteWithBreaker(context.Background(), BreakerComplete{
 		Breaker: br,
 		Name:    "openai",
 		Once: func(context.Context, Request) (Response, error) {
-			called = true
-			return Response{StatusCode: 200, ProviderRequestID: "byo"}, nil
+			return Response{StatusCode: 200, ProviderRequestID: wantID}, nil
 		},
-	}, Request{APIKeyOverride: "sk-byo"})
-	if err != nil || !called || got.ProviderRequestID != "byo" {
-		t.Fatalf("override must bypass open breaker: called=%v got=%+v err=%v", called, got, err)
-	}
-
-	called = false
-	got, err = CompleteWithBreaker(context.Background(), BreakerComplete{
-		Breaker: br,
-		Name:    "openai",
-		Once: func(context.Context, Request) (Response, error) {
-			called = true
-			return Response{StatusCode: 200, ProviderRequestID: "url"}, nil
-		},
-	}, Request{BaseURLOverride: "https://byo.example/v1"})
-	if err != nil || !called || got.ProviderRequestID != "url" {
-		t.Fatalf("BaseURLOverride must bypass: called=%v got=%+v err=%v", called, got, err)
+	}, req)
+	if err != nil || got.ProviderRequestID != wantID {
+		t.Fatalf("override must bypass open breaker: got=%+v err=%v", got, err)
 	}
 }
 

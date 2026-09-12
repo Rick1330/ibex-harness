@@ -26,21 +26,21 @@ func TestPerProviderCircuitBreakerIsolation(t *testing.T) {
 	t.Run("trip_anthropic", func(t *testing.T) {
 		t.Parallel()
 		fx := newIsolationFixture(t, failSrv, okSrv)
-		tripProviderBreaker(t, fx.anthFail, fx.anthReq, fx.cool, 2)
+		tripProviderBreaker(t, tripArgs{Provider: fx.anthFail, Req: fx.anthReq, Cool: fx.cool, Failures: 2})
 		assertCompleteOK(t, fx.oaiOK, fx.oaiReq)
 		assertCompleteOK(t, fx.shOK, fx.shReq)
 	})
 	t.Run("trip_openai", func(t *testing.T) {
 		t.Parallel()
 		fx := newIsolationFixture(t, failSrv, okSrv)
-		tripProviderBreaker(t, fx.oaiFail, fx.oaiReq, fx.cool, 2)
+		tripProviderBreaker(t, tripArgs{Provider: fx.oaiFail, Req: fx.oaiReq, Cool: fx.cool, Failures: 2})
 		assertCompleteOK(t, fx.anthOK, fx.anthReq)
 		assertCompleteOK(t, fx.shOK, fx.shReq)
 	})
 	t.Run("trip_selfhosted", func(t *testing.T) {
 		t.Parallel()
 		fx := newIsolationFixture(t, failSrv, okSrv)
-		tripProviderBreaker(t, fx.shFail, fx.shReq, fx.cool, 2)
+		tripProviderBreaker(t, tripArgs{Provider: fx.shFail, Req: fx.shReq, Cool: fx.cool, Failures: 2})
 		assertCompleteOK(t, fx.anthOK, fx.anthReq)
 		assertCompleteOK(t, fx.oaiOK, fx.oaiReq)
 	})
@@ -143,21 +143,28 @@ func mustBreaker(t *testing.T, s circuitbreaker.Settings) *circuitbreaker.Breake
 	return br
 }
 
-func tripProviderBreaker(t *testing.T, p provider.Provider, req provider.Request, cool time.Duration, failures int) {
+type tripArgs struct {
+	Provider provider.Provider
+	Req      provider.Request
+	Cool     time.Duration
+	Failures int
+}
+
+func tripProviderBreaker(t *testing.T, a tripArgs) {
 	t.Helper()
-	for i := 0; i < failures; i++ {
-		_, _ = p.Complete(context.Background(), req)
+	for i := 0; i < a.Failures; i++ {
+		_, _ = a.Provider.Complete(context.Background(), a.Req)
 	}
-	_, err := p.Complete(context.Background(), req)
+	_, err := a.Provider.Complete(context.Background(), a.Req)
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) {
-		t.Fatalf("%s want circuit_open, got %v", p.Name(), err)
+		t.Fatalf("%s want circuit_open, got %v", a.Provider.Name(), err)
 	}
 	if pe.Reason != provider.ErrorReasonCircuitOpen {
-		t.Fatalf("%s Reason=%q", p.Name(), pe.Reason)
+		t.Fatalf("%s Reason=%q", a.Provider.Name(), pe.Reason)
 	}
-	if pe.RetryAfter != cool {
-		t.Fatalf("%s RetryAfter=%v", p.Name(), pe.RetryAfter)
+	if pe.RetryAfter != a.Cool {
+		t.Fatalf("%s RetryAfter=%v", a.Provider.Name(), pe.RetryAfter)
 	}
 }
 

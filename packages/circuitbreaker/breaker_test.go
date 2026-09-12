@@ -423,55 +423,32 @@ func assertTripsOnStatus(t *testing.T, name string, code int) {
 
 func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
 	t.Parallel()
-	_, err := New(Settings{Name: "bad", MinSamples: 10})
-	if err == nil {
-		t.Fatal("want error for MinSamples without Window")
+	cases := []struct {
+		name string
+		s    Settings
+	}{
+		{"min_without_window", Settings{Name: "bad", MinSamples: 10}},
+		{"rate_gt_one", Settings{Name: "bad", Window: time.Second, FailureRateThreshold: 1.5, MinSamples: 1}},
+		{"rate_nan", Settings{Name: "bad", Window: time.Second, FailureRateThreshold: math.NaN(), MinSamples: 1}},
+		{"bucket_gt_window", Settings{Name: "bad", Window: time.Second, BucketPeriod: 2 * time.Second, MinSamples: 1, FailureRateThreshold: 0.5}},
+		{"neg_window", Settings{Name: "bad", Window: -time.Second}},
+		{"min_zero", Settings{Name: "bad", Window: time.Second, MinSamples: 0, FailureRateThreshold: 0.5}},
+		{"rate_zero", Settings{Name: "bad", Window: time.Second, MinSamples: 1, FailureRateThreshold: 0}},
+		{"rate_neg", Settings{Name: "bad", Window: time.Second, MinSamples: 1, FailureRateThreshold: -0.1}},
+		{"bucket_neg", Settings{Name: "bad", Window: time.Second, BucketPeriod: -time.Millisecond, MinSamples: 1, FailureRateThreshold: 0.5}},
 	}
-	_, err = New(Settings{Name: "bad", Window: time.Second, FailureRateThreshold: 1.5, MinSamples: 1})
-	if err == nil {
-		t.Fatal("want error for rate > 1")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertNewRejects(t, tc.s)
+		})
 	}
-	_, err = New(Settings{
-		Name: "bad", Window: time.Second, FailureRateThreshold: math.NaN(), MinSamples: 1,
-	})
-	if err == nil {
-		t.Fatal("want error for NaN rate")
-	}
-	_, err = New(Settings{
-		Name: "bad", Window: time.Second, BucketPeriod: 2 * time.Second,
-		MinSamples: 1, FailureRateThreshold: 0.5,
-	})
-	if err == nil {
-		t.Fatal("want error for BucketPeriod > Window")
-	}
-	_, err = New(Settings{Name: "bad", Window: -time.Second})
-	if err == nil {
-		t.Fatal("want error for negative Window")
-	}
-	_, err = New(Settings{
-		Name: "bad", Window: time.Second, MinSamples: 0, FailureRateThreshold: 0.5,
-	})
-	if err == nil {
-		t.Fatal("want error for MinSamples == 0")
-	}
-	_, err = New(Settings{
-		Name: "bad", Window: time.Second, MinSamples: 1, FailureRateThreshold: 0,
-	})
-	if err == nil {
-		t.Fatal("want error for FailureRateThreshold == 0")
-	}
-	_, err = New(Settings{
-		Name: "bad", Window: time.Second, MinSamples: 1, FailureRateThreshold: -0.1,
-	})
-	if err == nil {
-		t.Fatal("want error for negative FailureRateThreshold")
-	}
-	_, err = New(Settings{
-		Name: "bad", Window: time.Second, BucketPeriod: -time.Millisecond,
-		MinSamples: 1, FailureRateThreshold: 0.5,
-	})
-	if err == nil {
-		t.Fatal("want error for negative BucketPeriod")
+}
+
+func assertNewRejects(t *testing.T, s Settings) {
+	t.Helper()
+	if _, err := New(s); err == nil {
+		t.Fatal("want New error")
 	}
 }
 

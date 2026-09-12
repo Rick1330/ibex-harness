@@ -319,18 +319,40 @@ func (c *Config) applySelfHostedDefaults() {
 // env var is unset. Explicit non-positive values are preserved so
 // circuitbreaker.New / bootstrap surfaces a configuration error.
 func applyProviderBreakerRollingDefaults(c *Config) {
-	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS") && c.ProviderBreakerWindow <= 0 {
-		c.ProviderBreakerWindow = defaultBreakerWindow
+	defaultDurationUnlessEnv(&c.ProviderBreakerWindow, "IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS", defaultBreakerWindow)
+	defaultDurationUnlessEnv(&c.ProviderBreakerBucketPeriod, "IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS", defaultBreakerBucketPeriod)
+	defaultUint32UnlessEnv(&c.ProviderBreakerMinSamples, "IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES", defaultBreakerMinSamples)
+	defaultFloatUnlessEnv(&c.ProviderBreakerFailureRate, "IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE", defaultBreakerFailureRate)
+}
+
+func defaultDurationUnlessEnv(dst *time.Duration, env string, def time.Duration) {
+	if envIsSet(env) {
+		return
 	}
-	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS") && c.ProviderBreakerBucketPeriod <= 0 {
-		c.ProviderBreakerBucketPeriod = defaultBreakerBucketPeriod
+	if *dst > 0 {
+		return
 	}
-	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES") && c.ProviderBreakerMinSamples == 0 {
-		c.ProviderBreakerMinSamples = defaultBreakerMinSamples
+	*dst = def
+}
+
+func defaultUint32UnlessEnv(dst *uint32, env string, def uint32) {
+	if envIsSet(env) {
+		return
 	}
-	if !envIsSet("IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE") && c.ProviderBreakerFailureRate <= 0 {
-		c.ProviderBreakerFailureRate = defaultBreakerFailureRate
+	if *dst != 0 {
+		return
 	}
+	*dst = def
+}
+
+func defaultFloatUnlessEnv(dst *float64, env string, def float64) {
+	if envIsSet(env) {
+		return
+	}
+	if *dst > 0 {
+		return
+	}
+	*dst = def
 }
 
 func envIsSet(key string) bool {

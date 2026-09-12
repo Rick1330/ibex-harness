@@ -89,6 +89,11 @@ func TestApplySelfHostedDefaults_Breaker(t *testing.T) {
 		SelfHosted: SelfHostedConfig{Enabled: true, BaseURL: "http://127.0.0.1:8000/v1/"},
 	}
 	cfg.applySelfHostedDefaults()
+	assertBreakerDefaults(t, cfg)
+}
+
+func assertBreakerDefaults(t *testing.T, cfg Config) {
+	t.Helper()
 	if cfg.SelfHosted.BaseURL != "http://127.0.0.1:8000/v1" {
 		t.Fatalf("BaseURL=%q", cfg.SelfHosted.BaseURL)
 	}
@@ -98,6 +103,14 @@ func TestApplySelfHostedDefaults_Breaker(t *testing.T) {
 	if cfg.ProviderBreakerCoolDown != defaultBreakerCoolDown {
 		t.Fatalf("cool=%s", cfg.ProviderBreakerCoolDown)
 	}
+	assertRollingDefaults(t, cfg)
+	if cfg.SelfHosted.ReadyTimeout != defaultSelfHostedReadyTimeout {
+		t.Fatalf("ready=%s", cfg.SelfHosted.ReadyTimeout)
+	}
+}
+
+func assertRollingDefaults(t *testing.T, cfg Config) {
+	t.Helper()
 	if cfg.ProviderBreakerWindow != defaultBreakerWindow {
 		t.Fatalf("window=%s", cfg.ProviderBreakerWindow)
 	}
@@ -109,9 +122,6 @@ func TestApplySelfHostedDefaults_Breaker(t *testing.T) {
 	}
 	if cfg.ProviderBreakerFailureRate != defaultBreakerFailureRate {
 		t.Fatalf("rate=%v", cfg.ProviderBreakerFailureRate)
-	}
-	if cfg.SelfHosted.ReadyTimeout != defaultSelfHostedReadyTimeout {
-		t.Fatalf("ready=%s", cfg.SelfHosted.ReadyTimeout)
 	}
 }
 
