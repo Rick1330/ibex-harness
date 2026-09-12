@@ -124,25 +124,31 @@ type Config struct {
 	Tokenizer            TokenizerConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
-	// Provider circuit breaker (shared defaults; applied to self-hosted path).
-	ProviderBreakerFailures uint32
-	ProviderBreakerCoolDown time.Duration
-	PostgresDSN             string
-	DirectiveCacheTTL       time.Duration
-	SessionCacheTTL         time.Duration
-	CheckpointWorkers       int
-	CheckpointQueue         int
-	SessionGetOrCreateTO    time.Duration
-	SessionIdleTimeout      time.Duration
-	SessionSweepInterval    time.Duration
-	ClickHouseDSN           string
-	ClickHouseBatchSize     int
-	ClickHouseFlushMS       int
-	IdempotencyTTL          time.Duration
-	IdempotencyRedisTimeout time.Duration
-	ExtractionTurnsTTL      time.Duration
-	WorkerEnqueueBaseURL    string
-	WorkerEnqueueAPIToken   string
+	// Provider circuit breaker (shared defaults).
+	// FAILURES/COOLDOWN apply to self-hosted consecutive mode; WINDOW/BUCKET/
+	// MIN_SAMPLES/FAILURE_RATE apply to hosted OpenAI + Anthropic rolling mode.
+	ProviderBreakerFailures     uint32
+	ProviderBreakerCoolDown     time.Duration
+	ProviderBreakerWindow       time.Duration
+	ProviderBreakerBucketPeriod time.Duration
+	ProviderBreakerMinSamples   uint32
+	ProviderBreakerFailureRate  float64
+	PostgresDSN                 string
+	DirectiveCacheTTL           time.Duration
+	SessionCacheTTL             time.Duration
+	CheckpointWorkers           int
+	CheckpointQueue             int
+	SessionGetOrCreateTO        time.Duration
+	SessionIdleTimeout          time.Duration
+	SessionSweepInterval        time.Duration
+	ClickHouseDSN               string
+	ClickHouseBatchSize         int
+	ClickHouseFlushMS           int
+	IdempotencyTTL              time.Duration
+	IdempotencyRedisTimeout     time.Duration
+	ExtractionTurnsTTL          time.Duration
+	WorkerEnqueueBaseURL        string
+	WorkerEnqueueAPIToken       string
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -302,6 +308,18 @@ func (c *Config) applySelfHostedDefaults() {
 	}
 	if c.ProviderBreakerCoolDown <= 0 {
 		c.ProviderBreakerCoolDown = defaultBreakerCoolDown
+	}
+	if c.ProviderBreakerWindow <= 0 {
+		c.ProviderBreakerWindow = defaultBreakerWindow
+	}
+	if c.ProviderBreakerBucketPeriod <= 0 {
+		c.ProviderBreakerBucketPeriod = defaultBreakerBucketPeriod
+	}
+	if c.ProviderBreakerMinSamples == 0 {
+		c.ProviderBreakerMinSamples = defaultBreakerMinSamples
+	}
+	if c.ProviderBreakerFailureRate <= 0 {
+		c.ProviderBreakerFailureRate = defaultBreakerFailureRate
 	}
 	c.SelfHosted.BreakerFailures = c.ProviderBreakerFailures
 	c.SelfHosted.BreakerCoolDown = c.ProviderBreakerCoolDown

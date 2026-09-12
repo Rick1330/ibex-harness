@@ -12,6 +12,10 @@ const (
 	defaultSelfHostedReadyInterval = 2 * time.Second
 	defaultBreakerFailures         = 5
 	defaultBreakerCoolDown         = 30 * time.Second
+	defaultBreakerWindow           = 30 * time.Second
+	defaultBreakerBucketPeriod     = 3 * time.Second
+	defaultBreakerMinSamples       = 10
+	defaultBreakerFailureRate      = 0.5
 )
 
 // SelfHostedConfig holds OpenAI-compatible self-hosted backend settings (vLLM-first).

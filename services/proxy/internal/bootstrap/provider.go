@@ -200,28 +200,38 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 
 func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) ([]provider.Provider, error) {
 	var providers []provider.Provider
-	providers = appendLiveIfPresent(providers, strings.TrimSpace(cfg.OpenAI.APIKey) != "", func() provider.Provider {
+	if strings.TrimSpace(cfg.OpenAI.APIKey) != "" {
+		br, err := newRollingProviderBreaker(openaicompatible.ProviderNameOpenAI, cfg)
+		if err != nil {
+			return nil, err
+		}
 		maxRetries := cfg.OpenAI.MaxRetries
-		return openai.New(openai.Config{
+		providers = append(providers, openai.New(openai.Config{
 			APIKey:         cfg.OpenAI.APIKey,
 			BaseURL:        cfg.OpenAI.BaseURL,
 			Timeout:        cfg.OpenAI.RequestTimeout,
 			MaxRetries:     &maxRetries,
 			RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
 			ExtraModels:    cfg.OpenAI.ExtraModels,
-		}, log, tracer, reg)
-	})
-	providers = appendLiveIfPresent(providers, strings.TrimSpace(cfg.Anthropic.APIKey) != "", func() provider.Provider {
+			Breaker:        br,
+		}, log, tracer, reg))
+	}
+	if strings.TrimSpace(cfg.Anthropic.APIKey) != "" {
+		br, err := newRollingProviderBreaker("anthropic", cfg)
+		if err != nil {
+			return nil, err
+		}
 		maxRetries := cfg.Anthropic.MaxRetries
-		return anthropic.New(anthropic.Config{
+		providers = append(providers, anthropic.New(anthropic.Config{
 			APIKey:         cfg.Anthropic.APIKey,
 			BaseURL:        cfg.Anthropic.BaseURL,
 			Timeout:        cfg.Anthropic.RequestTimeout,
 			MaxRetries:     &maxRetries,
 			RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
 			ExtraModels:    cfg.Anthropic.ExtraModels,
-		}, log, tracer, reg)
-	})
+			Breaker:        br,
+		}, log, tracer, reg))
+	}
 	if !cfg.SelfHosted.Enabled {
 		return providers, nil
 	}
@@ -232,11 +242,23 @@ func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tr
 	return append(providers, p), nil
 }
 
-func appendLiveIfPresent(dst []provider.Provider, present bool, build func() provider.Provider) []provider.Provider {
-	if !present {
-		return dst
+func newProviderBreaker(name string, s circuitbreaker.Settings) (*circuitbreaker.Breaker, error) {
+	s.Name = name
+	br, err := circuitbreaker.New(s)
+	if err != nil {
+		return nil, fmt.Errorf("circuit breaker %q: %w", name, err)
 	}
-	return append(dst, build())
+	return br, nil
+}
+
+func newRollingProviderBreaker(name string, cfg config.Config) (*circuitbreaker.Breaker, error) {
+	return newProviderBreaker(name, circuitbreaker.Settings{
+		Window:               cfg.ProviderBreakerWindow,
+		BucketPeriod:         cfg.ProviderBreakerBucketPeriod,
+		MinSamples:           cfg.ProviderBreakerMinSamples,
+		FailureRateThreshold: cfg.ProviderBreakerFailureRate,
+		CoolDown:             cfg.ProviderBreakerCoolDown,
+	})
 }
 
 func newSelfHostedProvider(
@@ -249,11 +271,13 @@ func newSelfHostedProvider(
 	if err := waitSelfHostedReady(context.Background(), base, cfg.SelfHosted, log); err != nil {
 		return nil, err
 	}
-	br := circuitbreaker.New(circuitbreaker.Settings{
-		Name:        openaicompatible.ProviderNameSelfHosted,
+	br, err := newProviderBreaker(openaicompatible.ProviderNameSelfHosted, circuitbreaker.Settings{
 		MaxFailures: cfg.SelfHosted.BreakerFailures,
 		CoolDown:    cfg.SelfHosted.BreakerCoolDown,
 	})
+	if err != nil {
+		return nil, err
+	}
 	maxRetries := cfg.OpenAI.MaxRetries
 	return openaicompatible.New(openaicompatible.Config{
 		ProviderName:   openaicompatible.ProviderNameSelfHosted,

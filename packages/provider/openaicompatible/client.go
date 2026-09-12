@@ -106,12 +106,17 @@ func mapBreakerError(name string, err error) (provider.Response, error) {
 		return provider.Response{}, pe
 	}
 	if errors.Is(err, circuitbreaker.ErrOpen) {
-		return provider.Response{}, &provider.ProviderError{
+		pe := &provider.ProviderError{
 			ProviderName:   name,
 			StatusCode:     http.StatusServiceUnavailable,
 			ProviderErrMsg: "circuit breaker open",
 			Reason:         provider.ErrorReasonCircuitOpen,
 		}
+		var oe *circuitbreaker.OpenError
+		if errors.As(err, &oe) && oe != nil {
+			pe.RetryAfter = oe.RetryAfter
+		}
+		return provider.Response{}, pe
 	}
 	return provider.Response{}, err
 }

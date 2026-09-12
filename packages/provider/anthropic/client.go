@@ -3,9 +3,12 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/circuitbreaker"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"go.opentelemetry.io/otel/trace"
@@ -55,6 +58,24 @@ func (c *Client) SupportedModels() []string {
 
 // Complete sends a Messages API request and returns an OpenAI-compatible body.
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
+	if c.cfg.Breaker == nil {
+		return c.completeOnce(ctx, req)
+	}
+	out, err := c.cfg.Breaker.Execute(func() (any, error) {
+		return c.completeUnderBreaker(ctx, req)
+	})
+	return decodeBreakerResult(c.Name(), out, err)
+}
+
+func (c *Client) completeUnderBreaker(ctx context.Context, req provider.Request) (any, error) {
+	resp, err := c.completeOnce(ctx, req)
+	if err != nil {
+		return nil, classifyForBreaker(ctx, err)
+	}
+	return resp, nil
+}
+
+func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provider.Response, error) {
 	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, provider.CompleteSpan{
 		Names: provider.CompleteSpanNames{Span: "anthropic.Complete", Provider: c.Name()},
 		Req:   req,
@@ -78,6 +99,53 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		Model:          req.Model,
 		APIKeyOverride: req.APIKeyOverride,
 	})
+}
+
+// classifyForBreaker keeps caller abandonment from tripping the breaker, while
+// ensuring upstream timeouts that wrap DeadlineExceeded still count as failures.
+func classifyForBreaker(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
+		return context.Canceled
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("upstream timed out: %v", err)
+	default:
+		return err
+	}
+}
+
+func decodeBreakerResult(name string, out any, err error) (provider.Response, error) {
+	if err != nil {
+		return mapBreakerError(name, err)
+	}
+	resp, ok := out.(provider.Response)
+	if !ok {
+		return provider.Response{}, fmt.Errorf("%s: circuit breaker returned unexpected result", name)
+	}
+	return resp, nil
+}
+
+func mapBreakerError(name string, err error) (provider.Response, error) {
+	var pe *provider.ProviderError
+	if errors.As(err, &pe) {
+		return provider.Response{}, pe
+	}
+	if errors.Is(err, circuitbreaker.ErrOpen) {
+		out := &provider.ProviderError{
+			ProviderName:   name,
+			StatusCode:     http.StatusServiceUnavailable,
+			ProviderErrMsg: "circuit breaker open",
+			Reason:         provider.ErrorReasonCircuitOpen,
+		}
+		var oe *circuitbreaker.OpenError
+		if errors.As(err, &oe) && oe != nil {
+			out.RetryAfter = oe.RetryAfter
+		}
+		return provider.Response{}, out
+	}
+	return provider.Response{}, err
 }
 
 func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Response, error) {
