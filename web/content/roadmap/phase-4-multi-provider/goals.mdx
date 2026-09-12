@@ -58,7 +58,7 @@ phase: "phase-4-multi-provider"
 
 **Milestones:**
 - **4.C.1 — Anthropic adapter hardening:** Docs-truth close for the Phase 2.5 / ADR-0040 adapter (SSE translation, system extraction, version pin already shipped) plus minor stream-translate test hardening.
-- **4.C.2 — Per-org model routing:** `Registry.ForOrg(ctx, orgID, model)`. Allow/deny list in Postgres, cached via bloom→LRU.
+- **4.C.2 — Per-org model routing:** `OrgAwareRegistry.ForOrg` over unchanged `Registry.For`; Postgres policies + LRU+TTL cache (`packages/modelpolicy`); middleware gate + admin CRUD.
 - **4.C.3 — Circuit breaker per provider:** Rolling error-rate window (30s, &gt;50% failure trips open). Per-provider isolation. New `packages/circuitbreaker`.
 - **4.C.4 — Fallback routing (new):** On breaker-open, transparently reroute to fallback model. Opt-in per org. `X-IBEX-Provider-Fallback` header. Traced to ClickHouse.
 - **4.C.5 — Streaming hardening:** Slow-client backpressure. Mid-stream Anthropic `error` event and OpenAI connection drop both produce the same client behavior.

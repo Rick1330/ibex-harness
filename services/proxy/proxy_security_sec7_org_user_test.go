@@ -5,6 +5,7 @@ package proxy_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,16 +77,25 @@ func requireProbeForbiddenEventually(t *testing.T, p probeForbiddenOpts) {
 		}
 		lastStatus = resp.StatusCode
 		lastBody = body
-		if resp.StatusCode == http.StatusForbidden {
-			forbiddenResp = resp
-			forbiddenBody = body
+		if resp.StatusCode != http.StatusForbidden {
+			resp.Body.Close()
+			assert.Fail(c, fmt.Sprintf(
+				"expected forbidden within %v; last status=%d body=%s",
+				p.within, lastStatus, redactBearer(lastBody, p.opts.bearer),
+			))
 			return
 		}
-		resp.Body.Close()
-		assert.Fail(c, fmt.Sprintf(
-			"expected forbidden within %v; last status=%d body=%s",
-			p.within, lastStatus, redactBearer(lastBody, p.opts.bearer),
-		))
+		got, ok := peekErrorCode(body)
+		if !ok || got != p.want {
+			resp.Body.Close()
+			assert.Fail(c, fmt.Sprintf(
+				"expected code=%q within %v; last status=%d code=%q body=%s",
+				p.want, p.within, lastStatus, got, redactBearer(lastBody, p.opts.bearer),
+			))
+			return
+		}
+		forbiddenResp = resp
+		forbiddenBody = body
 	}, p.within, 10*time.Millisecond)
 
 	mu.Lock()
@@ -96,6 +106,17 @@ func requireProbeForbiddenEventually(t *testing.T, p probeForbiddenOpts) {
 	defer resp.Body.Close()
 	requireErrorCode(t, body, p.want)
 	assertSecurityErrorEnvelope(t, resp, body, p.secret)
+}
+
+func peekErrorCode(body string) (apierror.Code, bool) {
+	var envelope apierror.Response
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		return "", false
+	}
+	if envelope.Error.Code == "" {
+		return "", false
+	}
+	return envelope.Error.Code, true
 }
 
 func suspendOrgInDB(t *testing.T, db *sql.DB, orgID string) {

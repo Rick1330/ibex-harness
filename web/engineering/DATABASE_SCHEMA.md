@@ -1127,6 +1127,42 @@ CREATE POLICY rate_limit_overrides_isolation ON ibex_core.rate_limit_overrides
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.rate_limit_overrides TO ibex_app;
 
 -- ================================================================
+-- ORG MODEL POLICIES (m4.C.2 / ADR-0075)
+-- Per-org allow/deny globs for model routing; no fallback_chain until 4.C.4
+-- ================================================================
+CREATE TABLE ibex_core.org_model_policies (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         UUID NOT NULL
+                   REFERENCES ibex_core.organizations(id)
+                   ON DELETE CASCADE,
+    model_pattern  TEXT NOT NULL
+                   CHECK (char_length(model_pattern) BETWEEN 1 AND 256),
+    allowed        BOOLEAN NOT NULL,
+    priority       INTEGER NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT org_model_policies_org_pattern_unique UNIQUE (org_id, model_pattern)
+);
+
+CREATE INDEX idx_org_model_policies_org_priority
+    ON ibex_core.org_model_policies (org_id, priority ASC);
+
+ALTER TABLE ibex_core.org_model_policies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.org_model_policies FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY org_model_policies_isolation ON ibex_core.org_model_policies
+    USING (
+        (
+            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+            AND org_id = current_setting('app.current_org_id', true)::UUID
+        )
+        OR current_setting('app.is_service_account', true) = 'true'
+    );
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.org_model_policies TO ibex_app;
+
+-- ================================================================
 -- MFA CHALLENGES
 -- Temporary MFA verification challenges
 -- ================================================================
@@ -2091,6 +2127,11 @@ Rate Limiting (m4.B.1 hierarchical RPM; counters are fail-open):
   Type:  Pub/Sub
   Payload: {"v":1,"org_id":"<uuid>"}
   Use:   Management API PATCH notifies proxy config subscriber (m4.B.2); 30s poll is backup
+
+  Channel: model_policy_updates:{org_id}
+  Type:  Pub/Sub
+  Payload: {"v":1,"org_id":"<uuid>"}
+  Use:   Management API model-policy write notifies proxy OrgAwareRegistry cache (m4.C.2); 60s TTL backup
 
 Chat Idempotency (m2.1.6):
   Key:   idempotency:{org_id}:{key}

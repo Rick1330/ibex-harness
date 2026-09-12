@@ -126,6 +126,63 @@ func TestUnit_LoopStoppedAndSleepBackoff(t *testing.T) {
 	}
 }
 
+func TestUnit_LoopStopBeforeListenNeverBlocks(t *testing.T) {
+	t.Parallel()
+	log, err := logger.New(logger.Config{Service: "redissub-test"})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	loop := redissub.NewLoop()
+	loop.Stop() // close stopCh before Run stores a listen cancel
+	entered := atomic.Bool{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		loop.Run(context.Background(), log, "test", func(context.Context) (bool, error) {
+			entered.Store(true)
+			return true, nil
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit after pre-Stop")
+	}
+	if entered.Load() {
+		t.Fatal("listen must not run after Stop closed stopCh")
+	}
+}
+
+func TestUnit_LoopStopAfterCancelStoredUnblocks(t *testing.T) {
+	t.Parallel()
+	log, err := logger.New(logger.Config{Service: "redissub-test"})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	loop := redissub.NewLoop()
+	stored := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		loop.Run(context.Background(), log, "test", func(ctx context.Context) (bool, error) {
+			close(stored)
+			<-ctx.Done()
+			return true, nil
+		})
+	}()
+	select {
+	case <-stored:
+	case <-time.After(2 * time.Second):
+		t.Fatal("listen did not start")
+	}
+	loop.Stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not cancel active listen")
+	}
+}
+
 func TestUnit_LoopStopIdempotent(t *testing.T) {
 	t.Parallel()
 	loop := redissub.NewLoop()

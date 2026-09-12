@@ -10,11 +10,14 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
+	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/redis/go-redis/v9"
@@ -324,6 +327,107 @@ func startRateLimitConfigSubscriber(
 		log.InfoCtx(context.Background(), "rate-limit config subscriber started",
 			"pattern", ratelimit.ChannelPattern,
 			"poll", ratelimit.DefaultConfigPollInterval.String())
+	}
+	return sub, cancel, nil
+}
+
+func modelPolicyMetrics(reg *ibexmetrics.ProxyRegistry) modelpolicy.Metrics {
+	if reg != nil {
+		return reg
+	}
+	return modelpolicy.NoopMetrics{}
+}
+
+func buildModelPolicyRuntime(
+	pgDB *sql.DB,
+	base *provider.Registry,
+	log *logger.Logger,
+	metrics *ibexmetrics.ProxyRegistry,
+) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
+	if pgDB == nil || base == nil {
+		reason := "POSTGRES_DSN unset or db handle nil"
+		if base == nil {
+			reason = "provider registry nil"
+		}
+		warnModelPolicyPassthrough(log, metrics, reason)
+		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
+	}
+	m := modelPolicyMetrics(metrics)
+	cache, reg, err := newOrgPolicyStack(pgDB, base, m)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	agentDefaults, err := newCachedAgentDefaults(pgDB)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if metrics != nil {
+		metrics.SetModelPolicyEnabled(true)
+	}
+	if log != nil {
+		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
+	}
+	return cache, reg, agentDefaults, nil
+}
+
+func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
+	if metrics != nil {
+		metrics.SetModelPolicyEnabled(false)
+	}
+	if log == nil {
+		return
+	}
+	log.WarnCtx(context.Background(),
+		"model policy passthrough: org model policies disabled; every model allowed for every org",
+		"reason", reason,
+	)
+}
+
+func newOrgPolicyStack(
+	pgDB *sql.DB,
+	base *provider.Registry,
+	m modelpolicy.Metrics,
+) (*modelpolicy.Cache, *modelpolicy.OrgAwareRegistry, error) {
+	store, err := modelpolicy.NewStore(pgDB)
+	if err != nil {
+		return nil, nil, err
+	}
+	cache, err := modelpolicy.NewCache(store, modelpolicy.Config{}, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cache, reg, nil
+}
+
+func newCachedAgentDefaults(pgDB *sql.DB) (modelpolicy.AgentDefaultLoader, error) {
+	agentStore, err := modelpolicy.NewAgentStore(pgDB)
+	if err != nil {
+		return nil, err
+	}
+	return modelpolicy.NewCachingAgentDefaults(agentStore, modelpolicy.Config{})
+}
+
+func startModelPolicySubscriber(
+	redisClient redis.UniversalClient,
+	cache *modelpolicy.Cache,
+	log *logger.Logger,
+	metrics *ibexmetrics.ProxyRegistry,
+) (*modelpolicy.Subscriber, context.CancelFunc, error) {
+	if redisClient == nil || cache == nil {
+		return nil, nil, nil
+	}
+	sub, err := modelpolicy.NewSubscriber(redisClient, cache, log, modelPolicyMetrics(metrics))
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
+	if log != nil {
+		log.InfoCtx(context.Background(), "model-policy subscriber started", "pattern", modelpolicy.ChannelPattern)
 	}
 	return sub, cancel, nil
 }
