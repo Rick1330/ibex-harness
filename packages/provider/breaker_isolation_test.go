@@ -22,56 +22,25 @@ import (
 func TestPerProviderCircuitBreakerIsolation(t *testing.T) {
 	t.Parallel()
 
-	okBodyOpenAI := `{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
-	okBodyAnthropic := `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"claude-sonnet-4-5","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
-
-	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)
-	}))
-	t.Cleanup(failSrv.Close)
-
-	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/v1/messages" {
-			_, _ = io.WriteString(w, okBodyAnthropic)
-			return
-		}
-		_, _ = io.WriteString(w, okBodyOpenAI)
-	}))
-	t.Cleanup(okSrv.Close)
-
+	failSrv, okSrv := isolationServers(t)
 	cool := time.Minute
-	anthBr, err := circuitbreaker.New(circuitbreaker.Settings{
+	anthBr := mustBreaker(t, circuitbreaker.Settings{
 		Name: "anthropic", Window: time.Minute, BucketPeriod: time.Minute,
 		MinSamples: 2, FailureRateThreshold: 0.5, CoolDown: cool,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	oaiBr, err := circuitbreaker.New(circuitbreaker.Settings{
+	oaiBr := mustBreaker(t, circuitbreaker.Settings{
 		Name: "openai", Window: time.Minute, BucketPeriod: time.Minute,
 		MinSamples: 10, FailureRateThreshold: 0.5, CoolDown: cool,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	shBr, err := circuitbreaker.New(circuitbreaker.Settings{
+	shBr := mustBreaker(t, circuitbreaker.Settings{
 		Name: "openaicompatible", MaxFailures: 5, CoolDown: cool,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	zero := 0
 	log := logger.Discard("t")
 	tr := telemetry.NoopTracer("t")
-
 	anthFail := anthropic.New(anthropic.Config{
 		APIKey: "k", BaseURL: failSrv.URL, MaxRetries: &zero, Breaker: anthBr,
-	}, log, tr, nil)
-	anthOK := anthropic.New(anthropic.Config{
-		APIKey: "k", BaseURL: okSrv.URL, MaxRetries: &zero, Breaker: anthBr,
 	}, log, tr, nil)
 	oai := openai.New(openai.Config{
 		APIKey: "k", BaseURL: okSrv.URL + "/v1", MaxRetries: &zero, Breaker: oaiBr,
@@ -83,41 +52,74 @@ func TestPerProviderCircuitBreakerIsolation(t *testing.T) {
 		Breaker: shBr,
 	}, log, tr, nil)
 
-	anthReq := provider.Request{
+	tripAnthropicBreaker(t, anthFail, cool)
+	assertCompleteOK(t, oai, provider.Request{
+		Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	assertCompleteOK(t, sh, provider.Request{
+		Model: "local-m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+}
+
+func isolationServers(t *testing.T) (failSrv, okSrv *httptest.Server) {
+	t.Helper()
+	okBodyOpenAI := `{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	okBodyAnthropic := `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"claude-sonnet-4-5","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`
+
+	failSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"message":"boom"}}`)
+	}))
+	t.Cleanup(failSrv.Close)
+
+	okSrv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/messages" {
+			_, _ = io.WriteString(w, okBodyAnthropic)
+			return
+		}
+		_, _ = io.WriteString(w, okBodyOpenAI)
+	}))
+	t.Cleanup(okSrv.Close)
+	return failSrv, okSrv
+}
+
+func mustBreaker(t *testing.T, s circuitbreaker.Settings) *circuitbreaker.Breaker {
+	t.Helper()
+	br, err := circuitbreaker.New(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return br
+}
+
+func tripAnthropicBreaker(t *testing.T, c *anthropic.Client, cool time.Duration) {
+	t.Helper()
+	req := provider.Request{
 		Model:    "claude-sonnet-4-5",
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	}
-	oaiReq := provider.Request{
-		Model:    "gpt-4o",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	}
-	shReq := provider.Request{
-		Model:    "local-m",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	}
-
-	// Trip Anthropic rolling breaker (2 failures @ 100% ≥ 50% with MinSamples=2).
 	for i := 0; i < 2; i++ {
-		_, _ = anthFail.Complete(context.Background(), anthReq)
+		_, _ = c.Complete(context.Background(), req)
 	}
-	_, err = anthOK.Complete(context.Background(), anthReq)
+	_, err := c.Complete(context.Background(), req)
 	var pe *provider.ProviderError
-	if !errors.As(err, &pe) || pe.Reason != provider.ErrorReasonCircuitOpen {
+	if !errors.As(err, &pe) {
 		t.Fatalf("anthropic want circuit_open, got %v", err)
 	}
+	if pe.Reason != provider.ErrorReasonCircuitOpen {
+		t.Fatalf("Reason=%q", pe.Reason)
+	}
 	if pe.RetryAfter != cool {
-		t.Fatalf("anthropic RetryAfter=%v", pe.RetryAfter)
+		t.Fatalf("RetryAfter=%v", pe.RetryAfter)
 	}
+}
 
-	resp, err := oai.Complete(context.Background(), oaiReq)
+func assertCompleteOK(t *testing.T, p provider.Provider, req provider.Request) {
+	t.Helper()
+	resp, err := p.Complete(context.Background(), req)
 	if err != nil {
-		t.Fatalf("openai affected by anthropic breaker: %v", err)
-	}
-	_ = resp.Body.Close()
-
-	resp, err = sh.Complete(context.Background(), shReq)
-	if err != nil {
-		t.Fatalf("self-hosted affected by anthropic breaker: %v", err)
+		t.Fatalf("%s affected by anthropic breaker: %v", p.Name(), err)
 	}
 	_ = resp.Body.Close()
 }

@@ -3,6 +3,7 @@ package circuitbreaker
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -139,23 +140,22 @@ func TestBreaker_RollingTripsAtThreshold(t *testing.T) {
 		CoolDown:             time.Minute,
 	})
 	fail := errors.New("boom")
-	// 2 fail + 2 success = 50% at floor → trip
-	for i := 0; i < 2; i++ {
-		_, _ = b.Execute(func() (any, error) { return nil, fail })
-	}
+	// Two successes then two failures → exactly 50% at MinSamples=4; trip on 2nd failure.
 	for i := 0; i < 2; i++ {
 		_, err := b.Execute(func() (any, error) { return "ok", nil })
 		if err != nil {
-			t.Fatalf("before trip: %v", err)
+			t.Fatalf("success %d: %v", i, err)
 		}
+		assertState(t, b, "closed")
 	}
-	// 4th success already counted; need another failure to re-evaluate?
-	// ReadyToTrip is called on failure. So after 2f+2s we're at 50% with 4 samples
-	// but trip only evaluated on the failure that pushed us there — the 2nd failure
-	// had only 2 samples. Drive one more failure: 3f+2s = 5 samples, 60% >= 50%.
 	_, err := b.Execute(func() (any, error) { return nil, fail })
 	if !errors.Is(err, fail) {
-		t.Fatalf("trip failure err=%v", err)
+		t.Fatalf("first failure: %v", err)
+	}
+	assertState(t, b, "closed") // 1/3 < floor of 4 samples
+	_, err = b.Execute(func() (any, error) { return nil, fail })
+	if !errors.Is(err, fail) {
+		t.Fatalf("second failure (exact 50%%): %v", err)
 	}
 	assertState(t, b, "open")
 	_, err = b.Execute(func() (any, error) { return "ok", nil })
@@ -261,6 +261,21 @@ func TestBreaker_DualModeCoexistence(t *testing.T) {
 	}
 }
 
+func TestBreaker_RollingExcludesCanceled(t *testing.T) {
+	t.Parallel()
+	b := mustNew(t, Settings{
+		Name: "excl", Window: time.Minute, BucketPeriod: time.Minute,
+		MinSamples: 2, FailureRateThreshold: 0.5, CoolDown: time.Minute,
+	})
+	for i := 0; i < 5; i++ {
+		_, err := b.Execute(func() (any, error) { return nil, context.Canceled })
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v", err)
+		}
+	}
+	assertState(t, b, "closed")
+}
+
 func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
 	t.Parallel()
 	_, err := New(Settings{Name: "bad", MinSamples: 10})
@@ -270,6 +285,12 @@ func TestBreaker_ValidateRejectsPartialRolling(t *testing.T) {
 	_, err = New(Settings{Name: "bad", Window: time.Second, FailureRateThreshold: 1.5, MinSamples: 1})
 	if err == nil {
 		t.Fatal("want error for rate > 1")
+	}
+	_, err = New(Settings{
+		Name: "bad", Window: time.Second, FailureRateThreshold: math.NaN(), MinSamples: 1,
+	})
+	if err == nil {
+		t.Fatal("want error for NaN rate")
 	}
 	_, err = New(Settings{
 		Name: "bad", Window: time.Second, BucketPeriod: 2 * time.Second,

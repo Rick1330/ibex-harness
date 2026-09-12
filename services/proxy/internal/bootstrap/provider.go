@@ -200,37 +200,13 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 
 func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) ([]provider.Provider, error) {
 	var providers []provider.Provider
-	if strings.TrimSpace(cfg.OpenAI.APIKey) != "" {
-		br, err := newRollingProviderBreaker(openaicompatible.ProviderNameOpenAI, cfg)
-		if err != nil {
-			return nil, err
-		}
-		maxRetries := cfg.OpenAI.MaxRetries
-		providers = append(providers, openai.New(openai.Config{
-			APIKey:         cfg.OpenAI.APIKey,
-			BaseURL:        cfg.OpenAI.BaseURL,
-			Timeout:        cfg.OpenAI.RequestTimeout,
-			MaxRetries:     &maxRetries,
-			RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
-			ExtraModels:    cfg.OpenAI.ExtraModels,
-			Breaker:        br,
-		}, log, tracer, reg))
+	providers, err := appendOpenAIProvider(providers, cfg, log, tracer, reg)
+	if err != nil {
+		return nil, err
 	}
-	if strings.TrimSpace(cfg.Anthropic.APIKey) != "" {
-		br, err := newRollingProviderBreaker("anthropic", cfg)
-		if err != nil {
-			return nil, err
-		}
-		maxRetries := cfg.Anthropic.MaxRetries
-		providers = append(providers, anthropic.New(anthropic.Config{
-			APIKey:         cfg.Anthropic.APIKey,
-			BaseURL:        cfg.Anthropic.BaseURL,
-			Timeout:        cfg.Anthropic.RequestTimeout,
-			MaxRetries:     &maxRetries,
-			RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
-			ExtraModels:    cfg.Anthropic.ExtraModels,
-			Breaker:        br,
-		}, log, tracer, reg))
+	providers, err = appendAnthropicProvider(providers, cfg, log, tracer, reg)
+	if err != nil {
+		return nil, err
 	}
 	if !cfg.SelfHosted.Enabled {
 		return providers, nil
@@ -240,6 +216,58 @@ func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tr
 		return nil, err
 	}
 	return append(providers, p), nil
+}
+
+func appendOpenAIProvider(
+	dst []provider.Provider,
+	cfg config.Config,
+	log *logger.Logger,
+	tracer trace.Tracer,
+	reg *metrics.ProxyRegistry,
+) ([]provider.Provider, error) {
+	if strings.TrimSpace(cfg.OpenAI.APIKey) == "" {
+		return dst, nil
+	}
+	br, err := newRollingProviderBreaker(openaicompatible.ProviderNameOpenAI, cfg)
+	if err != nil {
+		return nil, err
+	}
+	maxRetries := cfg.OpenAI.MaxRetries
+	return append(dst, openai.New(openai.Config{
+		APIKey:         cfg.OpenAI.APIKey,
+		BaseURL:        cfg.OpenAI.BaseURL,
+		Timeout:        cfg.OpenAI.RequestTimeout,
+		MaxRetries:     &maxRetries,
+		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
+		ExtraModels:    cfg.OpenAI.ExtraModels,
+		Breaker:        br,
+	}, log, tracer, reg)), nil
+}
+
+func appendAnthropicProvider(
+	dst []provider.Provider,
+	cfg config.Config,
+	log *logger.Logger,
+	tracer trace.Tracer,
+	reg *metrics.ProxyRegistry,
+) ([]provider.Provider, error) {
+	if strings.TrimSpace(cfg.Anthropic.APIKey) == "" {
+		return dst, nil
+	}
+	br, err := newRollingProviderBreaker("anthropic", cfg)
+	if err != nil {
+		return nil, err
+	}
+	maxRetries := cfg.Anthropic.MaxRetries
+	return append(dst, anthropic.New(anthropic.Config{
+		APIKey:         cfg.Anthropic.APIKey,
+		BaseURL:        cfg.Anthropic.BaseURL,
+		Timeout:        cfg.Anthropic.RequestTimeout,
+		MaxRetries:     &maxRetries,
+		RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
+		ExtraModels:    cfg.Anthropic.ExtraModels,
+		Breaker:        br,
+	}, log, tracer, reg)), nil
 }
 
 func newProviderBreaker(name string, s circuitbreaker.Settings) (*circuitbreaker.Breaker, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	gobreaker "github.com/sony/gobreaker/v2"
@@ -59,6 +60,7 @@ func New(s Settings) (*Breaker, error) {
 		Timeout:       s.CoolDown,
 		ReadyToTrip:   readyToTrip(s),
 		IsSuccessful:  isSuccessfulOutcome,
+		IsExcluded:    rollingIsExcluded(s),
 		OnStateChange: onStateChangeAdapter(s.OnStateChange),
 	})
 	return &Breaker{inner: cb, coolDown: s.CoolDown}, nil
@@ -93,15 +95,23 @@ func validateSettings(s Settings) error {
 		return fmt.Errorf("circuitbreaker: Window must be >= 0")
 	}
 	if s.Window == 0 {
-		if s.BucketPeriod != 0 || s.MinSamples != 0 || s.FailureRateThreshold != 0 {
-			return fmt.Errorf("circuitbreaker: rolling fields require Window > 0")
-		}
-		return nil
+		return validateConsecutiveSettings(s)
 	}
+	return validateRollingSettings(s)
+}
+
+func validateConsecutiveSettings(s Settings) error {
+	if s.BucketPeriod != 0 || s.MinSamples != 0 || s.FailureRateThreshold != 0 {
+		return fmt.Errorf("circuitbreaker: rolling fields require Window > 0")
+	}
+	return nil
+}
+
+func validateRollingSettings(s Settings) error {
 	if s.MinSamples == 0 {
 		return fmt.Errorf("circuitbreaker: MinSamples must be > 0 when Window > 0")
 	}
-	if s.FailureRateThreshold <= 0 || s.FailureRateThreshold > 1 {
+	if math.IsNaN(s.FailureRateThreshold) || s.FailureRateThreshold <= 0 || s.FailureRateThreshold > 1 {
 		return fmt.Errorf("circuitbreaker: FailureRateThreshold must be in (0, 1], got %v", s.FailureRateThreshold)
 	}
 	if s.BucketPeriod < 0 {
@@ -125,6 +135,17 @@ func rollingBucketPeriod(s Settings) time.Duration {
 		return s.BucketPeriod
 	}
 	return 0
+}
+
+// rollingIsExcluded excludes caller cancel/deadline from rolling counts only.
+// Consecutive mode keeps IsExcluded nil so IsSuccessful can reset failure streaks.
+func rollingIsExcluded(s Settings) func(error) bool {
+	if s.Window <= 0 {
+		return nil
+	}
+	return func(err error) bool {
+		return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	}
 }
 
 func readyToTrip(s Settings) func(counts gobreaker.Counts) bool {

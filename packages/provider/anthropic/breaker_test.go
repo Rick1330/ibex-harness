@@ -42,6 +42,11 @@ func TestClient_CircuitBreakerMapsOpenWithRetryAfter(t *testing.T) {
 	}
 	_, _ = c.Complete(context.Background(), req)
 	_, err = c.Complete(context.Background(), req)
+	assertCircuitOpenRetryAfter(t, err, cool)
+}
+
+func assertCircuitOpenRetryAfter(t *testing.T, err error, cool time.Duration) {
+	t.Helper()
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err=%v", err)
@@ -53,7 +58,13 @@ func TestClient_CircuitBreakerMapsOpenWithRetryAfter(t *testing.T) {
 		t.Fatalf("RetryAfter=%v want %v", pe.RetryAfter, cool)
 	}
 	mapped, write := provider.MapError(err)
-	if !write || mapped == nil || mapped.RetryAfter != cool {
-		t.Fatalf("mapped=%+v write=%v", mapped, write)
+	if !write {
+		t.Fatal("want write")
+	}
+	if mapped == nil {
+		t.Fatal("mapped nil")
+	}
+	if mapped.RetryAfter != cool {
+		t.Fatalf("mapped RetryAfter=%v", mapped.RetryAfter)
 	}
 }

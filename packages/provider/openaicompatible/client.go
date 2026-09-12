@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/packages/circuitbreaker"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"go.opentelemetry.io/otel/trace"
@@ -62,63 +61,20 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 	out, err := c.cfg.Breaker.Execute(func() (any, error) {
 		return c.completeUnderBreaker(ctx, req)
 	})
-	return decodeBreakerResult(c.Name(), out, err)
+	return provider.DecodeBreakerResult(c.Name(), out, err)
 }
 
 func (c *Client) completeUnderBreaker(ctx context.Context, req provider.Request) (any, error) {
 	resp, err := c.completeOnce(ctx, req)
 	if err != nil {
-		return nil, classifyForBreaker(ctx, err)
+		return nil, provider.ClassifyForBreaker(ctx, err)
 	}
 	return resp, nil
 }
 
-// classifyForBreaker keeps caller abandonment from tripping the breaker, while
-// ensuring upstream timeouts that wrap DeadlineExceeded still count as failures.
+// classifyForBreaker is kept for package tests; delegates to provider.
 func classifyForBreaker(ctx context.Context, err error) error {
-	switch {
-	case errors.Is(ctx.Err(), context.Canceled):
-		return context.Canceled
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return context.DeadlineExceeded
-	case errors.Is(err, context.DeadlineExceeded):
-		// Do not wrap with %w: errors.Is must not match DeadlineExceeded.
-		return fmt.Errorf("upstream timed out: %v", err)
-	default:
-		return err
-	}
-}
-
-func decodeBreakerResult(name string, out any, err error) (provider.Response, error) {
-	if err != nil {
-		return mapBreakerError(name, err)
-	}
-	resp, ok := out.(provider.Response)
-	if !ok {
-		return provider.Response{}, fmt.Errorf("%s: circuit breaker returned unexpected result", name)
-	}
-	return resp, nil
-}
-
-func mapBreakerError(name string, err error) (provider.Response, error) {
-	var pe *provider.ProviderError
-	if errors.As(err, &pe) {
-		return provider.Response{}, pe
-	}
-	if errors.Is(err, circuitbreaker.ErrOpen) {
-		pe := &provider.ProviderError{
-			ProviderName:   name,
-			StatusCode:     http.StatusServiceUnavailable,
-			ProviderErrMsg: "circuit breaker open",
-			Reason:         provider.ErrorReasonCircuitOpen,
-		}
-		var oe *circuitbreaker.OpenError
-		if errors.As(err, &oe) && oe != nil {
-			pe.RetryAfter = oe.RetryAfter
-		}
-		return provider.Response{}, pe
-	}
-	return provider.Response{}, err
+	return provider.ClassifyForBreaker(ctx, err)
 }
 
 func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provider.Response, error) {
