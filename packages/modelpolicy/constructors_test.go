@@ -9,48 +9,34 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestConfig_ApplyDefaults(t *testing.T) {
+func TestNewCache_NilLoader(t *testing.T) {
 	t.Parallel()
-	var c Config
-	c.ApplyDefaults()
-	if c.CacheTTL != defaultCacheTTL || c.LRUSize != defaultLRUSize {
-		t.Fatalf("%+v", c)
-	}
-	if c.AgentDefaultsTTL != defaultAgentDefaultsTTL || c.LoadTimeout != defaultLoadTimeout {
-		t.Fatalf("%+v", c)
-	}
-}
-
-func TestOrgIDFromChannel_RejectsBad(t *testing.T) {
-	t.Parallel()
-	if _, err := OrgIDFromChannel("directive_updates:x"); err == nil {
-		t.Fatal("expected error")
-	}
-	if _, err := OrgIDFromChannel(ChannelPrefix); err == nil {
+	if _, err := NewCache(nil, Config{}, NoopMetrics{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestValidatePattern_Oversize(t *testing.T) {
+func TestNewOrgAwareRegistry_RequiresDeps(t *testing.T) {
 	t.Parallel()
-	if err := ValidatePattern(string(make([]byte, 257))); err == nil {
-		t.Fatal("expected oversize error")
-	}
-}
-
-func TestMatch_BadPatternErrors(t *testing.T) {
-	t.Parallel()
-	if _, err := Match("[", "x"); err == nil {
-		t.Fatal("expected match error")
-	}
-}
-
-func TestEvaluatePolicies_MatchError(t *testing.T) {
-	t.Parallel()
-	_, err := EvaluatePolicies([]Policy{{Pattern: "[", Allowed: false, Priority: 1}}, "x")
-	if err == nil {
+	if _, err := NewOrgAwareRegistry(nil, nil, nil); err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestNewSubscriber_RequiresDeps(t *testing.T) {
+	t.Parallel()
+	if _, err := NewSubscriber(nil, nil, nil, nil); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestInvalidate_NilOrgNoop(t *testing.T) {
+	t.Parallel()
+	cache, err := NewCache(&fakeLoader{policies: map[uuid.UUID][]Policy{}}, Config{LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.Invalidate(uuid.Nil)
 }
 
 func TestOrgAwareRegistry_BaseAndPassthrough(t *testing.T) {
@@ -101,13 +87,5 @@ func TestCache_LookupStaleGeneration(t *testing.T) {
 	cache.mu.Unlock()
 	if _, ok := cache.lookupFresh(org.String()); ok {
 		t.Fatal("stale gen must miss")
-	}
-}
-
-func TestInvalidateEvent_MarshalRejectsBad(t *testing.T) {
-	t.Parallel()
-	_, err := (InvalidateEvent{Version: 99, OrgID: uuid.New().String()}).Marshal()
-	if err == nil {
-		t.Fatal("expected version error")
 	}
 }

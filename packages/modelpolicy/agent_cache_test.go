@@ -3,6 +3,7 @@ package modelpolicy
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -67,6 +68,66 @@ func TestCachingAgentDefaults_PropagatesError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+}
+
+func TestCachingAgentDefaults_CoalescesConcurrentLoads(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner := &blockingDefaults{
+		started: started,
+		release: release,
+		val:     AgentDefaults{DefaultModel: "gpt-4o"},
+	}
+	cache, err := NewCachingAgentDefaults(inner, Config{
+		AgentDefaultsTTL: time.Minute,
+		AgentDefaultsLRU: 8,
+		LoadTimeout:      5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, agent := uuid.New(), uuid.New()
+	const n = 8
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			got, loadErr := cache.Load(context.Background(), org, agent)
+			if loadErr != nil {
+				errCh <- loadErr
+				return
+			}
+			if got.DefaultModel != "gpt-4o" {
+				errCh <- errors.New("unexpected model")
+				return
+			}
+			errCh <- nil
+		}()
+	}
+	<-started
+	close(release)
+	for i := 0; i < n; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if inner.calls.Load() != 1 {
+		t.Fatalf("inner loads=%d want 1 (singleflight)", inner.calls.Load())
+	}
+}
+
+type blockingDefaults struct {
+	started, release chan struct{}
+	calls            atomic.Int32
+	val              AgentDefaults
+	once             sync.Once
+}
+
+func (b *blockingDefaults) Load(context.Context, uuid.UUID, uuid.UUID) (AgentDefaults, error) {
+	b.calls.Add(1)
+	b.once.Do(func() { close(b.started) })
+	<-b.release
+	return b.val, nil
 }
 
 func TestNewAgentStore_NilDB(t *testing.T) {

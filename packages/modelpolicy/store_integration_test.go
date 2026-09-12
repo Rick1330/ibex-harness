@@ -181,34 +181,49 @@ func TestAgentStore_LoadDefaults(t *testing.T) {
 	agentID := seedAgent(t, db, agentSeed{
 		orgID: org, slug: "agent-defaults", model: "gpt-4o", provider: "openai",
 	})
+	store := mustAgentStore(t, db)
+	assertAgentDefaults(t, store, agentDefaultsWant{
+		orgID: org, agentID: agentID, model: "gpt-4o", provider: "openai",
+	})
+	assertAgentDefaultsEmpty(t, store, org, uuid.New())
 
+	orgB := seedOrg(t, db, "mp-agent-iso-b")
+	assertAgentDefaultsEmpty(t, store, orgB, agentID)
+}
+
+func mustAgentStore(t *testing.T, db *sql.DB) *modelpolicy.AgentStore {
+	t.Helper()
 	store, err := modelpolicy.NewAgentStore(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := store.Load(context.Background(), org, agentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.DefaultModel != "gpt-4o" || got.DefaultProvider != "openai" {
-		t.Fatalf("got=%+v", got)
-	}
+	return store
+}
 
-	missing, err := store.Load(context.Background(), org, uuid.New())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if missing.DefaultModel != "" || missing.DefaultProvider != "" {
-		t.Fatalf("missing agent must be empty: %+v", missing)
-	}
+type agentDefaultsWant struct {
+	orgID, agentID  uuid.UUID
+	model, provider string
+}
 
-	orgB := seedOrg(t, db, "mp-agent-iso-b")
-	cross, err := store.Load(context.Background(), orgB, agentID)
+func assertAgentDefaults(t *testing.T, store *modelpolicy.AgentStore, want agentDefaultsWant) {
+	t.Helper()
+	got, err := store.Load(context.Background(), want.orgID, want.agentID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cross.DefaultModel != "" {
-		t.Fatalf("cross-tenant agent defaults leak: %+v", cross)
+	if got.DefaultModel != want.model || got.DefaultProvider != want.provider {
+		t.Fatalf("got=%+v want model=%q provider=%q", got, want.model, want.provider)
+	}
+}
+
+func assertAgentDefaultsEmpty(t *testing.T, store *modelpolicy.AgentStore, orgID, agentID uuid.UUID) {
+	t.Helper()
+	got, err := store.Load(context.Background(), orgID, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultModel != "" || got.DefaultProvider != "" {
+		t.Fatalf("expected empty defaults: %+v", got)
 	}
 }
 

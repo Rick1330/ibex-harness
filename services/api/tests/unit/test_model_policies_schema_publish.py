@@ -42,6 +42,14 @@ def test_create_rejects_golden_patterns(pattern: str) -> None:
         ModelPolicyCreate(model_pattern=pattern, allowed=True)
 
 
+def test_create_rejects_malformed_not_in_golden() -> None:
+    # Not listed in golden reject corpus; full grammar scan must still reject.
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(model_pattern="prefix[unclosed", allowed=True)
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(model_pattern="ends\\", allowed=True)
+
+
 def test_create_rejects_whitespace_only() -> None:
     with pytest.raises(ValidationError):
         ModelPolicyCreate(model_pattern="   ", allowed=True)

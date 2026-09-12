@@ -214,9 +214,17 @@ def _patch_has_fields(body: ModelPolicyPatch) -> bool:
 
 
 async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyResponse:
-    body = args.body
-    if not _patch_has_fields(body):
+    if not _patch_has_fields(args.body):
         return await get_policy(session, args.org_id, args.policy_id)
+    row = await _execute_patch(session, args)
+    if row is None:
+        raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_MSG)
+    await _publish_best_effort(args.deps.publisher, args.org_id)
+    return _row_to_response(row)
+
+
+async def _execute_patch(session: AsyncSession, args: PatchArgs):
+    body = args.body
     try:
         result = await session.execute(
             text(_UPDATE_SQL),
@@ -233,10 +241,7 @@ async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyRes
     except IntegrityError as exc:
         await session.rollback()
         _raise_write_integrity(exc)
-    if row is None:
-        raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_MSG)
-    await _publish_best_effort(args.deps.publisher, args.org_id)
-    return _row_to_response(row)
+    return row
 
 
 async def delete_policy(

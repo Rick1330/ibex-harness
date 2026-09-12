@@ -348,23 +348,11 @@ func buildModelPolicyRuntime(
 		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
 	}
 	m := modelPolicyMetrics(metrics)
-	store, err := modelpolicy.NewStore(pgDB)
+	cache, reg, err := newOrgPolicyStack(pgDB, base, m)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	cache, err := modelpolicy.NewCache(store, modelpolicy.Config{}, m)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, m)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	agentStore, err := modelpolicy.NewAgentStore(pgDB)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	agentDefaults, err := modelpolicy.NewCachingAgentDefaults(agentStore, modelpolicy.Config{})
+	agentDefaults, err := newCachedAgentDefaults(pgDB)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -372,6 +360,34 @@ func buildModelPolicyRuntime(
 		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
 	}
 	return cache, reg, agentDefaults, nil
+}
+
+func newOrgPolicyStack(
+	pgDB *sql.DB,
+	base *provider.Registry,
+	m modelpolicy.Metrics,
+) (*modelpolicy.Cache, *modelpolicy.OrgAwareRegistry, error) {
+	store, err := modelpolicy.NewStore(pgDB)
+	if err != nil {
+		return nil, nil, err
+	}
+	cache, err := modelpolicy.NewCache(store, modelpolicy.Config{}, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, m)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cache, reg, nil
+}
+
+func newCachedAgentDefaults(pgDB *sql.DB) (modelpolicy.AgentDefaultLoader, error) {
+	agentStore, err := modelpolicy.NewAgentStore(pgDB)
+	if err != nil {
+		return nil, err
+	}
+	return modelpolicy.NewCachingAgentDefaults(agentStore, modelpolicy.Config{})
 }
 
 func startModelPolicySubscriber(

@@ -2,6 +2,7 @@ package modelpolicy
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,28 +23,80 @@ func TestSubscriber_PubSubInvalidatesWithinOneSecond(t *testing.T) {
 }
 
 func TestSubscriber_MalformedPayloadIgnored(t *testing.T) {
-	org := uuid.New()
-	cache, loader := seedCachedDeny(t, org)
+	warmOrg := uuid.New()
+	cache, loader := seedCachedDeny(t, warmOrg)
+	rec := &recordingInvalidator{inner: cache, seen: make(chan uuid.UUID, 4)}
 	client := newMiniRedis(t)
-	startSubscriber(t, client, cache)
+	startSubscriber(t, client, rec)
 	waitPubSubPatterns(t, client)
-	if err := client.Publish(context.Background(), ChannelForOrg(org), `{`).Err(); err != nil {
+
+	if err := client.Publish(context.Background(), ChannelForOrg(warmOrg), `{`).Err(); err != nil {
 		t.Fatal(err)
 	}
 	other := uuid.New()
 	bad := `{"v":1,"org_id":"` + other.String() + `"}`
-	if err := client.Publish(context.Background(), ChannelForOrg(org), bad).Err(); err != nil {
+	if err := client.Publish(context.Background(), ChannelForOrg(warmOrg), bad).Err(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(100 * time.Millisecond)
-	if loader.callCount() != 1 {
-		t.Fatalf("malformed/mismatch must not invalidate; calls=%d", loader.callCount())
+
+	sentinel := uuid.New()
+	mustPublishInvalidate(t, client, sentinel)
+	waitInvalidated(t, rec, sentinel)
+
+	if got := rec.orgsSnapshot(); len(got) != 1 || got[0] != sentinel {
+		t.Fatalf("invalidated=%v want only sentinel %s", got, sentinel)
 	}
-	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+	if loader.callCount() != 1 {
+		t.Fatalf("warm org must not reload; calls=%d", loader.callCount())
+	}
+	if _, err := cache.PoliciesForOrg(context.Background(), warmOrg); err != nil {
 		t.Fatal(err)
 	}
 	if loader.callCount() != 1 {
 		t.Fatalf("cache should still be warm; calls=%d", loader.callCount())
+	}
+}
+
+type recordingInvalidator struct {
+	inner Invalidator
+	seen  chan uuid.UUID
+	mu    sync.Mutex
+	orgs  []uuid.UUID
+}
+
+func (r *recordingInvalidator) Invalidate(orgID uuid.UUID) {
+	r.mu.Lock()
+	r.orgs = append(r.orgs, orgID)
+	r.mu.Unlock()
+	if r.inner != nil {
+		r.inner.Invalidate(orgID)
+	}
+	select {
+	case r.seen <- orgID:
+	default:
+	}
+}
+
+func (r *recordingInvalidator) orgsSnapshot() []uuid.UUID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]uuid.UUID, len(r.orgs))
+	copy(out, r.orgs)
+	return out
+}
+
+func waitInvalidated(t *testing.T, rec *recordingInvalidator, want uuid.UUID) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case got := <-rec.seen:
+			if got == want {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for invalidate of %s; saw %v", want, rec.orgsSnapshot())
+		}
 	}
 }
 

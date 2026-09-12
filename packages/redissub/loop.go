@@ -86,7 +86,9 @@ func (l *Loop) Run(ctx context.Context, log *logger.Logger, name string, listen 
 		if l.Stopped(ctx) {
 			return
 		}
-		backoff = l.afterSession(ctx, log, name, established, err, backoff)
+		backoff = l.afterSession(ctx, log, sessionResult{
+			name: name, established: established, err: err, backoff: backoff,
+		})
 		if backoff == 0 {
 			return
 		}
@@ -96,25 +98,25 @@ func (l *Loop) Run(ctx context.Context, log *logger.Logger, name string, listen 
 func (l *Loop) runListenSession(ctx context.Context, listen ListenOnce) (bool, error) {
 	listenCtx, cancel := context.WithCancel(ctx)
 	l.listenCancel.Store(&cancel)
+	// Stop may have closed stopCh after the Run-loop check and before Store.
+	// Cancel immediately so we never enter listen after Stop returns.
+	if l.Stopped(ctx) {
+		cancel()
+		return true, nil
+	}
 	established, err := listen(listenCtx)
 	cancel()
 	return established, err
 }
 
-func (l *Loop) afterSession(
-	ctx context.Context,
-	log *logger.Logger,
-	name string,
-	established bool,
-	err error,
-	backoff time.Duration,
-) time.Duration {
-	if established {
+func (l *Loop) afterSession(ctx context.Context, log *logger.Logger, args sessionResult) time.Duration {
+	backoff := args.backoff
+	if args.established {
 		backoff = initialBackoff
 	}
-	if err != nil {
-		log.WarnCtx(ctx, name+" subscriber disconnected; reconnecting",
-			"error", err, "backoff", backoff.String())
+	if args.err != nil {
+		log.WarnCtx(ctx, args.name+" subscriber disconnected; reconnecting",
+			"error", args.err, "backoff", backoff.String())
 	}
 	if !l.sleepBackoff(ctx, backoff) {
 		return 0
@@ -123,6 +125,13 @@ func (l *Loop) afterSession(
 		backoff *= 2
 	}
 	return backoff
+}
+
+type sessionResult struct {
+	name        string
+	established bool
+	err         error
+	backoff     time.Duration
 }
 
 func (l *Loop) sleepBackoff(ctx context.Context, d time.Duration) bool {

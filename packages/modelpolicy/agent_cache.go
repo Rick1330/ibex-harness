@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 )
 
 type cachedAgentDefaults struct {
@@ -16,12 +17,14 @@ type cachedAgentDefaults struct {
 }
 
 // CachingAgentDefaults wraps an AgentDefaultLoader with a process-local LRU+TTL.
+// Concurrent cold loads for the same org|agent key coalesce via singleflight.
 type CachingAgentDefaults struct {
 	inner AgentDefaultLoader
 	cfg   Config
 	lru   *lru.Cache[string, *cachedAgentDefaults]
 	now   func() time.Time
 	mu    sync.Mutex
+	group singleflight.Group
 }
 
 // NewCachingAgentDefaults constructs a caching loader. inner is required.
@@ -48,6 +51,21 @@ func (c *CachingAgentDefaults) Load(ctx context.Context, orgID, agentID uuid.UUI
 	if d, ok := c.lookupFresh(key); ok {
 		return d, nil
 	}
+	v, err, _ := c.group.Do(key, func() (any, error) {
+		if d, ok := c.lookupFresh(key); ok {
+			return d, nil
+		}
+		return c.loadAndStore(ctx, key, orgID, agentID)
+	})
+	if err != nil {
+		return AgentDefaults{}, err
+	}
+	return v.(AgentDefaults), nil
+}
+
+func (c *CachingAgentDefaults) loadAndStore(
+	ctx context.Context, key string, orgID, agentID uuid.UUID,
+) (AgentDefaults, error) {
 	loadCtx := ctx
 	if c.cfg.LoadTimeout > 0 {
 		var cancel context.CancelFunc
