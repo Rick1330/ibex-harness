@@ -88,6 +88,40 @@ func TestCachingAgentDefaults_CoalescesConcurrentLoads(t *testing.T) {
 	assertInnerLoadCount(t, &inner.calls, 1)
 }
 
+// First caller's cancel must not fail a coalesced peer with a healthy context.
+// Before WithoutCancel, canceling the flight owner aborted inner.Load for everyone.
+func TestCachingAgentDefaults_CancelFirstCallerStillServesPeer(t *testing.T) {
+	t.Parallel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner := &blockingDefaults{
+		started: started,
+		release: release,
+		val:     AgentDefaults{DefaultModel: "gpt-4o"},
+	}
+	cache := mustCachingAgentDefaults(t, inner)
+	org, agent := uuid.New(), uuid.New()
+
+	ownerCtx, ownerCancel := context.WithCancel(context.Background())
+	ownerErr := make(chan error, 1)
+	go func() {
+		_, err := cache.Load(ownerCtx, org, agent)
+		ownerErr <- err
+	}()
+	<-started
+	ownerCancel()
+
+	peerErr := make(chan error, 1)
+	go func() { peerErr <- loadExpectModel(cache, org, agent, "gpt-4o") }()
+	close(release)
+
+	requireNoErr(t, <-peerErr)
+	// Owner may still observe success (singleflight shares the result) or a
+	// rare local error; peer must succeed and the DB load must run once.
+	<-ownerErr
+	assertInnerLoadCount(t, &inner.calls, 1)
+}
+
 func mustCachingAgentDefaults(t *testing.T, inner AgentDefaultLoader) *CachingAgentDefaults {
 	t.Helper()
 	cache, err := NewCachingAgentDefaults(inner, Config{
@@ -148,11 +182,15 @@ type blockingDefaults struct {
 	once             sync.Once
 }
 
-func (b *blockingDefaults) Load(context.Context, uuid.UUID, uuid.UUID) (AgentDefaults, error) {
+func (b *blockingDefaults) Load(ctx context.Context, _ uuid.UUID, _ uuid.UUID) (AgentDefaults, error) {
 	b.calls.Add(1)
 	b.once.Do(func() { close(b.started) })
-	<-b.release
-	return b.val, nil
+	select {
+	case <-b.release:
+		return b.val, nil
+	case <-ctx.Done():
+		return AgentDefaults{}, ctx.Err()
+	}
 }
 
 func TestNewAgentStore_NilDB(t *testing.T) {

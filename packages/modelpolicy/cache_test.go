@@ -357,3 +357,30 @@ func (i *invalidateOnLoad) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, er
 	i.cache.Invalidate(i.org)
 	return []Policy{{Pattern: "x*", Allowed: false, Priority: 1}}, nil
 }
+
+func TestCache_GensPrunedOnCapacityEviction(t *testing.T) {
+	t.Parallel()
+	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 2}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	orgs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New()}
+	for _, org := range orgs {
+		loader.policies[org] = []Policy{{Pattern: "a*", Allowed: true, Priority: 1}}
+		if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Capacity-2 LRU: loading the third org evicts the first; gens for the
+	// evicted live generation must be pruned (not retained forever).
+	if n := cache.gensLen(); n > 2 {
+		t.Fatalf("gensLen=%d want <=2 after capacity eviction", n)
+	}
+	// Invalidate must still retain a bumped generation for a key not in LRU.
+	evicted := orgs[0]
+	cache.Invalidate(evicted)
+	if cache.gensLen() < 1 {
+		t.Fatal("expected invalidate to retain generation bump")
+	}
+}

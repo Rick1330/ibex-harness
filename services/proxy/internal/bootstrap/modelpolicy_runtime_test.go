@@ -1,11 +1,15 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/alicebob/miniredis/v2"
@@ -16,7 +20,13 @@ import (
 func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthrough(t *testing.T) {
 	t.Parallel()
 	base := mustTestRegistry(t)
-	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, nil, nil)
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := ibexmetrics.NewProxy("mp-passthrough-test")
+	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, log, reg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +35,13 @@ func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthrough(t *testing.T) {
 	}
 	assertPassthroughResolver(t, resolver)
 	assertNoopDefaults(t, defaults)
+	if !strings.Contains(buf.String(), "model policy passthrough: org model policies disabled") {
+		t.Fatalf("expected passthrough warn log, got %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "POSTGRES_DSN unset or db handle nil") {
+		t.Fatalf("expected reason in warn log, got %q", buf.String())
+	}
+	assertModelPolicyEnabledGauge(t, reg, 0)
 }
 
 func TestUnit_StartModelPolicySubscriber_SkippedWithoutDeps(t *testing.T) {
@@ -105,6 +122,27 @@ func assertNoopDefaults(t *testing.T, defaults modelpolicy.AgentDefaultLoader) {
 	if err != nil || got.DefaultModel != "" {
 		t.Fatalf("noop defaults: %+v err=%v", got, err)
 	}
+}
+
+func assertModelPolicyEnabledGauge(t *testing.T, reg *ibexmetrics.ProxyRegistry, want float64) {
+	t.Helper()
+	families, err := reg.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() != "ibex_proxy_model_policy_enabled" {
+			continue
+		}
+		if len(f.GetMetric()) == 0 {
+			t.Fatal("enabled gauge has no samples")
+		}
+		if got := f.GetMetric()[0].GetGauge().GetValue(); got != want {
+			t.Fatalf("enabled=%v want %v", got, want)
+		}
+		return
+	}
+	t.Fatal("missing ibex_proxy_model_policy_enabled")
 }
 
 type mpFakeLoader struct{}

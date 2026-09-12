@@ -48,12 +48,25 @@ func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
 		now:     time.Now,
 		gens:    make(map[string]uint64),
 	}
-	cache, err := lru.New[string, *cachedPolicies](cfg.LRUSize)
+	cache, err := lru.NewWithEvict[string, *cachedPolicies](cfg.LRUSize, c.onLRUEvict)
 	if err != nil {
 		return nil, fmt.Errorf("modelpolicy: lru: %w", err)
 	}
 	c.lru = cache
 	return c, nil
+}
+
+// onLRUEvict drops gens entries for capacity/TTL removals of the live generation.
+// Invalidate bumps gens before Remove, so entry.gen != gens[key] and the bump is kept.
+// TryLock avoids deadlock when Remove/Add runs while mu is already held.
+func (c *Cache) onLRUEvict(key string, entry *cachedPolicies) {
+	if entry == nil || !c.mu.TryLock() {
+		return
+	}
+	defer c.mu.Unlock()
+	if c.gens[key] == entry.gen {
+		delete(c.gens, key)
+	}
 }
 
 // PoliciesForOrg returns cached or freshly loaded policies for orgID.
@@ -70,20 +83,24 @@ func (c *Cache) PoliciesForOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, 
 
 func (c *Cache) lookupFresh(key string) ([]Policy, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	entry, ok := c.lru.Get(key)
 	if !ok || entry == nil {
+		c.mu.Unlock()
 		return nil, false
 	}
 	if entry.gen != c.gens[key] {
+		c.mu.Unlock()
 		c.lru.Remove(key)
 		return nil, false
 	}
 	if !c.now().Before(entry.expiresAt) {
+		c.mu.Unlock()
 		c.lru.Remove(key)
 		return nil, false
 	}
-	return clonePolicies(entry.policies), true
+	out := clonePolicies(entry.policies)
+	c.mu.Unlock()
+	return out, true
 }
 
 func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, error) {
@@ -123,17 +140,31 @@ func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) ([]Po
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.gens[key] != gen {
+		c.mu.Unlock()
 		// Stale snapshot — do not cache or return; caller retries.
 		return nil, false, nil
 	}
-	c.lru.Add(key, &cachedPolicies{
+	entry := &cachedPolicies{
 		policies:  clonePolicies(policies),
 		expiresAt: c.now().Add(c.cfg.CacheTTL),
 		gen:       gen,
-	})
-	c.metrics.SetLRUSize(float64(c.lru.Len()))
+	}
+	c.mu.Unlock()
+
+	// Add outside the gen lock so onLRUEvict can take mu (capacity eviction).
+	c.lru.Add(key, entry)
+
+	c.mu.Lock()
+	stale := c.gens[key] != gen
+	size := c.lru.Len()
+	c.mu.Unlock()
+	if stale {
+		// Invalidate raced after Add — drop the stale install.
+		c.lru.Remove(key)
+		return nil, false, nil
+	}
+	c.metrics.SetLRUSize(float64(size))
 	return clonePolicies(policies), true, nil
 }
 
@@ -145,7 +176,9 @@ func (c *Cache) Invalidate(orgID uuid.UUID) {
 	key := orgID.String()
 	c.mu.Lock()
 	c.gens[key]++
+	c.mu.Unlock()
 	c.lru.Remove(key)
+	c.mu.Lock()
 	size := c.lru.Len()
 	c.mu.Unlock()
 	c.metrics.IncInvalidate()
@@ -170,4 +203,11 @@ func clonePolicies(in []Policy) []Policy {
 	out := make([]Policy, len(in))
 	copy(out, in)
 	return out
+}
+
+// gensLen reports generation-map size for tests.
+func (c *Cache) gensLen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.gens)
 }

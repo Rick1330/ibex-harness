@@ -25,6 +25,10 @@ func (r *ProxyRegistry) initModelPolicyMetrics() {
 		Name: "ibex_proxy_model_policy_lru_size",
 		Help: "Current number of orgs in the model-policy LRU.",
 	})
+	r.modelPolicyEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ibex_proxy_model_policy_enabled",
+		Help: "1 when org model-policy enforcement is active; 0 when PassthroughRegistry (no Postgres).",
+	})
 }
 
 // IncCacheHit implements modelpolicy.Metrics.
@@ -65,4 +69,16 @@ func (r *ProxyRegistry) SetLRUSize(n float64) {
 		return
 	}
 	r.modelPolicyLRUSize.Set(n)
+}
+
+// SetModelPolicyEnabled records whether org model-policy enforcement is active.
+func (r *ProxyRegistry) SetModelPolicyEnabled(enabled bool) {
+	if r == nil || r.modelPolicyEnabled == nil {
+		return
+	}
+	if enabled {
+		r.modelPolicyEnabled.Set(1)
+		return
+	}
+	r.modelPolicyEnabled.Set(0)
 }

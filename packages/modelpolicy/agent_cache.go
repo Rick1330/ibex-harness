@@ -51,11 +51,14 @@ func (c *CachingAgentDefaults) Load(ctx context.Context, orgID, agentID uuid.UUI
 	if d, ok := c.lookupFresh(key); ok {
 		return d, nil
 	}
+	// Detach from the caller's cancel/deadline so one abandoned request cannot
+	// fail coalesced waiters. Preserve ctx values for tracing; LoadTimeout caps the flight.
+	loadParent := context.WithoutCancel(ctx)
 	v, err, _ := c.group.Do(key, func() (any, error) {
 		if d, ok := c.lookupFresh(key); ok {
 			return d, nil
 		}
-		return c.loadAndStore(ctx, key, orgID, agentID)
+		return c.loadAndStore(loadParent, key, orgID, agentID)
 	})
 	if err != nil {
 		return AgentDefaults{}, err

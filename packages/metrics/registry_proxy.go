@@ -40,6 +40,7 @@ type ProxyRegistry struct {
 	modelPolicyDeny               prometheus.Counter
 	modelPolicyInvalidate         prometheus.Counter
 	modelPolicyLRUSize            prometheus.Gauge
+	modelPolicyEnabled            prometheus.Gauge
 	sessionGetOrCreate            *prometheus.CounterVec
 	sessionGetOrCreateSec         prometheus.Histogram
 	sessionCheckpoint             *prometheus.CounterVec

@@ -55,6 +55,8 @@ func (r *OrgAwareRegistry) ForOrg(ctx context.Context, orgID uuid.UUID, model st
 func (r *OrgAwareRegistry) Base() *provider.Registry { return r.base }
 
 // PassthroughRegistry adapts *provider.Registry to ForOrg without policies.
+// Used only when Postgres is unavailable; bootstrap must Warn and set
+// ibex_proxy_model_policy_enabled=0 so operators can observe the bypass.
 type PassthroughRegistry struct {
 	Base *provider.Registry
 }

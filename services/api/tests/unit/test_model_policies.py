@@ -182,23 +182,23 @@ def test_empty_character_class_glob_400() -> None:
     assert resp.status_code == 400
 
 
-def test_TestAPI_ISO_MODELPOLICY_list_foreign_org_404() -> None:
+def test_unit_model_policies_list_foreign_org_404() -> None:
     _assert_foreign_org_404("GET")
 
 
-def test_TestAPI_ISO_MODELPOLICY_create_foreign_org_404() -> None:
+def test_unit_model_policies_create_foreign_org_404() -> None:
     _assert_foreign_org_404("POST")
 
 
-def test_TestAPI_ISO_MODELPOLICY_get_foreign_org_404() -> None:
+def test_unit_model_policies_get_foreign_org_404() -> None:
     _assert_foreign_org_404("GET_ONE")
 
 
-def test_TestAPI_ISO_MODELPOLICY_patch_foreign_org_404() -> None:
+def test_unit_model_policies_patch_foreign_org_404() -> None:
     _assert_foreign_org_404("PATCH")
 
 
-def test_TestAPI_ISO_MODELPOLICY_delete_foreign_org_404() -> None:
+def test_unit_model_policies_delete_foreign_org_404() -> None:
     _assert_foreign_org_404("DELETE")
 
 

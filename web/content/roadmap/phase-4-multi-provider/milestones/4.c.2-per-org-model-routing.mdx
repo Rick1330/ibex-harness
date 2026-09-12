@@ -84,7 +84,7 @@ Exit criteria requires model-based routing configuration per org — allowlists/
 - [x] Deny → `ErrModelNotAllowedForOrg` → `403 MODEL_NOT_ALLOWED` (middleware unit + registry tests)
 - [x] Cache hit avoids second loader call; TTL expiry + pub/sub invalidate ≤1s (miniredis)
 - [x] `TestRouting_OrgPolicy_*` against real Postgres (`//go:build integration`)
-- [x] `TestAPI_ISO_MODELPOLICY_*` foreign org → 404 on all verbs
+- [x] Unit foreign-org path checks → 404 on all verbs (`test_unit_model_policies_*_foreign_org_404`; live API+RLS ISO is a follow-up)
 - [x] **Minimal** middleware + constructor wiring (not “zero middleware changes”)
 
 ---

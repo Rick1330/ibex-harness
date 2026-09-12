@@ -345,6 +345,11 @@ func buildModelPolicyRuntime(
 	metrics *ibexmetrics.ProxyRegistry,
 ) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
 	if pgDB == nil || base == nil {
+		reason := "POSTGRES_DSN unset or db handle nil"
+		if base == nil {
+			reason = "provider registry nil"
+		}
+		warnModelPolicyPassthrough(log, metrics, reason)
 		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
 	}
 	m := modelPolicyMetrics(metrics)
@@ -356,10 +361,26 @@ func buildModelPolicyRuntime(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	if metrics != nil {
+		metrics.SetModelPolicyEnabled(true)
+	}
 	if log != nil {
 		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
 	}
 	return cache, reg, agentDefaults, nil
+}
+
+func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
+	if metrics != nil {
+		metrics.SetModelPolicyEnabled(false)
+	}
+	if log == nil {
+		return
+	}
+	log.WarnCtx(context.Background(),
+		"model policy passthrough: org model policies disabled; every model allowed for every org",
+		"reason", reason,
+	)
 }
 
 func newOrgPolicyStack(

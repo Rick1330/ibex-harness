@@ -81,6 +81,7 @@ func (r *ProxyRegistry) authAndSessionCollectors() []prometheus.Collector {
 		r.modelPolicyDeny,
 		r.modelPolicyInvalidate,
 		r.modelPolicyLRUSize,
+		r.modelPolicyEnabled,
 		r.sessionGetOrCreate,
 		r.sessionGetOrCreateSec,
 		r.sessionCheckpoint,

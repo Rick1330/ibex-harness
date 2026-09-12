@@ -10,6 +10,7 @@ func TestProxyRegistry_ModelPolicyMetrics(t *testing.T) {
 	reg.IncDeny()
 	reg.IncInvalidate()
 	reg.SetLRUSize(3)
+	reg.SetModelPolicyEnabled(true)
 
 	families := gatherFamilies(t, reg.Gatherer())
 	if got := counterByLabel(families["ibex_proxy_model_policy_cache_hits_total"], "tier", "lru"); got != 1 {
@@ -31,6 +32,18 @@ func TestProxyRegistry_ModelPolicyMetrics(t *testing.T) {
 	if got := gauge.GetMetric()[0].GetGauge().GetValue(); got != 3 {
 		t.Fatalf("lru size=%v want 3", got)
 	}
+	enabled := families["ibex_proxy_model_policy_enabled"]
+	if enabled == nil || len(enabled.GetMetric()) == 0 {
+		t.Fatal("missing enabled gauge")
+	}
+	if got := enabled.GetMetric()[0].GetGauge().GetValue(); got != 1 {
+		t.Fatalf("enabled=%v want 1", got)
+	}
+	reg.SetModelPolicyEnabled(false)
+	families = gatherFamilies(t, reg.Gatherer())
+	if got := families["ibex_proxy_model_policy_enabled"].GetMetric()[0].GetGauge().GetValue(); got != 0 {
+		t.Fatalf("enabled=%v want 0", got)
+	}
 
 	var nilReg *ProxyRegistry
 	nilReg.IncCacheHit("lru")
@@ -38,4 +51,5 @@ func TestProxyRegistry_ModelPolicyMetrics(t *testing.T) {
 	nilReg.IncDeny()
 	nilReg.IncInvalidate()
 	nilReg.SetLRUSize(0)
+	nilReg.SetModelPolicyEnabled(false)
 }
