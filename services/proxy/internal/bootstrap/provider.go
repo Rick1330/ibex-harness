@@ -199,12 +199,9 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 }
 
 func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) ([]provider.Provider, error) {
+	lp := liveProviderBuild{cfg: cfg, log: log, tracer: tracer, reg: reg}
 	var providers []provider.Provider
-	providers, err := appendOpenAIProvider(providers, cfg, log, tracer, reg)
-	if err != nil {
-		return nil, err
-	}
-	providers, err = appendAnthropicProvider(providers, cfg, log, tracer, reg)
+	providers, err := lp.appendCloud(providers)
 	if err != nil {
 		return nil, err
 	}
@@ -218,56 +215,61 @@ func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tr
 	return append(providers, p), nil
 }
 
-func appendOpenAIProvider(
-	dst []provider.Provider,
-	cfg config.Config,
-	log *logger.Logger,
-	tracer trace.Tracer,
-	reg *metrics.ProxyRegistry,
-) ([]provider.Provider, error) {
-	if strings.TrimSpace(cfg.OpenAI.APIKey) == "" {
-		return dst, nil
-	}
-	br, err := newRollingProviderBreaker(openaicompatible.ProviderNameOpenAI, cfg)
-	if err != nil {
-		return nil, err
-	}
-	maxRetries := cfg.OpenAI.MaxRetries
-	return append(dst, openai.New(openai.Config{
-		APIKey:         cfg.OpenAI.APIKey,
-		BaseURL:        cfg.OpenAI.BaseURL,
-		Timeout:        cfg.OpenAI.RequestTimeout,
-		MaxRetries:     &maxRetries,
-		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
-		ExtraModels:    cfg.OpenAI.ExtraModels,
-		Breaker:        br,
-	}, log, tracer, reg)), nil
+type liveProviderBuild struct {
+	cfg    config.Config
+	log    *logger.Logger
+	tracer trace.Tracer
+	reg    *metrics.ProxyRegistry
 }
 
-func appendAnthropicProvider(
-	dst []provider.Provider,
-	cfg config.Config,
-	log *logger.Logger,
-	tracer trace.Tracer,
-	reg *metrics.ProxyRegistry,
-) ([]provider.Provider, error) {
-	if strings.TrimSpace(cfg.Anthropic.APIKey) == "" {
-		return dst, nil
-	}
-	br, err := newRollingProviderBreaker("anthropic", cfg)
+func (lp liveProviderBuild) appendCloud(dst []provider.Provider) ([]provider.Provider, error) {
+	dst, err := lp.appendNamed(dst, strings.TrimSpace(lp.cfg.OpenAI.APIKey), openaicompatible.ProviderNameOpenAI, lp.newOpenAI)
 	if err != nil {
 		return nil, err
 	}
-	maxRetries := cfg.Anthropic.MaxRetries
-	return append(dst, anthropic.New(anthropic.Config{
-		APIKey:         cfg.Anthropic.APIKey,
-		BaseURL:        cfg.Anthropic.BaseURL,
-		Timeout:        cfg.Anthropic.RequestTimeout,
+	return lp.appendNamed(dst, strings.TrimSpace(lp.cfg.Anthropic.APIKey), "anthropic", lp.newAnthropic)
+}
+
+func (lp liveProviderBuild) appendNamed(
+	dst []provider.Provider,
+	apiKey string,
+	breakerName string,
+	build func(*circuitbreaker.Breaker) provider.Provider,
+) ([]provider.Provider, error) {
+	if apiKey == "" {
+		return dst, nil
+	}
+	br, err := newRollingProviderBreaker(breakerName, lp.cfg)
+	if err != nil {
+		return nil, err
+	}
+	return append(dst, build(br)), nil
+}
+
+func (lp liveProviderBuild) newOpenAI(br *circuitbreaker.Breaker) provider.Provider {
+	maxRetries := lp.cfg.OpenAI.MaxRetries
+	return openai.New(openai.Config{
+		APIKey:         lp.cfg.OpenAI.APIKey,
+		BaseURL:        lp.cfg.OpenAI.BaseURL,
+		Timeout:        lp.cfg.OpenAI.RequestTimeout,
 		MaxRetries:     &maxRetries,
-		RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
-		ExtraModels:    cfg.Anthropic.ExtraModels,
+		RetryBaseDelay: lp.cfg.OpenAI.RetryBaseDelay,
+		ExtraModels:    lp.cfg.OpenAI.ExtraModels,
 		Breaker:        br,
-	}, log, tracer, reg)), nil
+	}, lp.log, lp.tracer, lp.reg)
+}
+
+func (lp liveProviderBuild) newAnthropic(br *circuitbreaker.Breaker) provider.Provider {
+	maxRetries := lp.cfg.Anthropic.MaxRetries
+	return anthropic.New(anthropic.Config{
+		APIKey:         lp.cfg.Anthropic.APIKey,
+		BaseURL:        lp.cfg.Anthropic.BaseURL,
+		Timeout:        lp.cfg.Anthropic.RequestTimeout,
+		MaxRetries:     &maxRetries,
+		RetryBaseDelay: lp.cfg.Anthropic.RetryBaseDelay,
+		ExtraModels:    lp.cfg.Anthropic.ExtraModels,
+		Breaker:        br,
+	}, lp.log, lp.tracer, lp.reg)
 }
 
 func newProviderBreaker(name string, s circuitbreaker.Settings) (*circuitbreaker.Breaker, error) {

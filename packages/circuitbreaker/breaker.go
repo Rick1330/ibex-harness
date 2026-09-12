@@ -101,17 +101,27 @@ func validateSettings(s Settings) error {
 }
 
 func validateConsecutiveSettings(s Settings) error {
-	if s.BucketPeriod != 0 || s.MinSamples != 0 || s.FailureRateThreshold != 0 {
+	if rollingFieldsSet(s) {
 		return fmt.Errorf("circuitbreaker: rolling fields require Window > 0")
 	}
 	return nil
+}
+
+func rollingFieldsSet(s Settings) bool {
+	if s.BucketPeriod != 0 {
+		return true
+	}
+	if s.MinSamples != 0 {
+		return true
+	}
+	return s.FailureRateThreshold != 0
 }
 
 func validateRollingSettings(s Settings) error {
 	if s.MinSamples == 0 {
 		return fmt.Errorf("circuitbreaker: MinSamples must be > 0 when Window > 0")
 	}
-	if math.IsNaN(s.FailureRateThreshold) || s.FailureRateThreshold <= 0 || s.FailureRateThreshold > 1 {
+	if failureRateInvalid(s.FailureRateThreshold) {
 		return fmt.Errorf("circuitbreaker: FailureRateThreshold must be in (0, 1], got %v", s.FailureRateThreshold)
 	}
 	if s.BucketPeriod < 0 {
@@ -121,6 +131,16 @@ func validateRollingSettings(s Settings) error {
 		return fmt.Errorf("circuitbreaker: BucketPeriod (%s) must be <= Window (%s)", s.BucketPeriod, s.Window)
 	}
 	return nil
+}
+
+func failureRateInvalid(rate float64) bool {
+	if math.IsNaN(rate) {
+		return true
+	}
+	if rate <= 0 {
+		return true
+	}
+	return rate > 1
 }
 
 func rollingInterval(s Settings) time.Duration {
