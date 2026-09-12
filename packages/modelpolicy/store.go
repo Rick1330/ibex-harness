@@ -42,29 +42,37 @@ func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) 
 	)
 	defer span.End()
 
-	policies, err := s.loadOrgTx(ctx, orgID)
+	policies, err := withOrgReadTx(ctx, s.db, orgID, func(tx *sql.Tx) ([]Policy, error) {
+		return scanOrgPolicies(ctx, tx, orgID)
+	})
 	if err != nil {
 		return nil, recordStoreErr(span, err)
 	}
 	return policies, nil
 }
 
-func (s *Store) loadOrgTx(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+func withOrgReadTx[T any](
+	ctx context.Context,
+	db *sql.DB,
+	orgID uuid.UUID,
+	fn func(*sql.Tx) (T, error),
+) (T, error) {
+	var zero T
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setOrgRLS(ctx, tx, orgID); err != nil {
-		return nil, err
+		return zero, err
 	}
-	out, err := scanOrgPolicies(ctx, tx, orgID)
+	out, err := fn(tx)
 	if err != nil {
-		return nil, err
+		return zero, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return zero, err
 	}
 	return out, nil
 }
@@ -144,28 +152,20 @@ func (s *AgentStore) Load(ctx context.Context, orgID, agentID uuid.UUID) (AgentD
 	)
 	defer span.End()
 
-	defaults, err := s.loadAgentDefaultsTx(ctx, orgID, agentID)
+	defaults, err := withOrgReadTx(ctx, s.db, orgID, func(tx *sql.Tx) (AgentDefaults, error) {
+		return scanAgentDefaults(ctx, tx, orgID, agentID)
+	})
 	if err != nil {
 		return AgentDefaults{}, recordStoreErr(span, err)
 	}
 	return defaults, nil
 }
 
-func (s *AgentStore) loadAgentDefaultsTx(
-	ctx context.Context, orgID, agentID uuid.UUID,
+func scanAgentDefaults(
+	ctx context.Context, tx *sql.Tx, orgID, agentID uuid.UUID,
 ) (AgentDefaults, error) {
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return AgentDefaults{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := setOrgRLS(ctx, tx, orgID); err != nil {
-		return AgentDefaults{}, err
-	}
-
 	var model, provider sql.NullString
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT default_model, default_provider
 		FROM ibex_core.agents
 		WHERE id = $1 AND org_id = $2`, agentID, orgID).Scan(&model, &provider)
@@ -174,9 +174,6 @@ func (s *AgentStore) loadAgentDefaultsTx(
 	}
 	if err != nil {
 		return AgentDefaults{}, fmt.Errorf("modelpolicy: agent defaults: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return AgentDefaults{}, err
 	}
 	return AgentDefaults{
 		DefaultModel:    nullStr(model),

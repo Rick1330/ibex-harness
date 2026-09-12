@@ -23,6 +23,20 @@ def _skip_escape(pattern: str, i: int, n: int) -> tuple[int, str | None]:
     return i + 1, None
 
 
+def _scan_class_contents(pattern: str, i: int, n: int) -> tuple[int, str | None]:
+    """Scan until ']' inside a character class; i is first content index."""
+    while i < n and pattern[i] != "]":
+        if pattern[i] != "\\":
+            i += 1
+            continue
+        i, err = _skip_escape(pattern, i + 1, n)
+        if err is not None:
+            return i, err
+    if i >= n:
+        return i, "unclosed character class"
+    return i + 1, None
+
+
 def _skip_character_class(pattern: str, i: int, n: int) -> tuple[int, str | None]:
     """Advance past a [...] class; i points at the char after '['."""
     if i < n and pattern[i] == "^":
@@ -31,16 +45,7 @@ def _skip_character_class(pattern: str, i: int, n: int) -> tuple[int, str | None
         return i, "unclosed character class"
     if pattern[i] == "]":
         return i, "empty character class"
-    while i < n and pattern[i] != "]":
-        if pattern[i] == "\\":
-            i, err = _skip_escape(pattern, i + 1, n)
-            if err is not None:
-                return i, err
-            continue
-        i += 1
-    if i >= n:
-        return i, "unclosed character class"
-    return i + 1, None
+    return _scan_class_contents(pattern, i, n)
 
 
 def _go_filepath_match_error(pattern: str) -> str | None:
