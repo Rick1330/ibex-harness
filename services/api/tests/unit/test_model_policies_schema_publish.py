@@ -43,14 +43,21 @@ def test_create_rejects_patterns_go_filepath_match_rejects(pattern: str) -> None
 
 
 def test_create_rejects_pattern_over_256_chars() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc:
         ModelPolicyCreate(model_pattern="a" * 257, allowed=False)
+    assert "256" in str(exc.value)
 
 
 def test_patch_omitted_pattern_stays_none() -> None:
     body = ModelPolicyPatch(allowed=False)
     assert body.model_pattern is None
     assert body.allowed is False
+
+
+def test_patch_explicit_none_pattern_stays_none() -> None:
+    body = ModelPolicyPatch(model_pattern=None, priority=3)
+    assert body.model_pattern is None
+    assert body.priority == 3
 
 
 def test_patch_rejects_empty_character_class() -> None:

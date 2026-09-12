@@ -16,6 +16,33 @@ Priority = Annotated[int, Field(ge=-1_000_000, le=1_000_000)]
 _MAX_PATTERN_LEN = 256
 
 
+def _skip_escape(pattern: str, i: int, n: int) -> tuple[int, str | None]:
+    """Advance past a backslash escape; i points at the char after '\\'."""
+    if i >= n:
+        return i, "trailing backslash"
+    return i + 1, None
+
+
+def _skip_character_class(pattern: str, i: int, n: int) -> tuple[int, str | None]:
+    """Advance past a [...] class; i points at the char after '['."""
+    if i < n and pattern[i] == "^":
+        i += 1
+    if i >= n:
+        return i, "unclosed character class"
+    if pattern[i] == "]":
+        return i, "empty character class"
+    while i < n and pattern[i] != "]":
+        if pattern[i] == "\\":
+            i, err = _skip_escape(pattern, i + 1, n)
+            if err is not None:
+                return i, err
+            continue
+        i += 1
+    if i >= n:
+        return i, "unclosed character class"
+    return i + 1, None
+
+
 def _go_filepath_match_error(pattern: str) -> str | None:
     """Return a reason if Go ``filepath.Match`` would return ErrBadPattern."""
     i = 0
@@ -24,27 +51,15 @@ def _go_filepath_match_error(pattern: str) -> str | None:
         ch = pattern[i]
         i += 1
         if ch == "\\":
-            if i >= n:
-                return "trailing backslash"
-            i += 1
+            i, err = _skip_escape(pattern, i, n)
+            if err is not None:
+                return err
             continue
         if ch != "[":
             continue
-        if i < n and pattern[i] == "^":
-            i += 1
-        if i >= n:
-            return "unclosed character class"
-        if pattern[i] == "]":
-            return "empty character class"
-        while i < n and pattern[i] != "]":
-            if pattern[i] == "\\":
-                i += 1
-                if i >= n:
-                    return "trailing backslash"
-            i += 1
-        if i >= n:
-            return "unclosed character class"
-        i += 1
+        i, err = _skip_character_class(pattern, i, n)
+        if err is not None:
+            return err
     return None
 
 
@@ -61,7 +76,9 @@ def _normalize_model_pattern(pattern: str) -> str:
 
 
 class ModelPolicyCreate(BaseModel):
-    model_pattern: str = Field(min_length=1, max_length=_MAX_PATTERN_LEN)
+    # Length upper bound is enforced in _normalize_model_pattern (not Field) so
+    # oversize input reaches the same error path as Go ValidatePattern.
+    model_pattern: str = Field(min_length=1)
     allowed: bool
     priority: Priority = 100
 
@@ -72,7 +89,7 @@ class ModelPolicyCreate(BaseModel):
 
 
 class ModelPolicyPatch(BaseModel):
-    model_pattern: str | None = Field(default=None, min_length=1, max_length=_MAX_PATTERN_LEN)
+    model_pattern: str | None = Field(default=None, min_length=1)
     allowed: bool | None = None
     priority: Priority | None = None
 

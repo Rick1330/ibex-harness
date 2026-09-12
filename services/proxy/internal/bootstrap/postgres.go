@@ -331,6 +331,13 @@ func startRateLimitConfigSubscriber(
 	return sub, cancel, nil
 }
 
+func modelPolicyMetrics(reg *ibexmetrics.ProxyRegistry) modelpolicy.Metrics {
+	if reg != nil {
+		return reg
+	}
+	return modelpolicy.NoopMetrics{}
+}
+
 func buildModelPolicyRuntime(
 	pgDB *sql.DB,
 	base *provider.Registry,
@@ -340,10 +347,7 @@ func buildModelPolicyRuntime(
 	if pgDB == nil || base == nil {
 		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
 	}
-	var m modelpolicy.Metrics = modelpolicy.NoopMetrics{}
-	if metrics != nil {
-		m = metrics
-	}
+	m := modelPolicyMetrics(metrics)
 	store, err := modelpolicy.NewStore(pgDB)
 	if err != nil {
 		return nil, nil, nil, err
@@ -375,11 +379,7 @@ func startModelPolicySubscriber(
 	if redisClient == nil || cache == nil {
 		return nil, nil, nil
 	}
-	var m modelpolicy.Metrics = modelpolicy.NoopMetrics{}
-	if metrics != nil {
-		m = metrics
-	}
-	sub, err := modelpolicy.NewSubscriber(redisClient, cache, log, m)
+	sub, err := modelpolicy.NewSubscriber(redisClient, cache, log, modelPolicyMetrics(metrics))
 	if err != nil {
 		return nil, nil, err
 	}

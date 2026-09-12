@@ -325,6 +325,22 @@ def test_pattern_conflict_detected_from_diag_constraint_name() -> None:
     assert svc._is_pattern_conflict(IntegrityError("x", {}, orig)) is True
 
 
+def test_constraint_name_falls_back_to_orig_string() -> None:
+    orig = SimpleNamespace(constraint_name=None, diag=None)
+    name = svc._constraint_name(IntegrityError("x", {}, orig))
+    assert name  # non-empty fallback
+
+
+def test_constraint_name_ignores_empty_diag_name() -> None:
+    orig = SimpleNamespace(
+        constraint_name=None,
+        diag=SimpleNamespace(constraint_name=""),
+    )
+    name = svc._constraint_name(IntegrityError("x", {}, orig))
+    assert name
+    assert svc._is_pattern_conflict(IntegrityError("x", {}, orig)) is False
+
+
 def test_row_mapping_accepts_uuid_strings() -> None:
     org_id, policy_id = uuid4(), uuid4()
     now = datetime.now(UTC)

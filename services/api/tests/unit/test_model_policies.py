@@ -77,6 +77,24 @@ def test_create_model_policy_owner_ok() -> None:
     assert patched.await_count == 1
 
 
+def test_create_uses_noop_publisher_when_unset() -> None:
+    org_id = uuid4()
+    with (
+        managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
+        _mock_svc("create_policy", _policy(org_id)) as patched,
+    ):
+        client.app.state.api.model_policy_publisher = None
+        resp = client.post(
+            _base(org_id),
+            headers=bearer_headers(),
+            json={"model_pattern": "gpt-*", "allowed": True},
+        )
+    assert resp.status_code == 201
+    assert patched.await_count == 1
+    deps = patched.await_args.kwargs["deps"]
+    assert deps.publisher is not None
+
+
 def test_member_create_denied() -> None:
     org_id = uuid4()
     with managed_org_client(
