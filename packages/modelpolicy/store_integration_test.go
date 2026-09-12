@@ -13,7 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/google/uuid"
 
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // database/sql Postgres driver for integration DSN
 )
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"

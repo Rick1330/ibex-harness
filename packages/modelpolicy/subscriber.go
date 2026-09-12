@@ -114,5 +114,4 @@ func (s *Subscriber) handleMessage(ctx context.Context, channel, payload string)
 		return
 	}
 	s.cache.Invalidate(orgID)
-	s.metrics.IncInvalidate()
 }

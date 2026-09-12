@@ -35,6 +35,9 @@ def test_create_accepts_filepath_match_patterns(pattern: str) -> None:
         "trail\\",
         "[" + "\\",  # trailing backslash inside class
         "   ",  # whitespace-only after strip
+        "[a-]",  # dangling range
+        "[-a]",  # leading dash item
+        "[a-b-]",  # dash after completed range
     ],
 )
 def test_create_rejects_patterns_go_filepath_match_rejects(pattern: str) -> None:

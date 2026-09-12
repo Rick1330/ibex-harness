@@ -10,6 +10,8 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
+const maxPolicyLoadAttempts = 3
+
 type cachedPolicies struct {
 	policies  []Policy
 	expiresAt time.Time
@@ -81,27 +83,40 @@ func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (
 	// Touch bloom for metrics/observability only; never gate the load on it.
 	_ = c.bloom.mayHave(key)
 
+	for attempt := 0; attempt < maxPolicyLoadAttempts; attempt++ {
+		policies, ok, err := c.loadOnce(ctx, orgID, key)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return policies, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: invalidated during load", ErrPolicyUnavailable)
+}
+
+func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, bool, error) {
 	gen := c.generation(key)
 	policies, err := c.loader.LoadOrg(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return nil, false, fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
 	}
 	if policies == nil {
 		policies = []Policy{}
 	}
+	if c.generation(key) != gen {
+		// Stale snapshot — do not cache or return; caller retries.
+		return nil, false, nil
+	}
 	if len(policies) > 0 {
 		c.bloom.add(key)
-	}
-	// Invalidate during LoadOrg must not re-cache stale rows.
-	if c.generation(key) != gen {
-		return clonePolicies(policies), nil
 	}
 	c.lru.Add(key, &cachedPolicies{
 		policies:  clonePolicies(policies),
 		expiresAt: c.now().Add(c.cfg.CacheTTL),
 	})
 	c.metrics.SetLRUSize(float64(c.lru.Len()))
-	return clonePolicies(policies), nil
+	return clonePolicies(policies), true, nil
 }
 
 func (c *Cache) generation(key string) uint64 {

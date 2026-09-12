@@ -219,16 +219,11 @@ async def test_create_survives_publish_failure_after_commit() -> None:
 @pytest.mark.asyncio
 async def test_patch_applies_partial_fields_and_publishes() -> None:
     org_id, policy_id = uuid4(), uuid4()
-    current = _policy_row(
-        id=policy_id, org_id=org_id, model_pattern="old-*", allowed=True, priority=1
-    )
     updated = _policy_row(
         id=policy_id, org_id=org_id, model_pattern="old-*", allowed=False, priority=1
     )
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[_Rows(row=current), _Rows(row=updated)]
-    )
+    session.execute = AsyncMock(return_value=_Rows(row=updated))
     session.commit = AsyncMock()
     publisher = RecordingModelPolicyPublisher()
     got = await svc.patch_policy(
@@ -242,16 +237,36 @@ async def test_patch_applies_partial_fields_and_publishes() -> None:
     )
     assert got.allowed is False
     assert publisher.published == [str(org_id)]
+    params = session.execute.await_args.args[1]
+    assert params["allowed"] is False
+    assert params["model_pattern"] is None
+    assert params["priority"] is None
+
+
+@pytest.mark.asyncio
+async def test_patch_empty_body_returns_current() -> None:
+    org_id, policy_id = uuid4(), uuid4()
+    current = _policy_row(id=policy_id, org_id=org_id)
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_Rows(row=current))
+    got = await svc.patch_policy(
+        session,
+        svc.PatchArgs(
+            org_id=org_id,
+            policy_id=policy_id,
+            body=ModelPolicyPatch(),
+            deps=svc.WriteDeps(),
+        ),
+    )
+    assert got.id == policy_id
+    session.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_patch_duplicate_pattern_is_conflict() -> None:
     org_id, policy_id = uuid4(), uuid4()
-    current = _policy_row(id=policy_id, org_id=org_id)
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[_Rows(row=current), _integrity(_ORG_PATTERN_UNIQUE)]
-    )
+    session.execute = AsyncMock(side_effect=_integrity(_ORG_PATTERN_UNIQUE))
     session.rollback = AsyncMock()
     await _expect_api_error(
         svc.patch_policy(
@@ -271,11 +286,8 @@ async def test_patch_duplicate_pattern_is_conflict() -> None:
 @pytest.mark.asyncio
 async def test_patch_race_deleted_row_is_not_found() -> None:
     org_id, policy_id = uuid4(), uuid4()
-    current = _policy_row(id=policy_id, org_id=org_id)
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[_Rows(row=current), _Rows(row=None)]
-    )
+    session.execute = AsyncMock(return_value=_Rows(row=None))
     session.commit = AsyncMock()
     await _expect_api_error(
         svc.patch_policy(

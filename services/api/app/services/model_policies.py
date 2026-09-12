@@ -60,9 +60,9 @@ RETURNING id, org_id, model_pattern, allowed, priority, created_at, updated_at
 
 _UPDATE_SQL = """
 UPDATE ibex_core.org_model_policies
-SET model_pattern = :model_pattern,
-    allowed = :allowed,
-    priority = :priority,
+SET model_pattern = COALESCE(:model_pattern, model_pattern),
+    allowed = COALESCE(:allowed, allowed),
+    priority = COALESCE(:priority, priority),
     updated_at = now()
 WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
 RETURNING id, org_id, model_pattern, allowed, priority, created_at, updated_at
@@ -210,23 +210,18 @@ async def create_policy(
 
 
 async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyResponse:
-    current = await get_policy(session, args.org_id, args.policy_id)
-    pattern = (
-        args.body.model_pattern
-        if args.body.model_pattern is not None
-        else current.model_pattern
-    )
-    allowed = args.body.allowed if args.body.allowed is not None else current.allowed
-    priority = args.body.priority if args.body.priority is not None else current.priority
+    body = args.body
+    if body.model_pattern is None and body.allowed is None and body.priority is None:
+        return await get_policy(session, args.org_id, args.policy_id)
     try:
         result = await session.execute(
             text(_UPDATE_SQL),
             {
                 "org_id": str(args.org_id),
                 "policy_id": str(args.policy_id),
-                "model_pattern": pattern,
-                "allowed": allowed,
-                "priority": priority,
+                "model_pattern": body.model_pattern,
+                "allowed": body.allowed,
+                "priority": body.priority,
             },
         )
         row = result.first()

@@ -20,9 +20,7 @@ import (
 func TestUnit_ProviderRouting_KnownModelAttachesProvider(t *testing.T) {
 	t.Parallel()
 	var gotName string
-	var called bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
 		p, ok := provider.ProviderFromContext(r.Context())
 		if !ok {
 			t.Fatal("provider missing from context")
@@ -32,8 +30,11 @@ func TestUnit_ProviderRouting_KnownModelAttachesProvider(t *testing.T) {
 	})
 
 	rec := serveProviderRouting(t, routingCase{model: "gpt-4o", next: next})
-	if !called || gotName != "openai" || rec.Code != http.StatusOK {
-		t.Fatalf("called=%v provider=%q status=%d", called, gotName, rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if gotName != "openai" {
+		t.Fatalf("provider=%q", gotName)
 	}
 }
 

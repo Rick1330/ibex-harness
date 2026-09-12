@@ -48,14 +48,14 @@ func routeProviderRequest(w http.ResponseWriter, r *http.Request, opts providerR
 	if !ok {
 		opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
-			"Internal error", requestID,
+			msgInternalError, requestID,
 			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: opts.docsBase})
 		return
 	}
 	authRes, ok := auth.FromContext(r.Context())
 	if !ok || authRes.OrgID == uuid.Nil {
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Internal error", requestID,
+			msgInternalError, requestID,
 			apierror.WriteOpts{Detail: "missing org context", DocsBase: opts.docsBase})
 		return
 	}
@@ -90,7 +90,7 @@ func writeResolveModelError(w http.ResponseWriter, requestID, docsBase string, e
 		return false
 	}
 	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-		"Internal error", requestID,
+		msgInternalError, requestID,
 		apierror.WriteOpts{Detail: "agent default model unavailable", DocsBase: docsBase})
 	return false
 }
@@ -156,11 +156,11 @@ func writeRegistryLookupError(w http.ResponseWriter, meta registryLookupWrite, e
 			"No provider registered for model "+meta.model)
 	case errors.Is(err, modelpolicy.ErrPolicyUnavailable):
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Internal error", meta.requestID,
+			msgInternalError, meta.requestID,
 			apierror.WriteOpts{Detail: "model policy unavailable", DocsBase: meta.docsBase})
 	default:
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", meta.requestID,
+			msgInternalError, meta.requestID,
 			apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: meta.docsBase})
 	}
 }
