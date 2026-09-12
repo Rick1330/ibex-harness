@@ -16,12 +16,12 @@ type cachedPolicies struct {
 
 // Cache is a bloom → LRU policy cache in front of PolicyLoader.
 type Cache struct {
-	loader PolicyLoader
-	cfg    Config
+	loader  PolicyLoader
+	cfg     Config
 	metrics Metrics
-	bloom  *policyBloom
-	lru    *lru.Cache[string, *cachedPolicies]
-	now    func() time.Time
+	bloom   *policyBloom
+	lru     *lru.Cache[string, *cachedPolicies]
+	now     func() time.Time
 }
 
 // NewCache constructs a Cache. loader is required.
@@ -49,16 +49,31 @@ func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
 }
 
 // PoliciesForOrg returns cached or freshly loaded policies for orgID.
+// LRU miss always loads from Postgres (fail-closed). Bloom is a positive hint
+// only and never skips the loader — false negatives would fail open.
 func (c *Cache) PoliciesForOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
 	key := orgID.String()
-	if entry, ok := c.lru.Get(key); ok && entry != nil && c.now().Before(entry.expiresAt) {
+	if policies, ok := c.lookupFresh(key); ok {
 		c.metrics.IncCacheHit("lru")
-		return clonePolicies(entry.policies), nil
+		return policies, nil
 	}
 	c.metrics.IncCacheMiss("lru")
+	return c.loadAndStore(ctx, orgID, key)
+}
 
-	// Bloom is a positive hint only: if it says the org may have policies OR
-	// we simply always load on miss (fail-closed). We always load on LRU miss.
+func (c *Cache) lookupFresh(key string) ([]Policy, bool) {
+	entry, ok := c.lru.Get(key)
+	if !ok || entry == nil {
+		return nil, false
+	}
+	if !c.now().Before(entry.expiresAt) {
+		return nil, false
+	}
+	return clonePolicies(entry.policies), true
+}
+
+func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, error) {
+	// Touch bloom for metrics/observability only; never gate the load on it.
 	_ = c.bloom.mayHave(key)
 
 	policies, err := c.loader.LoadOrg(ctx, orgID)

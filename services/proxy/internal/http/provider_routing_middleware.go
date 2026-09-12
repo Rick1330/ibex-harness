@@ -53,9 +53,19 @@ func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http
 					apierror.WriteOpts{Detail: "missing org context", DocsBase: opts.docsBase})
 				return
 			}
-			candidate, err := resolveRoutingModel(r.Context(), parsed.Model, opts.agentDefaults)
-			if err != nil {
+			candidate, err := resolveRoutingModel(r.Context(), resolveModelArgs{
+				requestModel: parsed.Model,
+				orgID:        authRes.OrgID,
+				loader:       opts.agentDefaults,
+			})
+			if errors.Is(err, errModelRequired) {
 				writeModelRequired(w, requestID, opts.docsBase)
+				return
+			}
+			if err != nil {
+				apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+					"Internal error", requestID,
+					apierror.WriteOpts{Detail: "agent default model unavailable", DocsBase: opts.docsBase})
 				return
 			}
 			parsed.Model = candidate
@@ -74,19 +84,25 @@ func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http
 	}
 }
 
-func resolveRoutingModel(
-	ctx context.Context,
-	requestModel string,
-	loader modelpolicy.AgentDefaultLoader,
-) (string, error) {
-	if m := strings.TrimSpace(requestModel); m != "" {
+type resolveModelArgs struct {
+	requestModel string
+	orgID        uuid.UUID
+	loader       modelpolicy.AgentDefaultLoader
+}
+
+func resolveRoutingModel(ctx context.Context, args resolveModelArgs) (string, error) {
+	if m := strings.TrimSpace(args.requestModel); m != "" {
 		return m, nil
 	}
 	agent, ok := AgentFromContext(ctx)
 	if !ok || agent.ID == uuid.Nil {
 		return "", errModelRequired
 	}
-	defaults, err := loader.Load(ctx, agent.OrgID, agent.ID)
+	// Defense in depth: never load defaults using a foreign agent.org_id.
+	if agent.OrgID != args.orgID {
+		return "", errModelRequired
+	}
+	defaults, err := args.loader.Load(ctx, args.orgID, agent.ID)
 	if err != nil {
 		return "", err
 	}

@@ -76,59 +76,78 @@ func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
 	if err != nil {
 		return nil, err
 	}
-	revSub, revCancel, err := startRevocationSubscriber(
-		assembled.redisClient, assembled.validator, in.log, in.reg,
-	)
+	subs, err := startProxySubscribers(assembled, in)
 	if err != nil {
-		return nil, fmt.Errorf("revocation subscriber: %w", err)
-	}
-	dirSub, dirCancel, err := startDirectiveSubscriber(
-		assembled.redisClient, assembled.directiveResolver, in.log, in.reg,
-	)
-	if err != nil {
-		stopRevocationOnFailure(revSub, revCancel)
-		return nil, fmt.Errorf("directive subscriber: %w", err)
-	}
-	rlSub, rlCancel, err := startRateLimitConfigSubscriber(
-		assembled.redisClient, assembled.pgDB, assembled.limiter, in.log,
-	)
-	if err != nil {
-		stopRevocationOnFailure(revSub, revCancel)
-		if dirCancel != nil {
-			dirCancel()
-		}
-		if dirSub != nil {
-			dirSub.Stop()
-		}
-		return nil, fmt.Errorf("rate-limit config subscriber: %w", err)
-	}
-	mpSub, mpCancel, err := startModelPolicySubscriber(
-		assembled.redisClient, assembled.modelPolicyCache, in.log,
-	)
-	if err != nil {
-		stopRevocationOnFailure(revSub, revCancel)
-		if dirCancel != nil {
-			dirCancel()
-		}
-		if dirSub != nil {
-			dirSub.Stop()
-		}
-		if rlCancel != nil {
-			rlCancel()
-		}
-		if rlSub != nil {
-			rlSub.Stop()
-		}
-		return nil, fmt.Errorf("model-policy subscriber: %w", err)
+		return nil, err
 	}
 	startSessionSweeper(assembled.sessionSweeper, in.cfg, in.log)
 	return finishProxyCore(proxyCoreParts{
 		assembled: assembled,
-		revSub:    revSub, revCancel: revCancel,
-		dirSub: dirSub, dirCancel: dirCancel,
-		rlConfigSub: rlSub, rlConfigCancel: rlCancel,
-		mpSub: mpSub, mpCancel: mpCancel,
+		revSub:    subs.revSub, revCancel: subs.revCancel,
+		dirSub: subs.dirSub, dirCancel: subs.dirCancel,
+		rlConfigSub: subs.rlSub, rlConfigCancel: subs.rlCancel,
+		mpSub: subs.mpSub, mpCancel: subs.mpCancel,
 	}), nil
+}
+
+type startedSubscribers struct {
+	revSub    *revocation.Subscriber
+	revCancel context.CancelFunc
+	dirSub    *directive.Subscriber
+	dirCancel context.CancelFunc
+	rlSub     *ratelimit.ConfigSubscriber
+	rlCancel  context.CancelFunc
+	mpSub     *modelpolicy.Subscriber
+	mpCancel  context.CancelFunc
+}
+
+func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput) (startedSubscribers, error) {
+	var out startedSubscribers
+	var err error
+	out.revSub, out.revCancel, err = startRevocationSubscriber(
+		assembled.redisClient, assembled.validator, in.log, in.reg,
+	)
+	if err != nil {
+		return out, fmt.Errorf("revocation subscriber: %w", err)
+	}
+	out.dirSub, out.dirCancel, err = startDirectiveSubscriber(
+		assembled.redisClient, assembled.directiveResolver, in.log, in.reg,
+	)
+	if err != nil {
+		stopRevocationOnFailure(out.revSub, out.revCancel)
+		return out, fmt.Errorf("directive subscriber: %w", err)
+	}
+	out.rlSub, out.rlCancel, err = startRateLimitConfigSubscriber(
+		assembled.redisClient, assembled.pgDB, assembled.limiter, in.log,
+	)
+	if err != nil {
+		stopSubscribersOnFailure(out)
+		return out, fmt.Errorf("rate-limit config subscriber: %w", err)
+	}
+	out.mpSub, out.mpCancel, err = startModelPolicySubscriber(
+		assembled.redisClient, assembled.modelPolicyCache, in.log,
+	)
+	if err != nil {
+		stopSubscribersOnFailure(out)
+		return out, fmt.Errorf("model-policy subscriber: %w", err)
+	}
+	return out, nil
+}
+
+func stopSubscribersOnFailure(s startedSubscribers) {
+	stopRevocationOnFailure(s.revSub, s.revCancel)
+	if s.dirCancel != nil {
+		s.dirCancel()
+	}
+	if s.dirSub != nil {
+		s.dirSub.Stop()
+	}
+	if s.rlCancel != nil {
+		s.rlCancel()
+	}
+	if s.rlSub != nil {
+		s.rlSub.Stop()
+	}
 }
 
 func stopRevocationOnFailure(sub *revocation.Subscriber, cancel context.CancelFunc) {

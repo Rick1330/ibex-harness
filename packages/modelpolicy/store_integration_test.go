@@ -18,6 +18,12 @@ import (
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
 
+type policySeed struct {
+	pattern  string
+	allowed  bool
+	priority int
+}
+
 func integrationDSN() string {
 	if dsn := os.Getenv("POSTGRES_TEST_DSN"); dsn != "" {
 		return dsn
@@ -82,16 +88,37 @@ func seedOrg(t *testing.T, db *sql.DB, slug string) uuid.UUID {
 	return uuid.MustParse(orgID)
 }
 
-func insertPolicy(t *testing.T, db *sql.DB, orgID uuid.UUID, pattern string, allowed bool, priority int) {
+func insertPolicy(t *testing.T, db *sql.DB, orgID uuid.UUID, seed policySeed) {
 	t.Helper()
 	err := withServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(context.Background(), `
 			INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
-			VALUES ($1::uuid, $2, $3, $4)`, orgID, pattern, allowed, priority)
+			VALUES ($1::uuid, $2, $3, $4)`, orgID, seed.pattern, seed.allowed, seed.priority)
 		return err
 	})
 	if err != nil {
 		t.Fatalf("insert policy: %v", err)
+	}
+}
+
+func mustStore(t *testing.T, db *sql.DB) *modelpolicy.Store {
+	t.Helper()
+	store, err := modelpolicy.NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func assertDecision(t *testing.T, policies []modelpolicy.Policy, model string, wantMatched, wantAllowed bool) {
+	t.Helper()
+	dec, err := modelpolicy.EvaluatePolicies(policies, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Matched != wantMatched || dec.Allowed != wantAllowed {
+		t.Fatalf("model=%s got matched=%v allowed=%v want matched=%v allowed=%v",
+			model, dec.Matched, dec.Allowed, wantMatched, wantAllowed)
 	}
 }
 
@@ -100,44 +127,19 @@ func TestRouting_OrgPolicy_StoreEvaluate(t *testing.T) {
 	defer db.Close()
 
 	org := seedOrg(t, db, "mp-routing-a")
-	insertPolicy(t, db, org, "claude-sonnet-4-5", false, 1)
-	insertPolicy(t, db, org, "claude-*", true, 10)
+	insertPolicy(t, db, org, policySeed{pattern: "claude-sonnet-4-5", allowed: false, priority: 1})
+	insertPolicy(t, db, org, policySeed{pattern: "claude-*", allowed: true, priority: 10})
 
-	store, err := modelpolicy.NewStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	policies, err := store.LoadOrg(context.Background(), org)
+	policies, err := mustStore(t, db).LoadOrg(context.Background(), org)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(policies) != 2 {
 		t.Fatalf("len=%d want 2", len(policies))
 	}
-
-	dec, err := modelpolicy.EvaluatePolicies(policies, "claude-sonnet-4-5")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !dec.Matched || dec.Allowed {
-		t.Fatalf("exact deny should win: %+v", dec)
-	}
-
-	dec, err = modelpolicy.EvaluatePolicies(policies, "claude-opus-4")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !dec.Matched || !dec.Allowed {
-		t.Fatalf("glob allow: %+v", dec)
-	}
-
-	dec, err = modelpolicy.EvaluatePolicies(policies, "gpt-4o")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dec.Matched || !dec.Allowed {
-		t.Fatalf("no match platform allow: %+v", dec)
-	}
+	assertDecision(t, policies, "claude-sonnet-4-5", true, false)
+	assertDecision(t, policies, "claude-opus-4", true, true)
+	assertDecision(t, policies, "gpt-4o", false, true)
 }
 
 func TestRouting_OrgPolicy_CrossTenantIsolation(t *testing.T) {
@@ -146,12 +148,9 @@ func TestRouting_OrgPolicy_CrossTenantIsolation(t *testing.T) {
 
 	orgA := seedOrg(t, db, "mp-iso-a")
 	orgB := seedOrg(t, db, "mp-iso-b")
-	insertPolicy(t, db, orgA, "claude-*", false, 1)
+	insertPolicy(t, db, orgA, policySeed{pattern: "claude-*", allowed: false, priority: 1})
 
-	store, err := modelpolicy.NewStore(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := mustStore(t, db)
 	polsA, err := store.LoadOrg(context.Background(), orgA)
 	if err != nil {
 		t.Fatal(err)

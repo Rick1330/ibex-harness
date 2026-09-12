@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,7 +112,7 @@ func TestUnit_ProviderRouting_EmptyModelUsesAgentDefault(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	h := ProviderRoutingMiddleware(providerRoutingOpts{
-		resolver: modelpolicy.PassthroughRegistry{Base: mustOpenAIRegistry(t)},
+		resolver:      modelpolicy.PassthroughRegistry{Base: mustOpenAIRegistry(t)},
 		agentDefaults: staticAgentDefaults{defaults: modelpolicy.AgentDefaults{DefaultModel: "gpt-4o"}},
 		log:           logger.Discard("proxy"),
 	})(next)
@@ -125,6 +126,57 @@ func TestUnit_ProviderRouting_EmptyModelUsesAgentDefault(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if !called || rec.Code != http.StatusOK {
 		t.Fatalf("called=%v status=%d body=%s", called, rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnit_ProviderRouting_AgentOrgMismatchRejects(t *testing.T) {
+	t.Parallel()
+	authOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
+	otherOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655440099")
+	agentID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440002")
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("must not continue")
+	})
+	h := ProviderRoutingMiddleware(providerRoutingOpts{
+		resolver:      modelpolicy.PassthroughRegistry{Base: mustOpenAIRegistry(t)},
+		agentDefaults: staticAgentDefaults{defaults: modelpolicy.AgentDefaults{DefaultModel: "gpt-4o"}},
+		log:           logger.Discard("proxy"),
+	})(next)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: authOrg}))
+	req = req.WithContext(WithAgent(req.Context(), auth.AgentRecord{ID: agentID, OrgID: otherOrg, Status: "active"}))
+	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
+		Model: "", Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUnit_ProviderRouting_AgentDefaultLoadError503(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
+	agentID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440002")
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("must not continue")
+	})
+	h := ProviderRoutingMiddleware(providerRoutingOpts{
+		resolver:      modelpolicy.PassthroughRegistry{Base: mustOpenAIRegistry(t)},
+		agentDefaults: errAgentDefaults{},
+		log:           logger.Discard("proxy"),
+	})(next)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
+	req = req.WithContext(WithAgent(req.Context(), auth.AgentRecord{ID: agentID, OrgID: org, Status: "active"}))
+	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
+		Model: "", Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -190,4 +242,10 @@ type staticAgentDefaults struct {
 
 func (s staticAgentDefaults) Load(context.Context, uuid.UUID, uuid.UUID) (modelpolicy.AgentDefaults, error) {
 	return s.defaults, nil
+}
+
+type errAgentDefaults struct{}
+
+func (errAgentDefaults) Load(context.Context, uuid.UUID, uuid.UUID) (modelpolicy.AgentDefaults, error) {
+	return modelpolicy.AgentDefaults{}, errors.New("db down")
 }

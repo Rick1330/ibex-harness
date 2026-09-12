@@ -50,11 +50,3 @@ func (b *policyBloom) add(orgKey string) {
 	b.active = bloom.NewWithEstimates(b.expected, b.fpRate)
 	b.adds = 0
 }
-
-func (b *policyBloom) clear() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.active = bloom.NewWithEstimates(b.expected, b.fpRate)
-	b.previous = nil
-	b.adds = 0
-}

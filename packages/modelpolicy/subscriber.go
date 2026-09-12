@@ -17,11 +17,11 @@ type Invalidator interface {
 
 // Subscriber listens for model-policy invalidate events.
 type Subscriber struct {
-	client redis.UniversalClient
-	cache  Invalidator
-	log    *logger.Logger
+	client  redis.UniversalClient
+	cache   Invalidator
+	log     *logger.Logger
 	metrics Metrics
-	loop   *redissub.Loop
+	loop    *redissub.Loop
 }
 
 // NewSubscriber constructs a Subscriber.

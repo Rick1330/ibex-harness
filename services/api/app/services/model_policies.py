@@ -6,7 +6,12 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from apierror_py import MODEL_POLICY_PATTERN_CONFLICT, NOT_FOUND, VALIDATION_ERROR
+from apierror_py import (
+    INTERNAL_ERROR,
+    MODEL_POLICY_PATTERN_CONFLICT,
+    NOT_FOUND,
+    VALIDATION_ERROR,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,18 +30,14 @@ logger = logging.getLogger(__name__)
 _UNIQUE = "org_model_policies_org_pattern_unique"
 _NOT_FOUND_MSG = "Model policy not found"
 
-_SELECT_COLS = """
-    id, org_id, model_pattern, allowed, priority, created_at, updated_at
-"""
-
-_GET_SQL = f"""
-SELECT {_SELECT_COLS}
+_GET_SQL = """
+SELECT id, org_id, model_pattern, allowed, priority, created_at, updated_at
 FROM ibex_core.org_model_policies
 WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
 """
 
-_LIST_SQL = f"""
-SELECT {_SELECT_COLS}
+_LIST_SQL = """
+SELECT id, org_id, model_pattern, allowed, priority, created_at, updated_at
 FROM ibex_core.org_model_policies
 WHERE org_id = CAST(:org_id AS uuid)
   AND (
@@ -51,10 +52,20 @@ ORDER BY priority ASC, model_pattern ASC
 LIMIT :limit
 """
 
-_INSERT_SQL = f"""
+_INSERT_SQL = """
 INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
 VALUES (CAST(:org_id AS uuid), :model_pattern, :allowed, :priority)
-RETURNING {_SELECT_COLS}
+RETURNING id, org_id, model_pattern, allowed, priority, created_at, updated_at
+"""
+
+_UPDATE_SQL = """
+UPDATE ibex_core.org_model_policies
+SET model_pattern = :model_pattern,
+    allowed = :allowed,
+    priority = :priority,
+    updated_at = now()
+WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
+RETURNING id, org_id, model_pattern, allowed, priority, created_at, updated_at
 """
 
 _DELETE_SQL = """
@@ -67,6 +78,14 @@ RETURNING id
 @dataclass(frozen=True, slots=True)
 class WriteDeps:
     publisher: ModelPolicyPublisher | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PatchArgs:
+    org_id: UUID
+    policy_id: UUID
+    body: ModelPolicyPatch
+    deps: WriteDeps
 
 
 def _row_to_response(row) -> ModelPolicyResponse:
@@ -99,6 +118,19 @@ def _is_pattern_conflict(exc: IntegrityError) -> bool:
     return name == _UNIQUE or _UNIQUE in name
 
 
+def _raise_write_integrity(exc: IntegrityError) -> None:
+    if _is_pattern_conflict(exc):
+        raise ApiError(
+            code=MODEL_POLICY_PATTERN_CONFLICT,
+            message="Model pattern already exists for this organization",
+            detail=_UNIQUE,
+        ) from exc
+    raise ApiError(
+        code=INTERNAL_ERROR,
+        message="Unable to write model policy",
+    ) from exc
+
+
 async def list_policies(
     session: AsyncSession,
     org_id: UUID,
@@ -106,15 +138,7 @@ async def list_policies(
     cursor: str | None,
     limit: int,
 ) -> CursorPage[ModelPolicyResponse]:
-    cursor_priority = None
-    cursor_pattern = None
-    if cursor:
-        try:
-            payload = decode_cursor(cursor) or {}
-            cursor_priority = int(payload["priority"])
-            cursor_pattern = str(payload["pattern"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
+    cursor_priority, cursor_pattern = _parse_list_cursor(cursor)
     result = await session.execute(
         text(_LIST_SQL),
         {
@@ -132,6 +156,16 @@ async def list_policies(
             {"priority": last.priority, "pattern": last.model_pattern}
         )
     return page_from_rows(rows, limit=limit, next_cursor=next_cursor)
+
+
+def _parse_list_cursor(cursor: str | None) -> tuple[int | None, str | None]:
+    if not cursor:
+        return None, None
+    try:
+        payload = decode_cursor(cursor) or {}
+        return int(payload["priority"]), str(payload["pattern"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
 
 
 async def get_policy(
@@ -168,46 +202,28 @@ async def create_policy(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        if _is_pattern_conflict(exc):
-            raise ApiError(
-                code=MODEL_POLICY_PATTERN_CONFLICT,
-                message="Model pattern already exists for this organization",
-                detail=_UNIQUE,
-            ) from exc
-        raise
-    assert row is not None
+        _raise_write_integrity(exc)
+    if row is None:
+        raise ApiError(code=INTERNAL_ERROR, message="Unable to create model policy")
     await _publish_best_effort(deps.publisher, org_id)
     return _row_to_response(row)
 
 
-async def patch_policy(
-    session: AsyncSession,
-    org_id: UUID,
-    policy_id: UUID,
-    body: ModelPolicyPatch,
-    *,
-    deps: WriteDeps,
-) -> ModelPolicyResponse:
-    current = await get_policy(session, org_id, policy_id)
-    pattern = body.model_pattern if body.model_pattern is not None else current.model_pattern
-    allowed = body.allowed if body.allowed is not None else current.allowed
-    priority = body.priority if body.priority is not None else current.priority
+async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyResponse:
+    current = await get_policy(session, args.org_id, args.policy_id)
+    pattern = (
+        args.body.model_pattern
+        if args.body.model_pattern is not None
+        else current.model_pattern
+    )
+    allowed = args.body.allowed if args.body.allowed is not None else current.allowed
+    priority = args.body.priority if args.body.priority is not None else current.priority
     try:
         result = await session.execute(
-            text(
-                f"""
-                UPDATE ibex_core.org_model_policies
-                SET model_pattern = :model_pattern,
-                    allowed = :allowed,
-                    priority = :priority,
-                    updated_at = now()
-                WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
-                RETURNING {_SELECT_COLS}
-                """
-            ),
+            text(_UPDATE_SQL),
             {
-                "org_id": str(org_id),
-                "policy_id": str(policy_id),
+                "org_id": str(args.org_id),
+                "policy_id": str(args.policy_id),
                 "model_pattern": pattern,
                 "allowed": allowed,
                 "priority": priority,
@@ -217,16 +233,10 @@ async def patch_policy(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        if _is_pattern_conflict(exc):
-            raise ApiError(
-                code=MODEL_POLICY_PATTERN_CONFLICT,
-                message="Model pattern already exists for this organization",
-                detail=_UNIQUE,
-            ) from exc
-        raise
+        _raise_write_integrity(exc)
     if row is None:
         raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_MSG)
-    await _publish_best_effort(deps.publisher, org_id)
+    await _publish_best_effort(args.deps.publisher, args.org_id)
     return _row_to_response(row)
 
 

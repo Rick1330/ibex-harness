@@ -13,6 +13,16 @@ import (
 
 func TestSubscriber_PubSubInvalidatesWithinOneSecond(t *testing.T) {
 	org := uuid.New()
+	cache, loader := seedCachedDeny(t, org)
+	client := newMiniRedis(t)
+	startSubscriber(t, client, cache)
+	waitPubSubPatterns(t, client)
+	mustPublishInvalidate(t, client, org)
+	assertReloaded(t, cache, loader, org)
+}
+
+func seedCachedDeny(t *testing.T, org uuid.UUID) (*Cache, *fakeLoader) {
+	t.Helper()
 	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{
 		org: {{Pattern: "claude-*", Allowed: false, Priority: 1}},
 	}}
@@ -26,11 +36,19 @@ func TestSubscriber_PubSubInvalidatesWithinOneSecond(t *testing.T) {
 	if loader.calls != 1 {
 		t.Fatalf("calls=%d", loader.calls)
 	}
+	return cache, loader
+}
 
+func newMiniRedis(t *testing.T) *redis.Client {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
 
+func startSubscriber(t *testing.T, client redis.UniversalClient, cache Invalidator) {
+	t.Helper()
 	sub, err := NewSubscriber(client, cache, logger.Discard("modelpolicy-test"), NoopMetrics{})
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +60,10 @@ func TestSubscriber_PubSubInvalidatesWithinOneSecond(t *testing.T) {
 		sub.Stop()
 		<-sub.Done()
 	})
-	waitPubSubPatterns(t, client)
+}
 
+func mustPublishInvalidate(t *testing.T, client redis.UniversalClient, org uuid.UUID) {
+	t.Helper()
 	pub, err := NewRedisPublisher(client, logger.Discard("modelpolicy-test"))
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +74,10 @@ func TestSubscriber_PubSubInvalidatesWithinOneSecond(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
 
+func assertReloaded(t *testing.T, cache *Cache, loader *fakeLoader, org uuid.UUID) {
+	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {

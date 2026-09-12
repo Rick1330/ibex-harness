@@ -42,42 +42,62 @@ func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) 
 	)
 	defer span.End()
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	policies, err := s.loadOrgTx(ctx, orgID)
 	if err != nil {
 		return nil, recordStoreErr(span, err)
 	}
+	return policies, nil
+}
+
+func (s *Store) loadOrgTx(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID.String()); err != nil {
-		return nil, recordStoreErr(span, fmt.Errorf("modelpolicy: set rls: %w", err))
+	if err := setOrgRLS(ctx, tx, orgID); err != nil {
+		return nil, err
 	}
+	out, err := scanOrgPolicies(ctx, tx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
+func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
+	_, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID.String())
+	if err != nil {
+		return fmt.Errorf("modelpolicy: set rls: %w", err)
+	}
+	return nil
+}
+
+func scanOrgPolicies(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) ([]Policy, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id::text, org_id::text, model_pattern, allowed, priority
 		FROM ibex_core.org_model_policies
 		WHERE org_id = $1
 		ORDER BY priority ASC, model_pattern ASC`, orgID)
 	if err != nil {
-		return nil, recordStoreErr(span, fmt.Errorf("modelpolicy: query: %w", err))
+		return nil, fmt.Errorf("modelpolicy: query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var out []Policy
+	out := make([]Policy, 0)
 	for rows.Next() {
 		var p Policy
 		if err := rows.Scan(&p.ID, &p.OrgID, &p.Pattern, &p.Allowed, &p.Priority); err != nil {
-			return nil, recordStoreErr(span, fmt.Errorf("modelpolicy: scan: %w", err))
+			return nil, fmt.Errorf("modelpolicy: scan: %w", err)
 		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, recordStoreErr(span, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, recordStoreErr(span, err)
-	}
-	if out == nil {
-		out = []Policy{}
+		return nil, err
 	}
 	return out, nil
 }
@@ -124,14 +144,24 @@ func (s *AgentStore) Load(ctx context.Context, orgID, agentID uuid.UUID) (AgentD
 	)
 	defer span.End()
 
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	defaults, err := s.loadAgentDefaultsTx(ctx, orgID, agentID)
 	if err != nil {
 		return AgentDefaults{}, recordStoreErr(span, err)
 	}
+	return defaults, nil
+}
+
+func (s *AgentStore) loadAgentDefaultsTx(
+	ctx context.Context, orgID, agentID uuid.UUID,
+) (AgentDefaults, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return AgentDefaults{}, err
+	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID.String()); err != nil {
-		return AgentDefaults{}, recordStoreErr(span, fmt.Errorf("modelpolicy: set rls: %w", err))
+	if err := setOrgRLS(ctx, tx, orgID); err != nil {
+		return AgentDefaults{}, err
 	}
 
 	var model, provider sql.NullString
@@ -143,10 +173,10 @@ func (s *AgentStore) Load(ctx context.Context, orgID, agentID uuid.UUID) (AgentD
 		return AgentDefaults{}, nil
 	}
 	if err != nil {
-		return AgentDefaults{}, recordStoreErr(span, fmt.Errorf("modelpolicy: agent defaults: %w", err))
+		return AgentDefaults{}, fmt.Errorf("modelpolicy: agent defaults: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return AgentDefaults{}, recordStoreErr(span, err)
+		return AgentDefaults{}, err
 	}
 	return AgentDefaults{
 		DefaultModel:    nullStr(model),

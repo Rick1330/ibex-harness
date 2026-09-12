@@ -67,6 +67,10 @@ def _write_ctx(
     return _make_ctx(request, org_id, token.org_id, session)
 
 
+def _write_deps(ctx: _Ctx) -> model_policy_service.WriteDeps:
+    return model_policy_service.WriteDeps(publisher=ctx.publisher)
+
+
 @router.get("/{org_id}/model-policies")
 async def list_model_policies(
     ctx: Annotated[_Ctx, Depends(_read_ctx)],
@@ -83,10 +87,7 @@ async def create_model_policy(
     ctx: Annotated[_Ctx, Depends(_write_ctx)],
 ) -> ModelPolicyResponse:
     return await model_policy_service.create_policy(
-        ctx.session,
-        ctx.org_id,
-        body,
-        deps=model_policy_service.WriteDeps(publisher=ctx.publisher),
+        ctx.session, ctx.org_id, body, deps=_write_deps(ctx)
     )
 
 
@@ -106,10 +107,12 @@ async def patch_model_policy(
 ) -> ModelPolicyResponse:
     return await model_policy_service.patch_policy(
         ctx.session,
-        ctx.org_id,
-        policy_id,
-        body,
-        deps=model_policy_service.WriteDeps(publisher=ctx.publisher),
+        model_policy_service.PatchArgs(
+            org_id=ctx.org_id,
+            policy_id=policy_id,
+            body=body,
+            deps=_write_deps(ctx),
+        ),
     )
 
 
@@ -121,9 +124,6 @@ async def delete_model_policy(
     ctx: Annotated[_Ctx, Depends(_write_ctx)],
 ) -> Response:
     await model_policy_service.delete_policy(
-        ctx.session,
-        ctx.org_id,
-        policy_id,
-        deps=model_policy_service.WriteDeps(publisher=ctx.publisher),
+        ctx.session, ctx.org_id, policy_id, deps=_write_deps(ctx)
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
