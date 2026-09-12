@@ -206,7 +206,7 @@ Used by: **proxy** (`services/proxy`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), and `/ready`. Empty → Noop limiter **and** auth cache wrap is skipped even when `IBEX_AUTH_CACHE_ENABLED=true` (WARN at startup) so revoke is immediate via gRPC. | Secret if password present |
+| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), model-policy invalidation SUBSCRIBE (`model_policy_updates:*`), and `/ready`. Empty → Noop limiter **and** auth cache wrap is skipped even when `IBEX_AUTH_CACHE_ENABLED=true` (WARN at startup) so revoke is immediate via gRPC; model-policy cache relies on 60s TTL only. | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
@@ -324,7 +324,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 |----------|----------|---------|-------------|----------------|
 | `IBEX_API_DATABASE_URL` | for ready | (none) | Async Postgres DSN (`postgresql+asyncpg://...`) | Secret |
 | `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
-| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
+| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
 | `IBEX_API_HOST` / `IBEX_API_PORT` | No | `127.0.0.1` / `8010` | Bind address | |

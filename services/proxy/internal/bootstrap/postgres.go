@@ -10,11 +10,14 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
+	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/redis/go-redis/v9"
@@ -324,6 +327,56 @@ func startRateLimitConfigSubscriber(
 		log.InfoCtx(context.Background(), "rate-limit config subscriber started",
 			"pattern", ratelimit.ChannelPattern,
 			"poll", ratelimit.DefaultConfigPollInterval.String())
+	}
+	return sub, cancel, nil
+}
+
+func buildModelPolicyRuntime(
+	pgDB *sql.DB,
+	base *provider.Registry,
+	log *logger.Logger,
+) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
+	if pgDB == nil || base == nil {
+		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
+	}
+	store, err := modelpolicy.NewStore(pgDB)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	cache, err := modelpolicy.NewCache(store, modelpolicy.Config{}, modelpolicy.NoopMetrics{})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, modelpolicy.NoopMetrics{})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	agentStore, err := modelpolicy.NewAgentStore(pgDB)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if log != nil {
+		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
+	}
+	return cache, reg, agentStore, nil
+}
+
+func startModelPolicySubscriber(
+	redisClient redis.UniversalClient,
+	cache *modelpolicy.Cache,
+	log *logger.Logger,
+) (*modelpolicy.Subscriber, context.CancelFunc, error) {
+	if redisClient == nil || cache == nil {
+		return nil, nil, nil
+	}
+	sub, err := modelpolicy.NewSubscriber(redisClient, cache, log, modelpolicy.NoopMetrics{})
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
+	if log != nil {
+		log.InfoCtx(context.Background(), "model-policy subscriber started", "pattern", modelpolicy.ChannelPattern)
 	}
 	return sub, cancel, nil
 }

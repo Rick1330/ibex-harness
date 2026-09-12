@@ -1,0 +1,99 @@
+package modelpolicy
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	lru "github.com/hashicorp/golang-lru/v2"
+)
+
+type cachedPolicies struct {
+	policies  []Policy
+	expiresAt time.Time
+}
+
+// Cache is a bloom → LRU policy cache in front of PolicyLoader.
+type Cache struct {
+	loader PolicyLoader
+	cfg    Config
+	metrics Metrics
+	bloom  *policyBloom
+	lru    *lru.Cache[string, *cachedPolicies]
+	now    func() time.Time
+}
+
+// NewCache constructs a Cache. loader is required.
+func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
+	if loader == nil {
+		return nil, fmt.Errorf("modelpolicy: loader is required")
+	}
+	if m == nil {
+		m = NoopMetrics{}
+	}
+	cfg.ApplyDefaults()
+	c := &Cache{
+		loader:  loader,
+		cfg:     cfg,
+		metrics: m,
+		bloom:   newPolicyBloom(cfg.BloomExpected, cfg.BloomFPRate),
+		now:     time.Now,
+	}
+	cache, err := lru.New[string, *cachedPolicies](cfg.LRUSize)
+	if err != nil {
+		return nil, fmt.Errorf("modelpolicy: lru: %w", err)
+	}
+	c.lru = cache
+	return c, nil
+}
+
+// PoliciesForOrg returns cached or freshly loaded policies for orgID.
+func (c *Cache) PoliciesForOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
+	key := orgID.String()
+	if entry, ok := c.lru.Get(key); ok && entry != nil && c.now().Before(entry.expiresAt) {
+		c.metrics.IncCacheHit("lru")
+		return clonePolicies(entry.policies), nil
+	}
+	c.metrics.IncCacheMiss("lru")
+
+	// Bloom is a positive hint only: if it says the org may have policies OR
+	// we simply always load on miss (fail-closed). We always load on LRU miss.
+	_ = c.bloom.mayHave(key)
+
+	policies, err := c.loader.LoadOrg(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+	}
+	if policies == nil {
+		policies = []Policy{}
+	}
+	if len(policies) > 0 {
+		c.bloom.add(key)
+	}
+	c.lru.Add(key, &cachedPolicies{
+		policies:  clonePolicies(policies),
+		expiresAt: c.now().Add(c.cfg.CacheTTL),
+	})
+	c.metrics.SetLRUSize(float64(c.lru.Len()))
+	return clonePolicies(policies), nil
+}
+
+// Invalidate drops the LRU entry for orgID.
+func (c *Cache) Invalidate(orgID uuid.UUID) {
+	if orgID == uuid.Nil {
+		return
+	}
+	c.lru.Remove(orgID.String())
+	c.metrics.IncInvalidate()
+	c.metrics.SetLRUSize(float64(c.lru.Len()))
+}
+
+func clonePolicies(in []Policy) []Policy {
+	if len(in) == 0 {
+		return []Policy{}
+	}
+	out := make([]Policy, len(in))
+	copy(out, in)
+	return out
+}

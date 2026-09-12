@@ -33,10 +33,10 @@ func TestValidateChatCompletionRequest(t *testing.T) {
 		wantFld string
 	}{
 		{
-			name:    "missing model",
+			name:    "missing model allowed at parse",
 			req:     &llm.ChatCompletionRequest{Messages: []llm.Message{{Role: "user", Content: "hi"}}},
-			wantLen: 1,
-			wantFld: "model",
+			wantLen: 0,
+			wantFld: "",
 		},
 		{
 			name:    "missing messages",
@@ -94,7 +94,8 @@ func TestValidateChatCompletionRequest(t *testing.T) {
 }
 
 func TestValidateChatCompletionRequest_aggregatesMultiple(t *testing.T) {
-	req := &llm.ChatCompletionRequest{Model: "", Messages: nil}
+	temp := 9.0
+	req := &llm.ChatCompletionRequest{Model: "gpt-4", Messages: nil, Temperature: &temp}
 	got := ValidateChatCompletionRequest(req)
 	if len(got) < 2 {
 		t.Fatalf("expected multiple errors, got %d", len(got))
@@ -160,8 +161,8 @@ func TestValidateChatCompletionRequest_whitespaceModel(t *testing.T) {
 	got := ValidateChatCompletionRequest(&llm.ChatCompletionRequest{
 		Model: "   ", Messages: []llm.Message{{Role: "user", Content: "hi"}},
 	})
-	if len(got) != 1 || got[0].Field != "model" {
-		t.Fatalf("got %+v", got)
+	if len(got) != 0 {
+		t.Fatalf("empty/whitespace model deferred to routing: got %+v", got)
 	}
 }
 

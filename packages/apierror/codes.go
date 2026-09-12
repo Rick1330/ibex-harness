@@ -20,6 +20,8 @@ const (
 	CodeInvalidRequest Code = "INVALID_REQUEST"
 	// CodeProviderNotConfigured tells clients no LLM provider is wired for the requested model yet.
 	CodeProviderNotConfigured Code = "PROVIDER_NOT_CONFIGURED"
+	// CodeModelNotAllowed tells clients the org model policy denies the requested model.
+	CodeModelNotAllowed Code = "MODEL_NOT_ALLOWED"
 	// CodePayloadTooLarge tells clients to reduce the request body size and retry.
 	CodePayloadTooLarge Code = "PAYLOAD_TOO_LARGE"
 	// CodeUnsupportedMediaType tells clients to send application/json for JSON endpoints.
@@ -40,6 +42,8 @@ const (
 	CodeOrgSuspended Code = "ORG_SUSPENDED"
 	// CodeLastOwnerProtected tells clients the last remaining owner cannot be demoted or removed.
 	CodeLastOwnerProtected Code = "LAST_OWNER_PROTECTED"
+	// CodeModelPolicyPatternConflict tells clients the model_pattern is already taken for the org.
+	CodeModelPolicyPatternConflict Code = "MODEL_POLICY_PATTERN_CONFLICT"
 	// CodeAgentSlugConflict tells clients the agent slug is already taken within the organization.
 	CodeAgentSlugConflict Code = "AGENT_SLUG_CONFLICT"
 	// CodeAgentHasSessions tells clients the agent cannot be deleted while session history exists.

@@ -14,6 +14,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
@@ -54,6 +55,8 @@ type proxyCore struct {
 	dirCancel         context.CancelFunc
 	rlConfigSub       *ratelimit.ConfigSubscriber
 	rlConfigCancel    context.CancelFunc
+	mpSub             *modelpolicy.Subscriber
+	mpCancel          context.CancelFunc
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -99,12 +102,32 @@ func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
 		}
 		return nil, fmt.Errorf("rate-limit config subscriber: %w", err)
 	}
+	mpSub, mpCancel, err := startModelPolicySubscriber(
+		assembled.redisClient, assembled.modelPolicyCache, in.log,
+	)
+	if err != nil {
+		stopRevocationOnFailure(revSub, revCancel)
+		if dirCancel != nil {
+			dirCancel()
+		}
+		if dirSub != nil {
+			dirSub.Stop()
+		}
+		if rlCancel != nil {
+			rlCancel()
+		}
+		if rlSub != nil {
+			rlSub.Stop()
+		}
+		return nil, fmt.Errorf("model-policy subscriber: %w", err)
+	}
 	startSessionSweeper(assembled.sessionSweeper, in.cfg, in.log)
 	return finishProxyCore(proxyCoreParts{
 		assembled: assembled,
 		revSub:    revSub, revCancel: revCancel,
 		dirSub: dirSub, dirCancel: dirCancel,
 		rlConfigSub: rlSub, rlConfigCancel: rlCancel,
+		mpSub: mpSub, mpCancel: mpCancel,
 	}), nil
 }
 
@@ -125,6 +148,8 @@ type proxyCoreParts struct {
 	dirCancel      context.CancelFunc
 	rlConfigSub    *ratelimit.ConfigSubscriber
 	rlConfigCancel context.CancelFunc
+	mpSub          *modelpolicy.Subscriber
+	mpCancel       context.CancelFunc
 }
 
 func finishProxyCore(parts proxyCoreParts) *proxyCore {
@@ -136,6 +161,7 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 		revSub:            parts.revSub, revCancel: parts.revCancel,
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		rlConfigSub: parts.rlConfigSub, rlConfigCancel: parts.rlConfigCancel,
+		mpSub: parts.mpSub, mpCancel: parts.mpCancel,
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,
 		traceWriter:    parts.assembled.traceWriter,
@@ -156,6 +182,9 @@ type assembledProxyCore struct {
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
 	tokenizerReg      *tokenizer.Registry
+	modelPolicyCache  *modelpolicy.Cache
+	modelRouter       proxyhttp.ProviderResolver
+	agentDefaults     modelpolicy.AgentDefaultLoader
 }
 
 type proxyInfra struct {
@@ -248,10 +277,15 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
 	}
+	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(in.infra.pgDB, providerReg, in.log)
+	if err != nil {
+		return assembledProxyCore{}, fmt.Errorf("model policy: %w", err)
+	}
 	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
 	deps := assembledRouterDeps(routerAssembleParts{
 		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
 		idempStore: idempStore, traceWriter: traceWriter,
+		modelRouter: modelRouter, agentDefaults: agentDefaults,
 	})
 	server, err := newHTTPServer(deps)
 	if err != nil {
@@ -265,15 +299,18 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		directiveResolver: in.infra.directiveResolver,
 		checkpointPool:    in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
 		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
+		modelPolicyCache: mpCache, modelRouter: modelRouter, agentDefaults: agentDefaults,
 	}, nil
 }
 
 type routerAssembleParts struct {
-	in           finishAssembledCoreInput
-	providerReg  *provider.Registry
-	tokenizerReg *tokenizer.Registry
-	idempStore   idempotency.Store
-	traceWriter  *ibexch.Writer
+	in            finishAssembledCoreInput
+	providerReg   *provider.Registry
+	tokenizerReg  *tokenizer.Registry
+	idempStore    idempotency.Store
+	traceWriter   *ibexch.Writer
+	modelRouter   proxyhttp.ProviderResolver
+	agentDefaults modelpolicy.AgentDefaultLoader
 }
 
 func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
@@ -286,6 +323,8 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
 		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
 		ProviderRegistry: p.providerReg,
+		ModelRouter:      p.modelRouter,
+		AgentDefaults:    p.agentDefaults,
 		ResponsePipeline: buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
 		IdempotencyStore: p.idempStore,
 		ContextClient:    in.infra.ctxClients.client,
