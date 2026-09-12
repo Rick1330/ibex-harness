@@ -1,18 +1,47 @@
 package metrics
 
-import "testing"
+import (
+	"testing"
+
+	dto "github.com/prometheus/client_model/go"
+)
 
 func TestProxyRegistry_ModelPolicyMetrics(t *testing.T) {
 	t.Parallel()
 	reg := NewProxy("model-policy-metrics-test")
+	seedModelPolicySamples(reg)
+
+	families := gatherFamilies(t, reg.Gatherer())
+	assertModelPolicyCounters(t, families)
+	assertModelPolicyGauges(t, families, 3, 1)
+
+	reg.SetModelPolicyEnabled(false)
+	families = gatherFamilies(t, reg.Gatherer())
+	assertGaugeValue(t, families, "ibex_proxy_model_policy_enabled", 0)
+}
+
+func TestProxyRegistry_ModelPolicyMetrics_NilSafe(t *testing.T) {
+	t.Parallel()
+	var nilReg *ProxyRegistry
+	nilReg.IncCacheHit("lru")
+	nilReg.IncCacheMiss("lru")
+	nilReg.IncDeny()
+	nilReg.IncInvalidate()
+	nilReg.SetLRUSize(0)
+	nilReg.SetModelPolicyEnabled(false)
+}
+
+func seedModelPolicySamples(reg *ProxyRegistry) {
 	reg.IncCacheHit("lru")
 	reg.IncCacheMiss("lru")
 	reg.IncDeny()
 	reg.IncInvalidate()
 	reg.SetLRUSize(3)
 	reg.SetModelPolicyEnabled(true)
+}
 
-	families := gatherFamilies(t, reg.Gatherer())
+func assertModelPolicyCounters(t *testing.T, families map[string]*dto.MetricFamily) {
+	t.Helper()
 	if got := counterByLabel(families["ibex_proxy_model_policy_cache_hits_total"], "tier", "lru"); got != 1 {
 		t.Fatalf("cache hits=%v want 1", got)
 	}
@@ -25,31 +54,21 @@ func TestProxyRegistry_ModelPolicyMetrics(t *testing.T) {
 	if got := counterValue(families["ibex_proxy_model_policy_invalidate_total"]); got != 1 {
 		t.Fatalf("invalidate=%v want 1", got)
 	}
-	gauge := families["ibex_proxy_model_policy_lru_size"]
-	if gauge == nil || len(gauge.GetMetric()) == 0 {
-		t.Fatal("missing lru size gauge")
-	}
-	if got := gauge.GetMetric()[0].GetGauge().GetValue(); got != 3 {
-		t.Fatalf("lru size=%v want 3", got)
-	}
-	enabled := families["ibex_proxy_model_policy_enabled"]
-	if enabled == nil || len(enabled.GetMetric()) == 0 {
-		t.Fatal("missing enabled gauge")
-	}
-	if got := enabled.GetMetric()[0].GetGauge().GetValue(); got != 1 {
-		t.Fatalf("enabled=%v want 1", got)
-	}
-	reg.SetModelPolicyEnabled(false)
-	families = gatherFamilies(t, reg.Gatherer())
-	if got := families["ibex_proxy_model_policy_enabled"].GetMetric()[0].GetGauge().GetValue(); got != 0 {
-		t.Fatalf("enabled=%v want 0", got)
-	}
+}
 
-	var nilReg *ProxyRegistry
-	nilReg.IncCacheHit("lru")
-	nilReg.IncCacheMiss("lru")
-	nilReg.IncDeny()
-	nilReg.IncInvalidate()
-	nilReg.SetLRUSize(0)
-	nilReg.SetModelPolicyEnabled(false)
+func assertModelPolicyGauges(t *testing.T, families map[string]*dto.MetricFamily, wantLRU, wantEnabled float64) {
+	t.Helper()
+	assertGaugeValue(t, families, "ibex_proxy_model_policy_lru_size", wantLRU)
+	assertGaugeValue(t, families, "ibex_proxy_model_policy_enabled", wantEnabled)
+}
+
+func assertGaugeValue(t *testing.T, families map[string]*dto.MetricFamily, name string, want float64) {
+	t.Helper()
+	gauge := families[name]
+	if gauge == nil || len(gauge.GetMetric()) == 0 {
+		t.Fatalf("missing %s gauge", name)
+	}
+	if got := gauge.GetMetric()[0].GetGauge().GetValue(); got != want {
+		t.Fatalf("%s=%v want %v", name, got, want)
+	}
 }
