@@ -28,4 +28,6 @@ Accepted (Milestone 4.C.2)
 
 - Chat parse allows empty `model` so agent-default fill can run before the policy gate.
 - Management API publishes invalidation events; proxy subscribers drop LRU entries for that org.
-- Glob dialect is Go `filepath.Match` (`*` / `?` only).
+- Glob dialect is Go `filepath.Match` (shell-style `*`, `?`, and character classes
+  including ranges/`^` negation; malformed classes such as `[]` are rejected by
+  `ValidatePattern` / management API validation).

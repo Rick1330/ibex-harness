@@ -3,6 +3,7 @@ package modelpolicy
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,9 @@ type Cache struct {
 	bloom   *policyBloom
 	lru     *lru.Cache[string, *cachedPolicies]
 	now     func() time.Time
+
+	genMu sync.Mutex
+	gens  map[string]uint64
 }
 
 // NewCache constructs a Cache. loader is required.
@@ -39,6 +43,7 @@ func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
 		metrics: m,
 		bloom:   newPolicyBloom(cfg.BloomExpected, cfg.BloomFPRate),
 		now:     time.Now,
+		gens:    make(map[string]uint64),
 	}
 	cache, err := lru.New[string, *cachedPolicies](cfg.LRUSize)
 	if err != nil {
@@ -76,6 +81,7 @@ func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (
 	// Touch bloom for metrics/observability only; never gate the load on it.
 	_ = c.bloom.mayHave(key)
 
+	gen := c.generation(key)
 	policies, err := c.loader.LoadOrg(ctx, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
@@ -86,6 +92,10 @@ func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (
 	if len(policies) > 0 {
 		c.bloom.add(key)
 	}
+	// Invalidate during LoadOrg must not re-cache stale rows.
+	if c.generation(key) != gen {
+		return clonePolicies(policies), nil
+	}
 	c.lru.Add(key, &cachedPolicies{
 		policies:  clonePolicies(policies),
 		expiresAt: c.now().Add(c.cfg.CacheTTL),
@@ -94,12 +104,26 @@ func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (
 	return clonePolicies(policies), nil
 }
 
-// Invalidate drops the LRU entry for orgID.
+func (c *Cache) generation(key string) uint64 {
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	return c.gens[key]
+}
+
+func (c *Cache) bumpGeneration(key string) {
+	c.genMu.Lock()
+	defer c.genMu.Unlock()
+	c.gens[key]++
+}
+
+// Invalidate drops the LRU entry for orgID and advances its generation.
 func (c *Cache) Invalidate(orgID uuid.UUID) {
 	if orgID == uuid.Nil {
 		return
 	}
-	c.lru.Remove(orgID.String())
+	key := orgID.String()
+	c.bumpGeneration(key)
+	c.lru.Remove(key)
 	c.metrics.IncInvalidate()
 	c.metrics.SetLRUSize(float64(c.lru.Len()))
 }

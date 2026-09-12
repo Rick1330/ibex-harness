@@ -3,6 +3,7 @@ package modelpolicy
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/redissub"
@@ -22,6 +23,8 @@ type Subscriber struct {
 	log     *logger.Logger
 	metrics Metrics
 	loop    *redissub.Loop
+
+	runCancel atomic.Pointer[context.CancelFunc]
 }
 
 // NewSubscriber constructs a Subscriber.
@@ -54,11 +57,19 @@ func NewSubscriber(
 
 // Run blocks until Stop or ctx cancellation.
 func (s *Subscriber) Run(ctx context.Context) {
-	s.loop.Run(ctx, s.log, "modelpolicy", s.listenOnce)
+	runCtx, cancel := context.WithCancel(ctx)
+	s.runCancel.Store(&cancel)
+	defer cancel()
+	s.loop.Run(runCtx, s.log, "modelpolicy", s.listenOnce)
 }
 
-// Stop signals the subscriber to exit.
-func (s *Subscriber) Stop() { s.loop.Stop() }
+// Stop cancels the listen context (unblocking Receive) and signals the loop.
+func (s *Subscriber) Stop() {
+	if ptr := s.runCancel.Load(); ptr != nil && *ptr != nil {
+		(*ptr)()
+	}
+	s.loop.Stop()
+}
 
 // Done is closed when Run returns.
 func (s *Subscriber) Done() <-chan struct{} { return s.loop.Done() }
@@ -103,4 +114,5 @@ func (s *Subscriber) handleMessage(ctx context.Context, channel, payload string)
 		return
 	}
 	s.cache.Invalidate(orgID)
+	s.metrics.IncInvalidate()
 }

@@ -31,14 +31,16 @@ func TestMatch_ClaudeGlob(t *testing.T) {
 
 func TestValidatePattern_Invalid(t *testing.T) {
 	t.Parallel()
-	if err := ValidatePattern(`claude-[`); err == nil {
-		t.Fatal("expected invalid pattern error")
+	for _, pattern := range []string{"", `claude-[`, "[]", "trail\\"} {
+		if err := ValidatePattern(pattern); err == nil {
+			t.Fatalf("ValidatePattern(%q) expected error", pattern)
+		}
 	}
 	if _, err := filepath.Match(`claude-[`, "x"); err == nil {
 		t.Fatal("sanity: filepath.Match should reject unbalanced [")
 	}
-	if err := ValidatePattern(""); err == nil {
-		t.Fatal("expected empty pattern error")
+	if err := ValidatePattern("claude-*"); err != nil {
+		t.Fatal(err)
 	}
 }
 

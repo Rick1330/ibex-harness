@@ -12,6 +12,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 	r.initAuthCacheMetrics()
 	r.initRevocationMetrics()
 	r.initDirectiveMetrics()
+	r.initModelPolicyMetrics()
 	r.initSessionMetrics()
 	r.initClickHouseMetrics()
 	r.initIdempotencyMetrics()
@@ -75,6 +76,11 @@ func (r *ProxyRegistry) authAndSessionCollectors() []prometheus.Collector {
 		r.directiveResolveErrs,
 		r.directiveResolveSec,
 		r.directiveInvalidate,
+		r.modelPolicyCacheHits,
+		r.modelPolicyCacheMisses,
+		r.modelPolicyDeny,
+		r.modelPolicyInvalidate,
+		r.modelPolicyLRUSize,
 		r.sessionGetOrCreate,
 		r.sessionGetOrCreateSec,
 		r.sessionCheckpoint,

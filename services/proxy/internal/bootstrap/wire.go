@@ -125,7 +125,7 @@ func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput)
 		return out, fmt.Errorf("rate-limit config subscriber: %w", err)
 	}
 	out.mpSub, out.mpCancel, err = startModelPolicySubscriber(
-		assembled.redisClient, assembled.modelPolicyCache, in.log,
+		assembled.redisClient, assembled.modelPolicyCache, in.log, in.reg,
 	)
 	if err != nil {
 		stopSubscribersOnFailure(out)
@@ -296,7 +296,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
 	}
-	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(in.infra.pgDB, providerReg, in.log)
+	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(in.infra.pgDB, providerReg, in.log, in.reg)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("model policy: %w", err)
 	}

@@ -21,7 +21,7 @@ func ValidatePattern(pattern string) error {
 	return nil
 }
 
-// Match reports whether model matches pattern using filepath.Match (* and ? only).
+// Match reports whether model matches pattern using filepath.Match.
 func Match(pattern, model string) (bool, error) {
 	if err := ValidatePattern(pattern); err != nil {
 		return false, err

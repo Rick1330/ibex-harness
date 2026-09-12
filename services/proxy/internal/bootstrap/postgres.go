@@ -335,19 +335,24 @@ func buildModelPolicyRuntime(
 	pgDB *sql.DB,
 	base *provider.Registry,
 	log *logger.Logger,
+	metrics *ibexmetrics.ProxyRegistry,
 ) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
 	if pgDB == nil || base == nil {
 		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
+	}
+	var m modelpolicy.Metrics = modelpolicy.NoopMetrics{}
+	if metrics != nil {
+		m = metrics
 	}
 	store, err := modelpolicy.NewStore(pgDB)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	cache, err := modelpolicy.NewCache(store, modelpolicy.Config{}, modelpolicy.NoopMetrics{})
+	cache, err := modelpolicy.NewCache(store, modelpolicy.Config{}, m)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, modelpolicy.NoopMetrics{})
+	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, m)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -365,11 +370,16 @@ func startModelPolicySubscriber(
 	redisClient redis.UniversalClient,
 	cache *modelpolicy.Cache,
 	log *logger.Logger,
+	metrics *ibexmetrics.ProxyRegistry,
 ) (*modelpolicy.Subscriber, context.CancelFunc, error) {
 	if redisClient == nil || cache == nil {
 		return nil, nil, nil
 	}
-	sub, err := modelpolicy.NewSubscriber(redisClient, cache, log, modelpolicy.NoopMetrics{})
+	var m modelpolicy.Metrics = modelpolicy.NoopMetrics{}
+	if metrics != nil {
+		m = metrics
+	}
+	sub, err := modelpolicy.NewSubscriber(redisClient, cache, log, m)
 	if err != nil {
 		return nil, nil, err
 	}

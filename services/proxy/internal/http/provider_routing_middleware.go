@@ -37,51 +37,62 @@ func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestID := requestIDFromContext(r.Context())
-			parsed, ok := llm.ChatRequestFromContext(r.Context())
-			if !ok {
-				opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
-				apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
-					"Internal error", requestID,
-					apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: opts.docsBase})
-				return
-			}
-			authRes, ok := auth.FromContext(r.Context())
-			if !ok || authRes.OrgID == uuid.Nil {
-				apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-					"Internal error", requestID,
-					apierror.WriteOpts{Detail: "missing org context", DocsBase: opts.docsBase})
-				return
-			}
-			candidate, err := resolveRoutingModel(r.Context(), resolveModelArgs{
-				requestModel: parsed.Model,
-				orgID:        authRes.OrgID,
-				loader:       opts.agentDefaults,
-			})
-			if errors.Is(err, errModelRequired) {
-				writeModelRequired(w, requestID, opts.docsBase)
-				return
-			}
-			if err != nil {
-				apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-					"Internal error", requestID,
-					apierror.WriteOpts{Detail: "agent default model unavailable", DocsBase: opts.docsBase})
-				return
-			}
-			parsed.Model = candidate
-			prov, err := opts.resolver.ForOrg(r.Context(), authRes.OrgID, candidate)
-			if err != nil {
-				writeRegistryLookupError(w, registryLookupWrite{
-					requestID: requestID,
-					docsBase:  opts.docsBase,
-					model:     candidate,
-				}, err)
-				return
-			}
-			ctx := provider.WithProvider(r.Context(), prov)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			routeProviderRequest(w, r, opts, next)
 		})
 	}
+}
+
+func routeProviderRequest(w http.ResponseWriter, r *http.Request, opts providerRoutingOpts, next http.Handler) {
+	requestID := requestIDFromContext(r.Context())
+	parsed, ok := llm.ChatRequestFromContext(r.Context())
+	if !ok {
+		opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
+			"Internal error", requestID,
+			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: opts.docsBase})
+		return
+	}
+	authRes, ok := auth.FromContext(r.Context())
+	if !ok || authRes.OrgID == uuid.Nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			"Internal error", requestID,
+			apierror.WriteOpts{Detail: "missing org context", DocsBase: opts.docsBase})
+		return
+	}
+	candidate, err := resolveRoutingModel(r.Context(), resolveModelArgs{
+		requestModel: parsed.Model,
+		orgID:        authRes.OrgID,
+		loader:       opts.agentDefaults,
+	})
+	if !writeResolveModelError(w, requestID, opts.docsBase, err) {
+		return
+	}
+	parsed.Model = candidate
+	prov, err := opts.resolver.ForOrg(r.Context(), authRes.OrgID, candidate)
+	if err != nil {
+		writeRegistryLookupError(w, registryLookupWrite{
+			requestID: requestID,
+			docsBase:  opts.docsBase,
+			model:     candidate,
+		}, err)
+		return
+	}
+	next.ServeHTTP(w, r.WithContext(provider.WithProvider(r.Context(), prov)))
+}
+
+// writeResolveModelError returns false when the request was already answered.
+func writeResolveModelError(w http.ResponseWriter, requestID, docsBase string, err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, errModelRequired) {
+		writeModelRequired(w, requestID, docsBase)
+		return false
+	}
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+		"Internal error", requestID,
+		apierror.WriteOpts{Detail: "agent default model unavailable", DocsBase: docsBase})
+	return false
 }
 
 type resolveModelArgs struct {

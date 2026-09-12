@@ -105,15 +105,13 @@ async def patch_model_policy(
     body: ModelPolicyPatch,
     ctx: Annotated[_Ctx, Depends(_write_ctx)],
 ) -> ModelPolicyResponse:
-    return await model_policy_service.patch_policy(
-        ctx.session,
-        model_policy_service.PatchArgs(
-            org_id=ctx.org_id,
-            policy_id=policy_id,
-            body=body,
-            deps=_write_deps(ctx),
-        ),
+    args = model_policy_service.PatchArgs(
+        org_id=ctx.org_id,
+        policy_id=policy_id,
+        body=body,
+        deps=_write_deps(ctx),
     )
+    return await model_policy_service.patch_policy(ctx.session, args)
 
 
 @router.delete(

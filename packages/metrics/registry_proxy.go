@@ -35,6 +35,11 @@ type ProxyRegistry struct {
 	directiveResolveErrs          prometheus.Counter
 	directiveResolveSec           prometheus.Histogram
 	directiveInvalidate           prometheus.Counter
+	modelPolicyCacheHits          *prometheus.CounterVec
+	modelPolicyCacheMisses        *prometheus.CounterVec
+	modelPolicyDeny               prometheus.Counter
+	modelPolicyInvalidate         prometheus.Counter
+	modelPolicyLRUSize            prometheus.Gauge
 	sessionGetOrCreate            *prometheus.CounterVec
 	sessionGetOrCreateSec         prometheus.Histogram
 	sessionCheckpoint             *prometheus.CounterVec

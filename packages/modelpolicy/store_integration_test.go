@@ -110,15 +110,21 @@ func mustStore(t *testing.T, db *sql.DB) *modelpolicy.Store {
 	return store
 }
 
-func assertDecision(t *testing.T, policies []modelpolicy.Policy, model string, wantMatched, wantAllowed bool) {
+type decisionWant struct {
+	model       string
+	wantMatched bool
+	wantAllowed bool
+}
+
+func assertDecision(t *testing.T, policies []modelpolicy.Policy, want decisionWant) {
 	t.Helper()
-	dec, err := modelpolicy.EvaluatePolicies(policies, model)
+	dec, err := modelpolicy.EvaluatePolicies(policies, want.model)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dec.Matched != wantMatched || dec.Allowed != wantAllowed {
+	if dec.Matched != want.wantMatched || dec.Allowed != want.wantAllowed {
 		t.Fatalf("model=%s got matched=%v allowed=%v want matched=%v allowed=%v",
-			model, dec.Matched, dec.Allowed, wantMatched, wantAllowed)
+			want.model, dec.Matched, dec.Allowed, want.wantMatched, want.wantAllowed)
 	}
 }
 
@@ -137,9 +143,9 @@ func TestRouting_OrgPolicy_StoreEvaluate(t *testing.T) {
 	if len(policies) != 2 {
 		t.Fatalf("len=%d want 2", len(policies))
 	}
-	assertDecision(t, policies, "claude-sonnet-4-5", true, false)
-	assertDecision(t, policies, "claude-opus-4", true, true)
-	assertDecision(t, policies, "gpt-4o", false, true)
+	assertDecision(t, policies, decisionWant{model: "claude-sonnet-4-5", wantMatched: true, wantAllowed: false})
+	assertDecision(t, policies, decisionWant{model: "claude-opus-4", wantMatched: true, wantAllowed: true})
+	assertDecision(t, policies, decisionWant{model: "gpt-4o", wantMatched: false, wantAllowed: true})
 }
 
 func TestRouting_OrgPolicy_CrossTenantIsolation(t *testing.T) {

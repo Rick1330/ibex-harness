@@ -153,6 +153,17 @@ def test_invalid_glob_pattern_400() -> None:
     assert resp.status_code == 400
 
 
+def test_empty_character_class_glob_400() -> None:
+    org_id = uuid4()
+    with managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _):
+        resp = client.post(
+            _base(org_id),
+            headers=bearer_headers(),
+            json={"model_pattern": "[]", "allowed": True},
+        )
+    assert resp.status_code == 400
+
+
 def test_TestAPI_ISO_MODELPOLICY_list_foreign_org_404() -> None:
     _assert_foreign_org_404("GET")
 

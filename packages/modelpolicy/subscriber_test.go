@@ -91,6 +91,27 @@ func assertReloaded(t *testing.T, cache *Cache, loader *fakeLoader, org uuid.UUI
 	t.Fatalf("cache not invalidated within 1s; loader.calls=%d", loader.calls)
 }
 
+func TestSubscriber_StopUnblocksReceive(t *testing.T) {
+	client := newMiniRedis(t)
+	cache, _ := seedCachedDeny(t, uuid.New())
+	sub, err := NewSubscriber(client, cache, logger.Discard("modelpolicy-stop"), NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		sub.Run(context.Background())
+		close(done)
+	}()
+	waitPubSubPatterns(t, client)
+	sub.Stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not unblock Run within 2s")
+	}
+}
+
 func waitPubSubPatterns(t *testing.T, client redis.UniversalClient) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

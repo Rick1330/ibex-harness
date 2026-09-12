@@ -170,3 +170,53 @@ func TestCache_LoaderErrorFailClosed(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestCache_InvalidateDuringLoadSkipsLRU(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	loader := &blockingLoader{
+		started:  started,
+		release:  release,
+		policies: []Policy{{Pattern: "claude-*", Allowed: false, Priority: 1}},
+	}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := cache.PoliciesForOrg(context.Background(), org)
+		errCh <- err
+	}()
+	<-started
+	cache.Invalidate(org)
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	// Stale load must not populate LRU; next call reloads.
+	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	if loader.calls != 2 {
+		t.Fatalf("calls=%d want 2 (invalidate during load skipped cache fill)", loader.calls)
+	}
+}
+
+type blockingLoader struct {
+	started  chan struct{}
+	release  chan struct{}
+	policies []Policy
+	calls    int
+}
+
+func (b *blockingLoader) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, error) {
+	b.calls++
+	if b.calls == 1 {
+		close(b.started)
+		<-b.release
+	}
+	return append([]Policy(nil), b.policies...), nil
+}
