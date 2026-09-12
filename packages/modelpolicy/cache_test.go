@@ -174,17 +174,34 @@ func TestCache_LoaderErrorFailClosed(t *testing.T) {
 func TestCache_InvalidateDuringLoadRejectsStaleAndRetries(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
-	started := make(chan struct{})
-	release := make(chan struct{})
-	stale := []Policy{{Pattern: "claude-*", Allowed: false, Priority: 1}}
-	fresh := []Policy{{Pattern: "claude-*", Allowed: true, Priority: 1}}
+	loader, cache := newInvalidateRetryFixture(t)
+	got := loadPoliciesWhileInvalidating(t, cache, org, loader.started, loader.release)
+	assertSingleAllowPolicy(t, got)
+	assertCachedAllowPolicy(t, cache, org)
+	if loader.calls != 2 {
+		t.Fatalf("calls=%d want 2 (retry after invalidate)", loader.calls)
+	}
+}
+
+func newInvalidateRetryFixture(t *testing.T) (*seqBlockingLoader, *Cache) {
+	t.Helper()
 	loader := &seqBlockingLoader{
-		started: started, release: release, first: stale, second: fresh,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		first:   []Policy{{Pattern: "claude-*", Allowed: false, Priority: 1}},
+		second:  []Policy{{Pattern: "claude-*", Allowed: true, Priority: 1}},
 	}
 	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return loader, cache
+}
+
+func loadPoliciesWhileInvalidating(
+	t *testing.T, cache *Cache, org uuid.UUID, started, release chan struct{},
+) []Policy {
+	t.Helper()
 	errCh := make(chan error, 1)
 	var got []Policy
 	go func() {
@@ -198,15 +215,21 @@ func TestCache_InvalidateDuringLoadRejectsStaleAndRetries(t *testing.T) {
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
+	return got
+}
+
+func assertSingleAllowPolicy(t *testing.T, got []Policy) {
+	t.Helper()
 	if len(got) != 1 || !got[0].Allowed {
 		t.Fatalf("returned stale deny snapshot: %+v", got)
 	}
+}
+
+func assertCachedAllowPolicy(t *testing.T, cache *Cache, org uuid.UUID) {
+	t.Helper()
 	cached, ok := cache.lookupFresh(org.String())
 	if !ok || len(cached) != 1 || !cached[0].Allowed {
 		t.Fatalf("LRU must hold fresh allow policies: ok=%v cached=%+v", ok, cached)
-	}
-	if loader.calls != 2 {
-		t.Fatalf("calls=%d want 2 (retry after invalidate)", loader.calls)
 	}
 }
 

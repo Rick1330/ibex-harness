@@ -209,9 +209,13 @@ async def create_policy(
     return _row_to_response(row)
 
 
+def _patch_has_fields(body: ModelPolicyPatch) -> bool:
+    return body.model_pattern is not None or body.allowed is not None or body.priority is not None
+
+
 async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyResponse:
     body = args.body
-    if body.model_pattern is None and body.allowed is None and body.priority is None:
+    if not _patch_has_fields(body):
         return await get_policy(session, args.org_id, args.policy_id)
     try:
         result = await session.execute(

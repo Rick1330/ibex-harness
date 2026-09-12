@@ -172,3 +172,46 @@ func TestRouting_OrgPolicy_CrossTenantIsolation(t *testing.T) {
 		t.Fatalf("orgB must not see orgA policies: %d", len(polsB))
 	}
 }
+
+func TestAgentStore_LoadDefaults(t *testing.T) {
+	db := openIntegrationDB(t)
+	defer db.Close()
+
+	org := seedOrg(t, db, "mp-agent-defaults")
+	agentID := seedAgentWithDefaults(t, db, org, "gpt-4o", "openai")
+
+	store, err := modelpolicy.NewAgentStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load(context.Background(), org, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DefaultModel != "gpt-4o" || got.DefaultProvider != "openai" {
+		t.Fatalf("got=%+v", got)
+	}
+
+	missing, err := store.Load(context.Background(), org, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.DefaultModel != "" || missing.DefaultProvider != "" {
+		t.Fatalf("missing agent must be empty: %+v", missing)
+	}
+}
+
+func seedAgentWithDefaults(t *testing.T, db *sql.DB, orgID uuid.UUID, model, provider string) uuid.UUID {
+	t.Helper()
+	var agentID string
+	err := withServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), `
+			INSERT INTO ibex_core.agents (org_id, name, slug, default_model, default_provider)
+			VALUES ($1::uuid, 'Agent', 'agent-defaults', $2, $3)
+			RETURNING id::text`, orgID, model, provider).Scan(&agentID)
+	})
+	if err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	return uuid.MustParse(agentID)
+}
