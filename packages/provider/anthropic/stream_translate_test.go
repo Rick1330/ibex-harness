@@ -56,30 +56,45 @@ func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 
 func TestStreamTranslate_IgnoresNonTextDelta(t *testing.T) {
 	t.Parallel()
-	const (
-		leakJSON      = `LEAK_PARTIAL_JSON_XYZ`
-		leakThinking  = `LEAK_THINKING_BLOCK_XYZ`
-		leakSignature = `LEAK_SIGNATURE_BLOCK_XYZ`
-	)
-	anth := anthropicSSEFixture(
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"`+leakJSON+`"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"`+leakThinking+`"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"`+leakSignature+`"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-	)
-	out := mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
+	leaks := ignoredDeltaLeakMarkers{
+		JSON:      "LEAK_PARTIAL_JSON_XYZ",
+		Thinking:  "LEAK_THINKING_BLOCK_XYZ",
+		Signature: "LEAK_SIGNATURE_BLOCK_XYZ",
+	}
+	out := mustTranslate(t, ignoredNonTextDeltaSSE(leaks), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	out.mustContain(t, `"content":"ok"`, "data: [DONE]")
-	for _, leak := range []string{leakJSON, leakThinking, leakSignature, "partial_json"} {
+	for _, leak := range []string{leaks.JSON, leaks.Thinking, leaks.Signature, "partial_json"} {
 		if strings.Contains(string(out), leak) {
 			t.Fatalf("leaked non-text delta into OpenAI stream: %q in %s", leak, out)
 		}
 	}
+}
+
+type ignoredDeltaLeakMarkers struct {
+	JSON      string
+	Thinking  string
+	Signature string
+}
+
+func ignoredNonTextDeltaSSE(leaks ignoredDeltaLeakMarkers) string {
+	var b strings.Builder
+	appendContentBlockDelta(&b, "input_json_delta", "partial_json", leaks.JSON)
+	appendContentBlockDelta(&b, "thinking_delta", "thinking", leaks.Thinking)
+	appendContentBlockDelta(&b, "signature_delta", "signature", leaks.Signature)
+	appendContentBlockDelta(&b, "text_delta", "text", "ok")
+	b.WriteString("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	return b.String()
+}
+
+func appendContentBlockDelta(b *strings.Builder, deltaType, field, value string) {
+	b.WriteString("event: content_block_delta\n")
+	b.WriteString(`data: {"type":"content_block_delta","delta":{"type":"`)
+	b.WriteString(deltaType)
+	b.WriteString(`","`)
+	b.WriteString(field)
+	b.WriteString(`":"`)
+	b.WriteString(value)
+	b.WriteString("\"}}\n\n")
 }
 
 func TestStreamTranslate_PingAndCommentKeepalive(t *testing.T) {
