@@ -161,21 +161,36 @@ func TestStreamTranslate_RateLimitError(t *testing.T) {
 func assertIncompleteStreamBody(t *testing.T, body []byte) {
 	t.Helper()
 	s := string(body)
-	if strings.Contains(s, "data: [DONE]") || strings.Contains(s, "[DONE]") {
+	if streamBodyHasDoneSentinel(s) {
 		t.Fatalf("incomplete mid-stream body must not contain [DONE]: %q", s)
 	}
+	if block, ok := firstFabricatedOpenAIErrorChunk(s); ok {
+		t.Fatalf("fabricated OpenAI-shaped error chunk in stream body: %q", block)
+	}
+}
+
+func streamBodyHasDoneSentinel(s string) bool {
+	return strings.Contains(s, "data: [DONE]") || strings.Contains(s, "[DONE]")
+}
+
+func firstFabricatedOpenAIErrorChunk(s string) (string, bool) {
 	for _, block := range strings.Split(s, "\n\n") {
 		payload, ok := openAIChunkPayload(block)
 		if !ok {
 			continue
 		}
-		trimmed := strings.TrimSpace(payload)
-		if strings.Contains(trimmed, `"object":"error"`) ||
-			strings.HasPrefix(trimmed, `{"error"`) ||
-			strings.HasPrefix(trimmed, `{"error":`) {
-			t.Fatalf("fabricated OpenAI-shaped error chunk in stream body: %q", block)
+		if isFabricatedOpenAIErrorPayload(strings.TrimSpace(payload)) {
+			return block, true
 		}
 	}
+	return "", false
+}
+
+func isFabricatedOpenAIErrorPayload(payload string) bool {
+	if strings.Contains(payload, `"object":"error"`) {
+		return true
+	}
+	return strings.HasPrefix(payload, `{"error"`)
 }
 
 func anthropicSSEFixture(lines ...sseLine) string {
