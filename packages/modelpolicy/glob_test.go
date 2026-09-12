@@ -17,8 +17,13 @@ func TestMatch_ClaudeGlob(t *testing.T) {
 		{"claude-?", "claude-x", true},
 		{"gpt-4o", "gpt-4o", true},
 		{"gpt-4o", "gpt-4o-mini", false},
+		{"*", "openai/gpt-4", false},
+		{"*/*", "openai/gpt-4", true},
 	}
 	for _, tc := range cases {
+		if err := ValidatePattern(tc.pattern); err != nil {
+			t.Fatalf("ValidatePattern(%q): %v", tc.pattern, err)
+		}
 		ok, err := Match(tc.pattern, tc.model)
 		if err != nil {
 			t.Fatalf("Match(%q,%q): %v", tc.pattern, tc.model, err)
@@ -47,8 +52,8 @@ func TestValidatePattern_Invalid(t *testing.T) {
 func TestEvaluatePolicies_PriorityFirstMatch(t *testing.T) {
 	t.Parallel()
 	policies := []Policy{
-		{Pattern: "claude-*", Allowed: true, Priority: 10},
 		{Pattern: "claude-sonnet-4-5", Allowed: false, Priority: 1},
+		{Pattern: "claude-*", Allowed: true, Priority: 10},
 	}
 	dec, err := EvaluatePolicies(policies, "claude-sonnet-4-5")
 	if err != nil {
@@ -56,6 +61,29 @@ func TestEvaluatePolicies_PriorityFirstMatch(t *testing.T) {
 	}
 	if !dec.Matched || dec.Allowed {
 		t.Fatalf("want deny match, got %+v", dec)
+	}
+}
+
+func TestEvaluatePolicies_DenyStarMissesSlashyModel(t *testing.T) {
+	t.Parallel()
+	policies := []Policy{{Pattern: "*", Allowed: false, Priority: 1}}
+	dec, err := EvaluatePolicies(policies, "openai/gpt-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dec.Matched {
+		t.Fatal("'*' must not match slashy model IDs (filepath.Match)")
+	}
+	policies = []Policy{
+		{Pattern: "*", Allowed: false, Priority: 1},
+		{Pattern: "*/*", Allowed: false, Priority: 2},
+	}
+	dec, err = EvaluatePolicies(policies, "openai/gpt-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Matched || dec.Allowed {
+		t.Fatalf("want deny via */*, got %+v", dec)
 	}
 }
 

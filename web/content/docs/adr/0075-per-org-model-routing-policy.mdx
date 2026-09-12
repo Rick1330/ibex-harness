@@ -1,6 +1,6 @@
 ---
 title: "ADR-0075 Per-Org Model Routing Policy"
-description: "Org allow/deny model policies gated in front of Registry.For, with proxy Postgres + bloom→LRU cache"
+description: "Org allow/deny model policies gated in front of Registry.For, with proxy Postgres + LRU+TTL cache"
 ---
 
 # ADR-0075 — Per-Org Model Routing Policy
@@ -19,9 +19,9 @@ Accepted (Milestone 4.C.2)
 2. **Precedence:** trimmed request-body `model` if non-empty; else proxy Postgres `agents.default_model` for the verified agent; else 400 `model is required`. Org policy is then a **veto** (priority ASC, first `filepath.Match` wins). No match → allow any registered model. Then `Registry.For`. `default_provider` is not used for registry lookup.
 3. **Deny** → `403 MODEL_NOT_ALLOWED`. Unknown model after allow → existing `501 PROVIDER_NOT_CONFIGURED`.
 4. **Direct Postgres** from the proxy (`packages/modelpolicy` store + RLS). No Auth gRPC hop.
-5. **Cache:** dedicated bloom→LRU in `packages/modelpolicy` (not `packages/authcache`), **60s TTL**, Redis pub/sub `model_policy_updates:{org_id}` via `packages/redissub.Loop`. Policy load errors **fail closed** (503).
+5. **Cache:** process-local **LRU + TTL** in `packages/modelpolicy` (not `packages/authcache`), **60s TTL**, Redis pub/sub `model_policy_updates:{org_id}` via `packages/redissub.Loop`. Invalidate advances a per-org generation under the same lock used for cache install so in-flight loads cannot repopulate a stale snapshot. A positive bloom filter is **not** used: false negatives would fail open on deny policies. Policy load errors **fail closed** (503). Agent `default_model` reads use a separate short-TTL LRU.
 6. **No `fallback_chain` column** in 4.C.2 — deferred to 4.C.4 when a reader exists.
-7. **Admin CRUD** under `/v1/organizations/{org_id}/model-policies` with `RequireOrgSettings` on writes; soft glob-syntax validation only (not #790 registry allowlist).
+7. **Admin CRUD** under `/v1/organizations/{org_id}/model-policies` with `RequireOrgSettings` on writes; soft pattern validation (strip, length, shared golden reject corpus). Full `filepath.Match` grammar is enforced when the proxy loads policies.
 8. **Middleware change is required:** `ProviderRoutingMiddleware` reads `auth.FromContext` org ID and calls `ForOrg` — handlers remain registry-agnostic.
 
 ## Consequences
@@ -30,4 +30,7 @@ Accepted (Milestone 4.C.2)
 - Management API publishes invalidation events; proxy subscribers drop LRU entries for that org.
 - Glob dialect is Go `filepath.Match` (shell-style `*`, `?`, and character classes
   including ranges/`^` negation; malformed classes such as `[]` are rejected by
-  `ValidatePattern` / management API validation).
+  `ValidatePattern` / management API golden reject list).
+- **`filepath.Match` `*` does not cross `/`.** A sole deny pattern `*` does not match
+  slashy catalog IDs (e.g. `openai/gpt-4`). Catch-alls for those IDs need `*/*`
+  (and/or explicit `provider/*`) in addition to `*`.

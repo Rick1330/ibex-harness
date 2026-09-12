@@ -85,9 +85,18 @@ func TestUnit_ProviderRouting_Deny403(t *testing.T) {
 func TestUnit_ProviderRouting_EmptyModelUsesAgentDefault(t *testing.T) {
 	t.Parallel()
 	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
-	var called bool
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		called = true
+	var gotModel, gotProvider string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		parsed, ok := llm.ChatRequestFromContext(r.Context())
+		if !ok {
+			t.Fatal("chat request missing")
+		}
+		gotModel = parsed.Model
+		p, ok := provider.ProviderFromContext(r.Context())
+		if !ok {
+			t.Fatal("provider missing")
+		}
+		gotProvider = p.Name()
 		w.WriteHeader(http.StatusOK)
 	})
 	rec := serveProviderRouting(t, routingCase{
@@ -95,9 +104,64 @@ func TestUnit_ProviderRouting_EmptyModelUsesAgentDefault(t *testing.T) {
 		defaults: staticAgentDefaults{defaults: modelpolicy.AgentDefaults{DefaultModel: "gpt-4o"}},
 		next:     next,
 	})
-	if !called || rec.Code != http.StatusOK {
-		t.Fatalf("called=%v status=%d body=%s", called, rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	if gotModel != "gpt-4o" || gotProvider != "openai" {
+		t.Fatalf("model=%q provider=%q", gotModel, gotProvider)
+	}
+}
+
+func TestUnit_ProviderRouting_PolicyUnavailable503(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
+	base := mustOpenAIRegistry(t)
+	cache, err := modelpolicy.NewCache(&errPolicyLoader{}, modelpolicy.Config{}, modelpolicy.NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := modelpolicy.NewOrgAwareRegistry(base, cache, modelpolicy.NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("must not continue")
+	})
+	rec := serveProviderRouting(t, routingCase{
+		model: "gpt-4o", orgID: org, resolver: reg, next: next,
+	})
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeServiceDegraded)) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
+func TestUnit_ProviderRouting_MissingOrg503(t *testing.T) {
+	t.Parallel()
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("must not continue")
+	})
+	h := ProviderRoutingMiddleware(providerRoutingOpts{
+		resolver: modelpolicy.PassthroughRegistry{Base: mustOpenAIRegistry(t)},
+		log:      logger.Discard("proxy"),
+	})(next)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
+		Model: "gpt-4o", Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+type errPolicyLoader struct{}
+
+func (errPolicyLoader) LoadOrg(context.Context, uuid.UUID) ([]modelpolicy.Policy, error) {
+	return nil, errors.New("db down")
 }
 
 func TestUnit_ProviderRouting_AgentOrgMismatchRejects(t *testing.T) {

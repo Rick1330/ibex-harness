@@ -35,13 +35,14 @@ func (r *OrgAwareRegistry) ForOrg(ctx context.Context, orgID uuid.UUID, model st
 	if orgID == uuid.Nil {
 		return nil, fmt.Errorf("%w: missing org_id", ErrPolicyUnavailable)
 	}
+	model = strings.TrimSpace(model)
 	policies, err := r.cache.PoliciesForOrg(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
 	dec, err := EvaluatePolicies(policies, model)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 	if dec.Matched && !dec.Allowed {
 		r.metrics.IncDeny()
@@ -63,7 +64,7 @@ func (p PassthroughRegistry) ForOrg(_ context.Context, _ uuid.UUID, model string
 	if p.Base == nil {
 		return nil, provider.ErrNoProviderForModel
 	}
-	return p.Base.For(model)
+	return p.Base.For(strings.TrimSpace(model))
 }
 
 // ResolveCandidateModel applies precedence: request model, else agent default_model.

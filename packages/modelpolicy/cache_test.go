@@ -3,6 +3,7 @@ package modelpolicy
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,14 +15,23 @@ type fakeLoader struct {
 	policies map[uuid.UUID][]Policy
 	calls    int
 	err      error
+	mu       sync.Mutex
 }
 
 func (f *fakeLoader) LoadOrg(_ context.Context, orgID uuid.UUID) ([]Policy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls++
 	if f.err != nil {
 		return nil, f.err
 	}
 	return append([]Policy(nil), f.policies[orgID]...), nil
+}
+
+func (f *fakeLoader) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 type fakeProvider struct{ models []string }
@@ -61,15 +71,15 @@ func TestCache_LRUHitAndInvalidate(t *testing.T) {
 	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
-	if loader.calls != 1 {
-		t.Fatalf("calls=%d want 1", loader.calls)
+	if loader.callCount() != 1 {
+		t.Fatalf("calls=%d want 1", loader.callCount())
 	}
 	cache.Invalidate(org)
 	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
-	if loader.calls != 2 {
-		t.Fatalf("calls=%d want 2 after invalidate", loader.calls)
+	if loader.callCount() != 2 {
+		t.Fatalf("calls=%d want 2 after invalidate", loader.callCount())
 	}
 }
 
@@ -90,8 +100,8 @@ func TestCache_TTLExpiry(t *testing.T) {
 	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
-	if loader.calls != 2 {
-		t.Fatalf("calls=%d want 2 after TTL", loader.calls)
+	if loader.callCount() != 2 {
+		t.Fatalf("calls=%d want 2 after TTL", loader.callCount())
 	}
 }
 
@@ -117,7 +127,9 @@ func TestOrgAwareRegistry_DenyAndAllow(t *testing.T) {
 	if _, err := reg.ForOrg(context.Background(), org, model); !errors.Is(err, ErrModelNotAllowedForOrg) {
 		t.Fatalf("deny err=%v", err)
 	}
+	loader.mu.Lock()
 	loader.policies[org] = []Policy{{Pattern: "claude-*", Allowed: true, Priority: 1}}
+	loader.mu.Unlock()
 	cache.Invalidate(org)
 	if _, err := reg.ForOrg(context.Background(), org, model); err != nil {
 		t.Fatalf("allow: %v", err)
@@ -125,6 +137,26 @@ func TestOrgAwareRegistry_DenyAndAllow(t *testing.T) {
 	other := uuid.New()
 	if _, err := reg.ForOrg(context.Background(), other, model); err != nil {
 		t.Fatalf("no policy rows: %v", err)
+	}
+}
+
+func TestOrgAwareRegistry_NilOrgFailClosed(t *testing.T) {
+	t.Parallel()
+	base, err := provider.NewRegistry(testCatalog("gpt-4o"), fakeProvider{models: []string{"gpt-4o"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := NewCache(&fakeLoader{policies: map[uuid.UUID][]Policy{}}, Config{LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := NewOrgAwareRegistry(base, cache, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = reg.ForOrg(context.Background(), uuid.Nil, "gpt-4o")
+	if !errors.Is(err, ErrPolicyUnavailable) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -158,6 +190,21 @@ func TestEventRoundTrip(t *testing.T) {
 	}
 }
 
+func TestParseInvalidateEvent_RejectsBad(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{`,
+		`{"v":2,"org_id":"550e8400-e29b-41d4-a716-446655440000"}`,
+		`{"v":1,"org_id":""}`,
+		`{"v":1,"org_id":"not-a-uuid"}`,
+	}
+	for _, raw := range cases {
+		if _, err := ParseInvalidateEvent(raw); err == nil {
+			t.Fatalf("expected error for %s", raw)
+		}
+	}
+}
+
 func TestCache_LoaderErrorFailClosed(t *testing.T) {
 	t.Parallel()
 	loader := &fakeLoader{err: errors.New("db down")}
@@ -171,20 +218,25 @@ func TestCache_LoaderErrorFailClosed(t *testing.T) {
 	}
 }
 
-func TestCache_InvalidateDuringLoadRejectsStaleAndRetries(t *testing.T) {
+func TestCache_BadPatternInDBFailClosed(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
-	loader, cache := newInvalidateRetryFixture(t)
-	got := loadPoliciesWhileInvalidating(t, cache, org, loader.started, loader.release)
-	assertSingleAllowPolicy(t, got)
-	assertCachedAllowPolicy(t, cache, org)
-	if loader.calls != 2 {
-		t.Fatalf("calls=%d want 2 (retry after invalidate)", loader.calls)
+	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{
+		org: {{Pattern: "[]", Allowed: false, Priority: 1}},
+	}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = cache.PoliciesForOrg(context.Background(), org)
+	if !errors.Is(err, ErrPolicyUnavailable) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
-func newInvalidateRetryFixture(t *testing.T) (*seqBlockingLoader, *Cache) {
-	t.Helper()
+func TestCache_InvalidateDuringLoadRejectsStaleAndRetries(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
 	loader := &seqBlockingLoader{
 		started: make(chan struct{}),
 		release: make(chan struct{}),
@@ -195,13 +247,6 @@ func newInvalidateRetryFixture(t *testing.T) (*seqBlockingLoader, *Cache) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return loader, cache
-}
-
-func loadPoliciesWhileInvalidating(
-	t *testing.T, cache *Cache, org uuid.UUID, started, release chan struct{},
-) []Policy {
-	t.Helper()
 	errCh := make(chan error, 1)
 	var got []Policy
 	go func() {
@@ -209,27 +254,46 @@ func loadPoliciesWhileInvalidating(
 		got, loadErr = cache.PoliciesForOrg(context.Background(), org)
 		errCh <- loadErr
 	}()
-	<-started
+	<-loader.started
 	cache.Invalidate(org)
-	close(release)
+	close(loader.release)
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
-	return got
-}
-
-func assertSingleAllowPolicy(t *testing.T, got []Policy) {
-	t.Helper()
 	if len(got) != 1 || !got[0].Allowed {
-		t.Fatalf("returned stale deny snapshot: %+v", got)
+		t.Fatalf("returned stale deny: %+v", got)
+	}
+	if loader.calls != 2 {
+		t.Fatalf("calls=%d want 2", loader.calls)
 	}
 }
 
-func assertCachedAllowPolicy(t *testing.T, cache *Cache, org uuid.UUID) {
-	t.Helper()
-	cached, ok := cache.lookupFresh(org.String())
-	if !ok || len(cached) != 1 || !cached[0].Allowed {
-		t.Fatalf("LRU must hold fresh allow policies: ok=%v cached=%+v", ok, cached)
+func TestCache_InvalidateAfterLoadBeforeInstall(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	var cache *Cache
+	loader := &hookLoader{
+		policies: []Policy{{Pattern: "claude-*", Allowed: false, Priority: 1}},
+	}
+	var err error
+	cache, err = NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader.afterLoad = func() {
+		cache.Invalidate(org)
+		loader.policies = []Policy{{Pattern: "claude-*", Allowed: true, Priority: 1}}
+		loader.afterLoad = nil
+	}
+	got, err := cache.PoliciesForOrg(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got[0].Allowed {
+		t.Fatalf("must not stick stale deny after post-load invalidate: %+v", got)
+	}
+	if loader.calls < 2 {
+		t.Fatalf("calls=%d want >=2", loader.calls)
 	}
 }
 
@@ -265,6 +329,21 @@ func (s *seqBlockingLoader) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, e
 		return append([]Policy(nil), s.first...), nil
 	}
 	return append([]Policy(nil), s.second...), nil
+}
+
+type hookLoader struct {
+	policies  []Policy
+	afterLoad func()
+	calls     int
+}
+
+func (h *hookLoader) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, error) {
+	h.calls++
+	out := append([]Policy(nil), h.policies...)
+	if h.afterLoad != nil {
+		h.afterLoad()
+	}
+	return out, nil
 }
 
 type invalidateOnLoad struct {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -15,40 +17,45 @@ from app.model_policy_publish import (
 )
 from app.schemas.model_policies import ModelPolicyCreate, ModelPolicyPatch
 
-
-@pytest.mark.parametrize(
-    "pattern",
-    ["claude-*", "gpt-?", "model-[abc]", "x-[^z]", r"a\*b", r"[a\]]"],
+_GOLDEN = (
+    Path(__file__).resolve().parents[4]
+    / "packages"
+    / "modelpolicy"
+    / "testdata"
+    / "model_pattern_golden.json"
 )
-def test_create_accepts_filepath_match_patterns(pattern: str) -> None:
+
+
+def _golden() -> dict:
+    return json.loads(_GOLDEN.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("pattern", _golden()["accept"])
+def test_create_accepts_golden_patterns(pattern: str) -> None:
     body = ModelPolicyCreate(model_pattern=pattern, allowed=True)
     assert body.model_pattern == pattern
 
 
-@pytest.mark.parametrize(
-    "pattern",
-    [
-        "[]",  # empty class — Go ErrBadPattern
-        "bad[",  # unclosed class
-        "[a",  # unclosed class
-        "\\",  # trailing backslash
-        "trail\\",
-        "[" + "\\",  # trailing backslash inside class
-        "   ",  # whitespace-only after strip
-        "[a-]",  # dangling range
-        "[-a]",  # leading dash item
-        "[a-b-]",  # dash after completed range
-    ],
-)
-def test_create_rejects_patterns_go_filepath_match_rejects(pattern: str) -> None:
+@pytest.mark.parametrize("pattern", _golden()["reject"])
+def test_create_rejects_golden_patterns(pattern: str) -> None:
     with pytest.raises(ValidationError):
         ModelPolicyCreate(model_pattern=pattern, allowed=True)
+
+
+def test_create_rejects_whitespace_only() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(model_pattern="   ", allowed=True)
 
 
 def test_create_rejects_pattern_over_256_chars() -> None:
     with pytest.raises(ValidationError) as exc:
         ModelPolicyCreate(model_pattern="a" * 257, allowed=False)
     assert "256" in str(exc.value)
+
+
+def test_create_strips_pattern() -> None:
+    body = ModelPolicyCreate(model_pattern="  claude-*  ", allowed=True)
+    assert body.model_pattern == "claude-*"
 
 
 def test_patch_omitted_pattern_stays_none() -> None:

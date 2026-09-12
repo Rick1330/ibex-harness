@@ -126,6 +126,36 @@ func TestUnit_LoopStoppedAndSleepBackoff(t *testing.T) {
 	}
 }
 
+func TestUnit_LoopStopCancelsListenContext(t *testing.T) {
+	t.Parallel()
+	log, err := logger.New(logger.Config{Service: "redissub-test"})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	loop := redissub.NewLoop()
+	blocked := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		loop.Run(context.Background(), log, "test", func(ctx context.Context) (bool, error) {
+			close(blocked)
+			<-ctx.Done()
+			return true, nil
+		})
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("listen did not start")
+	}
+	loop.Stop()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not cancel listen context")
+	}
+}
+
 func TestUnit_LoopStopIdempotent(t *testing.T) {
 	t.Parallel()
 	loop := redissub.NewLoop()

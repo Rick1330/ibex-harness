@@ -21,6 +21,32 @@ func TestSubscriber_PubSubInvalidatesWithinOneSecond(t *testing.T) {
 	assertReloaded(t, cache, loader, org)
 }
 
+func TestSubscriber_MalformedPayloadIgnored(t *testing.T) {
+	org := uuid.New()
+	cache, loader := seedCachedDeny(t, org)
+	client := newMiniRedis(t)
+	startSubscriber(t, client, cache)
+	waitPubSubPatterns(t, client)
+	if err := client.Publish(context.Background(), ChannelForOrg(org), `{`).Err(); err != nil {
+		t.Fatal(err)
+	}
+	other := uuid.New()
+	bad := `{"v":1,"org_id":"` + other.String() + `"}`
+	if err := client.Publish(context.Background(), ChannelForOrg(org), bad).Err(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if loader.callCount() != 1 {
+		t.Fatalf("malformed/mismatch must not invalidate; calls=%d", loader.callCount())
+	}
+	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	if loader.callCount() != 1 {
+		t.Fatalf("cache should still be warm; calls=%d", loader.callCount())
+	}
+}
+
 func seedCachedDeny(t *testing.T, org uuid.UUID) (*Cache, *fakeLoader) {
 	t.Helper()
 	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{
@@ -33,8 +59,8 @@ func seedCachedDeny(t *testing.T, org uuid.UUID) (*Cache, *fakeLoader) {
 	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
-	if loader.calls != 1 {
-		t.Fatalf("calls=%d", loader.calls)
+	if loader.callCount() != 1 {
+		t.Fatalf("calls=%d", loader.callCount())
 	}
 	return cache, loader
 }
@@ -83,12 +109,12 @@ func assertReloaded(t *testing.T, cache *Cache, loader *fakeLoader, org uuid.UUI
 		if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
 			t.Fatal(err)
 		}
-		if loader.calls >= 2 {
+		if loader.callCount() >= 2 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("cache not invalidated within 1s; loader.calls=%d", loader.calls)
+	t.Fatalf("cache not invalidated within 1s; loader.calls=%d", loader.callCount())
 }
 
 func TestSubscriber_StopUnblocksReceive(t *testing.T) {

@@ -178,7 +178,9 @@ func TestAgentStore_LoadDefaults(t *testing.T) {
 	defer db.Close()
 
 	org := seedOrg(t, db, "mp-agent-defaults")
-	agentID := seedAgentWithDefaults(t, db, org, "gpt-4o", "openai")
+	agentID := seedAgent(t, db, agentSeed{
+		orgID: org, slug: "agent-defaults", model: "gpt-4o", provider: "openai",
+	})
 
 	store, err := modelpolicy.NewAgentStore(db)
 	if err != nil {
@@ -199,16 +201,32 @@ func TestAgentStore_LoadDefaults(t *testing.T) {
 	if missing.DefaultModel != "" || missing.DefaultProvider != "" {
 		t.Fatalf("missing agent must be empty: %+v", missing)
 	}
+
+	orgB := seedOrg(t, db, "mp-agent-iso-b")
+	cross, err := store.Load(context.Background(), orgB, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cross.DefaultModel != "" {
+		t.Fatalf("cross-tenant agent defaults leak: %+v", cross)
+	}
 }
 
-func seedAgentWithDefaults(t *testing.T, db *sql.DB, orgID uuid.UUID, model, provider string) uuid.UUID {
+type agentSeed struct {
+	orgID    uuid.UUID
+	slug     string
+	model    string
+	provider string
+}
+
+func seedAgent(t *testing.T, db *sql.DB, seed agentSeed) uuid.UUID {
 	t.Helper()
 	var agentID string
 	err := withServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(context.Background(), `
 			INSERT INTO ibex_core.agents (org_id, name, slug, default_model, default_provider)
-			VALUES ($1::uuid, 'Agent', 'agent-defaults', $2, $3)
-			RETURNING id::text`, orgID, model, provider).Scan(&agentID)
+			VALUES ($1::uuid, 'Agent', $2, $3, $4)
+			RETURNING id::text`, seed.orgID, seed.slug, seed.model, seed.provider).Scan(&agentID)
 	})
 	if err != nil {
 		t.Fatalf("seed agent: %v", err)

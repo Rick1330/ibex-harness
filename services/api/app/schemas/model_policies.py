@@ -1,7 +1,9 @@
 """Org model-policy request/response schemas (m4.C.2).
 
-model_pattern uses Go path/filepath.Match grammar so the management API rejects
-patterns the proxy evaluator would later fail closed on (ADR-0075).
+model_pattern soft-validates length/strip plus the shared Go golden reject
+corpus. The proxy enforces full filepath.Match at policy load (ADR-0075).
+
+filepath.Match '*' does not cross '/'; use '*/*' or 'provider/*' for slashy IDs.
 """
 
 from __future__ import annotations
@@ -12,15 +14,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.model_pattern_glob import normalize_model_pattern
+from app.schemas.model_pattern_normalize import normalize_model_pattern
 
 Priority = Annotated[int, Field(ge=-1_000_000, le=1_000_000)]
 
+_PATTERN_DESC = (
+    "Go filepath.Match glob (shell-style *, ?, character classes). "
+    "'*' does not match across '/'; use '*/*' or 'provider/*' for slashy model IDs."
+)
+
 
 class ModelPolicyCreate(BaseModel):
-    # Length upper bound is enforced in normalize_model_pattern (not Field) so
-    # oversize input reaches the same error path as Go ValidatePattern.
-    model_pattern: str = Field(min_length=1)
+    model_pattern: str = Field(min_length=1, description=_PATTERN_DESC)
     allowed: bool
     priority: Priority = 100
 
@@ -31,7 +36,7 @@ class ModelPolicyCreate(BaseModel):
 
 
 class ModelPolicyPatch(BaseModel):
-    model_pattern: str | None = Field(default=None, min_length=1)
+    model_pattern: str | None = Field(default=None, min_length=1, description=_PATTERN_DESC)
     allowed: bool | None = None
     priority: Priority | None = None
 

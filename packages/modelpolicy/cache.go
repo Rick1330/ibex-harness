@@ -15,19 +15,21 @@ const maxPolicyLoadAttempts = 3
 type cachedPolicies struct {
 	policies  []Policy
 	expiresAt time.Time
+	gen       uint64
 }
 
-// Cache is a bloom → LRU policy cache in front of PolicyLoader.
+// Cache is a process-local LRU + TTL policy cache in front of PolicyLoader.
+// Invalidate advances a per-org generation under the same lock used for install,
+// so in-flight loads cannot repopulate a stale snapshot (ADR-0075 fail-closed).
 type Cache struct {
 	loader  PolicyLoader
 	cfg     Config
 	metrics Metrics
-	bloom   *policyBloom
 	lru     *lru.Cache[string, *cachedPolicies]
 	now     func() time.Time
 
-	genMu sync.Mutex
-	gens  map[string]uint64
+	mu   sync.Mutex
+	gens map[string]uint64
 }
 
 // NewCache constructs a Cache. loader is required.
@@ -43,7 +45,6 @@ func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
 		loader:  loader,
 		cfg:     cfg,
 		metrics: m,
-		bloom:   newPolicyBloom(cfg.BloomExpected, cfg.BloomFPRate),
 		now:     time.Now,
 		gens:    make(map[string]uint64),
 	}
@@ -56,8 +57,7 @@ func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
 }
 
 // PoliciesForOrg returns cached or freshly loaded policies for orgID.
-// LRU miss always loads from Postgres (fail-closed). Bloom is a positive hint
-// only and never skips the loader — false negatives would fail open.
+// Loader errors and invalid patterns fail closed.
 func (c *Cache) PoliciesForOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
 	key := orgID.String()
 	if policies, ok := c.lookupFresh(key); ok {
@@ -69,22 +69,32 @@ func (c *Cache) PoliciesForOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, 
 }
 
 func (c *Cache) lookupFresh(key string) ([]Policy, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	entry, ok := c.lru.Get(key)
 	if !ok || entry == nil {
 		return nil, false
 	}
+	if entry.gen != c.gens[key] {
+		c.lru.Remove(key)
+		return nil, false
+	}
 	if !c.now().Before(entry.expiresAt) {
+		c.lru.Remove(key)
 		return nil, false
 	}
 	return clonePolicies(entry.policies), true
 }
 
 func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, error) {
-	// Touch bloom for metrics/observability only; never gate the load on it.
-	_ = c.bloom.mayHave(key)
-
+	loadCtx := ctx
+	if c.cfg.LoadTimeout > 0 {
+		var cancel context.CancelFunc
+		loadCtx, cancel = context.WithTimeout(ctx, c.cfg.LoadTimeout)
+		defer cancel()
+	}
 	for attempt := 0; attempt < maxPolicyLoadAttempts; attempt++ {
-		policies, ok, err := c.loadOnce(ctx, orgID, key)
+		policies, ok, err := c.loadOnce(loadCtx, orgID, key)
 		if err != nil {
 			return nil, err
 		}
@@ -96,39 +106,35 @@ func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (
 }
 
 func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, bool, error) {
-	gen := c.generation(key)
+	c.mu.Lock()
+	gen := c.gens[key]
+	c.mu.Unlock()
+
 	policies, err := c.loader.LoadOrg(ctx, orgID)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: %v", ErrPolicyUnavailable, err)
+		return nil, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 	if policies == nil {
 		policies = []Policy{}
 	}
-	if c.generation(key) != gen {
+	policies, err = validateLoadedPolicies(policies)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gens[key] != gen {
 		// Stale snapshot — do not cache or return; caller retries.
 		return nil, false, nil
-	}
-	if len(policies) > 0 {
-		c.bloom.add(key)
 	}
 	c.lru.Add(key, &cachedPolicies{
 		policies:  clonePolicies(policies),
 		expiresAt: c.now().Add(c.cfg.CacheTTL),
+		gen:       gen,
 	})
 	c.metrics.SetLRUSize(float64(c.lru.Len()))
 	return clonePolicies(policies), true, nil
-}
-
-func (c *Cache) generation(key string) uint64 {
-	c.genMu.Lock()
-	defer c.genMu.Unlock()
-	return c.gens[key]
-}
-
-func (c *Cache) bumpGeneration(key string) {
-	c.genMu.Lock()
-	defer c.genMu.Unlock()
-	c.gens[key]++
 }
 
 // Invalidate drops the LRU entry for orgID and advances its generation.
@@ -137,10 +143,24 @@ func (c *Cache) Invalidate(orgID uuid.UUID) {
 		return
 	}
 	key := orgID.String()
-	c.bumpGeneration(key)
+	c.mu.Lock()
+	c.gens[key]++
 	c.lru.Remove(key)
+	size := c.lru.Len()
+	c.mu.Unlock()
 	c.metrics.IncInvalidate()
-	c.metrics.SetLRUSize(float64(c.lru.Len()))
+	c.metrics.SetLRUSize(float64(size))
+}
+
+func validateLoadedPolicies(policies []Policy) ([]Policy, error) {
+	out := make([]Policy, 0, len(policies))
+	for _, p := range policies {
+		if err := ValidatePattern(p.Pattern); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func clonePolicies(in []Policy) []Policy {

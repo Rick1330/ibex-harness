@@ -364,10 +364,14 @@ func buildModelPolicyRuntime(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	agentDefaults, err := modelpolicy.NewCachingAgentDefaults(agentStore, modelpolicy.Config{})
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	if log != nil {
 		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
 	}
-	return cache, reg, agentStore, nil
+	return cache, reg, agentDefaults, nil
 }
 
 func startModelPolicySubscriber(

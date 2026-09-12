@@ -7,6 +7,7 @@ import (
 )
 
 // ValidatePattern checks that pattern is a non-empty filepath.Match glob.
+// Note: filepath.Match '*' does not cross '/' (e.g. "*" does not match "openai/gpt-4").
 func ValidatePattern(pattern string) error {
 	p := strings.TrimSpace(pattern)
 	if p == "" {
@@ -21,11 +22,9 @@ func ValidatePattern(pattern string) error {
 	return nil
 }
 
-// Match reports whether model matches pattern using filepath.Match.
+// Match reports whether model matches a previously validated filepath.Match pattern.
+// Callers must ValidatePattern at ingest/load; this does not re-validate.
 func Match(pattern, model string) (bool, error) {
-	if err := ValidatePattern(pattern); err != nil {
-		return false, err
-	}
 	ok, err := filepath.Match(strings.TrimSpace(pattern), model)
 	if err != nil {
 		return false, fmt.Errorf("modelpolicy: match: %w", err)

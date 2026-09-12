@@ -1,6 +1,6 @@
 ---
 title: "4.C.2 Per-Org Model Routing"
-description: "Per-org allow/deny model policies (Postgres + bloom→LRU cache + Redis pub/sub), OrgAwareRegistry gate in ProviderRoutingMiddleware, agent default_model fill, and management CRUD."
+description: "Per-org allow/deny model policies (Postgres + LRU+TTL cache + Redis pub/sub), OrgAwareRegistry gate in ProviderRoutingMiddleware, agent default_model fill, and management CRUD."
 summary: "Per-org allow/deny model policies with ADR-0075: packages/modelpolicy cache, middleware gate, admin CRUD, no fallback_chain until 4.C.4."
 status: "completed"
 milestoneId: "4.C.2"
@@ -28,7 +28,7 @@ fullTitle: "Milestone 4.C.2 — Per-Org Model Routing Configuration"
 
   1. **`OrgAwareRegistry` wraps `*provider.Registry`** — `Registry.For(model)` signature unchanged; org gate is `ForOrg(ctx, orgID, model)`.
   2. **Real middleware change** — `ProviderRoutingMiddleware` fills empty model from agent `default_model` (proxy Postgres), then calls `ForOrg`; handlers unchanged.
-  3. **Not authcache** — dedicated bloom→LRU in `packages/modelpolicy` with **60s TTL + Redis pub/sub only** (no 30s full poll sibling).
+  3. **Not authcache** — dedicated LRU+TTL in `packages/modelpolicy` with **60s TTL + Redis pub/sub only** (no 30s full poll sibling; no ornamental bloom).
   4. **No `fallback_chain`** column — deferred until 4.C.4 has a consumer ([ADR-0075](/docs/adr/0075-per-org-model-routing-policy)).
   5. **Agent defaults via proxy Postgres** — Auth gRPC / `ValidateAgent` unchanged; `default_provider` ignored for routing.
   6. **Policy load errors → 503 fail-closed** (do not silently allow when the policy plane is broken).
@@ -59,7 +59,7 @@ Exit criteria requires model-based routing configuration per org — allowlists/
 |-------|-------------|
 | ADR | [ADR-0075](/docs/adr/0075-per-org-model-routing-policy) |
 | Schema | Migration `000029_org_model_policies` (RLS; no `fallback_chain`) |
-| Domain | `packages/modelpolicy` — store, evaluate, bloom→LRU, publisher/subscriber, `OrgAwareRegistry` |
+| Domain | `packages/modelpolicy` — store, evaluate, LRU+TTL, publisher/subscriber, `OrgAwareRegistry` |
 | Proxy | Chat parse allows empty model; `ProviderRoutingMiddleware` + bootstrap subscriber |
 | Errors | `403 MODEL_NOT_ALLOWED`; unknown after allow still `501 PROVIDER_NOT_CONFIGURED` |
 | API | Org-scoped model-policies CRUD + `model_policy_updates:{org_id}` publish-on-write |

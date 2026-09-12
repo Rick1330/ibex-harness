@@ -1,7 +1,5 @@
 package modelpolicy
 
-import "sort"
-
 // Decision is the result of evaluating org policies against a candidate model.
 type Decision struct {
 	Allowed bool
@@ -9,18 +7,11 @@ type Decision struct {
 	Policy  *Policy
 }
 
-// EvaluatePolicies applies priority-ASC first-match-wins rules.
-// No matching row → Allowed=true, Matched=false (platform default).
+// EvaluatePolicies applies first-match-wins on policies already ordered by
+// priority ASC, model_pattern ASC (store ORDER BY). No matching row → allow.
 func EvaluatePolicies(policies []Policy, model string) (Decision, error) {
-	ordered := append([]Policy(nil), policies...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].Priority != ordered[j].Priority {
-			return ordered[i].Priority < ordered[j].Priority
-		}
-		return ordered[i].Pattern < ordered[j].Pattern
-	})
-	for i := range ordered {
-		p := &ordered[i]
+	for i := range policies {
+		p := &policies[i]
 		ok, err := Match(p.Pattern, model)
 		if err != nil {
 			return Decision{}, err
