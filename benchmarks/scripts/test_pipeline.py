@@ -187,6 +187,9 @@ class RegressionGateTests(unittest.TestCase):
         )
         checks = regression_gate.build_checks(latest, baseline)
         self.assertTrue(all(passed for _, _, _, passed in checks))
+        names = {name for name, _, _, _ in checks}
+        self.assertIn("stage rate_limit present", names)
+        self.assertIn("stage rate_limit regression (%)", names)
 
     def test_build_checks_fails_on_high_p99_and_error_rate(self) -> None:
         latest = regression_gate.normalize_latest(json.loads((TESTDATA / "latest-fail.json").read_text()))
@@ -197,6 +200,26 @@ class RegressionGateTests(unittest.TestCase):
         failed = [name for name, _, _, passed in checks if not passed]
         self.assertIn("k6 p99 SLA", failed)
         self.assertIn("error rate", failed)
+
+    def test_build_checks_fails_on_rate_limit_regression(self) -> None:
+        latest = regression_gate.normalize_latest(
+            {
+                "k6": {
+                    "p99_ms": 12.0,
+                    "req_per_s": 850.5,
+                    "error_rate": 0.0,
+                    "check_rate": 1.0,
+                },
+                "go_benchmarks": {"BenchmarkProxyOverhead": {"allocs_per_op": 8.0, "bytes_per_op": 512.0}},
+                "stages": {"synthetic_total_us": 8500.0, "synthetic_rate_limit_us": 400.0},
+            }
+        )
+        baseline = regression_gate.normalize_baseline(
+            json.loads((ROOT / "benchmarks/data-schema/baseline.json").read_text())
+        )
+        checks = regression_gate.build_checks(latest, baseline)
+        failed = [name for name, _, _, passed in checks if not passed]
+        self.assertIn("stage rate_limit regression (%)", failed)
 
     def test_main_exits_nonzero_on_failed_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

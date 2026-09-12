@@ -245,9 +245,13 @@ def test_lifespan_wires_redis_publisher_and_closes() -> None:
     closer = AsyncMock()
     pub = MagicMock()
     pub.aclose = closer
+    mp_closer = AsyncMock()
+    mp_pub = MagicMock()
+    mp_pub.aclose = mp_closer
 
     with (
         patch("app.main.RedisOrgSuspendPublisher", return_value=pub),
+        patch("app.main.RedisModelPolicyPublisher", return_value=mp_pub),
         patch("app.main._make_celery_enqueue", return_value=lambda *_: None),
         patch("authclient.revoke.GRPCTokenRevoker") as revoker_cls,
     ):
@@ -258,7 +262,9 @@ def test_lifespan_wires_redis_publisher_and_closes() -> None:
         with TestClient(app) as client:
             assert client.get("/ready").status_code == 503
             assert app.state.api.org_suspend_publisher is pub
+            assert app.state.api.model_policy_publisher is mp_pub
     closer.assert_awaited()
+    mp_closer.assert_awaited()
     revoker.aclose.assert_awaited()
 
 

@@ -206,7 +206,7 @@ Used by: **proxy** (`services/proxy`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), and `/ready`. Empty → Noop limiter **and** auth cache wrap is skipped even when `IBEX_AUTH_CACHE_ENABLED=true` (WARN at startup) so revoke is immediate via gRPC. | Secret if password present |
+| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), model-policy invalidation SUBSCRIBE (`model_policy_updates:*`), and `/ready`. Empty → Noop limiter **and** auth cache wrap is skipped even when `IBEX_AUTH_CACHE_ENABLED=true` (WARN at startup) so revoke is immediate via gRPC; model-policy cache relies on 60s TTL only. | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
@@ -257,7 +257,11 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SELFHOSTED_READY_TIMEOUT` | No | `60s` | Bootstrap `GET /models` probe deadline | Fail-closed at boot |
 | `IBEX_SELFHOSTED_READY_POLL` | No | `2s` | Bootstrap probe interval | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | No | `5` | Consecutive Complete failures before self-hosted breaker opens | |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down / Retry-After in seconds (all providers) | Integer seconds (not Go duration string) |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS` | No | `30` | Rolling window for hosted OpenAI + Anthropic breakers | Integer seconds |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS` | No | `3` | Rolling-window bucket width | Integer seconds; must be ≤ window |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | No | `10` | Minimum samples before rolling trip | |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | No | `0.5` | Rolling failure-rate threshold | Float in (0, 1] |
 | `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
@@ -324,7 +328,7 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 |----------|----------|---------|-------------|----------------|
 | `IBEX_API_DATABASE_URL` | for ready | (none) | Async Postgres DSN (`postgresql+asyncpg://...`) | Secret |
 | `IBEX_AUTH_GRPC_ADDR` / `IBEX_API_AUTH_GRPC_ADDR` | Yes | `127.0.0.1:9091` | Auth ValidateToken gRPC target | Internal; port 9091 is Auth gRPC (8081 is Auth HTTP) |
-| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
+| `IBEX_API_REDIS_URL` | No | (empty) | Org suspend + `ratelimit_config_updates:{org_id}` + `model_policy_updates:{org_id}` publish; live RPM counter GET | Secret if password present |
 | `IBEX_API_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Platform default when no `rate_limit_overrides` row | Matches proxy default |
 | `IBEX_API_CELERY_BROKER_URL` | for org DELETE | (none) | Celery broker for org deletion enqueue | |
 | `IBEX_API_HOST` / `IBEX_API_PORT` | No | `127.0.0.1` / `8010` | Bind address | |

@@ -140,30 +140,6 @@ return {1, "", org_count, org_limit}
 
 ---
 
-## HierarchicalLuaLimiter Interface
-
-```go
-// Illustrative — exact path may differ
-
-// HierarchicalLuaLimiter implements the Limiter interface using an atomic Lua script.
-// It checks and decrements three nested budgets in a single Redis round trip:
-// agent → org → global.
-type HierarchicalLuaLimiter struct {
- client redis.UniversalClient
- scriptSHA string
- globalLimit int
-}
-
-func NewHierarchicalLuaLimiter(client redis.UniversalClient, globalLimit int) (*HierarchicalLuaLimiter, error)
-
-// Allow checks the hierarchical budgets. Returns (true, nil) on admission,
-// (false, ErrRateLimitExceeded) when any level is exhausted.
-// level field in the error indicates which level triggered: "agent", "org", or "global".
-func (l *HierarchicalLuaLimiter) Allow(ctx context.Context, req RateLimitRequest) (bool, error)
-```
-
----
-
 ## Design notes
 
 1. **Check-most-specific-first ordering (agent → org → global)**: an individual noisy agent is throttled before it can exhaust the org's shared budget, giving better fairness across an org's fleet of agents than a flat org-only counter.

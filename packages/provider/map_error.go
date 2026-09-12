@@ -42,20 +42,21 @@ func MapProviderError(in MapInput) *apierror.Error {
 func mapReason(in MapInput) (*apierror.Error, bool) {
 	switch in.Reason {
 	case ErrorReasonCircuitOpen:
-		return unavailableWithDetail("Self-hosted LLM circuit breaker is open"), true
+		return unavailableWithDetail("LLM provider circuit breaker is open", in.RetryAfter), true
 	case ErrorReasonQueueFull:
-		return unavailableWithDetail("Self-hosted LLM backend queue is full"), true
+		return unavailableWithDetail("Self-hosted LLM backend queue is full", 0), true
 	default:
 		return nil, false
 	}
 }
 
-func unavailableWithDetail(detail string) *apierror.Error {
+func unavailableWithDetail(detail string, retryAfter time.Duration) *apierror.Error {
 	return &apierror.Error{
 		Code:       apierror.CodeProviderUnavailable,
 		Message:    msgProviderUnavailable,
 		Detail:     detail,
 		HTTPStatus: apierror.HTTPStatus(apierror.CodeProviderUnavailable),
+		RetryAfter: retryAfter,
 	}
 }
 

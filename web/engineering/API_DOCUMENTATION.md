@@ -2153,6 +2153,63 @@ After a successful `PATCH`, the API best-effort `PUBLISH`es `{"v":1,"org_id":"..
 
 ---
 
+## Model Policies API (m4.C.2)
+
+Org-scoped allow/deny globs for proxy model routing ([ADR-0075](/docs/adr/0075-per-org-model-routing-policy)).
+First match wins by `priority` ascending (`filepath.Match`); no matching row → allow any registered model.
+
+**Auth:** GET = bearer + path-org match; mutating = owner/admin `ORG_SETTINGS_WRITE` (`RequireOrgSettings`).
+Cross-tenant path org → **404**.
+
+### GET /v1/organizations/{org_id}/model-policies
+
+Cursor list (`priority`, `pattern`). Query: `cursor`, `limit` (1..100, default 50).
+
+**Response: 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440010",
+      "org_id": "550e8400-e29b-41d4-a716-446655440000",
+      "model_pattern": "claude-*",
+      "allowed": true,
+      "priority": 100,
+      "created_at": "2026-09-12T00:00:00.000Z",
+      "updated_at": "2026-09-12T00:00:00.000Z"
+    }
+  ],
+  "pagination": { "has_more": false, "next_cursor": null }
+}
+```
+
+### POST /v1/organizations/{org_id}/model-policies
+
+```json
+{ "model_pattern": "claude-*", "allowed": true, "priority": 100 }
+```
+
+**Response: 201 Created** — policy object. Duplicate pattern → `409 MODEL_POLICY_PATTERN_CONFLICT`.
+
+### GET /v1/organizations/{org_id}/model-policies/{policy_id}
+
+**Response: 200 OK** — single policy, or `404 NOT_FOUND`.
+
+### PATCH /v1/organizations/{org_id}/model-policies/{policy_id}
+
+Partial update: any of `model_pattern`, `allowed`, `priority`.
+
+**Response: 200 OK** — updated policy.
+
+### DELETE /v1/organizations/{org_id}/model-policies/{policy_id}
+
+**Response: 204 No Content**.
+
+After successful write, API best-effort PUBLISHes `{"v":1,"org_id":"..."}` to `model_policy_updates:{org_id}` (publish failure does not roll back Postgres).
+
+---
+
 ## Organizations API
 
 ### GET /v1/organizations/me

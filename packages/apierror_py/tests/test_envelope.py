@@ -60,5 +60,7 @@ def test_http_status_for_known_codes() -> None:
     assert http_status_for_code("RATE_LIMITED") == 429
     assert http_status_for_code("PROVIDER_TIMEOUT") == 504
     assert http_status_for_code("PROVIDER_NOT_CONFIGURED") == 501
+    assert http_status_for_code("MODEL_NOT_ALLOWED") == 403
+    assert http_status_for_code("MODEL_POLICY_PATTERN_CONFLICT") == 409
     assert http_status_for_code("PAYLOAD_TOO_LARGE") == 413
     assert http_status_for_code("UNKNOWN_CODE") == 500

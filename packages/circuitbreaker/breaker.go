@@ -3,42 +3,66 @@ package circuitbreaker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
+	"net/http"
 	"time"
 
 	gobreaker "github.com/sony/gobreaker/v2"
 )
 
+const (
+	defaultMaxFailures = 5
+	defaultCoolDown    = 30 * time.Second
+)
+
 // Settings configures a provider circuit breaker.
+//
+// Trip mode:
+//   - Window == 0 (default): consecutive-failure trip via MaxFailures (ADR-0042).
+//   - Window > 0: rolling-window failure-rate trip via MinSamples + FailureRateThreshold (ADR-0076).
 type Settings struct {
 	Name        string
 	MaxFailures uint32
 	CoolDown    time.Duration
+
+	// Rolling-window fields (opt-in). When Window > 0, ReadyToTrip uses a
+	// failure-rate ratio over gobreaker's Interval/BucketPeriod counts.
+	Window               time.Duration
+	BucketPeriod         time.Duration
+	MinSamples           uint32
+	FailureRateThreshold float64
+
 	// OnStateChange is invoked on closed/open/half_open transitions when non-nil.
 	OnStateChange func(from, to string)
 }
 
 // Breaker wraps sony/gobreaker for provider Complete calls.
 type Breaker struct {
-	inner *gobreaker.CircuitBreaker[any]
+	inner    *gobreaker.CircuitBreaker[any]
+	coolDown time.Duration
 }
 
 // New constructs a Breaker. MaxFailures defaults to 5; CoolDown defaults to 30s.
-func New(s Settings) *Breaker {
+// When Window > 0, MinSamples, FailureRateThreshold, and BucketPeriod must be set
+// by the caller (bootstrap/config applies operator defaults when env vars are unset).
+func New(s Settings) (*Breaker, error) {
 	s = applyBreakerDefaults(s)
+	if err := validateSettings(s); err != nil {
+		return nil, err
+	}
 	cb := gobreaker.NewCircuitBreaker[any](gobreaker.Settings{
-		Name:        s.Name,
-		MaxRequests: 1,
-		Interval:    0,
-		Timeout:     s.CoolDown,
-		ReadyToTrip: func(counts gobreaker.Counts) bool {
-			return counts.ConsecutiveFailures >= s.MaxFailures
-		},
-		IsSuccessful: func(err error) bool {
-			return isSuccessfulOutcome(err)
-		},
+		Name:          s.Name,
+		MaxRequests:   1,
+		Interval:      rollingInterval(s),
+		BucketPeriod:  rollingBucketPeriod(s),
+		Timeout:       s.CoolDown,
+		ReadyToTrip:   readyToTrip(s),
+		IsSuccessful:  isSuccessfulOutcome,
+		IsExcluded:    rollingIsExcluded(s),
 		OnStateChange: onStateChangeAdapter(s.OnStateChange),
 	})
-	return &Breaker{inner: cb}
+	return &Breaker{inner: cb, coolDown: s.CoolDown}, nil
 }
 
 func applyBreakerDefaults(s Settings) Settings {
@@ -46,19 +70,153 @@ func applyBreakerDefaults(s Settings) Settings {
 		s.Name = "provider"
 	}
 	if s.MaxFailures == 0 {
-		s.MaxFailures = 5
+		s.MaxFailures = defaultMaxFailures
 	}
 	if s.CoolDown <= 0 {
-		s.CoolDown = 30 * time.Second
+		s.CoolDown = defaultCoolDown
 	}
+	// Rolling knobs are not silently filled: bootstrap/config supplies defaults
+	// when env vars are unset; explicit non-positive values fail validation.
 	return s
+}
+
+func validateSettings(s Settings) error {
+	if s.Window < 0 {
+		return fmt.Errorf("circuitbreaker: Window must be >= 0")
+	}
+	if s.Window == 0 {
+		return validateConsecutiveSettings(s)
+	}
+	return validateRollingSettings(s)
+}
+
+func validateConsecutiveSettings(s Settings) error {
+	if rollingFieldsSet(s) {
+		return fmt.Errorf("circuitbreaker: rolling fields require Window > 0")
+	}
+	return nil
+}
+
+func rollingFieldsSet(s Settings) bool {
+	if s.BucketPeriod != 0 {
+		return true
+	}
+	if s.MinSamples != 0 {
+		return true
+	}
+	return s.FailureRateThreshold != 0
+}
+
+func validateRollingSettings(s Settings) error {
+	if s.MinSamples == 0 {
+		return fmt.Errorf("circuitbreaker: MinSamples must be > 0 when Window > 0")
+	}
+	if failureRateInvalid(s.FailureRateThreshold) {
+		return fmt.Errorf("circuitbreaker: FailureRateThreshold must be in (0, 1], got %v", s.FailureRateThreshold)
+	}
+	if s.BucketPeriod < 0 {
+		return fmt.Errorf("circuitbreaker: BucketPeriod must be >= 0")
+	}
+	if s.BucketPeriod > s.Window {
+		return fmt.Errorf("circuitbreaker: BucketPeriod (%s) must be <= Window (%s)", s.BucketPeriod, s.Window)
+	}
+	return nil
+}
+
+func failureRateInvalid(rate float64) bool {
+	if math.IsNaN(rate) {
+		return true
+	}
+	if rate <= 0 {
+		return true
+	}
+	return rate > 1
+}
+
+func rollingInterval(s Settings) time.Duration {
+	if s.Window > 0 {
+		return s.Window
+	}
+	return 0
+}
+
+func rollingBucketPeriod(s Settings) time.Duration {
+	if s.Window > 0 {
+		return s.BucketPeriod
+	}
+	return 0
+}
+
+// rollingIsExcluded excludes caller cancel/deadline and client-fault 4xx (except
+// 429) from rolling counts. Consecutive mode keeps IsExcluded nil so
+// IsSuccessful can reset failure streaks (including client-fault 4xx).
+func rollingIsExcluded(s Settings) func(error) bool {
+	if s.Window <= 0 {
+		return nil
+	}
+	return func(err error) bool {
+		return isCancelOrDeadline(err) || isClientFaultHTTP(err)
+	}
+}
+
+func readyToTrip(s Settings) func(counts gobreaker.Counts) bool {
+	if s.Window > 0 {
+		minSamples := s.MinSamples
+		threshold := s.FailureRateThreshold
+		return func(counts gobreaker.Counts) bool {
+			valid := validRequests(counts)
+			if valid < minSamples {
+				return false
+			}
+			return float64(counts.TotalFailures)/float64(valid) >= threshold
+		}
+	}
+	maxFailures := s.MaxFailures
+	return func(counts gobreaker.Counts) bool {
+		return counts.ConsecutiveFailures >= maxFailures
+	}
+}
+
+// validRequests mirrors gobreaker's unexported Counts.validRequests.
+func validRequests(c gobreaker.Counts) uint32 {
+	if c.Requests < c.TotalExclusions {
+		return 0
+	}
+	return c.Requests - c.TotalExclusions
+}
+
+// httpStatusError is implemented by provider.ProviderError (and test stubs).
+type httpStatusError interface {
+	error
+	HTTPStatus() int
 }
 
 func isSuccessfulOutcome(err error) bool {
 	if err == nil {
 		return true
 	}
+	if isCancelOrDeadline(err) {
+		return true
+	}
+	// Client faults (4xx except 429) must not trip consecutive-mode breakers.
+	return isClientFaultHTTP(err)
+}
+
+func isCancelOrDeadline(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// isClientFaultHTTP reports 4xx except 429 (provider rate-limit still trips).
+func isClientFaultHTTP(err error) bool {
+	var hs httpStatusError
+	if !errors.As(err, &hs) {
+		return false
+	}
+	code := hs.HTTPStatus()
+	if code == http.StatusTooManyRequests {
+		return false
+	}
+	return code >= 400 && code < 500
 }
 
 func onStateChangeAdapter(cb func(from, to string)) func(name string, from gobreaker.State, to gobreaker.State) {
@@ -81,14 +239,14 @@ func stateString(s gobreaker.State) string {
 	}
 }
 
-// Execute runs fn under the breaker. When open, returns ErrOpen.
+// Execute runs fn under the breaker. When open, returns *OpenError (errors.Is ErrOpen).
 func (b *Breaker) Execute(fn func() (any, error)) (any, error) {
 	if b == nil || b.inner == nil {
 		return fn()
 	}
 	out, err := b.inner.Execute(fn)
 	if isBreakerBlocked(err) {
-		return nil, ErrOpen
+		return nil, &OpenError{RetryAfter: b.coolDown}
 	}
 	return out, err
 }
@@ -103,4 +261,12 @@ func (b *Breaker) State() string {
 		return "closed"
 	}
 	return stateString(b.inner.State())
+}
+
+// CoolDown returns the configured open-state timeout used for Retry-After.
+func (b *Breaker) CoolDown() time.Duration {
+	if b == nil {
+		return 0
+	}
+	return b.coolDown
 }

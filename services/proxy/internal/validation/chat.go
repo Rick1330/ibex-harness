@@ -42,8 +42,10 @@ func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []apierror.Fi
 
 func validateModel(model string) []apierror.FieldError {
 	model = strings.TrimSpace(model)
+	// Empty model is allowed at parse time; ProviderRoutingMiddleware fills from
+	// agents.default_model or returns REQUIRED (ADR-0075 precedence).
 	if model == "" {
-		return []apierror.FieldError{{Field: "model", Code: fieldCodeRequired, Message: "model is required"}}
+		return nil
 	}
 	if len(model) > MaxModelNameLength {
 		return []apierror.FieldError{{Field: "model", Code: fieldCodeTooLong, Message: "model exceeds maximum length"}}

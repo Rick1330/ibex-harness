@@ -1,0 +1,36 @@
+---
+title: "ADR-0075 Per-Org Model Routing Policy"
+description: "Org allow/deny model policies gated in front of Registry.For, with proxy Postgres + LRU+TTL cache"
+---
+
+# ADR-0075 — Per-Org Model Routing Policy
+
+## Status
+
+Accepted (Milestone 4.C.2)
+
+## Context
+
+`Registry.For(model)` is an exact platform map with no org awareness. Exit criteria require per-org allow/deny over requested models. Credentials use Auth gRPC because they are secrets (ADR-0074); org model policy is non-secret config closer to directives and rate-limit overrides. Auth's `ValidateAgent` does not return `default_model` (4.A.3 columns exist only in Postgres).
+
+## Decision
+
+1. **`OrgAwareRegistry` wraps** `*provider.Registry`; do not change `For(model)` signature or exact-match semantics.
+2. **Precedence:** trimmed request-body `model` if non-empty; else proxy Postgres `agents.default_model` for the verified agent; else 400 `model is required`. Org policy is then a **veto** (priority ASC, first `filepath.Match` wins). No match → allow any registered model. Then `Registry.For`. `default_provider` is not used for registry lookup.
+3. **Deny** → `403 MODEL_NOT_ALLOWED`. Unknown model after allow → existing `501 PROVIDER_NOT_CONFIGURED`.
+4. **Direct Postgres** from the proxy (`packages/modelpolicy` store + RLS). No Auth gRPC hop.
+5. **Cache:** process-local **LRU + TTL** in `packages/modelpolicy` (not `packages/authcache`), **60s TTL**, Redis pub/sub `model_policy_updates:{org_id}` via `packages/redissub.Loop`. Invalidate advances a per-org generation under the same lock used for cache install so in-flight loads cannot repopulate a stale snapshot. A positive bloom filter is **not** used: false negatives would fail open on deny policies. Policy load errors **fail closed** (503). Agent `default_model` reads use a separate short-TTL LRU. Management publish-after-commit is **best-effort**: if Redis publish fails, proxies may serve a stale allow/deny snapshot until the **~60s TTL** expires (monitor publish failures; do not treat this as fail-open on the hot path). When `POSTGRES_DSN` is unset the proxy uses `PassthroughRegistry` (policies off) and must expose `ibex_proxy_model_policy_enabled=0` plus a Warn log.
+6. **No `fallback_chain` column** in 4.C.2 — deferred to 4.C.4 when a reader exists.
+7. **Admin CRUD** under `/v1/organizations/{org_id}/model-policies` with `RequireOrgSettings` on writes. Write-side `model_pattern` validation strips whitespace, enforces length ≤256, rejects the shared golden reject corpus, and runs a **full Go `filepath.Match` grammar scan** (character classes, escapes) so the API refuses patterns the proxy would fail-closed on at load time.
+8. **Middleware change is required:** `ProviderRoutingMiddleware` reads `auth.FromContext` org ID and calls `ForOrg` — handlers remain registry-agnostic.
+
+## Consequences
+
+- Chat parse allows empty `model` so agent-default fill can run before the policy gate.
+- Management API publishes invalidation events; proxy subscribers drop LRU entries for that org.
+- Glob dialect is Go `filepath.Match` (shell-style `*`, `?`, and character classes
+  including ranges/`^` negation; malformed classes such as `[]` are rejected by
+  `ValidatePattern` / management API golden reject list).
+- **`filepath.Match` `*` does not cross `/`.** A sole deny pattern `*` does not match
+  slashy catalog IDs (e.g. `openai/gpt-4`). Catch-alls for those IDs need `*/*`
+  (and/or explicit `provider/*`) in addition to `*`.

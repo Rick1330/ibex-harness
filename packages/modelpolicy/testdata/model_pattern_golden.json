@@ -1,0 +1,31 @@
+{
+  "accept": [
+    "claude-*",
+    "gpt-?",
+    "model-[abc]",
+    "x-[^z]",
+    "a\\*b",
+    "[a\\]]",
+    "openai/*",
+    "*/*",
+    "exact-model",
+    "*"
+  ],
+  "reject": [
+    "[]",
+    "bad[",
+    "[a",
+    "\\",
+    "trail\\",
+    "[\\",
+    "[a-]",
+    "[-a]",
+    "[a-b-]"
+  ],
+  "slash_semantics": [
+    {"pattern": "*", "model": "openai/gpt-4", "match": false},
+    {"pattern": "*/*", "model": "openai/gpt-4", "match": true},
+    {"pattern": "openai/*", "model": "openai/gpt-4", "match": true},
+    {"pattern": "*", "model": "gpt-4o", "match": true}
+  ]
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
@@ -35,6 +36,8 @@ type protectedRouteDeps struct {
 	getOrCreateTimeout       time.Duration
 	docsBase                 string
 	providerRegistry         *provider.Registry
+	modelRouter              ProviderResolver
+	agentDefaults            modelpolicy.AgentDefaultLoader
 	responsePipeline         *responsepipeline.Pipeline
 	traceWriter              TraceWriter
 	idempotencyStore         idempotency.Store
@@ -126,9 +129,10 @@ func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerif
 		DirectiveResolveMiddleware(deps.directiveResolver, deps.logger),
 		ChatParseMiddleware(chatParseOpts{docsBase: deps.docsBase}),
 		ProviderRoutingMiddleware(providerRoutingOpts{
-			registry: deps.providerRegistry,
-			log:      deps.logger,
-			docsBase: deps.docsBase,
+			resolver:      deps.modelRouter,
+			agentDefaults: deps.agentDefaults,
+			log:           deps.logger,
+			docsBase:      deps.docsBase,
 		}),
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

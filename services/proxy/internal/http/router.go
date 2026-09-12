@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
@@ -53,9 +54,13 @@ type RouterDeps struct {
 	GetOrCreateTimeout time.Duration
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
-	ResponsePipeline   *responsepipeline.Pipeline
-	TraceWriter        TraceWriter
-	IdempotencyStore   idempotency.Store
+	// ModelRouter org-gates provider selection (nil → PassthroughRegistry over ProviderRegistry).
+	ModelRouter ProviderResolver
+	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
+	AgentDefaults    modelpolicy.AgentDefaultLoader
+	ResponsePipeline *responsepipeline.Pipeline
+	TraceWriter      TraceWriter
+	IdempotencyStore idempotency.Store
 	// ContextClient is the fail-open Assemble client from bootstrap (nil when
 	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
 	// Production passes *contextclient.Client; tests may supply fakes.
@@ -75,9 +80,13 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	modelRouter := deps.ModelRouter
+	if modelRouter == nil {
+		modelRouter = modelpolicy.PassthroughRegistry{Base: providerReg}
+	}
 	mountPublicRoutes(mux, deps)
 	if deps.Validator != nil {
-		prd := buildProtectedRouteDeps(deps, providerReg)
+		prd := buildProtectedRouteDeps(deps, providerReg, modelRouter)
 		prd.mux = mux
 		registerProtectedRoutes(prd)
 	}
@@ -105,7 +114,11 @@ func mountPublicRoutes(mux *http.ServeMux, deps RouterDeps) {
 	mux.Handle("/metrics", metrics.Handler(deps.Metrics.Gatherer()))
 }
 
-func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) protectedRouteDeps {
+func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, modelRouter ProviderResolver) protectedRouteDeps {
+	agentDefaults := deps.AgentDefaults
+	if agentDefaults == nil {
+		agentDefaults = modelpolicy.NoopAgentDefaults{}
+	}
 	return protectedRouteDeps{
 		cfg:                      deps.Config,
 		logger:                   deps.Logger,
@@ -120,6 +133,8 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) pr
 		getOrCreateTimeout:       deps.GetOrCreateTimeout,
 		docsBase:                 deps.Config.ErrorDocsBase,
 		providerRegistry:         providerReg,
+		modelRouter:              modelRouter,
+		agentDefaults:            agentDefaults,
 		responsePipeline:         deps.ResponsePipeline,
 		traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
 		idempotencyStore:         deps.IdempotencyStore,

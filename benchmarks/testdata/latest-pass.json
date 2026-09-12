@@ -12,6 +12,7 @@
     }
   },
   "stages": {
-    "synthetic_total_us": 8500.0
+    "synthetic_total_us": 8500.0,
+    "synthetic_rate_limit_us": 300.0
   }
 }
