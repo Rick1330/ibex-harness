@@ -79,6 +79,17 @@ func TestCachingAgentDefaults_CoalescesConcurrentLoads(t *testing.T) {
 		release: release,
 		val:     AgentDefaults{DefaultModel: "gpt-4o"},
 	}
+	cache := mustCachingAgentDefaults(t, inner)
+	org, agent := uuid.New(), uuid.New()
+	errCh := launchConcurrentLoads(cache, org, agent, 8)
+	<-started
+	close(release)
+	drainLoadErrors(t, errCh, 8)
+	assertInnerLoadCount(t, &inner.calls, 1)
+}
+
+func mustCachingAgentDefaults(t *testing.T, inner AgentDefaultLoader) *CachingAgentDefaults {
+	t.Helper()
 	cache, err := NewCachingAgentDefaults(inner, Config{
 		AgentDefaultsTTL: time.Minute,
 		AgentDefaultsLRU: 8,
@@ -87,32 +98,46 @@ func TestCachingAgentDefaults_CoalescesConcurrentLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org, agent := uuid.New(), uuid.New()
-	const n = 8
+	return cache
+}
+
+func launchConcurrentLoads(cache *CachingAgentDefaults, org, agent uuid.UUID, n int) <-chan error {
 	errCh := make(chan error, n)
 	for i := 0; i < n; i++ {
-		go func() {
-			got, loadErr := cache.Load(context.Background(), org, agent)
-			if loadErr != nil {
-				errCh <- loadErr
-				return
-			}
-			if got.DefaultModel != "gpt-4o" {
-				errCh <- errors.New("unexpected model")
-				return
-			}
-			errCh <- nil
-		}()
+		go func() { errCh <- loadExpectModel(cache, org, agent, "gpt-4o") }()
 	}
-	<-started
-	close(release)
+	return errCh
+}
+
+func loadExpectModel(cache *CachingAgentDefaults, org, agent uuid.UUID, want string) error {
+	got, err := cache.Load(context.Background(), org, agent)
+	if err != nil {
+		return err
+	}
+	if got.DefaultModel != want {
+		return errors.New("unexpected model")
+	}
+	return nil
+}
+
+func drainLoadErrors(t *testing.T, errCh <-chan error, n int) {
+	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := <-errCh; err != nil {
-			t.Fatal(err)
-		}
+		requireNoErr(t, <-errCh)
 	}
-	if inner.calls.Load() != 1 {
-		t.Fatalf("inner loads=%d want 1 (singleflight)", inner.calls.Load())
+}
+
+func requireNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertInnerLoadCount(t *testing.T, calls *atomic.Int32, want int32) {
+	t.Helper()
+	if calls.Load() != want {
+		t.Fatalf("inner loads=%d want %d (singleflight)", calls.Load(), want)
 	}
 }
 

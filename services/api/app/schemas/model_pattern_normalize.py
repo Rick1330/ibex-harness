@@ -31,13 +31,25 @@ def _golden_reject() -> frozenset[str]:
 def normalize_model_pattern(pattern: str) -> str:
     """Strip, bound length, reject invalid filepath.Match globs."""
     normalized = pattern.strip()
+    _require_nonempty(normalized)
+    _reject_too_long(normalized)
+    _reject_invalid_glob(normalized)
+    return normalized
+
+
+def _require_nonempty(normalized: str) -> None:
     if not normalized:
         raise ValueError("model_pattern is required")
+
+
+def _reject_too_long(normalized: str) -> None:
     if len(normalized) > _MAX_PATTERN_LEN:
         raise ValueError(f"model_pattern exceeds {_MAX_PATTERN_LEN} characters")
+
+
+def _reject_invalid_glob(normalized: str) -> None:
     if normalized in _golden_reject():
         raise ValueError("model_pattern has invalid glob syntax")
     reason = go_filepath_match_error(normalized)
     if reason is not None:
         raise ValueError(f"model_pattern has invalid glob syntax ({reason})")
-    return normalized

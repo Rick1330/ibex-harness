@@ -1,7 +1,7 @@
 package modelpolicy
 
 import (
-	_ "embed"
+	_ "embed" // registers embed.FS for go:embed golden JSON corpus in this package
 	"encoding/json"
 	"testing"
 )
