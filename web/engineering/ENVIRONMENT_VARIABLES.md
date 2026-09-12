@@ -257,7 +257,11 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SELFHOSTED_READY_TIMEOUT` | No | `60s` | Bootstrap `GET /models` probe deadline | Fail-closed at boot |
 | `IBEX_SELFHOSTED_READY_POLL` | No | `2s` | Bootstrap probe interval | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | No | `5` | Consecutive Complete failures before self-hosted breaker opens | |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down / Retry-After in seconds (all providers) | Integer seconds (not Go duration string) |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS` | No | `30` | Rolling window for hosted OpenAI + Anthropic breakers | Integer seconds |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS` | No | `3` | Rolling-window bucket width | Integer seconds; must be ≤ window |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | No | `10` | Minimum samples before rolling trip | |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | No | `0.5` | Rolling failure-rate threshold | Float in (0, 1] |
 | `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |

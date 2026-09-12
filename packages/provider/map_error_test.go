@@ -76,10 +76,15 @@ var mapProviderServerCases = []mapCase{
 		wantStatus: 503,
 	},
 	{
-		name:       "circuit_open",
-		in:         MapInput{StatusCode: 503, Reason: ErrorReasonCircuitOpen},
+		name: "circuit_open",
+		in: MapInput{
+			StatusCode: 503,
+			Reason:     ErrorReasonCircuitOpen,
+			RetryAfter: 30 * time.Second,
+		},
 		wantCode:   apierror.CodeProviderUnavailable,
 		wantStatus: 503,
+		wantRetry:  30 * time.Second,
 	},
 	{
 		name:       "transport",
@@ -142,6 +147,7 @@ type mapErrorCase struct {
 	wantCode   apierror.Code
 	wantStatus int
 	wantDetail string
+	wantRetry  time.Duration
 }
 
 var mapErrorEntrypointCases = []mapErrorCase{
@@ -176,11 +182,13 @@ var mapErrorEntrypointCases = []mapErrorCase{
 			StatusCode:     http.StatusServiceUnavailable,
 			ProviderErrMsg: "circuit breaker open",
 			Reason:         ErrorReasonCircuitOpen,
+			RetryAfter:     30 * time.Second,
 		},
 		wantWrite:  true,
 		wantCode:   apierror.CodeProviderUnavailable,
 		wantStatus: http.StatusServiceUnavailable,
-		wantDetail: "Self-hosted LLM circuit breaker is open",
+		wantDetail: "LLM provider circuit breaker is open",
+		wantRetry:  30 * time.Second,
 	},
 	{
 		name: "queue_full_reason",
@@ -231,6 +239,9 @@ func runMapErrorCases(t *testing.T, cases []mapErrorCase) {
 			assertMapped(t, mapped, tc.wantCode, tc.wantStatus)
 			if mapped.Detail != tc.wantDetail {
 				t.Fatalf("detail=%q want %q", mapped.Detail, tc.wantDetail)
+			}
+			if tc.wantRetry != 0 && mapped.RetryAfter != tc.wantRetry {
+				t.Fatalf("RetryAfter=%v want %v", mapped.RetryAfter, tc.wantRetry)
 			}
 		})
 	}

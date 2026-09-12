@@ -61,12 +61,22 @@ func TestClient_OpenAI503HasEmptyReason(t *testing.T) {
 func TestClient_CircuitBreakerMapsOpen(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t, http.StatusInternalServerError, `{"error":{"message":"boom"}}`)
-	br := circuitbreaker.New(circuitbreaker.Settings{Name: "t", MaxFailures: 1, CoolDown: time.Minute})
+	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: "t", MaxFailures: 1, CoolDown: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := newSelfHostedTestClient(srv.URL, br)
 	req := provider.Request{Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}}}
 	_, _ = c.Complete(context.Background(), req)
-	_, err := c.Complete(context.Background(), req)
+	_, err = c.Complete(context.Background(), req)
 	requireProviderReason(t, err, provider.ErrorReasonCircuitOpen)
+	var pe *provider.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err=%v", err)
+	}
+	if pe.RetryAfter != time.Minute {
+		t.Fatalf("RetryAfter=%v want %v", pe.RetryAfter, time.Minute)
+	}
 	mapped, _ := provider.MapError(err)
 	if mapped == nil {
 		t.Fatal("mapped nil")
@@ -74,13 +84,19 @@ func TestClient_CircuitBreakerMapsOpen(t *testing.T) {
 	if !strings.Contains(mapped.Detail, "circuit") {
 		t.Fatalf("mapped=%+v", mapped)
 	}
+	if mapped.RetryAfter != time.Minute {
+		t.Fatalf("mapped RetryAfter=%v", mapped.RetryAfter)
+	}
 }
 
 func TestClient_BreakerPassesProviderError(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t, http.StatusBadRequest, `{"error":{"message":"bad"}}`)
-	br := circuitbreaker.New(circuitbreaker.Settings{Name: "t", MaxFailures: 10, CoolDown: time.Minute})
-	_, err := completeHi(newSelfHostedTestClient(srv.URL, br))
+	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: "t", MaxFailures: 10, CoolDown: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = completeHi(newSelfHostedTestClient(srv.URL, br))
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err=%v", err)
@@ -93,7 +109,10 @@ func TestClient_BreakerPassesProviderError(t *testing.T) {
 func TestClient_BreakerSuccessPath(t *testing.T) {
 	t.Parallel()
 	srv := statusServer(t, http.StatusOK, `{"choices":[{"message":{"content":"ok"}}]}`)
-	br := circuitbreaker.New(circuitbreaker.Settings{Name: "ok", MaxFailures: 5, CoolDown: time.Minute})
+	br, err := circuitbreaker.New(circuitbreaker.Settings{Name: "ok", MaxFailures: 5, CoolDown: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp, err := completeHi(newSelfHostedTestClient(srv.URL, br))
 	if err != nil {
 		t.Fatal(err)
@@ -144,30 +163,6 @@ func TestClient_StreamRequiresEventStream(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected non-event-stream error")
-	}
-}
-
-func TestClassifyForBreaker_CallerVsUpstreamDeadline(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if !errors.Is(classifyForBreaker(ctx, context.Canceled), context.Canceled) {
-		t.Fatal("canceled")
-	}
-
-	dead, cancelDead := context.WithTimeout(context.Background(), time.Nanosecond)
-	defer cancelDead()
-	<-dead.Done()
-	if !errors.Is(classifyForBreaker(dead, context.DeadlineExceeded), context.DeadlineExceeded) {
-		t.Fatal("caller deadline")
-	}
-
-	up := classifyForBreaker(context.Background(), context.DeadlineExceeded)
-	if errors.Is(up, context.DeadlineExceeded) {
-		t.Fatal("upstream deadline must not match DeadlineExceeded")
-	}
-	if !strings.Contains(up.Error(), "upstream timed out") {
-		t.Fatalf("up=%v", up)
 	}
 }
 

@@ -1,0 +1,41 @@
+---
+title: "ADR-0076: Circuit Breaker per Provider"
+description: "Dual consecutive/rolling trip model, independent per-provider breakers, and Retry-After on circuit_open"
+adrId: "0076"
+status: "Accepted"
+date: "2026-09-12"
+authors: "IBEX Harness team"
+---
+
+# ADR-0076: Circuit Breaker per Provider
+
+- **Status:** Accepted
+- **Date:** 2026-09-12
+- **Authors:** IBEX Harness team
+- **Milestone:** [4.C.3 Circuit breaker per provider](/roadmap/phase-4-multi-provider/milestones/4.c.3-circuit-breaker-per-provider)
+- **Related:** [ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter) §5 (self-hosted consecutive breaker)
+
+## Context
+
+`packages/circuitbreaker` already shipped as a consecutive-failure wrapper over `sony/gobreaker/v2`, wired only for the self-hosted OpenAI-compatible adapter. Hosted OpenAI and Anthropic had no breakers, so a single cloud outage could not be isolated, and circuit-open responses lacked `Retry-After` despite docs implying it. Milestone 4.C.3 requires per-provider isolation, rolling error-rate trip for cloud providers, and HTTP `503` + `Retry-After` on open.
+
+## Decision
+
+1. **Extend `packages/circuitbreaker` in place** (no second package). Additive `Settings` fields: `Window`, `BucketPeriod`, `MinSamples`, `FailureRateThreshold`.
+2. **Dual trip modes on one API:**
+   - `Window == 0` (default): consecutive failures via `MaxFailures` — byte-compatible with ADR-0042 for self-hosted.
+   - `Window > 0`: rolling failure-rate via gobreaker `Interval`/`BucketPeriod` and ratio `TotalFailures / validRequests`, tripping only when `validRequests >= MinSamples` and rate `>= FailureRateThreshold`.
+3. **Independent named breakers** for `openai`, `anthropic`, and `openaicompatible`, each keyed by `provider.Name()`. Self-hosted keeps consecutive defaults; OpenAI and Anthropic default to rolling (30s window, 3s buckets, min 10 samples, 50% failure rate). Requests with `APIKeyOverride` or `BaseURLOverride` (org BYO credentials) **bypass** the shared provider breaker so a BYO upstream cannot open—or be blocked by—the platform provider circuit.
+4. **Env vars:** do not repurpose `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES`. New knobs: `WINDOW_SECONDS`, `BUCKET_PERIOD_SECONDS`, `MIN_SAMPLES`, `FAILURE_RATE`. Shared `COOLDOWN_SECONDS` remains the open-state timeout / Retry-After for all providers. Rolling knobs default only when unset; explicit non-positive values are preserved and fail at `circuitbreaker.New` during bootstrap.
+5. **`Retry-After`:** gobreaker does not expose remaining open expiry publicly; circuit-open returns `*OpenError{RetryAfter: CoolDown}` mapped into `ProviderError.RetryAfter` and propagated by `provider.mapReason` into `apierror.Error` so `WriteHTTP` emits the header.
+6. **Anthropic** uses the same local `Breaker` interface + `ErrOpen` mapping shape as `openaicompatible` (no proxy-level interceptor).
+7. **Context Assemble** breaker wrap remains deferred (unchanged).
+8. **Client-fault HTTP classification:** `ProviderError` (or any `HTTPStatus() int` error) with status in **4xx except 429** does **not** count as a breaker failure — consecutive mode treats them as success (streak reset); rolling mode excludes them from window counts (same path as cancel/deadline). **429** and **5xx**/timeouts/transport errors still trip. This avoids false-opens under bad client traffic before 4.C.4 fallback routing.
+9. **Known gobreaker quirk:** when `BucketPeriod > 0`, gobreaker rounds `Interval` up to a multiple of `BucketPeriod`. Operators should prefer Window divisible by BucketPeriod (production default 30s/3s).
+
+## Consequences
+
+- Operators can tune cloud rolling knobs independently of self-hosted consecutive threshold.
+- Misconfigured rolling settings (`Window > 0` with invalid rate/samples, or rolling fields without `Window`) fail at `circuitbreaker.New` / bootstrap.
+- Client-facing circuit-open detail is provider-agnostic: `"LLM provider circuit breaker is open"`.
+- A burst of `400 Bad Request` from a misconfigured client will not open the breaker; sustained `429`/`500`/timeouts will.

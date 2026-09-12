@@ -89,8 +89,12 @@ See [.env.example](.env.example).
 | `IBEX_SELFHOSTED_BASE_URL` | (empty) | Must end with `/v1` when enabled |
 | `IBEX_SELFHOSTED_MODELS` | (empty) | Comma-separated model IDs (require overlays with `provider:"openai"`) |
 | `IBEX_SELFHOSTED_API_KEY` | (empty) | Optional bearer; omitted when empty |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | `5` | Self-hosted breaker trip threshold |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30` | Breaker cool-down (integer seconds) |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | `5` | Self-hosted consecutive-failure trip threshold |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30` | Breaker cool-down / Retry-After (integer seconds; all providers) |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_WINDOW_SECONDS` | `30` | Hosted OpenAI/Anthropic rolling window |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS` | `3` | Rolling-window bucket width |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | `10` | Min samples before rolling trip |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | `0.5` | Rolling failure-rate threshold (0–1] |
 | `IBEX_IDEMPOTENCY_TTL` | `24h` | Idempotency-Key Redis TTL (non-streaming chat) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | `50ms` | Idempotency Redis budget |
 | `IBEX_TOKENIZER_MODE` | `local` | `local` only in G2.M1 (`service`/`dual` rejected at validate) |

@@ -55,6 +55,14 @@ func (c *Client) SupportedModels() []string {
 
 // Complete sends a Messages API request and returns an OpenAI-compatible body.
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
+	return provider.CompleteWithBreaker(ctx, provider.BreakerComplete{
+		Breaker: c.cfg.Breaker,
+		Name:    c.Name(),
+		Once:    c.completeOnce,
+	}, req)
+}
+
+func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provider.Response, error) {
 	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, provider.CompleteSpan{
 		Names: provider.CompleteSpanNames{Span: "anthropic.Complete", Provider: c.Name()},
 		Req:   req,

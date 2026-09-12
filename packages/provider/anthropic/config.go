@@ -1,6 +1,10 @@
 package anthropic
 
-import "time"
+import (
+	"time"
+
+	"github.com/Rick1330/ibex-harness/packages/provider"
+)
 
 const (
 	defaultBaseURL        = "https://api.anthropic.com"
@@ -26,6 +30,8 @@ type Config struct {
 	DefaultTokens  int
 	// ExtraModels are additional model IDs this client accepts.
 	ExtraModels []string
+	// Breaker, when non-nil, wraps each Complete attempt.
+	Breaker provider.CircuitBreaker
 }
 
 // ApplyDefaults fills zero-valued fields with production defaults.

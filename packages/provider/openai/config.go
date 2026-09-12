@@ -1,6 +1,10 @@
 package openai
 
-import "time"
+import (
+	"time"
+
+	"github.com/Rick1330/ibex-harness/packages/provider"
+)
 
 const (
 	defaultBaseURL        = "https://api.openai.com/v1"
@@ -20,6 +24,8 @@ type Config struct {
 	RetryBaseDelay time.Duration
 	// ExtraModels are additional model IDs this client accepts (e.g. OpenRouter slugs).
 	ExtraModels []string
+	// Breaker, when non-nil, wraps each Complete attempt (parity with self-hosted).
+	Breaker provider.CircuitBreaker
 }
 
 // ApplyDefaults fills zero-valued fields with production defaults.

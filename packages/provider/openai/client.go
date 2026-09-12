@@ -34,6 +34,7 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 		BuiltInModels:  builtInSupportedModels(),
 		ExtraModels:    cfg.ExtraModels,
 		AuthMode:       openaicompatible.AuthBearerAlways,
+		Breaker:        cfg.Breaker,
 	}, log, tracer, m)
 	return &Client{inner: inner}
 }
