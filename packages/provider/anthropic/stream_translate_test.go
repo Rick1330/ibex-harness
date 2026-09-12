@@ -32,17 +32,40 @@ func TestStreamTranslate_TextAndDone(t *testing.T) {
 		assertHappy(t, "msg_s")
 }
 
+const (
+	fixtureMidStreamOverloaded = "" +
+		"event: message_start\n" +
+		"data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_s\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n" +
+		"event: error\n" +
+		"data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+
+	fixtureRateLimitError = "" +
+		"event: error\n" +
+		"data: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\"}}\n\n"
+
+	// Named Anthropic delta types (Messages streaming docs) that must not leak.
+	leakPartialJSON   = "LEAK_PARTIAL_JSON_XYZ"
+	leakThinkingBlock = "LEAK_THINKING_BLOCK_XYZ"
+	leakSignatureBlk  = "LEAK_SIGNATURE_BLOCK_XYZ"
+
+	fixtureIgnoresNonTextDelta = "" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"" + leakPartialJSON + "\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"" + leakThinkingBlock + "\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"signature_delta\",\"signature\":\"" + leakSignatureBlk + "\"}}\n\n" +
+		"event: content_block_delta\n" +
+		"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" +
+		"event: message_stop\n" +
+		"data: {\"type\":\"message_stop\"}\n\n"
+)
+
 func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 	t.Parallel()
-	anth := anthropicSSEFixture(
-		`event: message_start`,
-		`data: {"type":"message_start","message":{"id":"msg_s"}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}}`,
-		`event: error`,
-		`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
-	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45})
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(fixtureMidStreamOverloaded)), streamMeta{Model: modelClaudeSonnet45})
 	defer func() { _ = pipe.Close() }()
 	body, err := io.ReadAll(pipe)
 	if err == nil {
@@ -56,40 +79,27 @@ func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 
 func isOverloadStreamErr(err error) bool {
 	msg := err.Error()
-	return strings.Contains(msg, "Overloaded") || strings.Contains(msg, "529")
+	if strings.Contains(msg, "Overloaded") {
+		return true
+	}
+	return strings.Contains(msg, "529")
 }
 
 func TestStreamTranslate_IgnoresNonTextDelta(t *testing.T) {
 	t.Parallel()
-	// Named Anthropic delta types (Messages streaming docs) that must not leak.
-	const (
-		leakJSON      = "LEAK_PARTIAL_JSON_XYZ"
-		leakThinking  = "LEAK_THINKING_BLOCK_XYZ"
-		leakSignature = "LEAK_SIGNATURE_BLOCK_XYZ"
-	)
-	anth := "" +
-		"event: content_block_delta\n" +
-		`data: {"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"` + leakJSON + `"}}` + "\n\n" +
-		"event: content_block_delta\n" +
-		`data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"` + leakThinking + `"}}` + "\n\n" +
-		"event: content_block_delta\n" +
-		`data: {"type":"content_block_delta","delta":{"type":"signature_delta","signature":"` + leakSignature + `"}}` + "\n\n" +
-		"event: content_block_delta\n" +
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}` + "\n\n" +
-		"event: message_stop\n" +
-		`data: {"type":"message_stop"}` + "\n\n"
-	out := mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
-	out.mustContain(t, `"content":"ok"`, "data: [DONE]")
-	assertNoLeak(t, string(out), leakJSON)
-	assertNoLeak(t, string(out), leakThinking)
-	assertNoLeak(t, string(out), leakSignature)
-	assertNoLeak(t, string(out), "partial_json")
+	out := mustTranslate(t, fixtureIgnoresNonTextDelta, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
+	out.mustContain(t, `"content":"ok"`)
+	out.mustContain(t, "data: [DONE]")
+	out.assertNoLeak(t, leakPartialJSON)
+	out.assertNoLeak(t, leakThinkingBlock)
+	out.assertNoLeak(t, leakSignatureBlk)
+	out.assertNoLeak(t, "partial_json")
 }
 
-func assertNoLeak(t *testing.T, body, leak string) {
+func (out translatedStream) assertNoLeak(t *testing.T, leak string) {
 	t.Helper()
-	if strings.Contains(body, leak) {
-		t.Fatalf("leaked non-text delta into OpenAI stream: %q in %s", leak, body)
+	if strings.Contains(string(out), leak) {
+		t.Fatalf("leaked non-text delta into OpenAI stream: %q in %s", leak, out)
 	}
 }
 
@@ -153,11 +163,7 @@ func TestStreamTranslate_CloseUnblocksProducer(t *testing.T) {
 
 func TestStreamTranslate_RateLimitError(t *testing.T) {
 	t.Parallel()
-	anth := anthropicSSEFixture(
-		`event: error`,
-		`data: {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
-	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(fixtureRateLimitError)), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	defer func() { _ = pipe.Close() }()
 	body, err := io.ReadAll(pipe)
 	var pe *provider.ProviderError
@@ -181,7 +187,10 @@ func assertIncompleteStreamBody(t *testing.T, body []byte) {
 }
 
 func streamBodyHasDoneSentinel(s string) bool {
-	return strings.Contains(s, "data: [DONE]") || strings.Contains(s, "[DONE]")
+	if strings.Contains(s, "data: [DONE]") {
+		return true
+	}
+	return strings.Contains(s, "[DONE]")
 }
 
 func firstFabricatedOpenAIErrorChunk(s string) (string, bool) {
