@@ -18,9 +18,26 @@ func TestNewCache_NilLoader(t *testing.T) {
 
 func TestNewOrgAwareRegistry_RequiresDeps(t *testing.T) {
 	t.Parallel()
-	if _, err := NewOrgAwareRegistry(nil, nil, nil); err == nil {
-		t.Fatal("expected error")
+	base, err := provider.NewRegistry(testCatalog("gpt-4o"), fakeProvider{models: []string{"gpt-4o"}})
+	if err != nil {
+		t.Fatal(err)
 	}
+	cache, err := NewCache(&fakeLoader{policies: map[uuid.UUID][]Policy{}}, Config{LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("nil_base", func(t *testing.T) {
+		t.Parallel()
+		if _, err := NewOrgAwareRegistry(nil, cache, NoopMetrics{}); err == nil {
+			t.Fatal("expected nil base error")
+		}
+	})
+	t.Run("nil_cache", func(t *testing.T) {
+		t.Parallel()
+		if _, err := NewOrgAwareRegistry(base, nil, NoopMetrics{}); err == nil {
+			t.Fatal("expected nil cache error")
+		}
+	})
 }
 
 func TestNewSubscriber_RequiresDeps(t *testing.T) {

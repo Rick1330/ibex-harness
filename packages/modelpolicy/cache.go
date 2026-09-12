@@ -58,11 +58,12 @@ func NewCache(loader PolicyLoader, cfg Config, m Metrics) (*Cache, error) {
 
 // onLRUEvict drops gens entries for capacity/TTL removals of the live generation.
 // Invalidate bumps gens before Remove, so entry.gen != gens[key] and the bump is kept.
-// TryLock avoids deadlock when Remove/Add runs while mu is already held.
+// Callers must not hold c.mu across lru.Add/Remove (evict runs synchronously).
 func (c *Cache) onLRUEvict(key string, entry *cachedPolicies) {
-	if entry == nil || !c.mu.TryLock() {
+	if entry == nil {
 		return
 	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.gens[key] == entry.gen {
 		delete(c.gens, key)
@@ -160,12 +161,23 @@ func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) ([]Po
 	size := c.lru.Len()
 	c.mu.Unlock()
 	if stale {
-		// Invalidate raced after Add — drop the stale install.
-		c.lru.Remove(key)
+		// Invalidate raced after Add — drop only *this* install if still present.
+		c.removeIfSame(key, entry)
 		return nil, false, nil
 	}
 	c.metrics.SetLRUSize(float64(size))
 	return clonePolicies(policies), true, nil
+}
+
+// removeIfSame drops key only when the LRU still holds want (pointer identity),
+// preserving a newer same-key install and its generation.
+func (c *Cache) removeIfSame(key string, want *cachedPolicies) {
+	if want == nil {
+		return
+	}
+	if got, ok := c.lru.Peek(key); ok && got == want {
+		c.lru.Remove(key)
+	}
 }
 
 // Invalidate drops the LRU entry for orgID and advances its generation.

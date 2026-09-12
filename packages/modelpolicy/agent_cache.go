@@ -51,19 +51,24 @@ func (c *CachingAgentDefaults) Load(ctx context.Context, orgID, agentID uuid.UUI
 	if d, ok := c.lookupFresh(key); ok {
 		return d, nil
 	}
-	// Detach from the caller's cancel/deadline so one abandoned request cannot
-	// fail coalesced waiters. Preserve ctx values for tracing; LoadTimeout caps the flight.
+	// Detach cancel/deadline from the shared flight so one abandoned request
+	// cannot fail coalesced waiters. Callers still observe their own ctx via DoChan.
 	loadParent := context.WithoutCancel(ctx)
-	v, err, _ := c.group.Do(key, func() (any, error) {
+	ch := c.group.DoChan(key, func() (any, error) {
 		if d, ok := c.lookupFresh(key); ok {
 			return d, nil
 		}
 		return c.loadAndStore(loadParent, key, orgID, agentID)
 	})
-	if err != nil {
-		return AgentDefaults{}, err
+	select {
+	case <-ctx.Done():
+		return AgentDefaults{}, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return AgentDefaults{}, res.Err
+		}
+		return res.Val.(AgentDefaults), nil
 	}
-	return v.(AgentDefaults), nil
 }
 
 func (c *CachingAgentDefaults) loadAndStore(

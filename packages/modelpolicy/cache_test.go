@@ -3,6 +3,7 @@ package modelpolicy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -383,4 +384,129 @@ func TestCache_GensPrunedOnCapacityEviction(t *testing.T) {
 	if cache.gensLen() < 1 {
 		t.Fatal("expected invalidate to retain generation bump")
 	}
+}
+
+func TestCache_GensBoundedUnderConcurrentCapacityChurn(t *testing.T) {
+	t.Parallel()
+	const lruSize = 8
+	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: lruSize}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			org := uuid.New()
+			loader.mu.Lock()
+			loader.policies[org] = []Policy{{Pattern: "m*", Allowed: true, Priority: 1}}
+			loader.mu.Unlock()
+			_, _ = cache.PoliciesForOrg(context.Background(), org)
+		}()
+	}
+	wg.Wait()
+	// Live gens track at most the LRU population (plus brief invalidate bumps).
+	if n := cache.gensLen(); n > lruSize*2 {
+		t.Fatalf("gensLen=%d want <=%d under capacity churn", n, lruSize*2)
+	}
+}
+
+// Gen-0 allow install must not clobber a newer deny via blind Remove on stale cleanup.
+func TestCache_StaleRemovePreservesNewerInstall(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	model := "deny-me-x"
+	gate0 := make(chan struct{})
+	gate1 := make(chan struct{})
+	installed1 := make(chan struct{})
+	loader := &orderedPolicyLoader{
+		org: org,
+		steps: []orderedLoadStep{
+			{policies: []Policy{{Pattern: "deny-me-*", Allowed: true, Priority: 1}}, wait: gate0},
+			{policies: []Policy{{Pattern: "deny-me-*", Allowed: false, Priority: 1}}, wait: gate1},
+		},
+		started: []chan struct{}{make(chan struct{}), make(chan struct{})},
+	}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := provider.NewRegistry(testCatalog(model), fakeProvider{models: []string{model}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := NewOrgAwareRegistry(base, cache, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err0 := make(chan error, 1)
+	go func() {
+		_, e := cache.PoliciesForOrg(context.Background(), org)
+		err0 <- e
+	}()
+	<-loader.started[0]
+
+	cache.Invalidate(org)
+	err1 := make(chan error, 1)
+	go func() {
+		_, e := cache.PoliciesForOrg(context.Background(), org)
+		close(installed1)
+		err1 <- e
+	}()
+	<-loader.started[1]
+	close(gate1)
+	if err := <-err1; err != nil {
+		t.Fatalf("gen1 load: %v", err)
+	}
+	<-installed1
+
+	close(gate0)
+	if err := <-err0; err != nil {
+		t.Fatalf("gen0 load: %v", err)
+	}
+
+	_, err = reg.ForOrg(context.Background(), org, model)
+	if !errors.Is(err, ErrModelNotAllowedForOrg) {
+		t.Fatalf("want deny after newer install, got %v", err)
+	}
+}
+
+type orderedLoadStep struct {
+	policies []Policy
+	wait     chan struct{}
+}
+
+type orderedPolicyLoader struct {
+	org     uuid.UUID
+	steps   []orderedLoadStep
+	mu      sync.Mutex
+	idx     int
+	started []chan struct{}
+}
+
+func (o *orderedPolicyLoader) LoadOrg(_ context.Context, orgID uuid.UUID) ([]Policy, error) {
+	if orgID != o.org {
+		return nil, fmt.Errorf("unexpected org")
+	}
+	o.mu.Lock()
+	i := o.idx
+	o.idx++
+	if i >= len(o.steps) {
+		last := o.steps[len(o.steps)-1]
+		o.mu.Unlock()
+		return append([]Policy(nil), last.policies...), nil
+	}
+	if i >= len(o.started) {
+		o.mu.Unlock()
+		return nil, fmt.Errorf("missing started channel for step %d", i)
+	}
+	started := o.started[i]
+	step := o.steps[i]
+	o.mu.Unlock()
+	close(started)
+	<-step.wait
+	return append([]Policy(nil), step.policies...), nil
 }

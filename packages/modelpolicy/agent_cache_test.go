@@ -88,8 +88,8 @@ func TestCachingAgentDefaults_CoalescesConcurrentLoads(t *testing.T) {
 	assertInnerLoadCount(t, &inner.calls, 1)
 }
 
-// First caller's cancel must not fail a coalesced peer with a healthy context.
-// Before WithoutCancel, canceling the flight owner aborted inner.Load for everyone.
+// First caller's cancel must return promptly as context.Canceled while the
+// detached shared load continues to serve healthy peers.
 func TestCachingAgentDefaults_CancelFirstCallerStillServesPeer(t *testing.T) {
 	t.Parallel()
 	started := make(chan struct{})
@@ -111,14 +111,19 @@ func TestCachingAgentDefaults_CancelFirstCallerStillServesPeer(t *testing.T) {
 	<-started
 	ownerCancel()
 
+	select {
+	case err := <-ownerErr:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("owner err=%v want context.Canceled before release", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner did not return context.Canceled before shared load finished")
+	}
+
 	peerErr := make(chan error, 1)
 	go func() { peerErr <- loadExpectModel(cache, org, agent, "gpt-4o") }()
 	close(release)
-
 	requireNoErr(t, <-peerErr)
-	// Owner may still observe success (singleflight shares the result) or a
-	// rare local error; peer must succeed and the DB load must run once.
-	<-ownerErr
 	assertInnerLoadCount(t, &inner.calls, 1)
 }
 
