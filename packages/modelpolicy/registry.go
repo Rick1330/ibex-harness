@@ -51,6 +51,19 @@ func (r *OrgAwareRegistry) ForOrg(ctx context.Context, orgID uuid.UUID, model st
 	return r.base.For(model)
 }
 
+// FallbackChain returns the configured fallback models for the original model
+// when the matching allow policy has a non-empty chain.
+func (r *OrgAwareRegistry) FallbackChain(ctx context.Context, orgID uuid.UUID, model string) ([]string, error) {
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("%w: missing org_id", ErrPolicyUnavailable)
+	}
+	policies, err := r.cache.PoliciesForOrg(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return FallbackChainForModel(policies, model)
+}
+
 // Base returns the underlying platform registry.
 func (r *OrgAwareRegistry) Base() *provider.Registry { return r.base }
 
@@ -67,6 +80,11 @@ func (p PassthroughRegistry) ForOrg(_ context.Context, _ uuid.UUID, model string
 		return nil, provider.ErrNoProviderForModel
 	}
 	return p.Base.For(strings.TrimSpace(model))
+}
+
+// FallbackChain always returns nil when policies are disabled.
+func (PassthroughRegistry) FallbackChain(context.Context, uuid.UUID, string) ([]string, error) {
+	return nil, nil
 }
 
 // ResolveCandidateModel applies precedence: request model, else agent default_model.

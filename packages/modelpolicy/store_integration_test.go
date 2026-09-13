@@ -12,8 +12,7 @@ import (
 	migratepg "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/google/uuid"
-
-	_ "github.com/lib/pq" // database/sql Postgres driver for integration DSN
+	"github.com/lib/pq"
 )
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
@@ -22,6 +21,7 @@ type policySeed struct {
 	pattern  string
 	allowed  bool
 	priority int
+	chain    []string
 }
 
 func integrationDSN() string {
@@ -91,9 +91,13 @@ func seedOrg(t *testing.T, db *sql.DB, slug string) uuid.UUID {
 func insertPolicy(t *testing.T, db *sql.DB, orgID uuid.UUID, seed policySeed) {
 	t.Helper()
 	err := withServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
+		chain := seed.chain
+		if chain == nil {
+			chain = []string{}
+		}
 		_, err := tx.ExecContext(context.Background(), `
-			INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
-			VALUES ($1::uuid, $2, $3, $4)`, orgID, seed.pattern, seed.allowed, seed.priority)
+			INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority, fallback_chain)
+			VALUES ($1::uuid, $2, $3, $4, $5)`, orgID, seed.pattern, seed.allowed, seed.priority, pq.Array(chain))
 		return err
 	})
 	if err != nil {
@@ -146,6 +150,31 @@ func TestRouting_OrgPolicy_StoreEvaluate(t *testing.T) {
 	assertDecision(t, policies, decisionWant{model: "claude-sonnet-4-5", wantMatched: true, wantAllowed: false})
 	assertDecision(t, policies, decisionWant{model: "claude-opus-4", wantMatched: true, wantAllowed: true})
 	assertDecision(t, policies, decisionWant{model: "gpt-4o", wantMatched: false, wantAllowed: true})
+}
+
+func TestStore_FallbackChainRoundTrip(t *testing.T) {
+	db := openIntegrationDB(t)
+	defer db.Close()
+
+	org := seedOrg(t, db, "mp-fallback-chain")
+	want := []string{"claude-sonnet-4-5", "gpt-4o-mini"}
+	insertPolicy(t, db, org, policySeed{
+		pattern: "gpt-*", allowed: true, priority: 1, chain: want,
+	})
+	policies, err := mustStore(t, db).LoadOrg(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policies) != 1 {
+		t.Fatalf("len=%d", len(policies))
+	}
+	got, err := modelpolicy.FallbackChainForModel(policies, "gpt-4o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("got=%v want=%v", got, want)
+	}
 }
 
 func TestRouting_OrgPolicy_CrossTenantIsolation(t *testing.T) {

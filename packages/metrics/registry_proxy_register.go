@@ -20,6 +20,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 	r.initResponsePipelineMetrics()
 	r.initContextAssembleMetrics()
 	r.initExtractionEnqueueMetrics()
+	r.initProviderFallbackMetrics()
 	r.processUp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "ibex_process_up",
 		Help:        "1 if the service process is running.",
@@ -59,6 +60,7 @@ func (r *ProxyRegistry) providerAndStreamCollectors() []prometheus.Collector {
 		r.streamBackpressure,
 		r.asyncQueueDepth,
 		r.asyncDroppedTotal,
+		r.providerFallbacksTotal,
 	}
 }
 

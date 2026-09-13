@@ -43,6 +43,7 @@ def _policy_row(**overrides) -> SimpleNamespace:
         "model_pattern": "claude-*",
         "allowed": True,
         "priority": 100,
+        "fallback_chain": [],
         "created_at": now,
         "updated_at": now,
     }
@@ -156,8 +157,27 @@ async def test_create_persists_and_publishes() -> None:
         session, org_id, body, deps=svc.WriteDeps(publisher=publisher)
     )
     assert got.model_pattern == "gpt-*"
+    assert got.fallback_chain == []
     assert publisher.published == [str(org_id)]
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_persists_fallback_chain() -> None:
+    org_id = uuid4()
+    chain = ["claude-sonnet-4-5", "gpt-4o-mini"]
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=_Rows(
+            row=_policy_row(org_id=org_id, model_pattern="gpt-*", fallback_chain=chain)
+        )
+    )
+    session.commit = AsyncMock()
+    body = ModelPolicyCreate(model_pattern="gpt-*", allowed=True, fallback_chain=chain)
+    got = await svc.create_policy(session, org_id, body, deps=svc.WriteDeps())
+    assert got.fallback_chain == chain
+    params = session.execute.await_args.args[1]
+    assert params["fallback_chain"] == chain
 
 
 @pytest.mark.asyncio

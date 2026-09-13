@@ -43,4 +43,8 @@ type AssembleInput struct {
 	Usage     *provider.Usage
 	Timings   RequestTimings
 	Outcome   RequestOutcome
+	// Fallback audit (ADR-0077). Leave empty/nil when no substitution occurred.
+	OriginalModel  string
+	FallbackModel  string
+	FallbackReason string
 }

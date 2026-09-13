@@ -34,12 +34,15 @@ type chatForwardParams struct {
 }
 
 type providerSuccessParams struct {
-	w            http.ResponseWriter
-	r            *http.Request
-	parsed       *llm.ChatCompletionRequest
-	providerName string
-	resp         provider.Response
-	claim        *idempotencyClaim
+	w              http.ResponseWriter
+	r              *http.Request
+	parsed         *llm.ChatCompletionRequest
+	providerName   string
+	resp           provider.Response
+	claim          *idempotencyClaim
+	originalModel  string
+	fallbackModel  string
+	fallbackReason string
 }
 
 type providerFailureParams struct {
@@ -92,7 +95,33 @@ func (h chatCompletionHandler) completeAndRespond(
 	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), providerElapsed.Seconds())
 	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerElapsed.Milliseconds()))
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		h.handlePrimaryCompleteError(p, claim, provReq, requestID, err)
+		return
+	}
+	h.finishProviderResponse(p, claim, p.prov, resp, "", "", "")
+}
+
+func (h chatCompletionHandler) handlePrimaryCompleteError(
+	p chatForwardParams,
+	claim *idempotencyClaim,
+	provReq provider.Request,
+	requestID string,
+	err error,
+) {
+	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
+		return
+	}
+	elig := provider.FallbackEligible(err, provReq)
+	if !elig.Eligible {
+		h.writeProviderFailure(providerFailureParams{
+			w: p.w, r: p.r, err: err, requestID: requestID,
+			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
+		})
+		return
+	}
+	fb, ok := h.tryFallbackComplete(p, provReq, elig.Reason)
+	if !ok {
+		if errors.Is(p.r.Context().Err(), context.Canceled) {
 			return
 		}
 		h.writeProviderFailure(providerFailureParams{
@@ -101,21 +130,42 @@ func (h chatCompletionHandler) completeAndRespond(
 		})
 		return
 	}
+	originalModel := fallbackOriginalModel(provReq.Model, p.parsed)
+	setFallbackSuccessHeaders(p.w, fb.model)
+	if h.metrics != nil {
+		h.metrics.IncProviderFallback(fb.reason)
+	}
+	if p.parsed != nil {
+		p.parsed.Model = fb.model
+	}
+	h.finishProviderResponse(p, claim, fb.prov, fb.resp, originalModel, fb.model, fb.reason)
+}
+
+func (h chatCompletionHandler) finishProviderResponse(
+	p chatForwardParams,
+	claim *idempotencyClaim,
+	prov provider.Provider,
+	resp provider.Response,
+	originalModel, fallbackModel, fallbackReason string,
+) {
 	defer func() {
 		//nolint:errcheck // upstream body close after successful read; copy errors handled separately
 		_ = resp.Body.Close()
 	}()
+	// Streaming may begin only after a successful Complete. Never call fallback
+	// after forwardSSEStream (double-billing / duplicate SSE risk).
 	if p.parsed.Stream {
 		forwardSSEStream(streamForwardParams{
-			w: p.w, r: p.r, resp: resp, provider: p.prov.Name(),
+			w: p.w, r: p.r, resp: resp, provider: prov.Name(),
 			metrics: h.metrics, log: h.log, docsBase: h.docsBase,
-			onComplete: h.streamCheckpointHook(p.r, p.parsed, p.prov.Name()),
+			onComplete: h.streamCheckpointHook(p.r, p.parsed, prov.Name(), originalModel, fallbackModel, fallbackReason),
 		})
 		return
 	}
 	h.writeProviderSuccess(providerSuccessParams{
-		w: p.w, r: p.r, parsed: p.parsed, providerName: p.prov.Name(), resp: resp,
-		claim: claim,
+		w: p.w, r: p.r, parsed: p.parsed, providerName: prov.Name(), resp: resp,
+		claim:         claim,
+		originalModel: originalModel, fallbackModel: fallbackModel, fallbackReason: fallbackReason,
 	})
 }
 
@@ -241,6 +291,7 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
+		OriginalModel: p.originalModel, FallbackModel: p.fallbackModel, FallbackReason: p.fallbackReason,
 	}, requestOutcome{
 		StatusCode: uint16(p.resp.StatusCode),
 		IsComplete: true,
@@ -291,6 +342,7 @@ func (h chatCompletionHandler) streamCheckpointHook(
 	r *http.Request,
 	parsed *llm.ChatCompletionRequest,
 	providerName string,
+	originalModel, fallbackModel, fallbackReason string,
 ) func(context.Context, streamCheckpointResult) {
 	return func(ctx context.Context, res streamCheckpointResult) {
 		status := uint16(http.StatusOK)
@@ -302,6 +354,7 @@ func (h chatCompletionHandler) streamCheckpointHook(
 			Messages: parsed.Messages, CompletionText: res.content,
 			Model: parsed.Model, Provider: providerName, Usage: res.usage,
 			Latency: res.latency, IsStreaming: true, IsComplete: res.complete,
+			OriginalModel: originalModel, FallbackModel: fallbackModel, FallbackReason: fallbackReason,
 		}, requestOutcome{
 			StatusCode: status,
 			IsComplete: res.complete,

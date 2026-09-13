@@ -21,11 +21,12 @@ const (
 
 // Policy is one org_model_policies row used for evaluation.
 type Policy struct {
-	ID       string
-	OrgID    string
-	Pattern  string
-	Allowed  bool
-	Priority int
+	ID            string
+	OrgID         string
+	Pattern       string
+	Allowed       bool
+	Priority      int
+	FallbackChain []string
 }
 
 // Config holds cache sizing and TTL.

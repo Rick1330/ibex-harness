@@ -1139,6 +1139,7 @@ CREATE TABLE ibex_core.org_model_policies (
                    CHECK (char_length(model_pattern) BETWEEN 1 AND 256),
     allowed        BOOLEAN NOT NULL,
     priority       INTEGER NOT NULL,
+    fallback_chain TEXT[] NOT NULL DEFAULT '{}',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

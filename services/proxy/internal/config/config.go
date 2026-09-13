@@ -134,22 +134,24 @@ type Config struct {
 	ProviderBreakerBucketPeriod time.Duration
 	ProviderBreakerMinSamples   uint32
 	ProviderBreakerFailureRate  float64
-	PostgresDSN                 string
-	DirectiveCacheTTL           time.Duration
-	SessionCacheTTL             time.Duration
-	CheckpointWorkers           int
-	CheckpointQueue             int
-	SessionGetOrCreateTO        time.Duration
-	SessionIdleTimeout          time.Duration
-	SessionSweepInterval        time.Duration
-	ClickHouseDSN               string
-	ClickHouseBatchSize         int
-	ClickHouseFlushMS           int
-	IdempotencyTTL              time.Duration
-	IdempotencyRedisTimeout     time.Duration
-	ExtractionTurnsTTL          time.Duration
-	WorkerEnqueueBaseURL        string
-	WorkerEnqueueAPIToken       string
+	// MaxFallbackDepth caps policy fallback_chain hops (ADR-0077). Default 1; <1 clamps to 1.
+	MaxFallbackDepth        int
+	PostgresDSN             string
+	DirectiveCacheTTL       time.Duration
+	SessionCacheTTL         time.Duration
+	CheckpointWorkers       int
+	CheckpointQueue         int
+	SessionGetOrCreateTO    time.Duration
+	SessionIdleTimeout      time.Duration
+	SessionSweepInterval    time.Duration
+	ClickHouseDSN           string
+	ClickHouseBatchSize     int
+	ClickHouseFlushMS       int
+	IdempotencyTTL          time.Duration
+	IdempotencyRedisTimeout time.Duration
+	ExtractionTurnsTTL      time.Duration
+	WorkerEnqueueBaseURL    string
+	WorkerEnqueueAPIToken   string
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -313,6 +315,9 @@ func (c *Config) applySelfHostedDefaults() {
 	applyProviderBreakerRollingDefaults(c)
 	c.SelfHosted.BreakerFailures = c.ProviderBreakerFailures
 	c.SelfHosted.BreakerCoolDown = c.ProviderBreakerCoolDown
+	if c.MaxFallbackDepth < 1 {
+		c.MaxFallbackDepth = defaultMaxFallbackDepth
+	}
 }
 
 // applyProviderBreakerRollingDefaults fills rolling knobs only when the matching

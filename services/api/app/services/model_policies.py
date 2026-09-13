@@ -31,13 +31,13 @@ _UNIQUE = "org_model_policies_org_pattern_unique"
 _NOT_FOUND_MSG = "Model policy not found"
 
 _GET_SQL = """
-SELECT id, org_id, model_pattern, allowed, priority, created_at, updated_at
+SELECT id, org_id, model_pattern, allowed, priority, fallback_chain, created_at, updated_at
 FROM ibex_core.org_model_policies
 WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
 """
 
 _LIST_SQL = """
-SELECT id, org_id, model_pattern, allowed, priority, created_at, updated_at
+SELECT id, org_id, model_pattern, allowed, priority, fallback_chain, created_at, updated_at
 FROM ibex_core.org_model_policies
 WHERE org_id = CAST(:org_id AS uuid)
   AND (
@@ -53,9 +53,9 @@ LIMIT :limit
 """
 
 _INSERT_SQL = """
-INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
-VALUES (CAST(:org_id AS uuid), :model_pattern, :allowed, :priority)
-RETURNING id, org_id, model_pattern, allowed, priority, created_at, updated_at
+INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority, fallback_chain)
+VALUES (CAST(:org_id AS uuid), :model_pattern, :allowed, :priority, CAST(:fallback_chain AS text[]))
+RETURNING id, org_id, model_pattern, allowed, priority, fallback_chain, created_at, updated_at
 """
 
 _UPDATE_SQL = """
@@ -63,9 +63,10 @@ UPDATE ibex_core.org_model_policies
 SET model_pattern = COALESCE(:model_pattern, model_pattern),
     allowed = COALESCE(:allowed, allowed),
     priority = COALESCE(:priority, priority),
+    fallback_chain = COALESCE(CAST(:fallback_chain AS text[]), fallback_chain),
     updated_at = now()
 WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
-RETURNING id, org_id, model_pattern, allowed, priority, created_at, updated_at
+RETURNING id, org_id, model_pattern, allowed, priority, fallback_chain, created_at, updated_at
 """
 
 _DELETE_SQL = """
@@ -89,12 +90,16 @@ class PatchArgs:
 
 
 def _row_to_response(row) -> ModelPolicyResponse:
+    chain = getattr(row, "fallback_chain", None) or []
+    if not isinstance(chain, list):
+        chain = list(chain)
     return ModelPolicyResponse(
         id=row.id if isinstance(row.id, UUID) else UUID(str(row.id)),
         org_id=row.org_id if isinstance(row.org_id, UUID) else UUID(str(row.org_id)),
         model_pattern=str(row.model_pattern),
         allowed=bool(row.allowed),
         priority=int(row.priority),
+        fallback_chain=[str(x) for x in chain],
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -196,6 +201,7 @@ async def create_policy(
                 "model_pattern": body.model_pattern,
                 "allowed": body.allowed,
                 "priority": body.priority,
+                "fallback_chain": body.fallback_chain,
             },
         )
         row = result.first()
@@ -210,8 +216,12 @@ async def create_policy(
 
 
 def _patch_has_fields(body: ModelPolicyPatch) -> bool:
-    return body.model_pattern is not None or body.allowed is not None or body.priority is not None
-
+    return (
+        body.model_pattern is not None
+        or body.allowed is not None
+        or body.priority is not None
+        or body.fallback_chain is not None
+    )
 
 async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyResponse:
     if not _patch_has_fields(args.body):
@@ -234,6 +244,7 @@ async def _execute_patch(session: AsyncSession, args: PatchArgs):
                 "model_pattern": body.model_pattern,
                 "allowed": body.allowed,
                 "priority": body.priority,
+                "fallback_chain": body.fallback_chain,
             },
         )
         row = result.first()
