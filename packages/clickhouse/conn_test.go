@@ -103,18 +103,26 @@ func TestUnit_CHInserter_InsertTraces_FallbackAudit(t *testing.T) {
 	if err := ins.InsertTraces(context.Background(), []TraceRecord{rec}); err != nil {
 		t.Fatal(err)
 	}
-	assertFallbackAuditRow(t, conn.batch.rows[0], orig, fb, "provider_circuit_open")
+	assertFallbackAuditRow(t, conn.batch.rows[0], wantFallbackAuditRow{
+		original: orig, fallback: fb, reason: "provider_circuit_open",
+	})
 }
 
-func assertFallbackAuditRow(t *testing.T, row []any, orig, fb, reason string) {
+type wantFallbackAuditRow struct {
+	original string
+	fallback string
+	reason   string
+}
+
+func assertFallbackAuditRow(t *testing.T, row []any, want wantFallbackAuditRow) {
 	t.Helper()
-	if row[20] != orig {
+	if row[20] != want.original {
 		t.Fatalf("original=%v", row[20])
 	}
-	if row[21] != fb {
+	if row[21] != want.fallback {
 		t.Fatalf("fallback=%v", row[21])
 	}
-	if row[22] != reason {
+	if row[22] != want.reason {
 		t.Fatalf("reason=%v", row[22])
 	}
 }
