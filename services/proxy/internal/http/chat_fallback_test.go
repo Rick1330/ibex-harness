@@ -9,8 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
-	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
@@ -125,24 +126,38 @@ func postFallbackChat(t *testing.T, handler http.Handler) *httptest.ResponseReco
 	})
 }
 
-func TestUnit_ChatFallback_SuccessHeadersAndModel(t *testing.T) {
-	t.Parallel()
-	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
-	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
+const fallbackModelClaudeSonnet = "claude-sonnet-4-5"
+
+func openAIFallbackFixture(chain []string, primaryErr error) (*scriptedProvider, *scriptedProvider, *fakeFallbackRouter) {
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{primaryErr}}
+	fallback := &scriptedProvider{name: "anthropic", models: []string{fallbackModelClaudeSonnet}}
 	router := &fakeFallbackRouter{
-		chain:   []string{"claude-sonnet-4-5"},
-		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": fallback},
+		chain: chain,
+		byModel: map[string]provider.Provider{
+			"gpt-4o": primary, fallbackModelClaudeSonnet: fallback,
+		},
 	}
-	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, fallback))
+	return primary, fallback, router
+}
+
+func assertFallbackSuccessHeaders(t *testing.T, rec *httptest.ResponseRecorder, usedModel string) {
+	t.Helper()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if rec.Header().Get(headerIBEXProviderFallback) != "true" {
 		t.Fatalf("fallback header=%q", rec.Header().Get(headerIBEXProviderFallback))
 	}
-	if rec.Header().Get(headerIBEXProviderUsed) != "claude-sonnet-4-5" {
+	if rec.Header().Get(headerIBEXProviderUsed) != usedModel {
 		t.Fatalf("used=%q", rec.Header().Get(headerIBEXProviderUsed))
 	}
+}
+
+func TestUnit_ChatFallback_SuccessHeadersAndModel(t *testing.T) {
+	t.Parallel()
+	primary, fallback, router := openAIFallbackFixture([]string{fallbackModelClaudeSonnet}, pe5xx("openai", 503))
+	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, fallback))
+	assertFallbackSuccessHeaders(t, rec, fallbackModelClaudeSonnet)
 }
 
 func TestUnit_ChatFallback_ExhaustNoHeaders(t *testing.T) {
@@ -250,13 +265,7 @@ func TestUnit_ChatFallback_NoHeadersWhenPipelineFails(t *testing.T) {
 
 func TestUnit_ChatFallback_CircuitOpenNoChainHardFailure(t *testing.T) {
 	t.Parallel()
-	circuitErr := peCircuitOpen("openai")
-	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{circuitErr}}
-	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
-	router := &fakeFallbackRouter{
-		chain:   []string{},
-		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": fallback},
-	}
+	primary, fallback, router := openAIFallbackFixture(nil, peCircuitOpen("openai"))
 	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, fallback))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -272,49 +281,60 @@ func TestUnit_ChatFallback_CircuitOpenNoChainHardFailure(t *testing.T) {
 	}
 }
 
+func TestUnit_ChatFallback_ExpiredContextSkipsFallback(t *testing.T) {
+	t.Parallel()
+	_, fallback, router := openAIFallbackFixture([]string{fallbackModelClaudeSonnet}, peCircuitOpen("openai"))
+	org := uuid.MustParse(testChatOrgID)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	ctx = auth.WithContext(ctx, &auth.ValidateResult{OrgID: org})
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h := chatCompletionHandler{
+		log: logger.Discard("proxy"), maxFallbackDepth: 1,
+		modelRouter: router, policyFallback: router,
+	}
+	h.handlePrimaryCompleteError(primaryCompleteErrorArgs{
+		p: chatForwardParams{
+			w: rec, r: req, prov: &scriptedProvider{name: "openai", models: []string{"gpt-4o"}},
+			parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
+		},
+		provReq:   provider.Request{Model: "gpt-4o"},
+		requestID: "req-expired",
+		err:       peCircuitOpen("openai"),
+	})
+	if fallback.calls != 0 {
+		t.Fatalf("fallback calls=%d want 0 on expired request context", fallback.calls)
+	}
+	if rec.Header().Get(headerIBEXProviderFallback) != "" {
+		t.Fatal("must not set fallback headers when request context is done")
+	}
+}
+
+func TestUnit_classifyFallbackHopErr_AbortedContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	outcome, _ := classifyFallbackHopErr(ctx, pe5xx("openai", 503), provider.Request{Model: "gpt-4o"})
+	if outcome != hopAbort {
+		t.Fatalf("outcome=%v want hopAbort when request context is done", outcome)
+	}
+}
+
 func TestUnit_ChatFallback_CircuitOpenTriggersFallback(t *testing.T) {
 	t.Parallel()
 	tw := &recordingTraceWriter{}
-	circuitErr := peCircuitOpen("openai")
-	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{circuitErr}}
-	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
-	router := &fakeFallbackRouter{
-		chain:   []string{"claude-sonnet-4-5"},
-		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": fallback},
-	}
+	primary, fallback, router := openAIFallbackFixture([]string{fallbackModelClaudeSonnet}, peCircuitOpen("openai"))
 	handler := fallbackChatHandlerWithTrace(t, 1, router, tw, mustPool(t), primary, fallback)
 	rec := postFallbackChat(t, handler)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-	if rec.Header().Get(headerIBEXProviderFallback) != "true" {
-		t.Fatalf("fallback header=%q", rec.Header().Get(headerIBEXProviderFallback))
-	}
-	if rec.Header().Get(headerIBEXProviderUsed) != "claude-sonnet-4-5" {
-		t.Fatalf("used=%q", rec.Header().Get(headerIBEXProviderUsed))
-	}
+	assertFallbackSuccessHeaders(t, rec, fallbackModelClaudeSonnet)
 	tw.waitWrites(t, 1)
 	got, ok := tw.last()
 	if !ok {
 		t.Fatal("no trace write")
 	}
-	assertTraceFallbackAudit(t, got, "gpt-4o", "claude-sonnet-4-5", provider.FallbackReasonCircuitOpen)
-}
-
-func assertTraceFallbackAudit(t *testing.T, rec ibexch.TraceRecord, original, fallback, reason string) {
-	t.Helper()
-	if rec.Model != fallback {
-		t.Fatalf("model=%s want %s", rec.Model, fallback)
-	}
-	if rec.OriginalModel == nil || *rec.OriginalModel != original {
-		t.Fatalf("original=%v want %q", rec.OriginalModel, original)
-	}
-	if rec.FallbackModel == nil || *rec.FallbackModel != fallback {
-		t.Fatalf("fallback=%v want %q", rec.FallbackModel, fallback)
-	}
-	if rec.FallbackReason != reason {
-		t.Fatalf("reason=%q want %q", rec.FallbackReason, reason)
-	}
+	assertTraceFallbackAudit(t, got, "gpt-4o", fallbackModelClaudeSonnet, provider.FallbackReasonCircuitOpen)
 }
 
 func TestUnit_ChatFallback_NeverOn429Primary(t *testing.T) {

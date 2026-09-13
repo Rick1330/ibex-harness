@@ -122,6 +122,14 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteEr
 	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
 		return
 	}
+	// Request already done (deadline/other) — surface primary failure, never fallback.
+	if p.r.Context().Err() != nil {
+		h.writeProviderFailure(providerFailureParams{
+			w: p.w, r: p.r, err: err, requestID: args.requestID,
+			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
+		})
+		return
+	}
 	elig := provider.FallbackEligible(err, provReq)
 	if !elig.Eligible {
 		h.writeProviderFailure(providerFailureParams{

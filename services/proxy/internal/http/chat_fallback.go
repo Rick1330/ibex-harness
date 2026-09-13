@@ -81,7 +81,7 @@ func (h chatCompletionHandler) tryFallbackComplete(
 
 func (h chatCompletionHandler) walkFallbackChain(args walkFallbackArgs) (fallbackSuccess, bool) {
 	for _, hopModel := range args.chain {
-		if errors.Is(args.p.r.Context().Err(), context.Canceled) {
+		if args.p.r.Context().Err() != nil {
 			return fallbackSuccess{}, false
 		}
 		outcome, fb := h.tryFallbackHop(args, hopModel)
@@ -104,9 +104,10 @@ func (h chatCompletionHandler) tryFallbackHop(args walkFallbackArgs, hopModel st
 		return hopAbort, fallbackSuccess{}
 	}
 	hopReq := fallbackHopRequest(args.primaryReq, hopModel)
-	resp, err := h.completeFallbackHop(args.p.r.Context(), hopProv, hopReq)
+	ctx := args.p.r.Context()
+	resp, err := h.completeFallbackHop(ctx, hopProv, hopReq)
 	if err != nil {
-		return classifyFallbackHopErr(err, hopReq)
+		return classifyFallbackHopErr(ctx, err, hopReq)
 	}
 	return hopOK, fallbackSuccess{
 		prov: hopProv, resp: resp, model: hopModel, reason: args.reason,
@@ -143,8 +144,8 @@ func (h chatCompletionHandler) completeFallbackHop(
 	return resp, err
 }
 
-func classifyFallbackHopErr(err error, hopReq provider.Request) (hopResult, fallbackSuccess) {
-	if errors.Is(err, context.Canceled) {
+func classifyFallbackHopErr(ctx context.Context, err error, hopReq provider.Request) (hopResult, fallbackSuccess) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		return hopAbort, fallbackSuccess{}
 	}
 	if !provider.FallbackEligible(err, hopReq).Eligible {
