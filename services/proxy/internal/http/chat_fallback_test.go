@@ -89,32 +89,35 @@ func peCircuitOpen(name string) *provider.ProviderError {
 
 func fallbackChatHandler(t *testing.T, depth int, router *fakeFallbackRouter, providers ...provider.Provider) http.Handler {
 	t.Helper()
-	return fallbackChatHandlerWithTrace(t, depth, router, nil, nil, providers...)
+	return newFallbackChatHandler(t, fallbackHandlerOpts{
+		depth: depth, router: router, providers: providers,
+	})
 }
 
-func fallbackChatHandlerWithTrace(
-	t *testing.T,
-	depth int,
-	router *fakeFallbackRouter,
-	tw TraceWriter,
-	pool *asyncpool.Pool,
-	providers ...provider.Provider,
-) http.Handler {
+type fallbackHandlerOpts struct {
+	depth     int
+	router    *fakeFallbackRouter
+	tw        TraceWriter
+	pool      *asyncpool.Pool
+	providers []provider.Provider
+}
+
+func newFallbackChatHandler(t *testing.T, opts fallbackHandlerOpts) http.Handler {
 	t.Helper()
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), providers...)
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), opts.providers...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
-		d.Config.MaxFallbackDepth = depth
+		d.Config.MaxFallbackDepth = opts.depth
 		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
 			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 		}}
 		d.ProviderRegistry = reg
-		d.ModelRouter = router
+		d.ModelRouter = opts.router
 		d.Metrics = metrics.NewProxy("fallback-test")
-		d.CheckpointPool = pool
-		d.TraceWriter = tw
+		d.CheckpointPool = opts.pool
+		d.TraceWriter = opts.tw
 	}))
 }
 
@@ -327,7 +330,10 @@ func TestUnit_ChatFallback_CircuitOpenTriggersFallback(t *testing.T) {
 	t.Parallel()
 	tw := &recordingTraceWriter{}
 	primary, fallback, router := openAIFallbackFixture([]string{fallbackModelClaudeSonnet}, peCircuitOpen("openai"))
-	handler := fallbackChatHandlerWithTrace(t, 1, router, tw, mustPool(t), primary, fallback)
+	handler := newFallbackChatHandler(t, fallbackHandlerOpts{
+		depth: 1, router: router, tw: tw, pool: mustPool(t),
+		providers: []provider.Provider{primary, fallback},
+	})
 	rec := postFallbackChat(t, handler)
 	assertFallbackSuccessHeaders(t, rec, fallbackModelClaudeSonnet)
 	tw.waitWrites(t, 1)
@@ -335,7 +341,10 @@ func TestUnit_ChatFallback_CircuitOpenTriggersFallback(t *testing.T) {
 	if !ok {
 		t.Fatal("no trace write")
 	}
-	assertTraceFallbackAudit(t, got, "gpt-4o", fallbackModelClaudeSonnet, provider.FallbackReasonCircuitOpen)
+	assertTraceFallbackAudit(t, got, wantTraceFallback{
+		original: "gpt-4o", fallback: fallbackModelClaudeSonnet,
+		reason: provider.FallbackReasonCircuitOpen,
+	})
 }
 
 func TestUnit_ChatFallback_StreamingSetsHeaders(t *testing.T) {
@@ -353,7 +362,7 @@ func TestUnit_ChatFallback_StreamingSetsHeaders(t *testing.T) {
 	}
 }
 
-func TestUnit_ChatFallback_HelpersAndPolicyErrors(t *testing.T) {
+func TestUnit_ChatFallback_OrgUUIDFromAuth(t *testing.T) {
 	t.Parallel()
 	if id, ok := orgUUIDFromAuth(context.Background()); ok || id != uuid.Nil {
 		t.Fatalf("no auth: id=%v ok=%v", id, ok)
@@ -361,6 +370,10 @@ func TestUnit_ChatFallback_HelpersAndPolicyErrors(t *testing.T) {
 	if id, ok := orgUUIDFromAuth(auth.WithContext(context.Background(), &auth.ValidateResult{})); ok || id != uuid.Nil {
 		t.Fatalf("nil org: id=%v ok=%v", id, ok)
 	}
+}
+
+func TestUnit_ChatFallback_ModelHelpers(t *testing.T) {
+	t.Parallel()
 	if got := fallbackOriginalModel("", &llm.ChatCompletionRequest{Model: "from-parsed"}); got != "from-parsed" {
 		t.Fatalf("parsed model=%q", got)
 	}
@@ -370,16 +383,19 @@ func TestUnit_ChatFallback_HelpersAndPolicyErrors(t *testing.T) {
 	if got := checkpointModel(nil, fallbackAudit{}); got != "" {
 		t.Fatalf("checkpoint empty=%q", got)
 	}
+}
 
+func TestUnit_ChatFallback_PolicyErrorAndMissingAuth(t *testing.T) {
+	t.Parallel()
 	org := uuid.MustParse(testChatOrgID)
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
+	errRouter := &errFallbackRouter{err: errors.New("policy boom")}
+	h := chatCompletionHandler{maxFallbackDepth: 1, modelRouter: errRouter, policyFallback: errRouter}
 	p := chatForwardParams{
 		w: httptest.NewRecorder(), r: req,
 		parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
 	}
-	errRouter := &errFallbackRouter{err: errors.New("policy boom")}
-	h := chatCompletionHandler{maxFallbackDepth: 1, modelRouter: errRouter, policyFallback: errRouter}
 	if _, ok := h.tryFallbackComplete(p, provider.Request{Model: "gpt-4o"}, provider.FallbackReason5xx); ok {
 		t.Fatal("policy error must not fallback")
 	}

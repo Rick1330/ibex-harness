@@ -103,9 +103,19 @@ func TestUnit_CHInserter_InsertTraces_FallbackAudit(t *testing.T) {
 	if err := ins.InsertTraces(context.Background(), []TraceRecord{rec}); err != nil {
 		t.Fatal(err)
 	}
-	row := conn.batch.rows[0]
-	if row[20] != orig || row[21] != fb || row[22] != "provider_circuit_open" {
-		t.Fatalf("fallback cols=%v %v %v", row[20], row[21], row[22])
+	assertFallbackAuditRow(t, conn.batch.rows[0], orig, fb, "provider_circuit_open")
+}
+
+func assertFallbackAuditRow(t *testing.T, row []any, orig, fb, reason string) {
+	t.Helper()
+	if row[20] != orig {
+		t.Fatalf("original=%v", row[20])
+	}
+	if row[21] != fb {
+		t.Fatalf("fallback=%v", row[21])
+	}
+	if row[22] != reason {
+		t.Fatalf("reason=%v", row[22])
 	}
 }
 
