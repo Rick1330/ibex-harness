@@ -1,4 +1,4 @@
-"""Org model-policy request/response schemas (m4.C.2).
+"""Org model-policy request/response schemas (m4.C.2 / m4.C.4).
 
 model_pattern soft-validates length/strip plus the shared Go golden reject
 corpus. The proxy enforces full filepath.Match at policy load (ADR-0075).
@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field, field_validator
 from app.schemas.model_pattern_normalize import normalize_model_pattern
 
 Priority = Annotated[int, Field(ge=-1_000_000, le=1_000_000)]
+_MODEL_ID_MAX = 256
+_FALLBACK_CHAIN_MAX = 8  # keep in sync with modelpolicy.MaxFallbackChainLen / DB CHECK
 
 _PATTERN_DESC = (
     "Go filepath.Match glob (shell-style *, ?, character classes). "
@@ -24,21 +26,45 @@ _PATTERN_DESC = (
 )
 
 
+def _normalize_fallback_entry(raw: str) -> str:
+    m = (raw or "").strip()
+    if not m:
+        raise ValueError("fallback_chain entries must be non-empty")
+    if len(m) > _MODEL_ID_MAX:
+        raise ValueError(f"fallback_chain entry exceeds {_MODEL_ID_MAX} characters")
+    return m
+
+
+def _normalize_fallback_chain(value: list[str] | None) -> list[str]:
+    if not value:
+        return []
+    if len(value) > _FALLBACK_CHAIN_MAX:
+        raise ValueError(f"fallback_chain exceeds {_FALLBACK_CHAIN_MAX} entries")
+    return [_normalize_fallback_entry(raw) for raw in value]
+
+
 class ModelPolicyCreate(BaseModel):
     model_pattern: str = Field(min_length=1, description=_PATTERN_DESC)
     allowed: bool
     priority: Priority = 100
+    fallback_chain: list[str] = Field(default_factory=list, max_length=_FALLBACK_CHAIN_MAX)
 
     @field_validator("model_pattern")
     @classmethod
     def _pattern(cls, value: str) -> str:
         return normalize_model_pattern(value)
 
+    @field_validator("fallback_chain")
+    @classmethod
+    def _chain(cls, value: list[str]) -> list[str]:
+        return _normalize_fallback_chain(value)
+
 
 class ModelPolicyPatch(BaseModel):
     model_pattern: str | None = Field(default=None, min_length=1, description=_PATTERN_DESC)
     allowed: bool | None = None
     priority: Priority | None = None
+    fallback_chain: list[str] | None = Field(default=None, max_length=_FALLBACK_CHAIN_MAX)
 
     @field_validator("model_pattern")
     @classmethod
@@ -47,6 +73,13 @@ class ModelPolicyPatch(BaseModel):
             return None
         return normalize_model_pattern(value)
 
+    @field_validator("fallback_chain")
+    @classmethod
+    def _chain(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _normalize_fallback_chain(value)
+
 
 class ModelPolicyResponse(BaseModel):
     id: UUID
@@ -54,5 +87,6 @@ class ModelPolicyResponse(BaseModel):
     model_pattern: str
     allowed: bool
     priority: int
+    fallback_chain: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime

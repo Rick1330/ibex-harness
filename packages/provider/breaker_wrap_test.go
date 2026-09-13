@@ -29,6 +29,9 @@ func TestClassifyForBreaker_CallerVsUpstreamDeadline(t *testing.T) {
 	if errors.Is(up, context.DeadlineExceeded) {
 		t.Fatal("upstream deadline must not match DeadlineExceeded")
 	}
+	if !errors.Is(up, ErrUpstreamTimeout) {
+		t.Fatalf("want ErrUpstreamTimeout, up=%v", up)
+	}
 	if !strings.Contains(up.Error(), "upstream timed out") {
 		t.Fatalf("up=%v", up)
 	}

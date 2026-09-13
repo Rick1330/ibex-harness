@@ -517,3 +517,22 @@ func (m *trackingMetrics) droppedCount() int {
 	defer m.mu.Unlock()
 	return m.dropped
 }
+
+func TestUnit_InsertSQL_IncludesFallbackColumns(t *testing.T) {
+	t.Parallel()
+	for _, col := range []string{"original_model", "fallback_model", "fallback_reason"} {
+		if !strings.Contains(insertSQL, col) {
+			t.Fatalf("insertSQL missing %s", col)
+		}
+	}
+	rt := reflect.TypeOf(TraceRecord{})
+	want := map[string]struct{}{
+		"OriginalModel": {}, "FallbackModel": {}, "FallbackReason": {},
+	}
+	for i := 0; i < rt.NumField(); i++ {
+		delete(want, rt.Field(i).Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("TraceRecord missing fields: %v", want)
+	}
+}

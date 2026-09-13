@@ -262,6 +262,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS` | No | `3` | Rolling-window bucket width | Integer seconds; must be ≤ window |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | No | `10` | Minimum samples before rolling trip | |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | No | `0.5` | Rolling failure-rate threshold | Float in (0, 1] |
+| `IBEX_PROVIDER_FALLBACK_MAX_DEPTH` | No (**4.C.4**) | `1` | Max hops from org `fallback_chain` after primary Complete failure | Values `<1` clamp to `1`; empty chain = opt-out |
 | `IBEX_CONTEXT_ENABLED` | No (**3.5.D.2**) | `false` | Master switch for context-assembly injection on chat completions; `false` = Phase 2 directive-only (no Assemble gRPC). Independent of empty `IBEX_CONTEXT_GRPC_TARGET` (nil client) | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |

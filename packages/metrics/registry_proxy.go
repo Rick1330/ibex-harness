@@ -59,6 +59,7 @@ type ProxyRegistry struct {
 	responsePipelineFailOpenTotal *prometheus.CounterVec
 	contextAssembleFallbackTotal  *prometheus.CounterVec
 	extractionEnqueueTotal        *prometheus.CounterVec
+	providerFallbacksTotal        *prometheus.CounterVec
 	processUp                     prometheus.Gauge
 }
 

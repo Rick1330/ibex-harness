@@ -55,8 +55,8 @@ func ClassifyForBreaker(ctx context.Context, err error) error {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		return context.DeadlineExceeded
 	case errors.Is(err, context.DeadlineExceeded):
-		// Do not wrap with %w: errors.Is must not match DeadlineExceeded.
-		return fmt.Errorf("upstream timed out: %v", err)
+		// ErrUpstreamTimeout is Is-detectable; DeadlineExceeded must not match.
+		return fmt.Errorf("%w: %v", ErrUpstreamTimeout, err)
 	default:
 		return err
 	}

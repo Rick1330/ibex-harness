@@ -45,6 +45,9 @@ func CaptureTraceSnapshot(args CaptureTraceArgs) (httptrace.AssembleInput, bool)
 			IsComplete: args.Outcome.IsComplete,
 			ErrorCode:  args.Outcome.ErrorCode,
 		},
+		OriginalModel:  args.In.OriginalModel,
+		FallbackModel:  args.In.FallbackModel,
+		FallbackReason: args.In.FallbackReason,
 	}, true
 }
 

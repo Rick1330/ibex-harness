@@ -31,4 +31,8 @@ type TraceRecord struct {
 	ErrorCode          string
 	RequestedAt        time.Time
 	CompletedAt        time.Time
+	// Fallback audit columns (ADR-0077 / ClickHouse 000003). Nil/empty when unused.
+	OriginalModel  *string
+	FallbackModel  *string
+	FallbackReason string
 }

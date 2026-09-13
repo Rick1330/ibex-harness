@@ -167,6 +167,74 @@ func TestPassthroughRegistry(t *testing.T) {
 	if _, err := p.ForOrg(context.Background(), uuid.New(), "x"); !errors.Is(err, provider.ErrNoProviderForModel) {
 		t.Fatalf("err=%v", err)
 	}
+	chain, err := p.FallbackChain(context.Background(), uuid.New(), "gpt-4o")
+	if err != nil || chain != nil {
+		t.Fatalf("passthrough chain=%v err=%v", chain, err)
+	}
+}
+
+func TestOrgAwareRegistry_FallbackChain(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	const model = "gpt-4o"
+	reg := mustOrgAwareWithChain(t, org, model, []string{"claude-sonnet-4-5", "gpt-4o-mini"})
+	got, err := reg.FallbackChain(context.Background(), org, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "claude-sonnet-4-5" {
+		t.Fatalf("got=%v", got)
+	}
+}
+
+func TestOrgAwareRegistry_FallbackChain_FailClosed(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	const model = "gpt-4o"
+	base, err := provider.NewRegistry(testCatalog(model), fakeProvider{models: []string{model}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := NewOrgAwareRegistry(base, mustCache(t, &fakeLoader{policies: map[uuid.UUID][]Policy{}}), NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reg.FallbackChain(context.Background(), uuid.Nil, model); !errors.Is(err, ErrPolicyUnavailable) {
+		t.Fatalf("nil org err=%v", err)
+	}
+	failCache := mustCache(t, &fakeLoader{err: errors.New("db down")})
+	failReg, err := NewOrgAwareRegistry(base, failCache, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failReg.FallbackChain(context.Background(), org, model); !errors.Is(err, ErrPolicyUnavailable) {
+		t.Fatalf("loader err=%v", err)
+	}
+}
+
+func mustCache(t *testing.T, loader PolicyLoader) *Cache {
+	t.Helper()
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cache
+}
+
+func mustOrgAwareWithChain(t *testing.T, org uuid.UUID, model string, chain []string) *OrgAwareRegistry {
+	t.Helper()
+	base, err := provider.NewRegistry(testCatalog(model), fakeProvider{models: []string{model}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{
+		org: {{Pattern: "gpt-*", Allowed: true, Priority: 1, FallbackChain: chain}},
+	}}
+	reg, err := NewOrgAwareRegistry(base, mustCache(t, loader), NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reg
 }
 
 func TestEventRoundTrip(t *testing.T) {

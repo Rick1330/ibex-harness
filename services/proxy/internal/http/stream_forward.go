@@ -38,6 +38,7 @@ type streamForwardParams struct {
 	metrics    *metrics.ProxyRegistry
 	log        *logger.Logger
 	docsBase   string
+	audit      fallbackAudit
 	onComplete func(context.Context, streamCheckpointResult)
 }
 
@@ -97,6 +98,12 @@ func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *op
 	p.w.Header().Set("Content-Type", "text/event-stream")
 	p.w.Header().Set("Cache-Control", "no-cache")
 	p.w.Header().Set("X-Accel-Buffering", "no")
+	if p.audit.FallbackModel != "" {
+		setFallbackSuccessHeaders(p.w, p.audit.FallbackModel)
+		if p.metrics != nil {
+			p.metrics.IncProviderFallback(p.audit.Reason)
+		}
+	}
 	p.w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
