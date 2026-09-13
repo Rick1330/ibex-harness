@@ -18,6 +18,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/google/uuid"
 )
@@ -337,23 +338,90 @@ func TestUnit_ChatFallback_CircuitOpenTriggersFallback(t *testing.T) {
 	assertTraceFallbackAudit(t, got, "gpt-4o", fallbackModelClaudeSonnet, provider.FallbackReasonCircuitOpen)
 }
 
+func TestUnit_ChatFallback_StreamingSetsHeaders(t *testing.T) {
+	t.Parallel()
+	primary, fallback, router := openAIFallbackFixture([]string{fallbackModelClaudeSonnet}, pe5xx("openai", 503))
+	fallback.body = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"
+	rec := postChat(t, fallbackChatHandler(t, 1, router, primary, fallback), chatRequestOpts{
+		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
+		auth:    true,
+		agentID: testChatAgentID,
+	})
+	assertFallbackSuccessHeaders(t, rec, fallbackModelClaudeSonnet)
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("Content-Type=%q", ct)
+	}
+}
+
+func TestUnit_ChatFallback_HelpersAndPolicyErrors(t *testing.T) {
+	t.Parallel()
+	if id, ok := orgUUIDFromAuth(context.Background()); ok || id != uuid.Nil {
+		t.Fatalf("no auth: id=%v ok=%v", id, ok)
+	}
+	if id, ok := orgUUIDFromAuth(auth.WithContext(context.Background(), &auth.ValidateResult{})); ok || id != uuid.Nil {
+		t.Fatalf("nil org: id=%v ok=%v", id, ok)
+	}
+	if got := fallbackOriginalModel("", &llm.ChatCompletionRequest{Model: "from-parsed"}); got != "from-parsed" {
+		t.Fatalf("parsed model=%q", got)
+	}
+	if got := fallbackOriginalModel("", nil); got != "" {
+		t.Fatalf("nil parsed=%q", got)
+	}
+	if got := checkpointModel(nil, fallbackAudit{}); got != "" {
+		t.Fatalf("checkpoint empty=%q", got)
+	}
+
+	org := uuid.MustParse(testChatOrgID)
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
+	p := chatForwardParams{
+		w: httptest.NewRecorder(), r: req,
+		parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
+	}
+	errRouter := &errFallbackRouter{err: errors.New("policy boom")}
+	h := chatCompletionHandler{maxFallbackDepth: 1, modelRouter: errRouter, policyFallback: errRouter}
+	if _, ok := h.tryFallbackComplete(p, provider.Request{Model: "gpt-4o"}, provider.FallbackReason5xx); ok {
+		t.Fatal("policy error must not fallback")
+	}
+	noAuth := chatForwardParams{
+		w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodPost, "/", nil),
+		parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
+	}
+	if _, ok := h.tryFallbackComplete(noAuth, provider.Request{Model: "gpt-4o"}, provider.FallbackReason5xx); ok {
+		t.Fatal("missing auth must not fallback")
+	}
+}
+
+type errFallbackRouter struct{ err error }
+
+func (e *errFallbackRouter) ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error) {
+	return nil, e.err
+}
+
+func (e *errFallbackRouter) FallbackChain(context.Context, uuid.UUID, string) ([]string, error) {
+	return nil, e.err
+}
+
 func TestUnit_ChatFallback_NeverOn429Primary(t *testing.T) {
 	t.Parallel()
-	primary := &scriptedProvider{
-		name: "openai", models: []string{"gpt-4o"},
-		errs: []error{&provider.ProviderError{ProviderName: "openai", StatusCode: 429}},
-	}
-	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
-	router := &fakeFallbackRouter{
-		chain:   []string{"claude-sonnet-4-5"},
-		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": fallback},
-	}
+	primary, fallback, router := openAIFallbackFixture(
+		[]string{fallbackModelClaudeSonnet},
+		&provider.ProviderError{ProviderName: "openai", StatusCode: 429},
+	)
 	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, fallback))
 	if rec.Header().Get(headerIBEXProviderFallback) != "" {
 		t.Fatal("429 must not trigger fallback")
 	}
 	if fallback.calls != 0 {
 		t.Fatalf("fallback calls=%d", fallback.calls)
+	}
+}
+
+func TestUnit_newChatCompletionHandler_ClampsDepth(t *testing.T) {
+	t.Parallel()
+	h := newChatCompletionHandler(protectedRouteDeps{cfg: config.Config{MaxFallbackDepth: 0}})
+	if h.maxFallbackDepth != 1 {
+		t.Fatalf("depth=%d want 1", h.maxFallbackDepth)
 	}
 }
 

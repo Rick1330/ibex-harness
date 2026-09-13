@@ -167,6 +167,55 @@ func TestPassthroughRegistry(t *testing.T) {
 	if _, err := p.ForOrg(context.Background(), uuid.New(), "x"); !errors.Is(err, provider.ErrNoProviderForModel) {
 		t.Fatalf("err=%v", err)
 	}
+	chain, err := p.FallbackChain(context.Background(), uuid.New(), "gpt-4o")
+	if err != nil || chain != nil {
+		t.Fatalf("passthrough chain=%v err=%v", chain, err)
+	}
+}
+
+func TestOrgAwareRegistry_FallbackChain(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	const model = "gpt-4o"
+	base, err := provider.NewRegistry(testCatalog(model), fakeProvider{models: []string{model}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader := &fakeLoader{policies: map[uuid.UUID][]Policy{
+		org: {{
+			Pattern: "gpt-*", Allowed: true, Priority: 1,
+			FallbackChain: []string{"claude-sonnet-4-5", "gpt-4o-mini"},
+		}},
+	}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := NewOrgAwareRegistry(base, cache, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := reg.FallbackChain(context.Background(), org, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "claude-sonnet-4-5" {
+		t.Fatalf("got=%v", got)
+	}
+	if _, err := reg.FallbackChain(context.Background(), uuid.Nil, model); !errors.Is(err, ErrPolicyUnavailable) {
+		t.Fatalf("nil org err=%v", err)
+	}
+	failCache, err := NewCache(&fakeLoader{err: errors.New("db down")}, Config{CacheTTL: time.Minute, LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failReg, err := NewOrgAwareRegistry(base, failCache, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := failReg.FallbackChain(context.Background(), org, model); !errors.Is(err, ErrPolicyUnavailable) {
+		t.Fatalf("loader err=%v", err)
+	}
 }
 
 func TestEventRoundTrip(t *testing.T) {

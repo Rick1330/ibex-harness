@@ -81,18 +81,29 @@ func (h chatCompletionHandler) tryFallbackComplete(
 
 func (h chatCompletionHandler) walkFallbackChain(args walkFallbackArgs) (fallbackSuccess, bool) {
 	for _, hopModel := range args.chain {
-		if args.p.r.Context().Err() != nil {
-			return fallbackSuccess{}, false
-		}
-		outcome, fb := h.tryFallbackHop(args, hopModel)
-		switch outcome {
-		case hopOK:
-			return fb, true
-		case hopAbort:
-			return fallbackSuccess{}, false
+		stop, fb, ok := h.advanceFallbackHop(args, hopModel)
+		if stop {
+			return fb, ok
 		}
 	}
 	return fallbackSuccess{}, false
+}
+
+func (h chatCompletionHandler) advanceFallbackHop(
+	args walkFallbackArgs,
+	hopModel string,
+) (stop bool, fb fallbackSuccess, ok bool) {
+	if args.p.r.Context().Err() != nil {
+		return true, fallbackSuccess{}, false
+	}
+	switch outcome, hop := h.tryFallbackHop(args, hopModel); outcome {
+	case hopOK:
+		return true, hop, true
+	case hopAbort:
+		return true, fallbackSuccess{}, false
+	default:
+		return false, fallbackSuccess{}, false
+	}
 }
 
 func (h chatCompletionHandler) tryFallbackHop(args walkFallbackArgs, hopModel string) (hopResult, fallbackSuccess) {

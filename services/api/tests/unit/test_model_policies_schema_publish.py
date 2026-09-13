@@ -94,6 +94,21 @@ def test_create_rejects_fallback_chain_over_max_entries() -> None:
         )
 
 
+def test_patch_rejects_empty_fallback_entry() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyPatch(fallback_chain=["  "])
+
+
+def test_patch_rejects_overlong_fallback_entry() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyPatch(fallback_chain=["a" * 257])
+
+
+def test_patch_rejects_fallback_chain_over_max_entries() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyPatch(fallback_chain=[f"m{i}" for i in range(9)])
+
+
 def test_patch_fallback_chain_none_omitted() -> None:
     body = ModelPolicyPatch(allowed=True)
     assert body.fallback_chain is None

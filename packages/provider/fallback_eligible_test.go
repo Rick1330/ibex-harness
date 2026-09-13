@@ -69,4 +69,7 @@ func TestFallbackEligible_BYOAndIneligible(t *testing.T) {
 	if FallbackEligible(errors.New("transport"), req).Eligible {
 		t.Fatal("generic transport not eligible")
 	}
+	if FallbackEligible(&ProviderError{StatusCode: 0}, req).Eligible {
+		t.Fatal("status 0 must not be eligible")
+	}
 }

@@ -5,6 +5,14 @@ import (
 	"testing"
 )
 
+func TestFallbackChainForModel_EvaluateError(t *testing.T) {
+	t.Parallel()
+	_, err := FallbackChainForModel([]Policy{{Pattern: "[]", Allowed: true}}, "gpt-4o")
+	if err == nil {
+		t.Fatal("expected evaluate error")
+	}
+}
+
 func TestFallbackChainForModel_AllowWithChain(t *testing.T) {
 	t.Parallel()
 	policies := []Policy{{
