@@ -91,6 +91,42 @@ func TestUnit_CHInserter_InsertTraces(t *testing.T) {
 	}
 }
 
+func TestUnit_CHInserter_InsertTraces_FallbackAudit(t *testing.T) {
+	t.Parallel()
+	conn := &fakeConn{batch: &fakeBatch{}}
+	ins := newCHInserter(conn)
+	rec := sampleRecord("fb-1")
+	orig, fb := "gpt-4o", "claude-sonnet-4-5"
+	rec.OriginalModel = &orig
+	rec.FallbackModel = &fb
+	rec.FallbackReason = "provider_circuit_open"
+	if err := ins.InsertTraces(context.Background(), []TraceRecord{rec}); err != nil {
+		t.Fatal(err)
+	}
+	assertFallbackAuditRow(t, conn.batch.rows[0], wantFallbackAuditRow{
+		original: orig, fallback: fb, reason: "provider_circuit_open",
+	})
+}
+
+type wantFallbackAuditRow struct {
+	original string
+	fallback string
+	reason   string
+}
+
+func assertFallbackAuditRow(t *testing.T, row []any, want wantFallbackAuditRow) {
+	t.Helper()
+	if row[20] != want.original {
+		t.Fatalf("original=%v", row[20])
+	}
+	if row[21] != want.fallback {
+		t.Fatalf("fallback=%v", row[21])
+	}
+	if row[22] != want.reason {
+		t.Fatalf("reason=%v", row[22])
+	}
+}
+
 func TestUnit_CHInserter_EmptyNoop(t *testing.T) {
 	t.Parallel()
 	ins := newCHInserter(&fakeConn{})

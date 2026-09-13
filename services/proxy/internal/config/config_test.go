@@ -96,6 +96,28 @@ func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	assertApplyDefaultsSession(t, cfg)
 	assertApplyDefaultsCheckpoint(t, cfg)
 	assertApplyDefaultsClickHouse(t, cfg)
+	if cfg.MaxFallbackDepth != defaultMaxFallbackDepth {
+		t.Fatalf("MaxFallbackDepth=%d", cfg.MaxFallbackDepth)
+	}
+}
+
+func TestUnit_Config_MaxFallbackDepthClamp(t *testing.T) {
+	t.Parallel()
+	cfg := Config{MaxFallbackDepth: 0}
+	cfg.ApplyDefaults()
+	if cfg.MaxFallbackDepth != 1 {
+		t.Fatalf("got %d", cfg.MaxFallbackDepth)
+	}
+	neg := Config{MaxFallbackDepth: -3}
+	neg.ApplyDefaults()
+	if neg.MaxFallbackDepth != 1 {
+		t.Fatalf("neg got %d", neg.MaxFallbackDepth)
+	}
+	keep := Config{MaxFallbackDepth: 3}
+	keep.ApplyDefaults()
+	if keep.MaxFallbackDepth != 3 {
+		t.Fatalf("keep got %d", keep.MaxFallbackDepth)
+	}
 }
 
 func assertApplyDefaultsSession(t *testing.T, cfg Config) {

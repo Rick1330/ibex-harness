@@ -141,6 +141,14 @@ func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerif
 }
 
 func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
+	depth := deps.cfg.MaxFallbackDepth
+	if depth < 1 {
+		depth = 1
+	}
+	var pf policyFallbackChain
+	if v, ok := deps.modelRouter.(policyFallbackChain); ok {
+		pf = v
+	}
 	return chatCompletionHandler{
 		log:                      deps.logger,
 		docsBase:                 deps.docsBase,
@@ -158,5 +166,8 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		contextEnabled:           deps.contextEnabled,
 		turnBuffer:               deps.turnBuffer,
 		credentialResolver:       deps.credentialResolver,
+		modelRouter:              deps.modelRouter,
+		policyFallback:           pf,
+		maxFallbackDepth:         depth,
 	}
 }

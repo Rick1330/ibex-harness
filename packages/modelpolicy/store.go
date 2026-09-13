@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -87,7 +88,7 @@ func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
 
 func scanOrgPolicies(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) ([]Policy, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id::text, org_id::text, model_pattern, allowed, priority
+		SELECT id::text, org_id::text, model_pattern, allowed, priority, fallback_chain
 		FROM ibex_core.org_model_policies
 		WHERE org_id = $1
 		ORDER BY priority ASC, model_pattern ASC`, orgID)
@@ -99,9 +100,11 @@ func scanOrgPolicies(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) ([]Policy
 	out := make([]Policy, 0)
 	for rows.Next() {
 		var p Policy
-		if err := rows.Scan(&p.ID, &p.OrgID, &p.Pattern, &p.Allowed, &p.Priority); err != nil {
+		var chain pq.StringArray
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Pattern, &p.Allowed, &p.Priority, &chain); err != nil {
 			return nil, fmt.Errorf("modelpolicy: scan: %w", err)
 		}
+		p.FallbackChain = NormalizeFallbackChain([]string(chain))
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {

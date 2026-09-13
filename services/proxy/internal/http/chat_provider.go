@@ -40,6 +40,7 @@ type providerSuccessParams struct {
 	providerName string
 	resp         provider.Response
 	claim        *idempotencyClaim
+	audit        fallbackAudit
 }
 
 type providerFailureParams struct {
@@ -50,6 +51,22 @@ type providerFailureParams struct {
 	parsed       *llm.ChatCompletionRequest
 	providerName string
 	claim        *idempotencyClaim
+}
+
+type primaryCompleteErrorArgs struct {
+	p         chatForwardParams
+	claim     *idempotencyClaim
+	provReq   provider.Request
+	requestID string
+	err       error
+}
+
+type finishProviderArgs struct {
+	p     chatForwardParams
+	claim *idempotencyClaim
+	prov  provider.Provider
+	resp  provider.Response
+	audit fallbackAudit
 }
 
 func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
@@ -92,30 +109,76 @@ func (h chatCompletionHandler) completeAndRespond(
 	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), providerElapsed.Seconds())
 	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerElapsed.Milliseconds()))
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
+		h.handlePrimaryCompleteError(primaryCompleteErrorArgs{
+			p: p, claim: claim, provReq: provReq, requestID: requestID, err: err,
+		})
+		return
+	}
+	h.finishProviderResponse(finishProviderArgs{p: p, claim: claim, prov: p.prov, resp: resp})
+}
+
+func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteErrorArgs) {
+	p, claim, provReq, err := args.p, args.claim, args.provReq, args.err
+	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
+		return
+	}
+	// Request already done (deadline/other) — surface primary failure, never fallback.
+	if p.r.Context().Err() != nil {
 		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: requestID,
+			w: p.w, r: p.r, err: err, requestID: args.requestID,
 			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
 		})
 		return
 	}
+	elig := provider.FallbackEligible(err, provReq)
+	if !elig.Eligible {
+		h.writeProviderFailure(providerFailureParams{
+			w: p.w, r: p.r, err: err, requestID: args.requestID,
+			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
+		})
+		return
+	}
+	fb, ok := h.tryFallbackComplete(p, provReq, elig.Reason)
+	if !ok {
+		if errors.Is(p.r.Context().Err(), context.Canceled) {
+			return
+		}
+		h.writeProviderFailure(providerFailureParams{
+			w: p.w, r: p.r, err: err, requestID: args.requestID,
+			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
+		})
+		return
+	}
+	h.finishProviderResponse(finishProviderArgs{
+		p: p, claim: claim, prov: fb.prov, resp: fb.resp,
+		audit: fallbackAudit{
+			OriginalModel: fallbackOriginalModel(provReq.Model, p.parsed),
+			FallbackModel: fb.model,
+			Reason:        fb.reason,
+		},
+	})
+}
+
+func (h chatCompletionHandler) finishProviderResponse(args finishProviderArgs) {
+	p, claim, prov, resp, audit := args.p, args.claim, args.prov, args.resp, args.audit
 	defer func() {
 		//nolint:errcheck // upstream body close after successful read; copy errors handled separately
 		_ = resp.Body.Close()
 	}()
+	// Streaming may begin only after a successful Complete. Never call fallback
+	// after forwardSSEStream (double-billing / duplicate SSE risk).
 	if p.parsed.Stream {
 		forwardSSEStream(streamForwardParams{
-			w: p.w, r: p.r, resp: resp, provider: p.prov.Name(),
+			w: p.w, r: p.r, resp: resp, provider: prov.Name(),
 			metrics: h.metrics, log: h.log, docsBase: h.docsBase,
-			onComplete: h.streamCheckpointHook(p.r, p.parsed, p.prov.Name()),
+			audit:      audit,
+			onComplete: h.streamCheckpointHook(p.r, p.parsed, prov.Name(), audit),
 		})
 		return
 	}
 	h.writeProviderSuccess(providerSuccessParams{
-		w: p.w, r: p.r, parsed: p.parsed, providerName: p.prov.Name(), resp: resp,
-		claim: claim,
+		w: p.w, r: p.r, parsed: p.parsed, providerName: prov.Name(), resp: resp,
+		claim: claim, audit: audit,
 	})
 }
 
@@ -230,6 +293,7 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 	setSessionResponseHeader(p.w, p.r.Context())
 	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "application/json")
+	h.acceptFallbackSubstitution(p.w, p.audit)
 	p.w.WriteHeader(p.resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream JSON body; client disconnect is acceptable
 	httpsession.WriteJSONBody(p.w, out)
@@ -238,9 +302,10 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 	h.finishIdempotency(p.claim, p.resp.StatusCode, out)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
-		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
+		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: p.resp.Usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
+		OriginalModel: p.audit.OriginalModel, FallbackModel: p.audit.FallbackModel, FallbackReason: p.audit.Reason,
 	}, requestOutcome{
 		StatusCode: uint16(p.resp.StatusCode),
 		IsComplete: true,
@@ -291,6 +356,7 @@ func (h chatCompletionHandler) streamCheckpointHook(
 	r *http.Request,
 	parsed *llm.ChatCompletionRequest,
 	providerName string,
+	audit fallbackAudit,
 ) func(context.Context, streamCheckpointResult) {
 	return func(ctx context.Context, res streamCheckpointResult) {
 		status := uint16(http.StatusOK)
@@ -300,8 +366,9 @@ func (h chatCompletionHandler) streamCheckpointHook(
 		}
 		h.enqueuePostResponse(ctx, checkpointInput{
 			Messages: parsed.Messages, CompletionText: res.content,
-			Model: parsed.Model, Provider: providerName, Usage: res.usage,
+			Model: checkpointModel(parsed, audit), Provider: providerName, Usage: res.usage,
 			Latency: res.latency, IsStreaming: true, IsComplete: res.complete,
+			OriginalModel: audit.OriginalModel, FallbackModel: audit.FallbackModel, FallbackReason: audit.Reason,
 		}, requestOutcome{
 			StatusCode: status,
 			IsComplete: res.complete,

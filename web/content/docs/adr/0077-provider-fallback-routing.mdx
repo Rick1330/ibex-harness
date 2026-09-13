@@ -1,0 +1,37 @@
+---
+title: "ADR-0077: Provider Fallback Routing"
+description: "Error-driven opt-in model fallback on circuit_open/5xx/timeout with per-replica breakers and pre-stream cutoff"
+adrId: "0077"
+status: "Accepted"
+date: "2026-09-12"
+authors: "IBEX Harness team"
+---
+
+# ADR-0077: Provider Fallback Routing
+
+- **Status:** Accepted
+- **Date:** 2026-09-12
+- **Authors:** IBEX Harness team
+- **Milestone:** [4.C.4 Fallback routing](/roadmap/phase-4-multi-provider/milestones/4.c.4-fallback-routing)
+- **Related:** [ADR-0075](/docs/adr/0075-per-org-model-routing-policy), [ADR-0076](/docs/adr/0076-circuit-breaker-per-provider), [ADR-0033](/docs/adr/0033-clickhouse-schema)
+
+## Context
+
+Circuit breakers (4.C.3) fail fast when a provider is unhealthy but do not recover the request. Org model policies (4.C.2) gate allow/deny but deferred `fallback_chain` until a consumer existed. Milestone 4.C.4 adds transparent substitution to a configured next model when the primary `Complete` fails for breaker-open, 5xx (after adapter retries), or timeout — never for 4xx (including 429).
+
+## Decision
+
+1. **Error-driven breaker observation only.** Detect open via `errors.As` → `*provider.ProviderError` with `Reason == ErrorReasonCircuitOpen` on the failed primary `Complete`. No preflight `State()` peek and no widening of `provider.CircuitBreaker`.
+2. **Per-replica breaker state is accepted.** Breakers remain in-process gobreaker instances. Fallback decisions based on locally observed Complete failures may differ across proxy replicas. Shared Redis breaker state is explicitly out of scope.
+3. **Trigger matrix:** eligible = `circuit_open` OR HTTP 5xx OR timeout. **Never** 4xx, including **429**. BYO requests (`APIKeyOverride` / `BaseURLOverride`) never fallback.
+4. **Opt-in:** `org_model_policies.fallback_chain TEXT[] NOT NULL DEFAULT '{}'` with `cardinality <= 8` (API + DB). Empty = disabled. Non-empty on the first-match **allow** policy for the original model = opt-in. Runtime hop depth capped by `IBEX_PROVIDER_FALLBACK_MAX_DEPTH` (default 1) as `min(len(chain), max_depth)`.
+5. **Every hop must pass `ForOrg`.** Deny or unknown model → skip hop. Policy infrastructure failure → abort fallback and surface the original primary error (fail closed).
+6. **Streaming hard cutoff:** fallback only when primary `Complete` fails **before** `forwardSSEStream` (before any client bytes). After SSE headers flush, never fallback (double-billing / duplicate client events).
+7. **Headers** `X-IBEX-Provider-Fallback` / `X-IBEX-Provider-Used` only on successful substitution (after response acceptance, immediately before `WriteHeader`). Chain exhausted → the original mapped primary error; no fallback headers.
+8. **ClickHouse:** additive `original_model`, `fallback_model`, `fallback_reason` on `ibex.llm_traces`. Usage attributes to the fallback model; audit fields record original + reason. Non-fallback rows leave new fields null/empty.
+
+## Consequences
+
+- Operators configure chains on allow policies; depth is a process env knob.
+- Multi-replica open detection is best-effort and LB-dependent; document for operators.
+- Streaming clients still get fail-fast 503 on mid-stream upstream death without model swap.

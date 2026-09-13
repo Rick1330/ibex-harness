@@ -42,7 +42,17 @@ func Assemble(in AssembleInput) ibexch.TraceRecord {
 		ErrorCode:          in.Outcome.ErrorCode,
 		RequestedAt:        requested.UTC(),
 		CompletedAt:        completed.UTC(),
+		OriginalModel:      optionalNonEmpty(in.OriginalModel),
+		FallbackModel:      optionalNonEmpty(in.FallbackModel),
+		FallbackReason:     in.FallbackReason,
 	}
+}
+
+func optionalNonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func usageTokenCounts(u *provider.Usage) (in, out, total uint32) {

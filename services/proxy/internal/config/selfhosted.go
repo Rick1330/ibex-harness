@@ -16,6 +16,7 @@ const (
 	defaultBreakerBucketPeriod     = 3 * time.Second
 	defaultBreakerMinSamples       = 10
 	defaultBreakerFailureRate      = 0.5
+	defaultMaxFallbackDepth        = 1
 )
 
 // SelfHostedConfig holds OpenAI-compatible self-hosted backend settings (vLLM-first).

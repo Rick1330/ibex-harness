@@ -223,6 +223,9 @@ type chatCompletionHandler struct {
 	contextEnabled           bool
 	turnBuffer               *extractionbuffer.Buffer
 	credentialResolver       credentialResolver
+	modelRouter              ProviderResolver
+	policyFallback           policyFallbackChain
+	maxFallbackDepth         int
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

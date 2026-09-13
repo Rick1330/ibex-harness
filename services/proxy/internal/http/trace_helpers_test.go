@@ -79,6 +79,28 @@ func assertStatusOK(t *testing.T, code int) {
 	}
 }
 
+type wantTraceFallback struct {
+	original string
+	fallback string
+	reason   string
+}
+
+func assertTraceFallbackAudit(t *testing.T, rec ibexch.TraceRecord, want wantTraceFallback) {
+	t.Helper()
+	if rec.Model != want.fallback {
+		t.Fatalf("model=%s want %s", rec.Model, want.fallback)
+	}
+	if rec.OriginalModel == nil || *rec.OriginalModel != want.original {
+		t.Fatalf("original=%v want %q", rec.OriginalModel, want.original)
+	}
+	if rec.FallbackModel == nil || *rec.FallbackModel != want.fallback {
+		t.Fatalf("fallback=%v want %q", rec.FallbackModel, want.fallback)
+	}
+	if rec.FallbackReason != want.reason {
+		t.Fatalf("reason=%q want %q", rec.FallbackReason, want.reason)
+	}
+}
+
 func mustPool(t *testing.T) *asyncpool.Pool {
 	t.Helper()
 	pool, err := asyncpool.New(2, 8, nil)

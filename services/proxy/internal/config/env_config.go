@@ -58,6 +58,7 @@ type envConfig struct {
 	ProviderBreakerBucketSecs int               `env:"IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS"`
 	ProviderBreakerMinSamples uint32            `env:"IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES"`
 	ProviderBreakerFailRate   float64           `env:"IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE"`
+	ProviderFallbackMaxDepth  int               `env:"IBEX_PROVIDER_FALLBACK_MAX_DEPTH"`
 	AuthCacheEnabled          string            `env:"IBEX_AUTH_CACHE_ENABLED" envDefault:"true"`
 	AuthCacheLRUCapacity      int               `env:"IBEX_AUTH_CACHE_LRU_CAPACITY"`
 	AuthCacheLRUMaxTTL        time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
@@ -106,6 +107,7 @@ func loadFromEnv() (Config, error) {
 	cfg.ProviderBreakerBucketPeriod = durationFromEnvSeconds(envCfg.ProviderBreakerBucketSecs)
 	cfg.ProviderBreakerMinSamples = envCfg.ProviderBreakerMinSamples
 	cfg.ProviderBreakerFailureRate = envCfg.ProviderBreakerFailRate
+	cfg.MaxFallbackDepth = envCfg.ProviderFallbackMaxDepth
 	overlays, err := ParseCapabilityOverlays(envCfg.ModelCapabilityOverlays)
 	if err != nil {
 		return Config{}, err

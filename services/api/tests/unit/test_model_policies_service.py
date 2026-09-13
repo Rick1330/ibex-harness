@@ -43,6 +43,7 @@ def _policy_row(**overrides) -> SimpleNamespace:
         "model_pattern": "claude-*",
         "allowed": True,
         "priority": 100,
+        "fallback_chain": [],
         "created_at": now,
         "updated_at": now,
     }
@@ -156,8 +157,56 @@ async def test_create_persists_and_publishes() -> None:
         session, org_id, body, deps=svc.WriteDeps(publisher=publisher)
     )
     assert got.model_pattern == "gpt-*"
+    assert got.fallback_chain == []
     assert publisher.published == [str(org_id)]
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_persists_fallback_chain() -> None:
+    org_id = uuid4()
+    chain = ["claude-sonnet-4-5", "gpt-4o-mini"]
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=_Rows(
+            row=_policy_row(org_id=org_id, model_pattern="gpt-*", fallback_chain=chain)
+        )
+    )
+    session.commit = AsyncMock()
+    body = ModelPolicyCreate(model_pattern="gpt-*", allowed=True, fallback_chain=chain)
+    got = await svc.create_policy(session, org_id, body, deps=svc.WriteDeps())
+    assert got.fallback_chain == chain
+    params = session.execute.await_args.args[1]
+    assert params["fallback_chain"] == chain
+
+
+@pytest.mark.asyncio
+async def test_row_to_response_accepts_sequence_chain() -> None:
+    row = _policy_row(fallback_chain=("claude-sonnet-4-5",))
+    got = svc._row_to_response(row)
+    assert got.fallback_chain == ["claude-sonnet-4-5"]
+
+
+@pytest.mark.asyncio
+async def test_patch_updates_fallback_chain() -> None:
+    org_id = uuid4()
+    policy_id = uuid4()
+    chain = ["gpt-4o-mini"]
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=_Rows(
+            row=_policy_row(id=policy_id, org_id=org_id, fallback_chain=chain)
+        )
+    )
+    session.commit = AsyncMock()
+    body = ModelPolicyPatch(fallback_chain=chain)
+    got = await svc.patch_policy(
+        session,
+        svc.PatchArgs(org_id=org_id, policy_id=policy_id, body=body, deps=svc.WriteDeps()),
+    )
+    assert got.fallback_chain == chain
+    params = session.execute.await_args.args[1]
+    assert params["fallback_chain"] == chain
 
 
 @pytest.mark.asyncio

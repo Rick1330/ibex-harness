@@ -95,6 +95,7 @@ See [.env.example](.env.example).
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_BUCKET_PERIOD_SECONDS` | `3` | Rolling-window bucket width |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_MIN_SAMPLES` | `10` | Min samples before rolling trip |
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURE_RATE` | `0.5` | Rolling failure-rate threshold (0–1] |
+| `IBEX_PROVIDER_FALLBACK_MAX_DEPTH` | `1` | Max policy fallback hops after primary Complete failure |
 | `IBEX_IDEMPOTENCY_TTL` | `24h` | Idempotency-Key Redis TTL (non-streaming chat) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | `50ms` | Idempotency Redis budget |
 | `IBEX_TOKENIZER_MODE` | `local` | `local` only in G2.M1 (`service`/`dual` rejected at validate) |

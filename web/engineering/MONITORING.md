@@ -230,7 +230,8 @@ Every service must publish these metrics:
 - `ibex_proxy_auth_cache_bloom_fp_total`
 - `ibex_proxy_revocation_invalidate_total` — LRU invalidations from Redis pub/sub
 - `ibex_proxy_fallbacks_total{reason}`
-  - reasons: `context_timeout|redis_down|auth_down|memory_timeout|provider_circuit_open`
+  - reasons (provider substitution, ADR-0077): `provider_circuit_open|provider_5xx|provider_timeout`
+  - reserved / other features (not yet emitted by proxy): `context_timeout|redis_down|auth_down|memory_timeout`
 - `ibex_proxy_circuit_breaker_state_current{provider,state}`
   - state: `closed|open|half_open`
 

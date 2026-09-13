@@ -24,6 +24,7 @@ var requiredLLMTraceColumns = []string{
 	"auth_latency_ms", "directive_latency_ms", "provider_ttfb_ms", "total_latency_ms",
 	"status_code", "is_complete", "error_code",
 	"requested_at", "completed_at", "event_date",
+	"original_model", "fallback_model", "fallback_reason",
 }
 
 func testMigrateConn() Conn {

@@ -2,7 +2,7 @@
 title: "4.C.4 Fallback Routing"
 description: "Transparent model rerouting when primary provider circuit breaker is open, with opt-in per-org policy, fallback chain depth cap, and full tracing."
 summary: "Transparent model rerouting when primary provider circuit breaker is open, with opt-in per-org policy, fallback chain depth cap, and full tracing."
-status: "planned"
+status: "in-progress"
 milestoneId: "4.C.4"
 track: "C"
 trackTitle: "Multi-Provider Adapters & Resilience"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.C.4 — Fallback Routing"
 
 # Milestone 4.C.4 — Fallback Routing
 
-**Status:** Planned  
+**Status:** In progress  
 **Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 2 days  
@@ -28,6 +28,15 @@ fullTitle: "Milestone 4.C.4 — Fallback Routing"
   libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
   that are expected to change once the live code, constraints, and research during implementation
   make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+<Callout type="warning" title="Planning baseline (sketch deviations)">
+  Discovery against post-#817/#820 `main` corrected several sketch assumptions:
+
+  - **`fallback_chain` was not pre-added** in `000029` — ADR-0075 deferred it; 4.C.4 adds it in `000030`.
+  - **ClickHouse `llm_traces` lacked** `original_model` / `fallback_model` / `fallback_reason` — additive CH migration `000003` is required.
+  - **Fallback decision lives in the chat handler** (`completeAndRespond`) after primary `Complete` fails — not in `ProviderRoutingMiddleware`, which only selects a provider before any upstream call.
+  - **Breakers are per-replica in-process** (no shared Redis state). Fallback based on locally observed Complete failures may differ across replicas; this is an accepted limitation ([ADR-0077](/docs/adr/0077-provider-fallback-routing)).
 </Callout>
 
 ## Why This Milestone Exists

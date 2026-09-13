@@ -28,7 +28,8 @@ _INSERT_SQL = (
     "input_tokens, output_tokens, total_tokens, "
     "auth_latency_ms, directive_latency_ms, provider_ttfb_ms, total_latency_ms, "
     "status_code, is_complete, error_code, "
-    "requested_at, completed_at"
+    "requested_at, completed_at, "
+    "original_model, fallback_model, fallback_reason"
     ") FORMAT JSONEachRow"
 )
 
@@ -138,6 +139,9 @@ def _row_json(row: ExtractionTraceRow) -> str:
         "error_code": row.error_code,
         "requested_at": _ch_datetime(row.requested_at),
         "completed_at": _ch_datetime(row.completed_at),
+        "original_model": None,
+        "fallback_model": None,
+        "fallback_reason": "",
     }
     return json.dumps(body)
 

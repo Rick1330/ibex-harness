@@ -66,6 +66,59 @@ def test_create_strips_pattern() -> None:
     assert body.model_pattern == "claude-*"
 
 
+def test_create_accepts_fallback_chain() -> None:
+    body = ModelPolicyCreate(
+        model_pattern="gpt-*",
+        allowed=True,
+        fallback_chain=["claude-sonnet-4-5", "gpt-4o-mini"],
+    )
+    assert body.fallback_chain == ["claude-sonnet-4-5", "gpt-4o-mini"]
+
+
+def test_create_rejects_empty_fallback_entry() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(model_pattern="gpt-*", allowed=True, fallback_chain=["  "])
+
+
+def test_create_rejects_overlong_fallback_entry() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(model_pattern="gpt-*", allowed=True, fallback_chain=["a" * 257])
+
+
+def test_create_rejects_fallback_chain_over_max_entries() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(
+            model_pattern="gpt-*",
+            allowed=True,
+            fallback_chain=[f"m{i}" for i in range(9)],
+        )
+
+
+def test_patch_rejects_empty_fallback_entry() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyPatch(fallback_chain=["  "])
+
+
+def test_patch_rejects_overlong_fallback_entry() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyPatch(fallback_chain=["a" * 257])
+
+
+def test_patch_rejects_fallback_chain_over_max_entries() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyPatch(fallback_chain=[f"m{i}" for i in range(9)])
+
+
+def test_patch_fallback_chain_none_omitted() -> None:
+    body = ModelPolicyPatch(allowed=True)
+    assert body.fallback_chain is None
+
+
+def test_patch_fallback_chain_empty_list() -> None:
+    body = ModelPolicyPatch(fallback_chain=[])
+    assert body.fallback_chain == []
+
+
 def test_patch_omitted_pattern_stays_none() -> None:
     body = ModelPolicyPatch(allowed=False)
     assert body.model_pattern is None

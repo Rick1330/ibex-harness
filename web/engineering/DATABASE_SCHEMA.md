@@ -1127,8 +1127,8 @@ CREATE POLICY rate_limit_overrides_isolation ON ibex_core.rate_limit_overrides
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.rate_limit_overrides TO ibex_app;
 
 -- ================================================================
--- ORG MODEL POLICIES (m4.C.2 / ADR-0075)
--- Per-org allow/deny globs for model routing; no fallback_chain until 4.C.4
+-- ORG MODEL POLICIES (m4.C.2 / ADR-0075; fallback_chain m4.C.4 / ADR-0077)
+-- Per-org allow/deny globs for model routing; fallback_chain opt-in (max 8 entries)
 -- ================================================================
 CREATE TABLE ibex_core.org_model_policies (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1139,6 +1139,8 @@ CREATE TABLE ibex_core.org_model_policies (
                    CHECK (char_length(model_pattern) BETWEEN 1 AND 256),
     allowed        BOOLEAN NOT NULL,
     priority       INTEGER NOT NULL,
+    fallback_chain TEXT[] NOT NULL DEFAULT '{}'
+                   CHECK (cardinality(fallback_chain) <= 8),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

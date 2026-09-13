@@ -68,7 +68,12 @@ def test_insert_posts_json_each_row_without_content() -> None:
     assert body["org_id"] == str(row.org_id)
     assert body["is_streaming"] is False
     assert body["total_tokens"] == 14
+    assert body["original_model"] is None
+    assert body["fallback_model"] is None
+    assert body["fallback_reason"] == ""
     assert "FORMAT JSONEachRow" in str(captured["query"]["query"])
+    assert "original_model" in str(captured["query"]["query"])
+    assert "fallback_reason" in str(captured["query"]["query"])
 
 
 def _dsn_client(handler) -> tuple[str, httpx.Client]:

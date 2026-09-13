@@ -84,6 +84,11 @@ type CheckpointInput struct {
 	ProviderReqID  string
 	IsStreaming    bool
 	IsComplete     bool
+	// OriginalModel / FallbackModel / FallbackReason audit a successful
+	// provider substitution (ADR-0077). Empty when no fallback occurred.
+	OriginalModel  string
+	FallbackModel  string
+	FallbackReason string
 }
 
 // SnapshotMeta is request-scoped identity the parent extracts from context.

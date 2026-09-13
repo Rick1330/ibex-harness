@@ -76,8 +76,8 @@ func MapError(err error) (mapped *apierror.Error, write bool) {
 			Reason:       pe.Reason,
 		}), true
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return MapProviderError(MapInput{TransportErr: context.DeadlineExceeded}), true
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrUpstreamTimeout) {
+		return MapProviderError(MapInput{TransportErr: ErrUpstreamTimeout}), true
 	}
 	return MapProviderError(MapInput{TransportErr: err}), true
 }
@@ -89,7 +89,7 @@ func mapTransport(in MapInput) (*apierror.Error, bool) {
 	if errors.Is(in.TransportErr, context.Canceled) {
 		return nil, true
 	}
-	if errors.Is(in.TransportErr, context.DeadlineExceeded) {
+	if errors.Is(in.TransportErr, context.DeadlineExceeded) || errors.Is(in.TransportErr, ErrUpstreamTimeout) {
 		return &apierror.Error{
 			Code:       apierror.CodeProviderTimeout,
 			Message:    msgProviderTimeout,
