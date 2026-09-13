@@ -81,7 +81,13 @@ func TestNormalizeFallbackChain_AllEmpty(t *testing.T) {
 func TestNormalizeFallbackChain_TrimsAndDrops(t *testing.T) {
 	t.Parallel()
 	got := NormalizeFallbackChain([]string{" a ", "", "b"})
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("got=%v", got)
+	if len(got) != 2 {
+		t.Fatalf("len=%d got=%v", len(got), got)
+	}
+	if got[0] != "a" {
+		t.Fatalf("got[0]=%q", got[0])
+	}
+	if got[1] != "b" {
+		t.Fatalf("got[1]=%q", got[1])
 	}
 }

@@ -26,20 +26,21 @@ _PATTERN_DESC = (
 )
 
 
+def _normalize_fallback_entry(raw: str) -> str:
+    m = (raw or "").strip()
+    if not m:
+        raise ValueError("fallback_chain entries must be non-empty")
+    if len(m) > _MODEL_ID_MAX:
+        raise ValueError(f"fallback_chain entry exceeds {_MODEL_ID_MAX} characters")
+    return m
+
+
 def _normalize_fallback_chain(value: list[str] | None) -> list[str]:
     if not value:
         return []
     if len(value) > _FALLBACK_CHAIN_MAX:
         raise ValueError(f"fallback_chain exceeds {_FALLBACK_CHAIN_MAX} entries")
-    out: list[str] = []
-    for raw in value:
-        m = (raw or "").strip()
-        if not m:
-            raise ValueError("fallback_chain entries must be non-empty")
-        if len(m) > _MODEL_ID_MAX:
-            raise ValueError(f"fallback_chain entry exceeds {_MODEL_ID_MAX} characters")
-        out.append(m)
-    return out
+    return [_normalize_fallback_entry(raw) for raw in value]
 
 
 class ModelPolicyCreate(BaseModel):

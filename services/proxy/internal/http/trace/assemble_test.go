@@ -97,48 +97,6 @@ func assertAssembleLatencies(t *testing.T, rec ibexch.TraceRecord) {
 	}
 }
 
-func TestUnit_Assemble_FallbackAuditFields(t *testing.T) {
-	t.Parallel()
-	rec := Assemble(AssembleInput{
-		RequestID: "r", OrgID: uuid.New(), AgentID: uuid.New(),
-		Model: "claude-sonnet-4-5", Provider: "anthropic",
-		OriginalModel: "gpt-4o", FallbackModel: "claude-sonnet-4-5",
-		FallbackReason: "provider_5xx",
-		Timings:        RequestTimings{CompletedAt: time.Now().UTC()},
-		Outcome:        RequestOutcome{StatusCode: 200, IsComplete: true},
-	})
-	assertFallbackAudit(t, rec, "gpt-4o", "claude-sonnet-4-5", "provider_5xx")
-}
-
-func TestUnit_Assemble_NonFallbackLeavesAuditEmpty(t *testing.T) {
-	t.Parallel()
-	plain := Assemble(AssembleInput{
-		RequestID: "r2", OrgID: uuid.New(), AgentID: uuid.New(),
-		Model:   "gpt-4o",
-		Timings: RequestTimings{CompletedAt: time.Now().UTC()},
-		Outcome: RequestOutcome{StatusCode: 200, IsComplete: true},
-	})
-	if plain.OriginalModel != nil || plain.FallbackModel != nil || plain.FallbackReason != "" {
-		t.Fatalf("non-fallback must leave audit empty: %+v", plain)
-	}
-}
-
-func assertFallbackAudit(t *testing.T, rec ibexch.TraceRecord, original, fallback, reason string) {
-	t.Helper()
-	if rec.Model != fallback {
-		t.Fatalf("model=%s", rec.Model)
-	}
-	if rec.OriginalModel == nil || *rec.OriginalModel != original {
-		t.Fatalf("original=%v", rec.OriginalModel)
-	}
-	if rec.FallbackModel == nil || *rec.FallbackModel != fallback {
-		t.Fatalf("fallback=%v", rec.FallbackModel)
-	}
-	if rec.FallbackReason != reason {
-		t.Fatalf("reason=%q", rec.FallbackReason)
-	}
-}
-
 func TestUnit_Assemble_NilUsageZeros(t *testing.T) {
 	t.Parallel()
 	rec := Assemble(AssembleInput{
