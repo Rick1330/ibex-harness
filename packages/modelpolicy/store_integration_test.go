@@ -172,7 +172,10 @@ func TestStore_FallbackChainRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if len(got) != 2 {
+		t.Fatalf("len=%d want 2 got=%v", len(got), got)
+	}
+	if got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got=%v want=%v", got, want)
 	}
 }

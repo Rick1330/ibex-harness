@@ -85,6 +85,15 @@ def test_create_rejects_overlong_fallback_entry() -> None:
         ModelPolicyCreate(model_pattern="gpt-*", allowed=True, fallback_chain=["a" * 257])
 
 
+def test_create_rejects_fallback_chain_over_max_entries() -> None:
+    with pytest.raises(ValidationError):
+        ModelPolicyCreate(
+            model_pattern="gpt-*",
+            allowed=True,
+            fallback_chain=[f"m{i}" for i in range(9)],
+        )
+
+
 def test_patch_fallback_chain_none_omitted() -> None:
     body = ModelPolicyPatch(allowed=True)
     assert body.fallback_chain is None

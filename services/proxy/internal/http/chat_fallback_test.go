@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ type scriptedProvider struct {
 	name   string
 	models []string
 	errs   []error
+	body   string
 	mu     sync.Mutex
 	calls  int
 }
@@ -37,24 +39,23 @@ func (s *scriptedProvider) Complete(_ context.Context, _ provider.Request) (prov
 	if i < len(s.errs) && s.errs[i] != nil {
 		return provider.Response{}, s.errs[i]
 	}
+	body := s.body
+	if body == "" {
+		body = minimalValidChatCompletionJSON
+	}
 	return provider.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(minimalValidChatCompletionJSON)),
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}, nil
 }
 
 type fakeFallbackRouter struct {
-	byModel   map[string]provider.Provider
-	chain     []string
-	chainErr  error
-	deny      map[string]error
-	forOrgErr error
+	byModel map[string]provider.Provider
+	chain   []string
+	deny    map[string]error
 }
 
 func (f *fakeFallbackRouter) ForOrg(_ context.Context, _ uuid.UUID, model string) (provider.Provider, error) {
-	if f.forOrgErr != nil {
-		return nil, f.forOrgErr
-	}
 	if err, ok := f.deny[model]; ok {
 		return nil, err
 	}
@@ -65,45 +66,48 @@ func (f *fakeFallbackRouter) ForOrg(_ context.Context, _ uuid.UUID, model string
 }
 
 func (f *fakeFallbackRouter) FallbackChain(context.Context, uuid.UUID, string) ([]string, error) {
-	if f.chainErr != nil {
-		return nil, f.chainErr
-	}
 	return append([]string(nil), f.chain...), nil
 }
 
-func TestUnit_ChatFallback_SuccessHeadersAndModel(t *testing.T) {
-	t.Parallel()
-	primary := &scriptedProvider{
-		name: "openai", models: []string{"gpt-4o"},
-		errs: []error{&provider.ProviderError{ProviderName: "openai", StatusCode: 503}},
-	}
-	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
-	router := &fakeFallbackRouter{
-		chain: []string{"claude-sonnet-4-5"},
-		byModel: map[string]provider.Provider{
-			"gpt-4o":            primary,
-			"claude-sonnet-4-5": fallback,
-		},
-	}
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), primary, fallback)
+func pe5xx(name string, code int) *provider.ProviderError {
+	return &provider.ProviderError{ProviderName: name, StatusCode: code}
+}
+
+func fallbackChatHandler(t *testing.T, depth int, router *fakeFallbackRouter, providers ...provider.Provider) http.Handler {
+	t.Helper()
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), providers...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	met := metrics.NewProxy("fallback-success")
-	handler := mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
-		d.Config.MaxFallbackDepth = 1
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Config.MaxFallbackDepth = depth
 		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
 			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 		}}
 		d.ProviderRegistry = reg
 		d.ModelRouter = router
-		d.Metrics = met
+		d.Metrics = metrics.NewProxy("fallback-test")
 	}))
-	rec := postChat(t, handler, chatRequestOpts{
+}
+
+func postFallbackChat(t *testing.T, handler http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	return postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 		auth:    true,
 		agentID: testChatAgentID,
 	})
+}
+
+func TestUnit_ChatFallback_SuccessHeadersAndModel(t *testing.T) {
+	t.Parallel()
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
+	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
+	router := &fakeFallbackRouter{
+		chain:   []string{"claude-sonnet-4-5"},
+		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": fallback},
+	}
+	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, fallback))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -117,76 +121,34 @@ func TestUnit_ChatFallback_SuccessHeadersAndModel(t *testing.T) {
 
 func TestUnit_ChatFallback_ExhaustNoHeaders(t *testing.T) {
 	t.Parallel()
-	fail := &provider.ProviderError{ProviderName: "openai", StatusCode: 502}
+	fail := pe5xx("openai", 502)
 	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{fail}}
 	hop := &scriptedProvider{name: "openai", models: []string{"gpt-4o-mini"}, errs: []error{fail}}
 	router := &fakeFallbackRouter{
-		chain: []string{"gpt-4o-mini"},
-		byModel: map[string]provider.Provider{
-			"gpt-4o":      primary,
-			"gpt-4o-mini": hop,
-		},
+		chain:   []string{"gpt-4o-mini"},
+		byModel: map[string]provider.Provider{"gpt-4o": primary, "gpt-4o-mini": hop},
 	}
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), primary, hop)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
-		d.Config.MaxFallbackDepth = 2
-		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
-		}}
-		d.ProviderRegistry = reg
-		d.ModelRouter = router
-	}))
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
-	if rec.Code != http.StatusBadGateway && rec.Code != http.StatusServiceUnavailable {
+	rec := postFallbackChat(t, fallbackChatHandler(t, 2, router, primary, hop))
+	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get(headerIBEXProviderFallback) != "" {
+	if rec.Header().Get(headerIBEXProviderFallback) != "" || rec.Header().Get(headerIBEXProviderUsed) != "" {
 		t.Fatal("must not set fallback headers on exhaust")
-	}
-	if rec.Header().Get(headerIBEXProviderUsed) != "" {
-		t.Fatal("must not set used header on exhaust")
 	}
 }
 
 func TestUnit_ChatFallback_SkipDenyThenSuccess(t *testing.T) {
 	t.Parallel()
-	primary := &scriptedProvider{
-		name: "openai", models: []string{"gpt-4o"},
-		errs: []error{&provider.ProviderError{ProviderName: "openai", StatusCode: 503}},
-	}
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
 	ok := &scriptedProvider{name: "anthropic", models: []string{"claude-opus-4-5"}}
 	router := &fakeFallbackRouter{
 		chain: []string{"blocked-model", "claude-opus-4-5"},
 		deny:  map[string]error{"blocked-model": modelpolicy.ErrModelNotAllowedForOrg},
 		byModel: map[string]provider.Provider{
-			"gpt-4o":          primary,
-			"claude-opus-4-5": ok,
+			"gpt-4o": primary, "claude-opus-4-5": ok,
 		},
 	}
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), primary, ok)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
-		d.Config.MaxFallbackDepth = 2
-		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
-		}}
-		d.ProviderRegistry = reg
-		d.ModelRouter = router
-	}))
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	rec := postFallbackChat(t, fallbackChatHandler(t, 2, router, primary, ok))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -195,9 +157,103 @@ func TestUnit_ChatFallback_SkipDenyThenSuccess(t *testing.T) {
 	}
 }
 
-func TestUnit_ChatFallback_DepthCap(t *testing.T) {
+func TestUnit_ChatFallback_Hop4xxStopsChain(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
+	hop429 := &scriptedProvider{
+		name: "openai", models: []string{"gpt-4o-mini"},
+		errs: []error{&provider.ProviderError{ProviderName: "openai", StatusCode: 429}},
+	}
+	second := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
+	router := &fakeFallbackRouter{
+		chain: []string{"gpt-4o-mini", "claude-sonnet-4-5"},
+		byModel: map[string]provider.Provider{
+			"gpt-4o": primary, "gpt-4o-mini": hop429, "claude-sonnet-4-5": second,
+		},
+	}
+	rec := postFallbackChat(t, fallbackChatHandler(t, 2, router, primary, hop429, second))
+	if rec.Header().Get(headerIBEXProviderFallback) != "" {
+		t.Fatal("4xx hop must stop chain without substitution headers")
+	}
+	if second.calls != 0 {
+		t.Fatalf("second hop calls=%d want 0", second.calls)
+	}
+	if rec.Code == http.StatusOK {
+		t.Fatal("must not succeed after ineligible hop")
+	}
+}
+
+func TestUnit_ChatFallback_UnclassifiedForOrgAborts(t *testing.T) {
+	t.Parallel()
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
+	ok := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
+	router := &fakeFallbackRouter{
+		chain: []string{"weird-hop", "claude-sonnet-4-5"},
+		deny:  map[string]error{"weird-hop": errors.New("routing boom")},
+		byModel: map[string]provider.Provider{
+			"gpt-4o": primary, "claude-sonnet-4-5": ok,
+		},
+	}
+	rec := postFallbackChat(t, fallbackChatHandler(t, 2, router, primary, ok))
+	if rec.Header().Get(headerIBEXProviderFallback) != "" {
+		t.Fatal("unclassified ForOrg must abort without headers")
+	}
+	if ok.calls != 0 {
+		t.Fatalf("ok hop calls=%d want 0", ok.calls)
+	}
+}
+
+func TestUnit_ChatFallback_NoHeadersWhenPipelineFails(t *testing.T) {
+	t.Parallel()
+	primary := &scriptedProvider{name: "openai", models: []string{"gpt-4o"}, errs: []error{pe5xx("openai", 503)}}
+	badJSON := &scriptedProvider{
+		name: "anthropic", models: []string{"claude-sonnet-4-5"}, body: "{not-json",
+	}
+	router := &fakeFallbackRouter{
+		chain:   []string{"claude-sonnet-4-5"},
+		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": badJSON},
+	}
+	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, badJSON))
+	if rec.Code == http.StatusOK {
+		t.Fatal("invalid fallback body must fail closed")
+	}
+	if rec.Header().Get(headerIBEXProviderFallback) != "" {
+		t.Fatal("must not set fallback headers before response acceptance")
+	}
+}
+
+func TestUnit_ChatFallback_NeverOn429Primary(t *testing.T) {
+	t.Parallel()
+	primary := &scriptedProvider{
+		name: "openai", models: []string{"gpt-4o"},
+		errs: []error{&provider.ProviderError{ProviderName: "openai", StatusCode: 429}},
+	}
+	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
+	router := &fakeFallbackRouter{
+		chain:   []string{"claude-sonnet-4-5"},
+		byModel: map[string]provider.Provider{"gpt-4o": primary, "claude-sonnet-4-5": fallback},
+	}
+	rec := postFallbackChat(t, fallbackChatHandler(t, 1, router, primary, fallback))
+	if rec.Header().Get(headerIBEXProviderFallback) != "" {
+		t.Fatal("429 must not trigger fallback")
+	}
+	if fallback.calls != 0 {
+		t.Fatalf("fallback calls=%d", fallback.calls)
+	}
+}
+
+func TestUnit_ChatFallback_DepthCapAndPolicyUnavailable(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse(testChatOrgID)
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
+	p := chatForwardParams{
+		w: httptest.NewRecorder(), r: req,
+		parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
+	}
+	provReq := provider.Request{Model: "gpt-4o"}
+
+	depthH := chatCompletionHandler{
 		maxFallbackDepth: 1,
 		modelRouter: &fakeFallbackRouter{
 			chain: []string{"a", "b"},
@@ -208,22 +264,11 @@ func TestUnit_ChatFallback_DepthCap(t *testing.T) {
 		},
 		policyFallback: &fakeFallbackRouter{chain: []string{"a", "b"}},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{
-		OrgID: uuid.MustParse(testChatOrgID),
-	}))
-	_, ok := h.tryFallbackComplete(chatForwardParams{
-		w: httptest.NewRecorder(), r: req,
-		parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
-	}, provider.Request{Model: "gpt-4o"}, provider.FallbackReason5xx)
-	if ok {
-		t.Fatal("depth-1 should not reach second hop success when both denied")
+	if _, ok := depthH.tryFallbackComplete(p, provReq, provider.FallbackReason5xx); ok {
+		t.Fatal("depth-1 should not succeed when first hop denied")
 	}
-}
 
-func TestUnit_ChatFallback_PolicyUnavailableAborts(t *testing.T) {
-	t.Parallel()
-	h := chatCompletionHandler{
+	abortH := chatCompletionHandler{
 		maxFallbackDepth: 2,
 		modelRouter: &fakeFallbackRouter{
 			chain: []string{"claude-sonnet-4-5"},
@@ -231,69 +276,7 @@ func TestUnit_ChatFallback_PolicyUnavailableAborts(t *testing.T) {
 		},
 		policyFallback: &fakeFallbackRouter{chain: []string{"claude-sonnet-4-5"}},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{
-		OrgID: uuid.MustParse(testChatOrgID),
-	}))
-	_, ok := h.tryFallbackComplete(chatForwardParams{
-		w: httptest.NewRecorder(), r: req,
-		parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
-	}, provider.Request{Model: "gpt-4o"}, provider.FallbackReasonCircuitOpen)
-	if ok {
+	if _, ok := abortH.tryFallbackComplete(p, provReq, provider.FallbackReasonCircuitOpen); ok {
 		t.Fatal("policy unavailable must abort")
-	}
-}
-
-func TestUnit_TruncateChain_Concurrent(t *testing.T) {
-	t.Parallel()
-	chain := []string{"a", "b", "c"}
-	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			got := modelpolicy.TruncateChain(chain, 1)
-			if len(got) != 1 || got[0] != "a" {
-				t.Errorf("got=%v", got)
-			}
-		}()
-	}
-	wg.Wait()
-}
-
-func TestUnit_ChatFallback_NeverAfterPrimarySuccess(t *testing.T) {
-	t.Parallel()
-	// Primary Complete fails before stream → fallback still allowed (covered elsewhere).
-	// Ensure 4xx is not eligible even when chain exists.
-	primary := &scriptedProvider{
-		name: "openai", models: []string{"gpt-4o"},
-		errs: []error{&provider.ProviderError{ProviderName: "openai", StatusCode: 429}},
-	}
-	fallback := &scriptedProvider{name: "anthropic", models: []string{"claude-sonnet-4-5"}}
-	router := &fakeFallbackRouter{
-		chain: []string{"claude-sonnet-4-5"},
-		byModel: map[string]provider.Provider{
-			"gpt-4o":            primary,
-			"claude-sonnet-4-5": fallback,
-		},
-	}
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), primary, fallback)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
-		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
-		}}
-		d.ProviderRegistry = reg
-		d.ModelRouter = router
-	}))
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
-	if rec.Header().Get(headerIBEXProviderFallback) != "" {
-		t.Fatal("429 must not trigger fallback")
 	}
 }

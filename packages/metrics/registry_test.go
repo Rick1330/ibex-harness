@@ -163,6 +163,8 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncDeny()
 	reg.IncInvalidate()
 	reg.SetLRUSize(1)
+	reg.SetModelPolicyEnabled(true)
+	reg.IncProviderFallback("provider_5xx")
 	reg.IncSessionGetOrCreate("created")
 	reg.ObserveSessionGetOrCreateSeconds(0.001)
 	reg.IncSessionCheckpoint("ok")

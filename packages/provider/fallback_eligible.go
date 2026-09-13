@@ -28,22 +28,31 @@ func FallbackEligible(err error, req Request) FallbackDecision {
 	if err == nil || hasUpstreamOverride(req) {
 		return FallbackDecision{}
 	}
+	if d, ok := fallbackFromProviderError(err); ok {
+		return d
+	}
+	return fallbackFromTimeout(err)
+}
+
+func fallbackFromProviderError(err error) (FallbackDecision, bool) {
 	var pe *ProviderError
-	if errors.As(err, &pe) && pe != nil {
-		if pe.Reason == ErrorReasonCircuitOpen {
-			return FallbackDecision{Eligible: true, Reason: FallbackReasonCircuitOpen}
-		}
-		if pe.StatusCode >= 500 {
-			return FallbackDecision{Eligible: true, Reason: FallbackReason5xx}
-		}
-		if pe.StatusCode >= 400 && pe.StatusCode < 500 {
-			return FallbackDecision{}
-		}
+	if !errors.As(err, &pe) || pe == nil {
+		return FallbackDecision{}, false
 	}
-	if errors.Is(err, ErrUpstreamTimeout) {
-		return FallbackDecision{Eligible: true, Reason: FallbackReasonTimeout}
+	switch {
+	case pe.Reason == ErrorReasonCircuitOpen:
+		return FallbackDecision{Eligible: true, Reason: FallbackReasonCircuitOpen}, true
+	case pe.StatusCode >= 500:
+		return FallbackDecision{Eligible: true, Reason: FallbackReason5xx}, true
+	case pe.StatusCode >= 400 && pe.StatusCode < 500:
+		return FallbackDecision{}, true
+	default:
+		return FallbackDecision{}, false
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+}
+
+func fallbackFromTimeout(err error) FallbackDecision {
+	if errors.Is(err, ErrUpstreamTimeout) || errors.Is(err, context.DeadlineExceeded) {
 		return FallbackDecision{Eligible: true, Reason: FallbackReasonTimeout}
 	}
 	return FallbackDecision{}

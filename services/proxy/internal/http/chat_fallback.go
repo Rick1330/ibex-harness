@@ -31,6 +31,28 @@ type fallbackSuccess struct {
 	reason string
 }
 
+type fallbackAudit struct {
+	OriginalModel string
+	FallbackModel string
+	Reason        string
+}
+
+type walkFallbackArgs struct {
+	p          chatForwardParams
+	primaryReq provider.Request
+	orgID      uuid.UUID
+	chain      []string
+	reason     string
+}
+
+type hopResult int
+
+const (
+	hopContinue hopResult = iota
+	hopAbort
+	hopOK
+)
+
 func (h chatCompletionHandler) tryFallbackComplete(
 	p chatForwardParams,
 	primaryReq provider.Request,
@@ -52,50 +74,83 @@ func (h chatCompletionHandler) tryFallbackComplete(
 	if len(chain) == 0 {
 		return fallbackSuccess{}, false
 	}
-	return h.walkFallbackChain(p, primaryReq, orgID, chain, reason)
+	return h.walkFallbackChain(walkFallbackArgs{
+		p: p, primaryReq: primaryReq, orgID: orgID, chain: chain, reason: reason,
+	})
 }
 
-func (h chatCompletionHandler) walkFallbackChain(
-	p chatForwardParams,
-	primaryReq provider.Request,
-	orgID uuid.UUID,
-	chain []string,
-	reason string,
-) (fallbackSuccess, bool) {
-	for _, hopModel := range chain {
-		if errors.Is(p.r.Context().Err(), context.Canceled) {
+func (h chatCompletionHandler) walkFallbackChain(args walkFallbackArgs) (fallbackSuccess, bool) {
+	for _, hopModel := range args.chain {
+		if errors.Is(args.p.r.Context().Err(), context.Canceled) {
 			return fallbackSuccess{}, false
 		}
-		hopProv, err := h.modelRouter.ForOrg(p.r.Context(), orgID, hopModel)
-		if err != nil {
-			if errors.Is(err, modelpolicy.ErrPolicyUnavailable) {
-				return fallbackSuccess{}, false
-			}
-			if errors.Is(err, modelpolicy.ErrModelNotAllowedForOrg) ||
-				errors.Is(err, provider.ErrNoProviderForModel) {
-				continue
-			}
-			continue
+		outcome, fb := h.tryFallbackHop(args, hopModel)
+		switch outcome {
+		case hopOK:
+			return fb, true
+		case hopAbort:
+			return fallbackSuccess{}, false
 		}
-		hopReq := primaryReq
-		hopReq.Model = hopModel
-		hopReq.APIKeyOverride = ""
-		hopReq.BaseURLOverride = ""
-		start := time.Now()
-		resp, err := hopProv.Complete(p.r.Context(), hopReq)
-		elapsed := time.Since(start)
-		if h.metrics != nil {
-			h.metrics.ObserveProviderDurationSeconds(hopProv.Name(), elapsed.Seconds())
-		}
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return fallbackSuccess{}, false
-			}
-			continue
-		}
-		return fallbackSuccess{prov: hopProv, resp: resp, model: hopModel, reason: reason}, true
 	}
 	return fallbackSuccess{}, false
+}
+
+func (h chatCompletionHandler) tryFallbackHop(args walkFallbackArgs, hopModel string) (hopResult, fallbackSuccess) {
+	hopProv, err := h.resolveFallbackProvider(args, hopModel)
+	if err != nil {
+		if skipFallbackForOrgErr(err) {
+			return hopContinue, fallbackSuccess{}
+		}
+		return hopAbort, fallbackSuccess{}
+	}
+	hopReq := fallbackHopRequest(args.primaryReq, hopModel)
+	resp, err := h.completeFallbackHop(args.p.r.Context(), hopProv, hopReq)
+	if err != nil {
+		return classifyFallbackHopErr(err, hopReq)
+	}
+	return hopOK, fallbackSuccess{
+		prov: hopProv, resp: resp, model: hopModel, reason: args.reason,
+	}
+}
+
+func (h chatCompletionHandler) resolveFallbackProvider(args walkFallbackArgs, hopModel string) (provider.Provider, error) {
+	return h.modelRouter.ForOrg(args.p.r.Context(), args.orgID, hopModel)
+}
+
+func skipFallbackForOrgErr(err error) bool {
+	return errors.Is(err, modelpolicy.ErrModelNotAllowedForOrg) ||
+		errors.Is(err, provider.ErrNoProviderForModel)
+}
+
+func fallbackHopRequest(primary provider.Request, hopModel string) provider.Request {
+	hopReq := primary
+	hopReq.Model = hopModel
+	hopReq.APIKeyOverride = ""
+	hopReq.BaseURLOverride = ""
+	return hopReq
+}
+
+func (h chatCompletionHandler) completeFallbackHop(
+	ctx context.Context,
+	hopProv provider.Provider,
+	hopReq provider.Request,
+) (provider.Response, error) {
+	start := time.Now()
+	resp, err := hopProv.Complete(ctx, hopReq)
+	if h.metrics != nil {
+		h.metrics.ObserveProviderDurationSeconds(hopProv.Name(), time.Since(start).Seconds())
+	}
+	return resp, err
+}
+
+func classifyFallbackHopErr(err error, hopReq provider.Request) (hopResult, fallbackSuccess) {
+	if errors.Is(err, context.Canceled) {
+		return hopAbort, fallbackSuccess{}
+	}
+	if !provider.FallbackEligible(err, hopReq).Eligible {
+		return hopAbort, fallbackSuccess{}
+	}
+	return hopContinue, fallbackSuccess{}
 }
 
 func orgUUIDFromAuth(ctx context.Context) (uuid.UUID, bool) {
@@ -119,4 +174,24 @@ func fallbackOriginalModel(reqModel string, parsed *llm.ChatCompletionRequest) s
 func setFallbackSuccessHeaders(w http.ResponseWriter, model string) {
 	w.Header().Set(headerIBEXProviderFallback, "true")
 	w.Header().Set(headerIBEXProviderUsed, model)
+}
+
+func (h chatCompletionHandler) acceptFallbackSubstitution(w http.ResponseWriter, audit fallbackAudit) {
+	if audit.FallbackModel == "" {
+		return
+	}
+	setFallbackSuccessHeaders(w, audit.FallbackModel)
+	if h.metrics != nil {
+		h.metrics.IncProviderFallback(audit.Reason)
+	}
+}
+
+func checkpointModel(parsed *llm.ChatCompletionRequest, audit fallbackAudit) string {
+	if audit.FallbackModel != "" {
+		return audit.FallbackModel
+	}
+	if parsed == nil {
+		return ""
+	}
+	return parsed.Model
 }

@@ -37,7 +37,7 @@ func TestFallbackEligible_Never4xxIncluding429(t *testing.T) {
 	}
 }
 
-func TestFallbackEligible_TimeoutAndBYO(t *testing.T) {
+func TestFallbackEligible_Timeouts(t *testing.T) {
 	t.Parallel()
 	req := Request{Model: "m"}
 	up := FallbackEligible(ErrUpstreamTimeout, req)
@@ -52,12 +52,15 @@ func TestFallbackEligible_TimeoutAndBYO(t *testing.T) {
 	if !dead.Eligible || dead.Reason != FallbackReasonTimeout {
 		t.Fatalf("deadline: %+v", dead)
 	}
-	byoKey := FallbackEligible(ErrUpstreamTimeout, Request{APIKeyOverride: "sk"})
-	if byoKey.Eligible {
+}
+
+func TestFallbackEligible_BYOAndIneligible(t *testing.T) {
+	t.Parallel()
+	req := Request{Model: "m"}
+	if FallbackEligible(ErrUpstreamTimeout, Request{APIKeyOverride: "sk"}).Eligible {
 		t.Fatal("BYO key must not fallback")
 	}
-	byoURL := FallbackEligible(&ProviderError{StatusCode: 503}, Request{BaseURLOverride: "https://byo"})
-	if byoURL.Eligible {
+	if FallbackEligible(&ProviderError{StatusCode: 503}, Request{BaseURLOverride: "https://byo"}).Eligible {
 		t.Fatal("BYO URL must not fallback")
 	}
 	if FallbackEligible(nil, req).Eligible {

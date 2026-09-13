@@ -71,11 +71,15 @@ func TestTruncateChain_Concurrent(t *testing.T) {
 	wg.Wait()
 }
 
-func TestNormalizeFallbackChain(t *testing.T) {
+func TestNormalizeFallbackChain_AllEmpty(t *testing.T) {
 	t.Parallel()
 	if NormalizeFallbackChain([]string{"  ", ""}) != nil {
 		t.Fatal("all empty")
 	}
+}
+
+func TestNormalizeFallbackChain_TrimsAndDrops(t *testing.T) {
+	t.Parallel()
 	got := NormalizeFallbackChain([]string{" a ", "", "b"})
 	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
 		t.Fatalf("got=%v", got)

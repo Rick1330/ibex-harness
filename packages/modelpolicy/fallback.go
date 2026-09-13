@@ -2,6 +2,10 @@ package modelpolicy
 
 import "strings"
 
+// MaxFallbackChainLen is the shared stored-chain cardinality limit (API + DB CHECK).
+// Runtime hop depth remains capped separately by IBEX_PROVIDER_FALLBACK_MAX_DEPTH.
+const MaxFallbackChainLen = 8
+
 // FallbackChainForModel returns the fallback_chain from the first-match allow
 // policy for model. Empty / denied / unmatched → nil chain (opt-out).
 func FallbackChainForModel(policies []Policy, model string) ([]string, error) {
@@ -9,10 +13,14 @@ func FallbackChainForModel(policies []Policy, model string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !dec.Matched || !dec.Allowed || dec.Policy == nil {
+	if !allowPolicyMatched(dec) {
 		return nil, nil
 	}
 	return NormalizeFallbackChain(dec.Policy.FallbackChain), nil
+}
+
+func allowPolicyMatched(dec Decision) bool {
+	return dec.Matched && dec.Allowed && dec.Policy != nil
 }
 
 // TruncateChain returns at most maxDepth entries. maxDepth < 1 is treated as 1.

@@ -181,6 +181,35 @@ async def test_create_persists_fallback_chain() -> None:
 
 
 @pytest.mark.asyncio
+async def test_row_to_response_accepts_sequence_chain() -> None:
+    row = _policy_row(fallback_chain=("claude-sonnet-4-5",))
+    got = svc._row_to_response(row)
+    assert got.fallback_chain == ["claude-sonnet-4-5"]
+
+
+@pytest.mark.asyncio
+async def test_patch_updates_fallback_chain() -> None:
+    org_id = uuid4()
+    policy_id = uuid4()
+    chain = ["gpt-4o-mini"]
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        return_value=_Rows(
+            row=_policy_row(id=policy_id, org_id=org_id, fallback_chain=chain)
+        )
+    )
+    session.commit = AsyncMock()
+    body = ModelPolicyPatch(fallback_chain=chain)
+    got = await svc.patch_policy(
+        session,
+        svc.PatchArgs(org_id=org_id, policy_id=policy_id, body=body, deps=svc.WriteDeps()),
+    )
+    assert got.fallback_chain == chain
+    params = session.execute.await_args.args[1]
+    assert params["fallback_chain"] == chain
+
+
+@pytest.mark.asyncio
 async def test_create_duplicate_pattern_is_conflict() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=_integrity(_ORG_PATTERN_UNIQUE))

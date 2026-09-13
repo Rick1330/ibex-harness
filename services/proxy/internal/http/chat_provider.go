@@ -34,15 +34,13 @@ type chatForwardParams struct {
 }
 
 type providerSuccessParams struct {
-	w              http.ResponseWriter
-	r              *http.Request
-	parsed         *llm.ChatCompletionRequest
-	providerName   string
-	resp           provider.Response
-	claim          *idempotencyClaim
-	originalModel  string
-	fallbackModel  string
-	fallbackReason string
+	w            http.ResponseWriter
+	r            *http.Request
+	parsed       *llm.ChatCompletionRequest
+	providerName string
+	resp         provider.Response
+	claim        *idempotencyClaim
+	audit        fallbackAudit
 }
 
 type providerFailureParams struct {
@@ -53,6 +51,22 @@ type providerFailureParams struct {
 	parsed       *llm.ChatCompletionRequest
 	providerName string
 	claim        *idempotencyClaim
+}
+
+type primaryCompleteErrorArgs struct {
+	p         chatForwardParams
+	claim     *idempotencyClaim
+	provReq   provider.Request
+	requestID string
+	err       error
+}
+
+type finishProviderArgs struct {
+	p     chatForwardParams
+	claim *idempotencyClaim
+	prov  provider.Provider
+	resp  provider.Response
+	audit fallbackAudit
 }
 
 func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
@@ -95,26 +109,23 @@ func (h chatCompletionHandler) completeAndRespond(
 	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), providerElapsed.Seconds())
 	p.r = p.r.WithContext(withProviderDurationMs(p.r.Context(), providerElapsed.Milliseconds()))
 	if err != nil {
-		h.handlePrimaryCompleteError(p, claim, provReq, requestID, err)
+		h.handlePrimaryCompleteError(primaryCompleteErrorArgs{
+			p: p, claim: claim, provReq: provReq, requestID: requestID, err: err,
+		})
 		return
 	}
-	h.finishProviderResponse(p, claim, p.prov, resp, "", "", "")
+	h.finishProviderResponse(finishProviderArgs{p: p, claim: claim, prov: p.prov, resp: resp})
 }
 
-func (h chatCompletionHandler) handlePrimaryCompleteError(
-	p chatForwardParams,
-	claim *idempotencyClaim,
-	provReq provider.Request,
-	requestID string,
-	err error,
-) {
+func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteErrorArgs) {
+	p, claim, provReq, err := args.p, args.claim, args.provReq, args.err
 	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
 		return
 	}
 	elig := provider.FallbackEligible(err, provReq)
 	if !elig.Eligible {
 		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: requestID,
+			w: p.w, r: p.r, err: err, requestID: args.requestID,
 			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
 		})
 		return
@@ -125,29 +136,23 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(
 			return
 		}
 		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: requestID,
+			w: p.w, r: p.r, err: err, requestID: args.requestID,
 			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
 		})
 		return
 	}
-	originalModel := fallbackOriginalModel(provReq.Model, p.parsed)
-	setFallbackSuccessHeaders(p.w, fb.model)
-	if h.metrics != nil {
-		h.metrics.IncProviderFallback(fb.reason)
-	}
-	if p.parsed != nil {
-		p.parsed.Model = fb.model
-	}
-	h.finishProviderResponse(p, claim, fb.prov, fb.resp, originalModel, fb.model, fb.reason)
+	h.finishProviderResponse(finishProviderArgs{
+		p: p, claim: claim, prov: fb.prov, resp: fb.resp,
+		audit: fallbackAudit{
+			OriginalModel: fallbackOriginalModel(provReq.Model, p.parsed),
+			FallbackModel: fb.model,
+			Reason:        fb.reason,
+		},
+	})
 }
 
-func (h chatCompletionHandler) finishProviderResponse(
-	p chatForwardParams,
-	claim *idempotencyClaim,
-	prov provider.Provider,
-	resp provider.Response,
-	originalModel, fallbackModel, fallbackReason string,
-) {
+func (h chatCompletionHandler) finishProviderResponse(args finishProviderArgs) {
+	p, claim, prov, resp, audit := args.p, args.claim, args.prov, args.resp, args.audit
 	defer func() {
 		//nolint:errcheck // upstream body close after successful read; copy errors handled separately
 		_ = resp.Body.Close()
@@ -158,14 +163,14 @@ func (h chatCompletionHandler) finishProviderResponse(
 		forwardSSEStream(streamForwardParams{
 			w: p.w, r: p.r, resp: resp, provider: prov.Name(),
 			metrics: h.metrics, log: h.log, docsBase: h.docsBase,
-			onComplete: h.streamCheckpointHook(p.r, p.parsed, prov.Name(), originalModel, fallbackModel, fallbackReason),
+			audit:      audit,
+			onComplete: h.streamCheckpointHook(p.r, p.parsed, prov.Name(), audit),
 		})
 		return
 	}
 	h.writeProviderSuccess(providerSuccessParams{
 		w: p.w, r: p.r, parsed: p.parsed, providerName: prov.Name(), resp: resp,
-		claim:         claim,
-		originalModel: originalModel, fallbackModel: fallbackModel, fallbackReason: fallbackReason,
+		claim: claim, audit: audit,
 	})
 }
 
@@ -280,6 +285,7 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 	setSessionResponseHeader(p.w, p.r.Context())
 	setContextAssembleResponseHeaders(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "application/json")
+	h.acceptFallbackSubstitution(p.w, p.audit)
 	p.w.WriteHeader(p.resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream JSON body; client disconnect is acceptable
 	httpsession.WriteJSONBody(p.w, out)
@@ -288,10 +294,10 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 	h.finishIdempotency(p.claim, p.resp.StatusCode, out)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
-		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
+		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: p.resp.Usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
-		OriginalModel: p.originalModel, FallbackModel: p.fallbackModel, FallbackReason: p.fallbackReason,
+		OriginalModel: p.audit.OriginalModel, FallbackModel: p.audit.FallbackModel, FallbackReason: p.audit.Reason,
 	}, requestOutcome{
 		StatusCode: uint16(p.resp.StatusCode),
 		IsComplete: true,
@@ -342,7 +348,7 @@ func (h chatCompletionHandler) streamCheckpointHook(
 	r *http.Request,
 	parsed *llm.ChatCompletionRequest,
 	providerName string,
-	originalModel, fallbackModel, fallbackReason string,
+	audit fallbackAudit,
 ) func(context.Context, streamCheckpointResult) {
 	return func(ctx context.Context, res streamCheckpointResult) {
 		status := uint16(http.StatusOK)
@@ -352,9 +358,9 @@ func (h chatCompletionHandler) streamCheckpointHook(
 		}
 		h.enqueuePostResponse(ctx, checkpointInput{
 			Messages: parsed.Messages, CompletionText: res.content,
-			Model: parsed.Model, Provider: providerName, Usage: res.usage,
+			Model: checkpointModel(parsed, audit), Provider: providerName, Usage: res.usage,
 			Latency: res.latency, IsStreaming: true, IsComplete: res.complete,
-			OriginalModel: originalModel, FallbackModel: fallbackModel, FallbackReason: fallbackReason,
+			OriginalModel: audit.OriginalModel, FallbackModel: audit.FallbackModel, FallbackReason: audit.Reason,
 		}, requestOutcome{
 			StatusCode: status,
 			IsComplete: res.complete,
