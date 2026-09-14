@@ -222,34 +222,49 @@ async def _connect_pubsub(redis_url: str, channel: str) -> tuple[Redis, Any]:
     return client, pubsub
 
 
+def _org_id_from_fan_in_payload(payload: dict[str, Any]) -> UUID | None:
+    """Require a valid org_id on Redis fan-in payloads; drop otherwise."""
+    org_raw = payload.pop("org_id", None)
+    if org_raw is None:
+        logger.warning("operator sse redis fan-in dropped event without org_id")
+        return None
+    try:
+        return UUID(str(org_raw))
+    except ValueError:
+        logger.warning("operator sse redis fan-in dropped event with invalid org_id")
+        return None
+
+
+async def _fan_in_get_message(pubsub: Any) -> dict[str, Any] | None:
+    try:
+        return await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+    except asyncio.CancelledError:
+        raise
+    except (OSError, RedisError) as exc:
+        raise RedisError(str(exc)) from exc
+
+
+async def _fan_in_publish_message(hub: OperatorSSEHub, message: dict[str, Any]) -> None:
+    payload = _decode_fan_in_payload(message.get("data"))
+    if payload is None:
+        return
+    org_id = _org_id_from_fan_in_payload(payload)
+    if org_id is None:
+        return
+    await hub.publish(payload, org_id=org_id)
+
+
 async def _fan_in_read_loop(
     hub: OperatorSSEHub,
     pubsub: Any,
     stop: asyncio.Event,
 ) -> None:
     while not stop.is_set():
-        try:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-        except asyncio.CancelledError:
-            raise
-        except (OSError, RedisError) as exc:
-            raise RedisError(str(exc)) from exc
+        message = await _fan_in_get_message(pubsub)
         if message is None:
             await asyncio.sleep(0.05)
             continue
-        payload = _decode_fan_in_payload(message.get("data"))
-        if payload is None:
-            continue
-        org_raw = payload.pop("org_id", None)
-        if org_raw is None:
-            logger.warning("operator sse redis fan-in dropped event without org_id")
-            continue
-        try:
-            org_id = UUID(str(org_raw))
-        except ValueError:
-            logger.warning("operator sse redis fan-in dropped event with invalid org_id")
-            continue
-        await hub.publish(payload, org_id=org_id)
+        await _fan_in_publish_message(hub, message)
 
 
 async def _safe_await(label: str, coro_factory: Callable[[], Awaitable[Any]]) -> None:
