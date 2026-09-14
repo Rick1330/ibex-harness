@@ -57,60 +57,44 @@ def test_session_stub_roundtrip() -> None:
     assert not verify_csrf_token(secret="c" * 32, cookie_value=csrf, header_value="nope")
 
 
-def test_session_stub_error_paths() -> None:
-    with pytest.raises(SessionStubError):
-        verify_token_opts(
-            "a.b",
-            TokenVerifyOpts(
-                secret="s" * 32,
-                issuer="i",
-                audience="a",
-                expect_kind="access",
-            ),
-        )
-    with pytest.raises(SessionStubError):
-        verify_token_opts(
-            "a.b.c",
-            TokenVerifyOpts(
-                secret="s" * 32,
-                issuer="i",
-                audience="a",
-                expect_kind="access",
-            ),
-        )
-    org = uuid4()
-    tok = issue_token_opts(
+def _sample_access_token(*, secret: str = "s" * 32, org_id=None, ttl_seconds: int = 60) -> str:
+    return issue_token_opts(
         TokenIssueOpts(
-            secret="s" * 32,
+            secret=secret,
             issuer="ibex-harness",
             audience="ibex-dashboard",
-            org_id=org,
+            org_id=org_id or uuid4(),
             permissions=1,
             subject="u",
             session_kind=SESSION_KIND_ACCESS,
-            ttl_seconds=60,
+            ttl_seconds=ttl_seconds,
         )
     )
+
+
+def _access_verify(secret: str, issuer: str = "ibex-harness") -> TokenVerifyOpts:
+    return TokenVerifyOpts(
+        secret=secret,
+        issuer=issuer,
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+    )
+
+
+def test_session_stub_rejects_malformed_token() -> None:
+    opts = TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     with pytest.raises(SessionStubError):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret="o" * 32,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind="access",
-            ),
-        )
+        verify_token_opts("a.b", opts)
     with pytest.raises(SessionStubError):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret="s" * 32,
-                issuer="wrong",
-                audience="ibex-dashboard",
-                expect_kind="access",
-            ),
-        )
+        verify_token_opts("a.b.c", opts)
+
+
+def test_session_stub_rejects_bad_signature_issuer_and_kind() -> None:
+    tok = _sample_access_token()
+    with pytest.raises(SessionStubError):
+        verify_token_opts(tok, _access_verify("o" * 32))
+    with pytest.raises(SessionStubError):
+        verify_token_opts(tok, _access_verify("s" * 32, issuer="wrong"))
     with pytest.raises(SessionStubError):
         verify_token_opts(
             tok,
@@ -121,28 +105,12 @@ def test_session_stub_error_paths() -> None:
                 expect_kind=SESSION_KIND_REFRESH,
             ),
         )
-    expired = issue_token_opts(
-        TokenIssueOpts(
-            secret="s" * 32,
-            issuer="ibex-harness",
-            audience="ibex-dashboard",
-            org_id=org,
-            permissions=1,
-            subject="u",
-            session_kind=SESSION_KIND_ACCESS,
-            ttl_seconds=-10,
-        )
-    )
+
+
+def test_session_stub_rejects_expired_and_bad_csrf() -> None:
+    expired = _sample_access_token(ttl_seconds=-10)
     with pytest.raises(SessionStubError):
-        verify_token_opts(
-            expired,
-            TokenVerifyOpts(
-                secret="s" * 32,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-            ),
-        )
+        verify_token_opts(expired, _access_verify("s" * 32))
     assert not verify_csrf_token(secret="c" * 32, cookie_value="noperiod", header_value="noperiod")
 
 
