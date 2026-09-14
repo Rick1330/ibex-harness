@@ -59,13 +59,14 @@ describe("resolveApiBase", () => {
     assert.equal(resolveApiBase("http://user:pass@localhost:8010"), null);
   });
 
-  it("pickApiBase only returns frozen allowlist members", () => {
+  it("pickApiBase: local default only when inject absent; fail-closed when inject rejected", () => {
     assert.equal(pickApiBase(""), ALLOWED_API_ORIGINS[0]);
     assert.equal(pickApiBase("https://api.ibexharness.com"), "https://api.ibexharness.com");
-    assert.equal(pickApiBase("https://evil.example"), ALLOWED_API_ORIGINS[0]);
-    assert.equal(pickApiBase("https://api.other.ibexharness.com"), ALLOWED_API_ORIGINS[0]);
+    assert.equal(pickApiBase("https://evil.example"), null);
+    assert.equal(pickApiBase("https://api.other.ibexharness.com"), null);
     const urls = buildEndpointUrls("https://api.ibexharness.com");
     assert.equal(urls.login, "https://api.ibexharness.com/v1/operator/session/login");
+    assert.throws(() => buildEndpointUrls("https://evil.example"));
   });
 });
 
@@ -87,6 +88,11 @@ describe("classifyStreamStatus", () => {
     assert.equal(classifyStreamStatus(fakeResp(200)), "ok");
     assert.equal(isAuthFailure(403), true);
     assert.equal(isPermanentClientError(400), true);
+  });
+
+  it("treats HTTP 408 as retryable, not permanent", () => {
+    assert.equal(isPermanentClientError(408), false);
+    assert.equal(classifyStreamStatus(fakeResp(408)), "retry");
   });
 });
 

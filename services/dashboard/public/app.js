@@ -31,13 +31,16 @@ const els = {
 const injected =
   typeof window.IBEX_API_BASE_URL === "string" ? window.IBEX_API_BASE_URL.trim() : "";
 const API_BASE = pickApiBase(injected);
-const apiFetch = createApiFetch(buildEndpointUrls(API_BASE));
+const apiConfigured = API_BASE != null;
+const apiFetch = apiConfigured ? createApiFetch(buildEndpointUrls(API_BASE)) : null;
 
-els.apiBase.value = API_BASE;
+els.apiBase.value = API_BASE || injected || "(not configured)";
 els.apiBase.readOnly = true;
-els.apiBase.title = injected
-  ? "Set by deploy config (IBEX_API_BASE_URL)"
-  : "Local default (http://localhost:8010)";
+els.apiBase.title = apiConfigured
+  ? injected
+    ? "Set by deploy config (IBEX_API_BASE_URL)"
+    : "Local default (http://localhost:8010)"
+  : "Injected API origin missing or not allowlisted";
 
 let csrfToken = "";
 
@@ -57,61 +60,96 @@ function appendEvent(line) {
   }
 }
 
-const sse = createSseController({ apiFetch, setState, appendEvent });
+const sse = createSseController({
+  apiFetch: apiFetch || (async () => {
+    throw new Error("API origin not configured");
+  }),
+  setState,
+  appendEvent,
+});
+
+function requireApi() {
+  if (apiFetch) return true;
+  setState("error", "API origin missing or not allowlisted; login disabled");
+  return false;
+}
 
 async function login() {
+  if (!requireApi()) return;
   const pat = els.pat.value.trim();
   if (!pat) {
     setState("error", "PAT required for provisional login stub");
     return;
   }
   setState("reconnecting", "Exchanging PAT for session cookies…");
-  const resp = await apiFetch("login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: buildLoginBody(pat),
-  });
-  els.pat.value = "";
-  if (!resp.ok) {
-    setState("unauthenticated", `login failed: HTTP ${resp.status}`);
-    return;
+  try {
+    const resp = await apiFetch("login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: buildLoginBody(pat),
+    });
+    els.pat.value = "";
+    if (!resp.ok) {
+      setState("unauthenticated", `login failed: HTTP ${resp.status}`);
+      return;
+    }
+    const body = await resp.json();
+    csrfToken = body.csrf_token || "";
+    setState("connected", `org ${body.org_id} (provisional session)`);
+  } catch (err) {
+    els.pat.value = "";
+    setState("error", `login failed: ${err}`);
   }
-  const body = await resp.json();
-  csrfToken = body.csrf_token || "";
-  setState("connected", `org ${body.org_id} (provisional session)`);
 }
 
 async function me() {
-  const resp = await apiFetch("me");
-  if (resp.status === 401 || resp.status === 403) {
-    setState("unauthenticated", `/me rejected: HTTP ${resp.status}`);
-    return;
+  if (!requireApi()) return;
+  try {
+    const resp = await apiFetch("me");
+    if (resp.status === 401 || resp.status === 403) {
+      setState("unauthenticated", `/me rejected: HTTP ${resp.status}`);
+      return;
+    }
+    if (!resp.ok) {
+      setState("degraded", `/me failed: HTTP ${resp.status}`);
+      return;
+    }
+    const body = await resp.json();
+    setState("connected", `authenticated via ${body.auth}; org ${body.org_id}`);
+  } catch (err) {
+    setState("error", `/me failed: ${err}`);
   }
-  if (!resp.ok) {
-    setState("degraded", `/me failed: HTTP ${resp.status}`);
-    return;
-  }
-  const body = await resp.json();
-  setState("connected", `authenticated via ${body.auth}; org ${body.org_id}`);
 }
 
 async function logout() {
   sse.close();
+  if (!requireApi()) return;
   const headers = {};
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  const resp = await apiFetch("logout", { method: "POST", headers });
-  if (!resp.ok) {
-    setState("error", `logout failed: HTTP ${resp.status}`);
-    return;
+  try {
+    const resp = await apiFetch("logout", { method: "POST", headers });
+    if (!resp.ok) {
+      setState("error", `logout failed: HTTP ${resp.status}`);
+      return;
+    }
+    csrfToken = "";
+    sse.resetCursor();
+    setState("unauthenticated", "Logged out");
+  } catch (err) {
+    setState("error", `logout failed: ${err}`);
   }
-  csrfToken = "";
-  sse.resetCursor();
-  setState("unauthenticated", "Logged out");
 }
 
 document.getElementById("btn-login").addEventListener("click", () => void login());
 document.getElementById("btn-me").addEventListener("click", () => void me());
-document.getElementById("btn-sse").addEventListener("click", () => sse.connect());
+document.getElementById("btn-sse").addEventListener("click", () => {
+  if (!requireApi()) return;
+  sse.connect();
+});
 document.getElementById("btn-logout").addEventListener("click", () => void logout());
 
-setState("unauthenticated", "Ready — login with a PAT (not stored in the URL)");
+if (apiConfigured) {
+  setState("unauthenticated", "Ready — login with a PAT (not stored in the URL)");
+} else {
+  setState("error", "API origin missing or not allowlisted; login disabled");
+}

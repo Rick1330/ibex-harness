@@ -15,6 +15,12 @@ export const ALLOWED_API_ORIGINS = Object.freeze([
   "https://api.staging.ibexharness.com",
 ]);
 
+/** Local-dev defaults only — never used as a silent fallback for rejected inject. */
+export const LOCAL_DEV_ORIGINS = Object.freeze([
+  "http://localhost:8010",
+  "http://127.0.0.1:8010",
+]);
+
 /** @deprecated use ALLOWED_API_ORIGINS — kept for existing imports */
 export const ALLOWED_LOCAL_BASES = ALLOWED_API_ORIGINS;
 
@@ -63,18 +69,25 @@ export function resolveApiBase(raw) {
 }
 
 /**
- * Pick an origin that is an exact member of ALLOWED_API_ORIGINS (SSRF-safe).
- * Unknown inject values fall back to the local default.
+ * Pick an allowlisted API origin.
+ * - No inject (local dev): loopback default.
+ * - Inject present (deployed shell): must match ALLOWED_API_ORIGINS exactly, else null.
  */
 export function pickApiBase(injectedRaw) {
-  const resolved = resolveApiBase(injectedRaw);
-  const matched = ALLOWED_API_ORIGINS.find((origin) => origin === resolved);
-  return matched ?? ALLOWED_API_ORIGINS[0];
+  const trimmed = String(injectedRaw || "").trim();
+  if (!trimmed) {
+    return LOCAL_DEV_ORIGINS[0];
+  }
+  const resolved = resolveApiBase(trimmed);
+  return ALLOWED_API_ORIGINS.find((origin) => origin === resolved) ?? null;
 }
 
 /** Build frozen endpoint URLs for a previously allowlisted origin. */
 export function buildEndpointUrls(origin) {
-  const base = ALLOWED_API_ORIGINS.find((o) => o === origin) ?? ALLOWED_API_ORIGINS[0];
+  const base = ALLOWED_API_ORIGINS.find((o) => o === origin);
+  if (!base) {
+    throw new Error("API origin is not on the allowlist");
+  }
   return Object.freeze({
     login: `${base}/v1/operator/session/login`,
     me: `${base}/v1/operator/session/me`,

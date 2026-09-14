@@ -21,7 +21,14 @@ export function isAuthFailure(status) {
 }
 
 export function isPermanentClientError(status) {
-  return status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 429;
+  return (
+    status >= 400 &&
+    status < 500 &&
+    status !== 401 &&
+    status !== 403 &&
+    status !== 408 &&
+    status !== 429
+  );
 }
 
 /** Uniform jitter in [0, maxExclusive) via Web Crypto (not Math.random). */
