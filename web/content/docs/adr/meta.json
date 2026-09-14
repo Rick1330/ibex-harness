@@ -75,6 +75,7 @@
     "0074-provider-credential-storage",
     "0075-per-org-model-routing-policy",
     "0076-circuit-breaker-per-provider",
-    "0077-provider-fallback-routing"
+    "0077-provider-fallback-routing",
+    "0078-operator-runtime-topology"
   ]
 }

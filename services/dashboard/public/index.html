@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IBEX Operator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <p class="product">IBEX Operator</p>
+        <p class="tagline">Connection contract shell (4.P.0) — product UI is Track D.</p>
+      </header>
+
+      <section class="state-panel" aria-live="polite">
+        <h1>Connection state</h1>
+        <p id="conn-state" class="state unknown">unknown</p>
+        <p id="conn-detail" class="detail">Waiting for configuration…</p>
+        <ul id="event-log" class="event-log" aria-label="Recent operator events"></ul>
+      </section>
+
+      <section class="actions">
+        <label>
+          API origin
+          <input id="api-base" type="url" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>
+          PAT (session exchange only — never stored in localStorage or URL)
+          <input id="pat" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="buttons">
+          <button type="button" id="btn-login">Login</button>
+          <button type="button" id="btn-me">GET /me</button>
+          <button type="button" id="btn-sse">Connect SSE</button>
+          <button type="button" id="btn-logout">Logout</button>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

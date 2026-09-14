@@ -1,7 +1,8 @@
-"""FastAPI host for the IBEX management API (m4.A.1 + m4.A.2)."""
+"""FastAPI host for the IBEX management API (m4.A.1 + m4.A.2 + 4.P.0)."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
@@ -13,10 +14,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.cors import CORSMiddleware
 
 from app.auth.client import GRPCTokenValidator, TokenValidator
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
+from app.drain import DrainState
 from app.errors import (
     ApiError,
     api_error_handler,
@@ -26,6 +29,7 @@ from app.errors import (
 )
 from app.http_metrics import HTTPMetricsMiddleware
 from app.logutil import install_request_id_log_filter, request_id_for_log
+from app.middleware.csrf import CSRFMiddleware
 from app.middleware.request_id import RequestIdMiddleware
 from app.model_policy_publish import (
     ModelPolicyPublisher,
@@ -46,12 +50,15 @@ from app.revocation_publish import (
 )
 from app.routers.agents import router as agents_router
 from app.routers.model_policies import router as model_policies_router
+from app.routers.operator_events import router as operator_events_router
 from app.routers.organizations import router as organizations_router
 from app.routers.providers import router as providers_router
 from app.routers.rate_limits import router as rate_limits_router
+from app.routers.session import router as session_router
 from app.routers.tenant import router as tenant_router
 from app.routers.tokens import router as tokens_router
 from app.routers.users import router as users_router
+from app.sse.operator_events import OperatorSSEHub, redis_fan_in_loop
 
 logger = logging.getLogger(__name__)
 install_request_id_log_filter(logger)
@@ -87,6 +94,10 @@ class ApiAppState:
     rate_limit_counter: RedisRateLimitCounter | None = field(default=None, repr=False)
     model_policy_publisher: ModelPolicyPublisher | None = field(default=None, repr=False)
     enqueue_org_deletion: Callable[[str, str], None] | None = field(default=None, repr=False)
+    drain: DrainState = field(default_factory=DrainState)
+    operator_sse_hub: OperatorSSEHub | None = field(default=None, repr=False)
+    _redis_fan_in_task: asyncio.Task[None] | None = field(default=None, repr=False)
+    _redis_fan_in_stop: asyncio.Event | None = field(default=None, repr=False)
 
 
 def create_app(
@@ -114,6 +125,9 @@ def create_app(
         async with _api_service_lifespan(state, cfg, validator):
             yield
 
+    hub = OperatorSSEHub(settings=cfg, drain=state.drain)
+    state.operator_sse_hub = hub
+
     application = FastAPI(
         title="IBEX Management API",
         version="0.2.0",
@@ -121,6 +135,7 @@ def create_app(
     )
     application.state.api = state
     application.state.settings = cfg
+    application.state.operator_sse_hub = hub
     application.add_exception_handler(ApiError, api_error_handler)
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     application.add_exception_handler(StarletteHTTPException, http_exception_handler)
@@ -134,8 +149,29 @@ def create_app(
     application.include_router(providers_router)
     application.include_router(rate_limits_router)
     application.include_router(model_policies_router)
+    application.include_router(session_router)
+    application.include_router(operator_events_router)
+    # Middleware: last added = outermost. CORS must be outermost (Sonar/FastAPI).
+    # CSRF is pure ASGI so RequestId contextvars remain visible to handlers.
     application.add_middleware(HTTPMetricsMiddleware)
+    application.add_middleware(CSRFMiddleware, settings=cfg)
     application.add_middleware(RequestIdMiddleware)
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=cfg.cors_origin_list(),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "X-CSRF-Token",
+            "Last-Event-ID",
+            "Accept",
+        ],
+        expose_headers=["X-Request-ID", "X-IBEX-Drain"],
+        max_age=600,
+    )
     return application
 
 
@@ -208,6 +244,23 @@ async def _aclose_optional(obj: object | None) -> None:
 
 
 async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
+    state.drain.begin_drain()
+    timeout = (
+        state.settings.shutdown_timeout_seconds
+        if state.settings is not None
+        else 30
+    )
+    if state.operator_sse_hub is not None:
+        await state.operator_sse_hub.close_all()
+    await state.drain.wait_sse_drain(float(timeout))
+    if state._redis_fan_in_stop is not None:
+        state._redis_fan_in_stop.set()
+    if state._redis_fan_in_task is not None:
+        state._redis_fan_in_task.cancel()
+        try:
+            await asyncio.wait_for(state._redis_fan_in_task, timeout=2.0)
+        except (TimeoutError, asyncio.CancelledError):
+            pass
     await auth.aclose()
     for obj in (
         state.token_revoker,
@@ -238,6 +291,22 @@ async def _startup_database(
     await _refresh_readiness(state, auth=auth, engine=engine)
 
 
+def _start_redis_fan_in(state: ApiAppState, cfg: Settings) -> None:
+    if not cfg.redis_url or state.operator_sse_hub is None:
+        return
+    stop = asyncio.Event()
+    state._redis_fan_in_stop = stop
+    state._redis_fan_in_task = asyncio.create_task(
+        redis_fan_in_loop(
+            state.operator_sse_hub,
+            redis_url=cfg.redis_url,
+            channel=cfg.operator_events_channel,
+            stop=stop,
+        ),
+        name="operator-sse-redis-fan-in",
+    )
+
+
 @asynccontextmanager
 async def _api_service_lifespan(
     state: ApiAppState,
@@ -251,8 +320,11 @@ async def _api_service_lifespan(
     )
     state.validator = auth
     _wire_runtime_defaults(state, cfg)
+    # Drain begins in _close_runtime on lifespan exit (uvicorn SIGTERM) —
+    # do not replace the server's SIGTERM handler via add_signal_handler.
     try:
         await _startup_database(state, cfg, auth)
+        _start_redis_fan_in(state, cfg)
         yield
     finally:
         await _close_runtime(state, auth)

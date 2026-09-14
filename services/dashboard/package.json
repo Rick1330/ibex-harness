@@ -1,0 +1,12 @@
+{
+  "name": "dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "IBEX operator UI — static SPA (4.P.0 topology shell; Track D owns product UI)",
+  "scripts": {
+    "dev": "python3 -m http.server 3100 --directory dist",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

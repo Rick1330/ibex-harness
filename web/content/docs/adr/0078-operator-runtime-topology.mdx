@@ -1,0 +1,101 @@
+---
+title: "ADR-0078: Operator runtime topology & environment contract (4.P.0)"
+description: "Architecture decision record 0078 — Option B static operator UI + services/api CORS/CSRF/SSE."
+adrId: "0078"
+status: "Accepted"
+date: "2026-09-14"
+authors: "IBEX Harness team"
+---
+
+# ADR-0078: Operator runtime topology & environment contract (4.P.0)
+
+- **Status:** Accepted
+- **Date:** 2026-09-14
+- **Authors:** IBEX Harness team
+- **ADR listing checked at write time:** `ls web/content/docs/adr/*.mdx` — highest prior was **0077**; this file is **0078**.
+
+## Context
+
+Track P needs a live operator UI ↔ API ↔ SSE topology before Track D dashboard work. Discovery confirmed:
+
+- Public `web/` is a Cloudflare Pages **static export** (`NEXT_STATIC_EXPORT=1` → `output: "export"`); converting it into a server-capable BFF would fight ADR-0023 and the existing deploy pipeline.
+- Auth/API today are PAT Bearer-only; no cookie/CORS/CSRF middleware existed in `services/`.
+- `services/api` `/ready` was startup-latched (unlike auth/proxy live checks; ADR-0022).
+- Provider SSE (`stream_forward.go`, ADR-0027) must never be reused for operator events.
+- Production Kubernetes/ingress for the management API is **not shipped** ([kubernetes.mdx](/docs/deployment/kubernetes) — no Helm charts yet).
+
+## Decision
+
+### 1) Topology: Option B (locked)
+
+| Surface | Hosting | Role |
+| --- | --- | --- |
+| Public docs (`web/`) | Cloudflare Pages `ibex-harness-docs` | Unchanged static docs |
+| Operator UI (`services/dashboard`) | Cloudflare Pages `ibex-harness-operator` | New static SPA shell |
+| Operator API + operator-event SSE | `services/api` | CORS/CSRF origin; SSE origin |
+
+**Option A′ rejected:** converting `web/` into a server-capable Next app (or attaching operator UI to the docs Pages project) would couple operator auth/SSE to the docs static-export pipeline, expand blast radius on docs deploys, and conflict with ADR-0023’s Pages-only decision for the public site.
+
+No BFF / API gateway. CORS and CSRF are owned by **`services/api` only**.
+
+### 2) Origins matrix (verified against live repo infra)
+
+**Ingress verification (2026-09-14):** `web/content/docs/deployment/kubernetes.mdx` and `infra/` contain **no** production Ingress/Gateway for `services/api`. Staging/production API hostnames below are **planned DNS targets**, not currently provisioned endpoints. Local uses host-process bind on `IBEX_API_PORT` default **8010**.
+
+| Environment | Operator UI origin | API / SSE origin | TLS termination | Cookie `SameSite` | Notes |
+| --- | --- | --- | --- | --- | --- |
+| **local** | `http://localhost:3100` | `http://localhost:8010` | none (plaintext) | `Lax` | Same host (`localhost`) for cookie SameSite; do not mix with `127.0.0.1`; `Secure=false` |
+| **preview** | `https://*.ibex-harness-operator.pages.dev` | *not provisioned* — use local or future staging API | Cloudflare Pages edge (UI only) | `None` + `Secure` when UI↔API are cross-site | Preview UI must not embed PATs in URLs; Pages deploy is `workflow_dispatch` only |
+| **staging** | `https://operator.staging.ibexharness.com` (**planned**) | `https://api.staging.ibexharness.com` (**planned**; no Ingress yet) | Planned: Cloudflare/edge for UI; API TLS TBD with 4.P.5 Helm | `Strict` once both are `*.ibexharness.com` with `Domain=.ibexharness.com` | Flag deviation until Ingress exists |
+| **production** | `https://operator.ibexharness.com` (**planned**) | `https://api.ibexharness.com` (**planned**; no Ingress yet) | Same as staging | `Strict` + `Secure=true` + `Domain=.ibexharness.com` | Docs remain `https://ibexharness.com` / docs paths |
+
+`IBEX_ALLOWED_ORIGINS` must list the exact operator UI origin(s) for that environment (never `*`).
+
+### 3) CORS / CSRF
+
+- **CORS:** Starlette `CORSMiddleware` with explicit allow-list from `IBEX_ALLOWED_ORIGINS`, `allow_credentials=True`.
+- **CSRF:** double-submit cookie (`DASHBOARD_CSRF_*`) + `X-CSRF-Token` on cookie-authenticated **mutating** requests. Bearer-PAT callers are exempt. Login is CSRF-exempt (establishes cookies).
+
+### 4) Session cookies (**PROVISIONAL — 4.P.1**)
+
+Short-lived HttpOnly `Secure` (in non-local) **access** cookie (`DASHBOARD_SESSION_COOKIE_NAME`, default `ibex_session`) + **refresh** cookie (`DASHBOARD_REFRESH_COOKIE_NAME`, default `ibex_refresh`).
+
+> **Provisional stub (default off):** 4.P.0 may issue HS256 JWTs from **`services/api`** using `JWT_HMAC_SECRET` (≥32 bytes) only when `IBEX_OPERATOR_FEATURE_ENABLED=true`. **`JWT_PRIVATE_KEY_PEM` is not accepted as HMAC material.** Routes under `/v1/operator/session` stay disabled until 4.P.1 provides RS256 issuer/verifier in `services/auth`. **Never store a PAT in the browser as a session.**
+
+### 5) Operator-event SSE
+
+New module under `services/api` (`app/sse/operator_events.py`). Redis fan-in via `redis.asyncio` pub/sub (same intent as `packages/redissub`; Python-native). **Does not** import/call/copy `forwardSSEStream` / `stream_forward.go`.
+
+Contract:
+
+- `text/event-stream`, flush-at-event-boundary, finite write deadline (`IBEX_SSE_WRITE_DEADLINE_SECONDS`, default 15s — stricter than provider path per F4-033)
+- Slow-write metric `ibex_api_operator_sse_slow_writes_total`
+- Monotonic `id:` fields; clients resume with `Last-Event-ID` (events with `id <= Last-Event-ID` are not re-sent)
+- Drain on process shutdown: lifespan `_close_runtime` begins drain, closes in-flight streams within `IBEX_SHUTDOWN_TIMEOUT` (API: integer seconds; Go services keep duration strings) — mirrors ADR-0018 intent. Do **not** replace the ASGI server's SIGTERM handler.
+
+### 6) Readiness (ADR-0022 alignment)
+
+- `/health` — process alive only
+- `/ready` — **live per-request** Postgres + auth gRPC checks with timeouts (no longer startup-latch-only)
+
+### 7) 4.P.5 scope note
+
+Operator **UI hosting stays Cloudflare-Pages-only** and is **exempt** from the Helm/K8s buildout. Only API / workers / data plane need K8s overlays in 4.P.5.
+
+### 8) Kill switch / rollback
+
+`IBEX_OPERATOR_FEATURE_ENABLED` defaults to **`false`**. When false (or unset), operator session/SSE routes return 503 while public docs Pages continues unaffected. Operator Pages deploy is **`workflow_dispatch` only** (preview) until API Ingress exists — no production auto-deploy with a planned API hostname.
+
+## Consequences
+
+- New Pages project + `operator-deploy.yml` (independent of `web-deploy.yml`).
+- Env docs reconcile pre-existing `IBEX_ALLOWED_ORIGINS` / `JWT_*` / `DASHBOARD_*` names.
+- Staging/prod API hostnames require Ingress work in later milestones — documented as planned, not invented as live.
+
+## References
+
+- [ADR-0018](/docs/adr/0018-graceful-shutdown) — drain intent
+- [ADR-0022](/docs/adr/0022-health-check-contract) — `/health` vs `/ready`
+- [ADR-0023](/docs/adr/0023-docs-site-architecture) — docs Pages topology
+- [ADR-0027](/docs/adr/0027-streaming-dual-write) — provider SSE stays separate
+- Milestone [4.P.0](/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract)
