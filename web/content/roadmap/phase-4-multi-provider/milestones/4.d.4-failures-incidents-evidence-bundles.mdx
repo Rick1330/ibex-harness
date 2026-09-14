@@ -1,0 +1,70 @@
+---
+title: "Failures, Incidents & Evidence Bundles"
+description: "Triage a failure, assign ownership, preserve evidence, and produce a postmortem-ready bundle."
+summary: "Triage a failure, assign ownership, preserve evidence, and produce a postmortem-ready bundle."
+status: "planned"
+milestoneId: "4.D.4"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.4 — Failures, Incidents & Evidence Bundles"
+---
+
+# Milestone 4.D.4 — Failures, Incidents & Evidence Bundles
+
+**Status:** Planned  
+**Outcome:** An operator triages a failure, assigns ownership, preserves evidence, and produces a postmortem-ready bundle.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** 4.D.2; 4.P.2 events; 4.P.3 audit/evidence bundle; 4.P.4 query  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  The insert-only `failed_tasks` table is ingestion/forensics data, not an incident workflow.
+</Callout>
+
+## Why this milestone exists
+
+Ninety-day metadata alone cannot support high-quality postmortems.
+
+## Scope and deliverables
+
+Failure projection distinct from `failed_tasks`; incident state machine; severity, owner, assignment, dedupe key, timeline; linked traces/sessions/requests; redacted evidence; comments/activity; signed bundle export. Notifications are a later integration.
+
+## Contract and data requirements
+
+Every transition idempotent and audited. Raw traceback gated. Bundle reconstructs evidence after normal telemetry expiry without secrets or cross-tenant data.
+
+## Product and UX requirements
+
+Filters by status/severity/owner/time. Safe rendering of failure payloads (F4-008).
+
+## Non-functional requirements
+
+Action ledger for assignment/state; history not deleted on rollback.
+
+## Verification gates
+
+Idempotent transitions; bundle export reconstructs golden incident; cross-tenant isolation; hostile payload render.
+
+## Rollout and rollback
+
+**Trigger:** incident write-path regressions or evidence-bundle integrity failures. **Reversal:** return incident workflows to read-only triage; stop mutating incident state. **Verify:** existing bundles remain readable; no new write actions succeed until rollback cleared.
+
+## Findings addressed
+
+F4-008, F4-011.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
+## Exit checklist
+
+- [ ] Incident state machine + audit evidenced.
+- [ ] Signed evidence-bundle demo attached.
+- [ ] Read-only rollback path demonstrated.

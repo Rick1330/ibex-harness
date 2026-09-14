@@ -1,0 +1,77 @@
+---
+title: "Canonical Evidence Plane & Durable Publication"
+description: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
+summary: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
+status: "planned"
+milestoneId: "4.P.2"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication"
+---
+
+# Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication
+
+**Status:** Planned  
+**Outcome:** A multi-step agent run is a versioned, queryable, replay-aware evidence graph with durable publication.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** 4.P.0; 4.P.1  
+**Estimated effort:** 4 weeks  
+**Gate:** G2 contract + G3 evidence
+
+<Callout type="note" title="Completion contract">
+  Flat `llm_traces` aggregate rows are not enough. Nested span/event identity, correlation IDs, checkpoint joins, outbox relays, and Trace Inspector prerequisites (F4-021–027) must land before 4.D.2 claims real data.
+</Callout>
+
+## Why this milestone exists
+
+A flat request row cannot explain causality, support trace-to-resource navigation, or safely power Explore / Trace Inspector (F4-003).
+
+## Scope and deliverables
+
+- OTel/W3C-compatible envelope: `event_id`, `source`, `schema_version`/`dataschema`, `trace_id`, `span_id`, `parent_span_id`, links, **`org_id`**, `agent_id`, `session_id`, `turn_id`, `request_id`, `checkpoint_id`, sequence, timestamps, operation kind, status/error, attributes, capture/sample decision, payload refs.
+- Typed provenance: model, prompt refs, tool definition/call/result, retrieval candidates/scores, memory read/write, context assembly, directive, routing, fallback, evaluation, deployment.
+- **Must-fix for Trace Inspector:** propagate canonical `request_id`/`trace_id` through context-assembly RPC; return non-null `checkpoint_id` from writes; persist `AssemblyMetrics`/stage timings; version composite score payload (weights + exclusion reasons); persist per-request directive version/hash; expand tool-audit fields (sanitized args, idempotency, joins).
+- Choose durable conversation/raw-payload source (append-only Postgres events and/or encrypted object store) with RLS and retention (F4-024).
+- Postgres transactional outbox with `aggregate_seq`, digest, delivery status; idempotent relays to ClickHouse, Redis, object storage.
+
+## Contract and data requirements
+
+Require `org_id` on outbox records, relay payloads (Redis tenant prefixes), ClickHouse projections, and every evidence query. Publish Trace/Span/Event DTOs, cursor queries, SSE envelopes for operator events, batch/partial failure, dedupe, ordering, replay position, checkpoint join. Unknown attributes round-trip; old/new consumers compatible.
+
+## Product and UX requirements
+
+Trace details show parent/child hierarchy, completeness, sampling, freshness, and source links. Unknown or missing provenance is never inferred as success. Partial/degraded fields must be labeled for consumers of 4.D.2.
+
+## Non-functional requirements
+
+Crash-after-commit, crash-before-ack, duplicate, reorder, poison message, partial trace behaviors defined and measured.
+
+## Verification gates
+
+Ingest a golden nested run with retrieval, memory, tool, retry, fallback, and evaluation spans. Prove parent/child identity, duplicate safety, outbox replay, and joinability of all Trace Inspector sections by `request_id`/`trace_id`. Update golden-trace fixture contract after persistence decisions.
+
+## Rollout and rollback
+
+**Trigger:** join breakage, duplicate storms, or schema incompatibility. **Reversal:** dual-write compatibility window; roll back consumers, not committed event identity; replay from outbox; keep legacy aggregate as derived projection. **Verify:** golden run reconstructs; consumers on prior schema still read.
+
+## Findings addressed
+
+F4-003, F4-007, F4-021, F4-022, F4-023, F4-024, F4-025, F4-026, F4-027, F4-031.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+- [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
+## Exit checklist
+
+- [ ] Envelope and outbox schemas versioned with compatibility tests.
+- [ ] Correlation ID + checkpoint ID write path proven.
+- [ ] AssemblyMetrics, score, directive, tool contracts persisted or explicitly deferred with degraded labels.
+- [ ] Raw/conversation store decision documented with RLS/retention.
+- [ ] Golden nested-run + outbox crash/replay reports attached.

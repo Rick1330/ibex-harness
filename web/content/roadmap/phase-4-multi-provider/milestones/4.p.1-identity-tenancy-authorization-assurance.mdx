@@ -1,0 +1,79 @@
+---
+title: "Identity, Tenancy & Authorization Assurance"
+description: "Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision."
+summary: "Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision."
+status: "planned"
+milestoneId: "4.P.1"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance"
+---
+
+# Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance
+
+**Status:** Planned  
+**Outcome:** Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** 4.P.0; Track A identity/API foundations  
+**Estimated effort:** 3 weeks  
+**Gate:** G1 identity
+
+<Callout type="note" title="Completion contract">
+  Permission constants alone are not sufficient. Deny-by-default policy, step-up for high-impact actions, two-tenant negative matrices, and fail-closed model-policy behavior must be evidenced.
+</Callout>
+
+## Why this milestone exists
+
+A valid admin token is not sufficient authorization for raw evidence, deletion, secrets, or replay (F4-002, F4-006). Fail-open model policy and lossy invalidation (F4-015, F4-016) and secret/SSRF gaps (F4-017, F4-018) make tenant controls unsafe before any UI.
+
+## Scope and deliverables
+
+- Session/refresh or OIDC federation, revocation, org membership, org switching, role/permission evaluation, resource classification.
+- Action taxonomy: metadata-read, redacted-read, raw-read, export, delete, replay, secret-use, policy-change, break-glass.
+- Step-up MFA / dual approval hooks for deletion, raw/export, production replay, secret changes, break-glass.
+- Remove or hard-disable `PassthroughRegistry` fail-open; enforce deny-by-default when Postgres/policy store is unavailable.
+- Replace lossy model-policy Pub/Sub invalidation with versioned durable reconciliation; fail closed on unknown policy version.
+- Narrow `GetProviderCredential` service authorization; enforce BYO BaseURL SSRF allowlist/private-range blocks.
+
+## Contract and data requirements
+
+Typed authorization errors without leaking object existence. Audit fields: actor, tenant (`org_id`), purpose, assurance, policy result. Provider secrets and bearer tokens never appear in UI or logs.
+
+## Product and UX requirements
+
+Denied actions explain the safe next step without revealing object existence. The UI exposes only allowed actions.
+
+## Non-functional requirements
+
+Normal dashboard DB roles are not superusers / `BYPASSRLS`. Authorization is deny-by-default and evaluated server-side on every request, stream, and async job.
+
+## Verification gates
+
+Two-tenant matrix across API, Postgres/RLS, Redis keys, ClickHouse `org_id` filters, object storage, queues, exports, replay, guessed IDs, org switching, revoked sessions, expired step-up, degraded IdP. Negative tests: policy store down → no models allowed; revoke → no stale allow; SSRF blocked; credential fetch without scope denied.
+
+## Rollout and rollback
+
+**Trigger:** tenant leak, fail-open allow, or secret exposure. **Reversal:** kill switch disables sensitive actions; roll back policy versions, never audit history; return to read-only metadata. **Verify:** two-tenant matrix re-run green; fail-open paths return deny.
+
+## Findings addressed
+
+F4-002, F4-006, F4-010, F4-015, F4-016, F4-017, F4-018.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
+- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
+## Exit checklist
+
+- [ ] Action taxonomy and step-up rules documented and enforced.
+- [ ] Fail-open model policy removed or residual-risk recorded on 4.E.4.
+- [ ] Durable policy invalidation evidenced.
+- [ ] Secret/SSRF negative tests attached.
+- [ ] Two-tenant authorization matrix report attached.

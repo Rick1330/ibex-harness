@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.C.5 — Streaming Hardening"
 
 # Milestone 4.C.5 — Streaming Hardening
 
-**Status:** Planned  
+**Status:** Planned (implementation baseline complete; release-evidence soak pending)  
 **Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
 **Phase:** 4 — Operator Platform & Multi-Provider  
 **Estimated effort:** 2 days  
@@ -23,11 +23,12 @@ fullTitle: "Milestone 4.C.5 — Streaming Hardening"
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
+<Callout type="info" title="Planning baseline vs milestone closure">
+  **Implementation baseline is treated as complete for Phase 4 planning** (slow-client backpressure, mid-stream error normalization, ADR-0027 verbatim-close). This milestone remains **Planned** until release-evidence soak passes under 4.E.1 and 4.E.2 (memory leak test, operator SSE deadline/shedding — F4-033). Do not mark complete on code merge alone.
+</Callout>
+
+<Callout type="note" title="Planning sketch">
+  Named paths, package layouts, libraries, schemas, env vars, and checklists are **orientation aids**. Prefer outcomes over matching any particular file tree.
 </Callout>
 
 ## Why This Milestone Exists

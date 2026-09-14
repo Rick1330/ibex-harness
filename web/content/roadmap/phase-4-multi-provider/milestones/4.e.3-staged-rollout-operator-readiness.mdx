@@ -1,0 +1,79 @@
+---
+title: "Staged Rollout & Operator Readiness"
+description: "The platform can be promoted safely with observation, stop conditions, on-call ownership, and supportability."
+summary: "The platform can be promoted safely with observation, stop conditions, on-call ownership, and supportability."
+status: "planned"
+milestoneId: "4.E.3"
+track: "E"
+trackTitle: "Release Readiness & Phase Exit"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit"
+goal: "[Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)"
+estimatedEffort: "2 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.3 — Staged Rollout & Operator Readiness"
+---
+
+# Milestone 4.E.3 — Staged Rollout & Operator Readiness
+
+**Status:** Planned  
+**Outcome:** The platform can be promoted safely with observation, stop conditions, on-call ownership, and supportability.  
+**Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
+**Dependencies:** 4.E.1, 4.E.2 (gates green), 4.P.5 (deploy/rollback mechanics), Track D capabilities feature-complete for phase scope  
+**Estimated effort:** 2 weeks  
+**Gate:** G3 promotion
+
+<Callout type="note" title="Completion contract">
+  Default-on is a promotion result, not an earlier assumption. This milestone is complete only when dark launch through 100% stages complete with bake windows, abort/rollback tested, and on-call runbooks exercised.
+</Callout>
+
+## Why this milestone exists
+
+World-class operator software requires staged exposure, kill switches, and operator-visible rollout state so policy, routing, cost, and replay behavior never flips fleet-wide without observation (F4-010, F4-011).
+
+## Scope and deliverables
+
+- Execute promotion stages: dark launch (internal only) → 1% → 10% → 25% → 100% with minimum bake duration and sample thresholds per stage.
+- Define guardrails: error rate, p99 latency, SSE lag, queue depth, cost anomaly, auth failure spike, deletion backlog.
+- Publish on-call runbook, escalation tree, kill switches (operator origin, replay, policy publish, hard-cap enforcement), and support export bundle (redacted traces, config versions, health snapshot).
+- Record promotion decision per stage: artifact digest, schema version, owner, metrics snapshot, go/no-go rationale, rollback command.
+- Post-promotion observation window with zero open P0 and no unowned P1 breach.
+
+## Contract and data requirements
+
+Promotion ledger entries are immutable; corrections append amendments. Each stage links to 4.E.1/E.2 evidence bundle IDs. Rollback uses prior image digest and compatible configuration without manual data surgery.
+
+## Product and UX requirements
+
+Operators see rollout stage, dependency health, evidence completeness, and which high-impact actions (replay, policy change, export) are enabled for the current stage. Degraded modes are explicit.
+
+## Non-functional requirements
+
+Abort and rollback tested at least once during the promotion exercise. Post-promotion observation completes without P0/P1 breach or triggers automatic rollback.
+
+## Verification gates
+
+- Dark launch: internal tenants only; no public operator URL without auth.
+- Abort drill: guardrail breach triggers automatic stage halt and rollback transcript.
+- Support bundle: generated from staging drill and reviewed by on-call.
+
+## Rollout and rollback
+
+**Trigger:** guardrail breach, missing evidence, or on-call drill failure. **Reversal:** rollback to last immutable digest; disable operator origin via kill switch; notify stakeholders with evidence bundle. **Verify:** traffic on prior digest; operator UI shows maintenance/degraded state.
+
+## Findings addressed
+
+F4-010, F4-011, F4-014.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
+## Exit checklist
+
+- [ ] Full stage ladder executed or explicitly waived with signed exception on 4.E.4.
+- [ ] Abort and rollback drill transcript attached.
+- [ ] On-call runbook and kill-switch inventory published.
+- [ ] Post-promotion observation window completed without P0 breach.
+- [ ] Promotion ledger entries link to evidence artifacts.

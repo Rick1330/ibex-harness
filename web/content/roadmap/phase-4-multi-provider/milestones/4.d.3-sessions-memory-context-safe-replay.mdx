@@ -1,0 +1,71 @@
+---
+title: "Sessions, Memory, Context & Safe Replay Evidence"
+description: "Reconstruct a turn, see retrieval and memory provenance, and export or delete governed data."
+summary: "Reconstruct a turn, see retrieval and memory provenance, and export or delete governed data."
+status: "planned"
+milestoneId: "4.D.3"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.3 — Sessions, Memory, Context & Safe Replay Evidence"
+---
+
+# Milestone 4.D.3 — Sessions, Memory, Context & Safe Replay Evidence
+
+**Status:** Planned  
+**Outcome:** An operator reconstructs a conversation turn, sees retrieval and memory provenance, and exports or deletes governed data with receipts.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** 4.D.2; 4.P.2 checkpoint/retrieval contracts; 4.P.3 lifecycle  
+**Estimated effort:** 4 weeks
+
+<Callout type="note" title="Completion contract">
+  `memory_relationships` SQL is not a management API. Secure replay is not ordinary idempotency replay.
+</Callout>
+
+## Why this milestone exists
+
+Memory and session pages are only trustworthy when they prove what was used and what deletion removed (F4-019, F4-024).
+
+## Scope and deliverables
+
+Session timeline with stable sequence; memory search/list/detail; bounded graph lineage; context pack breakdown; retrieval snapshot; cascade preview; asynchronous export/delete jobs; deletion receipt; replay-safe evidence view requiring immutable snapshot, explicit versions, sandbox, disabled/mocked tools, no writes/secrets, approval, diff, and separate audit trace.
+
+## Contract and data requirements
+
+Preview equals execution scope. Embedding/ranking mismatch errors surfaced. Tenant-scoped jobs with step-up for delete/export/replay (F4-006, F4-010).
+
+## Product and UX requirements
+
+Missing/redacted/sampled events explicit. Link to current memory records labeled when not immutable per-trace snapshots.
+
+## Non-functional requirements
+
+Deleted data absent from all normal queries; no production side effects from replay; stable tie ordering.
+
+## Verification gates
+
+Cascade preview equals executed deletion; cross-store receipt; replay sandbox negative tests; privileged-job disable path.
+
+## Rollout and rollback
+
+**Trigger:** privileged replay/job failures, unsafe mutation, or tenant-scope defects. **Reversal:** disable privileged jobs; leave read-only session/memory views. **Verify:** queued jobs drain or park safely; no new privileged writes; recovery resumes only after evidence checks pass.
+
+## Findings addressed
+
+F4-006, F4-010, F4-019, F4-024, F4-031.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
+- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
+## Exit checklist
+
+- [ ] Session timeline + memory provenance journeys evidenced.
+- [ ] Export/delete receipt demo attached.
+- [ ] Replay sandbox and approval path evidenced.
+- [ ] Rollback of privileged jobs demonstrated.
