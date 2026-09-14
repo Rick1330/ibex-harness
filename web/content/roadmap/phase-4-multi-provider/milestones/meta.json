@@ -1,5 +1,7 @@
 {
   "title": "Milestones",
+  "description": "Phase 4 milestones grouped by management API, rate limiting, multi-provider resilience, operator readiness, dashboard capability slices, and release gates.",
+  "phase": "phase-4-multi-provider",
   "pages": [
     "4.a.1-api-server-skeleton",
     "4.a.2-org-user-management-api",
@@ -14,13 +16,22 @@
     "4.c.3-circuit-breaker-per-provider",
     "4.c.4-fallback-routing",
     "4.c.5-streaming-hardening",
-    "4.d.1-dashboard-foundation-auth-realtime",
-    "4.d.2-trace-inspector",
-    "4.d.3-memory-browser-v2-graph",
-    "4.d.4-drift-alerts-directive-management",
-    "4.d.5-analytics-v2-cost-governance",
-    "4.e.1-dashboard-e2e-playwright",
-    "4.e.2-multi-provider-resilience-suite",
-    "4.e.3-phase4-exit-audit"
+    "4.p.0-runtime-topology-environment-contract",
+    "4.p.1-identity-tenancy-authorization-assurance",
+    "4.p.2-canonical-evidence-durable-publication",
+    "4.p.3-privacy-retention-deletion-audit",
+    "4.p.4-query-usage-cost-data-platform",
+    "4.p.5-production-platform-recovery-supply-chain",
+    "4.p.6-contract-assurance-harness",
+    "4.d.1-authenticated-shell-operational-overview",
+    "4.d.2-explore-provenance-trace-inspector",
+    "4.d.3-sessions-memory-context-safe-replay",
+    "4.d.4-failures-incidents-evidence-bundles",
+    "4.d.5-directives-routing-experiments-actions",
+    "4.d.6-usage-cost-governance-capacity",
+    "4.e.1-environment-fixtures-required-ci",
+    "4.e.2-reliability-resilience-recovery-gate",
+    "4.e.3-staged-rollout-operator-readiness",
+    "4.e.4-phase4-findings-signoff"
   ]
 }

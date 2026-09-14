@@ -1,0 +1,72 @@
+---
+title: "Directives, Routing, Experiments & Controlled Actions"
+description: "Understand and safely change policy with preview, approval, provenance, and rollback."
+summary: "Understand and safely change policy with preview, approval, provenance, and rollback."
+status: "planned"
+milestoneId: "4.D.5"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.5 — Directives, Routing, Experiments & Controlled Actions"
+---
+
+# Milestone 4.D.5 — Directives, Routing, Experiments & Controlled Actions
+
+**Status:** Planned  
+**Outcome:** Operators understand and safely change policy with preview, approval, provenance, and rollback.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** 4.D.2; 4.D.4 recommended; 4.P.1 step-up; 4.P.2 routing decision + directive snapshot; 4.P.3 audit; Phase 4.5 fingerprinting for drift UI  
+**Estimated effort:** 4 weeks
+
+<Callout type="note" title="Completion contract">
+  Drift UI stays behind a Phase 4.5 producer contract (F4-013). Directive/routing controls ship first.
+</Callout>
+
+## Why this milestone exists
+
+Provider/policy mutations lack action journal, approval, preview, rollback, and decision provenance (F4-010, F4-026).
+
+## Scope and deliverables
+
+Immutable directive versions, diff, promotion/revoke state machine, regression-run linkage, matched policy revision, ordered candidates and rejection reasons, capability-catalog version, provider credential scope, fallback trigger, experiment assignment/exposure/holdback, guardrails, kill switch, operator action ledger, dry-run preview, bounded rollout, rollback pointer.
+
+## Contract and data requirements
+
+Replaying recorded inputs with recorded versions yields the same decision. Sensitive changes require step-up; high-impact changes may require dual approval. Duplicate submits safe; blast radius shown before confirmation.
+
+## Product and UX requirements
+
+Preview/approval UX; clear abort reasons; no drift alerts without producer evidence.
+
+## Non-functional requirements
+
+Dark launch → 1% shadow → 10% → 25% → 100% only after sample and bake windows. Automated abort on quality/latency/error/safety/cost guardrail breach.
+
+## Verification gates
+
+Deterministic replay of recorded decisions; action ledger completeness; abort/rollback drill.
+
+## Rollout and rollback
+
+**Trigger:** directive/routing abort, unsafe experiment promotion, or action-ledger inconsistency. **Reversal:** reactivate prior policy/directive version; disable new controlled actions. **Verify:** traffic uses prior version; aborted actions recorded; preview/approval fail closed until restored.
+
+## Findings addressed
+
+F4-010, F4-013, F4-026.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+- [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
+- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
+## Exit checklist
+
+- [ ] Directive lifecycle + action ledger evidenced.
+- [ ] Step-up/dual-approval paths tested.
+- [ ] Staged rollout abort drill attached.
+- [ ] Drift UI gated behind Phase 4.5 contract note.

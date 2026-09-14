@@ -1,3 +1,6 @@
+# --- Local research drafts (not versioned; curated copies live under web/engineering/research/) ---
+new findings/
+
 # --- Secrets & local env ---
 .env
 .env.*

@@ -1,0 +1,74 @@
+---
+title: "Query, Usage & Cost Data Platform"
+description: "Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy."
+summary: "Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy."
+status: "planned"
+milestoneId: "4.P.4"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.4 — Query, Usage & Cost Data Platform"
+---
+
+# Milestone 4.P.4 — Query, Usage & Cost Data Platform
+
+**Status:** Planned  
+**Outcome:** Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** 4.P.2; 4.P.3 (capture/redaction defaults)  
+**Estimated effort:** 4 weeks  
+**Gate:** part of post-P.3 parallel track with 4.P.5 / 4.P.6
+
+<Callout type="note" title="Completion contract">
+  Charts over request counts are not cost governance. Every ClickHouse query shape requires an explicit `org_id` parameter and predicate.
+</Callout>
+
+## Why this milestone exists
+
+Ad hoc client filtering cannot scale; billing schema was falsely assumed to exist (F4-005).
+
+## Scope and deliverables
+
+- Shared query grammar: typed fields, operators, time range, facets, autocomplete, saved-view URL serialization, cursor pagination, query budgets.
+- ClickHouse shapes for org/time, agent/session, event point lookup, run reconstruction, tool correlation, cost aggregation — **each with mandatory `org_id`**.
+- Immutable usage ledger facts keyed by `org_id`, agent, provider, model, run, time, token class, tool units, latency, status, fallback, rate-card version, policy version.
+- Versioned rate cards, currency, estimate/actual, budget periods, alerts, reconciliation jobs, enforcement decision records.
+
+## Contract and data requirements
+
+Filters apply before pagination. High-cardinality IDs remain event fields, not metric labels. Freshness/completeness fields on every aggregate response.
+
+## Product and UX requirements
+
+UI labels live vs retained data, ingestion lag, retention boundary, matched vs displayed/sample counts, cost source facts, rate-card and policy versions.
+
+## Non-functional requirements
+
+EXPLAIN review, p95/p99 query targets, bounded memory, sampling-bias disclosure, aggregate-to-raw reconciliation, duplicate-retry billing tests, hard-cap denial tests.
+
+## Verification gates
+
+Query contract suite, EXPLAIN samples, reconciliation report, fallback attribution, rate-card replay, hard-cap negative path on proxy.
+
+## Rollout and rollback
+
+**Trigger:** hard-cap false positives/negatives, reconciliation drift, or query SLO breach. **Reversal:** revert hard-cap enforcement to alert-only; preserve immutable facts; roll back rate-card/policy version. **Verify:** alert-only still emits; reconcile outstanding decisions before re-enabling hard caps.
+
+## Findings addressed
+
+F4-005.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+## Exit checklist
+
+- [ ] Query grammar and ClickHouse shapes documented with `org_id` requirement.
+- [ ] Usage ledger + rate-card schemas versioned.
+- [ ] Reconciliation and hard-cap negative tests attached.
+- [ ] URL-serializable saved-view round-trip proven.

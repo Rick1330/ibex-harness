@@ -1,0 +1,80 @@
+---
+title: "Reliability, Resilience & Recovery Gate"
+description: "Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated."
+summary: "Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated."
+status: "planned"
+milestoneId: "4.E.2"
+track: "E"
+trackTitle: "Release Readiness & Phase Exit"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit"
+goal: "[Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.2 — Reliability, Resilience & Recovery Gate"
+---
+
+# Milestone 4.E.2 — Reliability, Resilience & Recovery Gate
+
+**Status:** Planned  
+**Outcome:** Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated in staging with recorded artifacts.  
+**Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
+**Dependencies:** 4.E.1 (environment), 4.P.5 (platform/recovery), 4.C.5 (streaming baseline + soak), Track D slices under test  
+**Estimated effort:** 3 weeks  
+**Gate:** G2 resilience
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when load, degradation, chaos, backup/restore, and rollback scenarios meet declared thresholds and produce tracked findings for any breach. Architecture prose without measured evidence does not satisfy the gate.
+</Callout>
+
+## Why this milestone exists
+
+Operator trust requires proof that slow clients, provider outages, store degradation, and restore drills do not violate tenant isolation, lose evidence, or exhaust memory (F4-007, F4-011, F4-033).
+
+## Scope and deliverables
+
+- **Load:** sustained operator query and SSE load with p50/p95/p99 latency, error rate, and cost-per-request within declared budgets.
+- **Slow client:** operator-event SSE with 1 byte/sec consumer; bounded buffer, write deadline, shedding, and no unbounded memory growth.
+- **Provider failure:** mid-stream Anthropic `error` and OpenAI disconnect normalized per ADR-0027; fallback routing when configured.
+- **Dependency degradation:** Redis, ClickHouse, Postgres partial outage; UI shows degraded/incomplete states, not silent empty results.
+- **Queue saturation:** worker backlog, DLQ behavior, and operator-visible lag indicators.
+- **Backup/restore:** clean restore drill covering Postgres, ClickHouse, Redis checkpoints, object manifests, outbox position; tenant isolation verified post-restore.
+- **Chaos and rollback:** inject pod kill/network partition; execute rollback to prior immutable digest; verify SLO recovery within RTO.
+
+## Contract and data requirements
+
+Each experiment record includes: workload profile, percentile metrics, threshold, observation window, error budget consumed, tenant invariant checklist, degradation mode observed, and artifact URL. Restore drill records RPO achieved and data classes restored.
+
+## Product and UX requirements
+
+Operators see dependency health, evidence completeness, reconnecting/degraded banners, and recovery status. Partial telemetry is labeled; missing data is not rendered as zero.
+
+## Non-functional requirements
+
+All declared gates meet thresholds. Failed experiments create tracked findings (owner, severity, due date) rather than silent exceptions. Automatic abort when stop conditions trigger (error rate, lag, memory, cost).
+
+## Verification gates
+
+- Slow-client soak: no memory leak under sustained load (4.C.5 + operator SSE).
+- Restore drill: cross-tenant query after restore returns only owning org data.
+- Rollback: prior release serves traffic within RTO with compatible schema/config.
+
+## Rollout and rollback
+
+**Trigger:** SLO breach, restore failure, or rollback drill failure. **Reversal:** halt promotion; disable operator origin or route to last known-good digest. **Verify:** incident evidence bundle and amended finding register entry.
+
+## Findings addressed
+
+F4-007, F4-011, F4-020, F4-033.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
+## Exit checklist
+
+- [ ] Load report with p50/p95/p99 attached and within budget.
+- [ ] Slow-client and operator SSE reconnect evidence attached.
+- [ ] Provider outage and fallback scenarios recorded.
+- [ ] Backup/restore drill with RPO/RTO and tenant-negative post-restore check.
+- [ ] Chaos/rollback transcript with immutable digest rollback command.

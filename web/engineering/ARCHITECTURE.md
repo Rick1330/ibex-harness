@@ -5,26 +5,24 @@ Go interface placement (consumer ports vs shared package APIs):
 
 ## Roadmap alignment (read this first)
 
-Phases **0–2.5 are complete** (auth, multi-provider proxy, tokenizer, response pipeline, embedder,
-MCP skeleton, local LGTM). **Phase 3** (memory substrate) is in progress — Track C write pipeline
-complete (`POST /v1/memories`: PII → dedup → conflict → persist → multi-label); **next:** Track D
-read path. Redesigned sequence:
+Phases **0–3.5 are complete** (auth, multi-provider proxy, tokenizer, response pipeline, embedder,
+memory substrate, extraction, context assembly, and MCP tools). **Phase 4** is now in progress with
+Track P operator readiness before the redesigned Track D capability slices. The user-confirmed 4.C.5
+streaming hardening is the planning baseline. See the detailed [operator platform architecture](OPERATOR_PLATFORM_ARCHITECTURE.md).
 
 | Phase | Focus | Status |
 | --- | --- | --- |
 | 2.5 | Multi-provider foundation + embedder + tokenizer + MCP skeleton | **Complete** |
-| 3 | Memory substrate (schema v2 / HNSW, write + read pipelines) | **In progress** |
-| 3.5 | Extraction workers + context assembly on the proxy hot path + MCP tools | Planned |
-| 4 | Management API + dashboard + multi-provider resilience | Planned |
+| 3 | Memory substrate (schema v2 / HNSW, write + read pipelines) | **Complete** |
+| 3.5 | Extraction workers + context assembly on the proxy hot path + MCP tools | **Complete** |
+| 4 | Management API + readiness/evidence plane + operator capability slices | **In progress** |
 | 4.5 | Fingerprinting, drift, directive regression | Planned |
 | 5 | Hybrid retrieval + graph lineage at query time | Planned |
 
 Public roadmap: [`web/content/roadmap/`](../content/roadmap/). Service/package inventories:
 [`services/README.md`](../../services/README.md), [`packages/README.md`](../../packages/README.md).
 
-Org-wide production hardening beyond per-phase exit gates is **deferred past Phase 5** as future
-scope. Paths and package names in diagrams below are planning baselines — they may change with
-evidence and an ADR.
+Production hardening is a Phase 4 release requirement for the operator platform. Paths and package names in diagrams below are planning baselines — they may change with evidence and an ADR.
 
 ## 🏗️ Architecture Overview
 

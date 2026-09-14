@@ -356,3 +356,60 @@ For any UI change:
 ---
 
 These guidelines are part of system quality: operators rely on the dashboard to trust and debug agents.
+
+## 15) World-Class Operator Investigation Standard
+
+The dashboard is an investigation product, not a collection of generic charts. Global Explore must be reachable without selecting an agent first. Query state, time range, columns, and organization are URL-serializable and survive navigation to a resource detail page.
+
+### 15.1 Four semantic lanes
+
+Keep **score contribution**, **rank transition**, **resource cost**, and **selection outcome** visually and numerically separate. A similarity score is not a final rank. A recency multiplier is not causal importance. A token budget exclusion is not irrelevance. Missing telemetry is not an empty result.
+
+### 15.2 Trace Inspector contract
+
+Use three layers: a pinned run summary, a comparative candidate matrix, and an exact selected-item trace. The selected trace combines an additive waterfall, exact component table, and expandable computation tree. The matrix must expose retrieval rank, metric-specific similarity, final rank, signed `Delta rank`, token estimate/realized/allocation, latency, and outcome.
+
+### 15.3 Exclusion and uncertainty states
+
+Use mutually exclusive groups for included, scored-but-budget-excluded, filtered-before-score, and failed/unknown candidates. Display `not evaluated` rather than zero for pre-score filters. Label sampled, delayed, redacted, expired, partial, simulated, and deleted evidence explicitly.
+
+### 15.4 Safe actions
+
+Counterfactuals are simulated and never mutate the observed trace. Replay uses an immutable snapshot, explicit versions, a sandbox, disabled or mocked tools, and a separate audit record. Policy changes show blast radius, approval requirements, before/after diff, rollout stage, and rollback path before confirmation.
+
+### 15.5 Accessibility and density
+
+Dense tables use semantic headers, keyboard-sortable columns, visible focus, non-color status encoding, announced loading/filter/result changes, accessible clear-all filters, and responsive overflow. Hover may preview exact values but may never contain the only reason for exclusion or the only security explanation.
+
+### 15.6 Composite score display contract
+
+When the backend exposes a versioned five-component composite score, display weights explicitly:
+
+| Component | Weight |
+|---|---:|
+| Semantic similarity | 0.40 |
+| Recency multiplier | 0.25 |
+| Confidence | 0.20 |
+| Source trust | 0.10 |
+| Label relevance | 0.05 |
+
+The **Explain** tree shows additive contribution per component. If the backend emits interim similarity/confidence only (pre-F4-025 closure), label the panel **interim score** and hide the five-component waterfall until the versioned payload is available.
+
+### 15.7 Exclusion groups (mutually exclusive)
+
+| Group | Meaning | UI treatment |
+|---|---|---|
+| Included | Selected into context pack | Default row styling |
+| Budget-excluded | Scored but dropped by token budget | Badge + token estimate |
+| Filtered | Removed before scoring | `not evaluated` for score columns |
+| Failed / unknown | Retrieval or scoring error | Error icon + reason code |
+
+Never show filtered candidates with a numeric score of zero.
+
+### 15.8 URL-serializable investigation state
+
+Explore filters, time range, sort, column visibility, and organization scope serialize to the URL. Navigating from Explore to a trace detail preserves query context in a return link. Share URLs reproduce the same result set within freshness bounds.
+
+### 15.9 Evidence freshness and degradation
+
+Show `live`, `historical`, `reconnecting`, `degraded`, `partial`, and `stale` banners at the shell level. When ClickHouse or SSE lag exceeds SLA, show last-successful-sync time — do not silently show empty results.

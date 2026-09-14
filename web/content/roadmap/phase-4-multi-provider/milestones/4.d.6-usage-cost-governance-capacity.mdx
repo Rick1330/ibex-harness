@@ -1,0 +1,70 @@
+---
+title: "Usage, Cost Governance & Capacity"
+description: "Explain spend and enforce budgets without double charging or relying on ephemeral counters."
+summary: "Explain spend and enforce budgets without double charging or relying on ephemeral counters."
+status: "planned"
+milestoneId: "4.D.6"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.6 — Usage, Cost Governance & Capacity"
+---
+
+# Milestone 4.D.6 — Usage, Cost Governance & Capacity
+
+**Status:** Planned  
+**Outcome:** Operators explain spend and enforce budgets without double charging or relying on ephemeral counters.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** 4.D.1; 4.D.2 recommended for pivots; 4.P.2 durable facts; 4.P.4 ledger/query; 4.P.5 resource controls  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  Analytics becomes governance only when persisted facts can change authorization decisions and prove the result (F4-005).
+</Callout>
+
+## Why this milestone exists
+
+Charts over ephemeral counters are not hard caps.
+
+## Scope and deliverables
+
+Usage ledger UI, versioned rate cards, provider/model/fallback attribution, rollups, budget scopes/periods, alert state, hard pause/degrade decisions, Redis hot counters with reconciliation, worker concurrency and queue dashboards, resource/cost ceilings, exportable cost evidence.
+
+## Contract and data requirements
+
+Idempotent ingestion; raw-to-aggregate reconciliation; retry does not double charge; policy-version replay; hard cap blocks proxy requests; completeness labels on live vs historical spend. All queries scoped by `org_id`.
+
+## Product and UX requirements
+
+Visible rate-card/policy versions; soft vs hard enforcement state; alert-only vs deny.
+
+## Non-functional requirements
+
+High-cardinality query remains bounded; concurrent over-admission tests.
+
+## Verification gates
+
+Hard-cap negative path on proxy; reconciliation report; rate-card replay; no double charge on retry.
+
+## Rollout and rollback
+
+**Trigger:** cost/governance false denies, chart-to-ledger mismatch, or tenant-limit regressions. **Reversal:** return affected tenants to soft or alert-only limits; stop hard governance denies from the new path. **Verify:** reconcile enforcement decisions; charts remain informational; soft/alert-only limits still fire before re-enabling hard governance.
+
+## Findings addressed
+
+F4-005.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
+- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
+## Exit checklist
+
+- [ ] Ledger + rate-card UI evidenced.
+- [ ] Hard-cap proxy denial test attached.
+- [ ] Reconciliation + rollback-to-alert-only demonstrated.

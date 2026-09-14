@@ -1,25 +1,50 @@
 ---
 title: "Phase 4 — Risks and Mitigations"
-description: "Risks for the management API, hierarchical rate limiting, multi-provider routing, and dashboard delivery."
-summary: "Risks for the management API, hierarchical rate limiting, multi-provider routing, and dashboard delivery."
+description: "Risks and mitigations for the management API, multi-provider runtime, evidence plane, operator dashboard, privacy lifecycle, and release gates."
+summary: "Risks and mitigations for the management API, multi-provider runtime, evidence plane, operator dashboard, privacy lifecycle, and release gates."
 phase: "phase-4-multi-provider"
 ---
 
 # Phase 4 — Risks and Mitigations
 
-<Callout type="note" title="Planning baseline">
-  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
-  Implementation is expected to require further research and may land differently than any sketch.
+<Callout type="note" title="Risk ownership">
+  Track P turns architectural risks into acceptance gates. A risk is not mitigated by prose alone; the owner must attach contract, test, operational, and rollback evidence to the milestone that closes it. Pair each row with the matching F4 finding where applicable.
 </Callout>
 
-| Risk | Area | Likelihood | Impact | Mitigation |
-| --- | --- | --- | --- | --- |
-| Rate-limiter correctness bugs under concurrency | 4.B.x | Medium | High | Keep Lua logic small, benchmark with real Redis under contention, and make zero-over-admission a required verification gate |
-| Provider translation drift between OpenAI and Anthropic | 4.C.x | Medium | High | Maintain golden fixtures per provider, reuse the shared error envelope, and verify streaming parity in CI |
-| Fallback routing changes behavior unexpectedly | 4.C.4 | Medium | High | Keep fallback opt-in per org, trace every fallback event, and require negative tests for the default-off path |
-| Circuit-breaker thresholds are too aggressive or too slow | 4.C.3 | Medium | Medium | Start with conservative windows, validate with resilience tests, and revisit thresholds after real traffic observations |
-| Dashboard RBAC gaps expose cross-tenant operator data | 4.D.x | Low | Critical | Use server-side permission checks for every data path, add end-to-end RBAC tests, and keep 404-style anti-enumeration behavior |
-| OpenAPI / client drift slows dashboard delivery | 4.A.x + 4.D.x | Medium | Medium | Publish the spec in CI, generate clients from the same contract, and fail builds on incompatible changes |
-| Analytics and observability dependencies bleed into user-facing availability | 4.D.x | Low | Medium | Keep trace/analytics writes asynchronous and ensure degraded observability does not block the management surface |
-| Provider-credential handling introduces operational risk | 4.A.5 | Low | Critical | Validate before store, encrypt at rest, avoid plaintext in logs/traces, and verify the retrieval path through integration tests |
+| Risk | Area | Likelihood | Impact | Mitigation and evidence |
+|---|---|---:|---:|---|
+| The static documentation deployment is mistaken for a dashboard runtime. | 4.P.0 / F4-001 | High | Critical | Choose and deploy a server-capable operator topology or a separate SPA/API/SSE origin. Verify cookies, CORS/CSRF, stream reconnect, health, readiness, drain, and rollback. |
+| Cross-tenant data leaks through IDs, caches, queues, exports, or analytical stores. | 4.P.1 / F4-002 | Medium | Critical | Derive tenant context server-side, enforce policy on every path, use anti-enumeration responses, and run two-tenant negative matrices across synchronous and asynchronous flows. |
+| Model policy fails open when Postgres is down (`PassthroughRegistry`). | 4.P.1 / F4-015 | Medium | Critical | Deny-by-default on dependency failure; negative test that no model is allowed when policy store is unavailable. |
+| Stale model-policy allow after revoke via lossy Pub/Sub invalidation. | 4.P.1–P.2 / F4-016 | Medium | Critical | Versioned durable invalidation; fail closed on unknown policy version; reconciliation job evidence. |
+| Plaintext provider secrets retrieved without narrow service scope; BYO BaseURL SSRF. | 4.P.1 / F4-017–018 | Medium | Critical | Scoped credential APIs, audit, BaseURL allowlist/private-range block, proxy and Auth enforcement tests. |
+| Raw prompts, outputs, or tool arguments leak into logs, traces, dead letters, exports, or the browser. | 4.P.3 / D2–D4 / F4-008 | Medium | Critical | Redact before queueing, use metadata-only defaults, encrypt privileged payloads, escape untrusted rendering, audit raw access, and scan hostile-content fixtures. |
+| Aggregate traces cannot explain why a decision occurred; missing correlation IDs. | 4.P.2 / D2 / F4-003,021–027 | High | Critical | Canonical nested evidence with stable IDs, parent/links, sequence, checkpoint joins, AssemblyMetrics, score/directive/tool contracts, and durable publication before Trace Inspector release. |
+| Conversation/raw payload store is undefined (hashes-only sessions). | 4.P.2–P.3 / F4-024 | High | Critical | Choose append-only event store or object archive with RLS, retention, redaction, and `trace:read_raw` before claiming conversation/raw UI. |
+| Org delete reports success while ClickHouse/MinIO data remain. | 4.P.3 / F4-019 | High | Critical | Cross-store deletion with legal hold, watermarks, receipts, retries, and verification queries. |
+| At-least-once event delivery creates duplicate or reordered evidence. | 4.P.2 | Medium | High | Use transactional outbox, idempotent consumers, aggregate sequence, dedupe keys, replay tests, poison-message handling, and explicit late/partial states. |
+| Realtime streams lose events or exhaust memory under slow clients; operator SSE confused with provider streams. | 4.P.0 / C.5 / E.2 / F4-007,033 | Medium | High | Bound buffers, publish resume positions, use `Last-Event-ID` on **operator-event** SSE only, measure lag and memory, disconnect slow clients safely; keep provider token SSE verbatim (ADR-0027). |
+| Retention TTL is treated as coordinated deletion. | 4.P.3 / F4-004 | High | Critical | Use policy records, tombstones, legal holds, per-store watermarks, receipts, idempotent purge, and deletion verification across every store and derived projection. |
+| Assembly budgeting/ranking/packer defects make Trace Inspector explanations false. | Context / D2 / F4-028–031 | Medium | High | Fix budget accounting, wire rank weights, correct half-life and packer repair; golden fixtures before 4.D.2 honesty claims. |
+| Usage/cost charts double count retries, fallbacks, or late events. | 4.P.4 / D6 / F4-005 | Medium | High | Use immutable usage facts, rate-card versions, idempotency, reconciliation reports, freshness/completeness indicators, and hard-cap negative tests. |
+| A budget or capacity control is advisory when it must deny traffic. | B / P4 / D6 | Medium | Critical | Keep enforcement on the proxy path, reconcile Redis with durable facts, test concurrent over-admission, and stage soft then hard limits with a kill switch. |
+| Replay or policy actions mutate production state unexpectedly. | D3 / D5 / F4-010 | Medium | Critical | Use immutable snapshots, sandboxed or mocked tools, preview/dry-run, step-up/dual approval, action ledger, idempotency, blast-radius display, and rollback pointers. |
+| Directive/routing changes have no reproducible provenance. | C / D5 / F4-026 | Medium | High | Record policy/directive/capability versions, input hashes, candidates, rejection reasons, approvals, exposure, evaluation, and rollback pointer. |
+| Drift alerts are built before their producer, baseline, and evaluation contracts exist. | D5 / Phase 4.5 / F4-013 | High | Medium | Keep drift integration behind a contract gate; deliver directive/routing controls first and add alert views only after Phase 4.5 producer evidence exists. |
+| Backup restore does not preserve evidence or tenant isolation; no Helm/K8s manifests. | P5 / E2 / F4-011,032 | Medium | Critical | Define RPO/RTO, commit overlays, cover Postgres, ClickHouse, Redis, object manifests, and outbox, run clean restore drills, and test tenant isolation after restore. |
+| Supply-chain compromise reaches the operator runtime. | P5 | Low | Critical | Pin image digests, generate SBOM/provenance, sign artifacts, verify admission, scan dependencies, and record deploy identity in the evidence bundle. |
+| Accessibility or data-state defects make the dense investigation UI unusable. | D1–D6 / P6 / F4-009,012 | Medium | High | Require keyboard and screen-reader checks, axe, semantic tables, visible focus, loading/empty/error/partial/stale/missing states, and four-role Playwright journeys. |
+| Query cost or cardinality degrades the operator platform. | P4 / D2 / D6 | Medium | High | Use bounded grammar, filter-before-page, cursor pagination, query budgets, high-cardinality-safe dimensions, EXPLAIN review, p95/p99 budgets, and rate limits. |
+| Required CI checks (Python gate, Semgrep) are not actually branch-protected. | P6 / E1 / F4-034 | Medium | High | Inventory required checks; fail closed when evidence jobs missing. |
+| Release evidence is incomplete but rollout proceeds. | P6 / E1–E4 | Medium | Critical | Make contracts, security, privacy, accessibility, performance, recovery, supply-chain, and rollback evidence required promotion inputs. Zero open P0 findings is mandatory. |
 
+## Escalation policy
+
+Any tenant-isolation, secret exposure, deletion-integrity, unsafe-action, restore-integrity, fail-open authorization, or supply-chain failure is a P0 release blocker. The rollout must stop, the affected capability must be disabled, and the incident must receive an evidence bundle. P1 risks require an owner and dated remediation before default-on. P2 risks require a documented acceptance or follow-up milestone.
+
+## Related pages
+
+- [Phase 4 findings register](/roadmap/phase-4-multi-provider/findings)
+- [Phase 4 tracks](/roadmap/phase-4-multi-provider/tracks)
+- [Phase 4 goals](/roadmap/phase-4-multi-provider/goals)
+- [Research archive (operator platform audits)](https://github.com/Rick1330/ibex-harness/tree/main/web/engineering/research/operator-platform)
