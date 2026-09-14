@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
@@ -23,7 +24,8 @@ from app.session_stub import (
     SESSION_KIND_ACCESS,
     SESSION_KIND_REFRESH,
     SessionStubError,
-    issue_token,
+    TokenIssueOpts,
+    issue_token_opts,
     mint_csrf_token,
     verify_token,
 )
@@ -35,6 +37,17 @@ class LoginBody(BaseModel):
     """Exchange a PAT for provisional session cookies. PAT must not be stored in the browser."""
 
     pat: str = Field(min_length=8, max_length=4096)
+
+
+@dataclass(frozen=True, slots=True)
+class CookieParams:
+    name: str
+    value: str
+    max_age: int
+    httponly: bool
+    secure: bool
+    samesite: str
+    domain: str | None
 
 
 def _settings(request: Request) -> Settings:
@@ -60,28 +73,47 @@ def _require_hmac(settings: Settings) -> str:
     return settings.jwt_hmac_secret
 
 
-def _set_http_only_cookie(
-    response: Response, *, name: str, value: str, settings: Settings, max_age: int
-) -> None:
+def _cookie_security(settings: Settings) -> tuple[bool, str]:
     samesite = settings.cookie_samesite
     secure = settings.cookie_secure or samesite == "none"
+    return secure, samesite
+
+
+def _apply_cookie(response: Response, params: CookieParams) -> None:
     response.set_cookie(
-        key=name,
-        value=value,
-        max_age=max_age,
-        httponly=True,
-        secure=secure,
-        samesite=samesite,
-        domain=settings.cookie_domain,
+        key=params.name,
+        value=params.value,
+        max_age=params.max_age,
+        httponly=params.httponly,
+        secure=params.secure,
+        samesite=params.samesite,
+        domain=params.domain,
         path="/",
     )
 
 
+def _set_http_only_cookie(
+    response: Response, *, name: str, value: str, settings: Settings, max_age: int
+) -> None:
+    secure, samesite = _cookie_security(settings)
+    _apply_cookie(
+        response,
+        CookieParams(
+            name=name,
+            value=value,
+            max_age=max_age,
+            httponly=True,
+            secure=secure,
+            samesite=samesite,
+            domain=settings.cookie_domain,
+        ),
+    )
+
+
 def _set_csrf_cookie(response: Response, *, csrf: str, settings: Settings) -> None:
-    samesite = settings.cookie_samesite
-    secure = settings.cookie_secure or samesite == "none"
+    secure, samesite = _cookie_security(settings)
     # Readable by JS (double-submit); TTL matches refresh so CSRF survives access rotation.
-    response.set_cookie(
+    response.set_cookie(  # NOSONAR python:S3330 — CSRF double-submit must be JS-readable
         key=settings.dashboard_csrf_cookie_name,
         value=csrf,
         max_age=settings.jwt_refresh_token_ttl_seconds,
@@ -93,6 +125,30 @@ def _set_csrf_cookie(response: Response, *, csrf: str, settings: Settings) -> No
     )
 
 
+def _mint_token(
+    *,
+    secret: str,
+    settings: Settings,
+    org_id: UUID,
+    permissions: int,
+    subject: str,
+    session_kind: str,
+    ttl_seconds: int,
+) -> str:
+    return issue_token_opts(
+        TokenIssueOpts(
+            secret=secret,
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            org_id=org_id,
+            permissions=permissions,
+            subject=subject,
+            session_kind=session_kind,
+            ttl_seconds=ttl_seconds,
+        )
+    )
+
+
 def _issue_session_pair(
     *,
     secret: str,
@@ -101,20 +157,18 @@ def _issue_session_pair(
     permissions: int,
     subject: str,
 ) -> tuple[str, str]:
-    access = issue_token(
+    access = _mint_token(
         secret=secret,
-        issuer=settings.jwt_issuer,
-        audience=settings.jwt_audience,
+        settings=settings,
         org_id=org_id,
         permissions=permissions,
         subject=subject,
         session_kind=SESSION_KIND_ACCESS,
         ttl_seconds=settings.jwt_access_token_ttl_seconds,
     )
-    refresh = issue_token(
+    refresh = _mint_token(
         secret=secret,
-        issuer=settings.jwt_issuer,
-        audience=settings.jwt_audience,
+        settings=settings,
         org_id=org_id,
         permissions=permissions,
         subject=subject,
@@ -213,10 +267,9 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
         )
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
-    access = issue_token(
+    access = _mint_token(
         secret=secret,
-        issuer=settings.jwt_issuer,
-        audience=settings.jwt_audience,
+        settings=settings,
         org_id=claims.org_id,
         permissions=claims.permissions,
         subject=claims.sub,
@@ -254,6 +307,10 @@ async def me(request: Request) -> dict[str, object]:
     raw = request.cookies.get(settings.dashboard_session_cookie_name)
     if not raw:
         return await _me_bearer(request)
+    return _me_cookie(raw, settings=settings, secret=secret)
+
+
+def _me_cookie(raw: str, *, settings: Settings, secret: str) -> dict[str, object]:
     try:
         claims = verify_token(
             raw,
@@ -272,6 +329,15 @@ async def me(request: Request) -> dict[str, object]:
     }
 
 
+async def _validate_bearer(validator: TokenValidator, bearer: str) -> ValidateResult:
+    try:
+        return await validator.validate(bearer)
+    except AuthFailedError as exc:
+        raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
+    except AuthUnavailableError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc
+
+
 async def _me_bearer(request: Request) -> dict[str, object]:
     try:
         bearer = parse_authorization_header(request.headers.get("Authorization"))
@@ -280,12 +346,7 @@ async def _me_bearer(request: Request) -> dict[str, object]:
     validator = request.app.state.api.validator
     if validator is None:
         raise ApiError(code=SERVICE_DEGRADED, message="validator unavailable")
-    try:
-        result = await validator.validate(bearer)
-    except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
-    except AuthUnavailableError as exc:
-        raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc
+    result = await _validate_bearer(validator, bearer)
     return {
         "auth": "bearer",
         "org_id": str(result.org_id),

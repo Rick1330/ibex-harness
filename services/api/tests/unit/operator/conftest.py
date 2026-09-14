@@ -74,3 +74,41 @@ def app_client(settings: Settings, validator: StaticTokenValidator):
             yield app, client
         finally:
             client.__exit__(None, None, None)
+
+
+def login_with_csrf(client: TestClient, pat: str = "ibex_pat_test_secret") -> str:
+    """POST login and return CSRF token; asserts HTTP 200."""
+    login = client.post("/v1/operator/session/login", json={"pat": pat})
+    assert login.status_code == 200
+    return login.json()["csrf_token"]
+
+
+def create_operator_app(
+    *,
+    settings: Settings | None = None,
+    validator: StaticTokenValidator | None = None,
+):
+    """Context manager: patched create_app + TestClient for operator tests."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _cm():
+        s = settings or operator_settings()
+        v = validator or StaticTokenValidator(
+            {"ibex_pat_test_secret": ValidateResult(org_id=uuid4(), permissions=1, user_id="u1")}
+        )
+        with (
+            patch("app.main.create_engine", return_value=mock_engine()),
+            patch("app.main.create_session_factory", return_value=MagicMock()),
+            patch("authclient.revoke.GRPCTokenRevoker", return_value=MagicMock(aclose=AsyncMock())),
+            patch("authclient.tokens.GRPCTokenManager", return_value=MagicMock(aclose=AsyncMock())),
+            patch(
+                "authclient.provider_credentials.GRPCProviderCredentialManager",
+                return_value=MagicMock(aclose=AsyncMock()),
+            ),
+        ):
+            app = create_app(settings=s, validator=v)
+            with TestClient(app) as client:
+                yield app, client
+
+    return _cm()

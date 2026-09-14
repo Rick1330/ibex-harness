@@ -7,7 +7,7 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -71,6 +71,19 @@ class OperatorSSEHub:
                 await self._disconnect_subscriber(queue)
             return event.event_id
 
+    def _force_sentinel(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
+        try:
+            queue.put_nowait(None)
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                return
+
     async def _disconnect_subscriber(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
         """Drop a lagging subscriber so the client reconnects with Last-Event-ID."""
         logger.warning("operator sse subscriber queue full; disconnecting stream")
@@ -79,34 +92,38 @@ class OperatorSSEHub:
         try:
             queue.put_nowait(None)
         except asyncio.QueueFull:
+            self._force_sentinel(queue)
+
+    def _backlog_after(self, last_event_id: int | None) -> list[OperatorEvent]:
+        if last_event_id is None:
+            return list(self._history)
+        return [e for e in self._history if e.event_id > last_event_id]
+
+    async def _live_chunks(
+        self, queue: asyncio.Queue[OperatorEvent | None]
+    ) -> AsyncIterator[bytes]:
+        while not self.drain.draining:
             try:
-                queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            try:
-                queue.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
+                item = await asyncio.wait_for(queue.get(), timeout=15.0)
+            except TimeoutError:
+                yield b": heartbeat\n\n"
+                continue
+            if item is None:
+                return
+            yield self._format_event(item)
 
     async def subscribe(self, last_event_id: int | None) -> AsyncIterator[bytes]:
         if self.drain.draining:
             raise RuntimeError("draining")
         queue: asyncio.Queue[OperatorEvent | None] = asyncio.Queue(maxsize=64)
         async with self._lock:
-            backlog = [e for e in self._history if last_event_id is None or e.event_id > last_event_id]
+            backlog = self._backlog_after(last_event_id)
             self._subscribers.append(queue)
         try:
             for event in backlog:
                 yield self._format_event(event)
-            while not self.drain.draining:
-                try:
-                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except TimeoutError:
-                    yield b": heartbeat\n\n"
-                    continue
-                if item is None:
-                    break
-                yield self._format_event(item)
+            async for chunk in self._live_chunks(queue):
+                yield chunk
         finally:
             async with self._lock:
                 if queue in self._subscribers:
@@ -192,25 +209,33 @@ async def _fan_in_read_loop(
             await hub.publish(payload)
 
 
+async def _safe_await(label: str, coro_factory: Callable[[], Awaitable[Any]]) -> None:
+    try:
+        await coro_factory()
+    except (OSError, TimeoutError, RedisError) as exc:
+        logger.debug("redis fan-in %s: %s", label, exc)
+
+
+async def _safe_unsubscribe(pubsub: object, channel: str) -> None:
+    unsubscribe = getattr(pubsub, "unsubscribe", None)
+    if unsubscribe is None:
+        return
+    await _safe_await("unsubscribe", lambda: unsubscribe(channel))
+
+
+async def _safe_aclose(obj: object, label: str) -> None:
+    closer = getattr(obj, "aclose", None)
+    if closer is None:
+        return
+    await _safe_await(label, closer)
+
+
 async def _aclose_redis_fan_in(pubsub: object | None, client: Redis | None, channel: str) -> None:
     if pubsub is not None:
-        unsubscribe = getattr(pubsub, "unsubscribe", None)
-        if unsubscribe is not None:
-            try:
-                await unsubscribe(channel)
-            except (OSError, TimeoutError, RedisError) as exc:
-                logger.debug("redis fan-in unsubscribe: %s", exc)
-        closer = getattr(pubsub, "aclose", None)
-        if closer is not None:
-            try:
-                await closer()
-            except (OSError, TimeoutError, RedisError) as exc:
-                logger.debug("redis fan-in pubsub close: %s", exc)
+        await _safe_unsubscribe(pubsub, channel)
+        await _safe_aclose(pubsub, "pubsub close")
     if client is not None:
-        try:
-            await client.aclose()
-        except (OSError, TimeoutError, RedisError) as exc:
-            logger.debug("redis fan-in client close: %s", exc)
+        await _safe_aclose(client, "client close")
 
 
 async def redis_fan_in_loop(

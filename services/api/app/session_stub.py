@@ -44,6 +44,26 @@ class SessionClaims:
     jti: str
 
 
+@dataclass(frozen=True, slots=True)
+class TokenIssueOpts:
+    secret: str
+    issuer: str
+    audience: str
+    org_id: UUID
+    permissions: int
+    subject: str
+    session_kind: str
+    ttl_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class TokenVerifyOpts:
+    secret: str
+    issuer: str
+    audience: str
+    expect_kind: str
+
+
 def issue_token(
     *,
     secret: str,
@@ -55,23 +75,38 @@ def issue_token(
     session_kind: str,
     ttl_seconds: int,
 ) -> str:
+    return issue_token_opts(
+        TokenIssueOpts(
+            secret=secret,
+            issuer=issuer,
+            audience=audience,
+            org_id=org_id,
+            permissions=permissions,
+            subject=subject,
+            session_kind=session_kind,
+            ttl_seconds=ttl_seconds,
+        )
+    )
+
+
+def issue_token_opts(opts: TokenIssueOpts) -> str:
     now = int(time.time())
     header = {"alg": "HS256", "typ": "JWT"}
     payload = {
-        "iss": issuer,
-        "aud": audience,
-        "sub": subject,
-        "org_id": str(org_id),
-        "permissions": permissions,
-        "session_kind": session_kind,
+        "iss": opts.issuer,
+        "aud": opts.audience,
+        "sub": opts.subject,
+        "org_id": str(opts.org_id),
+        "permissions": opts.permissions,
+        "session_kind": opts.session_kind,
         "iat": now,
-        "exp": now + ttl_seconds,
+        "exp": now + opts.ttl_seconds,
         "jti": secrets.token_urlsafe(16),
         "provisional": True,  # 4.P.0 marker — remove when auth issues sessions
     }
     body = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}."
     body += _b64url(json.dumps(payload, separators=(',', ':')).encode())
-    sig = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    sig = hmac.new(opts.secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64url(sig)}"
 
 
@@ -101,17 +136,31 @@ def _decode_payload(payload_b64: str) -> dict[str, Any]:
     return payload
 
 
-def _to_claims(payload: dict[str, Any]) -> SessionClaims:
+def _session_kind_of(payload: dict[str, Any]) -> str | None:
     kind = payload.get("session_kind") or payload.get("token_kind")
+    return None if kind is None else str(kind)
+
+
+def _to_claims(payload: dict[str, Any]) -> SessionClaims:
     return SessionClaims(
         sub=str(payload.get("sub", "")),
         org_id=UUID(str(payload["org_id"])),
         permissions=int(payload.get("permissions", 0)),
-        session_kind=str(kind),
+        session_kind=str(_session_kind_of(payload)),
         exp=int(payload.get("exp", 0)),
         iat=int(payload.get("iat", 0)),
         jti=str(payload.get("jti", "")),
     )
+
+
+def _validate_claims(payload: dict[str, Any], opts: TokenVerifyOpts) -> SessionClaims:
+    if payload.get("iss") != opts.issuer or payload.get("aud") != opts.audience:
+        raise SessionStubError("issuer/audience mismatch")
+    if _session_kind_of(payload) != opts.expect_kind:
+        raise SessionStubError("wrong token kind")
+    if int(payload.get("exp", 0)) < int(time.time()):
+        raise SessionStubError("expired")
+    return _to_claims(payload)
 
 
 def verify_token(
@@ -122,18 +171,21 @@ def verify_token(
     audience: str,
     expect_kind: str,
 ) -> SessionClaims:
+    return verify_token_opts(
+        token,
+        TokenVerifyOpts(
+            secret=secret,
+            issuer=issuer,
+            audience=audience,
+            expect_kind=expect_kind,
+        ),
+    )
+
+
+def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
     header_b64, payload_b64, sig_b64 = _split_jwt(token)
-    _verify_signature(header_b64, payload_b64, sig_b64, secret=secret)
-    payload = _decode_payload(payload_b64)
-    if payload.get("iss") != issuer or payload.get("aud") != audience:
-        raise SessionStubError("issuer/audience mismatch")
-    kind = payload.get("session_kind") or payload.get("token_kind")
-    if kind != expect_kind:
-        raise SessionStubError("wrong token kind")
-    exp = int(payload.get("exp", 0))
-    if exp < int(time.time()):
-        raise SessionStubError("expired")
-    return _to_claims(payload)
+    _verify_signature(header_b64, payload_b64, sig_b64, secret=opts.secret)
+    return _validate_claims(_decode_payload(payload_b64), opts)
 
 
 def mint_csrf_token(*, secret: str) -> str:

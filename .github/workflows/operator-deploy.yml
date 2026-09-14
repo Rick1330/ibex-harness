@@ -71,11 +71,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_BRANCH: ${{ inputs.pages_branch }}
         run: |
           set -o pipefail
           pnpm exec wrangler pages deploy services/dashboard/dist \
             --project-name=ibex-harness-operator \
-            --branch="${{ inputs.pages_branch }}" \
+            --branch="$PAGES_BRANCH" \
             --commit-dirty=true 2>&1 | tee deploy.log
           BASE_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pages\.dev' deploy.log | tail -1)
           if [ -z "$BASE_URL" ]; then
@@ -85,8 +86,10 @@ jobs:
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Smoke static shell
+        env:
+          BASE_URL: ${{ steps.deploy.outputs.base_url }}
         run: |
           set -euo pipefail
-          code=$(curl -sS -o /dev/null -w '%{http_code}' "${{ steps.deploy.outputs.base_url }}/")
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "${BASE_URL}/")
           test "$code" = "200"
-          curl -sS "${{ steps.deploy.outputs.base_url }}/" | grep -q "IBEX Operator"
+          curl -sS "${BASE_URL}/" | grep -q "IBEX Operator"

@@ -245,29 +245,13 @@ def test_sse_http_drain_rejects_new_stream(app_client) -> None:
 
 
 def test_sse_stream_feature_disabled() -> None:
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from fastapi.testclient import TestClient
-
     from app.auth.client import StaticTokenValidator
-    from app.main import create_app
-    from tests.unit.operator.conftest import mock_engine, operator_settings
+    from tests.unit.operator.conftest import create_operator_app, operator_settings
 
     settings = operator_settings(operator_feature_enabled=False)
-    with (
-        patch("app.main.create_engine", return_value=mock_engine()),
-        patch("app.main.create_session_factory", return_value=MagicMock()),
-        patch("authclient.revoke.GRPCTokenRevoker", return_value=MagicMock(aclose=AsyncMock())),
-        patch("authclient.tokens.GRPCTokenManager", return_value=MagicMock(aclose=AsyncMock())),
-        patch(
-            "authclient.provider_credentials.GRPCProviderCredentialManager",
-            return_value=MagicMock(aclose=AsyncMock()),
-        ),
-    ):
-        app = create_app(settings=settings, validator=StaticTokenValidator({}))
-        with TestClient(app) as client:
-            resp = client.get("/v1/operator/events/stream")
-            assert resp.status_code == 503
+    with create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client):
+        resp = client.get("/v1/operator/events/stream")
+        assert resp.status_code == 503
 
 
 @pytest.mark.asyncio

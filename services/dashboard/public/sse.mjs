@@ -1,5 +1,5 @@
 /**
- * Pure SSE parsing helpers (unit-tested). Used by the operator shell.
+ * Pure SSE / API-origin helpers (unit-tested). Used by the operator shell.
  */
 
 export function parseSSEBlock(block) {
@@ -24,4 +24,38 @@ export function shouldAcceptEventId(lastEventId, nextId) {
 
 export function buildLoginBody(pat) {
   return JSON.stringify({ pat: String(pat).trim() });
+}
+
+/** Hosts allowed for operator API origin (local + product domains). */
+export function isAllowedApiHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+    return true;
+  }
+  return host === "ibexharness.com" || host.endsWith(".ibexharness.com");
+}
+
+/**
+ * Normalize and allowlist an API origin. Returns null when invalid.
+ * Only http/https; no credentials/userinfo in the URL.
+ */
+export function resolveApiBase(raw) {
+  const trimmed = String(raw || "").trim().replace(/\/$/, "");
+  if (!trimmed) return null;
+  let url;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return null;
+  }
+  if (url.username || url.password) {
+    return null;
+  }
+  if (!isAllowedApiHost(url.hostname)) {
+    return null;
+  }
+  return `${url.protocol}//${url.host}`;
 }

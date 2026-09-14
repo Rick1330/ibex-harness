@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   buildLoginBody,
+  isAllowedApiHost,
   parseSSEBlock,
+  resolveApiBase,
   shouldAcceptEventId,
 } from "../public/sse.mjs";
 
@@ -31,5 +33,19 @@ describe("shouldAcceptEventId", () => {
     assert.equal(shouldAcceptEventId(2, 1), false);
     assert.equal(shouldAcceptEventId(2, 3), true);
     assert.equal(shouldAcceptEventId(null, 1), true);
+  });
+});
+
+describe("resolveApiBase", () => {
+  it("allows localhost and product hosts", () => {
+    assert.equal(resolveApiBase("http://localhost:8010/"), "http://localhost:8010");
+    assert.equal(resolveApiBase("https://api.ibexharness.com"), "https://api.ibexharness.com");
+    assert.equal(isAllowedApiHost("operator.ibexharness.com"), true);
+  });
+
+  it("rejects non-http schemes and foreign hosts", () => {
+    assert.equal(resolveApiBase("javascript:alert(1)"), null);
+    assert.equal(resolveApiBase("http://evil.example"), null);
+    assert.equal(resolveApiBase("http://user:pass@localhost:8010"), null);
   });
 });

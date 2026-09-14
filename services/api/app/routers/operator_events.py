@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import APIRouter, Request
@@ -21,6 +22,15 @@ from app.sse.operator_events import SSE_SLOW_WRITES, SSE_WRITE_SECONDS, Operator
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/operator/events", tags=["operator-events"])
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamCtx:
+    request: Request
+    hub: OperatorSSEHub
+    drain: DrainState
+    settings: Settings
+    last_id: int | None
 
 
 def _settings(request: Request) -> Settings:
@@ -64,32 +74,28 @@ def _draining_response() -> JSONResponse:
     )
 
 
-async def _event_stream(
-    *,
-    request: Request,
-    hub: OperatorSSEHub,
-    drain: DrainState,
-    settings: Settings,
-    last_id: int | None,
-) -> AsyncIterator[bytes]:
+def _observe_write(elapsed: float, settings: Settings) -> None:
+    SSE_WRITE_SECONDS.observe(elapsed)
+    if elapsed * 1000 >= settings.sse_slow_write_ms:
+        SSE_SLOW_WRITES.inc()
+
+
+async def _event_stream(ctx: _StreamCtx) -> AsyncIterator[bytes]:
     task = asyncio.current_task()
     if task is not None:
-        await drain.register_sse(task)
+        await ctx.drain.register_sse(task)
     try:
-        async for chunk in hub.subscribe(last_id):
-            if await request.is_disconnected():
+        async for chunk in ctx.hub.subscribe(ctx.last_id):
+            if await ctx.request.is_disconnected():
                 break
             t0 = time.perf_counter()
             try:
-                async with asyncio.timeout(settings.sse_write_deadline_seconds):
+                async with asyncio.timeout(ctx.settings.sse_write_deadline_seconds):
                     yield chunk
             except TimeoutError:
                 logger.warning("operator sse write deadline exceeded; closing stream")
                 break
-            elapsed = time.perf_counter() - t0
-            SSE_WRITE_SECONDS.observe(elapsed)
-            if elapsed * 1000 >= settings.sse_slow_write_ms:
-                SSE_SLOW_WRITES.inc()
+            _observe_write(time.perf_counter() - t0, ctx.settings)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -97,25 +103,30 @@ async def _event_stream(
         raise
 
 
+def _hub_or_503(request: Request) -> OperatorSSEHub:
+    hub: OperatorSSEHub | None = getattr(request.app.state, "operator_sse_hub", None)
+    if hub is None:
+        raise ApiError(code=SERVICE_DEGRADED, message="operator SSE hub not initialized")
+    return hub
+
+
 @router.get("/stream", response_model=None)
 async def stream_events(request: Request) -> Response:
     await _require_session(request)
     settings = _settings(request)
-    hub: OperatorSSEHub | None = getattr(request.app.state, "operator_sse_hub", None)
+    hub = _hub_or_503(request)
     drain = request.app.state.api.drain
-    if hub is None:
-        raise ApiError(code=SERVICE_DEGRADED, message="operator SSE hub not initialized")
     if drain.draining:
         return _draining_response()
-    last_id = _parse_last_event_id(request)
+    ctx = _StreamCtx(
+        request=request,
+        hub=hub,
+        drain=drain,
+        settings=settings,
+        last_id=_parse_last_event_id(request),
+    )
     return StreamingResponse(
-        _event_stream(
-            request=request,
-            hub=hub,
-            drain=drain,
-            settings=settings,
-            last_id=last_id,
-        ),
+        _event_stream(ctx),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -129,9 +140,7 @@ async def stream_events(request: Request) -> Response:
 async def publish_test_event(request: Request) -> dict[str, object]:
     """Test helper: enqueue one operator event (requires session + CSRF)."""
     await _require_session(request)
-    hub: OperatorSSEHub | None = getattr(request.app.state, "operator_sse_hub", None)
-    if hub is None:
-        raise ApiError(code=SERVICE_DEGRADED, message="operator SSE hub not initialized")
+    hub = _hub_or_503(request)
     body = await request.json()
     if not isinstance(body, dict):
         body = {"value": body}

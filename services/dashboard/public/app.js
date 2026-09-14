@@ -3,7 +3,12 @@
  * No secrets in URL/query; PAT lives only in the password field until login.
  */
 
-import { buildLoginBody, parseSSEBlock, shouldAcceptEventId } from "./sse.mjs";
+import {
+  buildLoginBody,
+  parseSSEBlock,
+  resolveApiBase,
+  shouldAcceptEventId,
+} from "./sse.mjs";
 
 const STATES = new Set([
   "unknown",
@@ -32,12 +37,24 @@ let abortController = null;
 let reconnectTimer = null;
 let deliberateClose = false;
 
-function defaultApiBase() {
-  // Same-site with UI on http://localhost:3100 — use localhost, not 127.0.0.1.
-  return window.IBEX_API_BASE_URL || "http://localhost:8010";
+function injectedApiBase() {
+  return typeof window.IBEX_API_BASE_URL === "string" ? window.IBEX_API_BASE_URL.trim() : "";
 }
 
-els.apiBase.value = defaultApiBase();
+function defaultApiBase() {
+  return resolveApiBase(injectedApiBase()) || "http://localhost:8010";
+}
+
+function initApiBaseField() {
+  const injected = injectedApiBase();
+  els.apiBase.value = defaultApiBase();
+  if (injected) {
+    els.apiBase.readOnly = true;
+    els.apiBase.title = "Set by deploy config (IBEX_API_BASE_URL)";
+  }
+}
+
+initApiBaseField();
 
 function setState(name, detail) {
   const next = STATES.has(name) ? name : "unknown";
@@ -47,7 +64,11 @@ function setState(name, detail) {
 }
 
 function apiUrl(path) {
-  return `${els.apiBase.value.replace(/\/$/, "")}${path}`;
+  const base = resolveApiBase(els.apiBase.value);
+  if (!base) {
+    throw new Error("API origin is not allowlisted (http/https localhost or *.ibexharness.com)");
+  }
+  return `${base}${path}`;
 }
 
 function appendEvent(line) {
@@ -65,8 +86,15 @@ async function login() {
     setState("error", "PAT required for provisional login stub");
     return;
   }
+  let url;
+  try {
+    url = apiUrl("/v1/operator/session/login");
+  } catch (err) {
+    setState("error", String(err.message || err));
+    return;
+  }
   setState("reconnecting", "Exchanging PAT for session cookies…");
-  const resp = await fetch(apiUrl("/v1/operator/session/login"), {
+  const resp = await fetch(url, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -83,9 +111,14 @@ async function login() {
 }
 
 async function me() {
-  const resp = await fetch(apiUrl("/v1/operator/session/me"), {
-    credentials: "include",
-  });
+  let url;
+  try {
+    url = apiUrl("/v1/operator/session/me");
+  } catch (err) {
+    setState("error", String(err.message || err));
+    return;
+  }
+  const resp = await fetch(url, { credentials: "include" });
   if (resp.status === 401 || resp.status === 403) {
     setState("unauthenticated", `/me rejected: HTTP ${resp.status}`);
     return;
@@ -118,40 +151,62 @@ function closeSSE() {
 function connectSSE() {
   deliberateClose = false;
   abortActiveStream();
+  let url;
+  try {
+    url = apiUrl("/v1/operator/events/stream");
+  } catch (err) {
+    setState("error", String(err.message || err));
+    return;
+  }
   const generation = ++streamGeneration;
   abortController = new AbortController();
-  const url = apiUrl("/v1/operator/events/stream");
   setState(lastEventId ? "reconnecting" : "live", "Opening EventSource…");
   void streamWithFetch(url, generation, abortController.signal);
 }
 
-async function streamWithFetch(url, generation, signal) {
+function sseHeaders() {
   const headers = { Accept: "text/event-stream" };
   if (lastEventId != null) {
     headers["Last-Event-ID"] = String(lastEventId);
-    if (generation === streamGeneration) {
-      setState("historical", `Resuming after id ${lastEventId}`);
-    }
+  }
+  return headers;
+}
+
+async function handleStreamResponse(resp, generation) {
+  if (generation !== streamGeneration) return "stale";
+  if (resp.status === 503 && resp.headers.get("X-IBEX-Drain") === "1") {
+    setState("drained", "API is draining; new SSE rejected");
+    return "stop";
+  }
+  if (resp.status === 401 || resp.status === 403) {
+    setState("unauthenticated", `SSE rejected: HTTP ${resp.status}`);
+    return "stop";
+  }
+  if (!resp.ok || !resp.body) {
+    setState("degraded", `SSE failed: HTTP ${resp.status}`);
+    return "retry";
+  }
+  setState("live", "SSE connected");
+  await readStreamBody(resp.body, generation);
+  return "ended";
+}
+
+async function streamWithFetch(url, generation, signal) {
+  if (lastEventId != null && generation === streamGeneration) {
+    setState("historical", `Resuming after id ${lastEventId}`);
   }
   try {
-    const resp = await fetch(url, { credentials: "include", headers, signal });
-    if (generation !== streamGeneration) return;
-    if (resp.status === 503 && resp.headers.get("X-IBEX-Drain") === "1") {
-      setState("drained", "API is draining; new SSE rejected");
-      return;
-    }
-    if (resp.status === 401 || resp.status === 403) {
-      setState("unauthenticated", `SSE rejected: HTTP ${resp.status}`);
-      return;
-    }
-    if (!resp.ok || !resp.body) {
-      setState("degraded", `SSE failed: HTTP ${resp.status}`);
+    const resp = await fetch(url, {
+      credentials: "include",
+      headers: sseHeaders(),
+      signal,
+    });
+    const outcome = await handleStreamResponse(resp, generation);
+    if (outcome === "retry") {
       scheduleReconnect(generation);
       return;
     }
-    setState("live", "SSE connected");
-    await readStreamBody(resp.body, generation);
-    if (generation === streamGeneration && !deliberateClose) {
+    if (outcome === "ended" && generation === streamGeneration && !deliberateClose) {
       setState("reconnecting", "SSE ended; will retry");
       scheduleReconnect(generation);
     }
@@ -166,16 +221,20 @@ async function readStreamBody(body, generation) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  let aborted = false;
-  while (!aborted && generation === streamGeneration) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const parts = buf.split("\n\n");
-    buf = parts.pop() || "";
-    for (const block of parts) {
-      handleSSEBlock(block, generation);
+  try {
+    while (generation === streamGeneration) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() || "";
+      for (const block of parts) {
+        handleSSEBlock(block, generation);
+      }
     }
+  } catch (err) {
+    if (generation !== streamGeneration) return;
+    throw err;
   }
 }
 
@@ -202,9 +261,16 @@ function scheduleReconnect(generation) {
 
 async function logout() {
   closeSSE();
+  let url;
+  try {
+    url = apiUrl("/v1/operator/session/logout");
+  } catch (err) {
+    setState("error", String(err.message || err));
+    return;
+  }
   const headers = {};
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  await fetch(apiUrl("/v1/operator/session/logout"), {
+  await fetch(url, {
     method: "POST",
     credentials: "include",
     headers,
