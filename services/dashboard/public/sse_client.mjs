@@ -5,6 +5,22 @@
 import { parseSSEBlock, shouldAcceptEventId } from "./sse.mjs";
 import { classifyStreamStatus, reconnectDelayMs } from "./stream.mjs";
 
+/** Clear reconnect backoff only after the stream proves usable. */
+export const STABLE_CONNECTION_MS = 10_000;
+
+/**
+ * @param {boolean} receivedEvent
+ * @param {number} openMs
+ * @param {number} [stableMs]
+ */
+export function shouldClearReconnectBackoff(
+  receivedEvent,
+  openMs,
+  stableMs = STABLE_CONNECTION_MS,
+) {
+  return Boolean(receivedEvent) || openMs >= stableMs;
+}
+
 /**
  * @param {{
  *   apiFetch: (name: string, init?: RequestInit) => Promise<Response>,
@@ -61,7 +77,7 @@ export function createSseController(deps) {
     }, delay);
   }
 
-  function handleBlock(block, generation) {
+  function handleBlock(block, generation, stability) {
     if (generation !== streamGeneration) return;
     const parsed = parseSSEBlock(block);
     if (!parsed) return;
@@ -69,9 +85,11 @@ export function createSseController(deps) {
     if (parsed.id != null) lastEventId = parsed.id;
     appendEvent(parsed.id != null ? `#${parsed.id} ${parsed.data}` : parsed.data);
     setState("live", `last-event-id=${lastEventId}`);
+    stability.receivedEvent = true;
+    reconnectAttempt = 0;
   }
 
-  async function readBody(body, generation) {
+  async function readBody(body, generation, stability) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -82,7 +100,7 @@ export function createSseController(deps) {
         buf += decoder.decode(value, { stream: true });
         const parts = buf.split("\n\n");
         buf = parts.pop() || "";
-        for (const block of parts) handleBlock(block, generation);
+        for (const block of parts) handleBlock(block, generation, stability);
       }
     } catch (err) {
       if (generation !== streamGeneration) return;
@@ -110,8 +128,13 @@ export function createSseController(deps) {
       return { outcome: "retry", retryAfter: resp.headers.get("Retry-After") };
     }
     setState("live", "SSE connected");
-    reconnectAttempt = 0;
-    await readBody(resp.body, generation);
+    const stability = { receivedEvent: false };
+    const openedAt = Date.now();
+    await readBody(resp.body, generation, stability);
+    const openMs = Date.now() - openedAt;
+    if (shouldClearReconnectBackoff(stability.receivedEvent, openMs)) {
+      reconnectAttempt = 0;
+    }
     return "ended";
   }
 

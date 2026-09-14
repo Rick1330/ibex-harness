@@ -11,6 +11,10 @@ import {
 } from "../public/api_base.mjs";
 import { buildLoginBody, parseSSEBlock, shouldAcceptEventId } from "../public/sse.mjs";
 import {
+  STABLE_CONNECTION_MS,
+  shouldClearReconnectBackoff,
+} from "../public/sse_client.mjs";
+import {
   classifyStreamStatus,
   isAuthFailure,
   isPermanentClientError,
@@ -102,5 +106,13 @@ describe("reconnectDelayMs", () => {
     const delay = reconnectDelayMs(0, null);
     assert.ok(delay >= 1000 && delay < 1250);
     assert.ok(reconnectDelayMs(20, null) <= 30_250);
+  });
+});
+
+describe("shouldClearReconnectBackoff", () => {
+  it("clears after an event or a stable open duration, not sooner", () => {
+    assert.equal(shouldClearReconnectBackoff(false, STABLE_CONNECTION_MS - 1), false);
+    assert.equal(shouldClearReconnectBackoff(false, STABLE_CONNECTION_MS), true);
+    assert.equal(shouldClearReconnectBackoff(true, 0), true);
   });
 });
