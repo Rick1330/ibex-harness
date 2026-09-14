@@ -43,6 +43,52 @@ The operator dashboard is an investigation client over a canonical evidence plan
 
 ClickHouse TTL is not the deletion SLA. Retention and deletion are governed by policy records, tombstones, per-store watermarks, encrypted object manifests, legal holds, and verifiable receipts. The API must report when an evidence record is unavailable because it was never captured, sampled, redacted, expired, or deleted. See [OPERATOR_PLATFORM_ARCHITECTURE.md](OPERATOR_PLATFORM_ARCHITECTURE.md) for the complete contract and [Phase 4 Track P](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane) for implementation milestones.
 
+### Mandatory `org_id` scope
+
+Every operator evidence endpoint, SSE stream, export job, deletion job, and replay request **must** derive organization context from authenticated server-side claims. Clients must not supply a trusted `org_id` query parameter without membership verification. Missing or ambiguous org context returns **401/403** — never cross-tenant data. List endpoints use cursor pagination with filter-before-page semantics and explicit `matched_count` / `returned_count`.
+
+### Trace read model (4.D.2 prerequisites)
+
+Trace detail responses must support nested spans and the following optional blocks when evidence exists:
+
+```json
+{
+  "trace_id": "…",
+  "session_id": "…",
+  "checkpoint_id": "…",
+  "assembly_metrics": { "retrieve_ms": 12, "rank_ms": 3, "pack_ms": 5 },
+  "directive_snapshot": { "version": "…", "hash": "…" },
+  "candidates": [
+    {
+      "memory_id": "…",
+      "retrieval_rank": 1,
+      "similarity": 0.91,
+      "final_rank": 2,
+      "delta_rank": 1,
+      "composite_score": 0.82,
+      "score_components": { "similarity": 0.40, "recency": 0.25, "confidence": 0.20, "trust": 0.10, "label": 0.05 },
+      "exclusion": "included",
+      "token_estimate": 120
+    }
+  ],
+  "completeness": "complete"
+}
+```
+
+When score payload version is interim, return `"score_schema": "interim_v1"` so the UI does not render a false five-component waterfall.
+
+### Operator SSE envelope
+
+Operator-event streams (distinct from provider token SSE per ADR-0027) use:
+
+```text
+id: {event_id}
+event: operator.evidence
+data: {"schema_version":"…","org_id":"…","aggregate_seq":42,"completeness":"partial",…}
+```
+
+Clients reconnect with `Last-Event-ID`. Server deduplicates by `event_id`.
+
 ## 🌐 Base URLs
 
 ```text

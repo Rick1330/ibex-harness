@@ -18,49 +18,52 @@ fullTitle: "Milestone 4.P.4 — Query, Usage & Cost Data Platform"
 **Status:** Planned  
 **Outcome:** Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
-**Estimated effort:** 4 weeks
+**Dependencies:** 4.P.2; 4.P.3 (capture/redaction defaults)  
+**Estimated effort:** 4 weeks  
+**Gate:** part of post-P.3 parallel track with 4.P.5 / 4.P.6
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  Charts over request counts are not cost governance. Every ClickHouse query shape requires an explicit `org_id` parameter and predicate.
 </Callout>
 
 ## Why this milestone exists
 
-Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy.
+Ad hoc client filtering cannot scale; billing schema was falsely assumed to exist (F4-005).
 
 ## Scope and deliverables
 
-Define shared query grammar, facets, autocomplete, URL state, cursor pagination, query budgets, ClickHouse query shapes (every shape requires an explicit org_id parameter and applies an org_id predicate), freshness/completeness fields, immutable usage ledger, rate-card versions, currency, estimated/actual cost, budget periods, alerts, reconciliation, and enforcement decisions.
+- Shared query grammar: typed fields, operators, time range, facets, autocomplete, saved-view URL serialization, cursor pagination, query budgets.
+- ClickHouse shapes for org/time, agent/session, event point lookup, run reconstruction, tool correlation, cost aggregation — **each with mandatory `org_id`**.
+- Immutable usage ledger facts keyed by `org_id`, agent, provider, model, run, time, token class, tool units, latency, status, fallback, rate-card version, policy version.
+- Versioned rate cards, currency, estimate/actual, budget periods, alerts, reconciliation jobs, enforcement decision records.
 
 ## Contract and data requirements
 
-Usage facts are keyed by org_id, agent, provider, model, run, time, token class, tool units, latency, status, fallback, rate-card version, and policy version.
+Filters apply before pagination. High-cardinality IDs remain event fields, not metric labels. Freshness/completeness fields on every aggregate response.
 
 ## Product and UX requirements
 
-Filters, sort, matched/displayed counts, sampling, retention, freshness, and cost source are visible. High-cardinality IDs remain event fields, not metric labels.
+UI labels live vs retained data, ingestion lag, retention boundary, matched vs displayed/sample counts, cost source facts, rate-card and policy versions.
 
 ## Non-functional requirements
 
-Filters happen before pagination. Query p95/p99, bounded memory, raw-to-aggregate reconciliation, retry dedupe, and hard-cap negative tests pass.
+EXPLAIN review, p95/p99 query targets, bounded memory, sampling-bias disclosure, aggregate-to-raw reconciliation, duplicate-retry billing tests, hard-cap denial tests.
 
 ## Verification gates
 
-Run query contract, EXPLAIN, reconciliation, duplicate-ingestion, fallback-attribution, rate-card replay, and hard-cap enforcement tests.
+Query contract suite, EXPLAIN samples, reconciliation report, fallback attribution, rate-card replay, hard-cap negative path on proxy.
 
 ## Rollout and rollback
 
-Shadow ledger and alert-only first. Enable soft and hard limits per tenant after parity. Preserve immutable facts. **Trigger:** hard-cap false positives/negatives, reconciliation drift, or query SLO breach. **Reversal:** revert failed hard-cap enforcement to alert-only and stop applying deny decisions from the new ledger. **Verify:** alert-only path still emits decisions; immutable facts remain readable; reconcile outstanding deny/allow records before re-enabling hard caps.
+**Trigger:** hard-cap false positives/negatives, reconciliation drift, or query SLO breach. **Reversal:** revert hard-cap enforcement to alert-only; preserve immutable facts; roll back rate-card/policy version. **Verify:** alert-only still emits; reconcile outstanding decisions before re-enabling hard caps.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-005.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Query grammar and ClickHouse shapes documented with `org_id` requirement.
+- [ ] Usage ledger + rate-card schemas versioned.
+- [ ] Reconciliation and hard-cap negative tests attached.
+- [ ] URL-serializable saved-view round-trip proven.

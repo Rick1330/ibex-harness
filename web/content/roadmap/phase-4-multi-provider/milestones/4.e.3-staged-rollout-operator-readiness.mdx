@@ -18,49 +18,56 @@ fullTitle: "Milestone 4.E.3 — Staged Rollout & Operator Readiness"
 **Status:** Planned  
 **Outcome:** The platform can be promoted safely with observation, stop conditions, on-call ownership, and supportability.  
 **Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
-**Dependencies:** Track P and Track D capability evidence  
-**Estimated effort:** 2 weeks
+**Dependencies:** 4.E.1, 4.E.2 (gates green), 4.P.5 (deploy/rollback mechanics), Track D capabilities feature-complete for phase scope  
+**Estimated effort:** 2 weeks  
+**Gate:** G3 promotion
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  Default-on is a promotion result, not an earlier assumption. This milestone is complete only when dark launch through 100% stages complete with bake windows, abort/rollback tested, and on-call runbooks exercised.
 </Callout>
 
 ## Why this milestone exists
 
-The platform can be promoted safely with observation, stop conditions, on-call ownership, and supportability.
+World-class operator software requires staged exposure, kill switches, and operator-visible rollout state so policy, routing, cost, and replay behavior never flips fleet-wide without observation (F4-010, F4-011).
 
 ## Scope and deliverables
 
-Run dark launch, 1%, 10%, 25%, 100% promotion, bake windows, guardrails, on-call runbook, kill switches, support bundle, backup/restore status, and post-promotion observation.
+- Execute promotion stages: dark launch (internal only) → 1% → 10% → 25% → 100% with minimum bake duration and sample thresholds per stage.
+- Define guardrails: error rate, p99 latency, SSE lag, queue depth, cost anomaly, auth failure spike, deletion backlog.
+- Publish on-call runbook, escalation tree, kill switches (operator origin, replay, policy publish, hard-cap enforcement), and support export bundle (redacted traces, config versions, health snapshot).
+- Record promotion decision per stage: artifact digest, schema version, owner, metrics snapshot, go/no-go rationale, rollback command.
+- Post-promotion observation window with zero open P0 and no unowned P1 breach.
 
 ## Contract and data requirements
 
-Promotion record includes artifact digest, schema, owner, stage, sample/time minimum, metrics, decision, and rollback command.
+Promotion ledger entries are immutable; corrections append amendments. Each stage links to 4.E.1/E.2 evidence bundle IDs. Rollback uses prior image digest and compatible configuration without manual data surgery.
 
 ## Product and UX requirements
 
-Operators see rollout stage, health, evidence completeness, and safe action availability.
+Operators see rollout stage, dependency health, evidence completeness, and which high-impact actions (replay, policy change, export) are enabled for the current stage. Degraded modes are explicit.
 
 ## Non-functional requirements
 
-Abort/rollback tested and post-promotion observation completes without P0/P1 breach.
+Abort and rollback tested at least once during the promotion exercise. Post-promotion observation completes without P0/P1 breach or triggers automatic rollback.
 
 ## Verification gates
 
-Roll back by immutable digest and compatible configuration.
+- Dark launch: internal tenants only; no public operator URL without auth.
+- Abort drill: guardrail breach triggers automatic stage halt and rollback transcript.
+- Support bundle: generated from staging drill and reviewed by on-call.
 
 ## Rollout and rollback
 
-Default-on is a promotion result, not an earlier assumption.
+**Trigger:** guardrail breach, missing evidence, or on-call drill failure. **Reversal:** rollback to last immutable digest; disable operator origin via kill switch; notify stakeholders with evidence bundle. **Verify:** traffic on prior digest; operator UI shows maintenance/degraded state.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-010, F4-011, F4-014.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Full stage ladder executed or explicitly waived with signed exception on 4.E.4.
+- [ ] Abort and rollback drill transcript attached.
+- [ ] On-call runbook and kill-switch inventory published.
+- [ ] Post-promotion observation window completed without P0 breach.
+- [ ] Promotion ledger entries link to evidence artifacts.

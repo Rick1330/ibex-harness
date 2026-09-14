@@ -1,7 +1,7 @@
 ---
 title: "Usage, Cost Governance & Capacity"
-description: "Operators explain spend and enforce budgets without double charging or relying on ephemeral counters."
-summary: "Operators explain spend and enforce budgets without double charging or relying on ephemeral counters."
+description: "Explain spend and enforce budgets without double charging or relying on ephemeral counters."
+summary: "Explain spend and enforce budgets without double charging or relying on ephemeral counters."
 status: "planned"
 milestoneId: "4.D.6"
 track: "D"
@@ -18,49 +18,47 @@ fullTitle: "Milestone 4.D.6 — Usage, Cost Governance & Capacity"
 **Status:** Planned  
 **Outcome:** Operators explain spend and enforce budgets without double charging or relying on ephemeral counters.  
 **Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** Track P gates and preceding Track D slice  
+**Dependencies:** 4.D.1; 4.D.2 recommended for pivots; 4.P.2 durable facts; 4.P.4 ledger/query; 4.P.5 resource controls  
 **Estimated effort:** 3 weeks
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  Analytics becomes governance only when persisted facts can change authorization decisions and prove the result (F4-005).
 </Callout>
 
 ## Why this milestone exists
 
-Operators explain spend and enforce budgets without double charging or relying on ephemeral counters.
+Charts over ephemeral counters are not hard caps.
 
 ## Scope and deliverables
 
-Build usage/cost tables, rate-card provenance, provider/model/fallback attribution, rollups, budget scopes, alerts, soft/hard caps, queue/resource dashboards, capacity limits, reconciliation, and evidence export.
+Usage ledger UI, versioned rate cards, provider/model/fallback attribution, rollups, budget scopes/periods, alert state, hard pause/degrade decisions, Redis hot counters with reconciliation, worker concurrency and queue dashboards, resource/cost ceilings, exportable cost evidence.
 
 ## Contract and data requirements
 
-Usage ledger, rate-card, budget decision, proxy authorization, Redis reconciliation, and resource policy contracts are required.
+Idempotent ingestion; raw-to-aggregate reconciliation; retry does not double charge; policy-version replay; hard cap blocks proxy requests; completeness labels on live vs historical spend. All queries scoped by `org_id`.
 
 ## Product and UX requirements
 
-Show facts versus estimates, freshness, sampling, policy version, allocation, and enforcement state.
+Visible rate-card/policy versions; soft vs hard enforcement state; alert-only vs deny.
 
 ## Non-functional requirements
 
-Raw-to-aggregate reconciliation, retry dedupe, hard-cap denial, high-cardinality query, and load/cost ceilings pass.
+High-cardinality query remains bounded; concurrent over-admission tests.
 
 ## Verification gates
 
-Shadow and alert-only first; soft limits then hard enforcement per tenant.
+Hard-cap negative path on proxy; reconciliation report; rate-card replay; no double charge on retry.
 
 ## Rollout and rollback
 
-Charts become governance only when durable facts can change authorization decisions. **Trigger:** cost/governance false denies, chart-to-ledger mismatch, or tenant-limit regressions. **Reversal:** return affected tenants to soft or alert-only limits and stop hard governance denies from the new path. **Verify:** reconcile enforcement decisions; charts remain informational; soft/alert-only limits still fire before re-enabling hard governance.
+**Trigger:** cost/governance false denies, chart-to-ledger mismatch, or tenant-limit regressions. **Reversal:** return affected tenants to soft or alert-only limits; stop hard governance denies from the new path. **Verify:** reconcile enforcement decisions; charts remain informational; soft/alert-only limits still fire before re-enabling hard governance.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-005.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Ledger + rate-card UI evidenced.
+- [ ] Hard-cap proxy denial test attached.
+- [ ] Reconciliation + rollback-to-alert-only demonstrated.

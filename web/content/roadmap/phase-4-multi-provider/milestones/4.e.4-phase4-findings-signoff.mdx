@@ -16,51 +16,94 @@ fullTitle: "Milestone 4.E.4 — Phase 4 Findings Register & Sign-off"
 # Milestone 4.E.4 — Phase 4 Findings Register & Sign-off
 
 **Status:** Planned  
-**Outcome:** Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual risk.  
+**Outcome:** Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual P1/P2 risk.  
 **Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
-**Dependencies:** Track P and Track D capability evidence  
-**Estimated effort:** 1 week
+**Dependencies:** 4.E.1–4.E.3; all Track P and Track D milestones required for phase scope  
+**Estimated effort:** 1 week  
+**Gate:** G4 phase exit
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  Sign-off is immutable. Corrections create a new finding or amendment record. **Zero open P0 findings** is mandatory. Each P1/P2 must have an owner, due date, or explicit accepted exception with rollback/mitigation plan.
 </Callout>
 
 ## Why this milestone exists
 
-Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual risk.
+Phase 4 replaces a generic exit audit with an evidence-backed governance record. Every F4 finding must map to verification artifacts, not roadmap intent alone.
 
 ## Scope and deliverables
 
-Publish findings register with severity, evidence, owner, due date, exception rationale, and links to CI/recovery/security artifacts. Record architecture decisions, runbooks, support docs, and release certificate.
+- Publish the Phase 4 release certificate linking commit SHAs, image digests, schema versions, environment, and evidence bundle IDs from 4.E.1–4.E.3.
+- Close or disposition every F4-001–F4-034 row with: status (`closed` | `accepted-residual`), evidence link, owner, and milestone reference.
+- Record architecture decisions, runbooks, support docs, known limitations page, and operator-facing evidence freshness indicators.
+- Archive residual-risk acceptances with expiry review date and compensating controls.
+
+## F4 sign-off matrix
+
+| ID | Primary milestone | Required evidence |
+|---|---|---|
+| F4-001 | 4.P.0 | Topology ADR, smoke transcript (login/API/SSE/drain), rollback to docs origin |
+| F4-002 | 4.P.1 | Two-tenant negative matrix, server-derived org context on all paths |
+| F4-003 | 4.P.2 | Nested trace/span/event fixtures, checkpoint join proof |
+| F4-004 | 4.P.3 | Deletion receipt across stores, legal hold test, tombstone verification |
+| F4-005 | 4.P.4, 4.D.6 | Usage fact immutability, rate-card version, reconciliation report |
+| F4-006 | 4.P.1, 4.P.3 | Resource/field/action policy matrix including raw/export/replay |
+| F4-007 | 4.P.2, 4.E.2 | Operator SSE resume, slow-client soak, ADR-0027 provider stream separation |
+| F4-008 | 4.P.3, 4.D.2–4.D.4 | Hostile-content fixtures, redaction scan, safe rendering tests |
+| F4-009 | 4.D.2 | Three-layer Trace Inspector, exclusion groups, UI/UX §15 compliance |
+| F4-010 | 4.P.1, 4.P.2, 4.D.5 | Action ledger, preview/approval, sandbox replay negative test |
+| F4-011 | 4.P.5, 4.E.2–4.E.3 | Restore drill, rollback transcript, promotion ledger |
+| F4-012 | 4.P.6, 4.E.1 | Four-role/two-tenant Playwright + axe artifacts |
+| F4-013 | 4.D.5 | Drift integration deferred or gated; directive/routing evidence without drift producer |
+| F4-014 | Hub pages | Index, tracks, goals, current-state, findings updated and linked |
+| F4-015 | 4.P.1 | PassthroughRegistry fail-closed negative test or signed residual risk |
+| F4-016 | 4.P.1–4.P.2 | Versioned policy invalidation, reconciliation job evidence |
+| F4-017 | 4.P.1 | Scoped credential retrieval, audit log, no plaintext in UI |
+| F4-018 | 4.P.1 | BaseURL SSRF block tests (private ranges, allowlist) |
+| F4-019 | 4.P.3 | Cross-store org delete with verification queries |
+| F4-020 | 4.P.0, 4.P.5 | Dependency-aware readiness, worker deadline tests |
+| F4-021 | 4.P.2 | `request_id`/`trace_id` propagation golden fixture |
+| F4-022 | 4.P.2 | Checkpoint ID returned and joinable in read model |
+| F4-023 | 4.P.2 | AssemblyMetrics persisted on durable trace projection |
+| F4-024 | 4.P.2–4.P.3 | Conversation/raw payload store choice with retention/redaction |
+| F4-025 | 4.P.2, 4.D.2 | Versioned score payload, composite weights `0.40/0.25/0.20/0.10/0.05` |
+| F4-026 | 4.P.2, 4.D.5 | Directive snapshot hash stored with inference |
+| F4-027 | 4.P.2 | Tool audit with sanitized args, idempotency, join fields |
+| F4-028 | 4.P.6 | Budget accounting includes tool schemas/formatter payload |
+| F4-029 | 4.P.6, 4.D.2 | Rank weights wired; golden scorer fixtures |
+| F4-030 | 4.P.6, 4.D.2 | Half-life and packer repair correctness fixtures |
+| F4-031 | 4.P.2, 4.D.3 | Embedding profile/version persistence evidence |
+| F4-032 | 4.P.5 | Helm/K8s overlays committed; restore drill passed |
+| F4-033 | 4.C.5, 4.E.2 | Streaming soak + SSE deadline/shedding evidence |
+| F4-034 | 4.P.6, 4.E.1 | Required branch-check inventory matches protection rules |
 
 ## Contract and data requirements
 
-The sign-off schema references each Track P/D/E milestone, commit, artifact, environment, and residual risk.
+Sign-off schema references each Track P/D/E milestone, commit, artifact URL, environment, test manifest version, and residual risk record. Amendments append; prior sign-off rows are never edited in place.
 
 ## Product and UX requirements
 
-Provide an operator-facing status page for known limitations and evidence freshness.
+Operator-facing known-limitations page lists deferred capabilities (e.g. drift integration), evidence freshness SLA, and how to request break-glass raw access.
 
 ## Non-functional requirements
 
-No open P0. Every P1/P2 has owner/date or explicit accepted exception.
+No open P0. Every P1/P2 has owner/date or explicit accepted exception with compensating control and review date.
 
 ## Verification gates
 
-Sign-off is immutable. Corrections create a new finding or amendment.
+Independent reviewer confirms each F4 row has linked evidence or signed residual-risk acceptance. Release certificate signed by phase owner and engineering lead.
 
 ## Rollout and rollback
 
-This replaces a generic exit audit with an evidence-backed governance record.
+Sign-off does not auto-enable features; it certifies that promotion gates were met. If post-sign-off regression occurs, open a new finding and amend the certificate.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-001 through F4-034 (closure registry for Phase 4 exit).
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Release certificate published with digest, schema, and bundle links.
+- [ ] F4-001–F4-034 matrix complete with evidence or signed residual risk.
+- [ ] Zero open P0 findings verified.
+- [ ] Known limitations and runbooks linked from operator UI or docs.
+- [ ] Residual P1/P2 owners and review dates recorded.

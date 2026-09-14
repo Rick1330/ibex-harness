@@ -380,3 +380,36 @@ Counterfactuals are simulated and never mutate the observed trace. Replay uses a
 ### 15.5 Accessibility and density
 
 Dense tables use semantic headers, keyboard-sortable columns, visible focus, non-color status encoding, announced loading/filter/result changes, accessible clear-all filters, and responsive overflow. Hover may preview exact values but may never contain the only reason for exclusion or the only security explanation.
+
+### 15.6 Composite score display contract
+
+When the backend exposes a versioned five-component composite score, display weights explicitly:
+
+| Component | Weight |
+|---|---:|
+| Semantic similarity | 0.40 |
+| Recency multiplier | 0.25 |
+| Confidence | 0.20 |
+| Source trust | 0.10 |
+| Label relevance | 0.05 |
+
+The **Explain** tree shows additive contribution per component. If the backend emits interim similarity/confidence only (pre-F4-025 closure), label the panel **interim score** and hide the five-component waterfall until the versioned payload is available.
+
+### 15.7 Exclusion groups (mutually exclusive)
+
+| Group | Meaning | UI treatment |
+|---|---|---|
+| Included | Selected into context pack | Default row styling |
+| Budget-excluded | Scored but dropped by token budget | Badge + token estimate |
+| Filtered | Removed before scoring | `not evaluated` for score columns |
+| Failed / unknown | Retrieval or scoring error | Error icon + reason code |
+
+Never show filtered candidates with a numeric score of zero.
+
+### 15.8 URL-serializable investigation state
+
+Explore filters, time range, sort, column visibility, and organization scope serialize to the URL. Navigating from Explore to a trace detail preserves query context in a return link. Share URLs reproduce the same result set within freshness bounds.
+
+### 15.9 Evidence freshness and degradation
+
+Show `live`, `historical`, `reconnecting`, `degraded`, `partial`, and `stale` banners at the shell level. When ClickHouse or SSE lag exceeds SLA, show last-successful-sync time — do not silently show empty results.

@@ -43,3 +43,49 @@ A capability is promotable only when Track P gates, capability tests, accessibil
 ## Required evidence
 
 Each milestone record must link to contract snapshots, golden fixtures, tenant-negative tests, redaction/deletion results, performance data, CI reports, deployment digests, restore-drill output, and rollback transcripts.
+
+## Trace Inspector data prerequisites
+
+The Trace Inspector (4.D.2) is honest only when the evidence plane exposes the following join keys and payloads. Missing fields must surface as `unknown` or `not evaluated`, never as zero or empty.
+
+| Field / artifact | Source | Consumer |
+|---|---|---|
+| `trace_id`, `span_id`, `parent_span_id`, `aggregate_seq` | Proxy, context assembly, workers | Span tree, ordering |
+| `session_id`, `checkpoint_id`, `turn_id`, `request_id` | Session/checkpoint writes | Session bridge, turn replay |
+| `AssemblyMetrics` (stage timings) | Context assembly | Run summary strip |
+| Retrieval candidate list with retrieval rank, metric similarity, final rank, `delta_rank` | Context assembly scorer | Candidate matrix |
+| Composite score components and weights (`0.40/0.25/0.20/0.10/0.05`) | Versioned score payload | Explain tree |
+| Exclusion reason (`budget`, `filter`, `failed`, `unknown`) | Packer/scorer | Exclusion groups |
+| Directive snapshot hash/version | Policy store at inference time | Provenance panel |
+| Tool audit (sanitized args, idempotency key) | MCP/tool path | Tool span detail |
+
+## Publication topology
+
+```text
+Write path:  business txn + outbox row (same Postgres txn)
+Relay:       at-least-once, idempotent by event_id + aggregate_seq
+Projections: ClickHouse (analytics), read models (API), object manifest (raw)
+Replay:      from outbox position or immutable manifest — not Redis TTL alone
+```
+
+Partial, sampled, redacted, late, and deleted states are first-class on every read API and SSE envelope.
+
+## Operator action ledger
+
+High-impact actions (export, deletion, replay, policy change, fallback override, break-glass raw read) share one ledger shape:
+
+- `action_id`, idempotency key, actor, assurance level, resource scope
+- `preview_hash` / dry-run result before commit
+- `before_hash`, `after_hash`, approval context (when required)
+- `rollback_pointer` to prior config/version/digest
+- immutable audit event linked to `trace_id` where applicable
+
+Counterfactuals and replay are **simulated** against immutable snapshots; they never mutate the observed production trace.
+
+## Deployment and recovery
+
+Operator topology requires committed K8s/Helm/Kustomize overlays (4.P.5), dependency-aware readiness (not startup-only), drain for SSE, and documented RPO/RTO. Restore drills must verify tenant isolation post-restore. Image promotion uses immutable digests with SBOM/provenance and admission verification.
+
+## Research provenance
+
+Staff-engineering audits that informed this architecture are archived under [research/operator-platform/](research/operator-platform/README.md). Published roadmap and engineering pages supersede the archive.

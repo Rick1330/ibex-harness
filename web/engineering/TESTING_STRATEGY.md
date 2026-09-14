@@ -777,3 +777,43 @@ CI snapshots OpenAPI and SSE envelopes, generates the TypeScript client, runs ol
 ### Non-functional and recovery checks
 
 Performance reports include p50/p95/p99, query latency, page load, SSE memory, queue lag, DB pool, error rate, and cost. Staging runs slow-client, provider outage, Redis/ClickHouse/Postgres degradation, backup restore, chaos, and rollback scenarios. Promotion is blocked when declared SLO, RPO, RTO, tenant, privacy, or cost limits fail.
+
+### Evidence artifact inventory (4.E.1)
+
+Each CI run publishes a manifest linking:
+
+| Artifact | Purpose |
+|---|---|
+| `openapi-diff.json` | Contract regression gate |
+| `playwright-report/` | Journey evidence (four roles × two tenants) |
+| `axe-results.json` | Accessibility gate |
+| `tenant-negative-junit.xml` | Cross-tenant isolation |
+| `contract-fixtures/` | Old/new compatibility |
+| `trace.zip` | Failure debugging (redacted) |
+
+### Journey matrix (minimum)
+
+1. Login → refresh → forced revocation → re-auth
+2. Org switch → verify scope change on list APIs
+3. Explore → filter → URL share → open trace → return preserves query
+4. Trace Inspector: summary → matrix sort → Explain tree expand
+5. Memory detail → lineage link → governed export preview
+6. Incident create → timeline → evidence bundle download
+7. Directive preview → approval → rollback pointer visible
+8. Cost alert → hard-cap denial on proxy path
+9. Operator SSE disconnect → reconnect with `Last-Event-ID` → no duplicate rows
+10. Hostile prompt/HTML fixture → no script execution, sanitized render
+
+### Branch protection inventory (4.E.1 / F4-034)
+
+CI must verify GitHub branch protection includes every required job: Python tests, Semgrep, OpenAPI snapshot, Playwright, axe, tenant-negative, and supply-chain gates. A missing required check fails the inventory step — promotion blocked.
+
+### Resilience scenarios (4.E.2)
+
+| Scenario | Pass criteria |
+|---|---|
+| Slow client (1 B/s) | Bounded buffer, no memory leak, upstream closed safely |
+| Provider mid-stream error | ADR-0027 verbatim close, same client behavior both providers |
+| Postgres unavailable (policy) | Fail closed — no PassthroughRegistry allow-all |
+| Restore drill | RPO met, tenant isolation post-restore |
+| Rollback | Prior digest serves within RTO |

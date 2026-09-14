@@ -1,7 +1,7 @@
 ---
 title: "Explore & Provenance Trace Inspector"
-description: "An operator can answer why an agent acted without first selecting an agent or session."
-summary: "An operator can answer why an agent acted without first selecting an agent or session."
+description: "An operator answers why an agent acted via global Explore and a world-class provenance Trace Inspector."
+summary: "An operator answers why an agent acted via global Explore and a world-class provenance Trace Inspector."
 status: "planned"
 milestoneId: "4.D.2"
 track: "D"
@@ -16,51 +16,65 @@ fullTitle: "Milestone 4.D.2 — Explore & Provenance Trace Inspector"
 # Milestone 4.D.2 — Explore & Provenance Trace Inspector
 
 **Status:** Planned  
-**Outcome:** An operator can answer why an agent acted without first selecting an agent or session.  
+**Outcome:** An operator answers why an agent acted without first choosing an agent or session, using joinable evidence and an honest Trace Inspector.  
 **Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** Track P gates and preceding Track D slice  
+**Dependencies:** 4.D.1; 4.P.2 (canonical evidence + Trace Inspector must-fix checklist); 4.P.3 field policy; 4.P.4 query grammar; 4.C.5 release-evidence soak for streaming claims  
 **Estimated effort:** 4 weeks
 
-<Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+<Callout type="warn" title="Data prerequisites (block UI honesty)">
+  Do not start full Trace Inspector implementation until 4.P.2 has: canonical `request_id`/`trace_id` joins (F4-021), checkpoint IDs (F4-022), AssemblyMetrics persistence (F4-023), conversation/raw payload decision (F4-024), versioned composite score payload (F4-025), directive snapshot (F4-026), and expanded tool audit (F4-027). Partial/degraded views may ship only when explicitly labeled.
 </Callout>
 
 ## Why this milestone exists
 
-An operator can answer why an agent acted without first selecting an agent or session.
+This is the differentiated product wedge: an **auditable context-and-policy provenance debugger**, not a generic APM clone (F4-003, F4-009).
 
 ## Scope and deliverables
 
-Build global query bar, facets, trace/session/failure results, progressive disclosure, timeline/flame graph, context assembly, memory score vectors, directive/routing decisions, tools, model/fallback, evaluation links, redacted JSON, copy-link, and bidirectional pivots.
+### Explore
+
+Global query bar with autocomplete, facets, saved-view-ready URL grammar, results for traces/sessions/failures, preserve list filters when opening detail.
+
+### Trace Inspector — three-layer progressive disclosure
+
+1. **Summary strip:** agent/session/model/provider, tokens, latency stages (label unavailable stages), completeness/sampling/freshness/retention badges.
+2. **Candidate matrix:** sortable rows with score contribution, rank, Δrank vs similarity, category, tokens, disposition; exclusion groups **Included / Budget-excluded / Filtered / Failed**.
+3. **Explain tree (selected item):** additive waterfall or stacked contribution for composite weights **`0.40 / 0.25 / 0.20 / 0.10 / 0.05`**; keep score / rank / resource / outcome semantics separate.
+
+Also: timeline/flame view, directive+routing decision links, tools timeline, model/fallback, evaluation links, redacted JSON, copy-link, bidirectional pivots.
+
+### Reproducibility contract
+
+Surface weights, half-lives, tokenizer/packing policy versions, replay status, and directive version hash used at inference time.
 
 ## Contract and data requirements
 
-Trace/Span DTOs expose stable IDs, source links, completeness, sampling, freshness, retention, and org-enforced scope.
+Stable Trace/Span DTO with server-enforced `org_id` scope; copyable IDs (`trace_id`, `span_id`, `request_id`, `session_id`, `checkpoint_id`); completeness, sampling, freshness, retention, provenance links. Org B lookups against Org A IDs return `404`; searches return empty.
 
 ## Product and UX requirements
 
-Summary strip, candidate matrix, score/rank/resource/outcome lanes, exact selected-item waterfall/tree, and exclusion groups follow the design guide.
+Safe rendering of hostile prompt/tool content (F4-008). Never infer success from missing data. Live selection freezes before detail. Keyboard-safe panels; axe; screen-reader-visible status changes. Metadata-only launch before redacted expansions.
 
 ## Non-functional requirements
 
-Golden nested run, source-link coverage, cross-tenant negative, metadata-only default, query/page-load budget, and keyboard-safe detail pass.
+Golden multi-step trace; point lookup by known IDs; query and page-load budgets; assembly correctness prerequisites F4-028–031 either fixed or residual-risk accepted with UI labels.
 
 ## Verification gates
 
-Metadata-only launch, then redacted provenance. Feature-flag event kinds and content expansion.
+Golden-trace fixture asserts joinable summary, assembly stages, selected/excluded memories, conversation source state, tool events, and raw JSON authorization state. Cross-tenant denial. Accessibility suite. Performance budget report.
 
 ## Rollout and rollback
 
-This is the differentiated auditable context-and-policy provenance debugger. **Trigger:** content expansion leaks, inspector latency/SLO breach, or cross-tenant provenance joins. **Reversal:** disable content expansion and restore metadata-only trace views. **Verify:** Explore lists remain available; expanded payloads stay redacted or hidden until the flag is restored.
+**Trigger:** content expansion leaks, inspector latency/SLO breach, or cross-tenant provenance joins. **Reversal:** disable content expansion and restore metadata-only trace views. **Verify:** Explore lists remain available; expanded payloads stay redacted or hidden until the flag is restored.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-003, F4-008, F4-009, F4-021–031.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] P.2 Trace Inspector must-fix checklist closed or residual-risk recorded.
+- [ ] Three-layer UI + exclusion groups + weight contract implemented or fixture-proven.
+- [ ] Golden multi-step + cross-tenant denial attached.
+- [ ] Hostile-content and a11y evidence attached.
+- [ ] Degraded fields explicitly labeled in UI and docs.

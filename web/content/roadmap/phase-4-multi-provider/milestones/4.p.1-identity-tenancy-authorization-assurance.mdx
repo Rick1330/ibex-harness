@@ -18,49 +18,55 @@ fullTitle: "Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance"
 **Status:** Planned  
 **Outcome:** Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
-**Estimated effort:** 3 weeks
+**Dependencies:** 4.P.0; Track A identity/API foundations  
+**Estimated effort:** 3 weeks  
+**Gate:** G1 identity
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  Permission constants alone are not sufficient. Deny-by-default policy, step-up for high-impact actions, two-tenant negative matrices, and fail-closed model-policy behavior must be evidenced.
 </Callout>
 
 ## Why this milestone exists
 
-Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.
+A valid admin token is not sufficient authorization for raw evidence, deletion, secrets, or replay (F4-002, F4-006). Fail-open model policy and lossy invalidation (F4-015, F4-016) and secret/SSRF gaps (F4-017, F4-018) make tenant controls unsafe before any UI.
 
 ## Scope and deliverables
 
-Implement session/refresh or OIDC federation seam, revocation, org membership, org switching, role/permission evaluation, resource classification, step-up authentication, and dual approval hooks for high-impact actions.
+- Session/refresh or OIDC federation, revocation, org membership, org switching, role/permission evaluation, resource classification.
+- Action taxonomy: metadata-read, redacted-read, raw-read, export, delete, replay, secret-use, policy-change, break-glass.
+- Step-up MFA / dual approval hooks for deletion, raw/export, production replay, secret changes, break-glass.
+- Remove or hard-disable `PassthroughRegistry` fail-open; enforce deny-by-default when Postgres/policy store is unavailable.
+- Replace lossy model-policy Pub/Sub invalidation with versioned durable reconciliation; fail closed on unknown policy version.
+- Narrow `GetProviderCredential` service authorization; enforce BYO BaseURL SSRF allowlist/private-range blocks.
 
 ## Contract and data requirements
 
-Define metadata-read, redacted-read, raw-read, export, delete, replay, secret-use, policy-change, and break-glass actions with actor, tenant, purpose, assurance, and policy result.
+Typed authorization errors without leaking object existence. Audit fields: actor, tenant (`org_id`), purpose, assurance, policy result. Provider secrets and bearer tokens never appear in UI or logs.
 
 ## Product and UX requirements
 
-Denied actions explain the safe next step without revealing object existence. The UI never shows provider keys, bearer tokens, or decrypted secrets.
+Denied actions explain the safe next step without revealing object existence. The UI exposes only allowed actions.
 
 ## Non-functional requirements
 
-Normal dashboard roles cannot bypass RLS. Authorization is deny-by-default and evaluated server-side on every request.
+Normal dashboard DB roles are not superusers / `BYPASSRLS`. Authorization is deny-by-default and evaluated server-side on every request, stream, and async job.
 
 ## Verification gates
 
-Run a two-tenant matrix across API, Postgres, Redis, ClickHouse, object storage, queues, exports, replay, guessed IDs, org switching, revoked sessions, expired step-up, and degraded identity provider.
+Two-tenant matrix across API, Postgres/RLS, Redis keys, ClickHouse `org_id` filters, object storage, queues, exports, replay, guessed IDs, org switching, revoked sessions, expired step-up, degraded IdP. Negative tests: policy store down → no models allowed; revoke → no stale allow; SSRF blocked; credential fetch without scope denied.
 
 ## Rollout and rollback
 
-Start read-only with internal operators. Roll back policy versions, never audit history. Disable sensitive actions with a kill switch.
+**Trigger:** tenant leak, fail-open allow, or secret exposure. **Reversal:** kill switch disables sensitive actions; roll back policy versions, never audit history; return to read-only metadata. **Verify:** two-tenant matrix re-run green; fail-open paths return deny.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-002, F4-006, F4-010, F4-015, F4-016, F4-017, F4-018.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Action taxonomy and step-up rules documented and enforced.
+- [ ] Fail-open model policy removed or residual-risk recorded on 4.E.4.
+- [ ] Durable policy invalidation evidenced.
+- [ ] Secret/SSRF negative tests attached.
+- [ ] Two-tenant authorization matrix report attached.

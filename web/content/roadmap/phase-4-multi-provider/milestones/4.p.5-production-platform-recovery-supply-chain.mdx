@@ -8,7 +8,7 @@ track: "P"
 trackTitle: "Operator Readiness, Evidence & Control Plane"
 trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
 goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
-estimatedEffort: "4 weeks"
+estimatedEffort: "3 weeks"
 phase: "phase-4-multi-provider"
 fullTitle: "Milestone 4.P.5 — Production Platform, Recovery & Supply Chain"
 ---
@@ -16,51 +16,55 @@ fullTitle: "Milestone 4.P.5 — Production Platform, Recovery & Supply Chain"
 # Milestone 4.P.5 — Production Platform, Recovery & Supply Chain
 
 **Status:** Planned  
-**Outcome:** The operator system is deployable, recoverable, observable, and promotable.  
+**Outcome:** The operator system is deployable, recoverable, observable, and promotable with measured RPO/RTO and supply-chain verification.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
-**Estimated effort:** 4 weeks
+**Dependencies:** 4.P.0; 4.P.2 (outbox/data plane awareness)  
+**Estimated effort:** 3 weeks  
+**Gate:** G5 platform
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  Architecture prose is not a deployment. Executable overlays and a clean-environment restore drill are required (F4-011, F4-032).
 </Callout>
 
 ## Why this milestone exists
 
-The operator system is deployable, recoverable, observable, and promotable.
+Without deploy/recover/admit evidence, Track D cannot be production-ready.
 
 ## Scope and deliverables
 
-Commit executable manifests/overlays, image digests, migrations, probes, drain, resources, autoscaling, queue limits, rollout/rollback, canary, backup/PITR, restore, RPO/RTO, SLOs, chaos scenarios, SBOM, provenance, signatures, and admission verification.
+- Helm/Kustomize (or equivalent) overlays for UI, API, workers, relays, ClickHouse, Redis, dependencies.
+- Digest-pinned images; startup/liveness/readiness probes; drain; requests/limits; autoscaling bounds; migration ordering; canary/blue-green; automatic abort; rollback.
+- Encrypted off-cluster Postgres backups + WAL/PITR; restore scripts; backup freshness alerts; evidence-bundle recovery; measured RPO/RTO covering Postgres, ClickHouse, Redis, object manifests, outbox.
+- SBOM, provenance, signatures, admission verification; deployed digest recorded in evidence bundles.
+- Worker soft/hard time limits for deletion/maintenance tasks (F4-020).
 
 ## Contract and data requirements
 
-Deployment metadata links image digest, schema/migration version, environment, rollout stage, and evidence artifact. Backup inventory covers Postgres, ClickHouse, Redis, object manifests, and evidence bundles.
+Operators can query dependency health, last backup, last restore drill, retention horizon, ingestion lag, DLQ depth, degraded-mode state.
 
 ## Product and UX requirements
 
-Operators see dependency health, backup freshness, restore-drill age, ingestion lag, DLQ depth, saturation, and degraded state.
+Overview surfaces platform health/freshness inputs consumed by 4.D.1.
 
 ## Non-functional requirements
 
-A clean restore meets declared RPO/RTO and preserves tenant isolation. Load, provider failure, queue, database, slow-client, chaos, and rollback gates pass.
+Load and chaos: peak+headroom, Redis/ClickHouse/Postgres degradation, provider failure, slow consumers, queue saturation, rollback. SLOs: latency percentiles, availability, error rate, throughput, queue lag, cost budgets.
 
 ## Verification gates
 
-Run staging rollout, restore drill, signed artifact verification, and failure injection. Require evidence before promotion.
+Clean-environment restore meets RPO/RTO and preserves tenant isolation. Admission rejects unsigned/wrong-digest images in staging.
 
 ## Rollout and rollback
 
-Promote dark → staging → canary. Roll back by known-good digest and compatibility-safe version.
+**Trigger:** failed restore, probe failure, or admission mismatch. **Reversal:** roll back by digest and known-good migration-compatible version; never roll back a migration without its compatibility procedure. **Verify:** restore drill report + canary abort transcript attached.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-011, F4-020, F4-032.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Overlays committed and documented.
+- [ ] Restore drill report with RPO/RTO attached.
+- [ ] Supply-chain/admission evidence attached.
+- [ ] Probe/drain/rollback runbook linked.

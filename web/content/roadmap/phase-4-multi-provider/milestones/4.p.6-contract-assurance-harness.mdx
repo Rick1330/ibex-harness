@@ -16,51 +16,56 @@ fullTitle: "Milestone 4.P.6 — Contract & Assurance Harness"
 # Milestone 4.P.6 — Contract & Assurance Harness
 
 **Status:** Planned  
-**Outcome:** Every capability produces machine-verifiable release evidence in the intended environment.  
+**Outcome:** Every capability produces machine-verifiable release evidence in the intended operator environment.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
-**Estimated effort:** 3 weeks
+**Dependencies:** 4.P.0; 4.P.2 fixtures can start early; must mature before 4.D.1  
+**Estimated effort:** 3 weeks  
+**Gate:** G6 assurance
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  A static-site smoke test is not dashboard E2E. Real PostgreSQL RLS, Redis Lua rate limiting, pgvector, and token-revocation paths must not be replaced by contract doubles.
 </Callout>
 
 ## Why this milestone exists
 
-Every capability produces machine-verifiable release evidence in the intended environment.
+A test file or planned route is not an acceptance gate until CI executes it against the intended topology and data (F4-012, F4-034).
 
 ## Scope and deliverables
 
-Generate TypeScript SDK from OpenAPI. Add schema snapshots, old/new compatibility, migrations, golden fixtures, OTel round-trip, tenant/security, Playwright, axe, keyboard, k6, chaos, SLO, and no-check fail-closed tests.
+- Generate TypeScript SDK from OpenAPI in CI; schema snapshots; old/new compatibility; migrations-from-zero and upgrade tests.
+- Golden fixtures: trace/session/memory/cost; OTel round-trip; tenant/security matrix; Playwright (four roles, two tenants); axe; keyboard; k6; chaos; SLO gates.
+- Explicit Playwright browser install and operator environment provisioning.
+- Required-check inventory including Python gate and Semgrep security findings intended to block merges (F4-034).
+- Trace/report uploads on failure; no-check fail-closed evaluation.
 
 ## Contract and data requirements
 
-Store evidence with commit, image digest, schema version, environment, test command, result, and artifact links.
+Evidence artifacts immutable and tied to commit, image digest, schema version, environment, test command, result, artifact links.
 
 ## Product and UX requirements
 
-Loading, empty, error, partial, permission, stale, sampled, redacted, and expired states are all fixtures.
+Fixtures cover loading, empty, error, partial, permission, stale, sampled, redacted, and expired states.
 
 ## Non-functional requirements
 
-Required checks run in CI or named staging and block promotion. Browser dependencies and authenticated fixtures are provisioned explicitly.
+Promotion-blocking evidence must include Org B API/UI reads and searches against Org A data: direct lookups return `404` and searches return an empty set.
 
 ## Verification gates
 
-Verify required CI jobs, trace/report uploads, four roles, two tenants, keyboard flows, contract snapshots, performance, and failure paths. Promotion-blocking evidence must include Org B API/UI reads and searches against Org A data: direct lookups return `404` and searches return an empty set (no cross-tenant leakage).
+Required CI jobs green on operator topology; cross-tenant denial reports; accessibility and performance reports uploaded.
 
 ## Rollout and rollback
 
-A failed gate blocks promotion and retains its evidence.
+**Trigger:** missing required check or false-green smoke. **Reversal:** failed gate blocks promotion; does not silently downgrade to public-site smoke. **Verify:** evidence bundle lists all required artifacts for a sample capability.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-012, F4-028, F4-029, F4-030, F4-034.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] SDK generation + contract snapshots in CI.
+- [ ] Four-role / two-tenant Playwright against operator topology.
+- [ ] Cross-tenant 404/empty-search evidence attached.
+- [ ] Required-check inventory matches branch protection.
+- [ ] Real RLS/Lua/pgvector/revocation paths exercised (no doubles).

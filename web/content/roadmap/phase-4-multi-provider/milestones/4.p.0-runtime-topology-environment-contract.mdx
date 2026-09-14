@@ -16,26 +16,33 @@ fullTitle: "Milestone 4.P.0 — Runtime Topology & Environment Contract"
 # Milestone 4.P.0 — Runtime Topology & Environment Contract
 
 **Status:** Planned  
-**Outcome:** A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments.  
+**Outcome:** A chosen deployment topology supports a server-capable operator UI or a static SPA with a separately deployed API/SSE origin across local, preview, staging, and production.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
-**Estimated effort:** 2 weeks
+**Dependencies:** Track A API foundations; Phase 3.5; 4.C.5 streaming baseline (implementation retained; soak evidence still required)  
+**Estimated effort:** 2 weeks  
+**Gate:** G0 topology
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  This milestone is complete only when the topology ADR, environment matrix, smoke transcript (login, API, operator SSE connect/reconnect/drain), and rollback procedure exist. Static `web/out` documentation deploy is not operator runtime evidence.
 </Callout>
 
 ## Why this milestone exists
 
-A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments.
+Without an explicit runtime decision, every Track D estimate assumes an authenticated realtime app that the current static docs site cannot provide (F4-001).
 
 ## Scope and deliverables
 
-Choose separate server-capable UI or static SPA plus API/SSE origin. Provision origins, TLS, CORS, CSRF, cookie/token audience, refresh rotation, SSE ingress, proxy buffering, environment variables, health/readiness/startup/drain endpoints, and a topology ADR.
+- Record the topology decision in an ADR (server-capable Next.js app **or** static SPA + separate API/SSE origin).
+- Provision origins, TLS, CORS, CSRF, cookie/token audience, refresh rotation, SSE ingress timeouts, reverse-proxy buffering, and environment variables for local/preview/staging/production.
+- Expose health, readiness (dependency-aware, not startup-only — F4-020), startup, and drain endpoints.
+- Probe operator-event SSE separately from provider token streaming.
 
 ## Contract and data requirements
 
-Record origin, tenant, session, API version, pagination, error envelope, stream event, reconnect, and Last-Event-ID semantics for the **operator-event SSE stream** only. Provider token streaming continues to forward upstream SSE verbatim without adding event IDs or re-framing events (ADR-0027). Keep the public documentation site deployment separate from the operator application.
+- Versioned API envelope: tenant, session, API version, pagination, error model.
+- **Operator-event SSE:** event framing, reconnect, and `Last-Event-ID` resume semantics.
+- **Provider token streaming:** continues to forward upstream SSE verbatim without adding event IDs or re-framing (ADR-0027; F4-007).
+- Keep the public documentation site deployment separate from the operator application.
 
 ## Product and UX requirements
 
@@ -43,24 +50,24 @@ The shell shows connection state, freshness, live/historical mode, reconnecting,
 
 ## Non-functional requirements
 
-No static export is used for dynamic operator behavior. Staging API p95 metadata request is within the declared budget; SSE reconnects without duplicate visible events; termination drains active streams.
+No static export for authenticated realtime behavior. Staging API p95 metadata request within declared budget; operator SSE reconnects without duplicate visible events; termination drains active streams; SSE write deadlines and shedding hooks exist or are scheduled with evidence (F4-033).
 
 ## Verification gates
 
-Smoke test login, API request, SSE connect, reconnect, and graceful drain in the chosen topology. Validate static export guards and origin/CORS/CSRF negative tests.
+Smoke test login, API request, operator SSE connect, reconnect with `Last-Event-ID`, and graceful drain in the chosen topology. Validate static-export guards and origin/CORS/CSRF negative tests. Document environment matrix and rollback to public docs origin.
 
 ## Rollout and rollback
 
-Dark deploy behind an internal flag. Roll back routing to the public site or disable operator origin without changing data.
+**Trigger:** topology misconfiguration, cookie/CORS failure, or stream memory growth. **Reversal:** dark-deploy behind internal flag; route traffic to the public docs site and disable operator origin without changing stored data. **Verify:** public site serves; operator origin rejects unauthenticated access; smoke transcript attached.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-001, F4-007, F4-020, F4-033.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Topology ADR merged and linked from this milestone.
+- [ ] Environment matrix covers local/preview/staging/production origins.
+- [ ] Smoke transcript proves login, API, operator SSE reconnect/drain.
+- [ ] Provider SSE remains verbatim; operator SSE resume documented separately.
+- [ ] Rollback to docs-only origin demonstrated.

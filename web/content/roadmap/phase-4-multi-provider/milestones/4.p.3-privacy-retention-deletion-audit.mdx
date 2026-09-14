@@ -1,7 +1,7 @@
 ---
 title: "Privacy, Retention, Deletion & Audit Governance"
-description: "Sensitive evidence is useful without weakening existing content-omission and tenant boundaries."
-summary: "Sensitive evidence is useful without weakening existing content-omission and tenant boundaries."
+description: "Evidence is useful without reversing the no-prompt/no-completion security boundary; deletion is coordinated and receipted."
+summary: "Evidence is useful without reversing the no-prompt/no-completion security boundary; deletion is coordinated and receipted."
 status: "planned"
 milestoneId: "4.P.3"
 track: "P"
@@ -16,51 +16,58 @@ fullTitle: "Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance"
 # Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance
 
 **Status:** Planned  
-**Outcome:** Sensitive evidence is useful without weakening existing content-omission and tenant boundaries.  
+**Outcome:** Evidence is useful without reversing the repository’s no-prompt/no-completion security boundary; deletion and retention are coordinated, hold-aware, and receipted.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
-**Estimated effort:** 3 weeks
+**Dependencies:** 4.P.1; 4.P.2  
+**Estimated effort:** 3 weeks  
+**Gate:** G4 governance
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+  ClickHouse TTL is storage hygiene, not a deletion SLA (F4-004). Org delete that stops at Postgres is a P0 defect (F4-019).
 </Callout>
 
 ## Why this milestone exists
 
-Sensitive evidence is useful without weakening existing content-omission and tenant boundaries.
+GDPR erasure, incident reconstruction, and safe debugging require a coordinated data-lifecycle contract.
 
 ## Scope and deliverables
 
-Define none/metadata/redacted/full capture policy. Redact before queue/export. Store privileged payloads in encrypted object storage with manifests. Add retention policy, purge, deletion by trace/session/org, legal hold, tombstones, per-store watermarks, receipts, audit ledger, safe rendering, and signed evidence bundles.
+- Capture modes: none, metadata-only, redacted, full — per tenant, field, environment, and event kind. Redact before queueing or exporting.
+- Encrypted object storage for privileged payloads with manifest, retention class, masking policy version, digest.
+- Tenant retention policies, purge schedules, delete-by-trace/session/org, export-before-delete, legal hold, tombstones, per-store watermarks, deletion receipts.
+- Cross-store org deletion (Postgres, ClickHouse, Redis, MinIO/object, queues, derived projections) that does not report success until receipted.
+- Append-only audit ledger (actor, session, purpose, policy result, object, fields, approval, before/after hashes, correlation IDs).
+- Safe rendering: prompts/outputs/tool args/links/HTML/Markdown are inert escaped data; strict CSP.
+- `evidence_bundle` manifest with digests, versions, redacted refs, chain-of-custody, retention tier, signature.
 
 ## Contract and data requirements
 
-Capture manifests include policy version, redaction state, retention class, digest, legal hold, deletion state, and chain of custody. Audit records include actor, session, purpose, object, fields, approval, result, and correlation IDs.
+Field/action policy for raw-read, export, delete (F4-006). Deletion jobs carry soft/hard time limits (F4-020). Every store applies `org_id` authorization.
 
 ## Product and UX requirements
 
-Raw data is hidden by default. Prompts, outputs, tool arguments, links, HTML, Markdown, and model-suggested commands render as inert escaped data.
+Operators see retention horizon, hold state, deletion job status, and receipt IDs. Missing/redacted/expired evidence is labeled — never inferred as empty success.
 
 ## Non-functional requirements
 
-Secrets never reach analytical stores, logs, queues, dead letters, or browser action handlers. Deletion normal query paths converge to no data and retries are safe.
+Masked-by-default fixtures prove secrets never reach ClickHouse, OTLP, logs, DLQs, or browser actions. Deletion retries are safe and idempotent.
 
 ## Verification gates
 
-Run redaction, prompt-injection, cross-tenant, export, deletion, legal-hold, audit-tamper, and evidence-bundle verification tests.
+Injection fixtures with hidden instructions/HTML/links. Deletion tests prove normal query paths return no data after completion across all stores. Audit writes tamper-evident and read-restricted.
 
 ## Rollout and rollback
 
-Begin metadata-only. Enable redacted fields per tenant. Raw capture is time-limited and independently killable. Deletion is not rolled back.
+**Trigger:** deletion incompleteness, secret leak, or unsafe render. **Reversal:** begin metadata-only; kill raw capture independently; deletion is never rolled back — restore requires governed import. **Verify:** cross-store deletion receipt for a test org; hostile-content render suite green.
 
 ## Findings addressed
 
-This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+F4-004, F4-006, F4-008, F4-019, F4-020, F4-024.
 
 ## Exit checklist
 
-- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
-- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
-- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
-- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
-- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
+- [ ] Capture/redaction policy versioned.
+- [ ] Cross-store deletion with receipts demonstrated.
+- [ ] Legal hold and tombstone behavior tested.
+- [ ] Safe-rendering / hostile-content suite attached.
+- [ ] Evidence-bundle schema published.
