@@ -7,6 +7,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from uuid import UUID
 
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import APIRouter, Request
@@ -18,6 +19,7 @@ from app.drain import DrainState
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_ACCESS,
+    SessionClaims,
     SessionStubError,
     TokenVerifyOpts,
     verify_token_opts,
@@ -35,6 +37,7 @@ class _StreamCtx:
     hub: OperatorSSEHub
     drain: DrainState
     settings: Settings
+    org_id: UUID
     last_id: int | None
 
 
@@ -58,9 +61,9 @@ def _access_cookie_raw(request: Request, settings: Settings) -> str:
     return raw
 
 
-def _verify_access_cookie(raw: str, settings: Settings, secret: str) -> None:
+def _verify_access_cookie(raw: str, settings: Settings, secret: str) -> SessionClaims:
     try:
-        verify_token_opts(
+        claims = verify_token_opts(
             raw,
             TokenVerifyOpts(
                 secret=secret,
@@ -71,14 +74,17 @@ def _verify_access_cookie(raw: str, settings: Settings, secret: str) -> None:
         )
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
+    if not isinstance(claims.org_id, UUID):
+        raise ApiError(code=INVALID_TOKEN, message="missing org context in session")
+    return claims
 
 
-def _require_session(request: Request) -> None:
-    """Validate provisional access cookie. Any valid session may use operator SSE (4.P.0)."""
+def _require_session(request: Request) -> SessionClaims:
+    """Validate provisional access cookie and return server-verified claims (incl. org_id)."""
     settings = _settings(request)
     secret = _require_operator_secret(settings)
     raw = _access_cookie_raw(request, settings)
-    _verify_access_cookie(raw, settings, secret)
+    return _verify_access_cookie(raw, settings, secret)
 
 
 def _parse_last_event_id(request: Request) -> int | None:
@@ -109,7 +115,7 @@ async def _register_stream_task(ctx: _StreamCtx) -> None:
 
 
 async def _hub_chunks(ctx: _StreamCtx) -> AsyncIterator[bytes]:
-    async for chunk in ctx.hub.subscribe(ctx.last_id):
+    async for chunk in ctx.hub.subscribe(ctx.org_id, ctx.last_id):
         if await ctx.request.is_disconnected():
             return
         yield chunk
@@ -143,7 +149,7 @@ def _hub_or_503(request: Request) -> OperatorSSEHub:
 
 @router.get("/stream", response_model=None)
 async def stream_events(request: Request) -> Response:
-    _require_session(request)
+    claims = _require_session(request)
     settings = _settings(request)
     hub = _hub_or_503(request)
     drain = request.app.state.api.drain
@@ -154,6 +160,7 @@ async def stream_events(request: Request) -> Response:
         hub=hub,
         drain=drain,
         settings=settings,
+        org_id=claims.org_id,
         last_id=_parse_last_event_id(request),
     )
     return StreamingResponse(
@@ -165,15 +172,3 @@ async def stream_events(request: Request) -> Response:
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@router.post("/publish-test")
-async def publish_test_event(request: Request) -> dict[str, object]:
-    """Test helper: enqueue one operator event (requires session + CSRF)."""
-    _require_session(request)
-    hub = _hub_or_503(request)
-    body = await request.json()
-    if not isinstance(body, dict):
-        body = {"value": body}
-    event_id = await hub.publish(body)
-    return {"status": "ok", "event_id": event_id}

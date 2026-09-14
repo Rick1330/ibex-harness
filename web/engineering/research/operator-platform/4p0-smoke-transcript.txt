@@ -5,15 +5,15 @@ $ cd services/api && uv run python ../../web/engineering/research/operator-platf
 
 # 1) POST /v1/operator/session/login
 HTTP 200
-{'status': 'ok', 'provisional': True, 'org_id': '87c36690-fef1-4f04-8b55-1fecdea85236', 'csrf_token': '<redacted>', 'warning': '4.P.0 provisional session stub; 4.P.1 replaces issuance with services/auth'}
+{'status': 'ok', 'provisional': True, 'org_id': 'b47af46c-bae9-47e4-8178-249d28b3f538', 'csrf_token': '<redacted>', 'warning': '4.P.0 provisional session stub; 4.P.1 replaces issuance with services/auth'}
 
 # 2) GET /v1/operator/session/me (cookie session)
 HTTP 200
-{'auth': 'cookie', 'org_id': '87c36690-fef1-4f04-8b55-1fecdea85236', 'sub': 'smoke-user', 'provisional': True}
+{'auth': 'cookie', 'org_id': 'b47af46c-bae9-47e4-8178-249d28b3f538', 'sub': 'smoke-user', 'provisional': True}
 
-# 3) Publish two operator events
-publish n=1 → HTTP 200 {'status': 'ok', 'event_id': 1}
-publish n=2 → HTTP 200 {'status': 'ok', 'event_id': 2}
+# 3) Publish two operator events (in-process hub helper — no live /publish-test)
+publish n=1 → event_id=1
+publish n=2 → event_id=2
 
 # 4) SSE connect — finite subscribe mock (avoids hung stream)
 HTTP 200 content-type=text/event-stream; charset=utf-8
@@ -29,7 +29,7 @@ data:{"n":2}
 captured last-event-id=2
 
 # 5) Publish event 3, reconnect with Last-Event-ID (no duplicate of 1–2)
-publish n=3 → {'status': 'ok', 'event_id': 3}
+publish n=3 → event_id=3
 HTTP 200 Last-Event-ID=2
 id: 3
 event: operator.evidence
@@ -38,7 +38,7 @@ data:{"n":3}
 
 resume OK — visible id 3 only (> 2)
 
-# 5b) Hub Last-Event-ID filter (real ring buffer)
+# 5b) Hub Last-Event-ID filter (real ring buffer, org-scoped)
 hub resume after 2 → ids [3]
 
 # 6) Graceful drain — begin_drain then new SSE rejected
@@ -47,9 +47,9 @@ HTTP 503 X-IBEX-Drain=1
 
 === ROLLBACK TRANSCRIPT (kill switch) ===
 # Disable operator feature (docs origin unaffected — separate Pages project)
-login with kill-switch → HTTP 503 {'error': {'code': 'SERVICE_DEGRADED', 'message': 'operator feature disabled', 'request_id': '01a09f96-f170-7441-be13-bf57604de2d0', 'timestamp': '2026-09-14T11:04:24.690Z', 'detail': 'IBEX_OPERATOR_FEATURE_ENABLED=false', 'docs_url': 'https://docs.ibexharness.com/errors/SERVICE_DEGRADED'}}
+login with kill-switch → HTTP 503 {'error': {'code': 'SERVICE_DEGRADED', 'message': 'operator feature disabled', 'request_id': '01a0a0d5-c243-7a37-a287-b05553699256', 'timestamp': '2026-09-14T16:52:38.597Z', 'detail': 'IBEX_OPERATOR_FEATURE_ENABLED=false', 'docs_url': 'https://docs.ibexharness.com/errors/SERVICE_DEGRADED'}}
 # Re-enable; unauthenticated SSE rejected
-SSE without session → HTTP 401 {'error': {'code': 'INVALID_TOKEN', 'message': 'missing session cookie', 'request_id': '01a09f96-f175-71c2-b2b4-0691fdce6c04', 'timestamp': '2026-09-14T11:04:24.693Z', 'docs_url': 'https://docs.ibexharness.com/errors/INVALID_TOKEN'}}
+SSE without session → HTTP 401 {'error': {'code': 'INVALID_TOKEN', 'message': 'missing session cookie', 'request_id': '01a0a0d5-c248-7d3e-b9c9-c1be31be5c78', 'timestamp': '2026-09-14T16:52:38.601Z', 'docs_url': 'https://docs.ibexharness.com/errors/INVALID_TOKEN'}}
 # Docs origin independence: web-deploy.yml / ibex-harness-docs untouched by
 # IBEX_OPERATOR_FEATURE_ENABLED (operator-only kill switch on services/api).
 

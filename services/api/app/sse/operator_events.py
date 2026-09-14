@@ -10,6 +10,7 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import UUID
 
 from prometheus_client import Counter, Histogram
 from redis.asyncio import Redis
@@ -39,8 +40,15 @@ _RNG = secrets.SystemRandom()
 @dataclass
 class OperatorEvent:
     event_id: int
+    org_id: UUID
     payload: dict[str, Any]
     event_type: str = "operator.evidence"
+
+
+@dataclass
+class _Subscriber:
+    org_id: UUID
+    queue: asyncio.Queue[OperatorEvent | None]
 
 
 @dataclass
@@ -51,25 +59,40 @@ class OperatorSSEHub:
     drain: DrainState
     _next_id: int = 1
     _history: list[OperatorEvent] = field(default_factory=list)
-    _subscribers: list[asyncio.Queue[OperatorEvent | None]] = field(default_factory=list)
+    _subscribers: list[_Subscriber] = field(default_factory=list)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _history_limit: int = 256
 
-    async def publish(self, payload: dict[str, Any], *, event_type: str = "operator.evidence") -> int:
+    async def publish(
+        self,
+        payload: dict[str, Any],
+        *,
+        org_id: UUID,
+        event_type: str = "operator.evidence",
+    ) -> int:
+        if not isinstance(org_id, UUID):
+            raise TypeError("org_id is required for operator SSE publish")
         async with self._lock:
-            event = OperatorEvent(event_id=self._next_id, payload=payload, event_type=event_type)
+            event = OperatorEvent(
+                event_id=self._next_id,
+                org_id=org_id,
+                payload=payload,
+                event_type=event_type,
+            )
             self._next_id += 1
             self._history.append(event)
             if len(self._history) > self._history_limit:
                 self._history = self._history[-self._history_limit :]
-            lagging: list[asyncio.Queue[OperatorEvent | None]] = []
-            for queue in self._subscribers:
+            lagging: list[_Subscriber] = []
+            for sub in self._subscribers:
+                if sub.org_id != org_id:
+                    continue
                 try:
-                    queue.put_nowait(event)
+                    sub.queue.put_nowait(event)
                 except asyncio.QueueFull:
-                    lagging.append(queue)
-            for queue in lagging:
-                self._disconnect_subscriber(queue)
+                    lagging.append(sub)
+            for sub in lagging:
+                self._disconnect_subscriber(sub)
             return event.event_id
 
     def _force_sentinel(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
@@ -85,20 +108,21 @@ class OperatorSSEHub:
             except asyncio.QueueFull:
                 return
 
-    def _disconnect_subscriber(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
+    def _disconnect_subscriber(self, sub: _Subscriber) -> None:
         """Drop a lagging subscriber so the client reconnects with Last-Event-ID."""
         logger.warning("operator sse subscriber queue full; disconnecting stream")
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
+        if sub in self._subscribers:
+            self._subscribers.remove(sub)
         try:
-            queue.put_nowait(None)
+            sub.queue.put_nowait(None)
         except asyncio.QueueFull:
-            self._force_sentinel(queue)
+            self._force_sentinel(sub.queue)
 
-    def _backlog_after(self, last_event_id: int | None) -> list[OperatorEvent]:
+    def _backlog_after(self, org_id: UUID, last_event_id: int | None) -> list[OperatorEvent]:
+        scoped = [e for e in self._history if e.org_id == org_id]
         if last_event_id is None:
-            return list(self._history)
-        return [e for e in self._history if e.event_id > last_event_id]
+            return scoped
+        return [e for e in scoped if e.event_id > last_event_id]
 
     async def _live_chunks(
         self, queue: asyncio.Queue[OperatorEvent | None]
@@ -113,13 +137,16 @@ class OperatorSSEHub:
                 return
             yield self._format_event(item)
 
-    async def subscribe(self, last_event_id: int | None) -> AsyncIterator[bytes]:
+    async def subscribe(self, org_id: UUID, last_event_id: int | None) -> AsyncIterator[bytes]:
+        if not isinstance(org_id, UUID):
+            raise TypeError("org_id is required for operator SSE subscribe")
         if self.drain.draining:
             raise RuntimeError("draining")
         queue: asyncio.Queue[OperatorEvent | None] = asyncio.Queue(maxsize=64)
+        sub = _Subscriber(org_id=org_id, queue=queue)
         async with self._lock:
-            backlog = self._backlog_after(last_event_id)
-            self._subscribers.append(queue)
+            backlog = self._backlog_after(org_id, last_event_id)
+            self._subscribers.append(sub)
         try:
             for event in backlog:
                 yield self._format_event(event)
@@ -127,8 +154,8 @@ class OperatorSSEHub:
                 yield chunk
         finally:
             async with self._lock:
-                if queue in self._subscribers:
-                    self._subscribers.remove(queue)
+                if sub in self._subscribers:
+                    self._subscribers.remove(sub)
 
     def _format_event(self, event: OperatorEvent) -> bytes:
         data = json.dumps(event.payload, separators=(",", ":"))
@@ -136,9 +163,9 @@ class OperatorSSEHub:
 
     async def close_all(self) -> None:
         async with self._lock:
-            for queue in self._subscribers:
+            for sub in self._subscribers:
                 try:
-                    queue.put_nowait(None)
+                    sub.queue.put_nowait(None)
                 except asyncio.QueueFull:
                     pass
 
@@ -211,8 +238,18 @@ async def _fan_in_read_loop(
             await asyncio.sleep(0.05)
             continue
         payload = _decode_fan_in_payload(message.get("data"))
-        if payload is not None:
-            await hub.publish(payload)
+        if payload is None:
+            continue
+        org_raw = payload.pop("org_id", None)
+        if org_raw is None:
+            logger.warning("operator sse redis fan-in dropped event without org_id")
+            continue
+        try:
+            org_id = UUID(str(org_raw))
+        except ValueError:
+            logger.warning("operator sse redis fan-in dropped event with invalid org_id")
+            continue
+        await hub.publish(payload, org_id=org_id)
 
 
 async def _safe_await(label: str, coro_factory: Callable[[], Awaitable[Any]]) -> None:

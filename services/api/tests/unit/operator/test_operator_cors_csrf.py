@@ -8,7 +8,8 @@ from starlette.applications import Starlette
 from app.middleware.cors import build_cors_middleware
 from tests.unit.operator.conftest import create_operator_app, login_with_csrf, operator_settings
 
-PUBLISH = "/v1/operator/events/publish-test"
+# Cookie-authenticated mutating route used to exercise CSRF (publish-test removed).
+MUTATION = "/v1/operator/session/logout"
 
 
 def _assert_csrf_failed(resp) -> None:
@@ -23,9 +24,9 @@ def _preflight(client, origin: str):
     )
 
 
-def _publish(client, *, csrf: str | None = None, payload: dict | None = None):
+def _mutate(client, *, csrf: str | None = None):
     headers = {"X-CSRF-Token": csrf} if csrf is not None else {}
-    return client.post(PUBLISH, json=payload or {"hello": "world"}, headers=headers)
+    return client.post(MUTATION, headers=headers)
 
 
 def test_cors_allows_listed_origin(app_client) -> None:
@@ -51,22 +52,22 @@ def test_cors_rejects_disallowed_origin(app_client) -> None:
 def test_csrf_rejects_bad_token(app_client, csrf: str | None) -> None:
     _, client = app_client
     login_with_csrf(client)
-    _assert_csrf_failed(_publish(client, csrf=csrf))
+    _assert_csrf_failed(_mutate(client, csrf=csrf))
 
 
 def test_csrf_accepts_matching_double_submit(app_client) -> None:
     _, client = app_client
     csrf = login_with_csrf(client)
-    resp = _publish(client, csrf=csrf)
+    resp = _mutate(client, csrf=csrf)
     assert resp.status_code == 200
-    assert resp.json()["event_id"] >= 1
+    assert resp.json()["status"] == "ok"
 
 
 def test_csrf_misconfigured_without_secret() -> None:
     settings = operator_settings(dashboard_csrf_secret=None)
     with create_operator_app(settings=settings) as (_, client):
         login_with_csrf(client)
-        resp = client.post(PUBLISH, json={"x": 1})
+        resp = client.post(MUTATION)
         assert resp.status_code == 503
         assert resp.json()["error"]["code"] == "csrf_misconfigured"
 

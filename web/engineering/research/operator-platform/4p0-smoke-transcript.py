@@ -57,14 +57,15 @@ def _mask_login(body: dict) -> dict:
     return out
 
 
-def _step_login(client: TestClient) -> str:
+def _step_login(client: TestClient) -> tuple[str, str]:
     print("\n# 1) POST /v1/operator/session/login")
     login = client.post("/v1/operator/session/login", json={"pat": "ibex_pat_smoke"})
     print(f"HTTP {login.status_code}")
     print(_mask_login(login.json()))
     if login.status_code != 200:
         _fail(f"login HTTP {login.status_code}")
-    return login.json()["csrf_token"]
+    body = login.json()
+    return body["csrf_token"], body["org_id"]
 
 
 def _step_me(client: TestClient) -> None:
@@ -76,23 +77,20 @@ def _step_me(client: TestClient) -> None:
         _fail("cookie /me failed")
 
 
-def _step_publish(client: TestClient, csrf: str) -> None:
-    print("\n# 3) Publish two operator events")
+def _step_publish(hub, org_id: str) -> None:
+    print("\n# 3) Publish two operator events (in-process hub helper — no live /publish-test)")
+    from uuid import UUID
+
+    oid = UUID(org_id)
     for n in (1, 2):
-        pub = client.post(
-            "/v1/operator/events/publish-test",
-            json={"n": n},
-            headers={"X-CSRF-Token": csrf},
-        )
-        print(f"publish n={n} → HTTP {pub.status_code} {pub.json()}")
-        if pub.status_code != 200:
-            _fail(f"publish {n}")
+        eid = asyncio.run(hub.publish({"n": n}, org_id=oid))
+        print(f"publish n={n} → event_id={eid}")
 
 
 def _step_sse_connect(client: TestClient, hub) -> int:
     print("\n# 4) SSE connect — finite subscribe mock (avoids hung stream)")
 
-    async def sub_all(last_event_id):
+    async def sub_all(org_id, last_event_id=None):
         if last_event_id is not None:
             _fail("expected last_event_id None on first connect")
         for eid in (1, 2):
@@ -108,18 +106,14 @@ def _step_sse_connect(client: TestClient, hub) -> int:
     return 2
 
 
-def _step_sse_resume(client: TestClient, hub, csrf: str, last_id: int) -> None:
+def _step_sse_resume(client: TestClient, hub, org_id: str, last_id: int) -> None:
     print("\n# 5) Publish event 3, reconnect with Last-Event-ID (no duplicate of 1–2)")
-    pub3 = client.post(
-        "/v1/operator/events/publish-test",
-        json={"n": 3},
-        headers={"X-CSRF-Token": csrf},
-    )
-    print(f"publish n=3 → {pub3.status_code} {pub3.json()}")
-    if pub3.status_code != 200:
-        _fail(f"publish 3 HTTP {pub3.status_code}")
+    from uuid import UUID
 
-    async def sub_resume(last_event_id):
+    eid3 = asyncio.run(hub.publish({"n": 3}, org_id=UUID(org_id)))
+    print(f"publish n=3 → event_id={eid3}")
+
+    async def sub_resume(oid, last_event_id=None):
         if last_event_id != last_id:
             _fail(f"expected Last-Event-ID {last_id}, got {last_event_id}")
         yield b'id: 3\nevent: operator.evidence\ndata:{"n":3}\n\n'
@@ -138,12 +132,15 @@ def _step_sse_resume(client: TestClient, hub, csrf: str, last_id: int) -> None:
     print(f"resume OK — visible id 3 only (> {last_id})")
 
 
-def _step_hub_resume(hub) -> None:
-    print("\n# 5b) Hub Last-Event-ID filter (real ring buffer)")
+def _step_hub_resume(hub, org_id: str) -> None:
+    print("\n# 5b) Hub Last-Event-ID filter (real ring buffer, org-scoped)")
+    from uuid import UUID
+
     seen: list[int] = []
+    oid = UUID(org_id)
 
     async def collect() -> None:
-        agen = hub.subscribe(2)
+        agen = hub.subscribe(oid, 2)
         try:
             async for chunk in agen:
                 if chunk.startswith(b"id:"):
@@ -219,16 +216,17 @@ def main() -> None:
     ):
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:
-            csrf = _step_login(client)
+            csrf, org_id = _step_login(client)
             _step_me(client)
-            _step_publish(client, csrf)
             hub = app.state.operator_sse_hub
+            _step_publish(hub, org_id)
             last_id = _step_sse_connect(client, hub)
-            _step_sse_resume(client, hub, csrf, last_id)
-            _step_hub_resume(hub)
+            _step_sse_resume(client, hub, org_id, last_id)
+            _step_hub_resume(hub, org_id)
             _step_drain(app, client)
             _step_rollback(client, settings)
             print("\nSMOKE+ROLLBACK OK")
+            _ = csrf  # CSRF retained for transcript realism; mutations use hub helper
 
 
 if __name__ == "__main__":
