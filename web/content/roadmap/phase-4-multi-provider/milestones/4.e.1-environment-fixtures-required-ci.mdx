@@ -1,0 +1,80 @@
+---
+title: "Environment, Fixtures & Required CI"
+description: "The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence."
+summary: "The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence."
+status: "planned"
+milestoneId: "4.E.1"
+track: "E"
+trackTitle: "Release Readiness & Phase Exit"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit"
+goal: "[Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)"
+estimatedEffort: "2 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.1 — Environment, Fixtures & Required CI"
+---
+
+# Milestone 4.E.1 — Environment, Fixtures & Required CI
+
+**Status:** Planned  
+**Outcome:** The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence.  
+**Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
+**Dependencies:** 4.P.0 (topology), 4.P.1 (identity), 4.P.6 (harness contracts), Track D capability slices with mergeable UI/API paths  
+**Estimated effort:** 2 weeks  
+**Gate:** G1 operator CI
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when CI jobs run against the chosen server-capable operator topology (not static docs export), publish versioned evidence artifacts, and are registered as required branch checks. A mock screen, planning-only schema, or docs-site smoke test alone is not sufficient.
+</Callout>
+
+## Why this milestone exists
+
+Track P and D define contracts; Track E makes them executable release gates. Without a real operator test environment, four-role/two-tenant isolation, accessibility, and contract snapshots cannot block promotion (F4-012, F4-034).
+
+## Scope and deliverables
+
+- Provision the operator test environment: API, Postgres (RLS), Redis (Lua rate limit), ClickHouse, object storage, identity, and operator SSE origin per 4.P.0 ADR.
+- Install pinned Playwright browsers; seed two organizations, four roles (viewer, operator, admin, owner), and golden fixtures for traces, sessions, memories, incidents, directives, and cost facts.
+- Run and publish: OpenAPI snapshot diff, generated TypeScript client build, contract compatibility fixtures, Playwright journey matrix, axe and keyboard suites, tenant-negative matrices, and hostile-content rendering checks.
+- Inventory required GitHub branch checks (Python gate, Semgrep, contract, E2E, accessibility) and fail closed when any required job is missing from protection rules.
+
+## Contract and data requirements
+
+- Test manifest pins environment name, fixture version, commit SHA, container image digests, schema versions, and artifact paths (JUnit, HTML report, trace zip, OpenAPI diff, axe JSON).
+- Fixtures label evidence states explicitly: `complete`, `partial`, `sampled`, `late`, `redacted`, `expired`, `deleted`, `simulated`.
+- No contract doubles for PostgreSQL RLS, Redis Lua rate limiting, pgvector queries, or token-revocation propagation.
+
+## Product and UX requirements
+
+Journey matrix covers: login/refresh/revocation, organization switch, Explore query URL persistence, trace three-layer progressive disclosure, memory/context evidence, deletion preview, incident lifecycle, directive preview/approval, cost alert/hard-cap denial, operator SSE reconnect with `Last-Event-ID`, keyboard navigation, and screen-reader-visible status changes.
+
+## Non-functional requirements
+
+Required CI checks pass on every merge to the release branch; failures upload Playwright traces and block promotion. Static documentation-site deploy is excluded from dashboard E2E evidence.
+
+## Verification gates
+
+- OpenAPI snapshot matches published contract; breaking changes require explicit version bump.
+- Two-tenant negative tests prove Org B cannot read Org A resources (404 anti-enumeration where applicable).
+- axe reports zero critical violations on Explore, Trace Inspector, and shell routes.
+- Branch protection lists every required job; missing job fails the inventory check.
+
+## Rollout and rollback
+
+**Trigger:** operator environment unavailable, fixture drift, or required check not registered. **Reversal:** block merge/promotion; revert to last evidence-backed release tag. **Verify:** CI inventory and smoke transcript attached to promotion record.
+
+## Findings addressed
+
+F4-001, F4-002, F4-008, F4-012, F4-034.
+
+## Research depth
+
+Further audit context (provenance only — roadmap and engineering pages are authoritative):
+
+- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
+## Exit checklist
+
+- [ ] Operator environment manifest published and reproducible locally/CI.
+- [ ] Four roles × two tenants journey matrix green with artifacts uploaded.
+- [ ] OpenAPI snapshot, client generation, and compatibility fixtures pass.
+- [ ] Required branch-check inventory matches actual protection rules.
+- [ ] No static docs-site substitute used for dashboard E2E evidence.

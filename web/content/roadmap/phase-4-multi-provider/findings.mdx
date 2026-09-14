@@ -1,0 +1,74 @@
+---
+title: "Phase 4 — Findings Register"
+description: "Evidence-backed findings that shaped the Track P prerequisite and redesigned Track D and Track E roadmap."
+summary: "Evidence-backed findings that shaped the Track P prerequisite and redesigned Track D and Track E roadmap."
+phase: "phase-4-multi-provider"
+---
+
+# Phase 4 — Findings Register
+
+<Callout type="note" title="How to read this register">
+  These findings are roadmap constraints derived from repository inspection and product design review (see `web/engineering/research/operator-platform/`). They are not claims that a future contract is already implemented. Each finding is mapped to a milestone that must produce verification evidence before it can be closed. Engineering P0/P1 items may be closed by implementation or by an explicit residual-risk acceptance recorded on 4.E.4.
+</Callout>
+
+## Executive finding
+
+The original Phase 4 plan was a minimal feature list. It described screens and endpoints but did not define the runtime, evidence graph, privacy lifecycle, tenant policy, query semantics, durable usage facts, recovery model, or executable release gates required for a world-class operator product. Staff-engineering audits further showed **authorization fail-open**, **incomplete cross-store deletion**, **trace join gaps**, and **assembly correctness defects** that would make a premature Track D UI dishonest. The redesign therefore places readiness and control-plane work before dashboard UI and treats each capability as a vertical slice with contract and assurance evidence.
+
+## Findings and disposition
+
+### Product and control-plane findings
+
+| ID | Finding | Severity | Disposition |
+|---|---|---:|---|
+| F4-001 | The public web deployment is static documentation output and cannot provide cookie-backed dynamic dashboard behavior or a long-lived SSE endpoint by itself. | P0 | Resolve in 4.P.0 with an explicit server-capable or SPA/API/SSE topology. |
+| F4-002 | Dashboard identity, org switching, resource authorization, step-up assurance, and asynchronous-job scope were not a single enforceable contract. | P0 | Resolve in 4.P.1 with deny-by-default policy and negative isolation matrices. |
+| F4-003 | Aggregate trace rows cannot explain nested causality, checkpoint joins, candidate ranking, fallback, tool, or evaluation provenance. | P0 | Resolve in 4.P.2 with canonical trace/span/event contracts and durable publication. |
+| F4-004 | ClickHouse TTL and browser confirmation are not coordinated deletion, legal hold, or data-subject erasure. | P0 | Resolve in 4.P.3 with tombstones, store watermarks, receipts, and audit. |
+| F4-005 | The old cost milestone assumed durable usage and billing facts that were not defined at the required org/agent/provider/model scope. | P1 | Resolve in 4.P.4 and 4.D.6 with immutable usage facts, rate-card versions, reconciliation, and enforcement. |
+| F4-006 | Generic permission constants do not define raw-data, export, deletion, replay, policy-change, secret-use, or break-glass authorization. | P0 | Resolve in 4.P.1 and 4.P.3 with resource/field/action policy. |
+| F4-007 | Realtime streams need durable positions, resume semantics, bounded buffers, dedupe, and partial-data states. | P1 | Resolve in 4.P.2 and verify through 4.E.2 slow-client and reconnect tests. Operator-event SSE must not re-frame provider token streams (ADR-0027). |
+| F4-008 | Prompts, outputs, tool arguments, links, HTML, and Markdown are untrusted data and must never become browser actions or unsanitized markup. | P0 | Resolve in 4.P.3 and 4.D.2–4.D.4 safe-rendering tests. |
+| F4-009 | The previous Trace Inspector did not separate score contribution, rank transition, resource cost, and selection outcome. | P1 | Resolve in 4.D.2 and UI/UX §15 with three-layer progressive disclosure and exclusion groups. |
+| F4-010 | Replay, counterfactuals, policy changes, and fallback are high-impact actions without a common preview, approval, ledger, and rollback contract. | P0 | Resolve in 4.P.1, 4.P.2, and 4.D.5. |
+| F4-011 | Backup/restore, RPO/RTO, rollout abort, image provenance, and admission checks were described but not required release evidence. | P0 | Resolve in 4.P.5 and 4.E.2–4.E.3. |
+| F4-012 | Existing dashboard E2E planning did not prove four roles, two tenants, accessibility, hostile-content rendering, or static-site/runtime separation. | P1 | Resolve in 4.P.6 and 4.E.1. |
+| F4-013 | Drift and directive management were combined without an explicit producer contract for fingerprints, baselines, evaluations, or alert lifecycle. | P1 | Keep directive/routing controls in 4.D.5; integrate drift only after Phase 4.5 producer contracts are published. |
+| F4-014 | Documentation status did not expose the redesigned Phase 4 milestone graph or active work state. | P1 | Resolve in the Phase 4 index, current-state page, tracks, goals, risks, and this register. |
+
+### Engineering blockers before Track D honesty
+
+| ID | Finding | Severity | Disposition |
+|---|---|---:|---|
+| F4-015 | When Postgres is unavailable, the proxy can construct a `PassthroughRegistry` that allows every model for every organization (fail-open authorization). | P0 | Fix or explicit residual-risk acceptance before Track D production claims; verify in 4.P.1 and proxy negative tests. |
+| F4-016 | Model-policy invalidation uses lossy Postgres→Redis Pub/Sub dual-write, allowing stale allow decisions after revoke. | P0 | Replace with versioned durable invalidation/reconciliation and fail closed on unknown policy version (4.P.1 / 4.P.2 outbox patterns). |
+| F4-017 | Auth `GetProviderCredential` can return plaintext secrets without a narrowly scoped write/service authorization. | P0 | Close in 4.P.1 / Track A credential path with scoped service auth and audit. |
+| F4-018 | BYO provider BaseURL SSRF boundary is not enforced at Auth and proxy hot path. | P0 | Enforce allowlist/block private ranges before Track D paths that surface provider config (4.P.1, proxy hardening). |
+| F4-019 | Organization deletion can report success after Postgres-only cleanup while ClickHouse and object-storage data remain. | P0 | Resolve in 4.P.3 with cross-store, hold-aware, retryable, receipted deletion. |
+| F4-020 | API readiness is startup-only; deletion/maintenance tasks lack soft/hard time limits. | P1 | Resolve in 4.P.0 / 4.P.5 readiness and worker deadline contracts. |
+| F4-021 | Context-assembly RPC lacks durable `request_id` / `trace_id` propagation required to join Trace Inspector sections. | P0 | Resolve in 4.P.2 before 4.D.2 implementation starts. |
+| F4-022 | Checkpoint IDs are not returned from writes (`CheckpointID` nil), so checkpoint cannot be a stable bridge. | P0 | Resolve in 4.P.2 write path + evidence envelope. |
+| F4-023 | `AssemblyMetrics` / stage timings are computed but not persisted on the durable trace read model. | P1 | Persist on `ibex.llm_traces` or companion projection in 4.P.2. |
+| F4-024 | Applied session migrations store hashes, not conversation transcripts; no audited MinIO/archive write path for full payloads. | P0 | Choose durable conversation/raw-payload store in 4.P.2 / 4.P.3 before claiming conversation or raw views in 4.D.2–4.D.3. |
+| F4-025 | Score contract mismatches UX: interim similarity/confidence mix must not be labeled as five-component composite; real weights and exclusion reasons are missing. | P1 | Version context-trace score payload in 4.P.2; render in 4.D.2 per UI/UX §15 (`0.40/0.25/0.20/0.10/0.05`). |
+| F4-026 | Per-request directive snapshot (immutable version/hash) is not persisted with the inference. | P1 | Propagate and store in 4.P.2; consume in 4.D.2 / 4.D.5. |
+| F4-027 | Tool-call audit lacks sanitized args, idempotency key, and session/trace join fields. | P1 | Expand MCP/tool audit contract in 4.P.2; degraded metadata-only UI only if labeled in 4.D.2. |
+| F4-028 | Context budgeting omits tool schemas / formatter payload from available-token accounting. | P1 | Fix assembly correctness before 4.D.2/4.D.3 claim packing honesty (proxy/context; evidence in 4.P.6). |
+| F4-029 | Configured rank weights are validated but ignored at scoring time. | P1 | Wire weights into scorer; golden fixtures in 4.P.6 / 4.D.2. |
+| F4-030 | Multi-label half-life uses primary label only; packer repair can return lower-value sets. | P1 | Correct before Trace Inspector claims exclusion/rank honesty (4.D.2 prerequisites). |
+| F4-031 | Embedding profile/version persistence and pre-score truncation ordering defects undermine retrieval provenance. | P1 | Fix memory/retrieval contracts referenced by 4.P.2 and 4.D.3. |
+| F4-032 | No executable K8s/Helm/Kustomize overlays or proven backup/restore drill for operator topology. | P0 | Resolve in 4.P.5 with restore evidence before production Track D. |
+| F4-033 | SSE write deadlines, queue shedding, and provider connection caps remain incomplete for operator-grade realtime. | P1 | Close under 4.C.5 release-evidence soak + 4.P.0 / 4.E.2 (retain 4.C.5 implementation; evidence still required). |
+| F4-034 | Python CI / Semgrep intended as merge blockers are not fully protected as required branch checks. | P1 | Resolve in 4.P.6 / 4.E.1 required-check inventory. |
+
+## Closure rule
+
+A finding is closed only when the referenced milestone has a merged implementation **or** an accepted residual-risk record, a reproducible verification artifact, an owner, and an operational rollback or residual-risk decision. A roadmap page alone is evidence of intent, not closure. **Zero open P0 findings** is mandatory for Phase 4 exit (4.E.4).
+
+## Related pages
+
+- [Phase 4 hub](/roadmap/phase-4-multi-provider)
+- [Phase 4 tracks](/roadmap/phase-4-multi-provider/tracks)
+- [Phase 4 risks](/roadmap/phase-4-multi-provider/risks)
+- [Operator platform architecture](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/OPERATOR_PLATFORM_ARCHITECTURE.md)
+- [Research archive (operator platform audits)](https://github.com/Rick1330/ibex-harness/tree/main/web/engineering/research/operator-platform)

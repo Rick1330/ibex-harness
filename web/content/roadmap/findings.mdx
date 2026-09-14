@@ -26,6 +26,20 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 
 ---
 
+## 2026-09-14 — Phase 4 operator platform roadmap redesigned (Track P / D / E)
+
+**Context:** Phase 4 planning / PR [#831](https://github.com/Rick1330/ibex-harness/pull/831)
+
+**Finding:** The original Phase 4 plan listed dashboard features without runtime topology, canonical evidence, privacy lifecycle, query semantics, durable usage facts, recovery model, or executable release gates. Staff-engineering audits identified authorization fail-open, incomplete cross-store deletion, trace join gaps, and assembly correctness defects that would make a premature Track D UI dishonest.
+
+**Impact:** Track P (operator readiness and control plane) is now a hard prerequisite before Track D capability slices. Track E makes CI, resilience, staged rollout, and F4 findings sign-off executable gates. Findings F4-001–F4-034 and risks are published on the Phase 4 hub.
+
+**Decision:** Redesign Phase 4 milestones 4.P.0–4.P.6, 4.D.1–4.D.6, and 4.E.1–4.E.4. Treat 4.C.5 as implementation baseline complete with release-evidence soak still required. Archive research provenance under `web/engineering/research/operator-platform/` (not repo-root drafts).
+
+**Updated:** `web/content/roadmap/phase-4-multi-provider/*`, `web/engineering/OPERATOR_PLATFORM_ARCHITECTURE.md`, `web/engineering/UI_UX_GUIDELINES.md` §15, `web/engineering/TESTING_STRATEGY.md` §16, `web/engineering/API_DOCUMENTATION.md`, `web/content/roadmap/current-state.mdx`, `web/content/roadmap/findings.mdx`.
+
+---
+
 ## 2026-08-20 — Roadmap simplified: Phase 5.5 and Phase 6 removed
 
 **Context:** Post-redesign cleanup

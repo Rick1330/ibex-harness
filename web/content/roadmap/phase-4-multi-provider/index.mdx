@@ -1,71 +1,79 @@
 ---
 title: "Phase 4: Operator Platform & Multi-Provider"
-description: "Phase 4 is where IBEX stops being a proxy with an API-only backend and becomes an operable product: humans get a management surface, a second LLM provider proves the abstraction, and rate limiting becomes real cost control."
-summary: "Phase 4 is where IBEX stops being a proxy with an API-only backend and becomes an operable product: humans get a management surface, a second LLM provider proves the abstraction, and rate limiting becomes real cost control."
-status: "planned"
+description: "Phase 4 delivers a production-ready operator platform: management APIs, hierarchical rate limiting, multi-provider resilience, a governed evidence plane, and a world-class operator dashboard."
+summary: "Phase 4 delivers a production-ready operator platform: management APIs, hierarchical rate limiting, multi-provider resilience, a governed evidence plane, and a world-class operator dashboard."
+status: "in-progress"
 phase: "phase-4-multi-provider"
 fullTitle: "Phase 4 — Operator Platform & Multi-Provider"
 ---
 
 # Phase 4 — Operator Platform & Multi-Provider
 
-<Callout type="note" title="Planning baseline">
-  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
-  Implementation is expected to require further research and may land differently than any sketch.
+<Callout type="note" title="Roadmap contract">
+  This phase is now organized around **capability, assurance, and release gates**. A milestone is not complete because a route, schema, permission bit, or planning document exists. It is complete when its stated contract, verification evidence, and rollback behavior are implemented and recorded.
 </Callout>
 
-<Callout type="info" title="Scope note">
- Phase 4 combines management APIs, the operator dashboard, and multi-provider routing into one delivery
- phase. The intent is to build the operator surface alongside provider and rate-limit controls, since
- they depend on the same org-scoped configuration and observability surfaces. Intelligence-layer work
- remains in Phase 4.5.
+<Callout type="info" title="Current status">
+  **Phase 3.5 is complete and 4.C.5 is treated as complete for planning.** The operator dashboard implementation must begin with Track P. The original Track D feature list is superseded by the redesigned sequence below because its runtime, data, authorization, privacy, and production prerequisites were not sufficiently defined.
 </Callout>
 
-<Callout type="info" title="Entry condition">
- **Phase 3.5 is complete.** Extraction worker running, context assembly live on proxy hot path,
- MCP `search_memory`/`write_memory` tools functional.
-</Callout>
+## What Phase 4 delivers
 
-## What Phase 4 Delivers
+Phase 4 turns IBEX from a proxy and API-oriented system into a governed operator platform. It delivers authenticated tenant-scoped management, enforceable rate controls, resilient multi-provider routing, an auditable evidence plane, a world-class operator dashboard, and a release process that proves recovery, security, accessibility, performance, and rollback.
 
-- **Management API** (`services/api/`): Full CRUD for orgs, users, agents, tokens, directives, memories, sessions, provider credentials
-- **Hierarchical rate limiting:** Redis Lua-based atomic agent → org → global rate limiter replacing the Phase 1 placeholder
-- **Multi-provider routing:** At least two LLM providers live (OpenAI + Anthropic), per-org model routing, circuit breakers, opt-in fallback routing
-- **Operator dashboard** (`services/dashboard/`): Agent management, memory browser with relationship graph, trace inspector, analytics, drift alerts, billing/usage
+## Phase 4 tracks
 
-## Phase 4 Tracks
-
-| Track | Theme | Key Milestones |
-|---|---|---|
-| A | Management API Server | 4.A.1 (skeleton), 4.A.2 (org/user management), 4.A.3 (agent API), 4.A.4 (token API), 4.A.5 (provider credential API) |
-| B | Hierarchical Rate Limiting | 4.B.1 (Lua-based atomic limiter), 4.B.2 (rate-limit config API), 4.B.3 (load/correctness benchmark) |
-| C | Multi-Provider Adapters & Routing | 4.C.1 (Anthropic hardening), 4.C.2 (per-org model routing), 4.C.3 (circuit breaker), 4.C.4 (fallback routing), 4.C.5 (streaming hardening) |
-| D | Operator Dashboard | 4.D.1 (foundation + auth + real-time), 4.D.2 (trace inspector), 4.D.3 (memory browser v2 with graph), 4.D.4 (drift alerts + directive management), 4.D.5 (analytics v2 + cost governance) |
-| E | Exit Gate | 4.E.1 (dashboard Playwright e2e), 4.E.2 (multi-provider resilience suite), 4.E.3 (exit audit) |
-
-### New services
-
-| Service | Language | Path | Purpose |
+| Track | Theme | Status | Milestones |
 |---|---|---|---|
-| API Server | Python 3.12 | `services/api/` | Management REST API for operators |
-| Dashboard | TypeScript/Next.js | `services/dashboard/` | Operator web UI |
+| A | Management API Server | Foundation | 4.A.1–4.A.5 |
+| B | Rate Limiting & Quota Enforcement | Foundation | 4.B.1–4.B.3 |
+| C | Multi-Provider Adapters & Resilience | 4.C.5 baseline complete | 4.C.1–4.C.5 |
+| **P** | **Operator Readiness, Evidence & Control Plane** | **Required before dashboard UI** | **4.P.0–4.P.6** |
+| **D** | **Operator Capability Slices** | **Redesigned** | **4.D.1–4.D.6** |
+| E | Release Readiness & Phase Exit | Redesigned | 4.E.1–4.E.4 |
 
-## Key Design Decisions
+## Critical path
 
-- **Provider credentials are org-scoped, encrypted-at-rest:** BYO-key enterprise customers; proxy reads credentials via gRPC through auth service, never direct DB access. Platform-default fallback for managed deployments.
-- **Lua-based atomic three-level rate limiting:** Single Redis round trip checks agent → org → global. Zero over-admission tolerance under concurrency. Fail-open on Redis error preserved.
-- **Circuit breaker per provider:** Rolling error-rate window (not consecutive-count). Per-provider isolation — Anthropic outage never degrades OpenAI traffic.
-- **Fallback routing is opt-in per org:** Silent model swap is a compliance issue. `X-IBEX-Provider-Fallback` header signals substitution.
-- **Dashboard auth:** Short-lived JWT (15min) + httpOnly refresh cookie. Permission bitmap reuse from API (ADR-0009). SSE for real-time trace/alert streams.
+`4.P.0 → 4.P.1 → 4.P.2 → 4.P.3 → 4.P.4/4.P.5/4.P.6 → 4.D.1 → 4.D.2 → 4.D.3/4.D.4 → 4.D.5/4.D.6 → 4.E.1–4.E.4`
 
-## Exit Criteria
+Tracks A and B continue independently. Track C provides the completed streaming baseline and must pass its release-evidence checks before realtime dashboard claims are accepted. Track P is the non-negotiable gate before any dashboard UI milestone is marked complete.
 
-1. Management API live with full CRUD for orgs, users, agents, tokens, directives, memories, sessions, provider credentials
-2. Redis Lua-based hierarchical rate limiter atomic and load-tested (zero over-admission)
-3. At least two LLM providers live with per-org model routing
-4. Circuit breakers on provider and context-assembly dependencies, independently testable
-5. Operator dashboard live: agent management, memory browser, analytics, trace inspector, rate-limit visibility
-6. Dashboard Playwright e2e suite green, zero axe-core `serious`/`critical` accessibility violations
-7. Management API OpenAPI spec published and consumed by dashboard client
-8. All Phase 1–3.5 regression suites still pass; proxy overhead stays &lt;20ms p99
-9. Phase 4 gap register published with zero open P0 gaps
+## Entry conditions
+
+- Phase 3.5 extraction, context assembly, and MCP memory tools are complete.
+- The authenticated API and RLS foundations from Track A are available for extension.
+- 4.C.5 streaming hardening is treated as the planning baseline.
+- The phase owner has accepted the Track P / Track D redesign and its evidence-based completion model.
+
+## Phase exit conditions
+
+1. Track P gates pass for runtime, identity, evidence, privacy, platform, and assurance.
+2. The operator application is deployed on a server-capable topology or a separately deployed SPA/API/SSE topology.
+3. A nested multi-step agent run can be queried, explained, redacted, replayed safely, and linked to sessions, memories, tools, policies, evaluations, and incidents.
+4. Tenant isolation is demonstrated across synchronous and asynchronous paths.
+5. Usage and cost facts reconcile to immutable events and hard caps are enforced by the proxy.
+6. Required Playwright, axe, keyboard, contract, load, chaos, recovery, and supply-chain checks pass in the intended environment.
+7. Staged rollout, automatic abort, rollback, backup/restore, and residual-risk sign-off are evidenced.
+8. The Phase 4 gap register has zero open P0 gaps and all remaining P1/P2 items have owners and dates.
+
+## Findings carried into this phase
+
+The redesign records the following findings as roadmap requirements rather than informal notes:
+
+| Finding | Consequence |
+|---|---|
+| The current public web deployment is a static documentation site. | Runtime topology and live API/SSE origin are prerequisites. |
+| Current trace persistence is an aggregate request row. | Canonical nested trace/span/event evidence must precede Trace Inspector UI. |
+| Permission constants are not dashboard contracts. | Versioned API, tenancy, field policy, and step-up authorization are required. |
+| ClickHouse TTL is not coordinated deletion. | Retention, tombstones, per-store watermarks, and deletion receipts are required. |
+| Usage/cost tables assumed by the old 4.D.5 do not exist at the required scope. | Immutable usage ledger, rate-card versions, reconciliation, and enforcement are required. |
+| Deployment, restore, and Playwright gates are described but not wired as acceptance gates. | Track P.5/P.6 and Track E make them executable and required. |
+
+## Related documentation
+
+- [Phase 4 goals](/roadmap/phase-4-multi-provider/goals)
+- [Phase 4 tracks](/roadmap/phase-4-multi-provider/tracks)
+- [World-class dashboard design guide](/engineering/UI_UX_GUIDELINES)
+- [Operator dashboard testing strategy](/engineering/TESTING_STRATEGY)
+- [Operator evidence and control-plane architecture](/engineering/OPERATOR_PLATFORM_ARCHITECTURE)
+- [Operator platform research archive](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/README.md)
