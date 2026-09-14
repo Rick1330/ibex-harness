@@ -75,13 +75,18 @@ export function createSseController(deps) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
-    while (generation === streamGeneration) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop() || "";
-      for (const block of parts) handleBlock(block, generation);
+    try {
+      while (generation === streamGeneration) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() || "";
+        for (const block of parts) handleBlock(block, generation);
+      }
+    } catch (err) {
+      if (generation !== streamGeneration) return;
+      throw err;
     }
   }
 
@@ -110,12 +115,18 @@ export function createSseController(deps) {
     return "ended";
   }
 
+  function shouldResume(outcome, generation) {
+    if (outcome !== "ended") return false;
+    if (generation !== streamGeneration) return false;
+    return !deliberateClose;
+  }
+
   function onOutcome(outcome, generation, retryAfter) {
     if (outcome === "retry") {
       scheduleReconnect(generation, retryAfter);
       return;
     }
-    if (outcome === "ended" && generation === streamGeneration && !deliberateClose) {
+    if (shouldResume(outcome, generation)) {
       setState("reconnecting", "SSE ended; will retry");
       scheduleReconnect(generation, null);
     }
