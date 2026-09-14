@@ -31,7 +31,7 @@ The intended operator environment runs authenticated, multi-tenant, accessible t
 
 ## Scope and deliverables
 
-Provision browsers, API/data dependencies or contract doubles, four roles, two tenants, golden fixtures, Playwright, axe, keyboard, OpenAPI snapshot, reports, and required CI jobs.
+Provision browsers and real API/data dependencies for tenant-critical checks (PostgreSQL RLS, Redis Lua rate limiting, pgvector queries, and token-revocation propagation), four roles, two tenants, golden fixtures, Playwright, axe, keyboard, OpenAPI snapshot, reports, and required CI jobs. Limit contract doubles to deterministic unit behavior and bounded external-failure scenarios.
 
 ## Contract and data requirements
 

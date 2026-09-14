@@ -18,7 +18,7 @@ fullTitle: "Milestone 4.D.1 — Authenticated Shell & Operational Overview"
 **Status:** Planned  
 **Outcome:** An authorized operator enters a real application, selects an organization, sees platform health/freshness, and reaches every investigation surface.  
 **Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** Track P gates and preceding Track D slice  
+**Dependencies:** Track P gates  
 **Estimated effort:** 3 weeks
 
 <Callout type="note" title="Completion contract">
@@ -51,7 +51,7 @@ Internal allowlist and read-only flag. Disable route access independently.
 
 ## Rollout and rollback
 
-Creates the first end-to-end operator proof on top of Track P.
+Creates the first end-to-end operator proof on top of Track P. **Trigger:** shell auth, org scope, or Overview health regressions in staging. **Reversal:** disable the operator shell or individual routes independently behind the allowlist/read-only flag without changing Track P data. **Verify:** public docs remain available; login and deep links fail closed; recovery restores Overview and navigation after the flag is cleared.
 
 ## Findings addressed
 

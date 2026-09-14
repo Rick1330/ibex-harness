@@ -35,7 +35,7 @@ Choose separate server-capable UI or static SPA plus API/SSE origin. Provision o
 
 ## Contract and data requirements
 
-Record origin, tenant, session, API version, pagination, error envelope, stream event, reconnect, and Last-Event-ID semantics. Keep the public documentation site deployment separate from the operator application.
+Record origin, tenant, session, API version, pagination, error envelope, stream event, reconnect, and Last-Event-ID semantics for the **operator-event SSE stream** only. Provider token streaming continues to forward upstream SSE verbatim without adding event IDs or re-framing events (ADR-0027). Keep the public documentation site deployment separate from the operator application.
 
 ## Product and UX requirements
 

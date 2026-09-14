@@ -31,11 +31,11 @@ Dashboard reads are bounded and explainable, and usage/cost facts can safely dri
 
 ## Scope and deliverables
 
-Define shared query grammar, facets, autocomplete, URL state, cursor pagination, query budgets, ClickHouse query shapes, freshness/completeness fields, immutable usage ledger, rate-card versions, currency, estimated/actual cost, budget periods, alerts, reconciliation, and enforcement decisions.
+Define shared query grammar, facets, autocomplete, URL state, cursor pagination, query budgets, ClickHouse query shapes (every shape requires an explicit org_id parameter and applies an org_id predicate), freshness/completeness fields, immutable usage ledger, rate-card versions, currency, estimated/actual cost, budget periods, alerts, reconciliation, and enforcement decisions.
 
 ## Contract and data requirements
 
-Usage facts are keyed by org, agent, provider, model, run, time, token class, tool units, latency, status, fallback, rate-card version, and policy version.
+Usage facts are keyed by org_id, agent, provider, model, run, time, token class, tool units, latency, status, fallback, rate-card version, and policy version.
 
 ## Product and UX requirements
 
@@ -51,7 +51,7 @@ Run query contract, EXPLAIN, reconciliation, duplicate-ingestion, fallback-attri
 
 ## Rollout and rollback
 
-Shadow ledger and alert-only first. Enable soft and hard limits per tenant after parity. Preserve immutable facts.
+Shadow ledger and alert-only first. Enable soft and hard limits per tenant after parity. Preserve immutable facts. **Trigger:** hard-cap false positives/negatives, reconciliation drift, or query SLO breach. **Reversal:** revert failed hard-cap enforcement to alert-only and stop applying deny decisions from the new ledger. **Verify:** alert-only path still emits decisions; immutable facts remain readable; reconcile outstanding deny/allow records before re-enabling hard caps.
 
 ## Findings addressed
 

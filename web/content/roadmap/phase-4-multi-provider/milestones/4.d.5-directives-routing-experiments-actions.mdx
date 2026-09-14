@@ -51,7 +51,7 @@ Dark → 1% → 10% → 25% → 100% with abort thresholds. Drift UI depends on 
 
 ## Rollout and rollback
 
-The old milestone combined two unready products and lacked an action ledger.
+The old milestone combined two unready products and lacked an action ledger. **Trigger:** directive/routing abort, unsafe experiment promotion, or action-ledger inconsistency. **Reversal:** reactivate the prior policy/directive version and disable new controlled actions. **Verify:** traffic uses the prior version; aborted actions are recorded; preview/approval paths fail closed until restored.
 
 ## Findings addressed
 

@@ -764,7 +764,7 @@ Track P, D, and E use an evidence-producing definition of done. Every operator m
 
 ### Required dashboard environment
 
-The dashboard suite must run against the chosen server-capable operator topology or a separately deployed SPA/API/SSE origin. A static documentation-site smoke test is not dashboard E2E evidence. CI installs pinned Playwright browsers and provisions deterministic API, Postgres, Redis, ClickHouse, object-storage, and identity fixtures or explicitly named contract doubles.
+The dashboard suite must run against the chosen server-capable operator topology or a separately deployed SPA/API/SSE origin. A static documentation-site smoke test is not dashboard E2E evidence. CI installs pinned Playwright browsers and provisions deterministic API, Postgres, Redis, ClickHouse, object-storage, and identity fixtures. Do not use contract doubles for PostgreSQL RLS, Redis Lua rate limiting, pgvector queries, or token-revocation propagation; limit doubles to dependencies whose production semantics are not under test (deterministic unit behavior and bounded external-failure scenarios only).
 
 ### Required journey matrix
 

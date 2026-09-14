@@ -51,7 +51,7 @@ Shadow and alert-only first; soft limits then hard enforcement per tenant.
 
 ## Rollout and rollback
 
-Charts become governance only when durable facts can change authorization decisions.
+Charts become governance only when durable facts can change authorization decisions. **Trigger:** cost/governance false denies, chart-to-ledger mismatch, or tenant-limit regressions. **Reversal:** return affected tenants to soft or alert-only limits and stop hard governance denies from the new path. **Verify:** reconcile enforcement decisions; charts remain informational; soft/alert-only limits still fire before re-enabling hard governance.
 
 ## Findings addressed
 

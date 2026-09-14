@@ -47,7 +47,7 @@ Required checks run in CI or named staging and block promotion. Browser dependen
 
 ## Verification gates
 
-Verify required CI jobs, trace/report uploads, four roles, two tenants, keyboard flows, contract snapshots, performance, and failure paths.
+Verify required CI jobs, trace/report uploads, four roles, two tenants, keyboard flows, contract snapshots, performance, and failure paths. Promotion-blocking evidence must include Org B API/UI reads and searches against Org A data: direct lookups return `404` and searches return an empty set (no cross-tenant leakage).
 
 ## Rollout and rollback
 

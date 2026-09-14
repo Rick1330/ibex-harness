@@ -31,7 +31,7 @@ A multi-step run is a versioned, queryable, replay-aware evidence graph.
 
 ## Scope and deliverables
 
-Define OTel/W3C-compatible event envelope with event/source IDs, schema/dataschema, trace/span/parent/links, org/agent/session/turn/request/checkpoint, sequence, timestamps, operation kind, status/error, attributes, capture/sample decision, and payload refs. Add typed model, prompt, tool, retrieval, memory, context, directive, routing, fallback, evaluation, and deployment provenance. Add transactional outbox and idempotent relays.
+Define OTel/W3C-compatible event envelope with event/source IDs, schema/dataschema, trace/span/parent/links, org_id/agent/session/turn/request/checkpoint, sequence, timestamps, operation kind, status/error, attributes, capture/sample decision, and payload refs. Add typed model, prompt, tool, retrieval, memory, context, directive, routing, fallback, evaluation, and deployment provenance. Require org_id in the transactional outbox, relay payloads (including Redis tenant key prefixes), ClickHouse projections, and evidence query contracts. Add idempotent relays.
 
 ## Contract and data requirements
 

@@ -51,7 +51,7 @@ Read-only triage first. Mutations use operator action ledger and reversible stat
 
 ## Rollout and rollback
 
-The existing failed-task store is ingestion/forensics data, not an incident workflow.
+The existing failed-task store is ingestion/forensics data, not an incident workflow. **Trigger:** incident write-path regressions or evidence-bundle integrity failures. **Reversal:** return incident workflows to read-only triage and stop mutating incident state. **Verify:** existing bundles and recovery evidence remain readable; no new write actions succeed until rollback is cleared.
 
 ## Findings addressed
 

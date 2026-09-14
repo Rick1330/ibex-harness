@@ -51,7 +51,7 @@ Read-only first. Privileged export/delete/replay allowlisted and separately kill
 
 ## Rollout and rollback
 
-Memory SQL alone is not a management API or deletion contract.
+Memory SQL alone is not a management API or deletion contract. **Trigger:** privileged replay/job failures, unsafe mutation, or tenant-scope defects. **Reversal:** disable privileged jobs and leave read-only session/memory views enabled. **Verify:** queued jobs drain or park safely; no new privileged writes; recovery resumes jobs only after evidence checks pass.
 
 ## Findings addressed
 
