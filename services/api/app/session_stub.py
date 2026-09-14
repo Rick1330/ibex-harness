@@ -138,25 +138,6 @@ def _validate_claims(payload: dict[str, Any], opts: TokenVerifyOpts) -> SessionC
     return _to_claims(payload)
 
 
-def verify_token(
-    token: str,
-    *,
-    secret: str,
-    issuer: str,
-    audience: str,
-    expect_kind: str,
-) -> SessionClaims:
-    return verify_token_opts(
-        token,
-        TokenVerifyOpts(
-            secret=secret,
-            issuer=issuer,
-            audience=audience,
-            expect_kind=expect_kind,
-        ),
-    )
-
-
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
     header_b64, payload_b64, sig_b64 = _split_jwt(token)
     _verify_signature(header_b64, payload_b64, sig_b64, secret=opts.secret)

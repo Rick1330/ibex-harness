@@ -77,7 +77,20 @@ jobs:
             console.error("api_base_url must not include credentials");
             process.exit(1);
           }
-          console.log(`api_base_url ok: ${url.protocol}//${url.host}`);
+          const allowed = new Set([
+            "http://localhost:8010",
+            "http://127.0.0.1:8010",
+            "https://api.ibexharness.com",
+            "https://api.staging.ibexharness.com",
+          ]);
+          const origin = `${url.protocol}//${url.host}`;
+          if (!allowed.has(origin)) {
+            console.error(
+              `api_base_url origin must be one of: ${[...allowed].join(", ")} (got ${origin})`,
+            );
+            process.exit(1);
+          }
+          console.log(`api_base_url ok: ${origin}`);
           NODE
 
       - uses: ./.github/actions/setup-pnpm-web

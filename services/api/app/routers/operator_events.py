@@ -16,7 +16,12 @@ from starlette.responses import JSONResponse, Response
 from app.config import Settings
 from app.drain import DrainState
 from app.errors import ApiError
-from app.session_stub import SESSION_KIND_ACCESS, SessionStubError, verify_token
+from app.session_stub import (
+    SESSION_KIND_ACCESS,
+    SessionStubError,
+    TokenVerifyOpts,
+    verify_token_opts,
+)
 from app.sse.operator_events import SSE_SLOW_WRITES, SSE_WRITE_SECONDS, OperatorSSEHub
 
 logger = logging.getLogger(__name__)
@@ -37,27 +42,43 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def _require_session(request: Request) -> None:
-    """Validate provisional access cookie. Any valid session may use operator SSE (4.P.0)."""
-    settings = _settings(request)
+def _require_operator_secret(settings: Settings) -> str:
     if not settings.operator_feature_enabled:
         raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
     secret = settings.jwt_hmac_secret
     if not secret:
         raise ApiError(code=SERVICE_DEGRADED, message="session signing secret not configured")
+    return secret
+
+
+def _access_cookie_raw(request: Request, settings: Settings) -> str:
     raw = request.cookies.get(settings.dashboard_session_cookie_name)
     if not raw:
         raise ApiError(code=INVALID_TOKEN, message="missing session cookie")
+    return raw
+
+
+def _verify_access_cookie(raw: str, settings: Settings, secret: str) -> None:
     try:
-        verify_token(
+        verify_token_opts(
             raw,
-            secret=secret,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            expect_kind=SESSION_KIND_ACCESS,
+            TokenVerifyOpts(
+                secret=secret,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                expect_kind=SESSION_KIND_ACCESS,
+            ),
         )
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
+
+
+def _require_session(request: Request) -> None:
+    """Validate provisional access cookie. Any valid session may use operator SSE (4.P.0)."""
+    settings = _settings(request)
+    secret = _require_operator_secret(settings)
+    raw = _access_cookie_raw(request, settings)
+    _verify_access_cookie(raw, settings, secret)
 
 
 def _parse_last_event_id(request: Request) -> int | None:

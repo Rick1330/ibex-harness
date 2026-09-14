@@ -1,10 +1,10 @@
 /**
  * Operator connection-state shell (4.P.0).
  * No secrets in URL/query; PAT lives only in the password field until login.
- * API origin is inject/default only — never read from the DOM for fetch (Codacy SSRF).
+ * Fetch URLs come only from a frozen allowlist (Codacy SSRF).
  */
 
-import { ALLOWED_LOCAL_BASES, pickApiBase } from "./api_base.mjs";
+import { buildEndpointUrls, pickApiBase } from "./api_base.mjs";
 import { withCredentialedPolicy } from "./http.mjs";
 import { buildLoginBody, parseSSEBlock, shouldAcceptEventId } from "./sse.mjs";
 import { classifyStreamStatus, reconnectDelayMs } from "./stream.mjs";
@@ -21,13 +21,6 @@ const STATES = new Set([
   "error",
 ]);
 
-const PATHS = Object.freeze({
-  login: "/v1/operator/session/login",
-  me: "/v1/operator/session/me",
-  logout: "/v1/operator/session/logout",
-  stream: "/v1/operator/events/stream",
-});
-
 const els = {
   state: document.getElementById("conn-state"),
   detail: document.getElementById("conn-detail"),
@@ -39,7 +32,8 @@ const els = {
 const injected =
   typeof window.IBEX_API_BASE_URL === "string" ? window.IBEX_API_BASE_URL.trim() : "";
 const API_BASE = pickApiBase(injected);
-const ALLOWED_BASES = Object.freeze([...ALLOWED_LOCAL_BASES, API_BASE]);
+const ENDPOINTS = buildEndpointUrls(API_BASE);
+const ALLOWED_URLS = Object.freeze(Object.values(ENDPOINTS));
 
 els.apiBase.value = API_BASE;
 els.apiBase.readOnly = true;
@@ -62,15 +56,12 @@ function setState(name, detail) {
   els.detail.textContent = detail || "";
 }
 
-function apiUrl(path) {
-  if (!ALLOWED_BASES.includes(API_BASE)) {
-    throw new Error("API origin is not on the allowlist");
+function apiFetch(name, init = {}) {
+  const url = ENDPOINTS[name];
+  if (ALLOWED_URLS.includes(url)) {
+    return fetch(url, withCredentialedPolicy(init));
   }
-  return `${API_BASE}${path}`;
-}
-
-function apiFetch(path, init = {}) {
-  return fetch(apiUrl(path), withCredentialedPolicy(init));
+  throw new Error("API endpoint is not on the allowlist");
 }
 
 function appendEvent(line) {
@@ -89,7 +80,7 @@ async function login() {
     return;
   }
   setState("reconnecting", "Exchanging PAT for session cookies…");
-  const resp = await apiFetch(PATHS.login, {
+  const resp = await apiFetch("login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: buildLoginBody(pat),
@@ -105,7 +96,7 @@ async function login() {
 }
 
 async function me() {
-  const resp = await apiFetch(PATHS.me);
+  const resp = await apiFetch("me");
   if (resp.status === 401 || resp.status === 403) {
     setState("unauthenticated", `/me rejected: HTTP ${resp.status}`);
     return;
@@ -177,12 +168,18 @@ async function handleStreamResponse(resp, generation) {
   return "ended";
 }
 
+function shouldResumeAfterEnd(outcome, generation) {
+  if (outcome !== "ended") return false;
+  if (generation !== streamGeneration) return false;
+  return !deliberateClose;
+}
+
 function onStreamOutcome(outcome, generation, retryAfter) {
   if (outcome === "retry") {
     scheduleReconnect(generation, retryAfter);
     return;
   }
-  if (outcome === "ended" && generation === streamGeneration && !deliberateClose) {
+  if (shouldResumeAfterEnd(outcome, generation)) {
     setState("reconnecting", "SSE ended; will retry");
     scheduleReconnect(generation, null);
   }
@@ -193,7 +190,7 @@ async function openStream(generation, signal) {
     setState("historical", `Resuming after id ${lastEventId}`);
   }
   try {
-    const resp = await apiFetch(PATHS.stream, {
+    const resp = await apiFetch("stream", {
       headers: sseHeaders(),
       signal,
     });
@@ -258,7 +255,7 @@ async function logout() {
   closeSSE();
   const headers = {};
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  const resp = await apiFetch(PATHS.logout, {
+  const resp = await apiFetch("logout", {
     method: "POST",
     headers,
   });

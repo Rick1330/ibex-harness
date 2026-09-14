@@ -14,11 +14,24 @@ from app.session_stub import (
     SESSION_KIND_REFRESH,
     SessionStubError,
     TokenIssueOpts,
+    TokenVerifyOpts,
     issue_token_opts,
     mint_csrf_token,
     verify_csrf_token,
-    verify_token,
+    verify_token_opts,
 )
+
+
+def _verify(token: str, *, secret: str, issuer: str, audience: str, expect_kind: str):
+    return verify_token_opts(
+        token,
+        TokenVerifyOpts(
+            secret=secret,
+            issuer=issuer,
+            audience=audience,
+            expect_kind=expect_kind,
+        ),
+    )
 from tests.unit.operator.conftest import (
     HMAC_SECRET,
     create_operator_app,
@@ -41,7 +54,7 @@ def test_session_stub_roundtrip() -> None:
             ttl_seconds=60,
         )
     )
-    claims = verify_token(
+    claims = _verify(
         tok,
         secret=HMAC_SECRET,
         issuer="ibex-harness",
@@ -56,9 +69,9 @@ def test_session_stub_roundtrip() -> None:
 
 def test_session_stub_error_paths() -> None:
     with pytest.raises(SessionStubError):
-        verify_token("a.b", secret="s" * 32, issuer="i", audience="a", expect_kind="access")
+        _verify("a.b", secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     with pytest.raises(SessionStubError):
-        verify_token("a.b.c", secret="s" * 32, issuer="i", audience="a", expect_kind="access")
+        _verify("a.b.c", secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     org = uuid4()
     tok = issue_token_opts(
         TokenIssueOpts(
@@ -73,15 +86,15 @@ def test_session_stub_error_paths() -> None:
         )
     )
     with pytest.raises(SessionStubError):
-        verify_token(
+        _verify(
             tok, secret="o" * 32, issuer="ibex-harness", audience="ibex-dashboard", expect_kind="access"
         )
     with pytest.raises(SessionStubError):
-        verify_token(
+        _verify(
             tok, secret="s" * 32, issuer="wrong", audience="ibex-dashboard", expect_kind="access"
         )
     with pytest.raises(SessionStubError):
-        verify_token(
+        _verify(
             tok,
             secret="s" * 32,
             issuer="ibex-harness",
@@ -101,7 +114,7 @@ def test_session_stub_error_paths() -> None:
         )
     )
     with pytest.raises(SessionStubError):
-        verify_token(
+        _verify(
             expired,
             secret="s" * 32,
             issuer="ibex-harness",
@@ -270,7 +283,7 @@ def test_session_stub_bad_payload_and_legacy_kind() -> None:
     body = f"{header}.{bad_payload}"
     sig = _b64(hmac.new(HMAC_SECRET.encode(), body.encode(), hashlib.sha256).digest())
     with pytest.raises(SessionStubError, match="bad payload"):
-        verify_token(
+        _verify(
             f"{body}.{sig}",
             secret=HMAC_SECRET,
             issuer="ibex-harness",
@@ -283,7 +296,7 @@ def test_session_stub_bad_payload_and_legacy_kind() -> None:
     body2 = f"{header}.{junk}"
     sig2 = _b64(hmac.new(HMAC_SECRET.encode(), body2.encode(), hashlib.sha256).digest())
     with pytest.raises(SessionStubError, match="bad payload"):
-        verify_token(
+        _verify(
             f"{body2}.{sig2}",
             secret=HMAC_SECRET,
             issuer="ibex-harness",
@@ -307,7 +320,7 @@ def test_session_stub_bad_payload_and_legacy_kind() -> None:
     payload_b64 = _b64(json.dumps(payload).encode())
     body3 = f"{header}.{payload_b64}"
     sig3 = _b64(hmac.new(HMAC_SECRET.encode(), body3.encode(), hashlib.sha256).digest())
-    claims = verify_token(
+    claims = _verify(
         f"{body3}.{sig3}",
         secret=HMAC_SECRET,
         issuer="ibex-harness",

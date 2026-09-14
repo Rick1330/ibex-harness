@@ -25,9 +25,10 @@ from app.session_stub import (
     SESSION_KIND_REFRESH,
     SessionStubError,
     TokenIssueOpts,
+    TokenVerifyOpts,
     issue_token_opts,
     mint_csrf_token,
-    verify_token,
+    verify_token_opts,
 )
 
 router = APIRouter(prefix="/v1/operator/session", tags=["operator-session-provisional"])
@@ -120,57 +121,47 @@ def _set_csrf_cookie(response: Response, *, csrf: str, settings: Settings) -> No
     )
 
 
-def _mint_token(
-    *,
-    secret: str,
-    settings: Settings,
-    org_id: UUID,
-    permissions: int,
-    subject: str,
-    session_kind: str,
-    ttl_seconds: int,
-) -> str:
+@dataclass(frozen=True, slots=True)
+class _SessionPrincipal:
+    secret: str
+    settings: Settings
+    org_id: UUID
+    permissions: int
+    subject: str
+
+
+def _mint_access(principal: _SessionPrincipal) -> str:
     return issue_token_opts(
         TokenIssueOpts(
-            secret=secret,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            org_id=org_id,
-            permissions=permissions,
-            subject=subject,
-            session_kind=session_kind,
-            ttl_seconds=ttl_seconds,
+            secret=principal.secret,
+            issuer=principal.settings.jwt_issuer,
+            audience=principal.settings.jwt_audience,
+            org_id=principal.org_id,
+            permissions=principal.permissions,
+            subject=principal.subject,
+            session_kind=SESSION_KIND_ACCESS,
+            ttl_seconds=principal.settings.jwt_access_token_ttl_seconds,
         )
     )
 
 
-def _issue_session_pair(
-    *,
-    secret: str,
-    settings: Settings,
-    org_id: UUID,
-    permissions: int,
-    subject: str,
-) -> tuple[str, str]:
-    access = _mint_token(
-        secret=secret,
-        settings=settings,
-        org_id=org_id,
-        permissions=permissions,
-        subject=subject,
-        session_kind=SESSION_KIND_ACCESS,
-        ttl_seconds=settings.jwt_access_token_ttl_seconds,
+def _mint_refresh(principal: _SessionPrincipal) -> str:
+    return issue_token_opts(
+        TokenIssueOpts(
+            secret=principal.secret,
+            issuer=principal.settings.jwt_issuer,
+            audience=principal.settings.jwt_audience,
+            org_id=principal.org_id,
+            permissions=principal.permissions,
+            subject=principal.subject,
+            session_kind=SESSION_KIND_REFRESH,
+            ttl_seconds=principal.settings.jwt_refresh_token_ttl_seconds,
+        )
     )
-    refresh = _mint_token(
-        secret=secret,
-        settings=settings,
-        org_id=org_id,
-        permissions=permissions,
-        subject=subject,
-        session_kind=SESSION_KIND_REFRESH,
-        ttl_seconds=settings.jwt_refresh_token_ttl_seconds,
-    )
-    return access, refresh
+
+
+def _issue_session_pair(principal: _SessionPrincipal) -> tuple[str, str]:
+    return _mint_access(principal), _mint_refresh(principal)
 
 
 def _apply_session_cookies(
@@ -222,11 +213,13 @@ async def login(
     result = await _validate_pat(validator, body.pat.strip())
     subject = result.user_id or result.token_id or str(result.org_id)
     access, refresh = _issue_session_pair(
-        secret=secret,
-        settings=settings,
-        org_id=result.org_id,
-        permissions=result.permissions,
-        subject=subject,
+        _SessionPrincipal(
+            secret=secret,
+            settings=settings,
+            org_id=result.org_id,
+            permissions=result.permissions,
+            subject=subject,
+        )
     )
     _apply_session_cookies(response, settings=settings, access=access, refresh=refresh)
     csrf = _mint_and_set_csrf(response, settings=settings, secret=secret)
@@ -257,23 +250,25 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
     if not raw:
         raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
     try:
-        claims = verify_token(
+        claims = verify_token_opts(
             raw,
-            secret=secret,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            expect_kind=SESSION_KIND_REFRESH,
+            TokenVerifyOpts(
+                secret=secret,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                expect_kind=SESSION_KIND_REFRESH,
+            ),
         )
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
-    access = _mint_token(
-        secret=secret,
-        settings=settings,
-        org_id=claims.org_id,
-        permissions=claims.permissions,
-        subject=claims.sub,
-        session_kind=SESSION_KIND_ACCESS,
-        ttl_seconds=settings.jwt_access_token_ttl_seconds,
+    access = _mint_access(
+        _SessionPrincipal(
+            secret=secret,
+            settings=settings,
+            org_id=claims.org_id,
+            permissions=claims.permissions,
+            subject=claims.sub,
+        )
     )
     _apply_session_cookies(response, settings=settings, access=access, refresh=None)
     csrf = _mint_and_set_csrf(response, settings=settings, secret=secret)
@@ -311,12 +306,14 @@ async def me(request: Request) -> dict[str, object]:
 
 def _me_cookie(raw: str, *, settings: Settings, secret: str) -> dict[str, object]:
     try:
-        claims = verify_token(
+        claims = verify_token_opts(
             raw,
-            secret=secret,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            expect_kind=SESSION_KIND_ACCESS,
+            TokenVerifyOpts(
+                secret=secret,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                expect_kind=SESSION_KIND_ACCESS,
+            ),
         )
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  ALLOWED_API_ORIGINS,
+  buildEndpointUrls,
   isAllowedApiHost,
   isLoopbackHost,
   pickApiBase,
@@ -57,9 +59,13 @@ describe("resolveApiBase", () => {
     assert.equal(resolveApiBase("http://user:pass@localhost:8010"), null);
   });
 
-  it("pickApiBase falls back to localhost default", () => {
-    assert.equal(pickApiBase(""), "http://localhost:8010");
+  it("pickApiBase only returns frozen allowlist members", () => {
+    assert.equal(pickApiBase(""), ALLOWED_API_ORIGINS[0]);
     assert.equal(pickApiBase("https://api.ibexharness.com"), "https://api.ibexharness.com");
+    assert.equal(pickApiBase("https://evil.example"), ALLOWED_API_ORIGINS[0]);
+    assert.equal(pickApiBase("https://api.other.ibexharness.com"), ALLOWED_API_ORIGINS[0]);
+    const urls = buildEndpointUrls("https://api.ibexharness.com");
+    assert.equal(urls.login, "https://api.ibexharness.com/v1/operator/session/login");
   });
 });
 
