@@ -12,7 +12,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
-## [0.1.7](https://github.com/Rick1330/ibex-harness/compare/v0.1.6...v0.1.7) (2026-09-13)
+## [0.1.7](https://github.com/Rick1330/ibex-harness/compare/v0.1.6...v0.1.7) (2026-09-14)
 
 
 ### Features
@@ -33,6 +33,12 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 * **api:** close 4.A.1 verification gaps (envelope, logs, CI) ([#782](https://github.com/Rick1330/ibex-harness/issues/782)) ([f0d922f](https://github.com/Rick1330/ibex-harness/commit/f0d922fe27c0335d01098f469253be733158fde4))
 * **ci:** repair tagged release SBOM upload and docker caller perms ([#776](https://github.com/Rick1330/ibex-harness/issues/776)) ([2a91205](https://github.com/Rick1330/ibex-harness/commit/2a91205d899da115f2d6e9f11bea864938ee8e8d))
+* **ci:** exempt release-please branches from DCO gate and configure release signoff
+
+
+### Documentation
+
+* **roadmap:** redesign Phase 4 operator platform milestones (Track P/D/E) ([#831](https://github.com/Rick1330/ibex-harness/issues/831)) ([e00a167](https://github.com/Rick1330/ibex-harness/commit/e00a1678a9e8acbe86e7fc70a51c75465e2d9c71))
 
 ## [0.1.6](https://github.com/Rick1330/ibex-harness/compare/v0.1.5...v0.1.6) (2026-09-09)
 
