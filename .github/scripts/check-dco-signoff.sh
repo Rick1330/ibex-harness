@@ -3,20 +3,11 @@
 # See CONTRIBUTING.md § Developer Certificate of Origin.
 set -euo pipefail
 
-BASE_SHA="${1:-${GITHUB_EVENT_PULL_REQUEST_BASE_SHA:-}}"
-HEAD_SHA="${2:-${GITHUB_EVENT_PULL_REQUEST_HEAD_SHA:-}}"
-HEAD_REF="${3:-${GITHUB_HEAD_REF:-}}"
+BASE_SHA="${GITHUB_EVENT_PULL_REQUEST_BASE_SHA:-}"
+HEAD_SHA="${GITHUB_EVENT_PULL_REQUEST_HEAD_SHA:-}"
 
 if [[ -z "$BASE_SHA" || -z "$HEAD_SHA" ]]; then
   echo "DCO check skipped (missing base/head SHA)"
-  exit 0
-fi
-
-if [[ "$HEAD_REF" == release-please--* \
-   || "$HEAD_REF" == release--* \
-   || "$HEAD_REF" == dependabot/* \
-   || "$HEAD_REF" == chore/bench-data-* ]]; then
-  echo "DCO check skipped for automation branch: $HEAD_REF"
   exit 0
 fi
 

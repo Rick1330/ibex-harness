@@ -33,7 +33,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 * **api:** close 4.A.1 verification gaps (envelope, logs, CI) ([#782](https://github.com/Rick1330/ibex-harness/issues/782)) ([f0d922f](https://github.com/Rick1330/ibex-harness/commit/f0d922fe27c0335d01098f469253be733158fde4))
 * **ci:** repair tagged release SBOM upload and docker caller perms ([#776](https://github.com/Rick1330/ibex-harness/issues/776)) ([2a91205](https://github.com/Rick1330/ibex-harness/commit/2a91205d899da115f2d6e9f11bea864938ee8e8d))
-* **ci:** exempt release-please branches from DCO gate and configure release signoff
+* **ci:** configure release-please signoff and harden DCO workflow env binding
 
 
 ### Documentation
