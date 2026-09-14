@@ -1,0 +1,66 @@
+---
+title: "Usage, Cost Governance & Capacity"
+description: "Operators explain spend and enforce budgets without double charging or relying on ephemeral counters."
+summary: "Operators explain spend and enforce budgets without double charging or relying on ephemeral counters."
+status: "planned"
+milestoneId: "4.D.6"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.6 — Usage, Cost Governance & Capacity"
+---
+
+# Milestone 4.D.6 — Usage, Cost Governance & Capacity
+
+**Status:** Planned  
+**Outcome:** Operators explain spend and enforce budgets without double charging or relying on ephemeral counters.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** Track P gates and preceding Track D slice  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Operators explain spend and enforce budgets without double charging or relying on ephemeral counters.
+
+## Scope and deliverables
+
+Build usage/cost tables, rate-card provenance, provider/model/fallback attribution, rollups, budget scopes, alerts, soft/hard caps, queue/resource dashboards, capacity limits, reconciliation, and evidence export.
+
+## Contract and data requirements
+
+Usage ledger, rate-card, budget decision, proxy authorization, Redis reconciliation, and resource policy contracts are required.
+
+## Product and UX requirements
+
+Show facts versus estimates, freshness, sampling, policy version, allocation, and enforcement state.
+
+## Non-functional requirements
+
+Raw-to-aggregate reconciliation, retry dedupe, hard-cap denial, high-cardinality query, and load/cost ceilings pass.
+
+## Verification gates
+
+Shadow and alert-only first; soft limits then hard enforcement per tenant.
+
+## Rollout and rollback
+
+Charts become governance only when durable facts can change authorization decisions.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

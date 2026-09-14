@@ -1,0 +1,66 @@
+---
+title: "Canonical Evidence Plane & Durable Publication"
+description: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
+summary: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
+status: "planned"
+milestoneId: "4.P.2"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication"
+---
+
+# Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication
+
+**Status:** Planned  
+**Outcome:** A multi-step run is a versioned, queryable, replay-aware evidence graph.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
+**Estimated effort:** 4 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+A multi-step run is a versioned, queryable, replay-aware evidence graph.
+
+## Scope and deliverables
+
+Define OTel/W3C-compatible event envelope with event/source IDs, schema/dataschema, trace/span/parent/links, org/agent/session/turn/request/checkpoint, sequence, timestamps, operation kind, status/error, attributes, capture/sample decision, and payload refs. Add typed model, prompt, tool, retrieval, memory, context, directive, routing, fallback, evaluation, and deployment provenance. Add transactional outbox and idempotent relays.
+
+## Contract and data requirements
+
+Publish Trace/Span/Event DTOs, cursor queries, SSE envelopes, error model, batch/partial failure, dedupe, ordering, replay position, and checkpoint join contract. Return checkpoint IDs from writes.
+
+## Product and UX requirements
+
+Trace details show parent/child hierarchy, completeness, sampling, freshness, and source links. Unknown or missing provenance is never inferred as success.
+
+## Non-functional requirements
+
+Crash-after-commit, crash-before-ack, duplicate, reorder, poison message, partial trace, and old/new consumer compatibility behavior are defined and measured.
+
+## Verification gates
+
+Ingest a golden nested run with retrieval, memory, tool, retry, fallback, and evaluation spans. Prove replay reconstructs identity and source hashes.
+
+## Rollout and rollback
+
+Dual-write during a compatibility window. Keep legacy aggregate rows as derived projections. Replay consumers from the outbox.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

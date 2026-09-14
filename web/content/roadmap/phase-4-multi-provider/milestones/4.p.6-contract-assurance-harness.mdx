@@ -1,0 +1,66 @@
+---
+title: "Contract & Assurance Harness"
+description: "Every capability produces machine-verifiable release evidence in the intended environment."
+summary: "Every capability produces machine-verifiable release evidence in the intended environment."
+status: "planned"
+milestoneId: "4.P.6"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.6 — Contract & Assurance Harness"
+---
+
+# Milestone 4.P.6 — Contract & Assurance Harness
+
+**Status:** Planned  
+**Outcome:** Every capability produces machine-verifiable release evidence in the intended environment.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Every capability produces machine-verifiable release evidence in the intended environment.
+
+## Scope and deliverables
+
+Generate TypeScript SDK from OpenAPI. Add schema snapshots, old/new compatibility, migrations, golden fixtures, OTel round-trip, tenant/security, Playwright, axe, keyboard, k6, chaos, SLO, and no-check fail-closed tests.
+
+## Contract and data requirements
+
+Store evidence with commit, image digest, schema version, environment, test command, result, and artifact links.
+
+## Product and UX requirements
+
+Loading, empty, error, partial, permission, stale, sampled, redacted, and expired states are all fixtures.
+
+## Non-functional requirements
+
+Required checks run in CI or named staging and block promotion. Browser dependencies and authenticated fixtures are provisioned explicitly.
+
+## Verification gates
+
+Verify required CI jobs, trace/report uploads, four roles, two tenants, keyboard flows, contract snapshots, performance, and failure paths.
+
+## Rollout and rollback
+
+A failed gate blocks promotion and retains its evidence.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

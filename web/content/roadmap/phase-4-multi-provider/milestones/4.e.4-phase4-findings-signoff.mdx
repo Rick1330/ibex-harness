@@ -1,0 +1,66 @@
+---
+title: "Phase 4 Findings Register & Sign-off"
+description: "Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual risk."
+summary: "Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual risk."
+status: "planned"
+milestoneId: "4.E.4"
+track: "E"
+trackTitle: "Release Readiness & Phase Exit"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit"
+goal: "[Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)"
+estimatedEffort: "1 week"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.4 — Phase 4 Findings Register & Sign-off"
+---
+
+# Milestone 4.E.4 — Phase 4 Findings Register & Sign-off
+
+**Status:** Planned  
+**Outcome:** Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual risk.  
+**Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
+**Dependencies:** Track P and Track D capability evidence  
+**Estimated effort:** 1 week
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Phase 4 closes with signed evidence, zero open P0 gaps, and owned residual risk.
+
+## Scope and deliverables
+
+Publish findings register with severity, evidence, owner, due date, exception rationale, and links to CI/recovery/security artifacts. Record architecture decisions, runbooks, support docs, and release certificate.
+
+## Contract and data requirements
+
+The sign-off schema references each Track P/D/E milestone, commit, artifact, environment, and residual risk.
+
+## Product and UX requirements
+
+Provide an operator-facing status page for known limitations and evidence freshness.
+
+## Non-functional requirements
+
+No open P0. Every P1/P2 has owner/date or explicit accepted exception.
+
+## Verification gates
+
+Sign-off is immutable. Corrections create a new finding or amendment.
+
+## Rollout and rollback
+
+This replaces a generic exit audit with an evidence-backed governance record.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

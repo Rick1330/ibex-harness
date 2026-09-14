@@ -1,0 +1,66 @@
+---
+title: "Environment, Fixtures & Required CI"
+description: "The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence."
+summary: "The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence."
+status: "planned"
+milestoneId: "4.E.1"
+track: "E"
+trackTitle: "Release Readiness & Phase Exit"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit"
+goal: "[Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)"
+estimatedEffort: "2 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.1 — Environment, Fixtures & Required CI"
+---
+
+# Milestone 4.E.1 — Environment, Fixtures & Required CI
+
+**Status:** Planned  
+**Outcome:** The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence.  
+**Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
+**Dependencies:** Track P and Track D capability evidence  
+**Estimated effort:** 2 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+The intended operator environment runs authenticated, multi-tenant, accessible tests and publishes evidence.
+
+## Scope and deliverables
+
+Provision browsers, API/data dependencies or contract doubles, four roles, two tenants, golden fixtures, Playwright, axe, keyboard, OpenAPI snapshot, reports, and required CI jobs.
+
+## Contract and data requirements
+
+Test manifests pin environment, fixture, commit, image, schema, and report paths.
+
+## Product and UX requirements
+
+Test the real navigation, data states, query persistence, trace inspector, memory, incident, policy, and cost journeys.
+
+## Non-functional requirements
+
+CI required checks pass; failures upload traces/reports and block merge/promotion.
+
+## Verification gates
+
+No release if the operator environment is unavailable; revert to last known-good evidence-backed release.
+
+## Rollout and rollback
+
+Replaces the old dashboard-only smoke assumption.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

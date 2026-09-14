@@ -1,5 +1,6 @@
 # IBEX Harness - Complete API Documentation
 
+> **Operator platform contract:** Phase 4 dashboard work is gated by Track P. The operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
 > **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
 >
 > **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented**. See [CURRENT_STATE.md](roadmap/CURRENT_STATE.md).
@@ -21,6 +22,26 @@
 6. **Performance transparent**: Every response includes timing headers so clients can debug latency issues.
 
 ---
+
+## Operator Evidence Plane Contract
+
+The operator dashboard is an investigation client over a canonical evidence plane. Every evidence record uses stable `event_id` and `source` identity, `trace_id`, `span_id`, `parent_span_id`, explicit `session_id`, `turn_id`, `request_id`, `checkpoint_id`, `aggregate_seq`, `schema_version`, timestamps, operation kind, status/error, capture mode, sample decision, and completeness metadata. `trace_id` represents causal distributed execution; `session_id` represents conversation grouping; neither may be inferred from the other.
+
+### Required dashboard API behavior
+
+| Requirement | Contract |
+|---|---|
+| Tenant scope | Server-derived organization context on every request, stream, export, deletion, replay, and asynchronous job. |
+| Lists | Cursor pagination, bounded time ranges, stable sort, filter-before-page semantics, and explicit matched/displayed counts. |
+| Query state | Typed filters, facets, autocomplete, URL serialization, and a shareable query that reproduces the same result set. |
+| Evidence state | `complete`, `partial`, `sampled`, `late`, `redacted`, `expired`, `deleted`, and `simulated` are explicit states, not inferred empty results. |
+| Sensitive data | Metadata and redacted views are default. Raw access is a distinct permission, recent-authentication requirement, and audit event. |
+| Streaming | SSE events include stream version, event ID, sequence, retry behavior, and `Last-Event-ID` resume semantics. |
+| Writes | High-impact actions use idempotency keys, dry-run/preview where applicable, approval context, before/after hashes, audit identity, and rollback pointer. |
+
+### Data lifecycle contract
+
+ClickHouse TTL is not the deletion SLA. Retention and deletion are governed by policy records, tombstones, per-store watermarks, encrypted object manifests, legal holds, and verifiable receipts. The API must report when an evidence record is unavailable because it was never captured, sampled, redacted, expired, or deleted. See [OPERATOR_PLATFORM_ARCHITECTURE.md](OPERATOR_PLATFORM_ARCHITECTURE.md) for the complete contract and [Phase 4 Track P](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane) for implementation milestones.
 
 ## 🌐 Base URLs
 

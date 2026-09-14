@@ -1,0 +1,66 @@
+---
+title: "Runtime Topology & Environment Contract"
+description: "A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments."
+summary: "A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments."
+status: "planned"
+milestoneId: "4.P.0"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "2 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.0 — Runtime Topology & Environment Contract"
+---
+
+# Milestone 4.P.0 — Runtime Topology & Environment Contract
+
+**Status:** Planned  
+**Outcome:** A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
+**Estimated effort:** 2 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments.
+
+## Scope and deliverables
+
+Choose separate server-capable UI or static SPA plus API/SSE origin. Provision origins, TLS, CORS, CSRF, cookie/token audience, refresh rotation, SSE ingress, proxy buffering, environment variables, health/readiness/startup/drain endpoints, and a topology ADR.
+
+## Contract and data requirements
+
+Record origin, tenant, session, API version, pagination, error envelope, stream event, reconnect, and Last-Event-ID semantics. Keep the public documentation site deployment separate from the operator application.
+
+## Product and UX requirements
+
+The shell shows connection state, freshness, live/historical mode, reconnecting, degraded, and drained states. Deep links are origin-safe and do not embed secrets.
+
+## Non-functional requirements
+
+No static export is used for dynamic operator behavior. Staging API p95 metadata request is within the declared budget; SSE reconnects without duplicate visible events; termination drains active streams.
+
+## Verification gates
+
+Smoke test login, API request, SSE connect, reconnect, and graceful drain in the chosen topology. Validate static export guards and origin/CORS/CSRF negative tests.
+
+## Rollout and rollback
+
+Dark deploy behind an internal flag. Roll back routing to the public site or disable operator origin without changing data.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

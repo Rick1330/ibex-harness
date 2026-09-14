@@ -1,0 +1,66 @@
+---
+title: "Sessions, Memory, Context & Safe Replay Evidence"
+description: "An operator reconstructs a turn, sees memory/context provenance, and uses governed export/delete and safe replay."
+summary: "An operator reconstructs a turn, sees memory/context provenance, and uses governed export/delete and safe replay."
+status: "planned"
+milestoneId: "4.D.3"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.3 — Sessions, Memory, Context & Safe Replay Evidence"
+---
+
+# Milestone 4.D.3 — Sessions, Memory, Context & Safe Replay Evidence
+
+**Status:** Planned  
+**Outcome:** An operator reconstructs a turn, sees memory/context provenance, and uses governed export/delete and safe replay.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** Track P gates and preceding Track D slice  
+**Estimated effort:** 4 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+An operator reconstructs a turn, sees memory/context provenance, and uses governed export/delete and safe replay.
+
+## Scope and deliverables
+
+Build session timeline, memory search/detail, bounded relationship graph, context pack breakdown, retrieval snapshot, cascade preview, async export/delete jobs, receipts, and sandboxed replay with mocked/disabled tools.
+
+## Contract and data requirements
+
+Stable sequence, ranking version, embedding/model identity, context snapshot, payload manifest, deletion state, and replay provenance are required.
+
+## Product and UX requirements
+
+Show exact score/rank/resource/outcome semantics, missing/redacted/sampled states, and safe replay diffs.
+
+## Non-functional requirements
+
+Preview equals execution; deletion converges across stores; replay has no production side effects; tie ordering and mismatch errors pass.
+
+## Verification gates
+
+Read-only first. Privileged export/delete/replay allowlisted and separately killable.
+
+## Rollout and rollback
+
+Memory SQL alone is not a management API or deletion contract.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

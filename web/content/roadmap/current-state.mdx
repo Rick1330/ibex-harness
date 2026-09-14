@@ -1,7 +1,7 @@
 ---
 title: "Current State"
-description: "Phases 0–3.5 complete. Phase 4 operator platform is next."
-summary: "Phases 0–3.5 complete. Phase 4 operator platform is next."
+description: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with a redesigned readiness and dashboard roadmap."
+summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with a redesigned readiness and dashboard roadmap."
 ---
 
 # Current State
@@ -13,9 +13,9 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is next."
   learning-loop e2e, and ISO-MCP isolation.
 </Callout>
 
-<Callout type="info" title="Phase 4 next">
+<Callout type="info" title="Phase 4 in progress">
   **Current focus:** [Phase 4 — Operator Platform & Multi-Provider](/roadmap/phase-4-multi-provider) —
-  management API, dashboard, multi-provider routing, hierarchical rate limiting.
+  Track P operator readiness and evidence contracts, followed by the redesigned Track D capability slices.
 </Callout>
 
 ## Snapshot
@@ -27,14 +27,14 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is next."
 <StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete  
 <StatusBadge status="stable" /> **Phase 3 — Core Memory Substrate:** complete  
 <StatusBadge status="stable" /> **Phase 3.5 — Extraction & Context Assembly:** complete  
-<StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** next  
+<StatusBadge status="beta" /> **Phase 4 — Operator Platform & Multi-Provider:** roadmap redesigned; Track P is the current prerequisite
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-09-09  
-**Branch:** `main` (`ae0272d6` at Phase 3.5 audit)  
+**Last updated:** 2026-09-14  
+**Branch:** `feature/IBEX-9001-world-class-operator-roadmap` (roadmap redesign)  
 **Current focus:** [Phase 4](/roadmap/phase-4-multi-provider)  
-**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e
+**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e; 4.C.5 streaming hardening baseline
 
 <QuickLinks
   links={[
@@ -51,7 +51,12 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is next."
     {
       title: "Phase 4 hub",
       href: "/roadmap/phase-4-multi-provider",
-      description: "Operator platform and multi-provider routing.",
+      description: "Track P readiness, redesigned Track D capabilities, and release gates.",
+    },
+    {
+      title: "Operator platform architecture",
+      href: "https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/OPERATOR_PLATFORM_ARCHITECTURE.md",
+      description: "Evidence, tenancy, privacy, query, control, and release contracts.",
     },
     {
       title: "Architecture decisions",
@@ -81,14 +86,15 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is next."
   context assembly on the proxy hot path (degradation ladder), real MCP memory tools
   (`search_memory` / `write_memory` / `record_feedback`), learning-loop e2e (`e2e-smoke-p3.5`),
   ISO-MCP isolation (`security-integration-p35`), and memory/extraction quality benchmark CI gates.
-  **Not yet:** Dedicated published suites for context-assembly / MCP tool p95 / extraction
+**Not yet:** Dedicated published suites for context-assembly / MCP tool p95 / extraction
   throughput (contract columns reserved; see Phase 3.5 exit audit P2); management API/dashboard
   (Phase 4).
 </Callout>
 
 ## Next
 
-1. Begin **Phase 4** — [Operator Platform & Multi-Provider](/roadmap/phase-4-multi-provider).  
-2. Optionally close Phase 3.5 P2 suite-publish debt in follow-up bench PRs.
+1. Begin **Track P** — [Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane).  
+2. Then deliver the redesigned [Track D capability slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices).  
+3. Optionally close Phase 3.5 P2 suite-publish debt in follow-up bench PRs.
 
 See [Phase 3.5](/roadmap/phase-3-5-extraction-assembly) and [Phase 4](/roadmap/phase-4-multi-provider).

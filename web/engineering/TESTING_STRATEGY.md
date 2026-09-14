@@ -757,3 +757,23 @@ Every feature PR must include:
 ---
 
 This testing strategy is the enforcement mechanism that makes IBEX Harness safe to build quickly with AI assistance. If you skip tests, you are not moving faster — you are borrowing time from the future at compounding interest.
+
+## 16) Operator Platform Release Evidence
+
+Track P, D, and E use an evidence-producing definition of done. Every operator milestone must identify its API/schema contract, tenant and permission matrix, golden fixture, loading/empty/error/partial states, accessibility checks, performance budget, failure behavior, rollback, and report artifact.
+
+### Required dashboard environment
+
+The dashboard suite must run against the chosen server-capable operator topology or a separately deployed SPA/API/SSE origin. A static documentation-site smoke test is not dashboard E2E evidence. CI installs pinned Playwright browsers and provisions deterministic API, Postgres, Redis, ClickHouse, object-storage, and identity fixtures or explicitly named contract doubles.
+
+### Required journey matrix
+
+Playwright covers four roles and at least two organizations: login/refresh/revocation, organization scope, Explore query persistence, trace progressive disclosure, memory/context evidence, deletion preview, incident lifecycle, directive preview/approval, cost alert/hard-cap denial, SSE reconnect, keyboard navigation, screen-reader-visible status changes, and safe rendering of hostile prompt/tool content.
+
+### Contract and data-plane checks
+
+CI snapshots OpenAPI and SSE envelopes, generates the TypeScript client, runs old/new compatibility fixtures, validates cursor pagination and filter-before-page semantics, proves outbox duplicate/replay behavior, validates checkpoint joins, and checks redaction/deletion across every store.
+
+### Non-functional and recovery checks
+
+Performance reports include p50/p95/p99, query latency, page load, SSE memory, queue lag, DB pool, error rate, and cost. Staging runs slow-client, provider outage, Redis/ClickHouse/Postgres degradation, backup restore, chaos, and rollback scenarios. Promotion is blocked when declared SLO, RPO, RTO, tenant, privacy, or cost limits fail.

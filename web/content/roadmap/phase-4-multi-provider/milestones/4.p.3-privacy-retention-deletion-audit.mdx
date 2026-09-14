@@ -1,0 +1,66 @@
+---
+title: "Privacy, Retention, Deletion & Audit Governance"
+description: "Sensitive evidence is useful without weakening existing content-omission and tenant boundaries."
+summary: "Sensitive evidence is useful without weakening existing content-omission and tenant boundaries."
+status: "planned"
+milestoneId: "4.P.3"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance"
+---
+
+# Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance
+
+**Status:** Planned  
+**Outcome:** Sensitive evidence is useful without weakening existing content-omission and tenant boundaries.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Sensitive evidence is useful without weakening existing content-omission and tenant boundaries.
+
+## Scope and deliverables
+
+Define none/metadata/redacted/full capture policy. Redact before queue/export. Store privileged payloads in encrypted object storage with manifests. Add retention policy, purge, deletion by trace/session/org, legal hold, tombstones, per-store watermarks, receipts, audit ledger, safe rendering, and signed evidence bundles.
+
+## Contract and data requirements
+
+Capture manifests include policy version, redaction state, retention class, digest, legal hold, deletion state, and chain of custody. Audit records include actor, session, purpose, object, fields, approval, result, and correlation IDs.
+
+## Product and UX requirements
+
+Raw data is hidden by default. Prompts, outputs, tool arguments, links, HTML, Markdown, and model-suggested commands render as inert escaped data.
+
+## Non-functional requirements
+
+Secrets never reach analytical stores, logs, queues, dead letters, or browser action handlers. Deletion normal query paths converge to no data and retries are safe.
+
+## Verification gates
+
+Run redaction, prompt-injection, cross-tenant, export, deletion, legal-hold, audit-tamper, and evidence-bundle verification tests.
+
+## Rollout and rollback
+
+Begin metadata-only. Enable redacted fields per tenant. Raw capture is time-limited and independently killable. Deletion is not rolled back.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

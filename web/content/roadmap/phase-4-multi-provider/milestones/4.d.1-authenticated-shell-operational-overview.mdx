@@ -1,0 +1,66 @@
+---
+title: "Authenticated Shell & Operational Overview"
+description: "An authorized operator enters a real application, selects an organization, sees platform health/freshness, and reaches every investigation surface."
+summary: "An authorized operator enters a real application, selects an organization, sees platform health/freshness, and reaches every investigation surface."
+status: "planned"
+milestoneId: "4.D.1"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.1 — Authenticated Shell & Operational Overview"
+---
+
+# Milestone 4.D.1 — Authenticated Shell & Operational Overview
+
+**Status:** Planned  
+**Outcome:** An authorized operator enters a real application, selects an organization, sees platform health/freshness, and reaches every investigation surface.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** Track P gates and preceding Track D slice  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+An authorized operator enters a real application, selects an organization, sees platform health/freshness, and reaches every investigation surface.
+
+## Scope and deliverables
+
+Build operator app shell, org/role context, Overview, Agents/Resources, Explore, Incidents, Settings, breadcrumbs, global search entry, live/historical selector, connection state, and data-state components.
+
+## Contract and data requirements
+
+Consume generated SDK only. URL state stores org, time range, filters, columns, and selected resource.
+
+## Product and UX requirements
+
+Provide clear empty/error/partial/stale/degraded states and keyboard navigation.
+
+## Non-functional requirements
+
+Four roles, two tenants, initial-read budget, axe, keyboard, no-cross-tenant, and SSE reconnect gates pass.
+
+## Verification gates
+
+Internal allowlist and read-only flag. Disable route access independently.
+
+## Rollout and rollback
+
+Creates the first end-to-end operator proof on top of Track P.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

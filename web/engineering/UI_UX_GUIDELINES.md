@@ -356,3 +356,27 @@ For any UI change:
 ---
 
 These guidelines are part of system quality: operators rely on the dashboard to trust and debug agents.
+
+## 15) World-Class Operator Investigation Standard
+
+The dashboard is an investigation product, not a collection of generic charts. Global Explore must be reachable without selecting an agent first. Query state, time range, columns, and organization are URL-serializable and survive navigation to a resource detail page.
+
+### 15.1 Four semantic lanes
+
+Keep **score contribution**, **rank transition**, **resource cost**, and **selection outcome** visually and numerically separate. A similarity score is not a final rank. A recency multiplier is not causal importance. A token budget exclusion is not irrelevance. Missing telemetry is not an empty result.
+
+### 15.2 Trace Inspector contract
+
+Use three layers: a pinned run summary, a comparative candidate matrix, and an exact selected-item trace. The selected trace combines an additive waterfall, exact component table, and expandable computation tree. The matrix must expose retrieval rank, metric-specific similarity, final rank, signed `Delta rank`, token estimate/realized/allocation, latency, and outcome.
+
+### 15.3 Exclusion and uncertainty states
+
+Use mutually exclusive groups for included, scored-but-budget-excluded, filtered-before-score, and failed/unknown candidates. Display `not evaluated` rather than zero for pre-score filters. Label sampled, delayed, redacted, expired, partial, simulated, and deleted evidence explicitly.
+
+### 15.4 Safe actions
+
+Counterfactuals are simulated and never mutate the observed trace. Replay uses an immutable snapshot, explicit versions, a sandbox, disabled or mocked tools, and a separate audit record. Policy changes show blast radius, approval requirements, before/after diff, rollout stage, and rollback path before confirmation.
+
+### 15.5 Accessibility and density
+
+Dense tables use semantic headers, keyboard-sortable columns, visible focus, non-color status encoding, announced loading/filter/result changes, accessible clear-all filters, and responsive overflow. Hover may preview exact values but may never contain the only reason for exclusion or the only security explanation.

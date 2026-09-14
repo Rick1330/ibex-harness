@@ -1,0 +1,66 @@
+---
+title: "Directives, Routing, Experiments & Controlled Actions"
+description: "Operators understand and safely change policy with preview, approval, provenance, experimentation, and rollback."
+summary: "Operators understand and safely change policy with preview, approval, provenance, experimentation, and rollback."
+status: "planned"
+milestoneId: "4.D.5"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.5 — Directives, Routing, Experiments & Controlled Actions"
+---
+
+# Milestone 4.D.5 — Directives, Routing, Experiments & Controlled Actions
+
+**Status:** Planned  
+**Outcome:** Operators understand and safely change policy with preview, approval, provenance, experimentation, and rollback.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** Track P gates and preceding Track D slice  
+**Estimated effort:** 4 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Operators understand and safely change policy with preview, approval, provenance, experimentation, and rollback.
+
+## Scope and deliverables
+
+Build directive versions/diff/promotion/revoke, routing decision detail, candidate rejection reasons, fallback provenance, evaluation linkage, experiment assignment/exposure/holdback, guardrails, kill switch, dry-run, action ledger, and bounded rollout.
+
+## Contract and data requirements
+
+Record policy/directive/capability versions, input hashes, matched candidates, rejection codes, approval, assurance, before/after, and rollback pointer.
+
+## Product and UX requirements
+
+Show blast radius, guardrails, policy state, simulation versus observed state, and explicit approval requirements.
+
+## Non-functional requirements
+
+Versioned replay reproduces decisions. High-impact changes require step-up or dual approval. Duplicate submits and rollback tests pass.
+
+## Verification gates
+
+Dark → 1% → 10% → 25% → 100% with abort thresholds. Drift UI depends on the Phase 4.5 producer contract.
+
+## Rollout and rollback
+
+The old milestone combined two unready products and lacked an action ledger.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

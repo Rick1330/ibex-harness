@@ -1,5 +1,5 @@
 {
   "title": "Phase 4 operator platform",
   "icon": "LayoutDashboard",
-  "pages": ["index", "tracks", "goals", "risks", "milestones"]
+  "pages": ["index", "tracks", "goals", "findings", "risks", "milestones"]
 }

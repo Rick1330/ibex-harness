@@ -1,26 +1,20 @@
 ---
 title: "Tracks"
-description: "Phase 4 is organized into five parallel tracks covering the management API, rate limiting, multi-provider adapters, the operator dashboard, and exit gate verification."
+description: "Phase 4 tracks for the management API, rate limiting, multi-provider resilience, operator readiness, capability slices, and release gates."
 phase: "phase-4-multi-provider"
 ---
 
 # Phase 4 — Tracks
 
-<Callout type="note" title="Planning baseline">
-  Tracks group milestones for planning. Preferred sequencing below is not a rigid schedule.
-  Paths, libraries, and designs on linked milestone pages are orientation sketches — implementation
-  is expected to require further research and may diverge.
+<Callout type="note" title="Sequencing contract">
+  Phase 4 uses typed gates. Preferred sequencing is a dependency model, not a promise that every milestone is serial. Capability and assurance work may proceed in parallel when their inputs and evidence outputs are explicit.
 </Callout>
-
-Phase 4 delivers the operator platform and multi-provider routing layer across five tracks.
-
----
 
 ## Track A — Management API Server
 
-Management API providing authenticated CRUD for organizations, users, agents, tokens, and provider credentials. Service layout ideas on linked milestones are orientation only.
+Authenticated tenant-isolated management CRUD for organizations, users, agents, tokens, provider credentials, and model policies.
 
-**Preferred sequencing within track:** `4.A.1 → 4.A.2 → 4.A.3 → 4.A.4 → 4.A.5`
+**Sequencing:** `4.A.1 → 4.A.2 → 4.A.3 → 4.A.4 → 4.A.5`
 
 **Milestones:**
 - [4.A.1 — API Server Skeleton](/roadmap/phase-4-multi-provider/milestones/4.a.1-api-server-skeleton)
@@ -29,26 +23,22 @@ Management API providing authenticated CRUD for organizations, users, agents, to
 - [4.A.4 — Token Management API](/roadmap/phase-4-multi-provider/milestones/4.a.4-token-management-api)
 - [4.A.5 — Provider Credential Management](/roadmap/phase-4-multi-provider/milestones/4.a.5-provider-credential-management)
 
----
-
 ## Track B — Rate Limiting & Quota Enforcement
 
-Redis Lua hierarchical rate limiting with per-org/agent tier configuration and load benchmarking.
+Atomic Redis rate limiting remains the hot-path control. Durable usage and monthly cost governance are explicitly moved to Track P and D6.
 
-**Preferred sequencing within track:** `4.B.1 → 4.B.2 → 4.B.3`
+**Sequencing:** `4.B.1 → 4.B.2 → 4.B.3`
 
 **Milestones:**
 - [4.B.1 — Lua Hierarchical Rate Limiter](/roadmap/phase-4-multi-provider/milestones/4.b.1-lua-hierarchical-rate-limiter)
 - [4.B.2 — Rate Limit Config API](/roadmap/phase-4-multi-provider/milestones/4.b.2-rate-limit-config-api)
 - [4.B.3 — Rate Limit Load Benchmark](/roadmap/phase-4-multi-provider/milestones/4.b.3-rate-limit-load-benchmark)
 
----
-
 ## Track C — Multi-Provider Adapters & Resilience
 
-Multi-provider routing: Anthropic adapter hardening, per-org model routing, circuit breakers, fallback routing, and streaming hardening. Fallback stays opt-in; thresholds are expected to be revisited after real traffic.
+Provider parity, routing, circuit breaking, opt-in fallback, and streaming behavior.
 
-**Preferred sequencing within track:** `4.C.1 → 4.C.2 → 4.C.3 → 4.C.4 → 4.C.5`
+**Sequencing:** `4.C.1 → 4.C.2 → 4.C.3 → 4.C.4 → 4.C.5`
 
 **Milestones:**
 - [4.C.1 — Anthropic Adapter Hardening](/roadmap/phase-4-multi-provider/milestones/4.c.1-anthropic-adapter-hardening)
@@ -57,30 +47,43 @@ Multi-provider routing: Anthropic adapter hardening, per-org model routing, circ
 - [4.C.4 — Fallback Routing](/roadmap/phase-4-multi-provider/milestones/4.c.4-fallback-routing)
 - [4.C.5 — Streaming Hardening](/roadmap/phase-4-multi-provider/milestones/4.c.5-streaming-hardening)
 
----
+## Track P — Operator Readiness, Evidence & Control Plane
 
-## Track D — Operator Dashboard
+**Purpose:** establish the runtime, identity, evidence, privacy, data, deployment, and assurance contracts required before any dashboard UI can be called production-ready.
 
-Operator dashboard with JWT auth, RBAC, real-time SSE, trace inspector, memory graph browser, drift alerts, directive management, and cost governance. Dashboard layout ideas on linked milestones are orientation only.
-
-**Preferred sequencing within track:** `4.D.1 → 4.D.2 → 4.D.3 → 4.D.4 → 4.D.5` (depends on Track A for API contracts)
+**Sequencing:** `4.P.0 → 4.P.1 → 4.P.2 → 4.P.3 → (4.P.4 ∥ 4.P.5 ∥ 4.P.6)`
 
 **Milestones:**
-- [4.D.1 — Dashboard Foundation: Auth & Real-time](/roadmap/phase-4-multi-provider/milestones/4.d.1-dashboard-foundation-auth-realtime)
-- [4.D.2 — Trace Inspector](/roadmap/phase-4-multi-provider/milestones/4.d.2-trace-inspector)
-- [4.D.3 — Memory Browser v2 (Graph-Aware)](/roadmap/phase-4-multi-provider/milestones/4.d.3-memory-browser-v2-graph)
-- [4.D.4 — Drift Alerts & Directive Management](/roadmap/phase-4-multi-provider/milestones/4.d.4-drift-alerts-directive-management)
-- [4.D.5 — Analytics v2: Cost Governance](/roadmap/phase-4-multi-provider/milestones/4.d.5-analytics-v2-cost-governance)
+- [4.P.0 — Runtime Topology & Environment Contract](/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract)
+- [4.P.1 — Identity, Tenancy & Authorization Assurance](/roadmap/phase-4-multi-provider/milestones/4.p.1-identity-tenancy-authorization-assurance)
+- [4.P.2 — Canonical Evidence Plane & Durable Publication](/roadmap/phase-4-multi-provider/milestones/4.p.2-canonical-evidence-durable-publication)
+- [4.P.3 — Privacy, Retention, Deletion & Audit Governance](/roadmap/phase-4-multi-provider/milestones/4.p.3-privacy-retention-deletion-audit)
+- [4.P.4 — Query, Usage & Cost Data Platform](/roadmap/phase-4-multi-provider/milestones/4.p.4-query-usage-cost-data-platform)
+- [4.P.5 — Production Platform, Recovery & Supply Chain](/roadmap/phase-4-multi-provider/milestones/4.p.5-production-platform-recovery-supply-chain)
+- [4.P.6 — Contract & Assurance Harness](/roadmap/phase-4-multi-provider/milestones/4.p.6-contract-assurance-harness)
 
----
+## Track D — Operator Capability Slices
 
-## Track E — Exit Gate
+**Purpose:** deliver the world-class operator product as independently verifiable, end-to-end capability slices.
 
-Dashboard E2E testing, multi-provider resilience verification, and the Phase 4 gap register with sign-off.
-
-**Preferred sequencing within track:** `4.E.1 → 4.E.2 → 4.E.3`
+**Sequencing:** `4.D.1 → 4.D.2 → (4.D.3 ∥ 4.D.4) → (4.D.5 ∥ 4.D.6)`
 
 **Milestones:**
-- [4.E.1 — Dashboard E2E (Playwright)](/roadmap/phase-4-multi-provider/milestones/4.e.1-dashboard-e2e-playwright)
-- [4.E.2 — Multi-Provider Resilience Suite](/roadmap/phase-4-multi-provider/milestones/4.e.2-multi-provider-resilience-suite)
-- [4.E.3 — Phase 4 Exit Audit](/roadmap/phase-4-multi-provider/milestones/4.e.3-phase4-exit-audit)
+- [4.D.1 — Authenticated Shell & Operational Overview](/roadmap/phase-4-multi-provider/milestones/4.d.1-authenticated-shell-operational-overview)
+- [4.D.2 — Explore & Provenance Trace Inspector](/roadmap/phase-4-multi-provider/milestones/4.d.2-explore-provenance-trace-inspector)
+- [4.D.3 — Sessions, Memory, Context & Safe Replay Evidence](/roadmap/phase-4-multi-provider/milestones/4.d.3-sessions-memory-context-safe-replay)
+- [4.D.4 — Failures, Incidents & Evidence Bundles](/roadmap/phase-4-multi-provider/milestones/4.d.4-failures-incidents-evidence-bundles)
+- [4.D.5 — Directives, Routing, Experiments & Controlled Actions](/roadmap/phase-4-multi-provider/milestones/4.d.5-directives-routing-experiments-actions)
+- [4.D.6 — Usage, Cost Governance & Capacity](/roadmap/phase-4-multi-provider/milestones/4.d.6-usage-cost-governance-capacity)
+
+## Track E — Release Readiness & Phase Exit
+
+**Purpose:** convert implementation into a promotable, recoverable, auditable release.
+
+**Sequencing:** `4.E.1 → 4.E.2 → 4.E.3 → 4.E.4`
+
+**Milestones:**
+- [4.E.1 — Environment, Fixtures & Required CI](/roadmap/phase-4-multi-provider/milestones/4.e.1-environment-fixtures-required-ci)
+- [4.E.2 — Reliability, Resilience & Recovery Gate](/roadmap/phase-4-multi-provider/milestones/4.e.2-reliability-resilience-recovery-gate)
+- [4.E.3 — Staged Rollout & Operator Readiness](/roadmap/phase-4-multi-provider/milestones/4.e.3-staged-rollout-operator-readiness)
+- [4.E.4 — Phase 4 Findings Register & Sign-off](/roadmap/phase-4-multi-provider/milestones/4.e.4-phase4-findings-signoff)

@@ -1,0 +1,66 @@
+---
+title: "Identity, Tenancy & Authorization Assurance"
+description: "Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision."
+summary: "Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision."
+status: "planned"
+milestoneId: "4.P.1"
+track: "P"
+trackTitle: "Operator Readiness, Evidence & Control Plane"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane"
+goal: "[Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance"
+---
+
+# Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance
+
+**Status:** Planned  
+**Outcome:** Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.  
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
+**Dependencies:** Track A identity/API foundations; Phase 3.5; 4.C.5 baseline  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.
+
+## Scope and deliverables
+
+Implement session/refresh or OIDC federation seam, revocation, org membership, org switching, role/permission evaluation, resource classification, step-up authentication, and dual approval hooks for high-impact actions.
+
+## Contract and data requirements
+
+Define metadata-read, redacted-read, raw-read, export, delete, replay, secret-use, policy-change, and break-glass actions with actor, tenant, purpose, assurance, and policy result.
+
+## Product and UX requirements
+
+Denied actions explain the safe next step without revealing object existence. The UI never shows provider keys, bearer tokens, or decrypted secrets.
+
+## Non-functional requirements
+
+Normal dashboard roles cannot bypass RLS. Authorization is deny-by-default and evaluated server-side on every request.
+
+## Verification gates
+
+Run a two-tenant matrix across API, Postgres, Redis, ClickHouse, object storage, queues, exports, replay, guessed IDs, org switching, revoked sessions, expired step-up, and degraded identity provider.
+
+## Rollout and rollback
+
+Start read-only with internal operators. Roll back policy versions, never audit history. Disable sensitive actions with a kill switch.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

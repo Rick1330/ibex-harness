@@ -1,0 +1,66 @@
+---
+title: "Explore & Provenance Trace Inspector"
+description: "An operator can answer why an agent acted without first selecting an agent or session."
+summary: "An operator can answer why an agent acted without first selecting an agent or session."
+status: "planned"
+milestoneId: "4.D.2"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "4 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.2 — Explore & Provenance Trace Inspector"
+---
+
+# Milestone 4.D.2 — Explore & Provenance Trace Inspector
+
+**Status:** Planned  
+**Outcome:** An operator can answer why an agent acted without first selecting an agent or session.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** Track P gates and preceding Track D slice  
+**Estimated effort:** 4 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+An operator can answer why an agent acted without first selecting an agent or session.
+
+## Scope and deliverables
+
+Build global query bar, facets, trace/session/failure results, progressive disclosure, timeline/flame graph, context assembly, memory score vectors, directive/routing decisions, tools, model/fallback, evaluation links, redacted JSON, copy-link, and bidirectional pivots.
+
+## Contract and data requirements
+
+Trace/Span DTOs expose stable IDs, source links, completeness, sampling, freshness, retention, and org-enforced scope.
+
+## Product and UX requirements
+
+Summary strip, candidate matrix, score/rank/resource/outcome lanes, exact selected-item waterfall/tree, and exclusion groups follow the design guide.
+
+## Non-functional requirements
+
+Golden nested run, source-link coverage, cross-tenant negative, metadata-only default, query/page-load budget, and keyboard-safe detail pass.
+
+## Verification gates
+
+Metadata-only launch, then redacted provenance. Feature-flag event kinds and content expansion.
+
+## Rollout and rollback
+
+This is the differentiated auditable context-and-policy provenance debugger.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

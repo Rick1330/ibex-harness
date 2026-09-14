@@ -1,0 +1,66 @@
+---
+title: "Failures, Incidents & Evidence Bundles"
+description: "An operator triages failures, assigns ownership, preserves evidence, and exports a postmortem-ready bundle."
+summary: "An operator triages failures, assigns ownership, preserves evidence, and exports a postmortem-ready bundle."
+status: "planned"
+milestoneId: "4.D.4"
+track: "D"
+trackTitle: "Operator Capability Slices"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices"
+goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.4 — Failures, Incidents & Evidence Bundles"
+---
+
+# Milestone 4.D.4 — Failures, Incidents & Evidence Bundles
+
+**Status:** Planned  
+**Outcome:** An operator triages failures, assigns ownership, preserves evidence, and exports a postmortem-ready bundle.  
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
+**Dependencies:** Track P gates and preceding Track D slice  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+An operator triages failures, assigns ownership, preserves evidence, and exports a postmortem-ready bundle.
+
+## Scope and deliverables
+
+Build failure projection, incident lifecycle, severity, owner, assignment, dedupe, timeline, activity, linked traces/sessions/requests, redacted evidence, comments, and signed bundle export.
+
+## Contract and data requirements
+
+State transitions, action idempotency, evidence manifest, retention tier, legal hold, and chain of custody are API contracts.
+
+## Product and UX requirements
+
+Filters by status/severity/owner/time, explicit raw traceback gating, and clear incomplete-evidence states.
+
+## Non-functional requirements
+
+Transitions are audited and idempotent. Bundles remain reconstructable after normal telemetry expiry without secrets or cross-tenant data.
+
+## Verification gates
+
+Read-only triage first. Mutations use operator action ledger and reversible state changes.
+
+## Rollout and rollback
+
+The existing failed-task store is ingestion/forensics data, not an incident workflow.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.

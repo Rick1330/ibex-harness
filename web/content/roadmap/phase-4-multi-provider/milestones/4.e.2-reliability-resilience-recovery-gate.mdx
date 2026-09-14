@@ -1,0 +1,66 @@
+---
+title: "Reliability, Resilience & Recovery Gate"
+description: "Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated."
+summary: "Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated."
+status: "planned"
+milestoneId: "4.E.2"
+track: "E"
+trackTitle: "Release Readiness & Phase Exit"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit"
+goal: "[Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)"
+estimatedEffort: "3 weeks"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.2 — Reliability, Resilience & Recovery Gate"
+---
+
+# Milestone 4.E.2 — Reliability, Resilience & Recovery Gate
+
+**Status:** Planned  
+**Outcome:** Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated.  
+**Track:** [Track E — Release Readiness & Phase Exit](/roadmap/phase-4-multi-provider/tracks#track-e--release-readiness--phase-exit)  
+**Dependencies:** Track P and Track D capability evidence  
+**Estimated effort:** 3 weeks
+
+<Callout type="note" title="Completion contract">
+  This milestone is complete only when the implementation, versioned contract, verification evidence, operational signals, and rollback behavior described below are present. A mock screen, planning-only schema, permission constant, or passing unit test alone is not sufficient evidence.
+</Callout>
+
+## Why this milestone exists
+
+Declared SLO, RPO, RTO, cost, resilience, and rollback guarantees are demonstrated.
+
+## Scope and deliverables
+
+Run load, slow-client, provider outage, fallback, Redis/ClickHouse/Postgres degradation, queue saturation, backup/restore, chaos, and rollback scenarios.
+
+## Contract and data requirements
+
+Record workload, percentile, threshold, window, error budget, tenant invariant, degradation, and evidence artifact.
+
+## Product and UX requirements
+
+Surface degraded dependencies, incomplete telemetry, and recovery status to operators.
+
+## Non-functional requirements
+
+All declared gates meet thresholds; failed experiments produce tracked findings rather than silent exceptions.
+
+## Verification gates
+
+Abort and rollback automatically when stop conditions trigger.
+
+## Rollout and rollback
+
+Architecture and benchmark prose become release guarantees here.
+
+## Findings addressed
+
+This milestone addresses the repository and roadmap findings recorded in Track P and the Phase 4 findings register.
+
+## Exit checklist
+
+- [ ] The stated outcome is demonstrated against real or explicitly labeled deterministic fixtures.
+- [ ] The API, event, schema, or configuration contract is versioned and covered by compatibility tests.
+- [ ] Tenant, permission, privacy, freshness, and partial-data behavior are verified.
+- [ ] Performance, accessibility, failure, and rollback evidence is attached to the milestone record.
+- [ ] Documentation, runbooks, and links are updated before the milestone is marked complete.
