@@ -1,12 +1,14 @@
 /**
  * Operator connection-state shell (4.P.0).
  * No secrets in URL/query; PAT lives only in the password field until login.
+ * API origin is inject/default only — never read from the DOM for fetch (Codacy SSRF).
  */
 
 import {
+  ALLOWED_LOCAL_BASES,
   buildLoginBody,
   parseSSEBlock,
-  resolveApiBase,
+  pickApiBase,
   shouldAcceptEventId,
 } from "./sse.mjs";
 
@@ -22,6 +24,13 @@ const STATES = new Set([
   "error",
 ]);
 
+const PATHS = Object.freeze({
+  login: "/v1/operator/session/login",
+  me: "/v1/operator/session/me",
+  logout: "/v1/operator/session/logout",
+  stream: "/v1/operator/events/stream",
+});
+
 const els = {
   state: document.getElementById("conn-state"),
   detail: document.getElementById("conn-detail"),
@@ -30,31 +39,24 @@ const els = {
   pat: document.getElementById("pat"),
 };
 
+const injected =
+  typeof window.IBEX_API_BASE_URL === "string" ? window.IBEX_API_BASE_URL.trim() : "";
+const API_BASE = pickApiBase(injected);
+const ALLOWED_BASES = Object.freeze([...ALLOWED_LOCAL_BASES, API_BASE]);
+
+els.apiBase.value = API_BASE;
+els.apiBase.readOnly = true;
+els.apiBase.title = injected
+  ? "Set by deploy config (IBEX_API_BASE_URL)"
+  : "Local default (http://localhost:8010)";
+
 let csrfToken = "";
 let lastEventId = null;
 let streamGeneration = 0;
 let abortController = null;
 let reconnectTimer = null;
 let deliberateClose = false;
-
-function injectedApiBase() {
-  return typeof window.IBEX_API_BASE_URL === "string" ? window.IBEX_API_BASE_URL.trim() : "";
-}
-
-function defaultApiBase() {
-  return resolveApiBase(injectedApiBase()) || "http://localhost:8010";
-}
-
-function initApiBaseField() {
-  const injected = injectedApiBase();
-  els.apiBase.value = defaultApiBase();
-  if (injected) {
-    els.apiBase.readOnly = true;
-    els.apiBase.title = "Set by deploy config (IBEX_API_BASE_URL)";
-  }
-}
-
-initApiBaseField();
+let reconnectAttempt = 0;
 
 function setState(name, detail) {
   const next = STATES.has(name) ? name : "unknown";
@@ -64,11 +66,10 @@ function setState(name, detail) {
 }
 
 function apiUrl(path) {
-  const base = resolveApiBase(els.apiBase.value);
-  if (!base) {
-    throw new Error("API origin is not allowlisted (http/https localhost or *.ibexharness.com)");
+  if (!ALLOWED_BASES.includes(API_BASE)) {
+    throw new Error("API origin is not on the allowlist");
   }
-  return `${base}${path}`;
+  return `${API_BASE}${path}`;
 }
 
 function appendEvent(line) {
@@ -86,15 +87,8 @@ async function login() {
     setState("error", "PAT required for provisional login stub");
     return;
   }
-  let url;
-  try {
-    url = apiUrl("/v1/operator/session/login");
-  } catch (err) {
-    setState("error", String(err.message || err));
-    return;
-  }
   setState("reconnecting", "Exchanging PAT for session cookies…");
-  const resp = await fetch(url, {
+  const resp = await fetch(apiUrl(PATHS.login), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -111,14 +105,7 @@ async function login() {
 }
 
 async function me() {
-  let url;
-  try {
-    url = apiUrl("/v1/operator/session/me");
-  } catch (err) {
-    setState("error", String(err.message || err));
-    return;
-  }
-  const resp = await fetch(url, { credentials: "include" });
+  const resp = await fetch(apiUrl(PATHS.me), { credentials: "include" });
   if (resp.status === 401 || resp.status === 403) {
     setState("unauthenticated", `/me rejected: HTTP ${resp.status}`);
     return;
@@ -151,17 +138,10 @@ function closeSSE() {
 function connectSSE() {
   deliberateClose = false;
   abortActiveStream();
-  let url;
-  try {
-    url = apiUrl("/v1/operator/events/stream");
-  } catch (err) {
-    setState("error", String(err.message || err));
-    return;
-  }
   const generation = ++streamGeneration;
   abortController = new AbortController();
   setState(lastEventId ? "reconnecting" : "live", "Opening EventSource…");
-  void streamWithFetch(url, generation, abortController.signal);
+  void openStream(generation, abortController.signal);
 }
 
 function sseHeaders() {
@@ -172,48 +152,81 @@ function sseHeaders() {
   return headers;
 }
 
-async function handleStreamResponse(resp, generation) {
-  if (generation !== streamGeneration) return "stale";
+function classifyStreamStatus(resp) {
   if (resp.status === 503 && resp.headers.get("X-IBEX-Drain") === "1") {
-    setState("drained", "API is draining; new SSE rejected");
-    return "stop";
+    return "drained";
   }
   if (resp.status === 401 || resp.status === 403) {
-    setState("unauthenticated", `SSE rejected: HTTP ${resp.status}`);
+    return "auth";
+  }
+  if (resp.status === 429) {
+    return "retry";
+  }
+  if (resp.status >= 400 && resp.status < 500) {
     return "stop";
   }
   if (!resp.ok || !resp.body) {
-    setState("degraded", `SSE failed: HTTP ${resp.status}`);
     return "retry";
   }
+  return "ok";
+}
+
+async function handleStreamResponse(resp, generation) {
+  if (generation !== streamGeneration) return "stale";
+  const kind = classifyStreamStatus(resp);
+  if (kind === "drained") {
+    setState("drained", "API is draining; new SSE rejected");
+    return "stop";
+  }
+  if (kind === "auth") {
+    setState("unauthenticated", `SSE rejected: HTTP ${resp.status}`);
+    return "stop";
+  }
+  if (kind === "stop") {
+    setState("error", `SSE permanent failure: HTTP ${resp.status}`);
+    return "stop";
+  }
+  if (kind === "retry") {
+    setState("degraded", `SSE failed: HTTP ${resp.status}`);
+    return { outcome: "retry", retryAfter: resp.headers.get("Retry-After") };
+  }
   setState("live", "SSE connected");
+  reconnectAttempt = 0;
   await readStreamBody(resp.body, generation);
   return "ended";
 }
 
-async function streamWithFetch(url, generation, signal) {
+function onStreamOutcome(outcome, generation, retryAfter) {
+  if (outcome === "retry") {
+    scheduleReconnect(generation, retryAfter);
+    return;
+  }
+  if (outcome === "ended" && generation === streamGeneration && !deliberateClose) {
+    setState("reconnecting", "SSE ended; will retry");
+    scheduleReconnect(generation, null);
+  }
+}
+
+async function openStream(generation, signal) {
   if (lastEventId != null && generation === streamGeneration) {
     setState("historical", `Resuming after id ${lastEventId}`);
   }
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(apiUrl(PATHS.stream), {
       credentials: "include",
       headers: sseHeaders(),
       signal,
     });
-    const outcome = await handleStreamResponse(resp, generation);
-    if (outcome === "retry") {
-      scheduleReconnect(generation);
+    const result = await handleStreamResponse(resp, generation);
+    if (result && typeof result === "object") {
+      onStreamOutcome(result.outcome, generation, result.retryAfter);
       return;
     }
-    if (outcome === "ended" && generation === streamGeneration && !deliberateClose) {
-      setState("reconnecting", "SSE ended; will retry");
-      scheduleReconnect(generation);
-    }
+    onStreamOutcome(result, generation, null);
   } catch (err) {
     if (signal.aborted || generation !== streamGeneration) return;
     setState("degraded", `SSE error: ${err}`);
-    scheduleReconnect(generation);
+    scheduleReconnect(generation, null);
   }
 }
 
@@ -248,33 +261,44 @@ function handleSSEBlock(block, generation) {
   setState("live", `last-event-id=${lastEventId}`);
 }
 
-function scheduleReconnect(generation) {
+function reconnectDelayMs(retryAfterHeader) {
+  if (retryAfterHeader) {
+    const secs = Number(retryAfterHeader);
+    if (Number.isFinite(secs) && secs >= 0) {
+      return Math.min(secs * 1000, 60_000);
+    }
+  }
+  const base = Math.min(1000 * 2 ** reconnectAttempt, 30_000);
+  const jitter = Math.floor(Math.random() * 250);
+  return base + jitter;
+}
+
+function scheduleReconnect(generation, retryAfterHeader) {
   if (deliberateClose || generation !== streamGeneration) return;
   if (reconnectTimer) return;
-  setState("reconnecting", "Reconnect in 2s…");
+  const delay = reconnectDelayMs(retryAfterHeader);
+  reconnectAttempt += 1;
+  setState("reconnecting", `Reconnect in ${Math.round(delay / 1000)}s…`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     if (deliberateClose || generation !== streamGeneration) return;
     connectSSE();
-  }, 2000);
+  }, delay);
 }
 
 async function logout() {
   closeSSE();
-  let url;
-  try {
-    url = apiUrl("/v1/operator/session/logout");
-  } catch (err) {
-    setState("error", String(err.message || err));
-    return;
-  }
   const headers = {};
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  await fetch(url, {
+  const resp = await fetch(apiUrl(PATHS.logout), {
     method: "POST",
     credentials: "include",
     headers,
   });
+  if (!resp.ok) {
+    setState("error", `logout failed: HTTP ${resp.status}`);
+    return;
+  }
   csrfToken = "";
   lastEventId = null;
   setState("unauthenticated", "Logged out");

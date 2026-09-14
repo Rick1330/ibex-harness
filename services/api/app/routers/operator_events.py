@@ -37,7 +37,8 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-async def _require_session(request: Request) -> None:
+def _require_session(request: Request) -> None:
+    """Validate provisional access cookie. Any valid session may use operator SSE (4.P.0)."""
     settings = _settings(request)
     if not settings.operator_feature_enabled:
         raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
@@ -112,7 +113,7 @@ def _hub_or_503(request: Request) -> OperatorSSEHub:
 
 @router.get("/stream", response_model=None)
 async def stream_events(request: Request) -> Response:
-    await _require_session(request)
+    _require_session(request)
     settings = _settings(request)
     hub = _hub_or_503(request)
     drain = request.app.state.api.drain
@@ -139,7 +140,7 @@ async def stream_events(request: Request) -> Response:
 @router.post("/publish-test")
 async def publish_test_event(request: Request) -> dict[str, object]:
     """Test helper: enqueue one operator event (requires session + CSRF)."""
-    await _require_session(request)
+    _require_session(request)
     hub = _hub_or_503(request)
     body = await request.json()
     if not isinstance(body, dict):

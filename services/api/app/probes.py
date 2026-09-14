@@ -79,7 +79,8 @@ async def _check_auth(state: object) -> bool:
     try:
         async with asyncio.timeout(_READY_CHECK_TIMEOUT_S):
             return bool(await validator.ready())
-    except (TimeoutError, OSError):
+    except OSError:
+        # TimeoutError is an OSError subclass.
         return False
 
 
@@ -93,7 +94,8 @@ async def _check_postgres(state: object) -> bool:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
         return True
-    except (TimeoutError, SQLAlchemyError, OSError):
+    except (SQLAlchemyError, OSError):
+        # TimeoutError is an OSError subclass.
         return False
 
 

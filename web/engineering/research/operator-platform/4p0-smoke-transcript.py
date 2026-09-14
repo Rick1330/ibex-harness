@@ -115,7 +115,9 @@ def _step_sse_resume(client: TestClient, hub, csrf: str, last_id: int) -> None:
         json={"n": 3},
         headers={"X-CSRF-Token": csrf},
     )
-    print(f"publish n=3 → {pub3.json()}")
+    print(f"publish n=3 → {pub3.status_code} {pub3.json()}")
+    if pub3.status_code != 200:
+        _fail(f"publish 3 HTTP {pub3.status_code}")
 
     async def sub_resume(last_event_id):
         if last_event_id != last_id:

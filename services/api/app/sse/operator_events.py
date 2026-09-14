@@ -32,6 +32,7 @@ SSE_WRITE_SECONDS = Histogram(
 
 _FAN_IN_BACKOFF_BASE_S = 0.5
 _FAN_IN_BACKOFF_MAX_S = 30.0
+_FAN_IN_BACKOFF_MAX_ATTEMPT = 6  # 0.5 * 2^6 = 32 > max; clamp beyond this
 _RNG = secrets.SystemRandom()
 
 
@@ -68,7 +69,7 @@ class OperatorSSEHub:
                 except asyncio.QueueFull:
                     lagging.append(queue)
             for queue in lagging:
-                await self._disconnect_subscriber(queue)
+                self._disconnect_subscriber(queue)
             return event.event_id
 
     def _force_sentinel(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
@@ -84,7 +85,7 @@ class OperatorSSEHub:
             except asyncio.QueueFull:
                 return
 
-    async def _disconnect_subscriber(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
+    def _disconnect_subscriber(self, queue: asyncio.Queue[OperatorEvent | None]) -> None:
         """Drop a lagging subscriber so the client reconnects with Last-Event-ID."""
         logger.warning("operator sse subscriber queue full; disconnecting stream")
         if queue in self._subscribers:
@@ -174,7 +175,8 @@ def _decode_fan_in_payload(data: object) -> dict[str, Any] | None:
 
 
 async def _backoff_sleep(stop: asyncio.Event, attempt: int) -> None:
-    delay = min(_FAN_IN_BACKOFF_BASE_S * (2**attempt), _FAN_IN_BACKOFF_MAX_S)
+    exp = min(max(attempt, 0), _FAN_IN_BACKOFF_MAX_ATTEMPT)
+    delay = min(_FAN_IN_BACKOFF_BASE_S * (2**exp), _FAN_IN_BACKOFF_MAX_S)
     delay += _RNG.uniform(0, delay * 0.25)
     try:
         await asyncio.wait_for(stop.wait(), timeout=delay)
@@ -185,7 +187,11 @@ async def _backoff_sleep(stop: asyncio.Event, attempt: int) -> None:
 async def _connect_pubsub(redis_url: str, channel: str) -> tuple[Redis, Any]:
     client = Redis.from_url(redis_url, decode_responses=True)
     pubsub = client.pubsub()
-    await pubsub.subscribe(channel)
+    try:
+        await pubsub.subscribe(channel)
+    except Exception:
+        await _aclose_redis_fan_in(pubsub, client, channel)
+        raise
     return client, pubsub
 
 
@@ -199,7 +205,7 @@ async def _fan_in_read_loop(
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
         except asyncio.CancelledError:
             raise
-        except (OSError, TimeoutError, RedisError) as exc:
+        except (OSError, RedisError) as exc:
             raise RedisError(str(exc)) from exc
         if message is None:
             await asyncio.sleep(0.05)
@@ -212,7 +218,7 @@ async def _fan_in_read_loop(
 async def _safe_await(label: str, coro_factory: Callable[[], Awaitable[Any]]) -> None:
     try:
         await coro_factory()
-    except (OSError, TimeoutError, RedisError) as exc:
+    except (OSError, RedisError) as exc:
         logger.debug("redis fan-in %s: %s", label, exc)
 
 
@@ -256,10 +262,10 @@ async def redis_fan_in_loop(
             await _fan_in_read_loop(hub, pubsub, stop)
         except asyncio.CancelledError:
             raise
-        except AuthenticationError as exc:
-            logger.error("operator sse redis fan-in auth failed: %s", exc)
+        except AuthenticationError:
+            logger.exception("operator sse redis fan-in auth failed")
             return
-        except (OSError, TimeoutError, RedisError) as exc:
+        except (OSError, RedisError) as exc:
             logger.warning("operator sse redis fan-in failed: %s; retrying", exc)
             attempt += 1
             await _backoff_sleep(stop, attempt)

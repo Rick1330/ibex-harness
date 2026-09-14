@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: "Reachable API/SSE origin for the static shell (required until ingress exists)"
+        description: "HTTPS API/SSE origin (or loopback HTTP for local). Required; no localhost default."
         required: true
-        default: "http://localhost:8010"
         type: string
       pages_branch:
         description: "Cloudflare Pages branch name (use preview, not production main)"
@@ -45,15 +44,53 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate API base URL
+        env:
+          API_BASE_URL: ${{ inputs.api_base_url }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const raw = (process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
+          if (!raw) {
+            console.error("api_base_url is required");
+            process.exit(1);
+          }
+          let url;
+          try {
+            url = new URL(raw);
+          } catch {
+            console.error("api_base_url is not a valid URL");
+            process.exit(1);
+          }
+          const host = url.hostname.toLowerCase();
+          const loopback = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+          if (url.protocol === "http:") {
+            if (!loopback) {
+              console.error("http:// is only allowed for loopback hosts");
+              process.exit(1);
+            }
+          } else if (url.protocol !== "https:") {
+            console.error("api_base_url must be https:// (or http:// loopback)");
+            process.exit(1);
+          }
+          if (url.username || url.password) {
+            console.error("api_base_url must not include credentials");
+            process.exit(1);
+          }
+          console.log(`api_base_url ok: ${url.protocol}//${url.host}`);
+          NODE
+
       - uses: ./.github/actions/setup-pnpm-web
 
       - name: Build operator static shell
         run: pnpm --filter dashboard build
 
       - name: Inject API base for preview shell
+        env:
+          API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           printf 'window.IBEX_API_BASE_URL = %s;\n' \
-            "$(node -e "console.log(JSON.stringify(process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8010'))")" \
+            "$(node -e "console.log(JSON.stringify(process.env.API_BASE_URL))")" \
             > services/dashboard/dist/config.js
           sed -i 's#<script src="./app.js"#<script src="./config.js"></script>\n    <script src="./app.js"#' \
             services/dashboard/dist/index.html

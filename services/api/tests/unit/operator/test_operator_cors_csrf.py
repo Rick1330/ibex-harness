@@ -8,6 +8,11 @@ from app.middleware.cors import build_cors_middleware
 from tests.unit.operator.conftest import create_operator_app, login_with_csrf, operator_settings
 
 
+def _assert_csrf_failed(resp) -> None:
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "csrf_failed"
+
+
 def test_cors_allows_listed_origin(app_client) -> None:
     _, client = app_client
     resp = client.options(
@@ -38,21 +43,19 @@ def test_cors_rejects_disallowed_origin(app_client) -> None:
 def test_csrf_rejects_missing_token_on_cookie_mutation(app_client) -> None:
     _, client = app_client
     login_with_csrf(client)
-    resp = client.post("/v1/operator/events/publish-test", json={"hello": "world"})
-    assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "csrf_failed"
+    _assert_csrf_failed(client.post("/v1/operator/events/publish-test", json={"hello": "world"}))
 
 
 def test_csrf_rejects_mismatched_token(app_client) -> None:
     _, client = app_client
     login_with_csrf(client)
-    resp = client.post(
-        "/v1/operator/events/publish-test",
-        json={"hello": "world"},
-        headers={"X-CSRF-Token": "not-the-cookie-value"},
+    _assert_csrf_failed(
+        client.post(
+            "/v1/operator/events/publish-test",
+            json={"hello": "world"},
+            headers={"X-CSRF-Token": "not-the-cookie-value"},
+        )
     )
-    assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "csrf_failed"
 
 
 def test_csrf_accepts_matching_double_submit(app_client) -> None:
@@ -79,11 +82,8 @@ def test_csrf_misconfigured_without_secret() -> None:
 def test_csrf_required_when_only_refresh_cookie(app_client) -> None:
     _, client = app_client
     login_with_csrf(client)
-    # Drop access cookie; keep refresh — CSRF must still apply.
     client.cookies.pop("ibex_session", None)
-    resp = client.post("/v1/operator/session/refresh")
-    assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "csrf_failed"
+    _assert_csrf_failed(client.post("/v1/operator/session/refresh"))
 
 
 def test_build_cors_middleware_strips_star() -> None:

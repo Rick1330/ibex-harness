@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import hashlib
 import hmac
 import json
@@ -29,7 +28,8 @@ def _b64url_decode(data: str) -> bytes:
     pad = "=" * (-len(data) % 4)
     try:
         return base64.urlsafe_b64decode(data + pad)
-    except (ValueError, binascii.Error) as exc:
+    except ValueError as exc:
+        # binascii.Error is a ValueError subclass.
         raise SessionStubError("bad encoding") from exc
 
 

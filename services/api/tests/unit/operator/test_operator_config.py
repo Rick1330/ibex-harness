@@ -58,3 +58,17 @@ def test_shutdown_timeout_accepts_plain_digits() -> None:
 def test_shutdown_timeout_non_duration_passthrough() -> None:
     s = Settings(shutdown_timeout_seconds=12)
     assert s.shutdown_timeout_seconds == 12
+
+
+def test_cookie_names_must_be_distinct() -> None:
+    with pytest.raises(ValidationError):
+        operator_settings(
+            dashboard_session_cookie_name="same",
+            dashboard_refresh_cookie_name="same",
+            dashboard_csrf_cookie_name="ibex_csrf",
+        )
+
+
+def test_cookie_names_must_be_non_empty() -> None:
+    with pytest.raises(ValidationError):
+        operator_settings(dashboard_session_cookie_name="  ")

@@ -223,6 +223,25 @@ class Settings(BaseSettings):
                 )
         return self
 
+    @model_validator(mode="after")
+    def _cookie_names_distinct(self) -> Settings:
+        names = (
+            self.dashboard_session_cookie_name.strip(),
+            self.dashboard_refresh_cookie_name.strip(),
+            self.dashboard_csrf_cookie_name.strip(),
+        )
+        if any(not n for n in names):
+            raise ValueError("dashboard cookie names must be non-empty")
+        if len(set(names)) != 3:
+            raise ValueError("dashboard session, refresh, and CSRF cookie names must be distinct")
+        if names != (
+            self.dashboard_session_cookie_name,
+            self.dashboard_refresh_cookie_name,
+            self.dashboard_csrf_cookie_name,
+        ):
+            raise ValueError("dashboard cookie names must not include leading/trailing whitespace")
+        return self
+
     def cors_origin_list(self) -> list[str]:
         return [part.strip() for part in self.allowed_origins.split(",") if part.strip()]
 

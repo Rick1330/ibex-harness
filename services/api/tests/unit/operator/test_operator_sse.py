@@ -64,7 +64,7 @@ async def test_hub_queue_full_disconnects_subscriber() -> None:
     assert eid >= 1
     assert full not in hub._subscribers
     # Sentinel closes the stream for reconnect.
-    assert full.get_nowait() is None or True
+    assert full.get_nowait() is None
 
 
 @pytest.mark.asyncio
@@ -81,7 +81,8 @@ async def test_subscribe_exits_on_close() -> None:
         return None
 
     chunk = await asyncio.wait_for(reader(), timeout=2.0)
-    assert chunk is not None and chunk.startswith(b"id:")
+    assert chunk is not None
+    assert chunk.startswith(b"id:")
 
 
 @pytest.mark.asyncio
@@ -267,7 +268,7 @@ async def test_hub_trims_history_and_disconnect_full_sentinel() -> None:
     # Double-full queue exercises get_nowait + put_nowait retry path.
     full: asyncio.Queue = asyncio.Queue(maxsize=1)
     full.put_nowait("x")  # type: ignore[arg-type]
-    await hub._disconnect_subscriber(full)
+    hub._disconnect_subscriber(full)
     assert full.empty() or full.get_nowait() is None
 
 

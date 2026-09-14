@@ -4,7 +4,9 @@ import { describe, it } from "node:test";
 import {
   buildLoginBody,
   isAllowedApiHost,
+  isLoopbackHost,
   parseSSEBlock,
+  pickApiBase,
   resolveApiBase,
   shouldAcceptEventId,
 } from "../public/sse.mjs";
@@ -37,15 +39,22 @@ describe("shouldAcceptEventId", () => {
 });
 
 describe("resolveApiBase", () => {
-  it("allows localhost and product hosts", () => {
+  it("allows loopback HTTP and product HTTPS", () => {
     assert.equal(resolveApiBase("http://localhost:8010/"), "http://localhost:8010");
     assert.equal(resolveApiBase("https://api.ibexharness.com"), "https://api.ibexharness.com");
     assert.equal(isAllowedApiHost("operator.ibexharness.com"), true);
+    assert.equal(isLoopbackHost("127.0.0.1"), true);
   });
 
-  it("rejects non-http schemes and foreign hosts", () => {
+  it("rejects non-http schemes, foreign hosts, and non-loopback HTTP", () => {
     assert.equal(resolveApiBase("javascript:alert(1)"), null);
     assert.equal(resolveApiBase("http://evil.example"), null);
+    assert.equal(resolveApiBase("http://api.ibexharness.com"), null);
     assert.equal(resolveApiBase("http://user:pass@localhost:8010"), null);
+  });
+
+  it("pickApiBase falls back to localhost default", () => {
+    assert.equal(pickApiBase(""), "http://localhost:8010");
+    assert.equal(pickApiBase("https://api.ibexharness.com"), "https://api.ibexharness.com");
   });
 });
