@@ -12,6 +12,34 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.7](https://github.com/Rick1330/ibex-harness/compare/v0.1.6...v0.1.7) (2026-09-14)
+
+
+### Features
+
+* **api:** add FastAPI management-plane skeleton with auth and error envelope (m4.A.1) ([#780](https://github.com/Rick1330/ibex-harness/issues/780)) ([f93cb7a](https://github.com/Rick1330/ibex-harness/commit/f93cb7ad6637a1d9df4d5eec36fcc8bfa39a160f))
+* **api:** agent management API with default provider/model fields (m4.A.3) ([#791](https://github.com/Rick1330/ibex-harness/issues/791)) ([9919931](https://github.com/Rick1330/ibex-harness/commit/9919931eca016cb22fdf1253e5cd29ee870b0163))
+* **api:** org-scoped provider credential management with envelope encryption (m4.A.5) ([#801](https://github.com/Rick1330/ibex-harness/issues/801)) ([93fed0e](https://github.com/Rick1330/ibex-harness/commit/93fed0e605a3da67e23ea66b746cd1cf3d11acae))
+* **api:** organization and user management API with suspension propagation (m4.A.2) ([#785](https://github.com/Rick1330/ibex-harness/issues/785)) ([6028a2f](https://github.com/Rick1330/ibex-harness/commit/6028a2f71fc649c640ccf8ed2a3d2c528748f887))
+* **api:** PAT management API with scoped permissions and gRPC revocation (m4.A.4) ([#797](https://github.com/Rick1330/ibex-harness/issues/797)) ([e2661d2](https://github.com/Rick1330/ibex-harness/commit/e2661d2ffafda08cc300feadbd1209a876de9a4b))
+* **api:** rate limit configuration API with hot-path reload (m4.B.2) ([#808](https://github.com/Rick1330/ibex-harness/issues/808)) ([ad90879](https://github.com/Rick1330/ibex-harness/commit/ad90879619be411d64dfd86a46f86355f6acc256))
+* **proxy,api:** per-org model routing policy (m4.C.2) ([#817](https://github.com/Rick1330/ibex-harness/issues/817)) ([26a071e](https://github.com/Rick1330/ibex-harness/commit/26a071eda60b00519e11d0e61b0cbf4e1c1e1023))
+* **proxy,api:** provider fallback routing (m4.C.4) ([#822](https://github.com/Rick1330/ibex-harness/issues/822)) ([358baf3](https://github.com/Rick1330/ibex-harness/commit/358baf33d136c8c253e5cc10f2ce8afc52dc5ca6))
+* **proxy:** atomic Lua hierarchical rate limiter agent→org→global (m4.B.1) ([#805](https://github.com/Rick1330/ibex-harness/issues/805)) ([cb7f1e1](https://github.com/Rick1330/ibex-harness/commit/cb7f1e14b17942813f084ee39074e4d00f488f0f))
+* **proxy:** rolling error-rate circuit breaker per provider (m4.C.3) ([#820](https://github.com/Rick1330/ibex-harness/issues/820)) ([082d97d](https://github.com/Rick1330/ibex-harness/commit/082d97d3dae81afff259bf30f108d97126cddc13))
+
+
+### Bug Fixes
+
+* **api:** close 4.A.1 verification gaps (envelope, logs, CI) ([#782](https://github.com/Rick1330/ibex-harness/issues/782)) ([f0d922f](https://github.com/Rick1330/ibex-harness/commit/f0d922fe27c0335d01098f469253be733158fde4))
+* **ci:** repair tagged release SBOM upload and docker caller perms ([#776](https://github.com/Rick1330/ibex-harness/issues/776)) ([2a91205](https://github.com/Rick1330/ibex-harness/commit/2a91205d899da115f2d6e9f11bea864938ee8e8d))
+* **ci:** configure release-please signoff and harden DCO workflow env binding
+
+
+### Documentation
+
+* **roadmap:** redesign Phase 4 operator platform milestones (Track P/D/E) ([#831](https://github.com/Rick1330/ibex-harness/issues/831)) ([e00a167](https://github.com/Rick1330/ibex-harness/commit/e00a1678a9e8acbe86e7fc70a51c75465e2d9c71))
+
 ## [0.1.6](https://github.com/Rick1330/ibex-harness/compare/v0.1.5...v0.1.6) (2026-09-09)
 
 

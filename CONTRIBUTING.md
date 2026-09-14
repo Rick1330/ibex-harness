@@ -60,7 +60,7 @@ Signed-off-by: Your Name <your.email@example.com>
 
 Use the same name and email as your Git author. For squash merges, ensure the final commit includes `Signed-off-by` (GitHub preserves it from the PR branch when present on commits).
 
-CI enforces sign-off on pull requests via the `repo-guards` job ([`.github/scripts/check-dco-signoff.sh`](.github/scripts/check-dco-signoff.sh)). Automation commits from `github-actions[bot]` and `dependabot[bot]` are exempt.
+CI enforces sign-off on pull requests via the `repo-guards` job ([`.github/scripts/check-dco-signoff.sh`](.github/scripts/check-dco-signoff.sh)). Automation commits from `github-actions[bot]`, `dependabot[bot]`, and `ibex-harness-benchmark[bot]` are exempt. Release-please commits must include `Signed-off-by` via [`version-release.config.json`](version-release.config.json) `signoff`.
 
 ### DCO FAQ
 
