@@ -38,7 +38,9 @@ web:
   - 'turbo.json'
   - '.github/workflows/ci.yml'
   - '.github/workflows/web-deploy.yml'
+  - '.github/workflows/operator-deploy.yml'
   - '.github/actions/setup-pnpm-web/**'
+  - 'services/dashboard/**'
 proto:
   - 'packages/proto/**'
 docker:

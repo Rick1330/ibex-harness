@@ -1,0 +1,92 @@
+name: Operator Deploy
+
+# Blocked until services/api has a real staging/production Ingress (4.P.5).
+# Manual preview deploys only — do not auto-deploy production with a planned API URL.
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: "Reachable API/SSE origin for the static shell (required until ingress exists)"
+        required: true
+        default: "http://localhost:8010"
+        type: string
+      pages_branch:
+        description: "Cloudflare Pages branch name (use preview, not production main)"
+        required: true
+        default: "preview"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy-operator-pages-preview
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: preview
+    env:
+      NEXT_PUBLIC_API_BASE_URL: ${{ inputs.api_base_url }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-pnpm-web
+
+      - name: Build operator static shell
+        run: pnpm --filter dashboard build
+
+      - name: Inject API base for preview shell
+        run: |
+          printf 'window.IBEX_API_BASE_URL = %s;\n' \
+            "$(node -e "console.log(JSON.stringify(process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8010'))")" \
+            > services/dashboard/dist/config.js
+          sed -i 's#<script src="./app.js"#<script src="./config.js"></script>\n    <script src="./app.js"#' \
+            services/dashboard/dist/index.html
+
+      - name: Ensure Cloudflare Pages project exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm exec wrangler pages project create ibex-harness-operator --production-branch=main 2>/dev/null || true
+
+      - name: Deploy to Cloudflare Pages (preview branch)
+        id: deploy
+        timeout-minutes: 10
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          pnpm exec wrangler pages deploy services/dashboard/dist \
+            --project-name=ibex-harness-operator \
+            --branch="${{ inputs.pages_branch }}" \
+            --commit-dirty=true 2>&1 | tee deploy.log
+          BASE_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pages\.dev' deploy.log | tail -1)
+          if [ -z "$BASE_URL" ]; then
+            echo "Could not parse pages.dev URL from deploy output"
+            exit 1
+          fi
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke static shell
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "${{ steps.deploy.outputs.base_url }}/")
+          test "$code" = "200"
+          curl -sS "${{ steps.deploy.outputs.base_url }}/" | grep -q "IBEX Operator"
