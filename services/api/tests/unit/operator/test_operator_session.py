@@ -89,28 +89,37 @@ def test_session_stub_rejects_malformed_token() -> None:
         verify_token_opts("a.b.c", opts)
 
 
-def test_session_stub_rejects_bad_signature_issuer_and_kind() -> None:
+def test_session_stub_rejects_bad_signature() -> None:
     tok = _sample_access_token()
+    opts = _access_verify("o" * 32)
     with pytest.raises(SessionStubError):
-        verify_token_opts(tok, _access_verify("o" * 32))
+        verify_token_opts(tok, opts)
+
+
+def test_session_stub_rejects_wrong_issuer() -> None:
+    tok = _sample_access_token()
+    opts = _access_verify("s" * 32, issuer="wrong")
     with pytest.raises(SessionStubError):
-        verify_token_opts(tok, _access_verify("s" * 32, issuer="wrong"))
+        verify_token_opts(tok, opts)
+
+
+def test_session_stub_rejects_wrong_kind() -> None:
+    tok = _sample_access_token()
+    opts = TokenVerifyOpts(
+        secret="s" * 32,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_REFRESH,
+    )
     with pytest.raises(SessionStubError):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret="s" * 32,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_REFRESH,
-            ),
-        )
+        verify_token_opts(tok, opts)
 
 
 def test_session_stub_rejects_expired_and_bad_csrf() -> None:
     expired = _sample_access_token(ttl_seconds=-10)
+    opts = _access_verify("s" * 32)
     with pytest.raises(SessionStubError):
-        verify_token_opts(expired, _access_verify("s" * 32))
+        verify_token_opts(expired, opts)
     assert not verify_csrf_token(secret="c" * 32, cookie_value="noperiod", header_value="noperiod")
 
 
@@ -256,49 +265,49 @@ def test_me_bearer_validator_missing(app_client) -> None:
     assert resp.status_code == 503
 
 
-def test_session_stub_bad_payload_and_legacy_kind() -> None:
+def _signed_stub_token(payload_bytes: bytes) -> str:
     import base64
     import hashlib
     import hmac
     import json
-    import time
 
     def _b64(data: bytes) -> str:
         return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
-    org = uuid4()
     header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
-    # Non-object JSON payload
-    bad_payload = _b64(b"[1]")
-    body = f"{header}.{bad_payload}"
+    body = f"{header}.{_b64(payload_bytes)}"
     sig = _b64(hmac.new(HMAC_SECRET.encode(), body.encode(), hashlib.sha256).digest())
-    with pytest.raises(SessionStubError, match="bad payload"):
-        verify_token_opts(
-            f"{body}.{sig}",
-            TokenVerifyOpts(
-                secret=HMAC_SECRET,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-            ),
-        )
+    return f"{body}.{sig}"
 
-    # Invalid JSON payload
-    junk = _b64(b"{not-json")
-    body2 = f"{header}.{junk}"
-    sig2 = _b64(hmac.new(HMAC_SECRET.encode(), body2.encode(), hashlib.sha256).digest())
-    with pytest.raises(SessionStubError, match="bad payload"):
-        verify_token_opts(
-            f"{body2}.{sig2}",
-            TokenVerifyOpts(
-                secret=HMAC_SECRET,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-            ),
-        )
 
-    # Legacy token_kind claim still accepted
+def _access_verify_hmac() -> TokenVerifyOpts:
+    return TokenVerifyOpts(
+        secret=HMAC_SECRET,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+    )
+
+
+def test_session_stub_rejects_non_object_payload() -> None:
+    tok = _signed_stub_token(b"[1]")
+    opts = _access_verify_hmac()
+    with pytest.raises(SessionStubError, match="bad payload"):
+        verify_token_opts(tok, opts)
+
+
+def test_session_stub_rejects_invalid_json_payload() -> None:
+    tok = _signed_stub_token(b"{not-json")
+    opts = _access_verify_hmac()
+    with pytest.raises(SessionStubError, match="bad payload"):
+        verify_token_opts(tok, opts)
+
+
+def test_session_stub_accepts_legacy_token_kind() -> None:
+    import json
+    import time
+
+    org = uuid4()
     now = int(time.time())
     payload = {
         "sub": "u",
@@ -311,16 +320,5 @@ def test_session_stub_bad_payload_and_legacy_kind() -> None:
         "exp": now + 60,
         "jti": "x",
     }
-    payload_b64 = _b64(json.dumps(payload).encode())
-    body3 = f"{header}.{payload_b64}"
-    sig3 = _b64(hmac.new(HMAC_SECRET.encode(), body3.encode(), hashlib.sha256).digest())
-    claims = verify_token_opts(
-            f"{body3}.{sig3}",
-            TokenVerifyOpts(
-                secret=HMAC_SECRET,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-            ),
-        )
+    claims = verify_token_opts(_signed_stub_token(json.dumps(payload).encode()), _access_verify_hmac())
     assert claims.org_id == org

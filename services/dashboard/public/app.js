@@ -36,11 +36,15 @@ const apiFetch = apiConfigured ? createApiFetch(buildEndpointUrls(API_BASE)) : n
 
 els.apiBase.value = API_BASE || injected || "(not configured)";
 els.apiBase.readOnly = true;
-els.apiBase.title = apiConfigured
-  ? injected
-    ? "Set by deploy config (IBEX_API_BASE_URL)"
-    : "Local default (http://localhost:8010)"
-  : "Injected API origin missing or not allowlisted";
+let apiBaseTitle;
+if (!apiConfigured) {
+  apiBaseTitle = "Injected API origin missing or not allowlisted";
+} else if (injected) {
+  apiBaseTitle = "Set by deploy config (IBEX_API_BASE_URL)";
+} else {
+  apiBaseTitle = "Local default (http://localhost:8010)";
+}
+els.apiBase.title = apiBaseTitle;
 
 let csrfToken = "";
 
