@@ -56,9 +56,17 @@ function setState(name, detail) {
   els.detail.textContent = detail || "";
 }
 
+function resolveEndpoint(name) {
+  if (name === "login") return ENDPOINTS.login;
+  if (name === "me") return ENDPOINTS.me;
+  if (name === "logout") return ENDPOINTS.logout;
+  if (name === "stream") return ENDPOINTS.stream;
+  return null;
+}
+
 function apiFetch(name, init = {}) {
-  const url = ENDPOINTS[name];
-  if (ALLOWED_URLS.includes(url)) {
+  const url = resolveEndpoint(name);
+  if (url != null && ALLOWED_URLS.includes(url)) {
     return fetch(url, withCredentialedPolicy(init));
   }
   throw new Error("API endpoint is not on the allowlist");
