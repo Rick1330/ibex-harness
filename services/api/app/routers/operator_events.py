@@ -81,21 +81,30 @@ def _observe_write(elapsed: float, settings: Settings) -> None:
         SSE_SLOW_WRITES.inc()
 
 
-async def _event_stream(ctx: _StreamCtx) -> AsyncIterator[bytes]:
+async def _register_stream_task(ctx: _StreamCtx) -> None:
     task = asyncio.current_task()
     if task is not None:
         await ctx.drain.register_sse(task)
+
+
+async def _hub_chunks(ctx: _StreamCtx) -> AsyncIterator[bytes]:
+    async for chunk in ctx.hub.subscribe(ctx.last_id):
+        if await ctx.request.is_disconnected():
+            return
+        yield chunk
+
+
+async def _event_stream(ctx: _StreamCtx) -> AsyncIterator[bytes]:
+    await _register_stream_task(ctx)
     try:
-        async for chunk in ctx.hub.subscribe(ctx.last_id):
-            if await ctx.request.is_disconnected():
-                break
+        async for chunk in _hub_chunks(ctx):
             t0 = time.perf_counter()
             try:
                 async with asyncio.timeout(ctx.settings.sse_write_deadline_seconds):
                     yield chunk
             except TimeoutError:
                 logger.warning("operator sse write deadline exceeded; closing stream")
-                break
+                return
             _observe_write(time.perf_counter() - t0, ctx.settings)
     except asyncio.CancelledError:
         raise

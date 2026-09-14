@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
 from starlette.applications import Starlette
 
 from app.middleware.cors import build_cors_middleware
 from tests.unit.operator.conftest import create_operator_app, login_with_csrf, operator_settings
+
+PUBLISH = "/v1/operator/events/publish-test"
 
 
 def _assert_csrf_failed(resp) -> None:
@@ -13,15 +16,21 @@ def _assert_csrf_failed(resp) -> None:
     assert resp.json()["error"]["code"] == "csrf_failed"
 
 
+def _preflight(client, origin: str):
+    return client.options(
+        "/health",
+        headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+    )
+
+
+def _publish(client, *, csrf: str | None = None, payload: dict | None = None):
+    headers = {"X-CSRF-Token": csrf} if csrf is not None else {}
+    return client.post(PUBLISH, json=payload or {"hello": "world"}, headers=headers)
+
+
 def test_cors_allows_listed_origin(app_client) -> None:
     _, client = app_client
-    resp = client.options(
-        "/health",
-        headers={
-            "Origin": "http://localhost:3100",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
+    resp = _preflight(client, "http://localhost:3100")
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:3100"
     assert resp.headers.get("access-control-allow-credentials") == "true"
@@ -29,43 +38,26 @@ def test_cors_allows_listed_origin(app_client) -> None:
 
 def test_cors_rejects_disallowed_origin(app_client) -> None:
     _, client = app_client
-    resp = client.options(
-        "/health",
-        headers={
-            "Origin": "https://evil.example",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    assert resp.headers.get("access-control-allow-origin") != "https://evil.example"
-    assert resp.headers.get("access-control-allow-origin") in (None, "null", "")
+    allowed = _preflight(client, "https://evil.example").headers.get("access-control-allow-origin")
+    assert allowed != "https://evil.example"
+    assert allowed in (None, "null", "")
 
 
-def test_csrf_rejects_missing_token_on_cookie_mutation(app_client) -> None:
+@pytest.mark.parametrize(
+    "csrf",
+    [None, "not-the-cookie-value"],
+    ids=["missing", "mismatch"],
+)
+def test_csrf_rejects_bad_token(app_client, csrf: str | None) -> None:
     _, client = app_client
     login_with_csrf(client)
-    _assert_csrf_failed(client.post("/v1/operator/events/publish-test", json={"hello": "world"}))
-
-
-def test_csrf_rejects_mismatched_token(app_client) -> None:
-    _, client = app_client
-    login_with_csrf(client)
-    _assert_csrf_failed(
-        client.post(
-            "/v1/operator/events/publish-test",
-            json={"hello": "world"},
-            headers={"X-CSRF-Token": "not-the-cookie-value"},
-        )
-    )
+    _assert_csrf_failed(_publish(client, csrf=csrf))
 
 
 def test_csrf_accepts_matching_double_submit(app_client) -> None:
     _, client = app_client
     csrf = login_with_csrf(client)
-    resp = client.post(
-        "/v1/operator/events/publish-test",
-        json={"hello": "world"},
-        headers={"X-CSRF-Token": csrf},
-    )
+    resp = _publish(client, csrf=csrf)
     assert resp.status_code == 200
     assert resp.json()["event_id"] >= 1
 
@@ -74,7 +66,7 @@ def test_csrf_misconfigured_without_secret() -> None:
     settings = operator_settings(dashboard_csrf_secret=None)
     with create_operator_app(settings=settings) as (_, client):
         login_with_csrf(client)
-        resp = client.post("/v1/operator/events/publish-test", json={"x": 1})
+        resp = client.post(PUBLISH, json={"x": 1})
         assert resp.status_code == 503
         assert resp.json()["error"]["code"] == "csrf_misconfigured"
 

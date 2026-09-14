@@ -4,13 +4,10 @@
  * API origin is inject/default only — never read from the DOM for fetch (Codacy SSRF).
  */
 
-import {
-  ALLOWED_LOCAL_BASES,
-  buildLoginBody,
-  parseSSEBlock,
-  pickApiBase,
-  shouldAcceptEventId,
-} from "./sse.mjs";
+import { ALLOWED_LOCAL_BASES, pickApiBase } from "./api_base.mjs";
+import { withCredentialedPolicy } from "./http.mjs";
+import { buildLoginBody, parseSSEBlock, shouldAcceptEventId } from "./sse.mjs";
+import { classifyStreamStatus, reconnectDelayMs } from "./stream.mjs";
 
 const STATES = new Set([
   "unknown",
@@ -72,6 +69,10 @@ function apiUrl(path) {
   return `${API_BASE}${path}`;
 }
 
+function apiFetch(path, init = {}) {
+  return fetch(apiUrl(path), withCredentialedPolicy(init));
+}
+
 function appendEvent(line) {
   const li = document.createElement("li");
   li.textContent = line;
@@ -88,9 +89,8 @@ async function login() {
     return;
   }
   setState("reconnecting", "Exchanging PAT for session cookies…");
-  const resp = await fetch(apiUrl(PATHS.login), {
+  const resp = await apiFetch(PATHS.login, {
     method: "POST",
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: buildLoginBody(pat),
   });
@@ -105,7 +105,7 @@ async function login() {
 }
 
 async function me() {
-  const resp = await fetch(apiUrl(PATHS.me), { credentials: "include" });
+  const resp = await apiFetch(PATHS.me);
   if (resp.status === 401 || resp.status === 403) {
     setState("unauthenticated", `/me rejected: HTTP ${resp.status}`);
     return;
@@ -152,25 +152,6 @@ function sseHeaders() {
   return headers;
 }
 
-function classifyStreamStatus(resp) {
-  if (resp.status === 503 && resp.headers.get("X-IBEX-Drain") === "1") {
-    return "drained";
-  }
-  if (resp.status === 401 || resp.status === 403) {
-    return "auth";
-  }
-  if (resp.status === 429) {
-    return "retry";
-  }
-  if (resp.status >= 400 && resp.status < 500) {
-    return "stop";
-  }
-  if (!resp.ok || !resp.body) {
-    return "retry";
-  }
-  return "ok";
-}
-
 async function handleStreamResponse(resp, generation) {
   if (generation !== streamGeneration) return "stale";
   const kind = classifyStreamStatus(resp);
@@ -212,8 +193,7 @@ async function openStream(generation, signal) {
     setState("historical", `Resuming after id ${lastEventId}`);
   }
   try {
-    const resp = await fetch(apiUrl(PATHS.stream), {
-      credentials: "include",
+    const resp = await apiFetch(PATHS.stream, {
       headers: sseHeaders(),
       signal,
     });
@@ -261,22 +241,10 @@ function handleSSEBlock(block, generation) {
   setState("live", `last-event-id=${lastEventId}`);
 }
 
-function reconnectDelayMs(retryAfterHeader) {
-  if (retryAfterHeader) {
-    const secs = Number(retryAfterHeader);
-    if (Number.isFinite(secs) && secs >= 0) {
-      return Math.min(secs * 1000, 60_000);
-    }
-  }
-  const base = Math.min(1000 * 2 ** reconnectAttempt, 30_000);
-  const jitter = Math.floor(Math.random() * 250);
-  return base + jitter;
-}
-
 function scheduleReconnect(generation, retryAfterHeader) {
   if (deliberateClose || generation !== streamGeneration) return;
   if (reconnectTimer) return;
-  const delay = reconnectDelayMs(retryAfterHeader);
+  const delay = reconnectDelayMs(reconnectAttempt, retryAfterHeader);
   reconnectAttempt += 1;
   setState("reconnecting", `Reconnect in ${Math.round(delay / 1000)}s…`);
   reconnectTimer = setTimeout(() => {
@@ -290,9 +258,8 @@ async function logout() {
   closeSSE();
   const headers = {};
   if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  const resp = await fetch(apiUrl(PATHS.logout), {
+  const resp = await apiFetch(PATHS.logout, {
     method: "POST",
-    credentials: "include",
     headers,
   });
   if (!resp.ok) {

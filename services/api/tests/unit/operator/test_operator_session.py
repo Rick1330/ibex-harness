@@ -13,7 +13,8 @@ from app.session_stub import (
     SESSION_KIND_ACCESS,
     SESSION_KIND_REFRESH,
     SessionStubError,
-    issue_token,
+    TokenIssueOpts,
+    issue_token_opts,
     mint_csrf_token,
     verify_csrf_token,
     verify_token,
@@ -28,15 +29,17 @@ from tests.unit.operator.conftest import (
 
 def test_session_stub_roundtrip() -> None:
     org = uuid4()
-    tok = issue_token(
-        secret=HMAC_SECRET,
-        issuer="ibex-harness",
-        audience="ibex-dashboard",
-        org_id=org,
-        permissions=7,
-        subject="u",
-        session_kind=SESSION_KIND_ACCESS,
-        ttl_seconds=60,
+    tok = issue_token_opts(
+        TokenIssueOpts(
+            secret=HMAC_SECRET,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            org_id=org,
+            permissions=7,
+            subject="u",
+            session_kind=SESSION_KIND_ACCESS,
+            ttl_seconds=60,
+        )
     )
     claims = verify_token(
         tok,
@@ -57,15 +60,17 @@ def test_session_stub_error_paths() -> None:
     with pytest.raises(SessionStubError):
         verify_token("a.b.c", secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     org = uuid4()
-    tok = issue_token(
-        secret="s" * 32,
-        issuer="ibex-harness",
-        audience="ibex-dashboard",
-        org_id=org,
-        permissions=1,
-        subject="u",
-        session_kind=SESSION_KIND_ACCESS,
-        ttl_seconds=60,
+    tok = issue_token_opts(
+        TokenIssueOpts(
+            secret="s" * 32,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            org_id=org,
+            permissions=1,
+            subject="u",
+            session_kind=SESSION_KIND_ACCESS,
+            ttl_seconds=60,
+        )
     )
     with pytest.raises(SessionStubError):
         verify_token(
@@ -83,15 +88,17 @@ def test_session_stub_error_paths() -> None:
             audience="ibex-dashboard",
             expect_kind=SESSION_KIND_REFRESH,
         )
-    expired = issue_token(
-        secret="s" * 32,
-        issuer="ibex-harness",
-        audience="ibex-dashboard",
-        org_id=org,
-        permissions=1,
-        subject="u",
-        session_kind=SESSION_KIND_ACCESS,
-        ttl_seconds=-10,
+    expired = issue_token_opts(
+        TokenIssueOpts(
+            secret="s" * 32,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            org_id=org,
+            permissions=1,
+            subject="u",
+            session_kind=SESSION_KIND_ACCESS,
+            ttl_seconds=-10,
+        )
     )
     with pytest.raises(SessionStubError):
         verify_token(

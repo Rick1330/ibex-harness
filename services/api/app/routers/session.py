@@ -92,21 +92,16 @@ def _apply_cookie(response: Response, params: CookieParams) -> None:
     )
 
 
-def _set_http_only_cookie(
-    response: Response, *, name: str, value: str, settings: Settings, max_age: int
-) -> None:
+def _http_only_params(name: str, value: str, max_age: int, settings: Settings) -> CookieParams:
     secure, samesite = _cookie_security(settings)
-    _apply_cookie(
-        response,
-        CookieParams(
-            name=name,
-            value=value,
-            max_age=max_age,
-            httponly=True,
-            secure=secure,
-            samesite=samesite,
-            domain=settings.cookie_domain,
-        ),
+    return CookieParams(
+        name=name,
+        value=value,
+        max_age=max_age,
+        httponly=True,
+        secure=secure,
+        samesite=samesite,
+        domain=settings.cookie_domain,
     )
 
 
@@ -185,20 +180,24 @@ def _apply_session_cookies(
     access: str,
     refresh: str | None,
 ) -> None:
-    _set_http_only_cookie(
+    _apply_cookie(
         response,
-        name=settings.dashboard_session_cookie_name,
-        value=access,
-        settings=settings,
-        max_age=settings.jwt_access_token_ttl_seconds,
+        _http_only_params(
+            settings.dashboard_session_cookie_name,
+            access,
+            settings.jwt_access_token_ttl_seconds,
+            settings,
+        ),
     )
     if refresh is not None:
-        _set_http_only_cookie(
+        _apply_cookie(
             response,
-            name=settings.dashboard_refresh_cookie_name,
-            value=refresh,
-            settings=settings,
-            max_age=settings.jwt_refresh_token_ttl_seconds,
+            _http_only_params(
+                settings.dashboard_refresh_cookie_name,
+                refresh,
+                settings.jwt_refresh_token_ttl_seconds,
+                settings,
+            ),
         )
 
 

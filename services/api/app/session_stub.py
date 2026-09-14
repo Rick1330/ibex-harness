@@ -64,31 +64,6 @@ class TokenVerifyOpts:
     expect_kind: str
 
 
-def issue_token(
-    *,
-    secret: str,
-    issuer: str,
-    audience: str,
-    org_id: UUID,
-    permissions: int,
-    subject: str,
-    session_kind: str,
-    ttl_seconds: int,
-) -> str:
-    return issue_token_opts(
-        TokenIssueOpts(
-            secret=secret,
-            issuer=issuer,
-            audience=audience,
-            org_id=org_id,
-            permissions=permissions,
-            subject=subject,
-            session_kind=session_kind,
-            ttl_seconds=ttl_seconds,
-        )
-    )
-
-
 def issue_token_opts(opts: TokenIssueOpts) -> str:
     now = int(time.time())
     header = {"alg": "HS256", "typ": "JWT"}

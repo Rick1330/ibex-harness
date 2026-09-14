@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  buildLoginBody,
   isAllowedApiHost,
   isLoopbackHost,
-  parseSSEBlock,
   pickApiBase,
   resolveApiBase,
-  shouldAcceptEventId,
-} from "../public/sse.mjs";
+} from "../public/api_base.mjs";
+import { buildLoginBody, parseSSEBlock, shouldAcceptEventId } from "../public/sse.mjs";
+import {
+  classifyStreamStatus,
+  isAuthFailure,
+  isPermanentClientError,
+  reconnectDelayMs,
+} from "../public/stream.mjs";
 
 describe("buildLoginBody", () => {
   it("trims PAT and JSON-encodes", () => {
@@ -56,5 +60,35 @@ describe("resolveApiBase", () => {
   it("pickApiBase falls back to localhost default", () => {
     assert.equal(pickApiBase(""), "http://localhost:8010");
     assert.equal(pickApiBase("https://api.ibexharness.com"), "https://api.ibexharness.com");
+  });
+});
+
+describe("classifyStreamStatus", () => {
+  function fakeResp(status, headers = {}) {
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      body: {},
+      headers: { get: (k) => headers[k] ?? null },
+    };
+  }
+
+  it("classifies drain, auth, retry, and permanent 4xx", () => {
+    assert.equal(classifyStreamStatus(fakeResp(503, { "X-IBEX-Drain": "1" })), "drained");
+    assert.equal(classifyStreamStatus(fakeResp(401)), "auth");
+    assert.equal(classifyStreamStatus(fakeResp(429)), "retry");
+    assert.equal(classifyStreamStatus(fakeResp(404)), "stop");
+    assert.equal(classifyStreamStatus(fakeResp(200)), "ok");
+    assert.equal(isAuthFailure(403), true);
+    assert.equal(isPermanentClientError(400), true);
+  });
+});
+
+describe("reconnectDelayMs", () => {
+  it("honors Retry-After and caps exponential backoff", () => {
+    assert.equal(reconnectDelayMs(0, "5"), 5000);
+    const delay = reconnectDelayMs(0, null);
+    assert.ok(delay >= 1000 && delay < 1250);
+    assert.ok(reconnectDelayMs(20, null) <= 30_250);
   });
 });
