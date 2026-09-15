@@ -231,7 +231,7 @@ type memoryTOTPAttempts struct {
 }
 
 type totpAttemptEntry struct {
-	failures int
+	failures    int
 	lockedUntil time.Time
 }
 

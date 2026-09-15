@@ -19,6 +19,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -299,6 +300,9 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		Limiter:            limiter,
 		Health:             &healthcheck.Server{CriticalCheckers: healthCheckers},
 		ProviderRegistry:   providerReg,
+		// Integration fixtures are not testing deny-by-default; production NewRouter
+		// still DenyAlls when ModelRouter is nil.
+		ModelRouter:        modelpolicy.PassthroughRegistry{Base: providerReg},
 		ContextClient:      opts.srvOpts.contextClient,
 		CredentialResolver: credResolver,
 	})
