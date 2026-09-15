@@ -26,6 +26,17 @@ fullTitle: "Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance"
   Permission constants alone are not sufficient. Deny-by-default policy, step-up for high-impact actions, two-tenant negative matrices, and fail-closed model-policy behavior must be evidenced.
 </Callout>
 
+<Callout type="warning" title="Planning baseline (sketch deviations)">
+  Locked for G1 implementation vs earlier roadmap sketches:
+  - Unmatched model policies **deny by default** (breaking vs earlier allow-on-miss sketches).
+  - `DenyAllRegistry` replaces Passthrough when policy store is unavailable; escape hatch `IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH` only.
+  - Step-up is **bespoke TOTP in Auth**, not OIDC/ACR.
+  - Dual-approval is **ledger hooks only** (no UI / no preview issuer yet).
+  - Org switching is **deferred**.
+  - Operator action ledger is schema + deny-without-preview; full preview/approval APIs later.
+  - Session verify is **RS256-first dual-verify** with deprecated HS256 fallback logged as `provisional_hs256_verify=1`.
+</Callout>
+
 ## Why this milestone exists
 
 A valid admin token is not sufficient authorization for raw evidence, deletion, secrets, or replay (F4-002, F4-006). Fail-open model policy and lossy invalidation (F4-015, F4-016) and secret/SSRF gaps (F4-017, F4-018) make tenant controls unsafe before any UI.
