@@ -63,69 +63,76 @@ func mustNopTotpService(t *testing.T) *service.TotpService {
 	return svc
 }
 
-func TestUnit_AttachRedisJTIStore_RequiresRedisWhenIssuerPresent(t *testing.T) {
-	t.Parallel()
-	err := attachRedisJTIStore(mustTestIssuer(t), nil)
-	if err == nil {
-		t.Fatal("expected error when JWT issuer is present and redis is nil")
-	}
-	if !strings.Contains(err.Error(), "REDIS_URL is required when JWT_PRIVATE_KEY_PEM enables session issuance") {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestUnit_AttachRedisJTIStore_NilIssuerAllowsNilRedis(t *testing.T) {
-	t.Parallel()
-	if err := attachRedisJTIStore(nil, nil); err != nil {
-		t.Fatalf("nil issuer must allow nil redis (no session issuance): %v", err)
-	}
-}
-
-func TestUnit_AttachRedisJTIStore_AttachesWhenRedisPresent(t *testing.T) {
-	t.Parallel()
+func mustMiniRedis(t *testing.T) redis.UniversalClient {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	if err := attachRedisJTIStore(mustTestIssuer(t), rdb); err != nil {
-		t.Fatalf("attach with redis: %v", err)
-	}
+	return rdb
 }
 
-func TestUnit_AttachRedisTOTPAttempts_RequiresRedisWhenEnabled(t *testing.T) {
-	t.Parallel()
-	cfg := config.Config{TOTPEnabled: true}
-	err := attachRedisTOTPAttempts(cfg, mustNopTotpService(t), nil)
+func assertErrContains(t *testing.T, err error, needle string) {
+	t.Helper()
 	if err == nil {
-		t.Fatal("expected error when TOTP enabled and redis is nil")
+		t.Fatalf("expected error containing %q", needle)
 	}
-	if !strings.Contains(err.Error(), "REDIS_URL is required when IBEX_AUTH_TOTP_ENABLED=true") {
-		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestUnit_AttachRedisTOTPAttempts_DisabledAllowsNilRedis(t *testing.T) {
-	t.Parallel()
-	cfg := config.Config{TOTPEnabled: false}
-	if err := attachRedisTOTPAttempts(cfg, mustNopTotpService(t), nil); err != nil {
-		t.Fatalf("TOTP disabled must allow nil redis: %v", err)
+	if !strings.Contains(err.Error(), needle) {
+		t.Fatalf("err=%v want substring %q", err, needle)
 	}
 }
 
-func TestUnit_AttachRedisTOTPAttempts_NilServiceAllowsNilRedis(t *testing.T) {
+func TestUnit_AttachRedisJTIStore(t *testing.T) {
 	t.Parallel()
-	cfg := config.Config{TOTPEnabled: true}
-	if err := attachRedisTOTPAttempts(cfg, nil, nil); err != nil {
-		t.Fatalf("nil totp service short-circuits: %v", err)
-	}
+	const needRedis = "REDIS_URL is required when JWT_PRIVATE_KEY_PEM enables session issuance"
+
+	t.Run("requires_redis_when_issuer_present", func(t *testing.T) {
+		t.Parallel()
+		assertErrContains(t, attachRedisJTIStore(mustTestIssuer(t), nil), needRedis)
+	})
+	t.Run("nil_issuer_allows_nil_redis", func(t *testing.T) {
+		t.Parallel()
+		if err := attachRedisJTIStore(nil, nil); err != nil {
+			t.Fatalf("nil issuer must allow nil redis: %v", err)
+		}
+	})
+	t.Run("attaches_when_redis_present", func(t *testing.T) {
+		t.Parallel()
+		if err := attachRedisJTIStore(mustTestIssuer(t), mustMiniRedis(t)); err != nil {
+			t.Fatalf("attach with redis: %v", err)
+		}
+	})
 }
 
-func TestUnit_AttachRedisTOTPAttempts_AttachesWhenRedisPresent(t *testing.T) {
+func TestUnit_AttachRedisTOTPAttempts(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	cfg := config.Config{TOTPEnabled: true}
-	if err := attachRedisTOTPAttempts(cfg, mustNopTotpService(t), rdb); err != nil {
-		t.Fatalf("attach with redis: %v", err)
-	}
+	const needRedis = "REDIS_URL is required when IBEX_AUTH_TOTP_ENABLED=true"
+
+	t.Run("requires_redis_when_enabled", func(t *testing.T) {
+		t.Parallel()
+		err := attachRedisTOTPAttempts(config.Config{TOTPEnabled: true}, mustNopTotpService(t), nil)
+		assertErrContains(t, err, needRedis)
+	})
+	t.Run("disabled_allows_nil_redis", func(t *testing.T) {
+		t.Parallel()
+		err := attachRedisTOTPAttempts(config.Config{TOTPEnabled: false}, mustNopTotpService(t), nil)
+		if err != nil {
+			t.Fatalf("TOTP disabled must allow nil redis: %v", err)
+		}
+	})
+	t.Run("nil_service_allows_nil_redis", func(t *testing.T) {
+		t.Parallel()
+		err := attachRedisTOTPAttempts(config.Config{TOTPEnabled: true}, nil, nil)
+		if err != nil {
+			t.Fatalf("nil totp service short-circuits: %v", err)
+		}
+	})
+	t.Run("attaches_when_redis_present", func(t *testing.T) {
+		t.Parallel()
+		err := attachRedisTOTPAttempts(
+			config.Config{TOTPEnabled: true}, mustNopTotpService(t), mustMiniRedis(t),
+		)
+		if err != nil {
+			t.Fatalf("attach with redis: %v", err)
+		}
+	})
 }

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, SERVICE_DEGRADED
@@ -54,6 +54,50 @@ def _request_with_settings(settings: Settings, *, headers: list[tuple[bytes, byt
     return Request(scope)
 
 
+def _step_up_token(
+    *,
+    settings: Settings,
+    org_id: UUID,
+    subject: str,
+    ttl: int = 300,
+    permissions: int = 0,
+) -> str:
+    return issue_token_opts(
+        TokenIssueOpts(
+            secret=settings.jwt_hmac_secret or "h" * 32,
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            org_id=org_id,
+            permissions=permissions,
+            subject=subject,
+            session_kind=SESSION_KIND_STEP_UP,
+            ttl_seconds=ttl,
+        )
+    )
+
+
+def _step_up_request(
+    settings: Settings,
+    token: str,
+    *,
+    session_org: UUID | None | object = ...,
+    session_sub: str | None | object = ...,
+) -> Request:
+    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
+    if session_org is not ...:
+        req.state.ibex_session_org_id = session_org
+    if session_sub is not ...:
+        req.state.ibex_session_sub = session_sub
+    return req
+
+
+def _assert_step_up_denied(req: Request) -> None:
+    with pytest.raises(ApiError) as exc:
+        require_step_up_header(req)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert getattr(req.state, "ibex_step_up_ok", False) is not True
+
+
 @pytest.mark.parametrize(
     ("settings_kw", "want_code"),
     [
@@ -66,7 +110,6 @@ def test_assert_operator_permission_denies(settings_kw: dict, want_code: str | N
     settings = _settings(**settings_kw)
     step_up_ok = want_code is not None
     if want_code is None:
-        # requires step-up when step_up_ok is False
         with pytest.raises(ApiError) as exc:
             assert_operator_permission(
                 settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ, step_up_ok=False
@@ -124,83 +167,39 @@ def test_step_up_header_missing_sets_false() -> None:
     assert req.state.ibex_step_up_ok is False
 
 
-def _step_up_token(*, settings: Settings, org_id, subject: str, ttl: int = 300) -> str:
-    return issue_token_opts(
-        TokenIssueOpts(
-            secret=settings.jwt_hmac_secret or "h" * 32,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            org_id=org_id,
-            permissions=0,
-            subject=subject,
-            session_kind=SESSION_KIND_STEP_UP,
-            ttl_seconds=ttl,
-        )
-    )
-
-
 def test_step_up_header_valid_sets_true() -> None:
     settings = _settings()
     org = uuid4()
-    token = issue_token_opts(
-        TokenIssueOpts(
-            secret=settings.jwt_hmac_secret or "h" * 32,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            org_id=org,
-            permissions=SECRET_USE,
-            subject="user-1",
-            session_kind=SESSION_KIND_STEP_UP,
-            ttl_seconds=300,
-        )
+    token = _step_up_token(
+        settings=settings, org_id=org, subject="user-1", permissions=SECRET_USE
     )
-    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    req.state.ibex_session_org_id = org
-    req.state.ibex_session_sub = "user-1"
+    req = _step_up_request(settings, token, session_org=org, session_sub="user-1")
     require_step_up_header(req)
     assert req.state.ibex_step_up_ok is True
 
 
-def test_step_up_org_mismatch_denies() -> None:
-    settings = _settings()
-    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
-    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    req.state.ibex_session_org_id = uuid4()
-    req.state.ibex_session_sub = "user-1"
-    with pytest.raises(ApiError) as exc:
-        require_step_up_header(req)
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-
-
-def test_step_up_subject_mismatch_denies() -> None:
+@pytest.mark.parametrize(
+    "case",
+    [
+        "org_mismatch",
+        "subject_mismatch",
+        "expired",
+        "both_attrs_unset",
+    ],
+)
+def test_step_up_header_denies(case: str) -> None:
     settings = _settings()
     org = uuid4()
-    token = _step_up_token(settings=settings, org_id=org, subject="user-1")
-    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    req.state.ibex_session_org_id = org
-    req.state.ibex_session_sub = "other-user"
-    with pytest.raises(ApiError) as exc:
-        require_step_up_header(req)
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-
-
-def test_step_up_header_expired_denies() -> None:
-    settings = _settings()
-    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1", ttl=-10)
-    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    with pytest.raises(ApiError) as exc:
-        require_step_up_header(req)
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-
-
-def test_step_up_both_session_attrs_unset_denies() -> None:
-    """Missing session binding is fail-closed — not a silent skip of org/sub checks."""
-    settings = _settings()
-    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
-    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    req.state.ibex_session_org_id = None
-    req.state.ibex_session_sub = None
-    with pytest.raises(ApiError) as exc:
-        require_step_up_header(req)
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-    assert getattr(req.state, "ibex_step_up_ok", False) is not True
+    if case == "org_mismatch":
+        token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
+        req = _step_up_request(settings, token, session_org=uuid4(), session_sub="user-1")
+    elif case == "subject_mismatch":
+        token = _step_up_token(settings=settings, org_id=org, subject="user-1")
+        req = _step_up_request(settings, token, session_org=org, session_sub="other-user")
+    elif case == "expired":
+        token = _step_up_token(settings=settings, org_id=org, subject="user-1", ttl=-10)
+        req = _step_up_request(settings, token)
+    else:
+        token = _step_up_token(settings=settings, org_id=org, subject="user-1")
+        req = _step_up_request(settings, token, session_org=None, session_sub=None)
+    _assert_step_up_denied(req)
