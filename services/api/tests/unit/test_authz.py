@@ -61,3 +61,21 @@ def test_require_roles_ok() -> None:
     dep = require_roles(frozenset({"admin"}), required_permission=USER_MANAGE)
     token = ValidateResult(org_id=uuid4(), permissions=ADMIN, user_id=str(uuid4()))
     assert dep(token=token, role="admin") is token
+
+
+def test_require_roles_role_gate() -> None:
+    dep = require_roles(frozenset({"admin"}), required_permission=USER_MANAGE)
+    token = ValidateResult(org_id=uuid4(), permissions=ADMIN, user_id=str(uuid4()))
+    with pytest.raises(ApiError) as exc:
+        dep(token=token, role="member")
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+def test_assert_path_org_mismatch() -> None:
+    from app.authz import assert_path_org
+
+    org = uuid4()
+    with pytest.raises(ApiError) as exc:
+        assert_path_org(org, uuid4())
+    assert exc.value.code == NOT_FOUND
+    assert_path_org(org, org)

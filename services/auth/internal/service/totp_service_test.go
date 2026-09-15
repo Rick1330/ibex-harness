@@ -203,3 +203,59 @@ func TestUnit_TotpAttempts_Lockout(t *testing.T) {
 		t.Fatalf("want lockout, got %v", err)
 	}
 }
+
+func TestUnit_TotpService_ConfirmPendingAndRepoErrors(t *testing.T) {
+	t.Parallel()
+	enc, mk := mustMasterEncoded(t)
+	store := &memTOTPStore{master: mk}
+	svc, err := service.NewTotpService(store, service.MasterKeyConfig{Encoded: enc, KeyID: ""}, true, mustIssuer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.BeginEnrollment(context.Background(), "org", "user", "acct"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", "000000"); !errors.Is(err, service.ErrTOTPInvalidCode) {
+		t.Fatalf("bad code: %v", err)
+	}
+	// Pending (not confirmed) cannot step up.
+	secret := store.plaintext(t, "org", "user")
+	code, err := totp.GenerateCode(secret, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := svc.CreateStepUp(context.Background(), "org", "user", code, 1); !errors.Is(err, service.ErrTOTPNotEnrolled) {
+		t.Fatalf("pending stepup: %v", err)
+	}
+	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", code); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", code); !errors.Is(err, service.ErrTOTPAlreadyDone) {
+		t.Fatalf("already done confirm: %v", err)
+	}
+}
+
+type errGetStore struct {
+	memTOTPStore
+	getErr error
+}
+
+func (e *errGetStore) Get(ctx context.Context, orgID, userID string) (repository.TotpSecretRow, error) {
+	if e.getErr != nil {
+		return repository.TotpSecretRow{}, e.getErr
+	}
+	return e.memTOTPStore.Get(ctx, orgID, userID)
+}
+
+func TestUnit_TotpService_RepoGetErrorSurfaces(t *testing.T) {
+	t.Parallel()
+	enc, mk := mustMasterEncoded(t)
+	store := &errGetStore{memTOTPStore: memTOTPStore{master: mk}, getErr: errors.New("db down")}
+	svc, err := service.NewTotpService(store, service.MasterKeyConfig{Encoded: enc}, true, mustIssuer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.BeginEnrollment(context.Background(), "o", "u", "a"); err == nil || err.Error() != "db down" {
+		t.Fatalf("want db down, got %v", err)
+	}
+}

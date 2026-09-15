@@ -129,3 +129,69 @@ async def test_refresh_operator_session_codec_error_maps_unavailable() -> None:
     stub = AsyncMock(return_value=bytes([0x0F]))
     with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="codec"):
         await refresh_operator_session(auth_grpc_addr="127.0.0.1:50051", refresh_token="r")
+
+
+def test_decode_string_field_skips_fixed32() -> None:
+    # wire type 5 (32-bit) then field 1.
+    buf = bytes([0x0D, 1, 2, 3, 4]) + _proto_string(1, "ok")
+    assert _decode_string_field(buf, 1) == "ok"
+
+
+def test_decode_string_field_rejects_oversized_message() -> None:
+    from app.auth import session_refresh as mod
+
+    huge = b"\x00" * (mod._MAX_MESSAGE + 1)
+    with pytest.raises(AuthCodecError, match="too large"):
+        _decode_string_field(huge, 1)
+
+
+def test_decode_string_field_rejects_truncated_varint_and_len() -> None:
+    with pytest.raises(AuthCodecError, match="truncated varint"):
+        _decode_string_field(bytes([0x80]), 1)
+    # length-delimited key for field 1, then truncated length/body
+    with pytest.raises(AuthCodecError, match="truncated"):
+        _decode_string_field(bytes([0x0A, 0x05, 0x01]), 1)
+
+
+def test_decode_string_field_rejects_field_over_max_token() -> None:
+    from app.auth import session_refresh as mod
+
+    raw = b"x" * (mod._MAX_TOKEN_FIELD + 1)
+    buf = encode_varint((1 << 3) | 2) + encode_varint(len(raw)) + raw
+    with pytest.raises(AuthCodecError, match="exceeds limit"):
+        _decode_string_field(buf, 1)
+
+
+def test_decode_string_field_skips_length_delimited_other_field() -> None:
+    buf = _proto_string(9, "skip-me") + _proto_string(1, "access")
+    assert _decode_string_field(buf, 1) == "access"
+
+
+def test_decode_string_field_rejects_overlong_varint() -> None:
+    # 10 continuation bytes → shift > 63
+    with pytest.raises(AuthCodecError, match="invalid varint"):
+        _decode_string_field(bytes([0x80] * 10), 1)
+
+
+def test_decode_string_field_rejects_truncated_fixed64() -> None:
+    with pytest.raises(AuthCodecError, match="truncated fixed64"):
+        _decode_string_field(bytes([0x09, 1, 2, 3]), 1)
+
+
+def test_decode_string_field_rejects_truncated_fixed32() -> None:
+    with pytest.raises(AuthCodecError, match="truncated fixed32"):
+        _decode_string_field(bytes([0x0D, 1, 2]), 1)
+
+
+@pytest.mark.asyncio
+async def test_refresh_operator_session_empty_tokens() -> None:
+    stub = AsyncMock(return_value=_proto_string(1, "") + _proto_string(2, ""))
+    with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="incomplete"):
+        await refresh_operator_session(auth_grpc_addr="127.0.0.1:50051", refresh_token="r")
+
+
+@pytest.mark.asyncio
+async def test_refresh_operator_session_auth_codec_error_from_rpc() -> None:
+    stub = AsyncMock(side_effect=AuthCodecError("boom"))
+    with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="codec"):
+        await refresh_operator_session(auth_grpc_addr="127.0.0.1:50051", refresh_token="r")

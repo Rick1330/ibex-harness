@@ -98,3 +98,100 @@ func (b *blockingLoader) LoadOrg(ctx context.Context, _ uuid.UUID) (OrgPolicies,
 		return OrgPolicies{Epoch: 1, Policies: []Policy{}}, nil
 	}
 }
+
+type errLoader struct{ err error }
+
+func (e *errLoader) LoadOrg(context.Context, uuid.UUID) (OrgPolicies, error) {
+	return OrgPolicies{}, e.err
+}
+
+func TestNewEpochPoller_DefaultIntervalAndNilRun(t *testing.T) {
+	t.Parallel()
+	p := NewEpochPoller(nil, nil, nil, 0)
+	if p.interval != DefaultEpochPollInterval {
+		t.Fatalf("interval=%v", p.interval)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	p.Run(ctx) // nil loader/cache no-op
+	var nilPoller *EpochPoller
+	nilPoller.Run(ctx)
+}
+
+func TestEpochPoller_LoadErrorInvalidates(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	fast := &staticEpochLoader{epoch: 1}
+	cache, err := NewCache(fast, Config{CacheTTL: time.Hour, LRUSize: 8, LoadTimeout: 0}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	poller := NewEpochPoller(&errLoader{err: context.DeadlineExceeded}, cache, logger.Discard("t"), time.Hour)
+	poller.pollOnce(context.Background())
+	if _, ok := cache.CachedEpoch(org); ok {
+		t.Fatal("expected invalidation on load error")
+	}
+}
+
+func TestEpochPoller_StableEpochKeepsCache(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	loader := &staticEpochLoader{epoch: 3}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Hour, LRUSize: 8, LoadTimeout: time.Second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	poller := NewEpochPoller(loader, cache, nil, time.Hour)
+	poller.pollOnce(context.Background())
+	if ep, ok := cache.CachedEpoch(org); !ok || ep != 3 {
+		t.Fatalf("epoch=%d ok=%v", ep, ok)
+	}
+}
+
+func TestEpochPoller_RunCancels(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	loader := &staticEpochLoader{epoch: 1}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Hour, LRUSize: 8}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	poller := NewEpochPoller(loader, cache, logger.Discard("t"), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		poller.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not exit")
+	}
+}
+
+func TestCache_cachedOrgIDs_SkipsInvalidKeys(t *testing.T) {
+	t.Parallel()
+	cache, err := NewCache(&staticEpochLoader{epoch: 1}, Config{CacheTTL: time.Hour, LRUSize: 8}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := uuid.New()
+	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	ids := cache.cachedOrgIDs()
+	if len(ids) != 1 || ids[0] != org {
+		t.Fatalf("ids=%v", ids)
+	}
+}

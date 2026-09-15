@@ -180,3 +180,120 @@ func TestValidate_CredentialsMasterKey(t *testing.T) {
 		}
 	})
 }
+
+func TestValidate_TOTPSessionConfig(t *testing.T) {
+	t.Parallel()
+	base := validAuthConfig()
+	base.TOTPEnabled = true
+	base.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	base.JWTPrivateKeyPEM = "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"
+	base.JWTIssuer = "ibex"
+	base.JWTAudience = "dash"
+
+	t.Run("ok", func(t *testing.T) {
+		t.Parallel()
+		cfg := base
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+	})
+	t.Run("missing_master", func(t *testing.T) {
+		t.Parallel()
+		cfg := base
+		cfg.CredentialsMasterKey = ""
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("missing_jwt_pem", func(t *testing.T) {
+		t.Parallel()
+		cfg := base
+		cfg.JWTPrivateKeyPEM = ""
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("missing_issuer", func(t *testing.T) {
+		t.Parallel()
+		cfg := base
+		cfg.JWTIssuer = "  "
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("missing_audience", func(t *testing.T) {
+		t.Parallel()
+		cfg := base
+		cfg.JWTAudience = ""
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("disabled_skips", func(t *testing.T) {
+		t.Parallel()
+		cfg := validAuthConfig()
+		cfg.TOTPEnabled = false
+		cfg.JWTPrivateKeyPEM = ""
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+	})
+}
+
+func TestLoad_JWTDurationOverridesAndRejects(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
+	t.Setenv("JWT_REFRESH_TOKEN_TTL", "48h")
+	t.Setenv("JWT_STEP_UP_TOKEN_TTL", "2m")
+	t.Setenv("IBEX_AUTH_TOTP_ENABLED", "false")
+	t.Setenv("IBEX_CREDENTIALS_MASTER_KEY_ID", "  ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWTAccessTTL != 10*time.Minute || cfg.JWTRefreshTTL != 48*time.Hour || cfg.JWTStepUpTTL != 2*time.Minute {
+		t.Fatalf("ttls: access=%v refresh=%v step=%v", cfg.JWTAccessTTL, cfg.JWTRefreshTTL, cfg.JWTStepUpTTL)
+	}
+	if cfg.CredentialsMasterKeyID != "v1" {
+		t.Fatalf("key id default: %q", cfg.CredentialsMasterKeyID)
+	}
+
+	t.Setenv("JWT_ACCESS_TOKEN_TTL", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected non-positive access ttl error")
+	}
+	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
+	t.Setenv("JWT_REFRESH_TOKEN_TTL", "nope")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected bad refresh ttl")
+	}
+	t.Setenv("JWT_REFRESH_TOKEN_TTL", "48h")
+	t.Setenv("JWT_STEP_UP_TOKEN_TTL", "-1s")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected bad step-up ttl")
+	}
+}
+
+func TestLoad_TOTPEnabledRequiresJWTFields(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	t.Setenv("IBEX_AUTH_TOTP_ENABLED", "true")
+	t.Setenv("IBEX_CREDENTIALS_MASTER_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("JWT_PRIVATE_KEY_PEM", "")
+	t.Setenv("JWT_ISSUER", "ibex")
+	t.Setenv("JWT_AUDIENCE", "dash")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected missing JWT pem when totp enabled")
+	}
+}
+
+func TestParseLogLevelViaLoad(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	for _, level := range []string{"INFO", "WARN", "WARNING", "ERROR", "debug"} {
+		t.Setenv("IBEX_LOG_LEVEL", level)
+		if _, err := Load(); err != nil {
+			t.Fatalf("level %s: %v", level, err)
+		}
+	}
+}
