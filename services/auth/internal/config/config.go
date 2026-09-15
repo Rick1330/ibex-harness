@@ -51,48 +51,56 @@ func Load() (Config, error) {
 }
 
 func (c Config) Validate() error {
-	if err := validateEnvironment(c.Environment); err != nil {
-		return err
+	checks := []func() error{
+		func() error { return validateEnvironment(c.Environment) },
+		func() error { return validateServiceName(c.ServiceName) },
+		func() error { return validateTCPPort("IBEX_PORT", c.Port) },
+		func() error { return validateTCPPort("IBEX_GRPC_PORT", c.GRPCPort) },
+		func() error { return validatePostgresDSN(c.PostgresDSN) },
+		func() error { return validateCredentialsMasterKey(c) },
+		func() error { return validateTOTPSessionConfig(c) },
+		func() error { return validateValidateTokenRPM(c.ValidateTokenRPM) },
+		func() error { return shutdown.ValidateTimeout(c.ShutdownTimeout) },
 	}
-	if strings.TrimSpace(c.ServiceName) == "" {
+	for _, check := range checks {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateServiceName(name string) error {
+	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("IBEX_SERVICE_NAME must not be empty")
 	}
-	if err := validateTCPPort("IBEX_PORT", c.Port); err != nil {
-		return err
-	}
-	if err := validateTCPPort("IBEX_GRPC_PORT", c.GRPCPort); err != nil {
-		return err
-	}
-	if c.PostgresDSN == "" {
+	return nil
+}
+
+func validatePostgresDSN(dsn string) error {
+	if dsn == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
-	if err := validateCredentialsMasterKey(c); err != nil {
-		return err
-	}
-	if err := validateTOTPSessionConfig(c); err != nil {
-		return err
-	}
-	if err := validateValidateTokenRPM(c.ValidateTokenRPM); err != nil {
-		return err
-	}
-	return shutdown.ValidateTimeout(c.ShutdownTimeout)
+	return nil
 }
 
 func validateTOTPSessionConfig(c Config) error {
 	if !c.TOTPEnabled {
 		return nil
 	}
-	if strings.TrimSpace(c.CredentialsMasterKey) == "" {
-		return fmt.Errorf("IBEX_CREDENTIALS_MASTER_KEY is required when IBEX_AUTH_TOTP_ENABLED=true")
+	required := []struct {
+		name  string
+		value string
+	}{
+		{"IBEX_CREDENTIALS_MASTER_KEY", c.CredentialsMasterKey},
+		{"JWT_PRIVATE_KEY_PEM", c.JWTPrivateKeyPEM},
+		{"JWT_ISSUER", c.JWTIssuer},
+		{"JWT_AUDIENCE", c.JWTAudience},
 	}
-	if strings.TrimSpace(c.JWTPrivateKeyPEM) == "" {
-		return fmt.Errorf("JWT_PRIVATE_KEY_PEM is required when IBEX_AUTH_TOTP_ENABLED=true")
-	}
-	if strings.TrimSpace(c.JWTIssuer) == "" {
-		return fmt.Errorf("JWT_ISSUER is required when IBEX_AUTH_TOTP_ENABLED=true")
-	}
-	if strings.TrimSpace(c.JWTAudience) == "" {
-		return fmt.Errorf("JWT_AUDIENCE is required when IBEX_AUTH_TOTP_ENABLED=true")
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("%s is required when IBEX_AUTH_TOTP_ENABLED=true", field.name)
+		}
 	}
 	return nil
 }

@@ -21,6 +21,14 @@ type TotpSecretRow struct {
 	ConfirmedAt     sql.NullTime
 }
 
+// ConfirmCiphertextParams scopes a compare-and-set enrollment confirmation.
+type ConfirmCiphertextParams struct {
+	OrgID      string
+	UserID     string
+	Ciphertext []byte
+	At         time.Time
+}
+
 // TotpSecretRepo persists sealed TOTP secrets.
 type TotpSecretRepo struct {
 	db *sql.DB
@@ -91,39 +99,46 @@ func (r *TotpSecretRepo) Get(ctx context.Context, orgID, userID string) (TotpSec
 
 // Confirm marks enrollment confirmed.
 func (r *TotpSecretRepo) Confirm(ctx context.Context, orgID, userID string, at time.Time) error {
-	return r.ConfirmCiphertext(ctx, orgID, userID, nil, at)
+	return r.ConfirmCiphertext(ctx, ConfirmCiphertextParams{
+		OrgID: orgID, UserID: userID, At: at,
+	})
 }
 
 // ConfirmCiphertext confirms only when ciphertext still matches the validated secret
 // (compare-and-set against concurrent BeginEnrollment replacement). nil ciphertext
 // falls back to org/user-only match for legacy callers.
-func (r *TotpSecretRepo) ConfirmCiphertext(
-	ctx context.Context, orgID, userID string, ciphertext []byte, at time.Time,
-) error {
+func (r *TotpSecretRepo) ConfirmCiphertext(ctx context.Context, p ConfirmCiphertextParams) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("totp repo: nil db")
 	}
 	var res sql.Result
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
 		var execErr error
-		if len(ciphertext) == 0 {
-			res, execErr = tx.ExecContext(ctx, `
-				UPDATE ibex_core.user_totp_secrets
-				SET confirmed_at = $3, updated_at = NOW()
-				WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL
-			`, orgID, userID, at)
-		} else {
-			res, execErr = tx.ExecContext(ctx, `
-				UPDATE ibex_core.user_totp_secrets
-				SET confirmed_at = $4, updated_at = NOW()
-				WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL AND ciphertext = $3
-			`, orgID, userID, ciphertext, at)
-		}
+		res, execErr = execConfirmCiphertext(ctx, tx, p)
 		return execErr
 	})
 	if err != nil {
 		return err
 	}
+	return checkConfirmRowsAffected(res)
+}
+
+func execConfirmCiphertext(ctx context.Context, tx *sql.Tx, p ConfirmCiphertextParams) (sql.Result, error) {
+	if len(p.Ciphertext) == 0 {
+		return tx.ExecContext(ctx, `
+			UPDATE ibex_core.user_totp_secrets
+			SET confirmed_at = $3, updated_at = NOW()
+			WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL
+		`, p.OrgID, p.UserID, p.At)
+	}
+	return tx.ExecContext(ctx, `
+		UPDATE ibex_core.user_totp_secrets
+		SET confirmed_at = $4, updated_at = NOW()
+		WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL AND ciphertext = $3
+	`, p.OrgID, p.UserID, p.Ciphertext, p.At)
+}
+
+func checkConfirmRowsAffected(res sql.Result) error {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return err

@@ -62,23 +62,26 @@ def test_dual_approval_noop_when_not_required() -> None:
 async def test_record_ledger_row_inserts_via_repo() -> None:
     from unittest.mock import AsyncMock
 
+    from app.repositories.operator_ledger import LedgerRowInsert
     from app.services.operator_ledger import record_ledger_row
 
     session = AsyncMock()
     row_id = uuid4()
 
-    async def fake_insert(session, **kwargs):
-        assert kwargs["preview_token"] == "preview-1"
-        assert kwargs["org_id"]
+    async def fake_insert(_session, row: LedgerRowInsert):
+        assert row.preview_token == "preview-1"
+        assert row.org_id
         return row_id
 
     got = await record_ledger_row(
         session,
-        org_id=uuid4(),
-        actor_user_id=uuid4(),
-        action="export",
-        preview_token=" preview-1 ",
-        idempotency_key="idem-1",
+        LedgerRowInsert(
+            org_id=uuid4(),
+            actor_user_id=uuid4(),
+            action="export",
+            preview_token=" preview-1 ",
+            idempotency_key="idem-1",
+        ),
         insert=fake_insert,
     )
     assert got == row_id
@@ -88,7 +91,7 @@ async def test_record_ledger_row_inserts_via_repo() -> None:
 async def test_insert_ledger_row_executes_org_scoped_sql() -> None:
     from unittest.mock import AsyncMock, MagicMock
 
-    from app.repositories.operator_ledger import insert_ledger_row
+    from app.repositories.operator_ledger import LedgerRowInsert, insert_ledger_row
 
     row_id = uuid4()
     result = MagicMock()
@@ -100,15 +103,17 @@ async def test_insert_ledger_row_executes_org_scoped_sql() -> None:
     actor = uuid4()
     got = await insert_ledger_row(
         session,
-        org_id=org_id,
-        actor_user_id=actor,
-        action="export",
-        preview_token="preview-1",
-        idempotency_key="idem-1",
-        resource_type="memory",
-        resource_id="m-1",
-        step_up_jti="jti-1",
-        requires_second_actor=True,
+        LedgerRowInsert(
+            org_id=org_id,
+            actor_user_id=actor,
+            action="export",
+            preview_token="preview-1",
+            idempotency_key="idem-1",
+            resource_type="memory",
+            resource_id="m-1",
+            step_up_jti="jti-1",
+            requires_second_actor=True,
+        ),
     )
     assert got == row_id
     session.execute.assert_awaited_once()

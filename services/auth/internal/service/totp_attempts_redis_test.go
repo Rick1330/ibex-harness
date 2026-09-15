@@ -22,11 +22,11 @@ func TestUnit_RedisTOTPAttempts_LockoutAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gate.Allow("org", "user"); err != nil {
-		t.Fatal(err)
-	}
 	for i := 0; i < 3; i++ {
-		gate.Fail("org", "user")
+		if err := gate.Allow("org", "user"); err != nil {
+			t.Fatalf("allow %d: %v", i, err)
+		}
+		gate.Fail("org", "user") // no-op; reservation already counted
 	}
 	if err := gate.Allow("org", "user"); !errors.Is(err, service.ErrTOTPLockedOut) {
 		t.Fatalf("want lockout, got %v", err)

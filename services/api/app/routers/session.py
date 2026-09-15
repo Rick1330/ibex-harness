@@ -245,6 +245,12 @@ async def _validate_pat(validator: TokenValidator, pat: str) -> ValidateResult:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
 
 
+def _auth_owned_refresh(alg: str, settings: Settings) -> bool:
+    # RS256 refresh is always Auth-owned (even when HMAC is also configured).
+    # Non-HS256 headers with public keys also go to Auth (matches verify_token_opts).
+    return alg == _ALG_RS256 or (bool(settings.jwt_public_keys_pem) and alg != "HS256")
+
+
 async def _refresh_via_auth(
     *, response: Response, settings: Settings, refresh_token: str
 ) -> dict[str, object]:
@@ -273,30 +279,13 @@ async def _refresh_via_auth(
     }
 
 
-@router.post("/refresh")
-async def refresh_session(request: Request, response: Response) -> dict[str, object]:
-    settings = _settings(request)
-    _require_operator_enabled(settings)
-    raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
-    if not raw:
-        raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
-
-    try:
-        alg = peek_token_alg(raw)
-    except SessionStubError as exc:
-        raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
-
-    # RS256 refresh is always Auth-owned (even when HMAC is also configured).
-    # Non-HS256 headers with public keys also go to Auth (matches verify_token_opts).
-    if alg == _ALG_RS256 or (settings.jwt_public_keys_pem and alg != "HS256"):
-        return await _refresh_via_auth(
-            response=response, settings=settings, refresh_token=raw
-        )
-
+def _refresh_via_hmac(
+    *, response: Response, settings: Settings, refresh_token: str
+) -> dict[str, object]:
     secret = _require_hmac(settings)
     try:
         claims = verify_token_opts(
-            raw,
+            refresh_token,
             TokenVerifyOpts(
                 secret=secret,
                 issuer=settings.jwt_issuer,
@@ -324,6 +313,24 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
         "org_id": str(claims.org_id),
         "csrf_token": csrf,
     }
+
+
+@router.post("/refresh")
+async def refresh_session(request: Request, response: Response) -> dict[str, object]:
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
+    if not raw:
+        raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+    try:
+        alg = peek_token_alg(raw)
+    except SessionStubError as exc:
+        raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
+    if _auth_owned_refresh(alg, settings):
+        return await _refresh_via_auth(
+            response=response, settings=settings, refresh_token=raw
+        )
+    return _refresh_via_hmac(response=response, settings=settings, refresh_token=raw)
 
 
 @router.post("/logout")

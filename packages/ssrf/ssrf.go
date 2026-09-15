@@ -45,19 +45,55 @@ func IsBlockedIP(ip net.IP) bool {
 		return true
 	}
 	if ip4 := ip.To4(); ip4 != nil {
-		ip = ip4
+		return isBlockedIPv4(ip4)
 	}
-	return ip.IsPrivate() ||
-		ip.IsLoopback() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() ||
-		ip.IsUnspecified() ||
-		isCGNAT(ip) ||
-		isDocumentation(ip) ||
-		isBenchmarking(ip) ||
-		isBroadcast(ip) ||
-		isIPv6Documentation(ip)
+	return isBlockedIPv6(ip)
+}
+
+func isBlockedIPv4(ip net.IP) bool {
+	if isNetBlocked(ip) {
+		return true
+	}
+	return isSpecialUseIPv4(ip)
+}
+
+func isBlockedIPv6(ip net.IP) bool {
+	if isNetBlocked(ip) {
+		return true
+	}
+	return isIPv6Documentation(ip)
+}
+
+func isNetBlocked(ip net.IP) bool {
+	if ip.IsPrivate() {
+		return true
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	if ip.IsLinkLocalUnicast() {
+		return true
+	}
+	if ip.IsLinkLocalMulticast() {
+		return true
+	}
+	if ip.IsMulticast() {
+		return true
+	}
+	return ip.IsUnspecified()
+}
+
+func isSpecialUseIPv4(ip net.IP) bool {
+	if isCGNAT(ip) {
+		return true
+	}
+	if isDocumentation(ip) {
+		return true
+	}
+	if isBenchmarking(ip) {
+		return true
+	}
+	return isBroadcast(ip)
 }
 
 func isCGNAT(ip net.IP) bool {
@@ -75,16 +111,17 @@ func isDocumentation(ip net.IP) bool {
 		return false
 	}
 	// 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
-	if ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 2 {
+	if matchIPv4Prefix24(ip4, 192, 0, 2) {
 		return true
 	}
-	if ip4[0] == 198 && ip4[1] == 51 && ip4[2] == 100 {
+	if matchIPv4Prefix24(ip4, 198, 51, 100) {
 		return true
 	}
-	if ip4[0] == 203 && ip4[1] == 0 && ip4[2] == 113 {
-		return true
-	}
-	return false
+	return matchIPv4Prefix24(ip4, 203, 0, 113)
+}
+
+func matchIPv4Prefix24(ip4 net.IP, a, b, c byte) bool {
+	return ip4[0] == a && ip4[1] == b && ip4[2] == c
 }
 
 func isBenchmarking(ip net.IP) bool {
@@ -98,15 +135,21 @@ func isBenchmarking(ip net.IP) bool {
 
 func isBroadcast(ip net.IP) bool {
 	ip4 := ip.To4()
-	return ip4 != nil && ip4[0] == 255 && ip4[1] == 255 && ip4[2] == 255 && ip4[3] == 255
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] == 255 && ip4[1] == 255 && ip4[2] == 255 && ip4[3] == 255
 }
 
 func isIPv6Documentation(ip net.IP) bool {
 	if ip.To4() != nil {
 		return false
 	}
+	if len(ip) != net.IPv6len {
+		return false
+	}
 	// 2001:db8::/32 (RFC 3849)
-	return len(ip) == net.IPv6len && ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x0d && ip[3] == 0xb8
+	return ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x0d && ip[3] == 0xb8
 }
 
 // ValidateHTTPURL parses raw, requires http/https, resolves the host, and rejects
@@ -149,21 +192,36 @@ func validateHTTPURLParts(ctx context.Context, raw string) (urlParts, error) {
 
 func resolvePublicConnectIP(ctx context.Context, host string) (string, error) {
 	if lit := net.ParseIP(host); lit != nil {
-		if IsBlockedIP(lit) {
-			return "", ErrBlockedDestination
-		}
-		return lit.String(), nil
+		return connectIPFromLiteral(lit)
 	}
+	return connectIPFromLookup(ctx, host)
+}
+
+func connectIPFromLiteral(lit net.IP) (string, error) {
+	if IsBlockedIP(lit) {
+		return "", ErrBlockedDestination
+	}
+	return lit.String(), nil
+}
+
+func connectIPFromLookup(ctx context.Context, host string) (string, error) {
 	addrs, err := lookupIPAddr(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		return "", ErrBlockedDestination
 	}
-	for _, a := range addrs {
-		if IsBlockedIP(a.IP) {
-			return "", ErrBlockedDestination
-		}
+	if err := rejectBlockedAddrs(addrs); err != nil {
+		return "", err
 	}
 	return addrs[0].IP.String(), nil
+}
+
+func rejectBlockedAddrs(addrs []net.IPAddr) error {
+	for _, a := range addrs {
+		if IsBlockedIP(a.IP) {
+			return ErrBlockedDestination
+		}
+	}
+	return nil
 }
 
 // PinResult is a validated dial target: connect via ConnectHost, TLS/SNI via ServerName.
@@ -194,39 +252,44 @@ func ValidateAndPinHTTPURL(ctx context.Context, raw string) (PinResult, error) {
 	}, nil
 }
 
+// dialTarget groups SafeDialContext resolution inputs.
+type dialTarget struct {
+	network string
+	host    string
+	port    string
+	addr    string // original host:port when dialing a literal
+}
+
 // SafeDialContext resolves addr, rejects blocked IPs, and dials the first safe address.
 func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
+	target := dialTarget{network: network, host: host, port: port, addr: addr}
 	if lit := net.ParseIP(host); lit != nil {
-		return dialLiteralIP(ctx, network, addr, lit)
+		return dialLiteralIP(ctx, target, lit)
 	}
-	return dialResolvedHosts(ctx, network, host, port)
+	return dialResolvedHosts(ctx, target)
 }
 
-func dialLiteralIP(ctx context.Context, network, addr string, lit net.IP) (net.Conn, error) {
+func dialLiteralIP(ctx context.Context, target dialTarget, lit net.IP) (net.Conn, error) {
 	if IsBlockedIP(lit) {
 		return nil, ErrBlockedDestination
 	}
 	var d net.Dialer
-	return d.DialContext(ctx, network, addr)
+	return d.DialContext(ctx, target.network, target.addr)
 }
 
-func dialResolvedHosts(ctx context.Context, network, host, port string) (net.Conn, error) {
-	addrs, err := lookupIPAddr(ctx, host)
+func dialResolvedHosts(ctx context.Context, target dialTarget) (net.Conn, error) {
+	addrs, err := lookupIPAddr(ctx, target.host)
 	if err != nil || len(addrs) == 0 {
 		return nil, ErrBlockedDestination
 	}
 	var d net.Dialer
 	var last error
 	for _, a := range addrs {
-		if IsBlockedIP(a.IP) {
-			last = ErrBlockedDestination
-			continue
-		}
-		conn, err := d.DialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
+		conn, err := dialOneResolved(ctx, &d, target, a.IP)
 		if err == nil {
 			return conn, nil
 		}
@@ -236,6 +299,13 @@ func dialResolvedHosts(ctx context.Context, network, host, port string) (net.Con
 		last = ErrBlockedDestination
 	}
 	return nil, last
+}
+
+func dialOneResolved(ctx context.Context, d *net.Dialer, target dialTarget, ip net.IP) (net.Conn, error) {
+	if IsBlockedIP(ip) {
+		return nil, ErrBlockedDestination
+	}
+	return d.DialContext(ctx, target.network, net.JoinHostPort(ip.String(), target.port))
 }
 
 // WrapTransport clones t (or uses a default) with SafeDialContext.
@@ -267,17 +337,20 @@ func ClientForPinnedDial(base *http.Client, serverName string) *http.Client {
 	out := *base
 	t := WrapTransport(base.Transport)
 	if serverName != "" {
-		if t.TLSClientConfig == nil {
-			t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-		} else {
-			t.TLSClientConfig = t.TLSClientConfig.Clone()
-		}
-		t.TLSClientConfig.ServerName = serverName
-		pinnedHost := strings.ToLower(serverName)
-		out.CheckRedirect = pinnedHTTPSRedirect(pinnedHost)
+		applyPinnedTLS(t, serverName)
+		out.CheckRedirect = pinnedHTTPSRedirect(strings.ToLower(serverName))
 	}
 	out.Transport = t
 	return &out
+}
+
+func applyPinnedTLS(t *http.Transport, serverName string) {
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		t.TLSClientConfig = t.TLSClientConfig.Clone()
+	}
+	t.TLSClientConfig.ServerName = serverName
 }
 
 // pinnedHTTPSRedirect rejects cross-host and non-HTTPS redirects for pinned dials.

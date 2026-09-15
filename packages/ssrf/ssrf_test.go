@@ -233,12 +233,15 @@ func TestSafeDialContext_PublicDialPaths(t *testing.T) {
 	conn, err = ssrf.SafeDialContext(ctx, "tcp", "mixed.example:443")
 	if err == nil {
 		_ = conn.Close()
-	} else if errors.Is(err, ssrf.ErrBlockedDestination) {
-		t.Logf("dial after skip private: %v", err)
+		return
+	}
+	// Public address must be attempted; SSRF-block here means private-only regression.
+	if errors.Is(err, ssrf.ErrBlockedDestination) {
+		t.Fatalf("mixed lookup returned blocked without public dial attempt: %v", err)
 	}
 }
 
-func TestWrapTransportAndClients(t *testing.T) {
+func TestWrapTransport(t *testing.T) {
 	t.Parallel()
 	base := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}} //nolint:gosec
 	wrapped := ssrf.WrapTransport(base)
@@ -248,9 +251,14 @@ func TestWrapTransportAndClients(t *testing.T) {
 	if wrapped.TLSClientConfig == nil {
 		t.Fatal("expected cloned TLS config")
 	}
-	_ = ssrf.WrapTransport(nil) // default transport clone
+	_ = ssrf.WrapTransport(nil)
 	_ = ssrf.WrapTransport(http.RoundTripper(nil))
+}
 
+func TestClientWithSafeDialAndPinnedSNI(t *testing.T) {
+	t.Parallel()
+	base := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}} //nolint:gosec
+	wrapped := ssrf.WrapTransport(base)
 	c1 := ssrf.ClientWithSafeDial(nil)
 	if c1.Transport == nil {
 		t.Fatal("nil base client")
@@ -259,7 +267,6 @@ func TestWrapTransportAndClients(t *testing.T) {
 	if c2.Timeout != time.Second {
 		t.Fatalf("timeout=%v", c2.Timeout)
 	}
-
 	pinned := ssrf.ClientForPinnedDial(&http.Client{Transport: base}, "api.example.com")
 	if pinned.CheckRedirect == nil {
 		t.Fatal("expected CheckRedirect")
@@ -268,7 +275,6 @@ func TestWrapTransportAndClients(t *testing.T) {
 	if cfg == nil || cfg.ServerName != "api.example.com" {
 		t.Fatalf("sni=%v", cfg)
 	}
-	// Second pin clones existing TLSClientConfig.
 	pinned2 := ssrf.ClientForPinnedDial(&http.Client{Transport: wrapped}, "other.example")
 	if pinned2.Transport.(*http.Transport).TLSClientConfig.ServerName != "other.example" {
 		t.Fatal("expected cloned sni")

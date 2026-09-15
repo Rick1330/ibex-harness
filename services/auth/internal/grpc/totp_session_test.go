@@ -23,13 +23,13 @@ type fakeTotp struct {
 	stepErr  error
 }
 
-func (f *fakeTotp) BeginEnrollment(context.Context, string, string, string) (string, error) {
+func (f *fakeTotp) BeginEnrollment(context.Context, service.BeginEnrollmentParams) (string, error) {
 	return f.beginURI, f.beginErr
 }
-func (f *fakeTotp) ConfirmEnrollment(context.Context, string, string, string) error {
+func (f *fakeTotp) ConfirmEnrollment(context.Context, service.ConfirmEnrollmentParams) error {
 	return f.confirm
 }
-func (f *fakeTotp) CreateStepUp(context.Context, string, string, string, int64) (string, time.Time, error) {
+func (f *fakeTotp) CreateStepUp(context.Context, service.CreateStepUpParams) (string, time.Time, error) {
 	return f.stepTok, f.stepExp, f.stepErr
 }
 
@@ -108,6 +108,7 @@ func TestUnit_ConfirmAndStepUp_AndMapErr(t *testing.T) {
 		{service.ErrTOTPNotReady, codes.FailedPrecondition},
 		{service.ErrSessionJWTMissing, codes.FailedPrecondition},
 		{service.ErrTOTPLockedOut, codes.ResourceExhausted},
+		{service.ErrTOTPUnavailable, codes.Unavailable},
 		{service.ErrTOTPNotEnrolled, codes.FailedPrecondition},
 		{service.ErrTOTPAlreadyDone, codes.AlreadyExists},
 		{service.ErrInvalidArgument, codes.InvalidArgument},
@@ -120,72 +121,72 @@ func TestUnit_ConfirmAndStepUp_AndMapErr(t *testing.T) {
 	}
 }
 
+func requireCode(t *testing.T, err error, want codes.Code, label string) {
+	t.Helper()
+	if status.Code(err) != want {
+		t.Fatalf("%s: %v", label, err)
+	}
+}
+
 func TestUnit_IssueOperatorSession_RefreshAndIssue(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
 	fi := &fakeSessionIssuer{access: "a", refresh: "r", aExp: now.Add(time.Minute), rExp: now.Add(time.Hour)}
 	srv := totpServer(t, nil, fi)
 	resp, err := srv.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{RefreshToken: "old"})
-	if err != nil || resp.GetAccessToken() != "a" || resp.GetRefreshToken() != "r" {
-		t.Fatalf("refresh: %+v err=%v", resp, err)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if resp.GetAccessToken() != "a" || resp.GetRefreshToken() != "r" {
+		t.Fatalf("refresh tokens: %+v", resp)
 	}
 	fi.refreshErr = sessionjwt.ErrInvalidToken
-	if _, err := srv.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{RefreshToken: "old"}); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("bad refresh: %v", err)
-	}
+	_, err = srv.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{RefreshToken: "old"})
+	requireCode(t, err, codes.Unauthenticated, "bad refresh")
 	fi.refreshErr = nil
 	srvNil := totpServer(t, nil, nil)
-	if _, err := srvNil.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{}); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("nil issuer: %v", err)
-	}
+	_, err = srvNil.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{})
+	requireCode(t, err, codes.FailedPrecondition, "nil issuer")
 	ctx := ContextWithCaller(context.Background(), CallerContext{OrgID: "org", UserID: "user", Permissions: 1})
 	resp, err = srv.IssueOperatorSession(ctx, &authv1.IssueOperatorSessionRequest{})
-	if err != nil || resp.GetAccessToken() != "a" {
-		t.Fatalf("issue: %+v err=%v", resp, err)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
 	}
-	if _, err := srv.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{}); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("no caller: %v", err)
+	if resp.GetAccessToken() != "a" {
+		t.Fatalf("issue token: %+v", resp)
 	}
+	_, err = srv.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{})
+	requireCode(t, err, codes.Unauthenticated, "no caller")
 	ctxEmptyUser := ContextWithCaller(context.Background(), CallerContext{OrgID: "org", UserID: "", Permissions: 1})
-	if _, err := srv.IssueOperatorSession(ctxEmptyUser, &authv1.IssueOperatorSessionRequest{}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("empty user: %v", err)
-	}
+	_, err = srv.IssueOperatorSession(ctxEmptyUser, &authv1.IssueOperatorSessionRequest{})
+	requireCode(t, err, codes.PermissionDenied, "empty user")
 	fi.issueErr = errors.New("boom")
-	if _, err := srv.IssueOperatorSession(ctx, &authv1.IssueOperatorSessionRequest{}); status.Code(err) != codes.Internal {
-		t.Fatalf("issue fail: %v", err)
-	}
+	_, err = srv.IssueOperatorSession(ctx, &authv1.IssueOperatorSessionRequest{})
+	requireCode(t, err, codes.Internal, "issue fail")
 }
 
 func TestUnit_TotpHandlers_NilServiceAndAuthz(t *testing.T) {
 	t.Parallel()
 	srvNil := totpServer(t, nil, nil)
 	ctx := ContextWithCaller(context.Background(), CallerContext{OrgID: "org", UserID: "user", Permissions: 1})
-	if _, err := srvNil.ConfirmTotpEnrollment(ctx, &authv1.ConfirmTotpEnrollmentRequest{OrgId: "org", UserId: "user"}); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("nil confirm: %v", err)
-	}
-	if _, err := srvNil.CreateStepUpToken(ctx, &authv1.CreateStepUpTokenRequest{OrgId: "org", UserId: "user"}); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("nil stepup: %v", err)
-	}
+	_, err := srvNil.ConfirmTotpEnrollment(ctx, &authv1.ConfirmTotpEnrollmentRequest{OrgId: "org", UserId: "user"})
+	requireCode(t, err, codes.FailedPrecondition, "nil confirm")
+	_, err = srvNil.CreateStepUpToken(ctx, &authv1.CreateStepUpTokenRequest{OrgId: "org", UserId: "user"})
+	requireCode(t, err, codes.FailedPrecondition, "nil stepup")
 	ft := &fakeTotp{}
 	srv := totpServer(t, ft, nil)
-	if _, err := srv.ConfirmTotpEnrollment(context.Background(), &authv1.ConfirmTotpEnrollmentRequest{}); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("confirm no caller: %v", err)
-	}
-	if _, err := srv.CreateStepUpToken(context.Background(), &authv1.CreateStepUpTokenRequest{}); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("stepup no caller: %v", err)
-	}
-	if _, err := srv.ConfirmTotpEnrollment(ctx, &authv1.ConfirmTotpEnrollmentRequest{OrgId: "other", UserId: "user"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("confirm wrong org: %v", err)
-	}
-	if _, err := srv.CreateStepUpToken(ctx, &authv1.CreateStepUpTokenRequest{OrgId: "org", UserId: "other"}); status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("stepup wrong user: %v", err)
-	}
+	_, err = srv.ConfirmTotpEnrollment(context.Background(), &authv1.ConfirmTotpEnrollmentRequest{})
+	requireCode(t, err, codes.Unauthenticated, "confirm no caller")
+	_, err = srv.CreateStepUpToken(context.Background(), &authv1.CreateStepUpTokenRequest{})
+	requireCode(t, err, codes.Unauthenticated, "stepup no caller")
+	_, err = srv.ConfirmTotpEnrollment(ctx, &authv1.ConfirmTotpEnrollmentRequest{OrgId: "other", UserId: "user"})
+	requireCode(t, err, codes.PermissionDenied, "confirm wrong org")
+	_, err = srv.CreateStepUpToken(ctx, &authv1.CreateStepUpTokenRequest{OrgId: "org", UserId: "other"})
+	requireCode(t, err, codes.PermissionDenied, "stepup wrong user")
 	ft.stepErr = service.ErrTOTPInvalidCode
-	if _, err := srv.CreateStepUpToken(ctx, &authv1.CreateStepUpTokenRequest{OrgId: "org", UserId: "user", TotpCode: "x"}); status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("stepup map: %v", err)
-	}
+	_, err = srv.CreateStepUpToken(ctx, &authv1.CreateStepUpTokenRequest{OrgId: "org", UserId: "user", TotpCode: "x"})
+	requireCode(t, err, codes.Unauthenticated, "stepup invalid")
 	ft.beginErr = service.ErrTOTPAlreadyDone
-	if _, err := srv.BeginTotpEnrollment(ctx, &authv1.BeginTotpEnrollmentRequest{OrgId: "org", UserId: "user"}); status.Code(err) != codes.AlreadyExists {
-		t.Fatalf("begin map: %v", err)
-	}
+	_, err = srv.BeginTotpEnrollment(ctx, &authv1.BeginTotpEnrollmentRequest{OrgId: "org", UserId: "user"})
+	requireCode(t, err, codes.AlreadyExists, "begin map")
 }

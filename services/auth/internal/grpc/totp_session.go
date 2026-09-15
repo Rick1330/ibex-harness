@@ -17,9 +17,9 @@ import (
 const errMsgTOTPNotConfigured = "totp not configured"
 
 type totpPort interface {
-	BeginEnrollment(ctx context.Context, orgID, userID, accountName string) (string, error)
-	ConfirmEnrollment(ctx context.Context, orgID, userID, code string) error
-	CreateStepUp(ctx context.Context, orgID, userID, code string, permissions int64) (string, time.Time, error)
+	BeginEnrollment(ctx context.Context, p service.BeginEnrollmentParams) (string, error)
+	ConfirmEnrollment(ctx context.Context, p service.ConfirmEnrollmentParams) error
+	CreateStepUp(ctx context.Context, p service.CreateStepUpParams) (string, time.Time, error)
 }
 
 type sessionIssuerPort interface {
@@ -27,22 +27,34 @@ type sessionIssuerPort interface {
 	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 }
 
+func (s *Server) requireTotpSelf(ctx context.Context, orgID, userID string) (CallerContext, error) {
+	if s.totpService == nil {
+		return CallerContext{}, status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
+	}
+	caller, ok := CallerFromContext(ctx)
+	if !ok {
+		return CallerContext{}, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
+	}
+	if caller.OrgID != orgID {
+		return CallerContext{}, status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	if caller.UserID == "" || caller.UserID != userID {
+		return CallerContext{}, status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	return caller, nil
+}
+
 func (s *Server) BeginTotpEnrollment(
 	ctx context.Context,
 	req *authv1.BeginTotpEnrollmentRequest,
 ) (*authv1.BeginTotpEnrollmentResponse, error) {
-	if s.totpService == nil {
-		return nil, status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
-	}
-	caller, ok := CallerFromContext(ctx)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
-	}
 	orgID, userID := req.GetOrgId(), req.GetUserId()
-	if caller.OrgID != orgID || caller.UserID == "" || caller.UserID != userID {
-		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
+	if _, err := s.requireTotpSelf(ctx, orgID, userID); err != nil {
+		return nil, err
 	}
-	uri, err := s.totpService.BeginEnrollment(ctx, orgID, userID, userID)
+	uri, err := s.totpService.BeginEnrollment(ctx, service.BeginEnrollmentParams{
+		OrgID: orgID, UserID: userID, AccountName: userID,
+	})
 	if err != nil {
 		return nil, mapTotpErr(err)
 	}
@@ -53,18 +65,14 @@ func (s *Server) ConfirmTotpEnrollment(
 	ctx context.Context,
 	req *authv1.ConfirmTotpEnrollmentRequest,
 ) (*authv1.ConfirmTotpEnrollmentResponse, error) {
-	if s.totpService == nil {
-		return nil, status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
-	}
-	caller, ok := CallerFromContext(ctx)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
-	}
 	orgID, userID := req.GetOrgId(), req.GetUserId()
-	if caller.OrgID != orgID || caller.UserID == "" || caller.UserID != userID {
-		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
+	if _, err := s.requireTotpSelf(ctx, orgID, userID); err != nil {
+		return nil, err
 	}
-	if err := s.totpService.ConfirmEnrollment(ctx, orgID, userID, req.GetTotpCode()); err != nil {
+	err := s.totpService.ConfirmEnrollment(ctx, service.ConfirmEnrollmentParams{
+		OrgID: orgID, UserID: userID, Code: req.GetTotpCode(),
+	})
+	if err != nil {
 		return nil, mapTotpErr(err)
 	}
 	return &authv1.ConfirmTotpEnrollmentResponse{}, nil
@@ -74,18 +82,14 @@ func (s *Server) CreateStepUpToken(
 	ctx context.Context,
 	req *authv1.CreateStepUpTokenRequest,
 ) (*authv1.CreateStepUpTokenResponse, error) {
-	if s.totpService == nil {
-		return nil, status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
-	}
-	caller, ok := CallerFromContext(ctx)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
-	}
 	orgID, userID := req.GetOrgId(), req.GetUserId()
-	if caller.OrgID != orgID || caller.UserID == "" || caller.UserID != userID {
-		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
+	caller, err := s.requireTotpSelf(ctx, orgID, userID)
+	if err != nil {
+		return nil, err
 	}
-	token, exp, err := s.totpService.CreateStepUp(ctx, orgID, userID, req.GetTotpCode(), caller.Permissions)
+	token, exp, err := s.totpService.CreateStepUp(ctx, service.CreateStepUpParams{
+		OrgID: orgID, UserID: userID, Code: req.GetTotpCode(), Permissions: caller.Permissions,
+	})
 	if err != nil {
 		return nil, mapTotpErr(err)
 	}
@@ -151,23 +155,42 @@ func (s *Server) issueFromCaller(ctx context.Context) (*authv1.IssueOperatorSess
 }
 
 func mapTotpErr(err error) error {
+	if mapped := mapTotpClientErr(err); mapped != nil {
+		return mapped
+	}
+	if mapped := mapTotpStateErr(err); mapped != nil {
+		return mapped
+	}
+	return status.Error(codes.Internal, "totp operation failed")
+}
+
+func mapTotpClientErr(err error) error {
 	switch {
-	case errors.Is(err, service.ErrTOTPDisabled):
-		return status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
-	case errors.Is(err, service.ErrTOTPNotReady), errors.Is(err, service.ErrSessionJWTMissing):
-		return status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
 	case errors.Is(err, service.ErrTOTPInvalidCode):
 		return status.Error(codes.Unauthenticated, "invalid totp code")
 	case errors.Is(err, service.ErrTOTPLockedOut):
 		return status.Error(codes.ResourceExhausted, "totp attempt limit exceeded")
+	case errors.Is(err, service.ErrTOTPUnavailable):
+		return status.Error(codes.Unavailable, "totp attempt store unavailable")
+	case errors.Is(err, service.ErrInvalidArgument):
+		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
+	default:
+		return nil
+	}
+}
+
+func mapTotpStateErr(err error) error {
+	switch {
+	case errors.Is(err, service.ErrTOTPDisabled),
+		errors.Is(err, service.ErrTOTPNotReady),
+		errors.Is(err, service.ErrSessionJWTMissing):
+		return status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
 	case errors.Is(err, service.ErrTOTPNotEnrolled):
 		return status.Error(codes.FailedPrecondition, "totp not enrolled")
 	case errors.Is(err, service.ErrTOTPAlreadyDone):
 		return status.Error(codes.AlreadyExists, "totp already confirmed")
-	case errors.Is(err, service.ErrInvalidArgument):
-		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
 	default:
-		return status.Error(codes.Internal, "totp operation failed")
+		return nil
 	}
 }
 

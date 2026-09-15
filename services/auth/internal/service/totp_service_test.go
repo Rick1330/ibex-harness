@@ -49,18 +49,18 @@ func (m *memTOTPStore) Get(_ context.Context, orgID, userID string) (repository.
 	return row, nil
 }
 
-func (m *memTOTPStore) ConfirmCiphertext(_ context.Context, orgID, userID string, ciphertext []byte, at time.Time) error {
+func (m *memTOTPStore) ConfirmCiphertext(_ context.Context, p repository.ConfirmCiphertextParams) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := m.key(orgID, userID)
+	key := m.key(p.OrgID, p.UserID)
 	row, ok := m.rows[key]
 	if !ok {
 		return repository.ErrTotpSecretNotFound
 	}
-	if string(row.Ciphertext) != string(ciphertext) {
+	if len(p.Ciphertext) > 0 && string(row.Ciphertext) != string(p.Ciphertext) {
 		return errors.New("ciphertext mismatch")
 	}
-	row.ConfirmedAt = sql.NullTime{Time: at, Valid: true}
+	row.ConfirmedAt = sql.NullTime{Time: p.At, Valid: true}
 	m.rows[key] = row
 	return nil
 }
@@ -98,11 +98,30 @@ func mustIssuer(t *testing.T) *sessionjwt.Issuer {
 		t.Fatal(err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	iss, err := sessionjwt.NewIssuer(string(pemBytes), "ibex-auth", "ibex-dashboard", time.Minute, time.Hour, time.Minute)
+	iss, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
+		PrivateKeyPEM: string(pemBytes),
+		Issuer:        "ibex-auth",
+		Audience:      "ibex-dashboard",
+		AccessTTL:     time.Minute,
+		RefreshTTL:    time.Hour,
+		StepUpTTL:     time.Minute,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return iss
+}
+
+func beginP(org, user, acct string) service.BeginEnrollmentParams {
+	return service.BeginEnrollmentParams{OrgID: org, UserID: user, AccountName: acct}
+}
+
+func confirmP(org, user, code string) service.ConfirmEnrollmentParams {
+	return service.ConfirmEnrollmentParams{OrgID: org, UserID: user, Code: code}
+}
+
+func stepUpP(org, user, code string, perms int64) service.CreateStepUpParams {
+	return service.CreateStepUpParams{OrgID: org, UserID: user, Code: code, Permissions: perms}
 }
 
 func TestUnit_TotpService_EnrollmentConfirmAndStepUp(t *testing.T) {
@@ -113,19 +132,22 @@ func TestUnit_TotpService_EnrollmentConfirmAndStepUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uri, err := svc.BeginEnrollment(context.Background(), "org-1", "user-1", "user-1@example.com")
-	if err != nil || uri == "" {
-		t.Fatalf("begin: uri=%q err=%v", uri, err)
+	uri, err := svc.BeginEnrollment(context.Background(), beginP("org-1", "user-1", "user-1@example.com"))
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if uri == "" {
+		t.Fatal("begin: empty uri")
 	}
 	secret := store.plaintext(t, "org-1", "user-1")
 	code, err := totp.GenerateCode(secret, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ConfirmEnrollment(context.Background(), "org-1", "user-1", code); err != nil {
+	if err := svc.ConfirmEnrollment(context.Background(), confirmP("org-1", "user-1", code)); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	_, err = svc.BeginEnrollment(context.Background(), "org-1", "user-1", "again")
+	_, err = svc.BeginEnrollment(context.Background(), beginP("org-1", "user-1", "again"))
 	if !errors.Is(err, service.ErrTOTPAlreadyDone) {
 		t.Fatalf("want already done, got %v", err)
 	}
@@ -133,11 +155,15 @@ func TestUnit_TotpService_EnrollmentConfirmAndStepUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, exp, err := svc.CreateStepUp(context.Background(), "org-1", "user-1", code2, 7)
-	if err != nil || tok == "" || exp.IsZero() {
-		t.Fatalf("stepup tok=%q exp=%v err=%v", tok, exp, err)
+	tok, exp, err := svc.CreateStepUp(context.Background(), stepUpP("org-1", "user-1", code2, 7))
+	if err != nil {
+		t.Fatalf("stepup: %v", err)
 	}
-	if _, _, err := svc.CreateStepUp(context.Background(), "org-1", "user-1", "000000", 7); !errors.Is(err, service.ErrTOTPInvalidCode) {
+	if tok == "" || exp.IsZero() {
+		t.Fatalf("stepup tok=%q exp=%v", tok, exp)
+	}
+	_, _, err = svc.CreateStepUp(context.Background(), stepUpP("org-1", "user-1", "000000", 7))
+	if !errors.Is(err, service.ErrTOTPInvalidCode) {
 		t.Fatalf("want invalid code, got %v", err)
 	}
 }
@@ -149,14 +175,16 @@ func TestUnit_TotpService_DisabledNotReadyAndGates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := disabled.BeginEnrollment(context.Background(), "o", "u", "a"); !errors.Is(err, service.ErrTOTPDisabled) {
+	_, err = disabled.BeginEnrollment(context.Background(), beginP("o", "u", "a"))
+	if !errors.Is(err, service.ErrTOTPDisabled) {
 		t.Fatalf("disabled: %v", err)
 	}
 	notReady, err := service.NewTotpService(store, service.MasterKeyConfig{}, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := notReady.BeginEnrollment(context.Background(), "o", "u", "a"); !errors.Is(err, service.ErrTOTPNotReady) {
+	_, err = notReady.BeginEnrollment(context.Background(), beginP("o", "u", "a"))
+	if !errors.Is(err, service.ErrTOTPNotReady) {
 		t.Fatalf("not ready: %v", err)
 	}
 	if _, err := service.NewTotpService(nil, service.MasterKeyConfig{}, true, nil); err == nil {
@@ -167,17 +195,20 @@ func TestUnit_TotpService_DisabledNotReadyAndGates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := noJWT.CreateStepUp(context.Background(), "o", "u", "123456", 1); !errors.Is(err, service.ErrSessionJWTMissing) {
+	_, _, err = noJWT.CreateStepUp(context.Background(), stepUpP("o", "u", "123456", 1))
+	if !errors.Is(err, service.ErrSessionJWTMissing) {
 		t.Fatalf("missing jwt: %v", err)
 	}
 	ready, err := service.NewTotpService(store, service.MasterKeyConfig{Encoded: enc}, true, mustIssuer(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ready.BeginEnrollment(context.Background(), "", "u", "a"); !errors.Is(err, service.ErrInvalidArgument) {
+	_, err = ready.BeginEnrollment(context.Background(), beginP("", "u", "a"))
+	if !errors.Is(err, service.ErrInvalidArgument) {
 		t.Fatalf("empty org: %v", err)
 	}
-	if _, _, err := ready.CreateStepUp(context.Background(), "o", "u", "123456", 1); !errors.Is(err, service.ErrTOTPNotEnrolled) {
+	_, _, err = ready.CreateStepUp(context.Background(), stepUpP("o", "u", "123456", 1))
+	if !errors.Is(err, service.ErrTOTPNotEnrolled) {
 		t.Fatalf("not enrolled: %v", err)
 	}
 }
@@ -190,16 +221,17 @@ func TestUnit_TotpAttempts_Lockout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.BeginEnrollment(context.Background(), "org", "user", "acct"); err != nil {
+	if _, err := svc.BeginEnrollment(context.Background(), beginP("org", "user", "acct")); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
-		err := svc.ConfirmEnrollment(context.Background(), "org", "user", "000000")
+		err := svc.ConfirmEnrollment(context.Background(), confirmP("org", "user", "000000"))
 		if !errors.Is(err, service.ErrTOTPInvalidCode) {
 			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
-	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", "000000"); !errors.Is(err, service.ErrTOTPLockedOut) {
+	err = svc.ConfirmEnrollment(context.Background(), confirmP("org", "user", "000000"))
+	if !errors.Is(err, service.ErrTOTPLockedOut) {
 		t.Fatalf("want lockout, got %v", err)
 	}
 }
@@ -212,25 +244,27 @@ func TestUnit_TotpService_ConfirmPendingAndRepoErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.BeginEnrollment(context.Background(), "org", "user", "acct"); err != nil {
+	if _, err := svc.BeginEnrollment(context.Background(), beginP("org", "user", "acct")); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", "000000"); !errors.Is(err, service.ErrTOTPInvalidCode) {
+	err = svc.ConfirmEnrollment(context.Background(), confirmP("org", "user", "000000"))
+	if !errors.Is(err, service.ErrTOTPInvalidCode) {
 		t.Fatalf("bad code: %v", err)
 	}
-	// Pending (not confirmed) cannot step up.
 	secret := store.plaintext(t, "org", "user")
 	code, err := totp.GenerateCode(secret, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.CreateStepUp(context.Background(), "org", "user", code, 1); !errors.Is(err, service.ErrTOTPNotEnrolled) {
+	_, _, err = svc.CreateStepUp(context.Background(), stepUpP("org", "user", code, 1))
+	if !errors.Is(err, service.ErrTOTPNotEnrolled) {
 		t.Fatalf("pending stepup: %v", err)
 	}
-	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", code); err != nil {
+	if err := svc.ConfirmEnrollment(context.Background(), confirmP("org", "user", code)); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.ConfirmEnrollment(context.Background(), "org", "user", code); !errors.Is(err, service.ErrTOTPAlreadyDone) {
+	err = svc.ConfirmEnrollment(context.Background(), confirmP("org", "user", code))
+	if !errors.Is(err, service.ErrTOTPAlreadyDone) {
 		t.Fatalf("already done confirm: %v", err)
 	}
 }
@@ -255,7 +289,8 @@ func TestUnit_TotpService_RepoGetErrorSurfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.BeginEnrollment(context.Background(), "o", "u", "a"); err == nil || err.Error() != "db down" {
+	_, err = svc.BeginEnrollment(context.Background(), beginP("o", "u", "a"))
+	if err == nil || err.Error() != "db down" {
 		t.Fatalf("want db down, got %v", err)
 	}
 }

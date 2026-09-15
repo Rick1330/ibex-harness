@@ -80,22 +80,14 @@ def test_rs256_refresh_success_sets_cookies() -> None:
 
 
 def test_rs256_refresh_auth_failed_maps_401() -> None:
-    with (
-        create_operator_app(settings=_rs256_settings(), validator=StaticTokenValidator({})) as (
-            _,
-            client,
-        ),
-        patch(
-            "app.routers.session.refresh_operator_session",
-            new=AsyncMock(side_effect=AuthFailedError("bad")),
-        ),
-    ):
-        client.cookies.set("ibex_refresh", _rs256_shaped_refresh())
-        resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
-    assert resp.status_code == 401
+    _assert_rs256_refresh_maps_error(AuthFailedError("bad"), 401)
 
 
 def test_rs256_refresh_unavailable_maps_503() -> None:
+    _assert_rs256_refresh_maps_error(AuthUnavailableError("down"), 503)
+
+
+def _assert_rs256_refresh_maps_error(exc: Exception, status: int) -> None:
     with (
         create_operator_app(settings=_rs256_settings(), validator=StaticTokenValidator({})) as (
             _,
@@ -103,12 +95,12 @@ def test_rs256_refresh_unavailable_maps_503() -> None:
         ),
         patch(
             "app.routers.session.refresh_operator_session",
-            new=AsyncMock(side_effect=AuthUnavailableError("down")),
+            new=AsyncMock(side_effect=exc),
         ),
     ):
         client.cookies.set("ibex_refresh", _rs256_shaped_refresh())
         resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
-    assert resp.status_code == 503
+    assert resp.status_code == status
 
 
 def test_mixed_hmac_still_routes_rs256_cookie_to_auth() -> None:

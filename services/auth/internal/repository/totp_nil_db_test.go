@@ -22,7 +22,9 @@ func TestUnit_TotpSecretRepo_NilDB(t *testing.T) {
 	if err := repo.Confirm(ctx, "o", "u", time.Now().UTC()); err == nil {
 		t.Fatal("Confirm nil db")
 	}
-	if err := repo.ConfirmCiphertext(ctx, "o", "u", []byte{1}, time.Now().UTC()); err == nil {
+	if err := repo.ConfirmCiphertext(ctx, repository.ConfirmCiphertextParams{
+		OrgID: "o", UserID: "u", Ciphertext: []byte{1}, At: time.Now().UTC(),
+	}); err == nil {
 		t.Fatal("ConfirmCiphertext nil db")
 	}
 	var nilRepo *repository.TotpSecretRepo

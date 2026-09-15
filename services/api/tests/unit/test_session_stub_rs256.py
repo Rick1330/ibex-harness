@@ -141,26 +141,26 @@ def test_csrf_missing_cookie_or_header_false() -> None:
     assert not verify_csrf_token(secret="c" * 32, cookie_value=csrf, header_value=None)
 
 
-def test_verify_prefers_rs256_when_alg_claim_wrong() -> None:
-    """Keys present + non-HS256 alg → attempt RS256 even if alg claim is wrong."""
+def test_verify_rejects_alg_none_even_with_rs256_keys() -> None:
+    """Protected-header alg must match verifier; alg=none is rejected."""
     org = str(uuid4())
     key, pub = _rsa_keypair()
     tok = _sign_rs256(key, {"alg": "none", "typ": "JWT"}, _access_payload(org))
-    claims = verify_token_opts(
-        tok,
-        TokenVerifyOpts(
-            secret=None,
-            issuer="ibex-harness",
-            audience="ibex-dashboard",
-            expect_kind=SESSION_KIND_ACCESS,
-            public_keys_pem=pub,
-        ),
-    )
-    assert str(claims.org_id) == org
+    with pytest.raises(SessionStubError, match="alg mismatch"):
+        verify_token_opts(
+            tok,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=pub,
+            ),
+        )
 
 
-def test_verify_falls_through_when_rs256_attempt_fails() -> None:
-    """Wrong alg + bad RS256 → fall through; HS256 secret still verifies."""
+def test_verify_rejects_alg_none_hs256_fallback() -> None:
+    """alg=none must not fall through to HS256 even with a valid HMAC signature."""
     import hashlib
     import hmac
     import time
@@ -187,18 +187,17 @@ def test_verify_falls_through_when_rs256_attempt_fails() -> None:
     secret = "s" * 32
     sig = _b64url(hmac.new(secret.encode(), body.encode("ascii"), hashlib.sha256).digest())
     _, wrong_pub = _rsa_keypair()
-    claims = verify_token_opts(
-        f"{body}.{sig}",
-        TokenVerifyOpts(
-            secret=secret,
-            issuer="ibex-harness",
-            audience="ibex-dashboard",
-            expect_kind=SESSION_KIND_ACCESS,
-            public_keys_pem=wrong_pub,
-        ),
-    )
-    assert str(claims.org_id) == org
-    assert claims.verify_method == "HS256"
+    with pytest.raises(SessionStubError, match="alg mismatch"):
+        verify_token_opts(
+            f"{body}.{sig}",
+            TokenVerifyOpts(
+                secret=secret,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=wrong_pub,
+            ),
+        )
 
 
 def test_verify_accepts_token_kind_alias() -> None:

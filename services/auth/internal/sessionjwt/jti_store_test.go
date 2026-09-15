@@ -15,31 +15,51 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func requireConsume(t *testing.T, first bool, err error, wantFirst bool, label string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", label, err)
+	}
+	if first != wantFirst {
+		t.Fatalf("%s: first=%v want=%v", label, first, wantFirst)
+	}
+}
+
+func TestMemoryJTIStore_HonorsTTL(t *testing.T) {
+	t.Parallel()
+	store := &sessionjwt.MemoryJTIStore{}
+	ctx := context.Background()
+	first, err := store.ConsumeOnce(ctx, "jti-ttl", 20*time.Millisecond)
+	requireConsume(t, first, err, true, "first")
+	second, err := store.ConsumeOnce(ctx, "jti-ttl", time.Minute)
+	requireConsume(t, second, err, false, "replay before expiry")
+	time.Sleep(30 * time.Millisecond)
+	again, err := store.ConsumeOnce(ctx, "jti-ttl", time.Minute)
+	requireConsume(t, again, err, true, "after expiry")
+}
+
 func TestRedisJTIStore_ConsumeOnce(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
+
 	store, err := sessionjwt.NewRedisJTIStore(rdb)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sessionjwt.NewRedisJTIStore(nil); err == nil {
+	_, err = sessionjwt.NewRedisJTIStore(nil)
+	if err == nil {
 		t.Fatal("expected nil client error")
 	}
+
 	ctx := context.Background()
 	first, err := store.ConsumeOnce(ctx, "jti-1", time.Minute)
-	if err != nil || !first {
-		t.Fatalf("first=%v err=%v", first, err)
-	}
+	requireConsume(t, first, err, true, "first")
 	second, err := store.ConsumeOnce(ctx, "jti-1", time.Minute)
-	if err != nil || second {
-		t.Fatalf("replay second=%v err=%v", second, err)
-	}
+	requireConsume(t, second, err, false, "replay")
 	ok, err := store.ConsumeOnce(ctx, "jti-2", 0) // ttl clamped
-	if err != nil || !ok {
-		t.Fatalf("zero ttl: %v %v", ok, err)
-	}
+	requireConsume(t, ok, err, true, "zero ttl")
 }
 
 func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
@@ -55,8 +75,11 @@ func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	privPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	iss, err := sessionjwt.NewIssuer(string(privPEM), "iss", "aud", time.Minute, time.Hour, time.Minute)
+	privPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}))
+	iss, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
+		PrivateKeyPEM: privPEM, Issuer: "iss", Audience: "aud",
+		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +88,12 @@ func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err := iss.RefreshPair(context.Background(), refresh); err != nil {
+	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err := iss.RefreshPair(context.Background(), refresh); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
+	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("want replay err, got %v", err)
 	}
 }

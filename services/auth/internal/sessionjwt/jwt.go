@@ -44,6 +44,16 @@ type Claims struct {
 	JTI         string `json:"jti"`
 }
 
+// IssuerConfig holds RS256 signing material and token TTLs for NewIssuer.
+type IssuerConfig struct {
+	PrivateKeyPEM string
+	Issuer        string
+	Audience      string
+	AccessTTL     time.Duration
+	RefreshTTL    time.Duration
+	StepUpTTL     time.Duration
+}
+
 // Issuer signs RS256 JWTs with a PEM private key.
 type Issuer struct {
 	key        *rsa.PrivateKey
@@ -56,25 +66,25 @@ type Issuer struct {
 }
 
 // NewIssuer parses PKCS1/PKCS8 RSA private key PEM.
-func NewIssuer(privateKeyPEM, issuer, audience string, accessTTL, refreshTTL, stepUpTTL time.Duration) (*Issuer, error) {
-	key, err := parseRSAPrivateKey(privateKeyPEM)
+func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
+	key, err := parseRSAPrivateKey(cfg.PrivateKeyPEM)
 	if err != nil {
 		return nil, err
 	}
-	if accessTTL <= 0 {
-		accessTTL = 15 * time.Minute
-	}
-	if refreshTTL <= 0 {
-		refreshTTL = 7 * 24 * time.Hour
-	}
-	if stepUpTTL <= 0 {
-		stepUpTTL = 5 * time.Minute
-	}
 	return &Issuer{
-		key: key, issuer: issuer, audience: audience,
-		accessTTL: accessTTL, refreshTTL: refreshTTL, stepUpTTL: stepUpTTL,
-		jtiStore: &MemoryJTIStore{},
+		key: key, issuer: cfg.Issuer, audience: cfg.Audience,
+		accessTTL: defaultTTL(cfg.AccessTTL, 15*time.Minute),
+		refreshTTL: defaultTTL(cfg.RefreshTTL, 7*24*time.Hour),
+		stepUpTTL:  defaultTTL(cfg.StepUpTTL, 5*time.Minute),
+		jtiStore:   &MemoryJTIStore{},
 	}, nil
+}
+
+func defaultTTL(got, fallback time.Duration) time.Duration {
+	if got <= 0 {
+		return fallback
+	}
+	return got
 }
 
 // WithJTIStore replaces the refresh JTI consumer (Redis in production).
@@ -149,7 +159,13 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, 
 }
 
 func validateRefreshClaims(claims Claims) error {
-	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" {
+	if claims.Subject == "" {
+		return ErrInvalidToken
+	}
+	if claims.OrgID == "" {
+		return ErrInvalidToken
+	}
+	if claims.JTI == "" {
 		return ErrInvalidToken
 	}
 	return nil

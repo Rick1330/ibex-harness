@@ -47,9 +47,39 @@ func (c *captureProvider) Complete(_ context.Context, req provider.Request) (pro
 	return provider.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
 }
 
+var credTestOrg = uuid.MustParse("11111111-1111-1111-1111-111111111111")
+
+type credOverrideFixture struct {
+	handler  chatCompletionHandler
+	resolver *stubCredentialResolver
+	rec      *httptest.ResponseRecorder
+	req      *http.Request
+	provReq  *provider.Request
+}
+
+func newCredOverrideFixture(t *testing.T, resolver *stubCredentialResolver, withOrg bool) credOverrideFixture {
+	t.Helper()
+	if resolver == nil {
+		resolver = &stubCredentialResolver{}
+	}
+	h := chatCompletionHandler{log: logger.Discard("proxy"), credentialResolver: resolver}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_test")
+	if withOrg {
+		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: credTestOrg}))
+	}
+	return credOverrideFixture{
+		handler: h, resolver: resolver, rec: rec, req: req, provReq: &provider.Request{},
+	}
+}
+
+func (f credOverrideFixture) apply() bool {
+	return f.handler.applyCredentialOverride(f.rec, f.req, &captureProvider{name: "openai"}, f.provReq)
+}
+
 func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	restore := ssrf.SetLookupIPAddrForTest(func(_ context.Context, host string) ([]net.IPAddr, error) {
 		if host != "byo.example.test" {
 			t.Fatalf("unexpected host %q", host)
@@ -57,127 +87,87 @@ func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 		return []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}}, nil
 	})
 	t.Cleanup(restore)
-	resolver := &stubCredentialResolver{result: credentials.Result{
+	fx := newCredOverrideFixture(t, &stubCredentialResolver{result: credentials.Result{
 		APIKey: "sk-byo", BaseURL: "https://byo.example.test/v1",
-	}}
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"), credentialResolver: resolver,
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
-	provReq := &provider.Request{}
-	ok := h.applyCredentialOverride(httptest.NewRecorder(), req, &captureProvider{name: "openai"}, provReq)
-	if !ok {
+	}}, true)
+	if !fx.apply() {
 		t.Fatal("expected success")
 	}
-	if provReq.APIKeyOverride != "sk-byo" {
-		t.Fatalf("APIKeyOverride=%q", provReq.APIKeyOverride)
+	assertBYOOverrides(t, fx)
+}
+
+func assertBYOOverrides(t *testing.T, fx credOverrideFixture) {
+	t.Helper()
+	if fx.provReq.APIKeyOverride != "sk-byo" {
+		t.Fatalf("APIKeyOverride=%q", fx.provReq.APIKeyOverride)
 	}
-	if provReq.TLSServerName != "byo.example.test" {
-		t.Fatalf("TLSServerName=%q", provReq.TLSServerName)
+	if fx.provReq.TLSServerName != "byo.example.test" {
+		t.Fatalf("TLSServerName=%q", fx.provReq.TLSServerName)
 	}
-	if !strings.Contains(provReq.BaseURLOverride, "1.1.1.1") || strings.Contains(provReq.BaseURLOverride, "byo.example.test") {
-		t.Fatalf("expected IP-pinned BaseURLOverride, got %q", provReq.BaseURLOverride)
+	if !strings.Contains(fx.provReq.BaseURLOverride, "1.1.1.1") || strings.Contains(fx.provReq.BaseURLOverride, "byo.example.test") {
+		t.Fatalf("expected IP-pinned BaseURLOverride, got %q", fx.provReq.BaseURLOverride)
 	}
-	if resolver.last.OrgID != org.String() || resolver.last.ProviderName != "openai" {
-		t.Fatalf("resolve input=%+v", resolver.last)
+	if fx.resolver.last.OrgID != credTestOrg.String() || fx.resolver.last.ProviderName != "openai" {
+		t.Fatalf("resolve input=%+v", fx.resolver.last)
 	}
 }
 
 func TestUnit_ApplyCredentialOverride_BlocksPrivateBaseURL(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	h := chatCompletionHandler{
-		log: logger.Discard("proxy"),
-		credentialResolver: &stubCredentialResolver{result: credentials.Result{
-			APIKey: "sk-byo", BaseURL: "https://127.0.0.1/v1",
-		}},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
-	ok := h.applyCredentialOverride(rec, req, &captureProvider{name: "openai"}, &provider.Request{})
-	if ok || rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("ok=%v status=%d", ok, rec.Code)
+	fx := newCredOverrideFixture(t, &stubCredentialResolver{result: credentials.Result{
+		APIKey: "sk-byo", BaseURL: "https://127.0.0.1/v1",
+	}}, true)
+	ok := fx.apply()
+	if ok || fx.rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ok=%v status=%d", ok, fx.rec.Code)
 	}
 }
 
 func TestUnit_ApplyCredentialOverride_PlatformDefault(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	h := chatCompletionHandler{
-		log:                logger.Discard("proxy"),
-		credentialResolver: &stubCredentialResolver{result: credentials.Result{PlatformDefault: true}},
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
-	provReq := &provider.Request{}
-	ok := h.applyCredentialOverride(httptest.NewRecorder(), req, &captureProvider{name: "openai"}, provReq)
-	if !ok {
+	fx := newCredOverrideFixture(t, &stubCredentialResolver{result: credentials.Result{PlatformDefault: true}}, true)
+	if !fx.apply() {
 		t.Fatal("expected success")
 	}
-	if provReq.APIKeyOverride != "" {
-		t.Fatalf("APIKeyOverride=%q", provReq.APIKeyOverride)
+	if fx.provReq.APIKeyOverride != "" {
+		t.Fatalf("APIKeyOverride=%q", fx.provReq.APIKeyOverride)
 	}
-	if provReq.BaseURLOverride != "" {
-		t.Fatalf("BaseURLOverride=%q", provReq.BaseURLOverride)
+	if fx.provReq.BaseURLOverride != "" {
+		t.Fatalf("BaseURLOverride=%q", fx.provReq.BaseURLOverride)
 	}
 }
 
 func TestUnit_ApplyCredentialOverride_MissingOrg(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{
-		log:                logger.Discard("proxy"),
-		credentialResolver: &stubCredentialResolver{},
+	fx := newCredOverrideFixture(t, &stubCredentialResolver{}, false)
+	ok := fx.apply()
+	if ok || fx.rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ok=%v status=%d body=%s", ok, fx.rec.Code, fx.rec.Body.String())
 	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	ok := h.applyCredentialOverride(rec, req, &captureProvider{name: "openai"}, &provider.Request{})
-	if ok || rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("ok=%v status=%d body=%s", ok, rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
-		t.Fatalf("body=%s", rec.Body.String())
+	if !strings.Contains(fx.rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
+		t.Fatalf("body=%s", fx.rec.Body.String())
 	}
 }
 
 func TestUnit_ApplyCredentialOverride_InvalidAuth(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	h := chatCompletionHandler{
-		log:                logger.Discard("proxy"),
-		credentialResolver: &stubCredentialResolver{},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
-	ok := h.applyCredentialOverride(rec, req, &captureProvider{name: "openai"}, &provider.Request{})
-	if ok || rec.Code != http.StatusUnauthorized {
-		t.Fatalf("ok=%v status=%d", ok, rec.Code)
+	fx := newCredOverrideFixture(t, &stubCredentialResolver{}, true)
+	fx.req.Header.Del("Authorization")
+	ok := fx.apply()
+	if ok || fx.rec.Code != http.StatusUnauthorized {
+		t.Fatalf("ok=%v status=%d", ok, fx.rec.Code)
 	}
 }
 
 func TestUnit_ApplyCredentialOverride_ResolverFailure(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	h := chatCompletionHandler{
-		log:                logger.Discard("proxy"),
-		credentialResolver: &stubCredentialResolver{err: errors.New("auth down")},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
-	ok := h.applyCredentialOverride(rec, req, &captureProvider{name: "openai"}, &provider.Request{})
-	if ok || rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("ok=%v status=%d body=%s", ok, rec.Code, rec.Body.String())
+	fx := newCredOverrideFixture(t, &stubCredentialResolver{err: errors.New("auth down")}, true)
+	ok := fx.apply()
+	if ok || fx.rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ok=%v status=%d body=%s", ok, fx.rec.Code, fx.rec.Body.String())
 	}
 	var envelope map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+	if err := json.Unmarshal(fx.rec.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
 }

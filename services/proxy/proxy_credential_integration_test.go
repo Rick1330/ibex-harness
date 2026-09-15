@@ -121,8 +121,12 @@ func mustCreateOrgCredential(t *testing.T, authFx *integrationtest.AuthGRPCFixtu
 func TestProxyAuthIntegration_GetProviderCredential_BYOAndPlatformDefault(t *testing.T) {
 	fx := setupCredentialProxyFixture(t)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	assertBYOCredentialChat(t, fx, body)
+	assertPlatformDefaultCredentialChat(t, fx, body)
+}
 
-	// Credential-found: org A sealed row → chat Complete sees BYO override from real Get RPC.
+func assertBYOCredentialChat(t *testing.T, fx credProxyFixture, body string) {
+	t.Helper()
 	fx.capture.last = provider.Request{}
 	resp, respBody := chatPOST(t, chatRequestOpts{
 		srvURL: fx.srv.URL, bearer: fx.chatA, agentID: fx.agentA,
@@ -143,16 +147,18 @@ func TestProxyAuthIntegration_GetProviderCredential_BYOAndPlatformDefault(t *tes
 		!strings.Contains(fx.capture.last.BaseURLOverride, "/v1") {
 		t.Fatalf("BaseURLOverride=%q want IP-pinned", fx.capture.last.BaseURLOverride)
 	}
+}
 
-	// No-row / platform-default: org B has no credential → no override.
+func assertPlatformDefaultCredentialChat(t *testing.T, fx credProxyFixture, body string) {
+	t.Helper()
 	fx.capture.last = provider.Request{}
-	resp2, respBody2 := chatPOST(t, chatRequestOpts{
+	resp, respBody := chatPOST(t, chatRequestOpts{
 		srvURL: fx.srv.URL, bearer: fx.chatB, agentID: fx.agentB,
 		contentType: "application/json", body: body,
 	})
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
-		t.Fatalf("platform-default chat status=%d body=%s", resp2.StatusCode, respBody2)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("platform-default chat status=%d body=%s", resp.StatusCode, respBody)
 	}
 	if fx.capture.last.APIKeyOverride != "" {
 		t.Fatalf("platform-default APIKeyOverride=%q want empty", fx.capture.last.APIKeyOverride)

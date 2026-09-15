@@ -40,13 +40,35 @@ const (
 type totpStore interface {
 	UpsertPending(ctx context.Context, row repository.TotpSecretRow) error
 	Get(ctx context.Context, orgID, userID string) (repository.TotpSecretRow, error)
-	ConfirmCiphertext(ctx context.Context, orgID, userID string, ciphertext []byte, at time.Time) error
+	ConfirmCiphertext(ctx context.Context, p repository.ConfirmCiphertextParams) error
 }
 
 type totpAttemptGate interface {
 	Allow(orgID, userID string) error
 	Reset(orgID, userID string)
 	Fail(orgID, userID string)
+}
+
+// BeginEnrollmentParams scopes pending secret creation.
+type BeginEnrollmentParams struct {
+	OrgID       string
+	UserID      string
+	AccountName string
+}
+
+// ConfirmEnrollmentParams scopes pending-secret confirmation.
+type ConfirmEnrollmentParams struct {
+	OrgID  string
+	UserID string
+	Code   string
+}
+
+// CreateStepUpParams scopes TOTP verification and step-up JWT issuance.
+type CreateStepUpParams struct {
+	OrgID       string
+	UserID      string
+	Code        string
+	Permissions int64
 }
 
 // TotpService handles enrollment and step-up issuance.
@@ -96,20 +118,21 @@ func (s *TotpService) WithAttemptGate(gate totpAttemptGate) *TotpService {
 }
 
 // BeginEnrollment creates a pending sealed secret and returns an otpauth URI.
-func (s *TotpService) BeginEnrollment(ctx context.Context, orgID, userID, accountName string) (string, error) {
-	if !s.enabled {
-		return "", ErrTOTPDisabled
+func (s *TotpService) BeginEnrollment(ctx context.Context, p BeginEnrollmentParams) (string, error) {
+	if err := s.requireReady(); err != nil {
+		return "", err
 	}
-	if !s.ready {
-		return "", ErrTOTPNotReady
-	}
-	orgID, userID = strings.TrimSpace(orgID), strings.TrimSpace(userID)
+	orgID, userID := strings.TrimSpace(p.OrgID), strings.TrimSpace(p.UserID)
 	if orgID == "" || userID == "" {
 		return "", ErrInvalidArgument
 	}
 	if err := s.ensureEnrollmentAllowed(ctx, orgID, userID); err != nil {
 		return "", err
 	}
+	return s.createPendingSecret(ctx, orgID, userID, p.AccountName)
+}
+
+func (s *TotpService) createPendingSecret(ctx context.Context, orgID, userID, accountName string) (string, error) {
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "IBEX",
 		AccountName: accountName,
@@ -142,50 +165,59 @@ func (s *TotpService) ensureEnrollmentAllowed(ctx context.Context, orgID, userID
 }
 
 // ConfirmEnrollment verifies a code against the pending secret.
-func (s *TotpService) ConfirmEnrollment(ctx context.Context, orgID, userID, code string) error {
-	if err := s.attempts.Allow(orgID, userID); err != nil {
+func (s *TotpService) ConfirmEnrollment(ctx context.Context, p ConfirmEnrollmentParams) error {
+	if err := s.attempts.Allow(p.OrgID, p.UserID); err != nil {
 		return err
 	}
-	secret, row, err := s.loadPendingSecret(ctx, orgID, userID)
+	secret, row, err := s.loadPendingSecret(ctx, p.OrgID, p.UserID)
 	if err != nil {
 		return err
 	}
-	if !totp.Validate(strings.TrimSpace(code), secret) {
-		s.attempts.Fail(orgID, userID)
+	if !totp.Validate(strings.TrimSpace(p.Code), secret) {
+		s.attempts.Fail(p.OrgID, p.UserID)
 		return ErrTOTPInvalidCode
 	}
-	if err := s.repo.ConfirmCiphertext(ctx, orgID, userID, row.Ciphertext, time.Now().UTC()); err != nil {
+	if err := s.repo.ConfirmCiphertext(ctx, repository.ConfirmCiphertextParams{
+		OrgID: p.OrgID, UserID: p.UserID, Ciphertext: row.Ciphertext, At: time.Now().UTC(),
+	}); err != nil {
 		return err
 	}
-	s.attempts.Reset(orgID, userID)
+	s.attempts.Reset(p.OrgID, p.UserID)
 	return nil
 }
 
 // CreateStepUp verifies TOTP for a confirmed enrollment and issues a step-up JWT.
-func (s *TotpService) CreateStepUp(ctx context.Context, orgID, userID, code string, permissions int64) (string, time.Time, error) {
+func (s *TotpService) CreateStepUp(ctx context.Context, p CreateStepUpParams) (string, time.Time, error) {
 	if !s.issuerOK {
 		return "", time.Time{}, ErrSessionJWTMissing
 	}
-	if err := s.attempts.Allow(orgID, userID); err != nil {
+	if err := s.attempts.Allow(p.OrgID, p.UserID); err != nil {
 		return "", time.Time{}, err
 	}
-	secret, err := s.loadSecret(ctx, orgID, userID)
-	if err != nil {
+	if err := s.verifyConfirmedCode(ctx, p); err != nil {
 		return "", time.Time{}, err
 	}
-	row, err := s.repo.Get(ctx, orgID, userID)
+	s.attempts.Reset(p.OrgID, p.UserID)
+	return s.issuer.IssueStepUp(p.UserID, p.OrgID, p.Permissions)
+}
+
+func (s *TotpService) verifyConfirmedCode(ctx context.Context, p CreateStepUpParams) error {
+	secret, err := s.loadSecret(ctx, p.OrgID, p.UserID)
 	if err != nil {
-		return "", time.Time{}, mapTotpStoreErr(err)
+		return err
+	}
+	row, err := s.repo.Get(ctx, p.OrgID, p.UserID)
+	if err != nil {
+		return mapTotpStoreErr(err)
 	}
 	if !row.ConfirmedAt.Valid {
-		return "", time.Time{}, ErrTOTPNotEnrolled
+		return ErrTOTPNotEnrolled
 	}
-	if !totp.Validate(strings.TrimSpace(code), secret) {
-		s.attempts.Fail(orgID, userID)
-		return "", time.Time{}, ErrTOTPInvalidCode
+	if !totp.Validate(strings.TrimSpace(p.Code), secret) {
+		s.attempts.Fail(p.OrgID, p.UserID)
+		return ErrTOTPInvalidCode
 	}
-	s.attempts.Reset(orgID, userID)
-	return s.issuer.IssueStepUp(userID, orgID, permissions)
+	return nil
 }
 
 func (s *TotpService) loadPendingSecret(ctx context.Context, orgID, userID string) (string, repository.TotpSecretRow, error) {
@@ -203,12 +235,19 @@ func (s *TotpService) loadPendingSecret(ctx context.Context, orgID, userID strin
 	return secret, row, nil
 }
 
-func (s *TotpService) loadSecret(ctx context.Context, orgID, userID string) (string, error) {
+func (s *TotpService) requireReady() error {
 	if !s.enabled {
-		return "", ErrTOTPDisabled
+		return ErrTOTPDisabled
 	}
 	if !s.ready {
-		return "", ErrTOTPNotReady
+		return ErrTOTPNotReady
+	}
+	return nil
+}
+
+func (s *TotpService) loadSecret(ctx context.Context, orgID, userID string) (string, error) {
+	if err := s.requireReady(); err != nil {
+		return "", err
 	}
 	orgID, userID = strings.TrimSpace(orgID), strings.TrimSpace(userID)
 	row, err := s.repo.Get(ctx, orgID, userID)

@@ -11,6 +11,7 @@ from app.config import Settings
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_STEP_UP,
+    SessionClaims,
     SessionStubError,
     TokenVerifyOpts,
     verify_token_opts,
@@ -28,15 +29,9 @@ def _deny_step_up() -> ApiError:
     return ApiError(code=INSUFFICIENT_PERMISSIONS, message=_STEP_UP_REQUIRED)
 
 
-def require_step_up_header(request: Request) -> None:
-    """Validate X-IBEX-Step-Up when present; set request.state.ibex_step_up_ok."""
-    settings = _settings(request)
-    raw = request.headers.get(STEP_UP_HEADER)
-    if not raw:
-        request.state.ibex_step_up_ok = False
-        return
+def _verify_step_up_token(raw: str, settings: Settings) -> SessionClaims:
     try:
-        claims = verify_token_opts(
+        return verify_token_opts(
             raw.strip(),
             TokenVerifyOpts(
                 secret=settings.jwt_hmac_secret,
@@ -48,12 +43,25 @@ def require_step_up_header(request: Request) -> None:
         )
     except SessionStubError as exc:
         raise _deny_step_up() from exc
+
+
+def _assert_step_up_binds_session(request: Request, claims: SessionClaims) -> None:
     session_org = getattr(request.state, "ibex_session_org_id", None)
-    session_sub = getattr(request.state, "ibex_session_sub", None)
     if session_org is not None and str(claims.org_id) != str(session_org):
         raise _deny_step_up()
+    session_sub = getattr(request.state, "ibex_session_sub", None)
     if session_sub is not None and (not claims.sub or str(claims.sub) != str(session_sub)):
         raise _deny_step_up()
+
+
+def require_step_up_header(request: Request) -> None:
+    """Validate X-IBEX-Step-Up when present; set request.state.ibex_step_up_ok."""
+    raw = request.headers.get(STEP_UP_HEADER)
+    if not raw:
+        request.state.ibex_step_up_ok = False
+        return
+    claims = _verify_step_up_token(raw, _settings(request))
+    _assert_step_up_binds_session(request, claims)
     request.state.ibex_step_up_ok = True
     request.state.ibex_step_up_jti = claims.jti
 

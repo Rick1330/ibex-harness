@@ -297,31 +297,11 @@ type finishAssembledCoreInput struct {
 }
 
 func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error) {
-	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
+	parts, err := buildRouterAssembleParts(in)
 	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
+		return assembledProxyCore{}, err
 	}
-	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("tokenizer registry: %w", err)
-	}
-	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
-	}
-	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(
-		in.infra.pgDB, providerReg, in.log, in.reg, in.cfg.ModelPolicyAllowPassthrough,
-	)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("model policy: %w", err)
-	}
-	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
-	deps := assembledRouterDeps(routerAssembleParts{
-		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
-		idempStore: idempStore, traceWriter: traceWriter,
-		modelRouter: modelRouter, agentDefaults: agentDefaults,
-	})
-	server, err := newHTTPServer(deps)
+	server, err := newHTTPServer(assembledRouterDeps(parts))
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
 	}
@@ -332,8 +312,38 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		validator: in.infra.auth.validator, limiter: in.infra.limiter,
 		directiveResolver: in.infra.directiveResolver,
 		checkpointPool:    in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
-		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
-		modelPolicyCache: mpCache, modelRouter: modelRouter, agentDefaults: agentDefaults,
+		traceWriter: parts.traceWriter, tokenizerReg: parts.tokenizerReg,
+		modelPolicyCache: parts.mpCache, modelRouter: parts.modelRouter, agentDefaults: parts.agentDefaults,
+	}, nil
+}
+
+func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts, error) {
+	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("provider registry: %w", err)
+	}
+	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("tokenizer registry: %w", err)
+	}
+	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("idempotency store: %w", err)
+	}
+	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
+		PGDB:             in.infra.pgDB,
+		Base:             providerReg,
+		Log:              in.log,
+		Metrics:          in.reg,
+		AllowPassthrough: in.cfg.ModelPolicyAllowPassthrough,
+	})
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("model policy: %w", err)
+	}
+	return routerAssembleParts{
+		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
+		idempStore: idempStore, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
+		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
 	}, nil
 }
 
@@ -345,6 +355,7 @@ type routerAssembleParts struct {
 	traceWriter   *ibexch.Writer
 	modelRouter   proxyhttp.ProviderResolver
 	agentDefaults modelpolicy.AgentDefaultLoader
+	mpCache       *modelpolicy.Cache
 }
 
 func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {

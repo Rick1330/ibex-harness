@@ -19,48 +19,52 @@ import (
 
 func TestUnit_BuildModelPolicyRuntime_NilPostgresDenyAll(t *testing.T) {
 	t.Parallel()
-	base := mustTestRegistry(t)
-	var buf bytes.Buffer
-	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := ibexmetrics.NewProxy("mp-denyall-test")
-	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, log, reg, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cache != nil {
-		t.Fatal("expected nil cache without postgres")
-	}
-	assertDenyAllResolver(t, resolver)
-	assertNoopDefaults(t, defaults)
-	if !strings.Contains(buf.String(), "model policy deny-all") {
-		t.Fatalf("expected deny-all warn log, got %q", buf.String())
-	}
-	assertModelPolicyEnabledGauge(t, reg, 0)
+	assertNilPostgresFallback(t, nilPostgresCase{
+		allowPassthrough: false,
+		logNeedle:        "model policy deny-all",
+		assertResolver:   assertDenyAllResolver,
+	})
 }
 
 func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthroughEscapeHatch(t *testing.T) {
 	t.Parallel()
+	assertNilPostgresFallback(t, nilPostgresCase{
+		allowPassthrough: true,
+		logNeedle:        "model policy passthrough",
+		assertResolver:   assertPassthroughResolver,
+	})
+}
+
+type nilPostgresCase struct {
+	allowPassthrough bool
+	logNeedle        string
+	assertResolver   func(*testing.T, interface {
+		ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error)
+	})
+}
+
+func assertNilPostgresFallback(t *testing.T, tc nilPostgresCase) {
+	t.Helper()
 	base := mustTestRegistry(t)
 	var buf bytes.Buffer
 	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := ibexmetrics.NewProxy("mp-passthrough-test")
-	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, log, reg, true)
+	reg := ibexmetrics.NewProxy("mp-nil-pg-test")
+	cache, resolver, defaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
+		Base: base, Log: log, Metrics: reg, AllowPassthrough: tc.allowPassthrough,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cache != nil {
 		t.Fatal("expected nil cache without postgres")
 	}
-	assertPassthroughResolver(t, resolver)
+	tc.assertResolver(t, resolver)
 	assertNoopDefaults(t, defaults)
-	if !strings.Contains(buf.String(), "model policy passthrough") {
-		t.Fatalf("expected passthrough warn log, got %q", buf.String())
+	if !strings.Contains(buf.String(), tc.logNeedle) {
+		t.Fatalf("expected %q in log, got %q", tc.logNeedle, buf.String())
 	}
 	assertModelPolicyEnabledGauge(t, reg, 0)
 }

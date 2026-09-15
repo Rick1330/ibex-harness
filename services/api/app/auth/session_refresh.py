@@ -20,6 +20,7 @@ _WIRE_LEN = 2
 _WIRE_32BIT = 5
 _MAX_TOKEN_FIELD = 8192
 _MAX_MESSAGE = 16_384
+_FIXED_WIRE_BYTES = {_WIRE_64BIT: 8, _WIRE_32BIT: 4}
 
 
 def encode_issue_with_refresh(refresh_token: str) -> bytes:
@@ -53,24 +54,24 @@ def _read_bytes(buf: bytes, idx: int, *, max_len: int) -> tuple[bytes, int]:
     return buf[idx:end], end
 
 
+def _skip_fixed(buf: bytes, idx: int, size: int) -> int:
+    end = idx + size
+    if end > len(buf):
+        raise AuthCodecError("truncated fixed field")
+    return end
+
+
 def _skip_unknown(buf: bytes, idx: int, wire: int) -> int:
     if wire == _WIRE_VARINT:
         _, idx = _decode_varint(buf, idx)
         return idx
-    if wire == _WIRE_64BIT:
-        end = idx + 8
-        if end > len(buf):
-            raise AuthCodecError("truncated fixed64 field")
-        return end
-    if wire == _WIRE_32BIT:
-        end = idx + 4
-        if end > len(buf):
-            raise AuthCodecError("truncated fixed32 field")
-        return end
     if wire == _WIRE_LEN:
         _, idx = _read_bytes(buf, idx, max_len=_MAX_MESSAGE)
         return idx
-    raise AuthCodecError(f"unsupported wire type {wire}")
+    size = _FIXED_WIRE_BYTES.get(wire)
+    if size is None:
+        raise AuthCodecError(f"unsupported wire type {wire}")
+    return _skip_fixed(buf, idx, size)
 
 
 def _decode_string_field(buf: bytes, field_num: int) -> str | None:
@@ -105,29 +106,7 @@ def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailab
     return AuthUnavailableError("auth refresh failed")
 
 
-async def refresh_operator_session(
-    *,
-    auth_grpc_addr: str,
-    refresh_token: str,
-    timeout_seconds: float = 5.0,
-) -> RefreshedSession:
-    """Call Auth IssueOperatorSession with refresh_token (no PAT bearer)."""
-    assert_trusted_insecure_auth_target(auth_grpc_addr)
-    payload = encode_issue_with_refresh(refresh_token)
-    try:
-        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
-            stub = channel.unary_unary(
-                _ISSUE_METHOD,
-                request_serializer=lambda b: b,
-                response_deserializer=lambda b: b,
-            )
-            raw = await asyncio.wait_for(stub(payload), timeout=timeout_seconds)
-    except TimeoutError as exc:
-        raise AuthUnavailableError("auth refresh timeout") from exc
-    except grpc.aio.AioRpcError as exc:
-        raise _map_rpc_error(exc) from exc
-    except AuthCodecError as exc:
-        raise AuthUnavailableError("auth refresh codec error") from exc
+def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
     try:
         access = _decode_string_field(raw, 1)
         refresh = _decode_string_field(raw, 2)
@@ -136,3 +115,42 @@ async def refresh_operator_session(
     if not access or not refresh:
         raise AuthUnavailableError("auth refresh returned incomplete tokens")
     return RefreshedSession(access_token=access, refresh_token=refresh)
+
+
+async def _call_issue_operator_session(
+    *,
+    auth_grpc_addr: str,
+    refresh_token: str,
+    timeout_seconds: float,
+) -> bytes:
+    payload = encode_issue_with_refresh(refresh_token)
+    try:
+        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
+            stub = channel.unary_unary(
+                _ISSUE_METHOD,
+                request_serializer=lambda b: b,
+                response_deserializer=lambda b: b,
+            )
+            return await asyncio.wait_for(stub(payload), timeout=timeout_seconds)
+    except TimeoutError as exc:
+        raise AuthUnavailableError("auth refresh timeout") from exc
+    except grpc.aio.AioRpcError as exc:
+        raise _map_rpc_error(exc) from exc
+    except AuthCodecError as exc:
+        raise AuthUnavailableError("auth refresh codec error") from exc
+
+
+async def refresh_operator_session(
+    *,
+    auth_grpc_addr: str,
+    refresh_token: str,
+    timeout_seconds: float = 5.0,
+) -> RefreshedSession:
+    """Call Auth IssueOperatorSession with refresh_token (no PAT bearer)."""
+    assert_trusted_insecure_auth_target(auth_grpc_addr)
+    raw = await _call_issue_operator_session(
+        auth_grpc_addr=auth_grpc_addr,
+        refresh_token=refresh_token,
+        timeout_seconds=timeout_seconds,
+    )
+    return _parse_refreshed_session(raw)

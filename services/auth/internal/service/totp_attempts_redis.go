@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,12 +14,35 @@ const (
 	totpLockKeyPrefix = "auth:totp:lock:"
 )
 
+// ErrTOTPUnavailable is returned when the attempt gate cannot reach Redis.
+var ErrTOTPUnavailable = errors.New("totp attempt store unavailable")
+
 // RedisTOTPAttempts stores TOTP failure counts and lockouts in Redis.
 type RedisTOTPAttempts struct {
 	client   redis.UniversalClient
 	maxFails int
 	lockTTL  time.Duration
 }
+
+// totpReserveScript atomically checks lockout and reserves one attempt (INCR)
+// before TOTP verification. Returns -1 when locked / over limit, else the count.
+var totpReserveScript = redis.NewScript(`
+local failKey = KEYS[1]
+local lockKey = KEYS[2]
+local maxFails = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+if redis.call('EXISTS', lockKey) == 1 then
+  return -1
+end
+local n = redis.call('INCR', failKey)
+redis.call('EXPIRE', failKey, ttl)
+if n > maxFails then
+  redis.call('SET', lockKey, '1', 'EX', ttl)
+  redis.call('DEL', failKey)
+  return -1
+end
+return n
+`)
 
 // NewRedisTOTPAttempts constructs a shared attempt gate. client must be non-nil.
 func NewRedisTOTPAttempts(client redis.UniversalClient, maxFails int, lockTTL time.Duration) (*RedisTOTPAttempts, error) {
@@ -42,39 +66,28 @@ func (r *RedisTOTPAttempts) lockKey(orgID, userID string) string {
 	return totpLockKeyPrefix + totpAttemptKey(orgID, userID)
 }
 
-// Allow implements totpAttemptGate.
+// Allow reserves one attempt atomically before verification (fail-closed on Redis errors).
 func (r *RedisTOTPAttempts) Allow(orgID, userID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	n, err := r.client.Exists(ctx, r.lockKey(orgID, userID)).Result()
+	n, err := totpReserveScript.Run(
+		ctx, r.client,
+		[]string{r.failKey(orgID, userID), r.lockKey(orgID, userID)},
+		r.maxFails, int(r.lockTTL.Seconds()),
+	).Int64()
 	if err != nil {
-		// Fail-open on Redis errors (same posture as ValidateToken rate limit).
-		return nil
+		return ErrTOTPUnavailable
 	}
-	if n > 0 {
+	if n < 0 {
 		return ErrTOTPLockedOut
 	}
 	return nil
 }
 
-// Fail implements totpAttemptGate.
-func (r *RedisTOTPAttempts) Fail(orgID, userID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	failKey := r.failKey(orgID, userID)
-	n, err := r.client.Incr(ctx, failKey).Result()
-	if err != nil {
-		return
-	}
-	_ = r.client.Expire(ctx, failKey, r.lockTTL).Err()
-	if int(n) < r.maxFails {
-		return
-	}
-	_ = r.client.Set(ctx, r.lockKey(orgID, userID), "1", r.lockTTL).Err()
-	_ = r.client.Del(ctx, failKey).Err()
-}
+// Fail is a no-op: Allow already reserved the attempt for this verification.
+func (r *RedisTOTPAttempts) Fail(orgID, userID string) {}
 
-// Reset implements totpAttemptGate.
+// Reset clears reservations after successful verification.
 func (r *RedisTOTPAttempts) Reset(orgID, userID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

@@ -338,41 +338,55 @@ func modelPolicyMetrics(reg *ibexmetrics.ProxyRegistry) modelpolicy.Metrics {
 	return modelpolicy.NoopMetrics{}
 }
 
-func buildModelPolicyRuntime(
-	pgDB *sql.DB,
-	base *provider.Registry,
-	log *logger.Logger,
-	metrics *ibexmetrics.ProxyRegistry,
-	allowPassthrough bool,
-) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
-	if pgDB == nil || base == nil {
-		reason := "POSTGRES_DSN unset or db handle nil"
-		if base == nil {
-			reason = "provider registry nil"
-		}
-		if allowPassthrough {
-			warnModelPolicyPassthrough(log, metrics, reason)
-			return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
-		}
-		warnModelPolicyDenyAll(log, metrics, reason)
-		return nil, modelpolicy.DenyAllRegistry{}, modelpolicy.NoopAgentDefaults{}, nil
+type modelPolicyRuntimeInput struct {
+	PGDB             *sql.DB
+	Base             *provider.Registry
+	Log              *logger.Logger
+	Metrics          *ibexmetrics.ProxyRegistry
+	AllowPassthrough bool
+}
+
+func buildModelPolicyRuntime(in modelPolicyRuntimeInput) (
+	*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error,
+) {
+	if in.PGDB == nil || in.Base == nil {
+		return modelPolicyUnavailable(in)
 	}
-	m := modelPolicyMetrics(metrics)
-	cache, reg, err := newOrgPolicyStack(pgDB, base, m)
+	m := modelPolicyMetrics(in.Metrics)
+	cache, reg, err := newOrgPolicyStack(in.PGDB, in.Base, m)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	agentDefaults, err := newCachedAgentDefaults(pgDB)
+	agentDefaults, err := newCachedAgentDefaults(in.PGDB)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	markModelPolicyEnabled(in.Log, in.Metrics)
+	return cache, reg, agentDefaults, nil
+}
+
+func modelPolicyUnavailable(in modelPolicyRuntimeInput) (
+	*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error,
+) {
+	reason := "POSTGRES_DSN unset or db handle nil"
+	if in.Base == nil {
+		reason = "provider registry nil"
+	}
+	if in.AllowPassthrough {
+		warnModelPolicyPassthrough(in.Log, in.Metrics, reason)
+		return nil, modelpolicy.PassthroughRegistry{Base: in.Base}, modelpolicy.NoopAgentDefaults{}, nil
+	}
+	warnModelPolicyDenyAll(in.Log, in.Metrics, reason)
+	return nil, modelpolicy.DenyAllRegistry{}, modelpolicy.NoopAgentDefaults{}, nil
+}
+
+func markModelPolicyEnabled(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry) {
 	if metrics != nil {
 		metrics.SetModelPolicyEnabled(true)
 	}
 	if log != nil {
 		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
 	}
-	return cache, reg, agentDefaults, nil
 }
 
 func warnModelPolicyDenyAll(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {

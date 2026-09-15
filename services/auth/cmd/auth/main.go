@@ -194,25 +194,41 @@ func newSessionAndTotp(
 	if err != nil {
 		return nil, nil, err
 	}
-	if sessionIssuer != nil && redisClient != nil {
-		jtiStore, err := sessionjwt.NewRedisJTIStore(redisClient)
-		if err != nil {
-			return nil, nil, err
-		}
-		sessionIssuer.WithJTIStore(jtiStore)
+	if err := attachRedisJTIStore(sessionIssuer, redisClient); err != nil {
+		return nil, nil, err
 	}
 	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
 	if err != nil {
 		return nil, nil, err
 	}
-	if totpSvc != nil && redisClient != nil {
-		gate, err := service.NewRedisTOTPAttempts(redisClient, 0, 0)
-		if err != nil {
-			return nil, nil, err
-		}
-		totpSvc.WithAttemptGate(gate)
+	if err := attachRedisTOTPAttempts(totpSvc, redisClient); err != nil {
+		return nil, nil, err
 	}
 	return sessionIssuer, totpSvc, nil
+}
+
+func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.UniversalClient) error {
+	if sessionIssuer == nil || redisClient == nil {
+		return nil
+	}
+	jtiStore, err := sessionjwt.NewRedisJTIStore(redisClient)
+	if err != nil {
+		return err
+	}
+	sessionIssuer.WithJTIStore(jtiStore)
+	return nil
+}
+
+func attachRedisTOTPAttempts(totpSvc *service.TotpService, redisClient redis.UniversalClient) error {
+	if totpSvc == nil || redisClient == nil {
+		return nil
+	}
+	gate, err := service.NewRedisTOTPAttempts(redisClient, 0, 0)
+	if err != nil {
+		return err
+	}
+	totpSvc.WithAttemptGate(gate)
+	return nil
 }
 
 func newSessionIssuer(cfg config.Config) (*sessionjwt.Issuer, error) {
@@ -220,7 +236,14 @@ func newSessionIssuer(cfg config.Config) (*sessionjwt.Issuer, error) {
 	if pem == "" {
 		return nil, nil
 	}
-	return sessionjwt.NewIssuer(pem, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, cfg.JWTStepUpTTL)
+	return sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
+		PrivateKeyPEM: pem,
+		Issuer:        cfg.JWTIssuer,
+		Audience:      cfg.JWTAudience,
+		AccessTTL:     cfg.JWTAccessTTL,
+		RefreshTTL:    cfg.JWTRefreshTTL,
+		StepUpTTL:     cfg.JWTStepUpTTL,
+	})
 }
 
 func newTotpService(cfg config.Config, db *sql.DB, jwt *sessionjwt.Issuer) (*service.TotpService, error) {
@@ -454,9 +477,9 @@ func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetri
 }
 
 func optionalTotp(svc *service.TotpService) interface {
-	BeginEnrollment(ctx context.Context, orgID, userID, accountName string) (string, error)
-	ConfirmEnrollment(ctx context.Context, orgID, userID, code string) error
-	CreateStepUp(ctx context.Context, orgID, userID, code string, permissions int64) (string, time.Time, error)
+	BeginEnrollment(ctx context.Context, p service.BeginEnrollmentParams) (string, error)
+	ConfirmEnrollment(ctx context.Context, p service.ConfirmEnrollmentParams) error
+	CreateStepUp(ctx context.Context, p service.CreateStepUpParams) (string, time.Time, error)
 } {
 	if svc == nil {
 		return nil

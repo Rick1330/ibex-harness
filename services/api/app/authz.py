@@ -115,6 +115,24 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings  # type: ignore[no-any-return]
 
 
+def _assert_operator_feature_enabled(settings: Settings) -> None:
+    if not settings.operator_feature_enabled:
+        raise ApiError(code=SERVICE_DEGRADED, message="Operator feature disabled")
+
+
+def _assert_operator_action_enabled(settings: Settings, required: int) -> None:
+    attr = _KILL_SWITCH_BY_PERM.get(required)
+    if attr is not None and not bool(getattr(settings, attr, False)):
+        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Action disabled by policy")
+
+
+def _assert_operator_bitmap(bitmap: int, required: int, *, step_up_ok: bool) -> None:
+    if not has_permission(bitmap, required):
+        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
+    if requires_step_up(required) and not step_up_ok:
+        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
+
+
 def assert_operator_permission(
     settings: Settings,
     bitmap: int,
@@ -123,15 +141,9 @@ def assert_operator_permission(
     step_up_ok: bool = False,
 ) -> None:
     """Deny-by-default operator action gate (bitmap + kill switch + step-up)."""
-    if not settings.operator_feature_enabled:
-        raise ApiError(code=SERVICE_DEGRADED, message="Operator feature disabled")
-    attr = _KILL_SWITCH_BY_PERM.get(required)
-    if attr is not None and not bool(getattr(settings, attr, False)):
-        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Action disabled by policy")
-    if not has_permission(bitmap, required):
-        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
-    if requires_step_up(required) and not step_up_ok:
-        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
+    _assert_operator_feature_enabled(settings)
+    _assert_operator_action_enabled(settings, required)
+    _assert_operator_bitmap(bitmap, required, step_up_ok=step_up_ok)
 
 
 def require_operator_permission(required: int) -> Callable[..., ValidateResult]:

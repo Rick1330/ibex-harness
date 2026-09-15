@@ -205,32 +205,29 @@ def _validate_claims(
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
-    """Verify RS256 first when public keys are configured; fall back to deprecated HS256."""
+    """Verify RS256 or HS256; protected-header alg must match the verifier used."""
     header_b64, payload_b64, sig_b64 = _split_jwt(token)
     alg = _header_alg(header_b64)
     payload = _decode_payload(payload_b64)
 
-    if opts.public_keys_pem and alg == "RS256":
+    if alg == "RS256":
+        if not opts.public_keys_pem:
+            raise SessionStubError("no verify material")
         _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
         return _validate_claims(payload, opts, verify_method="RS256")
 
-    if opts.public_keys_pem and alg != "HS256":
-        # Prefer RS256 attempt even if alg claim is wrong/missing when keys exist.
-        try:
-            _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
-            return _validate_claims(payload, opts, verify_method="RS256")
-        except SessionStubError:
-            pass
+    if alg == "HS256":
+        if not opts.secret:
+            raise SessionStubError("no verify material")
+        _verify_hs256(header_b64, payload_b64, sig_b64, secret=opts.secret)
+        _LOG.warning(
+            "provisional_hs256_verify=1 issuer=%s audience=%s",
+            opts.issuer,
+            opts.audience,
+        )
+        return _validate_claims(payload, opts, verify_method="HS256")
 
-    if not opts.secret:
-        raise SessionStubError("no verify material")
-    _verify_hs256(header_b64, payload_b64, sig_b64, secret=opts.secret)
-    _LOG.warning(
-        "provisional_hs256_verify=1 issuer=%s audience=%s",
-        opts.issuer,
-        opts.audience,
-    )
-    return _validate_claims(payload, opts, verify_method="HS256")
+    raise SessionStubError("alg mismatch")
 
 
 def mint_csrf_token(*, secret: str) -> str:
