@@ -49,6 +49,8 @@ class SessionClaims:
     exp: int
     iat: int
     jti: str
+    # Verifier outcome (not the unverified JWT header alg).
+    verify_method: str  # "RS256" | "HS256"
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +179,7 @@ def _session_kind_of(payload: dict[str, Any]) -> str | None:
     return None if kind is None else str(kind)
 
 
-def _to_claims(payload: dict[str, Any]) -> SessionClaims:
+def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
     return SessionClaims(
         sub=str(payload.get("sub", "")),
         org_id=UUID(str(payload["org_id"])),
@@ -186,17 +188,20 @@ def _to_claims(payload: dict[str, Any]) -> SessionClaims:
         exp=int(payload.get("exp", 0)),
         iat=int(payload.get("iat", 0)),
         jti=str(payload.get("jti", "")),
+        verify_method=verify_method,
     )
 
 
-def _validate_claims(payload: dict[str, Any], opts: TokenVerifyOpts) -> SessionClaims:
+def _validate_claims(
+    payload: dict[str, Any], opts: TokenVerifyOpts, *, verify_method: str
+) -> SessionClaims:
     if payload.get("iss") != opts.issuer or payload.get("aud") != opts.audience:
         raise SessionStubError("issuer/audience mismatch")
     if _session_kind_of(payload) != opts.expect_kind:
         raise SessionStubError("wrong token kind")
     if int(payload.get("exp", 0)) < int(time.time()):
         raise SessionStubError("expired")
-    return _to_claims(payload)
+    return _to_claims(payload, verify_method=verify_method)
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
@@ -207,13 +212,13 @@ def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
 
     if opts.public_keys_pem and alg == "RS256":
         _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
-        return _validate_claims(payload, opts)
+        return _validate_claims(payload, opts, verify_method="RS256")
 
     if opts.public_keys_pem and alg != "HS256":
         # Prefer RS256 attempt even if alg claim is wrong/missing when keys exist.
         try:
             _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
-            return _validate_claims(payload, opts)
+            return _validate_claims(payload, opts, verify_method="RS256")
         except SessionStubError:
             pass
 
@@ -225,7 +230,7 @@ def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
         opts.issuer,
         opts.audience,
     )
-    return _validate_claims(payload, opts)
+    return _validate_claims(payload, opts, verify_method="HS256")
 
 
 def mint_csrf_token(*, secret: str) -> str:

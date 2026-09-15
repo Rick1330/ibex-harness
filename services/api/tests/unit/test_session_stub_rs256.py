@@ -78,6 +78,7 @@ def test_verify_rs256_ok_and_multi_key_rotation() -> None:
         ),
     )
     assert str(claims.org_id) == org
+    assert claims.verify_method == "RS256"
 
 
 def test_verify_rs256_rejects_bad_signature() -> None:
@@ -197,6 +198,7 @@ def test_verify_falls_through_when_rs256_attempt_fails() -> None:
         ),
     )
     assert str(claims.org_id) == org
+    assert claims.verify_method == "HS256"
 
 
 def test_verify_accepts_token_kind_alias() -> None:

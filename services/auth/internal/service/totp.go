@@ -86,6 +86,15 @@ func NewTotpService(repo totpStore, kek MasterKeyConfig, enabled bool, jwt *sess
 	return svc, nil
 }
 
+// WithAttemptGate replaces the in-memory TOTP attempt gate (Redis in production).
+func (s *TotpService) WithAttemptGate(gate totpAttemptGate) *TotpService {
+	if s == nil || gate == nil {
+		return s
+	}
+	s.attempts = gate
+	return s
+}
+
 // BeginEnrollment creates a pending sealed secret and returns an otpauth URI.
 func (s *TotpService) BeginEnrollment(ctx context.Context, orgID, userID, accountName string) (string, error) {
 	if !s.enabled {

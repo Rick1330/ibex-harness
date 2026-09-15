@@ -186,7 +186,8 @@ func TestValidate_TOTPSessionConfig(t *testing.T) {
 	base := validAuthConfig()
 	base.TOTPEnabled = true
 	base.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	base.JWTPrivateKeyPEM = "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"
+	// Non-empty placeholder only — Validate checks presence, not PEM parse.
+	base.JWTPrivateKeyPEM = "test-jwt-private-key-configured"
 	base.JWTIssuer = "ibex"
 	base.JWTAudience = "dash"
 
@@ -240,7 +241,7 @@ func TestValidate_TOTPSessionConfig(t *testing.T) {
 	})
 }
 
-func TestLoad_JWTDurationOverridesAndRejects(t *testing.T) {
+func TestLoad_JWTDurationOverrides(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
 	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
@@ -258,6 +259,14 @@ func TestLoad_JWTDurationOverridesAndRejects(t *testing.T) {
 	if cfg.CredentialsMasterKeyID != "v1" {
 		t.Fatalf("key id default: %q", cfg.CredentialsMasterKeyID)
 	}
+}
+
+func TestLoad_JWTDurationRejects(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	t.Setenv("JWT_ACCESS_TOKEN_TTL", "10m")
+	t.Setenv("JWT_REFRESH_TOKEN_TTL", "48h")
+	t.Setenv("JWT_STEP_UP_TOKEN_TTL", "2m")
 
 	t.Setenv("JWT_ACCESS_TOKEN_TTL", "0s")
 	if _, err := Load(); err == nil {

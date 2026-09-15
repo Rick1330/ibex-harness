@@ -1,6 +1,7 @@
 package sessionjwt_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -64,10 +65,10 @@ func TestRefreshPair_ConsumesJTIOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err := iss.RefreshPair(refresh); err != nil {
+	if _, _, _, _, err := iss.RefreshPair(context.Background(), refresh); err != nil {
 		t.Fatalf("first refresh: %v", err)
 	}
-	if _, _, _, _, err := iss.RefreshPair(refresh); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+	if _, _, _, _, err := iss.RefreshPair(context.Background(), refresh); !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("replay want ErrInvalidToken, got %v", err)
 	}
 }
@@ -194,10 +195,10 @@ func TestRefreshPair_RejectsAccessTokenAndBadClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err := iss.RefreshPair(access); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+	if _, _, _, _, err := iss.RefreshPair(context.Background(), access); !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("access as refresh: %v", err)
 	}
-	if _, _, _, _, err := iss.RefreshPair("not-a-token"); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+	if _, _, _, _, err := iss.RefreshPair(context.Background(), "not-a-token"); !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("garbage: %v", err)
 	}
 }

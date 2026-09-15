@@ -24,7 +24,7 @@ type totpPort interface {
 
 type sessionIssuerPort interface {
 	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
-	RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 }
 
 func (s *Server) BeginTotpEnrollment(
@@ -103,9 +103,12 @@ func (s *Server) IssueOperatorSession(
 		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
 	}
 	if rt := strings.TrimSpace(req.GetRefreshToken()); rt != "" {
-		access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(rt)
+		access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(ctx, rt)
 		if err != nil {
-			return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
+			if errors.Is(err, sessionjwt.ErrInvalidToken) || errors.Is(err, sessionjwt.ErrExpired) {
+				return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
+			}
+			return nil, status.Error(codes.Unavailable, "refresh unavailable")
 		}
 		return &authv1.IssueOperatorSessionResponse{
 			AccessToken:      access,

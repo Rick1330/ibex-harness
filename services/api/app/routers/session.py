@@ -287,7 +287,8 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
 
     # RS256 refresh is always Auth-owned (even when HMAC is also configured).
-    if alg == _ALG_RS256:
+    # Non-HS256 headers with public keys also go to Auth (matches verify_token_opts).
+    if alg == _ALG_RS256 or (settings.jwt_public_keys_pem and alg != "HS256"):
         return await _refresh_via_auth(
             response=response, settings=settings, refresh_token=raw
         )
@@ -372,7 +373,7 @@ def _me_cookie(raw: str, *, settings: Settings, secret: str | None) -> dict[str,
         "auth": "cookie",
         "org_id": str(claims.org_id),
         "sub": claims.sub,
-        "provisional": True,
+        "provisional": claims.verify_method != "RS256",
     }
 
 

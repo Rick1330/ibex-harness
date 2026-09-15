@@ -2,6 +2,7 @@
 package sessionjwt
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -13,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,8 +52,7 @@ type Issuer struct {
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 	stepUpTTL  time.Duration
-	// consumedJTIs records refresh JTIs already rotated (first-use wins).
-	consumedJTIs sync.Map
+	jtiStore   JTIStore
 }
 
 // NewIssuer parses PKCS1/PKCS8 RSA private key PEM.
@@ -74,7 +73,17 @@ func NewIssuer(privateKeyPEM, issuer, audience string, accessTTL, refreshTTL, st
 	return &Issuer{
 		key: key, issuer: issuer, audience: audience,
 		accessTTL: accessTTL, refreshTTL: refreshTTL, stepUpTTL: stepUpTTL,
+		jtiStore: &MemoryJTIStore{},
 	}, nil
+}
+
+// WithJTIStore replaces the refresh JTI consumer (Redis in production).
+func (i *Issuer) WithJTIStore(store JTIStore) *Issuer {
+	if i == nil || store == nil {
+		return i
+	}
+	i.jtiStore = store
+	return i
 }
 
 // IssuePair returns access + refresh tokens for an operator session.
@@ -114,8 +123,8 @@ func (i *Issuer) IssueStepUp(sub, orgID string, permissions int64) (token string
 }
 
 // RefreshPair verifies a refresh JWT with the issuer's public key and rotates the pair.
-// The refresh JTI is consumed atomically; a replay returns ErrInvalidToken.
-func (i *Issuer) RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
+// The refresh JTI is consumed atomically via JTIStore; a replay returns ErrInvalidToken.
+func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
 	v := &Verifier{
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
 		issuer:   i.issuer,
@@ -125,13 +134,25 @@ func (i *Issuer) RefreshPair(refreshToken string) (access, refresh string, acces
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
 	}
-	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" {
-		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
+	if err := validateRefreshClaims(claims); err != nil {
+		return "", "", time.Time{}, time.Time{}, err
 	}
-	if _, loaded := i.consumedJTIs.LoadOrStore(claims.JTI, struct{}{}); loaded {
+	ttl := time.Until(time.Unix(claims.ExpiresAt, 0).UTC())
+	first, err := i.jtiStore.ConsumeOnce(ctx, claims.JTI, ttl)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	if !first {
 		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
 	}
 	return i.IssuePair(claims.Subject, claims.OrgID, claims.Permissions)
+}
+
+func validateRefreshClaims(claims Claims) error {
+	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
 func (i *Issuer) sign(claims Claims) (string, error) {

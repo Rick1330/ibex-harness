@@ -123,3 +123,71 @@ def test_mixed_hmac_still_routes_rs256_cookie_to_auth() -> None:
     assert resp.status_code == 200
     assert resp.json()["provisional"] is False
     refresh_fn.assert_awaited_once()
+
+
+def test_me_cookie_rs256_is_not_provisional() -> None:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    from uuid import uuid4
+    import time
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_pem = (
+        key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
+    org = str(uuid4())
+    now = int(time.time())
+    header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    payload = _b64url(
+        json.dumps(
+            {
+                "iss": "ibex-harness",
+                "aud": "ibex-dashboard",
+                "sub": "user-1",
+                "org_id": org,
+                "permissions": 1,
+                "session_kind": "access",
+                "iat": now,
+                "exp": now + 60,
+                "jti": "jti-me",
+            }
+        ).encode()
+    )
+    body = f"{header}.{payload}"
+    sig = _b64url(key.sign(body.encode("ascii"), padding.PKCS1v15(), hashes.SHA256()))
+    token = f"{body}.{sig}"
+    settings = _rs256_settings(jwt_public_keys_pem=pub_pem)
+    with create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client):
+        client.cookies.set("ibex_session", token)
+        resp = client.get("/v1/operator/session/me")
+    assert resp.status_code == 200
+    body_json = resp.json()
+    assert body_json["provisional"] is False
+    assert body_json["org_id"] == org
+
+
+def test_refresh_non_hs256_alg_with_keys_routes_to_auth() -> None:
+    """Missing/odd alg with public keys must not require HMAC (Auth-owned path)."""
+    header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
+    payload = _b64url(json.dumps({"session_kind": "refresh"}).encode())
+    odd = f"{header}.{payload}.sig"
+    with (
+        create_operator_app(settings=_rs256_settings(), validator=StaticTokenValidator({})) as (
+            _,
+            client,
+        ),
+        patch(
+            "app.routers.session.refresh_operator_session",
+            new=AsyncMock(return_value=RefreshedSession(access_token="a", refresh_token="r")),
+        ) as refresh_fn,
+    ):
+        client.cookies.set("ibex_refresh", odd)
+        resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
+    assert resp.status_code == 200
+    assert resp.json()["provisional"] is False
+    refresh_fn.assert_awaited_once()

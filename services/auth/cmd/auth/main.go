@@ -177,9 +177,23 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
+	if sessionIssuer != nil && core.redisClient != nil {
+		jtiStore, err := sessionjwt.NewRedisJTIStore(core.redisClient)
+		if err != nil {
+			return authServiceDeps{}, err
+		}
+		sessionIssuer.WithJTIStore(jtiStore)
+	}
 	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
 	if err != nil {
 		return authServiceDeps{}, err
+	}
+	if totpSvc != nil && core.redisClient != nil {
+		gate, err := service.NewRedisTOTPAttempts(core.redisClient, 0, 0)
+		if err != nil {
+			return authServiceDeps{}, err
+		}
+		totpSvc.WithAttemptGate(gate)
 	}
 	return authServiceDeps{
 		validator: core.validator, tokenSvc: core.tokenSvc, credSvc: credSvc,
@@ -440,7 +454,7 @@ func optionalTotp(svc *service.TotpService) interface {
 
 func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
 	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
-	RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 } {
 	if iss == nil {
 		return nil

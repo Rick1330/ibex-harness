@@ -9,6 +9,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/sessionjwt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -42,7 +43,7 @@ type fakeSessionIssuer struct {
 func (f *fakeSessionIssuer) IssuePair(string, string, int64) (string, string, time.Time, time.Time, error) {
 	return f.access, f.refresh, f.aExp, f.rExp, f.issueErr
 }
-func (f *fakeSessionIssuer) RefreshPair(string) (string, string, time.Time, time.Time, error) {
+func (f *fakeSessionIssuer) RefreshPair(context.Context, string) (string, string, time.Time, time.Time, error) {
 	return f.access, f.refresh, f.aExp, f.rExp, f.refreshErr
 }
 
@@ -128,7 +129,7 @@ func TestUnit_IssueOperatorSession_RefreshAndIssue(t *testing.T) {
 	if err != nil || resp.GetAccessToken() != "a" || resp.GetRefreshToken() != "r" {
 		t.Fatalf("refresh: %+v err=%v", resp, err)
 	}
-	fi.refreshErr = errors.New("bad")
+	fi.refreshErr = sessionjwt.ErrInvalidToken
 	if _, err := srv.IssueOperatorSession(context.Background(), &authv1.IssueOperatorSessionRequest{RefreshToken: "old"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bad refresh: %v", err)
 	}
