@@ -21,6 +21,10 @@ SESSION_KIND_ACCESS = "access"
 SESSION_KIND_REFRESH = "refresh"
 SESSION_KIND_STEP_UP = "step_up"
 
+# Bound externally supplied cookies/headers before JWT parse (DoS / memory).
+MAX_SESSION_TOKEN_LEN = 8192
+MAX_JWT_PART_LEN = 4096
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -103,10 +107,18 @@ class _JWTParts:
 
 
 def _split_jwt(token: str) -> _JWTParts:
+    if len(token) > MAX_SESSION_TOKEN_LEN:
+        raise SessionStubError("token too large")
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError as exc:
         raise SessionStubError("malformed token") from exc
+    if (
+        len(header_b64) > MAX_JWT_PART_LEN
+        or len(payload_b64) > MAX_JWT_PART_LEN
+        or len(sig_b64) > MAX_JWT_PART_LEN
+    ):
+        raise SessionStubError("token too large")
     return _JWTParts(header_b64=header_b64, payload_b64=payload_b64, sig_b64=sig_b64)
 
 

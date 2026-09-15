@@ -210,7 +210,7 @@ func finishSessionTotp(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := attachRedisTOTPAttempts(totpSvc, redisClient); err != nil {
+	if err := attachRedisTOTPAttempts(cfg, totpSvc, redisClient); err != nil {
 		return nil, nil, err
 	}
 	return sessionIssuer, totpSvc, nil
@@ -220,8 +220,11 @@ func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.Uni
 	if sessionIssuer == nil {
 		return nil
 	}
+	// Session issuance requires a shared JTI store so refresh replay is consistent
+	// across replicas. Do not retain process-local MemoryJTIStore when JWT signing is on.
+	// Single-instance exception: omit JWT_PRIVATE_KEY_PEM (no session issuer).
 	if redisClient == nil {
-		return nil
+		return fmt.Errorf("REDIS_URL is required when JWT_PRIVATE_KEY_PEM enables session issuance")
 	}
 	jtiStore, err := sessionjwt.NewRedisJTIStore(redisClient)
 	if err != nil {
@@ -231,12 +234,14 @@ func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.Uni
 	return nil
 }
 
-func attachRedisTOTPAttempts(totpSvc *service.TotpService, redisClient redis.UniversalClient) error {
-	if totpSvc == nil {
+func attachRedisTOTPAttempts(cfg config.Config, totpSvc *service.TotpService, redisClient redis.UniversalClient) error {
+	if totpSvc == nil || !cfg.TOTPEnabled {
+		// Single-instance / Redis-less: leave the default in-process gate; TOTP RPCs stay disabled.
 		return nil
 	}
+	// Multi-replica lockouts require Redis when TOTP is enabled.
 	if redisClient == nil {
-		return nil
+		return fmt.Errorf("REDIS_URL is required when IBEX_AUTH_TOTP_ENABLED=true (shared attempt gate)")
 	}
 	gate, err := service.NewRedisTOTPAttempts(redisClient, 0, 0)
 	if err != nil {

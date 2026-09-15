@@ -249,7 +249,7 @@ async def test_create_duplicate_pattern_is_conflict() -> None:
 @pytest.mark.parametrize(
     ("execute_side_effect", "want_code", "expect_rollback"),
     [
-        (_integrity("some_other_constraint"), INTERNAL_ERROR, False),
+        (_integrity("some_other_constraint"), INTERNAL_ERROR, True),
         (_Rows(row=None), INTERNAL_ERROR, True),
     ],
 )

@@ -62,11 +62,12 @@ func (s *Server) BeginTotpEnrollment(
 	ctx context.Context,
 	req *authv1.BeginTotpEnrollmentRequest,
 ) (*authv1.BeginTotpEnrollmentResponse, error) {
-	if _, err := s.totpSelfIDs(ctx, req.GetOrgId(), req.GetUserId()); err != nil {
+	orgID, userID := req.GetOrgId(), req.GetUserId()
+	if _, err := s.requireTotpSelf(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
 	uri, err := s.totpService.BeginEnrollment(ctx, service.BeginEnrollmentParams{
-		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), AccountName: req.GetUserId(),
+		OrgID: service.OrgID(orgID), UserID: service.UserID(userID), AccountName: userID,
 	})
 	if err != nil {
 		return nil, mapTotpErr(err)
@@ -78,16 +79,22 @@ func (s *Server) ConfirmTotpEnrollment(
 	ctx context.Context,
 	req *authv1.ConfirmTotpEnrollmentRequest,
 ) (*authv1.ConfirmTotpEnrollmentResponse, error) {
-	if _, err := s.totpSelfIDs(ctx, req.GetOrgId(), req.GetUserId()); err != nil {
+	if err := s.confirmTotpEnrollment(ctx, req); err != nil {
 		return nil, err
 	}
-	err := s.totpService.ConfirmEnrollment(ctx, service.ConfirmEnrollmentParams{
-		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), Code: req.GetTotpCode(),
-	})
-	if err != nil {
-		return nil, mapTotpErr(err)
-	}
 	return &authv1.ConfirmTotpEnrollmentResponse{}, nil
+}
+
+func (s *Server) confirmTotpEnrollment(ctx context.Context, req *authv1.ConfirmTotpEnrollmentRequest) error {
+	if _, err := s.requireTotpSelf(ctx, req.GetOrgId(), req.GetUserId()); err != nil {
+		return err
+	}
+	if err := s.totpService.ConfirmEnrollment(ctx, service.ConfirmEnrollmentParams{
+		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), Code: req.GetTotpCode(),
+	}); err != nil {
+		return mapTotpErr(err)
+	}
+	return nil
 }
 
 func (s *Server) CreateStepUpToken(

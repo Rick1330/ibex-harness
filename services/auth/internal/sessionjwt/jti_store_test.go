@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -112,5 +113,36 @@ func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
 	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("want replay err, got %v", err)
+	}
+}
+
+func TestRefreshPair_ReuseRevokesFamilyDescendants(t *testing.T) {
+	t.Parallel()
+	iss := mustIssuer(t, time.Minute, time.Hour, time.Minute)
+	_, r1, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, r2, _, _, err := iss.RefreshPair(context.Background(), r1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, err = iss.RefreshPair(context.Background(), r1)
+	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
+		t.Fatalf("reuse: %v", err)
+	}
+	_, _, _, _, err = iss.RefreshPair(context.Background(), r2)
+	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
+		t.Fatalf("descendant after family revoke: %v", err)
+	}
+}
+
+func BenchmarkMemoryJTIStore_ConsumeOnce(b *testing.B) {
+	store := &sessionjwt.MemoryJTIStore{}
+	ctx := context.Background()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		jti := "bench-" + strconv.Itoa(i)
+		_, _ = store.ConsumeOnce(ctx, jti, time.Minute)
 	}
 }

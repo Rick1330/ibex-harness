@@ -4,26 +4,40 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-const refreshJTIKeyPrefix = "auth:session:refresh-jti:"
+const (
+	refreshJTIKeyPrefix           = "auth:session:refresh-jti:"
+	refreshFamilyRevokedKeyPrefix = "auth:session:refresh-family-revoked:"
+	memoryJTIPurgeEveryN          = 64
+	memoryJTIPurgeMinInterval     = time.Minute
+)
 
-// JTIStore atomically tracks consumed refresh JTIs until expiry.
+// JTIStore atomically tracks consumed refresh JTIs and revoked refresh families.
 type JTIStore interface {
 	// ConsumeOnce returns true when jti was recorded for the first time.
 	ConsumeOnce(ctx context.Context, jti string, ttl time.Duration) (bool, error)
+	// RevokeFamily marks a refresh-token family revoked (reuse detection).
+	RevokeFamily(ctx context.Context, familyID string, ttl time.Duration) error
+	// FamilyRevoked reports whether the family was revoked.
+	FamilyRevoked(ctx context.Context, familyID string) (bool, error)
 }
 
 type memoryJTIEntry struct {
 	expiresAt time.Time
 }
 
-// MemoryJTIStore is a process-local store (tests / Redis-less single instance).
+// MemoryJTIStore is a process-local store (tests / Redis-less single instance without JWT issuance).
 type MemoryJTIStore struct {
-	m sync.Map
+	m         sync.Map
+	revoked   sync.Map
+	ops       atomic.Uint64
+	purgeMu   sync.Mutex
+	lastPurge time.Time
 }
 
 // ConsumeOnce implements JTIStore with TTL-aware one-time consumption.
@@ -39,7 +53,7 @@ func (s *MemoryJTIStore) ConsumeOnce(_ context.Context, jti string, ttl time.Dur
 		}
 		actual, loaded := s.m.LoadOrStore(jti, ent)
 		if !loaded {
-			s.purgeExpired(now)
+			s.maybePurgeExpired(now)
 			return true, nil
 		}
 		existing := actual.(memoryJTIEntry)
@@ -63,7 +77,22 @@ func (s *MemoryJTIStore) liveEntry(jti string, now time.Time) bool {
 	return false
 }
 
-func (s *MemoryJTIStore) purgeExpired(now time.Time) {
+// maybePurgeExpired amortizes full-map scans: every N successful inserts and at most
+// once per memoryJTIPurgeMinInterval. Hot-path ConsumeOnce stays O(1) expected.
+func (s *MemoryJTIStore) maybePurgeExpired(now time.Time) {
+	if s.ops.Add(1)%memoryJTIPurgeEveryN != 0 {
+		return
+	}
+	s.purgeMu.Lock()
+	defer s.purgeMu.Unlock()
+	if !s.lastPurge.IsZero() && now.Sub(s.lastPurge) < memoryJTIPurgeMinInterval {
+		return
+	}
+	s.lastPurge = now
+	s.purgeExpiredLocked(now)
+}
+
+func (s *MemoryJTIStore) purgeExpiredLocked(now time.Time) {
 	s.m.Range(func(key, value any) bool {
 		ent := value.(memoryJTIEntry)
 		if !now.Before(ent.expiresAt) {
@@ -71,6 +100,45 @@ func (s *MemoryJTIStore) purgeExpired(now time.Time) {
 		}
 		return true
 	})
+	s.revoked.Range(func(key, value any) bool {
+		ent := value.(memoryJTIEntry)
+		if !now.Before(ent.expiresAt) {
+			s.revoked.Delete(key)
+		}
+		return true
+	})
+}
+
+// RevokeFamily implements JTIStore.
+func (s *MemoryJTIStore) RevokeFamily(_ context.Context, familyID string, ttl time.Duration) error {
+	if familyID == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	now := time.Now().UTC()
+	s.revoked.Store(familyID, memoryJTIEntry{expiresAt: now.Add(ttl)})
+	s.maybePurgeExpired(now)
+	return nil
+}
+
+// FamilyRevoked implements JTIStore.
+func (s *MemoryJTIStore) FamilyRevoked(_ context.Context, familyID string) (bool, error) {
+	if familyID == "" {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	v, ok := s.revoked.Load(familyID)
+	if !ok {
+		return false, nil
+	}
+	ent := v.(memoryJTIEntry)
+	if now.Before(ent.expiresAt) {
+		return true, nil
+	}
+	_ = s.revoked.CompareAndDelete(familyID, v)
+	return false, nil
 }
 
 // RedisJTIStore persists refresh JTI consumption with TTL = remaining token life.
@@ -96,4 +164,30 @@ func (s *RedisJTIStore) ConsumeOnce(ctx context.Context, jti string, ttl time.Du
 		return false, fmt.Errorf("sessionjwt: refresh jti consume: %w", err)
 	}
 	return ok, nil
+}
+
+// RevokeFamily implements JTIStore via SET EX on a family key.
+func (s *RedisJTIStore) RevokeFamily(ctx context.Context, familyID string, ttl time.Duration) error {
+	if familyID == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	if err := s.client.Set(ctx, refreshFamilyRevokedKeyPrefix+familyID, "1", ttl).Err(); err != nil {
+		return fmt.Errorf("sessionjwt: revoke refresh family: %w", err)
+	}
+	return nil
+}
+
+// FamilyRevoked implements JTIStore.
+func (s *RedisJTIStore) FamilyRevoked(ctx context.Context, familyID string) (bool, error) {
+	if familyID == "" {
+		return false, nil
+	}
+	n, err := s.client.Exists(ctx, refreshFamilyRevokedKeyPrefix+familyID).Result()
+	if err != nil {
+		return false, fmt.Errorf("sessionjwt: family revoked check: %w", err)
+	}
+	return n > 0, nil
 }

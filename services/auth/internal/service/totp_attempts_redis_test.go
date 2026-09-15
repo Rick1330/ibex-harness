@@ -37,6 +37,30 @@ func TestUnit_RedisTOTPAttempts_LockoutAndReset(t *testing.T) {
 	}
 }
 
+func TestUnit_RedisTOTPAttempts_ReleaseUndoesReservation(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	gate, err := service.NewRedisTOTPAttempts(rdb, 2, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Allow("org", "user"); err != nil {
+		t.Fatal(err)
+	}
+	gate.Release("org", "user") // undo infra failure reservation
+	if err := gate.Allow("org", "user"); err != nil {
+		t.Fatalf("after release: %v", err)
+	}
+	if err := gate.Allow("org", "user"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.Allow("org", "user"); !errors.Is(err, service.ErrTOTPLockedOut) {
+		t.Fatalf("want lockout after 2 kept reservations, got %v", err)
+	}
+}
+
 func TestUnit_TotpService_WithAttemptGate(t *testing.T) {
 	t.Parallel()
 	store := &memTOTPStore{}

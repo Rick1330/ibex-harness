@@ -81,34 +81,26 @@ def test_verify_rs256_ok_and_multi_key_rotation() -> None:
     assert claims.verify_method == "RS256"
 
 
-def test_verify_rs256_rejects_bad_signature() -> None:
+@pytest.mark.parametrize(
+    ("empty_pem", "match"),
+    [
+        (False, "bad signature|no public keys"),
+        (True, "no public keys|no verify material"),
+    ],
+)
+def test_verify_rs256_rejects_bad_material(empty_pem: bool, match: str) -> None:
     org = str(uuid4())
     key, _ = _rsa_keypair()
-    _, wrong_pub = _rsa_keypair()
     tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    pub = "" if empty_pem else _rsa_keypair()[1]
     opts = TokenVerifyOpts(
         secret=None,
         issuer="ibex-harness",
         audience="ibex-dashboard",
         expect_kind=SESSION_KIND_ACCESS,
-        public_keys_pem=wrong_pub,
+        public_keys_pem=pub,
     )
-    with pytest.raises(SessionStubError, match="bad signature|no public keys"):
-        verify_token_opts(tok, opts)
-
-
-def test_verify_rs256_rejects_empty_pem() -> None:
-    org = str(uuid4())
-    key, _ = _rsa_keypair()
-    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
-    opts = TokenVerifyOpts(
-        secret=None,
-        issuer="ibex-harness",
-        audience="ibex-dashboard",
-        expect_kind=SESSION_KIND_ACCESS,
-        public_keys_pem="",
-    )
-    with pytest.raises(SessionStubError, match="no public keys|no verify material"):
+    with pytest.raises(SessionStubError, match=match):
         verify_token_opts(tok, opts)
 
 

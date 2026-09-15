@@ -84,8 +84,30 @@ func (r *RedisTOTPAttempts) Allow(orgID, userID string) error {
 	return nil
 }
 
-// Fail is a no-op: Allow already reserved the attempt for this verification.
-func (r *RedisTOTPAttempts) Fail(orgID, userID string) {}
+// Fail is intentional no-op: Allow already reserved the attempt for this verification.
+func (r *RedisTOTPAttempts) Fail(orgID, userID string) {
+	_ = orgID
+	_ = userID
+	// Deliberate no-op — reservation counted in Allow; do not double-count.
+}
+
+// totpReleaseScript undoes one Allow reservation (DECR) without clearing lockout.
+var totpReleaseScript = redis.NewScript(`
+local failKey = KEYS[1]
+local n = redis.call('DECR', failKey)
+if n <= 0 then
+  redis.call('DEL', failKey)
+  return 0
+end
+return n
+`)
+
+// Release undoes a prior Allow reservation after non-invalid-code failures.
+func (r *RedisTOTPAttempts) Release(orgID, userID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, _ = totpReleaseScript.Run(ctx, r.client, []string{r.failKey(orgID, userID)}).Int64()
+}
 
 // Reset clears reservations after successful verification.
 func (r *RedisTOTPAttempts) Reset(orgID, userID string) {

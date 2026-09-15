@@ -47,6 +47,8 @@ type totpAttemptGate interface {
 	Allow(orgID, userID string) error
 	Reset(orgID, userID string)
 	Fail(orgID, userID string)
+	// Release undoes a prior Allow reservation without clearing lockout state.
+	Release(orgID, userID string)
 }
 
 // OrgID and UserID reduce primitive string coupling in TOTP APIs.
@@ -176,6 +178,7 @@ func (s *TotpService) ConfirmEnrollment(ctx context.Context, p ConfirmEnrollment
 	}
 	secret, row, err := s.loadPendingSecret(ctx, orgID, userID)
 	if err != nil {
+		s.attempts.Release(orgID, userID)
 		return err
 	}
 	if !totp.Validate(strings.TrimSpace(p.Code), secret) {
@@ -185,6 +188,7 @@ func (s *TotpService) ConfirmEnrollment(ctx context.Context, p ConfirmEnrollment
 	if err := s.repo.ConfirmCiphertext(ctx, repository.ConfirmCiphertextParams{
 		OrgID: orgID, UserID: userID, Ciphertext: row.Ciphertext, At: time.Now().UTC(),
 	}); err != nil {
+		s.attempts.Release(orgID, userID)
 		return err
 	}
 	s.attempts.Reset(orgID, userID)
@@ -201,6 +205,9 @@ func (s *TotpService) CreateStepUp(ctx context.Context, p CreateStepUpParams) (s
 		return "", time.Time{}, err
 	}
 	if err := s.verifyConfirmedCode(ctx, p); err != nil {
+		if !errors.Is(err, ErrTOTPInvalidCode) {
+			s.attempts.Release(orgID, userID)
+		}
 		return "", time.Time{}, err
 	}
 	s.attempts.Reset(orgID, userID)
@@ -327,6 +334,10 @@ func (m *memoryTOTPAttempts) Fail(orgID, userID string) {
 		ent.failures = 0
 	}
 	m.entries[key] = ent
+}
+
+func (m *memoryTOTPAttempts) Release(orgID, userID string) {
+	// In-process gate does not pre-reserve on Allow; nothing to undo.
 }
 
 func (m *memoryTOTPAttempts) Reset(orgID, userID string) {

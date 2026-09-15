@@ -134,6 +134,21 @@ def test_step_up_header_missing_sets_false() -> None:
     assert req.state.ibex_step_up_ok is False
 
 
+def _step_up_token(*, settings: Settings, org_id, subject: str, ttl: int = 300) -> str:
+    return issue_token_opts(
+        TokenIssueOpts(
+            secret=settings.jwt_hmac_secret or "h" * 32,
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            org_id=org_id,
+            permissions=0,
+            subject=subject,
+            session_kind=SESSION_KIND_STEP_UP,
+            ttl_seconds=ttl,
+        )
+    )
+
+
 def test_step_up_header_valid_sets_true() -> None:
     settings = _settings()
     org = uuid4()
@@ -158,18 +173,7 @@ def test_step_up_header_valid_sets_true() -> None:
 
 def test_step_up_org_mismatch_denies() -> None:
     settings = _settings()
-    token = issue_token_opts(
-        TokenIssueOpts(
-            secret=settings.jwt_hmac_secret or "h" * 32,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            org_id=uuid4(),
-            permissions=0,
-            subject="user-1",
-            session_kind=SESSION_KIND_STEP_UP,
-            ttl_seconds=300,
-        )
-    )
+    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     req.state.ibex_session_org_id = uuid4()
     with pytest.raises(ApiError) as exc:
@@ -179,18 +183,7 @@ def test_step_up_org_mismatch_denies() -> None:
 
 def test_step_up_subject_mismatch_denies() -> None:
     settings = _settings()
-    token = issue_token_opts(
-        TokenIssueOpts(
-            secret=settings.jwt_hmac_secret or "h" * 32,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            org_id=uuid4(),
-            permissions=0,
-            subject="user-1",
-            session_kind=SESSION_KIND_STEP_UP,
-            ttl_seconds=300,
-        )
-    )
+    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     req.state.ibex_session_org_id = None
     req.state.ibex_session_sub = "other-user"
@@ -201,18 +194,7 @@ def test_step_up_subject_mismatch_denies() -> None:
 
 def test_step_up_header_expired_denies() -> None:
     settings = _settings()
-    token = issue_token_opts(
-        TokenIssueOpts(
-            secret=settings.jwt_hmac_secret or "h" * 32,
-            issuer=settings.jwt_issuer,
-            audience=settings.jwt_audience,
-            org_id=uuid4(),
-            permissions=0,
-            subject="user-1",
-            session_kind=SESSION_KIND_STEP_UP,
-            ttl_seconds=-10,
-        )
-    )
+    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1", ttl=-10)
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     with pytest.raises(ApiError) as exc:
         require_step_up_header(req)

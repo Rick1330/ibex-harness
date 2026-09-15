@@ -138,7 +138,7 @@ def test_decode_string_field_skips_fixed32() -> None:
 
 
 def test_decode_string_field_rejects_oversized_message() -> None:
-    from app.auth import session_refresh as mod
+    from app.auth import session_refresh_codec as mod
 
     huge = b"\x00" * (mod._MAX_MESSAGE + 1)
     with pytest.raises(AuthCodecError, match="too large"):
@@ -154,7 +154,7 @@ def test_decode_string_field_rejects_truncated_varint_and_len() -> None:
 
 
 def test_decode_string_field_rejects_field_over_max_token() -> None:
-    from app.auth import session_refresh as mod
+    from app.auth import session_refresh_codec as mod
 
     raw = b"x" * (mod._MAX_TOKEN_FIELD + 1)
     buf = encode_varint((1 << 3) | 2) + encode_varint(len(raw)) + raw

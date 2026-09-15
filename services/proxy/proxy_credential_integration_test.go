@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -143,9 +145,21 @@ func assertBYOCredentialChat(t *testing.T, fx credProxyFixture, body string) {
 	if fx.capture.last.TLSServerName != "example.com" {
 		t.Fatalf("TLSServerName=%q", fx.capture.last.TLSServerName)
 	}
-	if strings.Contains(fx.capture.last.BaseURLOverride, "example.com") ||
-		!strings.Contains(fx.capture.last.BaseURLOverride, "/v1") {
-		t.Fatalf("BaseURLOverride=%q want IP-pinned", fx.capture.last.BaseURLOverride)
+	if strings.Contains(fx.capture.last.BaseURLOverride, "example.com") {
+		t.Fatalf("BaseURLOverride=%q still contains hostname", fx.capture.last.BaseURLOverride)
+	}
+	parsed, err := url.Parse(fx.capture.last.BaseURLOverride)
+	if err != nil {
+		t.Fatalf("BaseURLOverride parse: %v", err)
+	}
+	if parsed.Scheme != "https" {
+		t.Fatalf("BaseURLOverride scheme=%q want https", parsed.Scheme)
+	}
+	if net.ParseIP(parsed.Hostname()) == nil {
+		t.Fatalf("BaseURLOverride host=%q want literal IP", parsed.Hostname())
+	}
+	if parsed.Path != "/v1" && !strings.HasPrefix(parsed.Path, "/v1/") {
+		t.Fatalf("BaseURLOverride path=%q want /v1", parsed.Path)
 	}
 }
 

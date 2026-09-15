@@ -17,7 +17,9 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/sessionjwt"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/pquerna/otp/totp"
+	"github.com/redis/go-redis/v9"
 )
 
 type memTOTPStore struct {
@@ -307,5 +309,49 @@ func TestUnit_TotpService_RepoGetErrorSurfaces(t *testing.T) {
 	_, err = svc.BeginEnrollment(context.Background(), beginP("o", "u", "a"))
 	if err == nil || err.Error() != "db down" {
 		t.Fatalf("want db down, got %v", err)
+	}
+}
+
+func TestUnit_TotpService_ReleaseOnNotEnrolledAndRepoErrors(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	gate, err := service.NewRedisTOTPAttempts(rdb, 3, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, mk := mustMasterEncoded(t)
+	store := &memTOTPStore{master: mk}
+	svc, err := service.NewTotpService(store, service.MasterKeyConfig{Encoded: enc, KeyID: "v1"}, true, mustIssuer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.WithAttemptGate(gate)
+
+	_, _, err = svc.CreateStepUp(context.Background(), stepUpP("org", "user", "123456", 1))
+	if !errors.Is(err, service.ErrTOTPNotEnrolled) {
+		t.Fatalf("not enrolled: %v", err)
+	}
+	// Three Allows after Release must still succeed (reservation undone).
+	for i := 0; i < 3; i++ {
+		_, _, err = svc.CreateStepUp(context.Background(), stepUpP("org", "user", "123456", 1))
+		if !errors.Is(err, service.ErrTOTPNotEnrolled) {
+			t.Fatalf("iter %d: %v", i, err)
+		}
+	}
+
+	errStore := &errGetStore{memTOTPStore: memTOTPStore{master: mk}, getErr: errors.New("db down")}
+	svc2, err := service.NewTotpService(errStore, service.MasterKeyConfig{Encoded: enc}, true, mustIssuer(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc2.WithAttemptGate(gate)
+	err = svc2.ConfirmEnrollment(context.Background(), confirmP("org2", "user2", "000000"))
+	if err == nil || err.Error() != "db down" {
+		t.Fatalf("confirm repo err: %v", err)
+	}
+	if err := gate.Allow("org2", "user2"); err != nil {
+		t.Fatalf("reservation should have been released: %v", err)
 	}
 }

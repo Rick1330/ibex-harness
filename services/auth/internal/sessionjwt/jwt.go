@@ -31,7 +31,7 @@ var (
 	ErrExpired      = errors.New("sessionjwt: expired")
 )
 
-// Claims mirrors services/api SessionClaims (+ optional step-up marker).
+// Claims mirrors services/api SessionClaims (+ optional step-up marker / refresh family).
 type Claims struct {
 	Issuer      string `json:"iss"`
 	Audience    string `json:"aud"`
@@ -42,6 +42,7 @@ type Claims struct {
 	IssuedAt    int64  `json:"iat"`
 	ExpiresAt   int64  `json:"exp"`
 	JTI         string `json:"jti"`
+	FamilyID    string `json:"fid,omitempty"`
 }
 
 // IssuerConfig holds RS256 signing material and token TTLs for NewIssuer.
@@ -101,6 +102,8 @@ type IssuePairParams struct {
 	Subject     string
 	OrgID       string
 	Permissions int64
+	// FamilyID binds rotated refresh tokens; empty mints a new family.
+	FamilyID string
 }
 
 // IssuePair returns access + refresh tokens for an operator session.
@@ -108,6 +111,10 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	now := time.Now().UTC()
 	accessExp = now.Add(i.accessTTL)
 	refreshExp = now.Add(i.refreshTTL)
+	familyID := strings.TrimSpace(p.FamilyID)
+	if familyID == "" {
+		familyID = uuid.NewString()
+	}
 	access, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
 		Permissions: p.Permissions, SessionKind: KindAccess,
@@ -118,7 +125,7 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	}
 	refresh, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
-		Permissions: p.Permissions, SessionKind: KindRefresh,
+		Permissions: p.Permissions, SessionKind: KindRefresh, FamilyID: familyID,
 		IssuedAt: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(),
 	})
 	if err != nil {
@@ -147,7 +154,7 @@ func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, 
 }
 
 // RefreshPair verifies a refresh JWT with the issuer's public key and rotates the pair.
-// The refresh JTI is consumed atomically via JTIStore; a replay returns ErrInvalidToken.
+// The refresh JTI is consumed atomically via JTIStore; reuse revokes the whole family.
 func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
 	v := &Verifier{
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
@@ -162,15 +169,31 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, 
 		return "", "", time.Time{}, time.Time{}, err
 	}
 	ttl := time.Until(time.Unix(claims.ExpiresAt, 0).UTC())
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	revoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	if revoked {
+		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
+	}
 	first, err := i.jtiStore.ConsumeOnce(ctx, claims.JTI, ttl)
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
 	}
 	if !first {
+		familyTTL := i.refreshTTL
+		if ttl > familyTTL {
+			familyTTL = ttl
+		}
+		_ = i.jtiStore.RevokeFamily(ctx, claims.FamilyID, familyTTL)
 		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
 	}
 	return i.IssuePair(IssuePairParams{
 		Subject: claims.Subject, OrgID: claims.OrgID, Permissions: claims.Permissions,
+		FamilyID: claims.FamilyID,
 	})
 }
 
@@ -182,6 +205,9 @@ func validateRefreshClaims(claims Claims) error {
 		return ErrInvalidToken
 	}
 	if claims.JTI == "" {
+		return ErrInvalidToken
+	}
+	if claims.FamilyID == "" {
 		return ErrInvalidToken
 	}
 	return nil
