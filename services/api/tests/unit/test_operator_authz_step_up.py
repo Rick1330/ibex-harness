@@ -166,6 +166,7 @@ def test_step_up_org_mismatch_denies() -> None:
     token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     req.state.ibex_session_org_id = uuid4()
+    req.state.ibex_session_sub = "user-1"
     with pytest.raises(ApiError) as exc:
         require_step_up_header(req)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
@@ -173,9 +174,10 @@ def test_step_up_org_mismatch_denies() -> None:
 
 def test_step_up_subject_mismatch_denies() -> None:
     settings = _settings()
-    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
+    org = uuid4()
+    token = _step_up_token(settings=settings, org_id=org, subject="user-1")
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    req.state.ibex_session_org_id = None
+    req.state.ibex_session_org_id = org
     req.state.ibex_session_sub = "other-user"
     with pytest.raises(ApiError) as exc:
         require_step_up_header(req)
@@ -189,3 +191,16 @@ def test_step_up_header_expired_denies() -> None:
     with pytest.raises(ApiError) as exc:
         require_step_up_header(req)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+def test_step_up_both_session_attrs_unset_denies() -> None:
+    """Missing session binding is fail-closed — not a silent skip of org/sub checks."""
+    settings = _settings()
+    token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
+    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
+    req.state.ibex_session_org_id = None
+    req.state.ibex_session_sub = None
+    with pytest.raises(ApiError) as exc:
+        require_step_up_header(req)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert getattr(req.state, "ibex_step_up_ok", False) is not True

@@ -15,12 +15,17 @@ fullTitle: "Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance"
 
 # Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance
 
-**Status:** Planned  
+**Status:** Planned (partially landed — see callout)  
 **Outcome:** Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
 **Dependencies:** 4.P.0; Track A identity/API foundations  
 **Estimated effort:** 3 weeks  
 **Gate:** G1 identity
+
+<Callout type="warning" title="PR #845 partial Gate G1 landing (not milestone-complete)">
+  Shipped in this PR relative to Gate G1: fail-closed model policy (`DenyAllRegistry`, unmatched → deny), durable policy epochs + `EpochPoller` (F4-015/F4-016), `SecretUse` on credential Get (F4-017), shared SSRF validate/pin (F4-018), operator permission bits + kill switches + TOTP/step-up **scaffolding**, RS256 dual-verify, TOTP/ledger migrations with RLS FORCE.
+  **Not yet closed:** F4-002 / F4-006 as a single enforceable HTTP contract — `require_operator_permission` / `RequireStepUpProbe` are **not mounted** on any router; two-tenant operator authorization matrix not attached; org switching deferred. Follow-up: [#846](https://github.com/Rick1330/ibex-harness/issues/846). Do not treat Gate G1 as fully closed until those land.
+</Callout>
 
 <Callout type="note" title="Completion contract">
   Permission constants alone are not sufficient. Deny-by-default policy, step-up for high-impact actions, two-tenant negative matrices, and fail-closed model-policy behavior must be evidenced.
@@ -84,7 +89,7 @@ Further audit context (provenance only — roadmap and engineering pages are aut
 ## Exit checklist
 
 - [ ] Action taxonomy and step-up rules documented and enforced.
-- [ ] Fail-open model policy removed or residual-risk recorded on 4.E.4.
-- [ ] Durable policy invalidation evidenced.
-- [ ] Secret/SSRF negative tests attached.
+- [x] Fail-open model policy removed or residual-risk recorded on 4.E.4.
+- [x] Durable policy invalidation evidenced.
+- [x] Secret/SSRF negative tests attached.
 - [ ] Two-tenant authorization matrix report attached.

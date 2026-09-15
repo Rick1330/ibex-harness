@@ -46,6 +46,8 @@ def _verify_step_up_token(raw: str, settings: Settings) -> SessionClaims:
 
 
 def _assert_step_up_binds_session(request: Request, claims: SessionClaims) -> None:
+    # Binding is mandatory whenever a step-up header is presented. Missing
+    # request.state session attrs is a caller/wiring bug — fail closed (do not skip).
     _assert_step_up_org(request, claims)
     _assert_step_up_sub(request, claims)
 
@@ -53,7 +55,7 @@ def _assert_step_up_binds_session(request: Request, claims: SessionClaims) -> No
 def _assert_step_up_org(request: Request, claims: SessionClaims) -> None:
     session_org = getattr(request.state, "ibex_session_org_id", None)
     if session_org is None:
-        return
+        raise _deny_step_up()
     if str(claims.org_id) == str(session_org):
         return
     raise _deny_step_up()
@@ -62,7 +64,7 @@ def _assert_step_up_org(request: Request, claims: SessionClaims) -> None:
 def _assert_step_up_sub(request: Request, claims: SessionClaims) -> None:
     session_sub = getattr(request.state, "ibex_session_sub", None)
     if session_sub is None:
-        return
+        raise _deny_step_up()
     if claims.sub and str(claims.sub) == str(session_sub):
         return
     raise _deny_step_up()
