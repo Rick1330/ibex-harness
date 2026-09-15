@@ -42,7 +42,8 @@ The 64-bit permission bitmap is stored on `ibex_core.tokens.permissions` and ret
 | 16 | Session | `SessionCreate` |
 | 17 | Session | `SessionRead` |
 | 18 | Session | `SessionTerminate` |
-| 19-23 | Session | Reserved |
+| 19 | Session / Operator | `OperatorMetadataRead` (4.P.1) |
+| 20-23 | Session | Reserved |
 | 24 | Trace | `TraceRead` |
 | 25 | Trace | `TraceExport` |
 | 26-31 | Trace | Reserved |
@@ -52,13 +53,25 @@ The 64-bit permission bitmap is stored on `ibex_core.tokens.permissions` and ret
 | 35 | Admin | `OrgSettingsWrite` |
 | 36 | Admin | `TokenCreate` |
 | 37 | Admin | `TokenRevoke` |
-| 38-39 | Admin | Reserved |
+| 38 | Admin / Operator | `OperatorRedactedRead` (4.P.1) |
+| 39 | Admin / Operator | `OperatorRawRead` (step-up; 4.P.1) |
 | 40 | Marketplace | `MarketplacePublish` |
 | 41 | Marketplace | `MarketplaceInstall` |
-| 42-47 | Marketplace | Reserved |
+| 42 | Operator | `OperatorExport` (step-up; 4.P.1) |
+| 43 | Operator | `OperatorDelete` (step-up; 4.P.1) |
+| 44 | Operator | `OperatorReplay` (step-up; 4.P.1) |
+| 45 | Operator | `SecretUse` (step-up; proxy credential get; 4.P.1) |
+| 46 | Operator | `PolicyChange` (step-up; 4.P.1) |
+| 47 | Operator | `BreakGlass` (step-up; 4.P.1) |
 | 48 | Federation | `FederationShare` |
 | 49-55 | Federation | Reserved |
 | 56-63 | — | Reserved (do not use in v1) |
+
+### 2b) 4.P.1 amendment
+
+- Helpers: `RequiresStepUp` (canonical); `RequiresMFA` remains an alias.
+- Role defaults: `ViewerOperatorDefault` / `MemberOperatorDefault` = metadata+redacted; `AdminOperatorDefault` adds export+policy-change **without** raw/secret-use/break-glass.
+- `Admin` management set still excludes operator raw/secret/break-glass.
 
 ### 3) Phase 2 proxy minimum
 
