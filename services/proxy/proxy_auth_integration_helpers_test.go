@@ -291,15 +291,15 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		credResolver = mustCredentialResolver(t, opts.client, opts.cfg.AuthValidateTimeout)
 	}
 	handler, err := proxyhttp.NewRouter(proxyhttp.RouterDeps{
-		Config:             opts.cfg,
-		Logger:             logger.Discard("proxy"),
-		Metrics:            metrics.NewProxy("test"),
-		Tracer:             telemetry.NoopTracer("proxy"),
-		Validator:          validator,
-		AgentVerifier:      agentVerifier,
-		Limiter:            limiter,
-		Health:             &healthcheck.Server{CriticalCheckers: healthCheckers},
-		ProviderRegistry:   providerReg,
+		Config:           opts.cfg,
+		Logger:           logger.Discard("proxy"),
+		Metrics:          metrics.NewProxy("test"),
+		Tracer:           telemetry.NoopTracer("proxy"),
+		Validator:        validator,
+		AgentVerifier:    agentVerifier,
+		Limiter:          limiter,
+		Health:           &healthcheck.Server{CriticalCheckers: healthCheckers},
+		ProviderRegistry: providerReg,
 		// Integration fixtures are not testing deny-by-default; production NewRouter
 		// still DenyAlls when ModelRouter is nil.
 		ModelRouter:        modelpolicy.PassthroughRegistry{Base: providerReg},
