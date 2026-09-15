@@ -209,25 +209,42 @@ def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
     header_b64, payload_b64, sig_b64 = _split_jwt(token)
     alg = _header_alg(header_b64)
     payload = _decode_payload(payload_b64)
-
     if alg == "RS256":
-        if not opts.public_keys_pem:
-            raise SessionStubError("no verify material")
-        _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
-        return _validate_claims(payload, opts, verify_method="RS256")
-
+        return _verify_rs256_token(header_b64, payload_b64, sig_b64, payload, opts)
     if alg == "HS256":
-        if not opts.secret:
-            raise SessionStubError("no verify material")
-        _verify_hs256(header_b64, payload_b64, sig_b64, secret=opts.secret)
-        _LOG.warning(
-            "provisional_hs256_verify=1 issuer=%s audience=%s",
-            opts.issuer,
-            opts.audience,
-        )
-        return _validate_claims(payload, opts, verify_method="HS256")
-
+        return _verify_hs256_token(header_b64, payload_b64, sig_b64, payload, opts)
     raise SessionStubError("alg mismatch")
+
+
+def _verify_rs256_token(
+    header_b64: str,
+    payload_b64: str,
+    sig_b64: str,
+    payload: dict[str, Any],
+    opts: TokenVerifyOpts,
+) -> SessionClaims:
+    if not opts.public_keys_pem:
+        raise SessionStubError("no verify material")
+    _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
+    return _validate_claims(payload, opts, verify_method="RS256")
+
+
+def _verify_hs256_token(
+    header_b64: str,
+    payload_b64: str,
+    sig_b64: str,
+    payload: dict[str, Any],
+    opts: TokenVerifyOpts,
+) -> SessionClaims:
+    if not opts.secret:
+        raise SessionStubError("no verify material")
+    _verify_hs256(header_b64, payload_b64, sig_b64, secret=opts.secret)
+    _LOG.warning(
+        "provisional_hs256_verify=1 issuer=%s audience=%s",
+        opts.issuer,
+        opts.audience,
+    )
+    return _validate_claims(payload, opts, verify_method="HS256")
 
 
 def mint_csrf_token(*, secret: str) -> str:

@@ -174,12 +174,12 @@ def test_decode_string_field_rejects_overlong_varint() -> None:
 
 
 def test_decode_string_field_rejects_truncated_fixed64() -> None:
-    with pytest.raises(AuthCodecError, match="truncated fixed64"):
+    with pytest.raises(AuthCodecError, match="truncated fixed field"):
         _decode_string_field(bytes([0x09, 1, 2, 3]), 1)
 
 
 def test_decode_string_field_rejects_truncated_fixed32() -> None:
-    with pytest.raises(AuthCodecError, match="truncated fixed32"):
+    with pytest.raises(AuthCodecError, match="truncated fixed field"):
         _decode_string_field(bytes([0x0D, 1, 2]), 1)
 
 

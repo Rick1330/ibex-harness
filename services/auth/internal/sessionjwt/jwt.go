@@ -73,7 +73,7 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 	}
 	return &Issuer{
 		key: key, issuer: cfg.Issuer, audience: cfg.Audience,
-		accessTTL: defaultTTL(cfg.AccessTTL, 15*time.Minute),
+		accessTTL:  defaultTTL(cfg.AccessTTL, 15*time.Minute),
 		refreshTTL: defaultTTL(cfg.RefreshTTL, 7*24*time.Hour),
 		stepUpTTL:  defaultTTL(cfg.StepUpTTL, 5*time.Minute),
 		jtiStore:   &MemoryJTIStore{},

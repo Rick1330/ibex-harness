@@ -84,16 +84,12 @@ func isNetBlocked(ip net.IP) bool {
 }
 
 func isSpecialUseIPv4(ip net.IP) bool {
-	if isCGNAT(ip) {
-		return true
+	for _, check := range []func(net.IP) bool{isCGNAT, isDocumentation, isBenchmarking, isBroadcast} {
+		if check(ip) {
+			return true
+		}
 	}
-	if isDocumentation(ip) {
-		return true
-	}
-	if isBenchmarking(ip) {
-		return true
-	}
-	return isBroadcast(ip)
+	return false
 }
 
 func isCGNAT(ip net.IP) bool {
@@ -206,7 +202,10 @@ func connectIPFromLiteral(lit net.IP) (string, error) {
 
 func connectIPFromLookup(ctx context.Context, host string) (string, error) {
 	addrs, err := lookupIPAddr(ctx, host)
-	if err != nil || len(addrs) == 0 {
+	if err != nil {
+		return "", ErrBlockedDestination
+	}
+	if len(addrs) == 0 {
 		return "", ErrBlockedDestination
 	}
 	if err := rejectBlockedAddrs(addrs); err != nil {

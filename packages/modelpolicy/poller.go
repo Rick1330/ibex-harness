@@ -36,7 +36,7 @@ func NewEpochPoller(loader PolicyLoader, cache *Cache, log *logger.Logger, inter
 
 // Run polls until ctx is cancelled.
 func (p *EpochPoller) Run(ctx context.Context) {
-	if p == nil || p.loader == nil || p.cache == nil {
+	if !p.ready() {
 		return
 	}
 	ticker := time.NewTicker(p.interval)
@@ -49,6 +49,16 @@ func (p *EpochPoller) Run(ctx context.Context) {
 			p.pollOnce(ctx)
 		}
 	}
+}
+
+func (p *EpochPoller) ready() bool {
+	if p == nil {
+		return false
+	}
+	if p.loader == nil {
+		return false
+	}
+	return p.cache != nil
 }
 
 func (p *EpochPoller) pollOnce(ctx context.Context) {

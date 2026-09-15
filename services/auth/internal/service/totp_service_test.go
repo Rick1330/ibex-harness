@@ -151,11 +151,16 @@ func TestUnit_TotpService_EnrollmentConfirmAndStepUp(t *testing.T) {
 	if !errors.Is(err, service.ErrTOTPAlreadyDone) {
 		t.Fatalf("want already done, got %v", err)
 	}
-	code2, err := totp.GenerateCode(secret, time.Now().UTC())
+	assertStepUpOK(t, svc, secret)
+}
+
+func assertStepUpOK(t *testing.T, svc *service.TotpService, secret string) {
+	t.Helper()
+	code, err := totp.GenerateCode(secret, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, exp, err := svc.CreateStepUp(context.Background(), stepUpP("org-1", "user-1", code2, 7))
+	tok, exp, err := svc.CreateStepUp(context.Background(), stepUpP("org-1", "user-1", code, 7))
 	if err != nil {
 		t.Fatalf("stepup: %v", err)
 	}
@@ -168,7 +173,7 @@ func TestUnit_TotpService_EnrollmentConfirmAndStepUp(t *testing.T) {
 	}
 }
 
-func TestUnit_TotpService_DisabledNotReadyAndGates(t *testing.T) {
+func TestUnit_TotpService_Disabled(t *testing.T) {
 	t.Parallel()
 	store := &memTOTPStore{}
 	disabled, err := service.NewTotpService(store, service.MasterKeyConfig{}, false, nil)
@@ -179,6 +184,11 @@ func TestUnit_TotpService_DisabledNotReadyAndGates(t *testing.T) {
 	if !errors.Is(err, service.ErrTOTPDisabled) {
 		t.Fatalf("disabled: %v", err)
 	}
+}
+
+func TestUnit_TotpService_NotReadyAndNilRepo(t *testing.T) {
+	t.Parallel()
+	store := &memTOTPStore{}
 	notReady, err := service.NewTotpService(store, service.MasterKeyConfig{}, true, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -190,6 +200,11 @@ func TestUnit_TotpService_DisabledNotReadyAndGates(t *testing.T) {
 	if _, err := service.NewTotpService(nil, service.MasterKeyConfig{}, true, nil); err == nil {
 		t.Fatal("expected nil repo error")
 	}
+}
+
+func TestUnit_TotpService_MissingJWTAndGates(t *testing.T) {
+	t.Parallel()
+	store := &memTOTPStore{}
 	enc, _ := mustMasterEncoded(t)
 	noJWT, err := service.NewTotpService(store, service.MasterKeyConfig{Encoded: enc}, true, nil)
 	if err != nil {

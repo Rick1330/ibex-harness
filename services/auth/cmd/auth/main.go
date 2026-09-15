@@ -194,17 +194,30 @@ func newSessionAndTotp(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := attachRedisJTIStore(sessionIssuer, redisClient); err != nil {
-		return nil, nil, err
-	}
-	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
+	totpSvc, err := wireTotpStack(cfg, db, redisClient, sessionIssuer)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := attachRedisTOTPAttempts(totpSvc, redisClient); err != nil {
-		return nil, nil, err
-	}
 	return sessionIssuer, totpSvc, nil
+}
+
+func wireTotpStack(
+	cfg config.Config,
+	db *sql.DB,
+	redisClient redis.UniversalClient,
+	sessionIssuer *sessionjwt.Issuer,
+) (*service.TotpService, error) {
+	if err := attachRedisJTIStore(sessionIssuer, redisClient); err != nil {
+		return nil, err
+	}
+	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachRedisTOTPAttempts(totpSvc, redisClient); err != nil {
+		return nil, err
+	}
+	return totpSvc, nil
 }
 
 func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.UniversalClient) error {

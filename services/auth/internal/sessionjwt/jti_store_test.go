@@ -15,13 +15,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func requireConsume(t *testing.T, first bool, err error, wantFirst bool, label string) {
+type consumeResult struct {
+	first bool
+	err   error
+}
+
+func requireConsume(t *testing.T, got consumeResult, wantFirst bool, label string) {
 	t.Helper()
-	if err != nil {
-		t.Fatalf("%s: %v", label, err)
+	if got.err != nil {
+		t.Fatalf("%s: %v", label, got.err)
 	}
-	if first != wantFirst {
-		t.Fatalf("%s: first=%v want=%v", label, first, wantFirst)
+	if got.first != wantFirst {
+		t.Fatalf("%s: first=%v want=%v", label, got.first, wantFirst)
 	}
 }
 
@@ -30,12 +35,12 @@ func TestMemoryJTIStore_HonorsTTL(t *testing.T) {
 	store := &sessionjwt.MemoryJTIStore{}
 	ctx := context.Background()
 	first, err := store.ConsumeOnce(ctx, "jti-ttl", 20*time.Millisecond)
-	requireConsume(t, first, err, true, "first")
+	requireConsume(t, consumeResult{first, err}, true, "first")
 	second, err := store.ConsumeOnce(ctx, "jti-ttl", time.Minute)
-	requireConsume(t, second, err, false, "replay before expiry")
+	requireConsume(t, consumeResult{second, err}, false, "replay before expiry")
 	time.Sleep(30 * time.Millisecond)
 	again, err := store.ConsumeOnce(ctx, "jti-ttl", time.Minute)
-	requireConsume(t, again, err, true, "after expiry")
+	requireConsume(t, consumeResult{again, err}, true, "after expiry")
 }
 
 func TestRedisJTIStore_ConsumeOnce(t *testing.T) {
@@ -48,18 +53,17 @@ func TestRedisJTIStore_ConsumeOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = sessionjwt.NewRedisJTIStore(nil)
-	if err == nil {
+	if _, err := sessionjwt.NewRedisJTIStore(nil); err == nil {
 		t.Fatal("expected nil client error")
 	}
 
 	ctx := context.Background()
 	first, err := store.ConsumeOnce(ctx, "jti-1", time.Minute)
-	requireConsume(t, first, err, true, "first")
+	requireConsume(t, consumeResult{first, err}, true, "first")
 	second, err := store.ConsumeOnce(ctx, "jti-1", time.Minute)
-	requireConsume(t, second, err, false, "replay")
+	requireConsume(t, consumeResult{second, err}, false, "replay")
 	ok, err := store.ConsumeOnce(ctx, "jti-2", 0) // ttl clamped
-	requireConsume(t, ok, err, true, "zero ttl")
+	requireConsume(t, consumeResult{ok, err}, true, "zero ttl")
 }
 
 func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
