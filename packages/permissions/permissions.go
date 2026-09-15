@@ -17,10 +17,10 @@ const (
 	DirectiveRevoke  int64 = 1 << 11 // requires step-up
 
 	// Session operations (bits 16-23).
-	SessionCreate         int64 = 1 << 16
-	SessionRead           int64 = 1 << 17
-	SessionTerminate      int64 = 1 << 18
-	OperatorMetadataRead  int64 = 1 << 19 // 4.P.1 operator taxonomy
+	SessionCreate        int64 = 1 << 16
+	SessionRead          int64 = 1 << 17
+	SessionTerminate     int64 = 1 << 18
+	OperatorMetadataRead int64 = 1 << 19 // 4.P.1 operator taxonomy
 
 	// Trace operations (bits 24-31).
 	TraceRead   int64 = 1 << 24

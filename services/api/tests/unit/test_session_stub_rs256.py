@@ -136,3 +136,117 @@ def test_csrf_missing_cookie_or_header_false() -> None:
     csrf = mint_csrf_token(secret="c" * 32)
     assert not verify_csrf_token(secret="c" * 32, cookie_value=None, header_value=csrf)
     assert not verify_csrf_token(secret="c" * 32, cookie_value=csrf, header_value=None)
+
+
+def test_verify_prefers_rs256_when_alg_claim_wrong() -> None:
+    """Keys present + non-HS256 alg → attempt RS256 even if alg claim is wrong."""
+    org = str(uuid4())
+    key, pub = _rsa_keypair()
+    tok = _sign_rs256(key, {"alg": "none", "typ": "JWT"}, _access_payload(org))
+    claims = verify_token_opts(
+        tok,
+        TokenVerifyOpts(
+            secret=None,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            expect_kind=SESSION_KIND_ACCESS,
+            public_keys_pem=pub,
+        ),
+    )
+    assert str(claims.org_id) == org
+
+
+def test_verify_falls_through_when_rs256_attempt_fails() -> None:
+    """Wrong alg + bad RS256 → fall through; HS256 secret still verifies."""
+    import hashlib
+    import hmac
+    import time
+
+    org = str(uuid4())
+    now = int(time.time())
+    header = _b64url(json.dumps({"alg": "none"}).encode())
+    payload = _b64url(
+        json.dumps(
+            {
+                "iss": "ibex-harness",
+                "aud": "ibex-dashboard",
+                "sub": "u1",
+                "org_id": org,
+                "permissions": 1,
+                "session_kind": SESSION_KIND_ACCESS,
+                "iat": now,
+                "exp": now + 60,
+                "jti": "j",
+            }
+        ).encode()
+    )
+    body = f"{header}.{payload}"
+    secret = "s" * 32
+    sig = _b64url(hmac.new(secret.encode(), body.encode("ascii"), hashlib.sha256).digest())
+    _, wrong_pub = _rsa_keypair()
+    claims = verify_token_opts(
+        f"{body}.{sig}",
+        TokenVerifyOpts(
+            secret=secret,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            expect_kind=SESSION_KIND_ACCESS,
+            public_keys_pem=wrong_pub,
+        ),
+    )
+    assert str(claims.org_id) == org
+
+
+def test_verify_accepts_token_kind_alias() -> None:
+    org = str(uuid4())
+    key, pub = _rsa_keypair()
+    payload = _access_payload(org)
+    del payload["session_kind"]
+    payload["token_kind"] = SESSION_KIND_ACCESS
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, payload)
+    claims = verify_token_opts(
+        tok,
+        TokenVerifyOpts(
+            secret=None,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            expect_kind=SESSION_KIND_ACCESS,
+            public_keys_pem=pub,
+        ),
+    )
+    assert claims.session_kind == SESSION_KIND_ACCESS
+
+
+def test_verify_rejects_non_object_payload_and_csrf_mismatch() -> None:
+    hb = _b64url(json.dumps({"alg": "HS256"}).encode())
+    pb = _b64url(b"[1,2,3]")
+    with pytest.raises(SessionStubError, match="bad payload"):
+        verify_token_opts(
+            f"{hb}.{pb}.{_b64url(b'x')}",
+            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
+        )
+    csrf = mint_csrf_token(secret="c" * 32)
+    assert not verify_csrf_token(secret="c" * 32, cookie_value=csrf, header_value="other")
+    assert not verify_csrf_token(secret="c" * 32, cookie_value="nosplit", header_value="nosplit")
+
+
+def test_load_rsa_keys_rejects_private_pem() -> None:
+    key, _ = _rsa_keypair()
+    priv_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    org = str(uuid4())
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    with pytest.raises(SessionStubError, match="bad public key|no public keys|bad signature"):
+        verify_token_opts(
+            tok,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=priv_pem,
+            ),
+        )

@@ -82,3 +82,38 @@ async def test_record_ledger_row_inserts_via_repo() -> None:
         insert=fake_insert,
     )
     assert got == row_id
+
+
+@pytest.mark.asyncio
+async def test_insert_ledger_row_executes_org_scoped_sql() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.repositories.operator_ledger import insert_ledger_row
+
+    row_id = uuid4()
+    result = MagicMock()
+    result.scalar_one.return_value = row_id
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+
+    org_id = uuid4()
+    actor = uuid4()
+    got = await insert_ledger_row(
+        session,
+        org_id=org_id,
+        actor_user_id=actor,
+        action="export",
+        preview_token="preview-1",
+        idempotency_key="idem-1",
+        resource_type="memory",
+        resource_id="m-1",
+        step_up_jti="jti-1",
+        requires_second_actor=True,
+    )
+    assert got == row_id
+    session.execute.assert_awaited_once()
+    params = session.execute.await_args.args[1]
+    assert params["org_id"] == str(org_id)
+    assert params["actor_user_id"] == str(actor)
+    assert params["requires_second_actor"] is True
+    assert params["step_up_jti"] == "jti-1"
