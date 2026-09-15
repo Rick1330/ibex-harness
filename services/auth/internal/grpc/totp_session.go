@@ -23,7 +23,7 @@ type totpPort interface {
 }
 
 type sessionIssuerPort interface {
-	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
 	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 }
 
@@ -35,25 +35,38 @@ func (s *Server) requireTotpSelf(ctx context.Context, orgID, userID string) (Cal
 	if !ok {
 		return CallerContext{}, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
-	if caller.OrgID != orgID {
-		return CallerContext{}, status.Error(codes.PermissionDenied, errMsgForbidden)
-	}
-	if caller.UserID == "" || caller.UserID != userID {
-		return CallerContext{}, status.Error(codes.PermissionDenied, errMsgForbidden)
+	if err := assertSelfCaller(caller, orgID, userID); err != nil {
+		return CallerContext{}, err
 	}
 	return caller, nil
+}
+
+func assertSelfCaller(caller CallerContext, orgID, userID string) error {
+	if caller.OrgID != orgID {
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	if caller.UserID == "" {
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	if caller.UserID != userID {
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	return nil
+}
+
+func (s *Server) totpSelfIDs(ctx context.Context, orgID, userID string) (CallerContext, error) {
+	return s.requireTotpSelf(ctx, orgID, userID)
 }
 
 func (s *Server) BeginTotpEnrollment(
 	ctx context.Context,
 	req *authv1.BeginTotpEnrollmentRequest,
 ) (*authv1.BeginTotpEnrollmentResponse, error) {
-	orgID, userID := req.GetOrgId(), req.GetUserId()
-	if _, err := s.requireTotpSelf(ctx, orgID, userID); err != nil {
+	if _, err := s.totpSelfIDs(ctx, req.GetOrgId(), req.GetUserId()); err != nil {
 		return nil, err
 	}
 	uri, err := s.totpService.BeginEnrollment(ctx, service.BeginEnrollmentParams{
-		OrgID: orgID, UserID: userID, AccountName: userID,
+		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), AccountName: req.GetUserId(),
 	})
 	if err != nil {
 		return nil, mapTotpErr(err)
@@ -65,12 +78,11 @@ func (s *Server) ConfirmTotpEnrollment(
 	ctx context.Context,
 	req *authv1.ConfirmTotpEnrollmentRequest,
 ) (*authv1.ConfirmTotpEnrollmentResponse, error) {
-	orgID, userID := req.GetOrgId(), req.GetUserId()
-	if _, err := s.requireTotpSelf(ctx, orgID, userID); err != nil {
+	if _, err := s.totpSelfIDs(ctx, req.GetOrgId(), req.GetUserId()); err != nil {
 		return nil, err
 	}
 	err := s.totpService.ConfirmEnrollment(ctx, service.ConfirmEnrollmentParams{
-		OrgID: orgID, UserID: userID, Code: req.GetTotpCode(),
+		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), Code: req.GetTotpCode(),
 	})
 	if err != nil {
 		return nil, mapTotpErr(err)
@@ -82,13 +94,12 @@ func (s *Server) CreateStepUpToken(
 	ctx context.Context,
 	req *authv1.CreateStepUpTokenRequest,
 ) (*authv1.CreateStepUpTokenResponse, error) {
-	orgID, userID := req.GetOrgId(), req.GetUserId()
-	caller, err := s.requireTotpSelf(ctx, orgID, userID)
+	caller, err := s.totpSelfIDs(ctx, req.GetOrgId(), req.GetUserId())
 	if err != nil {
 		return nil, err
 	}
 	token, exp, err := s.totpService.CreateStepUp(ctx, service.CreateStepUpParams{
-		OrgID: orgID, UserID: userID, Code: req.GetTotpCode(), Permissions: caller.Permissions,
+		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), Code: req.GetTotpCode(), Permissions: caller.Permissions,
 	})
 	if err != nil {
 		return nil, mapTotpErr(err)
@@ -140,9 +151,9 @@ func (s *Server) issueFromCaller(ctx context.Context) (*authv1.IssueOperatorSess
 	if caller.UserID == "" {
 		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
-	access, refresh, accessExp, refreshExp, err := s.sessionIssuer.IssuePair(
-		caller.UserID, caller.OrgID, caller.Permissions,
-	)
+	access, refresh, accessExp, refreshExp, err := s.sessionIssuer.IssuePair(sessionjwt.IssuePairParams{
+		Subject: caller.UserID, OrgID: caller.OrgID, Permissions: caller.Permissions,
+	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, "issue session failed")
 	}

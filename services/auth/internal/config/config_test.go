@@ -253,8 +253,14 @@ func TestLoad_JWTDurationOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.JWTAccessTTL != 10*time.Minute || cfg.JWTRefreshTTL != 48*time.Hour || cfg.JWTStepUpTTL != 2*time.Minute {
-		t.Fatalf("ttls: access=%v refresh=%v step=%v", cfg.JWTAccessTTL, cfg.JWTRefreshTTL, cfg.JWTStepUpTTL)
+	if cfg.JWTAccessTTL != 10*time.Minute {
+		t.Fatalf("access ttl=%v", cfg.JWTAccessTTL)
+	}
+	if cfg.JWTRefreshTTL != 48*time.Hour {
+		t.Fatalf("refresh ttl=%v", cfg.JWTRefreshTTL)
+	}
+	if cfg.JWTStepUpTTL != 2*time.Minute {
+		t.Fatalf("step-up ttl=%v", cfg.JWTStepUpTTL)
 	}
 	if cfg.CredentialsMasterKeyID != "v1" {
 		t.Fatalf("key id default: %q", cfg.CredentialsMasterKeyID)

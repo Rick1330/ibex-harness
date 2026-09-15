@@ -80,7 +80,7 @@ func requireNoErr(t *testing.T, err error) {
 func TestIssueAndVerify(t *testing.T) {
 	t.Parallel()
 	iss, ver := mustIssuerVerifier(t)
-	access, _, _, _, err := iss.IssuePair("user-1", "org-1", 7)
+	access, _, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "user-1", OrgID: "org-1", Permissions: 7})
 	requireNoErr(t, err)
 	claims, err := ver.Verify(access, sessionjwt.KindAccess)
 	requireNoErr(t, err)
@@ -98,7 +98,7 @@ func TestIssueAndVerify(t *testing.T) {
 func TestRefreshPair_ConsumesJTIOnce(t *testing.T) {
 	t.Parallel()
 	iss := mustIssuer(t, time.Minute, time.Hour, time.Minute)
-	_, refresh, _, _, err := iss.IssuePair("user-1", "org-1", 7)
+	_, refresh, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "user-1", OrgID: "org-1", Permissions: 7})
 	requireNoErr(t, err)
 	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
 	requireNoErr(t, err)
@@ -111,7 +111,7 @@ func TestRefreshPair_ConsumesJTIOnce(t *testing.T) {
 func TestIssueStepUpAndVerify(t *testing.T) {
 	t.Parallel()
 	iss, ver := mustIssuerVerifier(t)
-	tok, exp, err := iss.IssueStepUp("user-1", "org-1", 9)
+	tok, exp, err := iss.IssueStepUp(sessionjwt.IssueStepUpParams{Subject: "user-1", OrgID: "org-1", Permissions: 9})
 	requireNoErr(t, err)
 	if tok == "" {
 		t.Fatal("empty step-up token")
@@ -161,7 +161,7 @@ func TestNewIssuer_DefaultTTLs(t *testing.T) {
 		PrivateKeyPEM: privPEM, Issuer: "iss", Audience: "aud",
 	})
 	requireNoErr(t, err)
-	access, refresh, aExp, rExp, err := iss.IssuePair("u", "o", 1)
+	access, refresh, aExp, rExp, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
 	requireNoErr(t, err)
 	if access == "" {
 		t.Fatal("empty access")
@@ -186,7 +186,7 @@ func TestNewIssuer_RejectsKindAndSignatureMismatch(t *testing.T) {
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	requireNoErr(t, err)
-	access, refresh, _, _, err := iss.IssuePair("u", "o", 1)
+	access, refresh, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
 	requireNoErr(t, err)
 	pubPEM := mustPublicPEM(t, priv)
 	ver, err := sessionjwt.NewVerifier(pubPEM, "iss", "aud")
@@ -230,7 +230,7 @@ func splitJWT(tok string) []string {
 func TestRefreshPair_RejectsAccessTokenAndBadClaims(t *testing.T) {
 	t.Parallel()
 	iss := mustIssuer(t, time.Minute, time.Hour, time.Minute)
-	access, _, _, _, err := iss.IssuePair("user-1", "org-1", 7)
+	access, _, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "user-1", OrgID: "org-1", Permissions: 7})
 	requireNoErr(t, err)
 	_, _, _, _, err = iss.RefreshPair(context.Background(), access)
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
@@ -247,7 +247,7 @@ func TestVerify_Expired(t *testing.T) {
 	priv, privPEM := mustRSAPrivatePEM(t)
 	iss, err := sessionjwt.NewIssuer(testIssuerConfig(privPEM, time.Second, time.Hour, time.Minute))
 	requireNoErr(t, err)
-	access, _, _, _, err := iss.IssuePair("u", "o", 1)
+	access, _, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
 	requireNoErr(t, err)
 	// Expiry uses unix seconds and is exclusive (< now); wait past exp second.
 	time.Sleep(2100 * time.Millisecond)
@@ -280,7 +280,7 @@ func TestNewVerifier_AcceptsRSACertificatePEM(t *testing.T) {
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	requireNoErr(t, err)
-	tok, _, err := iss.IssueStepUp("u", "o", 1)
+	tok, _, err := iss.IssueStepUp(sessionjwt.IssueStepUpParams{Subject: "u", OrgID: "o", Permissions: 1})
 	requireNoErr(t, err)
 	_, err = ver.Verify(tok, sessionjwt.KindStepUp)
 	requireNoErr(t, err)

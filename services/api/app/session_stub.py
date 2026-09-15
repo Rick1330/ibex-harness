@@ -95,18 +95,25 @@ def issue_token_opts(opts: TokenIssueOpts) -> str:
     return f"{body}.{_b64url(sig)}"
 
 
-def _split_jwt(token: str) -> tuple[str, str, str]:
+@dataclass(frozen=True, slots=True)
+class _JWTParts:
+    header_b64: str
+    payload_b64: str
+    sig_b64: str
+
+
+def _split_jwt(token: str) -> _JWTParts:
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError as exc:
         raise SessionStubError("malformed token") from exc
-    return header_b64, payload_b64, sig_b64
+    return _JWTParts(header_b64=header_b64, payload_b64=payload_b64, sig_b64=sig_b64)
 
 
-def _verify_hs256(header_b64: str, payload_b64: str, sig_b64: str, *, secret: str) -> None:
-    body = f"{header_b64}.{payload_b64}"
+def _verify_hs256(parts: _JWTParts, *, secret: str) -> None:
+    body = f"{parts.header_b64}.{parts.payload_b64}"
     expected = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
-    got_sig = _b64url_decode(sig_b64)
+    got_sig = _b64url_decode(parts.sig_b64)
     if not hmac.compare_digest(expected, got_sig):
         raise SessionStubError("bad signature")
 
@@ -131,12 +138,12 @@ def _load_rsa_public_keys(pem_blob: str) -> list[RSAPublicKey]:
     return keys
 
 
-def _verify_rs256(header_b64: str, payload_b64: str, sig_b64: str, *, public_keys_pem: str) -> None:
+def _verify_rs256(parts: _JWTParts, *, public_keys_pem: str) -> None:
     keys = _load_rsa_public_keys(public_keys_pem)
     if not keys:
         raise SessionStubError("no public keys")
-    body = f"{header_b64}.{payload_b64}".encode("ascii")
-    sig = _b64url_decode(sig_b64)
+    body = f"{parts.header_b64}.{parts.payload_b64}".encode("ascii")
+    sig = _b64url_decode(parts.sig_b64)
     last: Exception | None = None
     for key in keys:
         try:
@@ -160,8 +167,7 @@ def _header_alg(header_b64: str) -> str:
 
 def peek_token_alg(token: str) -> str:
     """Return the JWT alg claim without verifying the signature."""
-    header_b64, _, _ = _split_jwt(token)
-    return _header_alg(header_b64)
+    return _header_alg(_split_jwt(token).header_b64)
 
 
 def _decode_payload(payload_b64: str) -> dict[str, Any]:
@@ -206,39 +212,35 @@ def _validate_claims(
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
     """Verify RS256 or HS256; protected-header alg must match the verifier used."""
-    header_b64, payload_b64, sig_b64 = _split_jwt(token)
-    alg = _header_alg(header_b64)
-    payload = _decode_payload(payload_b64)
+    parts = _split_jwt(token)
+    alg = _header_alg(parts.header_b64)
+    payload = _decode_payload(parts.payload_b64)
     if alg == "RS256":
-        return _verify_rs256_token(header_b64, payload_b64, sig_b64, payload, opts)
+        return _verify_rs256_token(parts, payload, opts)
     if alg == "HS256":
-        return _verify_hs256_token(header_b64, payload_b64, sig_b64, payload, opts)
+        return _verify_hs256_token(parts, payload, opts)
     raise SessionStubError("alg mismatch")
 
 
 def _verify_rs256_token(
-    header_b64: str,
-    payload_b64: str,
-    sig_b64: str,
+    parts: _JWTParts,
     payload: dict[str, Any],
     opts: TokenVerifyOpts,
 ) -> SessionClaims:
     if not opts.public_keys_pem:
         raise SessionStubError("no verify material")
-    _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
+    _verify_rs256(parts, public_keys_pem=opts.public_keys_pem)
     return _validate_claims(payload, opts, verify_method="RS256")
 
 
 def _verify_hs256_token(
-    header_b64: str,
-    payload_b64: str,
-    sig_b64: str,
+    parts: _JWTParts,
     payload: dict[str, Any],
     opts: TokenVerifyOpts,
 ) -> SessionClaims:
     if not opts.secret:
         raise SessionStubError("no verify material")
-    _verify_hs256(header_b64, payload_b64, sig_b64, secret=opts.secret)
+    _verify_hs256(parts, secret=opts.secret)
     _LOG.warning(
         "provisional_hs256_verify=1 issuer=%s audience=%s",
         opts.issuer,

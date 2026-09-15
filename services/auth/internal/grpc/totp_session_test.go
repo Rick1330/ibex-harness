@@ -40,7 +40,7 @@ type fakeSessionIssuer struct {
 	refreshErr      error
 }
 
-func (f *fakeSessionIssuer) IssuePair(string, string, int64) (string, string, time.Time, time.Time, error) {
+func (f *fakeSessionIssuer) IssuePair(sessionjwt.IssuePairParams) (string, string, time.Time, time.Time, error) {
 	return f.access, f.refresh, f.aExp, f.rExp, f.issueErr
 }
 func (f *fakeSessionIssuer) RefreshPair(context.Context, string) (string, string, time.Time, time.Time, error) {

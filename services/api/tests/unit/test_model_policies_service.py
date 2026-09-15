@@ -246,28 +246,32 @@ async def test_create_duplicate_pattern_is_conflict() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_unknown_integrity_error_is_internal() -> None:
+@pytest.mark.parametrize(
+    ("execute_side_effect", "want_code", "expect_rollback"),
+    [
+        (_integrity("some_other_constraint"), INTERNAL_ERROR, False),
+        (_Rows(row=None), INTERNAL_ERROR, True),
+    ],
+)
+async def test_create_internal_failures(
+    execute_side_effect: object, want_code: str, expect_rollback: bool
+) -> None:
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=_integrity("some_other_constraint"))
+    session.execute = AsyncMock(
+        side_effect=execute_side_effect
+        if not isinstance(execute_side_effect, _Rows)
+        else None
+    )
+    if isinstance(execute_side_effect, _Rows):
+        session.execute = AsyncMock(return_value=execute_side_effect)
     session.rollback = AsyncMock()
     body = ModelPolicyCreate(model_pattern="x*", allowed=True)
     await _expect_api_error(
         svc.create_policy(session, uuid4(), body, deps=svc.WriteDeps()),
-        INTERNAL_ERROR,
+        want_code,
     )
-
-
-@pytest.mark.asyncio
-async def test_create_missing_returning_row_is_internal() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(return_value=_Rows(row=None))
-    session.rollback = AsyncMock()
-    body = ModelPolicyCreate(model_pattern="x*", allowed=True)
-    await _expect_api_error(
-        svc.create_policy(session, uuid4(), body, deps=svc.WriteDeps()),
-        INTERNAL_ERROR,
-    )
-    session.rollback.assert_awaited_once()
+    if expect_rollback:
+        session.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio

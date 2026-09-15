@@ -67,8 +67,14 @@ func assertInvalidatePayload(t *testing.T, payload string, want InvalidateEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != want.Version || got.OrgID != want.OrgID || got.Epoch != want.Epoch {
-		t.Fatalf("got=%+v want=%+v", got, want)
+	if got.Version != want.Version {
+		t.Fatalf("version=%d want=%d", got.Version, want.Version)
+	}
+	if got.OrgID != want.OrgID {
+		t.Fatalf("org=%s want=%s", got.OrgID, want.OrgID)
+	}
+	if got.Epoch != want.Epoch {
+		t.Fatalf("epoch=%d want=%d", got.Epoch, want.Epoch)
 	}
 }
 

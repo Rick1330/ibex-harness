@@ -96,22 +96,29 @@ func (i *Issuer) WithJTIStore(store JTIStore) *Issuer {
 	return i
 }
 
+// IssuePairParams scopes access+refresh issuance.
+type IssuePairParams struct {
+	Subject     string
+	OrgID       string
+	Permissions int64
+}
+
 // IssuePair returns access + refresh tokens for an operator session.
-func (i *Issuer) IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error) {
+func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error) {
 	now := time.Now().UTC()
 	accessExp = now.Add(i.accessTTL)
 	refreshExp = now.Add(i.refreshTTL)
 	access, err = i.sign(Claims{
-		Issuer: i.issuer, Audience: i.audience, Subject: sub, OrgID: orgID,
-		Permissions: permissions, SessionKind: KindAccess,
+		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
+		Permissions: p.Permissions, SessionKind: KindAccess,
 		IssuedAt: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(),
 	})
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
 	}
 	refresh, err = i.sign(Claims{
-		Issuer: i.issuer, Audience: i.audience, Subject: sub, OrgID: orgID,
-		Permissions: permissions, SessionKind: KindRefresh,
+		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
+		Permissions: p.Permissions, SessionKind: KindRefresh,
 		IssuedAt: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(),
 	})
 	if err != nil {
@@ -120,13 +127,20 @@ func (i *Issuer) IssuePair(sub, orgID string, permissions int64) (access, refres
 	return access, refresh, accessExp, refreshExp, nil
 }
 
+// IssueStepUpParams scopes step-up JWT issuance.
+type IssueStepUpParams struct {
+	Subject     string
+	OrgID       string
+	Permissions int64
+}
+
 // IssueStepUp returns a short-lived step-up token after TOTP verification.
-func (i *Issuer) IssueStepUp(sub, orgID string, permissions int64) (token string, exp time.Time, err error) {
+func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, err error) {
 	now := time.Now().UTC()
 	exp = now.Add(i.stepUpTTL)
 	token, err = i.sign(Claims{
-		Issuer: i.issuer, Audience: i.audience, Subject: sub, OrgID: orgID,
-		Permissions: permissions, SessionKind: KindStepUp,
+		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
+		Permissions: p.Permissions, SessionKind: KindStepUp,
 		IssuedAt: now.Unix(), ExpiresAt: exp.Unix(), JTI: uuid.NewString(),
 	})
 	return token, exp, err
@@ -155,7 +169,9 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, 
 	if !first {
 		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
 	}
-	return i.IssuePair(claims.Subject, claims.OrgID, claims.Permissions)
+	return i.IssuePair(IssuePairParams{
+		Subject: claims.Subject, OrgID: claims.OrgID, Permissions: claims.Permissions,
+	})
 }
 
 func validateRefreshClaims(claims Claims) error {

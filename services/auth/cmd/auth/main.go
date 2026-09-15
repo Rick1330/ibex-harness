@@ -194,34 +194,33 @@ func newSessionAndTotp(
 	if err != nil {
 		return nil, nil, err
 	}
-	totpSvc, err := wireTotpStack(cfg, db, redisClient, sessionIssuer)
+	if err := attachRedisJTIStore(sessionIssuer, redisClient); err != nil {
+		return nil, nil, err
+	}
+	return finishSessionTotp(cfg, db, redisClient, sessionIssuer)
+}
+
+func finishSessionTotp(
+	cfg config.Config,
+	db *sql.DB,
+	redisClient redis.UniversalClient,
+	sessionIssuer *sessionjwt.Issuer,
+) (*sessionjwt.Issuer, *service.TotpService, error) {
+	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := attachRedisTOTPAttempts(totpSvc, redisClient); err != nil {
 		return nil, nil, err
 	}
 	return sessionIssuer, totpSvc, nil
 }
 
-func wireTotpStack(
-	cfg config.Config,
-	db *sql.DB,
-	redisClient redis.UniversalClient,
-	sessionIssuer *sessionjwt.Issuer,
-) (*service.TotpService, error) {
-	if err := attachRedisJTIStore(sessionIssuer, redisClient); err != nil {
-		return nil, err
-	}
-	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
-	if err != nil {
-		return nil, err
-	}
-	if err := attachRedisTOTPAttempts(totpSvc, redisClient); err != nil {
-		return nil, err
-	}
-	return totpSvc, nil
-}
-
 func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.UniversalClient) error {
-	if sessionIssuer == nil || redisClient == nil {
+	if sessionIssuer == nil {
+		return nil
+	}
+	if redisClient == nil {
 		return nil
 	}
 	jtiStore, err := sessionjwt.NewRedisJTIStore(redisClient)
@@ -233,7 +232,10 @@ func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.Uni
 }
 
 func attachRedisTOTPAttempts(totpSvc *service.TotpService, redisClient redis.UniversalClient) error {
-	if totpSvc == nil || redisClient == nil {
+	if totpSvc == nil {
+		return nil
+	}
+	if redisClient == nil {
 		return nil
 	}
 	gate, err := service.NewRedisTOTPAttempts(redisClient, 0, 0)
@@ -501,7 +503,7 @@ func optionalTotp(svc *service.TotpService) interface {
 }
 
 func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
-	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
 	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 } {
 	if iss == nil {

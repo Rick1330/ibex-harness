@@ -118,17 +118,22 @@ func TestNewEpochPoller_DefaultIntervalAndNilRun(t *testing.T) {
 	nilPoller.Run(ctx)
 }
 
-func TestEpochPoller_LoadErrorInvalidates(t *testing.T) {
-	t.Parallel()
-	org := uuid.New()
-	fast := &staticEpochLoader{epoch: 1}
-	cache, err := NewCache(fast, Config{CacheTTL: time.Hour, LRUSize: 8, LoadTimeout: 0}, nil)
+func seedPollerCache(t *testing.T, loader PolicyLoader, org uuid.UUID) *Cache {
+	t.Helper()
+	cache, err := NewCache(loader, Config{CacheTTL: time.Hour, LRUSize: 8, LoadTimeout: time.Second}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
+	return cache
+}
+
+func TestEpochPoller_LoadErrorInvalidates(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	cache := seedPollerCache(t, &staticEpochLoader{epoch: 1}, org)
 	poller := NewEpochPoller(&errLoader{err: context.DeadlineExceeded}, cache, logger.Discard("t"), time.Hour)
 	poller.pollOnce(context.Background())
 	if _, ok := cache.CachedEpoch(org); ok {
@@ -140,17 +145,15 @@ func TestEpochPoller_StableEpochKeepsCache(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
 	loader := &staticEpochLoader{epoch: 3}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Hour, LRUSize: 8, LoadTimeout: time.Second}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cache.PoliciesForOrg(context.Background(), org); err != nil {
-		t.Fatal(err)
-	}
+	cache := seedPollerCache(t, loader, org)
 	poller := NewEpochPoller(loader, cache, nil, time.Hour)
 	poller.pollOnce(context.Background())
-	if ep, ok := cache.CachedEpoch(org); !ok || ep != 3 {
-		t.Fatalf("epoch=%d ok=%v", ep, ok)
+	ep, ok := cache.CachedEpoch(org)
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if ep != 3 {
+		t.Fatalf("epoch=%d", ep)
 	}
 }
 

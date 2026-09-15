@@ -98,17 +98,38 @@ func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 
 func assertBYOOverrides(t *testing.T, fx credOverrideFixture) {
 	t.Helper()
+	assertBYOKeyAndSNI(t, fx)
+	assertBYOPinnedBaseURL(t, fx)
+	assertBYOResolveInput(t, fx)
+}
+
+func assertBYOKeyAndSNI(t *testing.T, fx credOverrideFixture) {
+	t.Helper()
 	if fx.provReq.APIKeyOverride != "sk-byo" {
 		t.Fatalf("APIKeyOverride=%q", fx.provReq.APIKeyOverride)
 	}
 	if fx.provReq.TLSServerName != "byo.example.test" {
 		t.Fatalf("TLSServerName=%q", fx.provReq.TLSServerName)
 	}
-	if !strings.Contains(fx.provReq.BaseURLOverride, "1.1.1.1") || strings.Contains(fx.provReq.BaseURLOverride, "byo.example.test") {
+}
+
+func assertBYOPinnedBaseURL(t *testing.T, fx credOverrideFixture) {
+	t.Helper()
+	if !strings.Contains(fx.provReq.BaseURLOverride, "1.1.1.1") {
 		t.Fatalf("expected IP-pinned BaseURLOverride, got %q", fx.provReq.BaseURLOverride)
 	}
-	if fx.resolver.last.OrgID != credTestOrg.String() || fx.resolver.last.ProviderName != "openai" {
-		t.Fatalf("resolve input=%+v", fx.resolver.last)
+	if strings.Contains(fx.provReq.BaseURLOverride, "byo.example.test") {
+		t.Fatalf("expected hostname replaced, got %q", fx.provReq.BaseURLOverride)
+	}
+}
+
+func assertBYOResolveInput(t *testing.T, fx credOverrideFixture) {
+	t.Helper()
+	if fx.resolver.last.OrgID != credTestOrg.String() {
+		t.Fatalf("resolve org=%q", fx.resolver.last.OrgID)
+	}
+	if fx.resolver.last.ProviderName != "openai" {
+		t.Fatalf("resolve provider=%q", fx.resolver.last.ProviderName)
 	}
 }
 

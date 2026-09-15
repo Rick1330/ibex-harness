@@ -113,15 +113,15 @@ func mustIssuer(t *testing.T) *sessionjwt.Issuer {
 }
 
 func beginP(org, user, acct string) service.BeginEnrollmentParams {
-	return service.BeginEnrollmentParams{OrgID: org, UserID: user, AccountName: acct}
+	return service.BeginEnrollmentParams{OrgID: service.OrgID(org), UserID: service.UserID(user), AccountName: acct}
 }
 
 func confirmP(org, user, code string) service.ConfirmEnrollmentParams {
-	return service.ConfirmEnrollmentParams{OrgID: org, UserID: user, Code: code}
+	return service.ConfirmEnrollmentParams{OrgID: service.OrgID(org), UserID: service.UserID(user), Code: code}
 }
 
 func stepUpP(org, user, code string, perms int64) service.CreateStepUpParams {
-	return service.CreateStepUpParams{OrgID: org, UserID: user, Code: code, Permissions: perms}
+	return service.CreateStepUpParams{OrgID: service.OrgID(org), UserID: service.UserID(user), Code: code, Permissions: perms}
 }
 
 func TestUnit_TotpService_EnrollmentConfirmAndStepUp(t *testing.T) {

@@ -43,26 +43,39 @@ func TestMemoryJTIStore_HonorsTTL(t *testing.T) {
 	requireConsume(t, consumeResult{again, err}, true, "after expiry")
 }
 
+func TestRedisJTIStore_NilClient(t *testing.T) {
+	t.Parallel()
+	if _, err := sessionjwt.NewRedisJTIStore(nil); err == nil {
+		t.Fatal("expected nil client error")
+	}
+}
+
 func TestRedisJTIStore_ConsumeOnce(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-
 	store, err := sessionjwt.NewRedisJTIStore(rdb)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sessionjwt.NewRedisJTIStore(nil); err == nil {
-		t.Fatal("expected nil client error")
-	}
-
 	ctx := context.Background()
 	first, err := store.ConsumeOnce(ctx, "jti-1", time.Minute)
 	requireConsume(t, consumeResult{first, err}, true, "first")
 	second, err := store.ConsumeOnce(ctx, "jti-1", time.Minute)
 	requireConsume(t, consumeResult{second, err}, false, "replay")
-	ok, err := store.ConsumeOnce(ctx, "jti-2", 0) // ttl clamped
+}
+
+func TestRedisJTIStore_ZeroTTL(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store, err := sessionjwt.NewRedisJTIStore(rdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := store.ConsumeOnce(context.Background(), "jti-2", 0)
 	requireConsume(t, consumeResult{ok, err}, true, "zero ttl")
 }
 
@@ -88,7 +101,7 @@ func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	iss.WithJTIStore(store)
-	_, refresh, _, _, err := iss.IssuePair("u", "o", 1)
+	_, refresh, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
