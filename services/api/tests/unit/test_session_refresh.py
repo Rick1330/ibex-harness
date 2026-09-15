@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
 import pytest
+from authclient.codec import AuthCodecError, encode_varint
 from authclient.errors import AuthFailedError, AuthUnavailableError
 
 from app.auth.session_refresh import (
     _decode_string_field,
-    _encode_varint,
     encode_issue_with_refresh,
     refresh_operator_session,
 )
@@ -19,17 +19,14 @@ from app.auth.session_refresh import (
 
 def _proto_string(field_num: int, value: str) -> bytes:
     raw = value.encode("utf-8")
-    return bytes([(field_num << 3) | 2]) + _encode_varint(len(raw)) + raw
+    return encode_varint((field_num << 3) | 2) + encode_varint(len(raw)) + raw
 
 
 def _proto_varint(field_num: int, value: int) -> bytes:
-    return bytes([(field_num << 3) | 0]) + _encode_varint(value)
+    return encode_varint((field_num << 3) | 0) + encode_varint(value)
 
 
-def test_encode_varint_multi_byte() -> None:
-    assert _encode_varint(0) == b"\x00"
-    assert _encode_varint(127) == b"\x7f"
-    assert _encode_varint(128) == b"\x80\x01"
+def test_encode_issue_with_refresh_multi_byte() -> None:
     long_tok = "r" * 200
     payload = encode_issue_with_refresh(long_tok)
     assert payload[0] == 0x0A
@@ -48,16 +45,23 @@ def test_decode_string_field_skips_other_fields_and_varints() -> None:
     assert _decode_string_field(b"", 1) is None
 
 
-def test_decode_string_field_multi_byte_lengths_and_varints() -> None:
+def test_decode_string_field_multi_byte_key_and_length() -> None:
     long_val = "x" * 200
-    # Multi-byte string length + multi-byte skipped varint (value >= 128).
-    buf = _proto_varint(7, 300) + _proto_string(1, long_val)
-    assert _decode_string_field(buf, 1) == long_val
+    # Field 16 requires a multi-byte protobuf key; length >= 128 is multi-byte too.
+    buf = _proto_varint(7, 300) + _proto_string(16, long_val) + _proto_string(1, "access")
+    assert _decode_string_field(buf, 16) == long_val
+    assert _decode_string_field(buf, 1) == "access"
 
 
-def test_decode_string_field_rejects_unknown_wire_type() -> None:
-    # wire type 1 (64-bit) is unsupported → None
-    assert _decode_string_field(bytes([0x09, 0, 0, 0, 0, 0, 0, 0, 0]), 1) is None
+def test_decode_string_field_skips_fixed64() -> None:
+    # wire type 1 (64-bit) is skipped, then field 1 is found.
+    buf = bytes([0x09, 0, 0, 0, 0, 0, 0, 0, 0]) + _proto_string(1, "ok")
+    assert _decode_string_field(buf, 1) == "ok"
+
+
+def test_decode_string_field_rejects_unsupported_wire() -> None:
+    with pytest.raises(AuthCodecError, match="unsupported wire type"):
+        _decode_string_field(bytes([0x0F]), 1)
 
 
 def _patch_channel(stub: AsyncMock):
@@ -117,4 +121,11 @@ async def test_refresh_operator_session_rpc_errors(code, exc_type, match) -> Non
 async def test_refresh_operator_session_incomplete_response() -> None:
     stub = AsyncMock(return_value=_proto_string(1, "access-only"))
     with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="incomplete"):
+        await refresh_operator_session(auth_grpc_addr="127.0.0.1:50051", refresh_token="r")
+
+
+@pytest.mark.asyncio
+async def test_refresh_operator_session_codec_error_maps_unavailable() -> None:
+    stub = AsyncMock(return_value=bytes([0x0F]))
+    with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="codec"):
         await refresh_operator_session(auth_grpc_addr="127.0.0.1:50051", refresh_token="r")

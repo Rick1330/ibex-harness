@@ -223,11 +223,11 @@ func mapTotpStoreErr(err error) error {
 }
 
 type memoryTOTPAttempts struct {
-	mu      sync.Mutex
-	max     int
-	lockTTL time.Duration
-	now     func() time.Time
-	entries map[string]totpAttemptEntry
+	mu       sync.Mutex
+	maxFails int
+	lockTTL  time.Duration
+	now      func() time.Time
+	entries  map[string]totpAttemptEntry
 }
 
 type totpAttemptEntry struct {
@@ -235,9 +235,9 @@ type totpAttemptEntry struct {
 	lockedUntil time.Time
 }
 
-func newMemoryTOTPAttempts(max int, lockTTL time.Duration) *memoryTOTPAttempts {
+func newMemoryTOTPAttempts(maxFails int, lockTTL time.Duration) *memoryTOTPAttempts {
 	return &memoryTOTPAttempts{
-		max: max, lockTTL: lockTTL, now: time.Now, entries: make(map[string]totpAttemptEntry),
+		maxFails: maxFails, lockTTL: lockTTL, now: time.Now, entries: make(map[string]totpAttemptEntry),
 	}
 }
 
@@ -265,7 +265,7 @@ func (m *memoryTOTPAttempts) Fail(orgID, userID string) {
 	key := totpAttemptKey(orgID, userID)
 	ent := m.entries[key]
 	ent.failures++
-	if ent.failures >= m.max {
+	if ent.failures >= m.maxFails {
 		ent.lockedUntil = m.now().Add(m.lockTTL)
 		ent.failures = 0
 	}

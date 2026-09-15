@@ -212,15 +212,23 @@ INSERT INTO ibex_core.tokens (
   'E2E Org B Seed Token',
   35455005822723,
   false
-) ON CONFLICT (id) DO NOTHING;
+) ON CONFLICT (id) DO UPDATE SET
+  hash = EXCLUDED.hash,
+  prefix = EXCLUDED.prefix,
+  permissions = EXCLUDED.permissions,
+  is_revoked = EXCLUDED.is_revoked,
+  user_id = EXCLUDED.user_id,
+  agent_id = EXCLUDED.agent_id;
 
 INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
 VALUES ('${ORG_B}'::uuid, '*', true, 1000)
-ON CONFLICT (org_id, model_pattern) DO NOTHING;
+ON CONFLICT (org_id, model_pattern) DO UPDATE SET
+  allowed = EXCLUDED.allowed,
+  priority = EXCLUDED.priority;
 
 INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
 VALUES ('${ORG_B}'::uuid, 1)
-ON CONFLICT (org_id) DO NOTHING;
+ON CONFLICT (org_id) DO UPDATE SET epoch = EXCLUDED.epoch;
 SQL
   pass "seeded Org B user/agent/token"
 }

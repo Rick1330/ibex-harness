@@ -17,13 +17,18 @@ from app.session_stub import (
 )
 
 STEP_UP_HEADER = "X-IBEX-Step-Up"
+_STEP_UP_REQUIRED = "Step-up authentication required"
 
 
 def _settings(request: Request) -> Settings:
     return request.app.state.settings  # type: ignore[no-any-return]
 
 
-async def require_step_up_header(request: Request) -> None:
+def _deny_step_up() -> ApiError:
+    return ApiError(code=INSUFFICIENT_PERMISSIONS, message=_STEP_UP_REQUIRED)
+
+
+def require_step_up_header(request: Request) -> None:
     """Validate X-IBEX-Step-Up when present; set request.state.ibex_step_up_ok."""
     settings = _settings(request)
     raw = request.headers.get(STEP_UP_HEADER)
@@ -42,16 +47,13 @@ async def require_step_up_header(request: Request) -> None:
             ),
         )
     except SessionStubError as exc:
-        raise ApiError(
-            code=INSUFFICIENT_PERMISSIONS,
-            message="Step-up authentication required",
-        ) from exc
+        raise _deny_step_up() from exc
     session_org = getattr(request.state, "ibex_session_org_id", None)
     session_sub = getattr(request.state, "ibex_session_sub", None)
     if session_org is not None and str(claims.org_id) != str(session_org):
-        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
+        raise _deny_step_up()
     if session_sub is not None and (not claims.sub or str(claims.sub) != str(session_sub)):
-        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
+        raise _deny_step_up()
     request.state.ibex_step_up_ok = True
     request.state.ibex_step_up_jti = claims.jti
 

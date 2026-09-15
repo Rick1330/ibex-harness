@@ -201,12 +201,20 @@ func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 	if lit := net.ParseIP(host); lit != nil {
-		if IsBlockedIP(lit) {
-			return nil, ErrBlockedDestination
-		}
-		var d net.Dialer
-		return d.DialContext(ctx, network, addr)
+		return dialLiteralIP(ctx, network, addr, lit)
 	}
+	return dialResolvedHosts(ctx, network, host, port)
+}
+
+func dialLiteralIP(ctx context.Context, network, addr string, lit net.IP) (net.Conn, error) {
+	if IsBlockedIP(lit) {
+		return nil, ErrBlockedDestination
+	}
+	var d net.Dialer
+	return d.DialContext(ctx, network, addr)
+}
+
+func dialResolvedHosts(ctx context.Context, network, host, port string) (net.Conn, error) {
 	addrs, err := lookupIPAddr(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		return nil, ErrBlockedDestination
@@ -218,8 +226,7 @@ func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 			last = ErrBlockedDestination
 			continue
 		}
-		target := net.JoinHostPort(a.IP.String(), port)
-		conn, err := d.DialContext(ctx, network, target)
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(a.IP.String(), port))
 		if err == nil {
 			return conn, nil
 		}
@@ -267,16 +274,24 @@ func ClientForPinnedDial(base *http.Client, serverName string) *http.Client {
 		}
 		t.TLSClientConfig.ServerName = serverName
 		pinnedHost := strings.ToLower(serverName)
-		out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("ssrf: too many redirects")
-			}
-			if strings.ToLower(req.URL.Hostname()) != pinnedHost {
-				return fmt.Errorf("%w: redirect host %q != pinned %q", ErrBlockedDestination, req.URL.Hostname(), pinnedHost)
-			}
-			return nil
-		}
+		out.CheckRedirect = pinnedHTTPSRedirect(pinnedHost)
 	}
 	out.Transport = t
 	return &out
+}
+
+// pinnedHTTPSRedirect rejects cross-host and non-HTTPS redirects for pinned dials.
+func pinnedHTTPSRedirect(pinnedHost string) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("ssrf: too many redirects")
+		}
+		if strings.ToLower(req.URL.Scheme) != "https" {
+			return fmt.Errorf("%w: redirect scheme must be https", ErrBlockedDestination)
+		}
+		if strings.ToLower(req.URL.Hostname()) != pinnedHost {
+			return fmt.Errorf("%w: redirect host %q != pinned %q", ErrBlockedDestination, req.URL.Hostname(), pinnedHost)
+		}
+		return nil
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"testing"
 	"time"
 
@@ -42,5 +43,28 @@ func TestIssueAndVerify(t *testing.T) {
 	}
 	if claims.Subject != "user-1" || claims.OrgID != "org-1" || claims.Permissions != 7 {
 		t.Fatalf("claims=%+v", claims)
+	}
+}
+
+func TestRefreshPair_ConsumesJTIOnce(t *testing.T) {
+	t.Parallel()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	iss, err := sessionjwt.NewIssuer(string(privPEM), "ibex-auth", "ibex-dashboard", time.Minute, time.Hour, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, refresh, _, _, err := iss.IssuePair("user-1", "org-1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := iss.RefreshPair(refresh); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if _, _, _, _, err := iss.RefreshPair(refresh); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+		t.Fatalf("replay want ErrInvalidToken, got %v", err)
 	}
 }

@@ -156,6 +156,12 @@ def _header_alg(header_b64: str) -> str:
     return str(header.get("alg", ""))
 
 
+def peek_token_alg(token: str) -> str:
+    """Return the JWT alg claim without verifying the signature."""
+    header_b64, _, _ = _split_jwt(token)
+    return _header_alg(header_b64)
+
+
 def _decode_payload(payload_b64: str) -> dict[str, Any]:
     try:
         payload = json.loads(_b64url_decode(payload_b64))

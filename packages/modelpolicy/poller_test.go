@@ -72,6 +72,14 @@ func TestEpochPoller_LoadTimeoutInvalidatesAndContinues(t *testing.T) {
 		t.Fatal("pollOnce hung on load timeout")
 	}
 	close(slow.block)
+	// Both orgs must be fail-closed invalidated so the next request reloads;
+	// polling must continue after the first organization times out.
+	if _, ok := cache.CachedEpoch(orgA); ok {
+		t.Fatal("expected orgA invalidated after load timeout")
+	}
+	if _, ok := cache.CachedEpoch(orgB); ok {
+		t.Fatal("expected orgB invalidated after load timeout")
+	}
 }
 
 type staticEpochLoader struct{ epoch uint64 }

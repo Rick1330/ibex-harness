@@ -2,7 +2,9 @@ package ssrf_test
 
 import (
 	"context"
+	"errors"
 	"net"
+	"net/http"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/ssrf"
@@ -74,5 +76,25 @@ func TestValidateAndPinHTTPURL_RejectsHTTP(t *testing.T) {
 	t.Parallel()
 	if _, err := ssrf.ValidateAndPinHTTPURL(context.Background(), "http://8.8.8.8/v1"); err == nil {
 		t.Fatal("expected http scheme reject")
+	}
+}
+
+func TestClientForPinnedDial_BlocksHTTPSToHTTPRedirect(t *testing.T) {
+	t.Parallel()
+	client := ssrf.ClientForPinnedDial(nil, "example.com")
+	if client.CheckRedirect == nil {
+		t.Fatal("expected CheckRedirect set for pinned host")
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://example.com/downgrade", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	via := []*http.Request{req}
+	err = client.CheckRedirect(req, via)
+	if err == nil {
+		t.Fatal("expected https-to-http same-host redirect to be blocked")
+	}
+	if !errors.Is(err, ssrf.ErrBlockedDestination) {
+		t.Fatalf("want ErrBlockedDestination, got %v", err)
 	}
 }

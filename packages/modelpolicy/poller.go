@@ -62,13 +62,7 @@ func (p *EpochPoller) reconcileOrgEpoch(ctx context.Context, orgID uuid.UUID) {
 	if !ok {
 		return
 	}
-	loadCtx := ctx
-	cancel := func() {}
-	if p.cache.cfg.LoadTimeout > 0 {
-		loadCtx, cancel = context.WithTimeout(ctx, p.cache.cfg.LoadTimeout)
-	}
-	snap, err := p.loader.LoadOrg(loadCtx, orgID)
-	cancel()
+	snap, err := p.loadOrgForPoll(ctx, orgID)
 	if err != nil {
 		if p.log != nil {
 			p.log.WarnCtx(ctx, "model policy epoch poll failed", "org_id", orgID.String(), "err", err.Error())
@@ -81,6 +75,15 @@ func (p *EpochPoller) reconcileOrgEpoch(ctx context.Context, orgID uuid.UUID) {
 	if snap.Epoch != cachedEpoch {
 		p.cache.Invalidate(orgID)
 	}
+}
+
+func (p *EpochPoller) loadOrgForPoll(ctx context.Context, orgID uuid.UUID) (OrgPolicies, error) {
+	if p.cache.cfg.LoadTimeout <= 0 {
+		return p.loader.LoadOrg(ctx, orgID)
+	}
+	loadCtx, cancel := context.WithTimeout(ctx, p.cache.cfg.LoadTimeout)
+	defer cancel()
+	return p.loader.LoadOrg(loadCtx, orgID)
 }
 
 func (c *Cache) cachedOrgIDs() []uuid.UUID {

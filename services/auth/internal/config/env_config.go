@@ -87,15 +87,15 @@ func applyAuthEnvOverrides(cfg *Config, envCfg envConfig) error {
 	applyArgon2Overrides(&cfg.Argon2, envCfg)
 	cfg.JWTAccessTTL, err = parseDurationOr(envCfg.JWTAccessTTLRaw, 15*time.Minute)
 	if err != nil {
-		return fmt.Errorf("JWT_ACCESS_TTL: %w", err)
+		return fmt.Errorf("JWT_ACCESS_TOKEN_TTL: %w", err)
 	}
 	cfg.JWTRefreshTTL, err = parseDurationOr(envCfg.JWTRefreshTTLRaw, 7*24*time.Hour)
 	if err != nil {
-		return fmt.Errorf("JWT_REFRESH_TTL: %w", err)
+		return fmt.Errorf("JWT_REFRESH_TOKEN_TTL: %w", err)
 	}
 	cfg.JWTStepUpTTL, err = parseDurationOr(envCfg.JWTStepUpTTLRaw, 5*time.Minute)
 	if err != nil {
-		return fmt.Errorf("JWT_STEP_UP_TTL: %w", err)
+		return fmt.Errorf("JWT_STEP_UP_TOKEN_TTL: %w", err)
 	}
 	return nil
 }

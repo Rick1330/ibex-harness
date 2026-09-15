@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from unittest.mock import AsyncMock, patch
 
 from app.auth.client import StaticTokenValidator
@@ -11,6 +13,17 @@ from app.session_stub import mint_csrf_token
 from tests.unit.operator.conftest import CSRF_SECRET, create_operator_app, operator_settings
 
 _RS256_PEM = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _rs256_shaped_refresh() -> str:
+    """JWT shape with alg=RS256 so refresh dispatches to Auth-owned path."""
+    header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    payload = _b64url(json.dumps({"session_kind": "refresh"}).encode())
+    return f"{header}.{payload}.sig"
 
 
 def _rs256_settings(**kwargs: object):
@@ -51,7 +64,7 @@ def test_rs256_refresh_success_sets_cookies() -> None:
             ),
         ) as refresh_fn,
     ):
-        client.cookies.set("ibex_refresh", "old-refresh")
+        client.cookies.set("ibex_refresh", _rs256_shaped_refresh())
         resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
     assert resp.status_code == 200
     body = resp.json()
@@ -72,7 +85,7 @@ def test_rs256_refresh_auth_failed_maps_401() -> None:
             new=AsyncMock(side_effect=AuthFailedError("bad")),
         ),
     ):
-        client.cookies.set("ibex_refresh", "bad-refresh")
+        client.cookies.set("ibex_refresh", _rs256_shaped_refresh())
         resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
     assert resp.status_code == 401
 
@@ -88,6 +101,25 @@ def test_rs256_refresh_unavailable_maps_503() -> None:
             new=AsyncMock(side_effect=AuthUnavailableError("down")),
         ),
     ):
-        client.cookies.set("ibex_refresh", "old-refresh")
+        client.cookies.set("ibex_refresh", _rs256_shaped_refresh())
         resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
     assert resp.status_code == 503
+
+
+def test_mixed_hmac_still_routes_rs256_cookie_to_auth() -> None:
+    """HMAC configured must not mint HS256 access for an RS256 refresh cookie."""
+    settings = _rs256_settings(jwt_hmac_secret="h" * 32)
+    with (
+        create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+        patch(
+            "app.routers.session.refresh_operator_session",
+            new=AsyncMock(
+                return_value=RefreshedSession(access_token="a", refresh_token="r"),
+            ),
+        ) as refresh_fn,
+    ):
+        client.cookies.set("ibex_refresh", _rs256_shaped_refresh())
+        resp = client.post("/v1/operator/session/refresh", headers=_csrf_headers(client))
+    assert resp.status_code == 200
+    assert resp.json()["provisional"] is False
+    refresh_fn.assert_awaited_once()

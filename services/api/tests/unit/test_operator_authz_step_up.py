@@ -55,9 +55,10 @@ def _request_with_settings(settings: Settings, *, headers: list[tuple[bytes, byt
 
 
 def test_assert_operator_permission_feature_kill_switch() -> None:
+    settings = _settings(operator_feature_enabled=False)
     with pytest.raises(ApiError) as exc:
         assert_operator_permission(
-            _settings(operator_feature_enabled=False),
+            settings,
             OPERATOR_RAW_READ,
             OPERATOR_RAW_READ,
             step_up_ok=True,
@@ -66,9 +67,10 @@ def test_assert_operator_permission_feature_kill_switch() -> None:
 
 
 def test_assert_operator_permission_action_kill_switch() -> None:
+    settings = _settings(operator_allow_raw_read=False)
     with pytest.raises(ApiError) as exc:
         assert_operator_permission(
-            _settings(operator_allow_raw_read=False),
+            settings,
             OPERATOR_RAW_READ,
             OPERATOR_RAW_READ,
             step_up_ok=True,
@@ -77,9 +79,10 @@ def test_assert_operator_permission_action_kill_switch() -> None:
 
 
 def test_assert_operator_permission_requires_step_up() -> None:
+    settings = _settings()
     with pytest.raises(ApiError) as exc:
         assert_operator_permission(
-            _settings(),
+            settings,
             OPERATOR_RAW_READ,
             OPERATOR_RAW_READ,
             step_up_ok=False,
@@ -97,9 +100,10 @@ def test_assert_operator_permission_ok_with_step_up() -> None:
 
 
 def test_assert_operator_permission_bitmap_missing() -> None:
+    settings = _settings()
     with pytest.raises(ApiError) as exc:
         assert_operator_permission(
-            _settings(),
+            settings,
             0,
             OPERATOR_RAW_READ,
             step_up_ok=True,
@@ -124,15 +128,13 @@ def test_require_operator_permission_dep_reads_step_up_flag() -> None:
     assert dep(req, token) is token
 
 
-@pytest.mark.asyncio
-async def test_step_up_header_missing_sets_false() -> None:
+def test_step_up_header_missing_sets_false() -> None:
     req = _request_with_settings(_settings())
-    await require_step_up_header(req)
+    require_step_up_header(req)
     assert req.state.ibex_step_up_ok is False
 
 
-@pytest.mark.asyncio
-async def test_step_up_header_valid_sets_true() -> None:
+def test_step_up_header_valid_sets_true() -> None:
     settings = _settings()
     org = uuid4()
     token = issue_token_opts(
@@ -150,12 +152,11 @@ async def test_step_up_header_valid_sets_true() -> None:
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     req.state.ibex_session_org_id = org
     req.state.ibex_session_sub = "user-1"
-    await require_step_up_header(req)
+    require_step_up_header(req)
     assert req.state.ibex_step_up_ok is True
 
 
-@pytest.mark.asyncio
-async def test_step_up_org_and_subject_mismatch_denies() -> None:
+def test_step_up_org_mismatch_denies() -> None:
     settings = _settings()
     token = issue_token_opts(
         TokenIssueOpts(
@@ -172,18 +173,33 @@ async def test_step_up_org_and_subject_mismatch_denies() -> None:
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     req.state.ibex_session_org_id = uuid4()
     with pytest.raises(ApiError) as exc:
-        await require_step_up_header(req)
+        require_step_up_header(req)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
-    req2 = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
-    req2.state.ibex_session_org_id = None
-    req2.state.ibex_session_sub = "other-user"
-    with pytest.raises(ApiError):
-        await require_step_up_header(req2)
+
+def test_step_up_subject_mismatch_denies() -> None:
+    settings = _settings()
+    token = issue_token_opts(
+        TokenIssueOpts(
+            secret=settings.jwt_hmac_secret or "h" * 32,
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            org_id=uuid4(),
+            permissions=0,
+            subject="user-1",
+            session_kind=SESSION_KIND_STEP_UP,
+            ttl_seconds=300,
+        )
+    )
+    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
+    req.state.ibex_session_org_id = None
+    req.state.ibex_session_sub = "other-user"
+    with pytest.raises(ApiError) as exc:
+        require_step_up_header(req)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
 
-@pytest.mark.asyncio
-async def test_step_up_header_expired_denies() -> None:
+def test_step_up_header_expired_denies() -> None:
     settings = _settings()
     token = issue_token_opts(
         TokenIssueOpts(
@@ -199,5 +215,5 @@ async def test_step_up_header_expired_denies() -> None:
     )
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
     with pytest.raises(ApiError) as exc:
-        await require_step_up_header(req)
+        require_step_up_header(req)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS

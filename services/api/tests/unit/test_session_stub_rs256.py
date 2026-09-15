@@ -80,57 +80,59 @@ def test_verify_rs256_ok_and_multi_key_rotation() -> None:
     assert str(claims.org_id) == org
 
 
-def test_verify_rs256_rejects_bad_signature_and_empty_pem() -> None:
+def test_verify_rs256_rejects_bad_signature() -> None:
     org = str(uuid4())
     key, _ = _rsa_keypair()
     _, wrong_pub = _rsa_keypair()
     tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=wrong_pub,
+    )
     with pytest.raises(SessionStubError, match="bad signature|no public keys"):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=wrong_pub,
-            ),
-        )
+        verify_token_opts(tok, opts)
+
+
+def test_verify_rs256_rejects_empty_pem() -> None:
+    org = str(uuid4())
+    key, _ = _rsa_keypair()
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem="",
+    )
     with pytest.raises(SessionStubError, match="no public keys|no verify material"):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem="",
-            ),
-        )
+        verify_token_opts(tok, opts)
 
 
-def test_verify_rejects_non_object_header_and_missing_material() -> None:
+def test_verify_rejects_non_object_header() -> None:
     hb = _b64url(b"[1,2,3]")
     pb = _b64url(b"{}")
+    token = f"{hb}.{pb}.sig"
+    opts = TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     with pytest.raises(SessionStubError, match="bad header"):
-        verify_token_opts(
-            f"{hb}.{pb}.sig",
-            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
-        )
-    # Valid JSON object header + payload, but no secret/keys → no verify material.
+        verify_token_opts(token, opts)
+
+
+def test_verify_rejects_missing_material() -> None:
     ok_h = _b64url(json.dumps({"alg": "HS256"}).encode())
     ok_p = _b64url(json.dumps({"iss": "i"}).encode())
+    token = f"{ok_h}.{ok_p}.{_b64url(b'x')}"
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="i",
+        audience="a",
+        expect_kind="access",
+        public_keys_pem=None,
+    )
     with pytest.raises(SessionStubError, match="no verify material"):
-        verify_token_opts(
-            f"{ok_h}.{ok_p}.{_b64url(b'x')}",
-            TokenVerifyOpts(
-                secret=None,
-                issuer="i",
-                audience="a",
-                expect_kind="access",
-                public_keys_pem=None,
-            ),
-        )
+        verify_token_opts(token, opts)
 
 def test_csrf_missing_cookie_or_header_false() -> None:
     csrf = mint_csrf_token(secret="c" * 32)
@@ -217,14 +219,16 @@ def test_verify_accepts_token_kind_alias() -> None:
     assert claims.session_kind == SESSION_KIND_ACCESS
 
 
-def test_verify_rejects_non_object_payload_and_csrf_mismatch() -> None:
+def test_verify_rejects_non_object_payload() -> None:
     hb = _b64url(json.dumps({"alg": "HS256"}).encode())
     pb = _b64url(b"[1,2,3]")
+    token = f"{hb}.{pb}.{_b64url(b'x')}"
+    opts = TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     with pytest.raises(SessionStubError, match="bad payload"):
-        verify_token_opts(
-            f"{hb}.{pb}.{_b64url(b'x')}",
-            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
-        )
+        verify_token_opts(token, opts)
+
+
+def test_csrf_mismatch_and_malformed_false() -> None:
     csrf = mint_csrf_token(secret="c" * 32)
     assert not verify_csrf_token(secret="c" * 32, cookie_value=csrf, header_value="other")
     assert not verify_csrf_token(secret="c" * 32, cookie_value="nosplit", header_value="nosplit")
@@ -239,14 +243,12 @@ def test_load_rsa_keys_rejects_private_pem() -> None:
     ).decode("ascii")
     org = str(uuid4())
     tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=priv_pem,
+    )
     with pytest.raises(SessionStubError, match="bad public key|no public keys|bad signature"):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=priv_pem,
-            ),
-        )
+        verify_token_opts(tok, opts)

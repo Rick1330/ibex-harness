@@ -162,22 +162,33 @@ func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) (OrgP
 	gen := c.gens[key]
 	c.mu.Unlock()
 
+	snap, err := c.loadAndValidate(ctx, orgID)
+	if err != nil {
+		return OrgPolicies{}, false, err
+	}
+	return c.installSnapshot(key, gen, snap)
+}
+
+func (c *Cache) loadAndValidate(ctx context.Context, orgID uuid.UUID) (OrgPolicies, error) {
 	snap, err := c.loader.LoadOrg(ctx, orgID)
 	if err != nil {
-		return OrgPolicies{}, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
+		return OrgPolicies{}, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 	if snap.Epoch < 1 {
-		return OrgPolicies{}, false, fmt.Errorf("%w: missing policy epoch", ErrPolicyUnavailable)
+		return OrgPolicies{}, fmt.Errorf("%w: missing policy epoch", ErrPolicyUnavailable)
 	}
 	if snap.Policies == nil {
 		snap.Policies = []Policy{}
 	}
 	policies, err := validateLoadedPolicies(snap.Policies)
 	if err != nil {
-		return OrgPolicies{}, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
+		return OrgPolicies{}, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
 	snap.Policies = policies
+	return snap, nil
+}
 
+func (c *Cache) installSnapshot(key string, gen uint64, snap OrgPolicies) (OrgPolicies, bool, error) {
 	c.mu.Lock()
 	if c.gens[key] != gen {
 		c.mu.Unlock()

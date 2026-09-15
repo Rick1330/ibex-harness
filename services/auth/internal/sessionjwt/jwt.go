@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,6 +52,8 @@ type Issuer struct {
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 	stepUpTTL  time.Duration
+	// consumedJTIs records refresh JTIs already rotated (first-use wins).
+	consumedJTIs sync.Map
 }
 
 // NewIssuer parses PKCS1/PKCS8 RSA private key PEM.
@@ -111,6 +114,7 @@ func (i *Issuer) IssueStepUp(sub, orgID string, permissions int64) (token string
 }
 
 // RefreshPair verifies a refresh JWT with the issuer's public key and rotates the pair.
+// The refresh JTI is consumed atomically; a replay returns ErrInvalidToken.
 func (i *Issuer) RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
 	v := &Verifier{
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
@@ -121,7 +125,10 @@ func (i *Issuer) RefreshPair(refreshToken string) (access, refresh string, acces
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
 	}
-	if claims.Subject == "" || claims.OrgID == "" {
+	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" {
+		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
+	}
+	if _, loaded := i.consumedJTIs.LoadOrStore(claims.JTI, struct{}{}); loaded {
 		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
 	}
 	return i.IssuePair(claims.Subject, claims.OrgID, claims.Permissions)
@@ -172,24 +179,30 @@ func (v *Verifier) Verify(token, expectKind string) (Claims, error) {
 	if len(parts) != 3 {
 		return Claims{}, ErrInvalidToken
 	}
-	sig, err := b64dec(parts[2])
-	if err != nil {
-		return Claims{}, ErrInvalidToken
+	if err := v.verifySignature(parts[0], parts[1], parts[2]); err != nil {
+		return Claims{}, err
 	}
-	body := parts[0] + "." + parts[1]
+	return v.parseAndValidateClaims(parts[1], expectKind)
+}
+
+func (v *Verifier) verifySignature(headerB64, payloadB64, sigB64 string) error {
+	sig, err := b64dec(sigB64)
+	if err != nil {
+		return ErrInvalidToken
+	}
+	body := headerB64 + "." + payloadB64
 	sum := sha256.Sum256([]byte(body))
-	ok := false
 	for _, key := range v.keys {
 		// JWT RS256 (RFC 7518) requires PKCS#1 v1.5 verification.
 		if rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig) == nil { // NOSONAR
-			ok = true
-			break
+			return nil
 		}
 	}
-	if !ok {
-		return Claims{}, ErrInvalidToken
-	}
-	raw, err := b64dec(parts[1])
+	return ErrInvalidToken
+}
+
+func (v *Verifier) parseAndValidateClaims(payloadB64, expectKind string) (Claims, error) {
+	raw, err := b64dec(payloadB64)
 	if err != nil {
 		return Claims{}, ErrInvalidToken
 	}
