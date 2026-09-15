@@ -58,21 +58,21 @@ func NewRedisTOTPAttempts(client redis.UniversalClient, maxFails int, lockTTL ti
 	return &RedisTOTPAttempts{client: client, maxFails: maxFails, lockTTL: lockTTL}, nil
 }
 
-func (r *RedisTOTPAttempts) failKey(orgID, userID string) string {
-	return totpFailKeyPrefix + totpAttemptKey(orgID, userID)
+func (r *RedisTOTPAttempts) failKey(ref TenantRef) string {
+	return totpFailKeyPrefix + totpAttemptKey(ref)
 }
 
-func (r *RedisTOTPAttempts) lockKey(orgID, userID string) string {
-	return totpLockKeyPrefix + totpAttemptKey(orgID, userID)
+func (r *RedisTOTPAttempts) lockKey(ref TenantRef) string {
+	return totpLockKeyPrefix + totpAttemptKey(ref)
 }
 
 // Allow reserves one attempt atomically before verification (fail-closed on Redis errors).
-func (r *RedisTOTPAttempts) Allow(orgID, userID string) error {
+func (r *RedisTOTPAttempts) Allow(ref TenantRef) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	n, err := totpReserveScript.Run(
 		ctx, r.client,
-		[]string{r.failKey(orgID, userID), r.lockKey(orgID, userID)},
+		[]string{r.failKey(ref), r.lockKey(ref)},
 		r.maxFails, int(r.lockTTL.Seconds()),
 	).Int64()
 	if err != nil {
@@ -85,9 +85,8 @@ func (r *RedisTOTPAttempts) Allow(orgID, userID string) error {
 }
 
 // Fail is intentional no-op: Allow already reserved the attempt for this verification.
-func (r *RedisTOTPAttempts) Fail(orgID, userID string) {
-	_ = orgID
-	_ = userID
+func (r *RedisTOTPAttempts) Fail(ref TenantRef) {
+	_ = ref
 	// Deliberate no-op — reservation counted in Allow; do not double-count.
 }
 
@@ -103,17 +102,17 @@ return n
 `)
 
 // Release undoes a prior Allow reservation after non-invalid-code failures.
-func (r *RedisTOTPAttempts) Release(orgID, userID string) {
+func (r *RedisTOTPAttempts) Release(ref TenantRef) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, _ = totpReleaseScript.Run(ctx, r.client, []string{r.failKey(orgID, userID)}).Int64()
+	_, _ = totpReleaseScript.Run(ctx, r.client, []string{r.failKey(ref)}).Int64()
 }
 
 // Reset clears reservations after successful verification.
-func (r *RedisTOTPAttempts) Reset(orgID, userID string) {
+func (r *RedisTOTPAttempts) Reset(ref TenantRef) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_ = r.client.Del(ctx, r.failKey(orgID, userID), r.lockKey(orgID, userID)).Err()
+	_ = r.client.Del(ctx, r.failKey(ref), r.lockKey(ref)).Err()
 }
 
 // Ensure RedisTOTPAttempts satisfies the attempt gate used by TotpService.

@@ -312,46 +312,50 @@ func TestUnit_TotpService_RepoGetErrorSurfaces(t *testing.T) {
 	}
 }
 
-func TestUnit_TotpService_ReleaseOnNotEnrolledAndRepoErrors(t *testing.T) {
-	t.Parallel()
+func mustRedisGate(t *testing.T, maxFails int) *service.RedisTOTPAttempts {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	gate, err := service.NewRedisTOTPAttempts(rdb, 3, time.Minute)
+	gate, err := service.NewRedisTOTPAttempts(rdb, maxFails, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return gate
+}
+
+func TestUnit_TotpService_ReleaseOnNotEnrolled(t *testing.T) {
+	t.Parallel()
+	gate := mustRedisGate(t, 3)
 	enc, mk := mustMasterEncoded(t)
-	store := &memTOTPStore{master: mk}
-	svc, err := service.NewTotpService(store, service.MasterKeyConfig{Encoded: enc, KeyID: "v1"}, true, mustIssuer(t))
+	svc, err := service.NewTotpService(&memTOTPStore{master: mk}, service.MasterKeyConfig{Encoded: enc, KeyID: "v1"}, true, mustIssuer(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	svc.WithAttemptGate(gate)
-
-	_, _, err = svc.CreateStepUp(context.Background(), stepUpP("org", "user", "123456", 1))
-	if !errors.Is(err, service.ErrTOTPNotEnrolled) {
-		t.Fatalf("not enrolled: %v", err)
-	}
-	// Three Allows after Release must still succeed (reservation undone).
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		_, _, err = svc.CreateStepUp(context.Background(), stepUpP("org", "user", "123456", 1))
 		if !errors.Is(err, service.ErrTOTPNotEnrolled) {
 			t.Fatalf("iter %d: %v", i, err)
 		}
 	}
+}
 
+func TestUnit_TotpService_ReleaseOnConfirmRepoError(t *testing.T) {
+	t.Parallel()
+	gate := mustRedisGate(t, 3)
+	enc, mk := mustMasterEncoded(t)
 	errStore := &errGetStore{memTOTPStore: memTOTPStore{master: mk}, getErr: errors.New("db down")}
-	svc2, err := service.NewTotpService(errStore, service.MasterKeyConfig{Encoded: enc}, true, mustIssuer(t))
+	svc, err := service.NewTotpService(errStore, service.MasterKeyConfig{Encoded: enc}, true, mustIssuer(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc2.WithAttemptGate(gate)
-	err = svc2.ConfirmEnrollment(context.Background(), confirmP("org2", "user2", "000000"))
+	svc.WithAttemptGate(gate)
+	err = svc.ConfirmEnrollment(context.Background(), confirmP("org2", "user2", "000000"))
 	if err == nil || err.Error() != "db down" {
 		t.Fatalf("confirm repo err: %v", err)
 	}
-	if err := gate.Allow("org2", "user2"); err != nil {
+	if err := gate.Allow(service.TenantRef{Org: "org2", User: "user2"}); err != nil {
 		t.Fatalf("reservation should have been released: %v", err)
 	}
 }

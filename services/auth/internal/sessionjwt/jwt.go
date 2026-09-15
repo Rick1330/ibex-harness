@@ -156,6 +156,20 @@ func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, 
 // RefreshPair verifies a refresh JWT with the issuer's public key and rotates the pair.
 // The refresh JTI is consumed atomically via JTIStore; reuse revokes the whole family.
 func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
+	claims, err := i.verifyRefreshToken(refreshToken)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	if err := i.consumeRefreshOrRevoke(ctx, claims); err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	return i.IssuePair(IssuePairParams{
+		Subject: claims.Subject, OrgID: claims.OrgID, Permissions: claims.Permissions,
+		FamilyID: claims.FamilyID,
+	})
+}
+
+func (i *Issuer) verifyRefreshToken(refreshToken string) (Claims, error) {
 	v := &Verifier{
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
 		issuer:   i.issuer,
@@ -163,38 +177,44 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, 
 	}
 	claims, err := v.Verify(refreshToken, KindRefresh)
 	if err != nil {
-		return "", "", time.Time{}, time.Time{}, err
+		return Claims{}, err
 	}
 	if err := validateRefreshClaims(claims); err != nil {
-		return "", "", time.Time{}, time.Time{}, err
+		return Claims{}, err
 	}
-	ttl := time.Until(time.Unix(claims.ExpiresAt, 0).UTC())
-	if ttl <= 0 {
-		ttl = time.Second
-	}
+	return claims, nil
+}
+
+func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) error {
+	ttl := refreshRemainingTTL(claims)
 	revoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
 	if err != nil {
-		return "", "", time.Time{}, time.Time{}, err
+		return err
 	}
 	if revoked {
-		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
+		return ErrInvalidToken
 	}
 	first, err := i.jtiStore.ConsumeOnce(ctx, claims.JTI, ttl)
 	if err != nil {
-		return "", "", time.Time{}, time.Time{}, err
+		return err
 	}
-	if !first {
-		familyTTL := i.refreshTTL
-		if ttl > familyTTL {
-			familyTTL = ttl
-		}
-		_ = i.jtiStore.RevokeFamily(ctx, claims.FamilyID, familyTTL)
-		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
+	if first {
+		return nil
 	}
-	return i.IssuePair(IssuePairParams{
-		Subject: claims.Subject, OrgID: claims.OrgID, Permissions: claims.Permissions,
-		FamilyID: claims.FamilyID,
-	})
+	familyTTL := i.refreshTTL
+	if ttl > familyTTL {
+		familyTTL = ttl
+	}
+	_ = i.jtiStore.RevokeFamily(ctx, claims.FamilyID, familyTTL)
+	return ErrInvalidToken
+}
+
+func refreshRemainingTTL(claims Claims) time.Duration {
+	ttl := time.Until(time.Unix(claims.ExpiresAt, 0).UTC())
+	if ttl <= 0 {
+		return time.Second
+	}
+	return ttl
 }
 
 func validateRefreshClaims(claims Claims) error {

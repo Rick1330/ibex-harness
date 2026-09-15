@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	ibexcrypto "github.com/Rick1330/ibex-harness/packages/crypto"
@@ -43,17 +42,27 @@ type totpStore interface {
 	ConfirmCiphertext(ctx context.Context, p repository.ConfirmCiphertextParams) error
 }
 
-type totpAttemptGate interface {
-	Allow(orgID, userID string) error
-	Reset(orgID, userID string)
-	Fail(orgID, userID string)
-	// Release undoes a prior Allow reservation without clearing lockout state.
-	Release(orgID, userID string)
-}
-
 // OrgID and UserID reduce primitive string coupling in TOTP APIs.
 type OrgID string
 type UserID string
+
+// TenantRef identifies an org/user pair for attempt-gate operations.
+type TenantRef struct {
+	Org  OrgID
+	User UserID
+}
+
+func (r TenantRef) keyParts() (string, string) {
+	return strings.TrimSpace(string(r.Org)), strings.TrimSpace(string(r.User))
+}
+
+type totpAttemptGate interface {
+	Allow(ref TenantRef) error
+	Reset(ref TenantRef)
+	Fail(ref TenantRef)
+	// Release undoes a prior Allow reservation without clearing lockout state.
+	Release(ref TenantRef)
+}
 
 // BeginEnrollmentParams scopes pending secret creation.
 type BeginEnrollmentParams struct {
@@ -172,26 +181,27 @@ func (s *TotpService) ensureEnrollmentAllowed(ctx context.Context, orgID, userID
 
 // ConfirmEnrollment verifies a code against the pending secret.
 func (s *TotpService) ConfirmEnrollment(ctx context.Context, p ConfirmEnrollmentParams) error {
-	orgID, userID := string(p.OrgID), string(p.UserID)
-	if err := s.attempts.Allow(orgID, userID); err != nil {
+	ref := TenantRef{Org: p.OrgID, User: p.UserID}
+	orgID, userID := ref.keyParts()
+	if err := s.attempts.Allow(ref); err != nil {
 		return err
 	}
 	secret, row, err := s.loadPendingSecret(ctx, orgID, userID)
 	if err != nil {
-		s.attempts.Release(orgID, userID)
+		s.attempts.Release(ref)
 		return err
 	}
 	if !totp.Validate(strings.TrimSpace(p.Code), secret) {
-		s.attempts.Fail(orgID, userID)
+		s.attempts.Fail(ref)
 		return ErrTOTPInvalidCode
 	}
 	if err := s.repo.ConfirmCiphertext(ctx, repository.ConfirmCiphertextParams{
 		OrgID: orgID, UserID: userID, Ciphertext: row.Ciphertext, At: time.Now().UTC(),
 	}); err != nil {
-		s.attempts.Release(orgID, userID)
+		s.attempts.Release(ref)
 		return err
 	}
-	s.attempts.Reset(orgID, userID)
+	s.attempts.Reset(ref)
 	return nil
 }
 
@@ -200,24 +210,25 @@ func (s *TotpService) CreateStepUp(ctx context.Context, p CreateStepUpParams) (s
 	if !s.issuerOK {
 		return "", time.Time{}, ErrSessionJWTMissing
 	}
-	orgID, userID := string(p.OrgID), string(p.UserID)
-	if err := s.attempts.Allow(orgID, userID); err != nil {
+	ref := TenantRef{Org: p.OrgID, User: p.UserID}
+	orgID, userID := ref.keyParts()
+	if err := s.attempts.Allow(ref); err != nil {
 		return "", time.Time{}, err
 	}
-	if err := s.verifyConfirmedCode(ctx, p); err != nil {
+	if err := s.verifyConfirmedCode(ctx, p, ref); err != nil {
 		if !errors.Is(err, ErrTOTPInvalidCode) {
-			s.attempts.Release(orgID, userID)
+			s.attempts.Release(ref)
 		}
 		return "", time.Time{}, err
 	}
-	s.attempts.Reset(orgID, userID)
+	s.attempts.Reset(ref)
 	return s.issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
 		Subject: userID, OrgID: orgID, Permissions: p.Permissions,
 	})
 }
 
-func (s *TotpService) verifyConfirmedCode(ctx context.Context, p CreateStepUpParams) error {
-	orgID, userID := string(p.OrgID), string(p.UserID)
+func (s *TotpService) verifyConfirmedCode(ctx context.Context, p CreateStepUpParams, ref TenantRef) error {
+	orgID, userID := ref.keyParts()
 	secret, err := s.loadSecret(ctx, orgID, userID)
 	if err != nil {
 		return err
@@ -230,7 +241,7 @@ func (s *TotpService) verifyConfirmedCode(ctx context.Context, p CreateStepUpPar
 		return ErrTOTPNotEnrolled
 	}
 	if !totp.Validate(strings.TrimSpace(p.Code), secret) {
-		s.attempts.Fail(orgID, userID)
+		s.attempts.Fail(ref)
 		return ErrTOTPInvalidCode
 	}
 	return nil
@@ -284,64 +295,4 @@ func mapTotpStoreErr(err error) error {
 		return ErrTOTPNotEnrolled
 	}
 	return err
-}
-
-type memoryTOTPAttempts struct {
-	mu       sync.Mutex
-	maxFails int
-	lockTTL  time.Duration
-	now      func() time.Time
-	entries  map[string]totpAttemptEntry
-}
-
-type totpAttemptEntry struct {
-	failures    int
-	lockedUntil time.Time
-}
-
-func newMemoryTOTPAttempts(maxFails int, lockTTL time.Duration) *memoryTOTPAttempts {
-	return &memoryTOTPAttempts{
-		maxFails: maxFails, lockTTL: lockTTL, now: time.Now, entries: make(map[string]totpAttemptEntry),
-	}
-}
-
-func totpAttemptKey(orgID, userID string) string {
-	return strings.TrimSpace(orgID) + ":" + strings.TrimSpace(userID)
-}
-
-func (m *memoryTOTPAttempts) Allow(orgID, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := totpAttemptKey(orgID, userID)
-	ent := m.entries[key]
-	if !ent.lockedUntil.IsZero() && m.now().Before(ent.lockedUntil) {
-		return ErrTOTPLockedOut
-	}
-	if !ent.lockedUntil.IsZero() && !m.now().Before(ent.lockedUntil) {
-		delete(m.entries, key)
-	}
-	return nil
-}
-
-func (m *memoryTOTPAttempts) Fail(orgID, userID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := totpAttemptKey(orgID, userID)
-	ent := m.entries[key]
-	ent.failures++
-	if ent.failures >= m.maxFails {
-		ent.lockedUntil = m.now().Add(m.lockTTL)
-		ent.failures = 0
-	}
-	m.entries[key] = ent
-}
-
-func (m *memoryTOTPAttempts) Release(orgID, userID string) {
-	// In-process gate does not pre-reserve on Allow; nothing to undo.
-}
-
-func (m *memoryTOTPAttempts) Reset(orgID, userID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.entries, totpAttemptKey(orgID, userID))
 }

@@ -54,40 +54,30 @@ def _request_with_settings(settings: Settings, *, headers: list[tuple[bytes, byt
     return Request(scope)
 
 
-def test_assert_operator_permission_feature_kill_switch() -> None:
-    settings = _settings(operator_feature_enabled=False)
+@pytest.mark.parametrize(
+    ("settings_kw", "want_code"),
+    [
+        ({"operator_feature_enabled": False}, SERVICE_DEGRADED),
+        ({"operator_allow_raw_read": False}, INSUFFICIENT_PERMISSIONS),
+        ({}, None),  # missing step-up handled below via step_up_ok
+    ],
+)
+def test_assert_operator_permission_denies(settings_kw: dict, want_code: str | None) -> None:
+    settings = _settings(**settings_kw)
+    step_up_ok = want_code is not None
+    if want_code is None:
+        # requires step-up when step_up_ok is False
+        with pytest.raises(ApiError) as exc:
+            assert_operator_permission(
+                settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ, step_up_ok=False
+            )
+        assert "Step-up" in exc.value.message
+        return
     with pytest.raises(ApiError) as exc:
         assert_operator_permission(
-            settings,
-            OPERATOR_RAW_READ,
-            OPERATOR_RAW_READ,
-            step_up_ok=True,
+            settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ, step_up_ok=step_up_ok
         )
-    assert exc.value.code == SERVICE_DEGRADED
-
-
-def test_assert_operator_permission_action_kill_switch() -> None:
-    settings = _settings(operator_allow_raw_read=False)
-    with pytest.raises(ApiError) as exc:
-        assert_operator_permission(
-            settings,
-            OPERATOR_RAW_READ,
-            OPERATOR_RAW_READ,
-            step_up_ok=True,
-        )
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-
-
-def test_assert_operator_permission_requires_step_up() -> None:
-    settings = _settings()
-    with pytest.raises(ApiError) as exc:
-        assert_operator_permission(
-            settings,
-            OPERATOR_RAW_READ,
-            OPERATOR_RAW_READ,
-            step_up_ok=False,
-        )
-    assert "Step-up" in exc.value.message
+    assert exc.value.code == want_code
 
 
 def test_assert_operator_permission_ok_with_step_up() -> None:

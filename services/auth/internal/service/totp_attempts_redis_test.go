@@ -10,6 +10,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func tenant(org, user string) service.TenantRef {
+	return service.TenantRef{Org: service.OrgID(org), User: service.UserID(user)}
+}
+
 func TestUnit_RedisTOTPAttempts_LockoutAndReset(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
@@ -23,16 +27,16 @@ func TestUnit_RedisTOTPAttempts_LockoutAndReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := gate.Allow("org", "user"); err != nil {
+		if err := gate.Allow(tenant("org", "user")); err != nil {
 			t.Fatalf("allow %d: %v", i, err)
 		}
-		gate.Fail("org", "user") // no-op; reservation already counted
+		gate.Fail(tenant("org", "user")) // no-op; reservation already counted
 	}
-	if err := gate.Allow("org", "user"); !errors.Is(err, service.ErrTOTPLockedOut) {
+	if err := gate.Allow(tenant("org", "user")); !errors.Is(err, service.ErrTOTPLockedOut) {
 		t.Fatalf("want lockout, got %v", err)
 	}
-	gate.Reset("org", "user")
-	if err := gate.Allow("org", "user"); err != nil {
+	gate.Reset(tenant("org", "user"))
+	if err := gate.Allow(tenant("org", "user")); err != nil {
 		t.Fatalf("after reset: %v", err)
 	}
 }
@@ -46,17 +50,17 @@ func TestUnit_RedisTOTPAttempts_ReleaseUndoesReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gate.Allow("org", "user"); err != nil {
+	if err := gate.Allow(tenant("org", "user")); err != nil {
 		t.Fatal(err)
 	}
-	gate.Release("org", "user") // undo infra failure reservation
-	if err := gate.Allow("org", "user"); err != nil {
+	gate.Release(tenant("org", "user")) // undo infra failure reservation
+	if err := gate.Allow(tenant("org", "user")); err != nil {
 		t.Fatalf("after release: %v", err)
 	}
-	if err := gate.Allow("org", "user"); err != nil {
+	if err := gate.Allow(tenant("org", "user")); err != nil {
 		t.Fatal(err)
 	}
-	if err := gate.Allow("org", "user"); !errors.Is(err, service.ErrTOTPLockedOut) {
+	if err := gate.Allow(tenant("org", "user")); !errors.Is(err, service.ErrTOTPLockedOut) {
 		t.Fatalf("want lockout after 2 kept reservations, got %v", err)
 	}
 }

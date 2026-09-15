@@ -75,6 +75,14 @@ func TestAuthProtoValidateTokenRequest(t *testing.T) {
 	}
 }
 
+type validateFieldSpec struct {
+	num      protoreflect.FieldNumber
+	name     string
+	kind     protoreflect.Kind
+	optional bool
+	message  string
+}
+
 func TestAuthProtoValidateTokenResponseFields(t *testing.T) {
 	fd := compileProto(t, "ibex/auth/v1/auth.proto")
 	resp := findMessage(fd, "ValidateTokenResponse")
@@ -89,14 +97,7 @@ func TestAuthProtoValidateTokenResponseFields(t *testing.T) {
 
 func assertValidateTokenResponseFields(t *testing.T, resp protoreflect.MessageDescriptor) {
 	t.Helper()
-	type fieldSpec struct {
-		num      protoreflect.FieldNumber
-		name     string
-		kind     protoreflect.Kind
-		optional bool
-		message  string
-	}
-	specs := []fieldSpec{
+	specs := []validateFieldSpec{
 		{1, "org_id", protoreflect.StringKind, false, ""},
 		{2, "permissions", protoreflect.Int64Kind, false, ""},
 		{3, "agent_id", protoreflect.StringKind, true, ""},
@@ -105,35 +106,27 @@ func assertValidateTokenResponseFields(t *testing.T, resp protoreflect.MessageDe
 		{6, "expires_at", protoreflect.MessageKind, true, "google.protobuf.Timestamp"},
 	}
 	for _, spec := range specs {
-		assertOneValidateField(t, resp, spec.num, spec.name, spec.kind, spec.optional, spec.message)
+		assertOneValidateField(t, resp, spec)
 	}
 }
 
-func assertOneValidateField(
-	t *testing.T,
-	resp protoreflect.MessageDescriptor,
-	num protoreflect.FieldNumber,
-	name string,
-	kind protoreflect.Kind,
-	optional bool,
-	message string,
-) {
+func assertOneValidateField(t *testing.T, resp protoreflect.MessageDescriptor, spec validateFieldSpec) {
 	t.Helper()
-	f := fieldByNumber(resp, num)
+	f := fieldByNumber(resp, spec.num)
 	if f == nil {
-		t.Fatalf("response field %d (%s) missing", num, name)
+		t.Fatalf("response field %d (%s) missing", spec.num, spec.name)
 	}
-	if string(f.Name()) != name {
-		t.Errorf("field %d name: got %q want %q", num, f.Name(), name)
+	if string(f.Name()) != spec.name {
+		t.Errorf("field %d name: got %q want %q", spec.num, f.Name(), spec.name)
 	}
-	if f.Kind() != kind {
-		t.Errorf("field %s kind: got %v want %v", name, f.Kind(), kind)
+	if f.Kind() != spec.kind {
+		t.Errorf("field %s kind: got %v want %v", spec.name, f.Kind(), spec.kind)
 	}
-	if optional && !f.HasOptionalKeyword() {
-		t.Errorf("field %s should be optional", name)
+	if spec.optional && !f.HasOptionalKeyword() {
+		t.Errorf("field %s should be optional", spec.name)
 	}
-	if message != "" && string(f.Message().FullName()) != message {
-		t.Errorf("field %s message type: got %q want %q", name, f.Message().FullName(), message)
+	if spec.message != "" && string(f.Message().FullName()) != spec.message {
+		t.Errorf("field %s message type: got %q want %q", spec.name, f.Message().FullName(), spec.message)
 	}
 }
 

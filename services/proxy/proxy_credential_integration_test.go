@@ -145,10 +145,15 @@ func assertBYOCredentialChat(t *testing.T, fx credProxyFixture, body string) {
 	if fx.capture.last.TLSServerName != "example.com" {
 		t.Fatalf("TLSServerName=%q", fx.capture.last.TLSServerName)
 	}
-	if strings.Contains(fx.capture.last.BaseURLOverride, "example.com") {
-		t.Fatalf("BaseURLOverride=%q still contains hostname", fx.capture.last.BaseURLOverride)
+	assertIPPinnedBaseURL(t, fx.capture.last.BaseURLOverride)
+}
+
+func assertIPPinnedBaseURL(t *testing.T, raw string) {
+	t.Helper()
+	if strings.Contains(raw, "example.com") {
+		t.Fatalf("BaseURLOverride=%q still contains hostname", raw)
 	}
-	parsed, err := url.Parse(fx.capture.last.BaseURLOverride)
+	parsed, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("BaseURLOverride parse: %v", err)
 	}

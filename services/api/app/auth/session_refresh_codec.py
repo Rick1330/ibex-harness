@@ -64,6 +64,19 @@ def _skip_unknown(buf: bytes, idx: int, wire: int) -> int:
     return _skip_fixed(buf, idx, size)
 
 
+def _utf8_string(val: bytes) -> str:
+    try:
+        return val.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AuthCodecError("invalid utf-8 string field") from exc
+
+
+def _take_matching_string(fn: int, field_num: int, val: bytes) -> str | None:
+    if fn != field_num:
+        return None
+    return _utf8_string(val)
+
+
 def decode_string_field(buf: bytes, field_num: int) -> str | None:
     """Bounded protobuf string scan; raises AuthCodecError on malformed input."""
     if len(buf) > _MAX_MESSAGE:
@@ -72,13 +85,11 @@ def decode_string_field(buf: bytes, field_num: int) -> str | None:
     while idx < len(buf):
         key, idx = _decode_varint(buf, idx)
         fn, wt = key >> 3, key & 7
-        if wt == _WIRE_LEN:
-            val, idx = _read_bytes(buf, idx, max_len=_MAX_TOKEN_FIELD)
-            if fn == field_num:
-                try:
-                    return val.decode("utf-8")
-                except UnicodeDecodeError as exc:
-                    raise AuthCodecError("invalid utf-8 string field") from exc
+        if wt != _WIRE_LEN:
+            idx = _skip_unknown(buf, idx, wt)
             continue
-        idx = _skip_unknown(buf, idx, wt)
+        val, idx = _read_bytes(buf, idx, max_len=_MAX_TOKEN_FIELD)
+        matched = _take_matching_string(fn, field_num, val)
+        if matched is not None:
+            return matched
     return None

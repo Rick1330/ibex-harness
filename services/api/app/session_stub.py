@@ -106,19 +106,27 @@ class _JWTParts:
     sig_b64: str
 
 
-def _split_jwt(token: str) -> _JWTParts:
+def _reject_oversized_token(token: str) -> None:
     if len(token) > MAX_SESSION_TOKEN_LEN:
         raise SessionStubError("token too large")
-    try:
-        header_b64, payload_b64, sig_b64 = token.split(".")
-    except ValueError as exc:
-        raise SessionStubError("malformed token") from exc
+
+
+def _reject_oversized_parts(header_b64: str, payload_b64: str, sig_b64: str) -> None:
     if (
         len(header_b64) > MAX_JWT_PART_LEN
         or len(payload_b64) > MAX_JWT_PART_LEN
         or len(sig_b64) > MAX_JWT_PART_LEN
     ):
         raise SessionStubError("token too large")
+
+
+def _split_jwt(token: str) -> _JWTParts:
+    _reject_oversized_token(token)
+    try:
+        header_b64, payload_b64, sig_b64 = token.split(".")
+    except ValueError as exc:
+        raise SessionStubError("malformed token") from exc
+    _reject_oversized_parts(header_b64, payload_b64, sig_b64)
     return _JWTParts(header_b64=header_b64, payload_b64=payload_b64, sig_b64=sig_b64)
 
 
