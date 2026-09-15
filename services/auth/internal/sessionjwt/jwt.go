@@ -122,7 +122,8 @@ func (i *Issuer) sign(claims Claims) (string, error) {
 	}
 	body := b64(hb) + "." + b64(pb)
 	sum := sha256.Sum256([]byte(body))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, i.key, crypto.SHA256, sum[:])
+	// JWT RS256 (RFC 7518) requires PKCS#1 v1.5 signatures, not OAEP/PSS.
+	sig, err := rsa.SignPKCS1v15(rand.Reader, i.key, crypto.SHA256, sum[:]) // NOSONAR
 	if err != nil {
 		return "", err
 	}
@@ -162,7 +163,8 @@ func (v *Verifier) Verify(token, expectKind string) (Claims, error) {
 	sum := sha256.Sum256([]byte(body))
 	ok := false
 	for _, key := range v.keys {
-		if rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig) == nil {
+		// JWT RS256 (RFC 7518) requires PKCS#1 v1.5 verification.
+		if rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig) == nil { // NOSONAR
 			ok = true
 			break
 		}
@@ -218,23 +220,35 @@ func parseRSAPublicKeys(pemData string) ([]*rsa.PublicKey, error) {
 		if block == nil {
 			break
 		}
-		pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+		key, err := parseRSAPublicKeyBlock(block)
 		if err != nil {
-			if cert, cerr := x509.ParseCertificate(block.Bytes); cerr == nil {
-				if rsaPub, ok := cert.PublicKey.(*rsa.PublicKey); ok {
-					keys = append(keys, rsaPub)
-				}
-				continue
-			}
-			return nil, fmt.Errorf("sessionjwt: parse public key: %w", err)
+			return nil, err
 		}
+		if key != nil {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
+}
+
+func parseRSAPublicKeyBlock(block *pem.Block) (*rsa.PublicKey, error) {
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err == nil {
 		rsaPub, ok := pub.(*rsa.PublicKey)
 		if !ok {
 			return nil, fmt.Errorf("sessionjwt: not an RSA public key")
 		}
-		keys = append(keys, rsaPub)
+		return rsaPub, nil
 	}
-	return keys, nil
+	cert, cerr := x509.ParseCertificate(block.Bytes)
+	if cerr != nil {
+		return nil, fmt.Errorf("sessionjwt: parse public key: %w", err)
+	}
+	rsaPub, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, nil
+	}
+	return rsaPub, nil
 }
 
 func b64(b []byte) string {

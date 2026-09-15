@@ -210,9 +210,17 @@ INSERT INTO ibex_core.tokens (
   '${TOKEN_B_HASH}',
   '${TOKEN_B_PREFIX}',
   'E2E Org B Seed Token',
-  270633733891,
+  35455005822723,
   false
 ) ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
+VALUES ('${ORG_B}'::uuid, '*', true, 1000)
+ON CONFLICT (org_id, model_pattern) DO NOTHING;
+
+INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
+VALUES ('${ORG_B}'::uuid, 1)
+ON CONFLICT (org_id) DO NOTHING;
 SQL
   pass "seeded Org B user/agent/token"
 }

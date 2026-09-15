@@ -69,39 +69,57 @@ func isDocumentation(ip net.IP) bool {
 // ValidateHTTPURL parses raw, requires http/https, resolves the host, and rejects
 // if any resolved address is blocked. empty raw is allowed (no custom base URL).
 func ValidateHTTPURL(ctx context.Context, raw string) error {
+	_, err := validateHTTPURLParts(ctx, raw)
+	return err
+}
+
+type urlParts struct {
+	u          *url.URL
+	serverName string
+	connectIP  string
+}
+
+func validateHTTPURLParts(ctx context.Context, raw string) (urlParts, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil
+		return urlParts{}, nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		return ErrInvalidURL
+		return urlParts{}, ErrInvalidURL
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "http" && scheme != "https" {
-		return ErrInvalidURL
+		return urlParts{}, ErrInvalidURL
 	}
-	host := u.Hostname()
-	if host == "" {
-		return ErrInvalidURL
+	serverName := u.Hostname()
+	if serverName == "" {
+		return urlParts{}, ErrInvalidURL
 	}
+	connectIP, err := resolvePublicConnectIP(ctx, serverName)
+	if err != nil {
+		return urlParts{}, err
+	}
+	return urlParts{u: u, serverName: serverName, connectIP: connectIP}, nil
+}
+
+func resolvePublicConnectIP(ctx context.Context, host string) (string, error) {
 	if lit := net.ParseIP(host); lit != nil {
 		if IsBlockedIP(lit) {
-			return ErrBlockedDestination
+			return "", ErrBlockedDestination
 		}
-		return nil
+		return lit.String(), nil
 	}
-	resolver := net.DefaultResolver
-	addrs, err := resolver.LookupIPAddr(ctx, host)
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
 	if err != nil || len(addrs) == 0 {
-		return ErrBlockedDestination
+		return "", ErrBlockedDestination
 	}
 	for _, a := range addrs {
 		if IsBlockedIP(a.IP) {
-			return ErrBlockedDestination
+			return "", ErrBlockedDestination
 		}
 	}
-	return nil
+	return addrs[0].IP.String(), nil
 }
 
 // PinResult is a validated dial target: connect via ConnectHost, TLS/SNI via ServerName.
@@ -113,53 +131,22 @@ type PinResult struct {
 
 // ValidateAndPinHTTPURL validates then rewrites the URL host to the first safe IP.
 func ValidateAndPinHTTPURL(ctx context.Context, raw string) (PinResult, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return PinResult{}, nil
+	parts, err := validateHTTPURLParts(ctx, raw)
+	if err != nil || parts.u == nil {
+		return PinResult{}, err
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return PinResult{}, ErrInvalidURL
+	hostPort := parts.connectIP
+	if strings.Contains(parts.connectIP, ":") {
+		hostPort = "[" + parts.connectIP + "]"
 	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return PinResult{}, ErrInvalidURL
+	if port := parts.u.Port(); port != "" {
+		hostPort = net.JoinHostPort(parts.connectIP, port)
 	}
-	serverName := u.Hostname()
-	if serverName == "" {
-		return PinResult{}, ErrInvalidURL
-	}
-	port := u.Port()
-	var connectIP string
-	if lit := net.ParseIP(serverName); lit != nil {
-		if IsBlockedIP(lit) {
-			return PinResult{}, ErrBlockedDestination
-		}
-		connectIP = lit.String()
-	} else {
-		addrs, err := net.DefaultResolver.LookupIPAddr(ctx, serverName)
-		if err != nil || len(addrs) == 0 {
-			return PinResult{}, ErrBlockedDestination
-		}
-		for _, a := range addrs {
-			if IsBlockedIP(a.IP) {
-				return PinResult{}, ErrBlockedDestination
-			}
-		}
-		connectIP = addrs[0].IP.String()
-	}
-	hostPort := connectIP
-	if strings.Contains(connectIP, ":") {
-		hostPort = "[" + connectIP + "]"
-	}
-	if port != "" {
-		hostPort = net.JoinHostPort(connectIP, port)
-	}
-	u.Host = hostPort
+	parts.u.Host = hostPort
 	return PinResult{
-		PinnedURL:  u.String(),
-		ServerName: serverName,
-		ConnectIP:  connectIP,
+		PinnedURL:  parts.u.String(),
+		ServerName: parts.serverName,
+		ConnectIP:  parts.connectIP,
 	}, nil
 }
 

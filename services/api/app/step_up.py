@@ -9,7 +9,12 @@ from fastapi import Depends, Request
 
 from app.config import Settings
 from app.errors import ApiError
-from app.session_stub import SESSION_KIND_STEP_UP, SessionStubError, TokenVerifyOpts, verify_token_opts
+from app.session_stub import (
+    SESSION_KIND_STEP_UP,
+    SessionStubError,
+    TokenVerifyOpts,
+    verify_token_opts,
+)
 
 STEP_UP_HEADER = "X-IBEX-Step-Up"
 

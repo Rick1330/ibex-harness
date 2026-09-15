@@ -102,14 +102,18 @@ func (c *Cache) SnapshotForOrg(ctx context.Context, orgID uuid.UUID) (OrgPolicie
 func (c *Cache) CachedEpoch(orgID uuid.UUID) (uint64, bool) {
 	key := orgID.String()
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	entry, ok := c.lru.Get(key)
-	if !ok || entry == nil || entry.gen != c.gens[key] || !c.now().Before(entry.expiresAt) {
-		c.mu.Unlock()
+	if !ok || entry == nil {
 		return 0, false
 	}
-	epoch := entry.epoch
-	c.mu.Unlock()
-	return epoch, true
+	if entry.gen != c.gens[key] {
+		return 0, false
+	}
+	if !c.now().Before(entry.expiresAt) {
+		return 0, false
+	}
+	return entry.epoch, true
 }
 
 func (c *Cache) lookupFresh(key string) (OrgPolicies, bool) {

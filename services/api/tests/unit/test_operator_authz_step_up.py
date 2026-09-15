@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS, SERVICE_DEGRADED
+from authclient.permissions import OPERATOR_RAW_READ, SECRET_USE
 from starlette.applications import Starlette
 from starlette.requests import Request
 
@@ -19,7 +19,6 @@ from app.session_stub import (
     issue_token_opts,
 )
 from app.step_up import require_step_up_header
-from authclient.permissions import OPERATOR_RAW_READ, SECRET_USE
 
 
 def _settings(**overrides: object) -> Settings:

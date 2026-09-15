@@ -53,22 +53,26 @@ func (p *EpochPoller) Run(ctx context.Context) {
 
 func (p *EpochPoller) pollOnce(ctx context.Context) {
 	for _, orgID := range p.cache.cachedOrgIDs() {
-		cachedEpoch, ok := p.cache.CachedEpoch(orgID)
-		if !ok {
-			continue
+		p.reconcileOrgEpoch(ctx, orgID)
+	}
+}
+
+func (p *EpochPoller) reconcileOrgEpoch(ctx context.Context, orgID uuid.UUID) {
+	cachedEpoch, ok := p.cache.CachedEpoch(orgID)
+	if !ok {
+		return
+	}
+	snap, err := p.loader.LoadOrg(ctx, orgID)
+	if err != nil {
+		if p.log != nil {
+			p.log.WarnCtx(ctx, "model policy epoch poll failed", "org_id", orgID.String(), "err", err.Error())
 		}
-		snap, err := p.loader.LoadOrg(ctx, orgID)
-		if err != nil {
-			if p.log != nil {
-				p.log.WarnCtx(ctx, "model policy epoch poll failed", "org_id", orgID.String(), "err", err.Error())
-			}
-			// Fail closed for this org: drop cache so next request reloads or errors.
-			p.cache.Invalidate(orgID)
-			continue
-		}
-		if snap.Epoch != cachedEpoch {
-			p.cache.Invalidate(orgID)
-		}
+		// Fail closed for this org: drop cache so next request reloads or errors.
+		p.cache.Invalidate(orgID)
+		return
+	}
+	if snap.Epoch != cachedEpoch {
+		p.cache.Invalidate(orgID)
 	}
 }
 
