@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from app.auth.client import StaticTokenValidator
 from app.auth.errors import AuthFailedError, AuthUnavailableError
@@ -126,11 +131,6 @@ def test_mixed_hmac_still_routes_rs256_cookie_to_auth() -> None:
 
 
 def test_me_cookie_rs256_is_not_provisional() -> None:
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding, rsa
-    from uuid import uuid4
-    import time
-
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pub_pem = (
         key.public_key()

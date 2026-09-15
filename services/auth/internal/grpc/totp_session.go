@@ -103,20 +103,32 @@ func (s *Server) IssueOperatorSession(
 		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
 	}
 	if rt := strings.TrimSpace(req.GetRefreshToken()); rt != "" {
-		access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(ctx, rt)
-		if err != nil {
-			if errors.Is(err, sessionjwt.ErrInvalidToken) || errors.Is(err, sessionjwt.ErrExpired) {
-				return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
-			}
-			return nil, status.Error(codes.Unavailable, "refresh unavailable")
-		}
-		return &authv1.IssueOperatorSessionResponse{
-			AccessToken:      access,
-			RefreshToken:     refresh,
-			AccessExpiresAt:  timestamppb.New(accessExp),
-			RefreshExpiresAt: timestamppb.New(refreshExp),
-		}, nil
+		return s.issueFromRefresh(ctx, rt)
 	}
+	return s.issueFromCaller(ctx)
+}
+
+func (s *Server) issueFromRefresh(ctx context.Context, refreshToken string) (*authv1.IssueOperatorSessionResponse, error) {
+	access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(ctx, refreshToken)
+	if err != nil {
+		return nil, mapRefreshPairErr(err)
+	}
+	return &authv1.IssueOperatorSessionResponse{
+		AccessToken:      access,
+		RefreshToken:     refresh,
+		AccessExpiresAt:  timestamppb.New(accessExp),
+		RefreshExpiresAt: timestamppb.New(refreshExp),
+	}, nil
+}
+
+func mapRefreshPairErr(err error) error {
+	if errors.Is(err, sessionjwt.ErrInvalidToken) || errors.Is(err, sessionjwt.ErrExpired) {
+		return status.Error(codes.Unauthenticated, "invalid refresh token")
+	}
+	return status.Error(codes.Unavailable, "refresh unavailable")
+}
+
+func (s *Server) issueFromCaller(ctx context.Context) (*authv1.IssueOperatorSessionResponse, error) {
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
 		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)

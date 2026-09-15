@@ -173,27 +173,9 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
-	sessionIssuer, err := newSessionIssuer(cfg)
+	sessionIssuer, totpSvc, err := newSessionAndTotp(cfg, db, core.redisClient)
 	if err != nil {
 		return authServiceDeps{}, err
-	}
-	if sessionIssuer != nil && core.redisClient != nil {
-		jtiStore, err := sessionjwt.NewRedisJTIStore(core.redisClient)
-		if err != nil {
-			return authServiceDeps{}, err
-		}
-		sessionIssuer.WithJTIStore(jtiStore)
-	}
-	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
-	if err != nil {
-		return authServiceDeps{}, err
-	}
-	if totpSvc != nil && core.redisClient != nil {
-		gate, err := service.NewRedisTOTPAttempts(core.redisClient, 0, 0)
-		if err != nil {
-			return authServiceDeps{}, err
-		}
-		totpSvc.WithAttemptGate(gate)
 	}
 	return authServiceDeps{
 		validator: core.validator, tokenSvc: core.tokenSvc, credSvc: credSvc,
@@ -201,6 +183,36 @@ func initAuthServices(
 		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
 		validateLimiter: core.validateLimiter, log: log,
 	}, nil
+}
+
+func newSessionAndTotp(
+	cfg config.Config,
+	db *sql.DB,
+	redisClient redis.UniversalClient,
+) (*sessionjwt.Issuer, *service.TotpService, error) {
+	sessionIssuer, err := newSessionIssuer(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sessionIssuer != nil && redisClient != nil {
+		jtiStore, err := sessionjwt.NewRedisJTIStore(redisClient)
+		if err != nil {
+			return nil, nil, err
+		}
+		sessionIssuer.WithJTIStore(jtiStore)
+	}
+	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
+	if err != nil {
+		return nil, nil, err
+	}
+	if totpSvc != nil && redisClient != nil {
+		gate, err := service.NewRedisTOTPAttempts(redisClient, 0, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		totpSvc.WithAttemptGate(gate)
+	}
+	return sessionIssuer, totpSvc, nil
 }
 
 func newSessionIssuer(cfg config.Config) (*sessionjwt.Issuer, error) {
