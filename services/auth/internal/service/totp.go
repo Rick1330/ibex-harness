@@ -52,7 +52,8 @@ type TenantRef struct {
 	User UserID
 }
 
-func (r TenantRef) keyParts() (string, string) {
+// KeyParts returns trimmed org/user strings for persistence keys.
+func (r TenantRef) KeyParts() (string, string) {
 	return strings.TrimSpace(string(r.Org)), strings.TrimSpace(string(r.User))
 }
 
@@ -182,7 +183,7 @@ func (s *TotpService) ensureEnrollmentAllowed(ctx context.Context, orgID, userID
 // ConfirmEnrollment verifies a code against the pending secret.
 func (s *TotpService) ConfirmEnrollment(ctx context.Context, p ConfirmEnrollmentParams) error {
 	ref := TenantRef{Org: p.OrgID, User: p.UserID}
-	orgID, userID := ref.keyParts()
+	orgID, userID := ref.KeyParts()
 	if err := s.attempts.Allow(ref); err != nil {
 		return err
 	}
@@ -211,7 +212,7 @@ func (s *TotpService) CreateStepUp(ctx context.Context, p CreateStepUpParams) (s
 		return "", time.Time{}, ErrSessionJWTMissing
 	}
 	ref := TenantRef{Org: p.OrgID, User: p.UserID}
-	orgID, userID := ref.keyParts()
+	orgID, userID := ref.KeyParts()
 	if err := s.attempts.Allow(ref); err != nil {
 		return "", time.Time{}, err
 	}
@@ -223,12 +224,12 @@ func (s *TotpService) CreateStepUp(ctx context.Context, p CreateStepUpParams) (s
 	}
 	s.attempts.Reset(ref)
 	return s.issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
-		Subject: userID, OrgID: orgID, Permissions: p.Permissions,
+		Subject: sessionjwt.Subject(userID), OrgID: sessionjwt.OrgID(orgID), Permissions: p.Permissions,
 	})
 }
 
 func (s *TotpService) verifyConfirmedCode(ctx context.Context, p CreateStepUpParams, ref TenantRef) error {
-	orgID, userID := ref.keyParts()
+	orgID, userID := ref.KeyParts()
 	secret, err := s.loadSecret(ctx, orgID, userID)
 	if err != nil {
 		return err

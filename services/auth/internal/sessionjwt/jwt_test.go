@@ -16,11 +16,24 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/sessionjwt"
 )
 
+func mustVerifier(t *testing.T, pubPEM, issuer, audience string) *sessionjwt.Verifier {
+	t.Helper()
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{
+		PublicKeysPEM: sessionjwt.PublicKeysPEM(pubPEM),
+		Issuer:        sessionjwt.TokenIssuer(issuer),
+		Audience:      sessionjwt.TokenAudience(audience),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ver
+}
+
 func testIssuerConfig(privPEM string, access, refresh, stepUp time.Duration) sessionjwt.IssuerConfig {
 	return sessionjwt.IssuerConfig{
-		PrivateKeyPEM: privPEM,
-		Issuer:        "ibex-auth",
-		Audience:      "ibex-dashboard",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(privPEM),
+		Issuer:        sessionjwt.TokenIssuer("ibex-auth"),
+		Audience:      sessionjwt.TokenAudience("ibex-dashboard"),
 		AccessTTL:     access,
 		RefreshTTL:    refresh,
 		StepUpTTL:     stepUp,
@@ -63,7 +76,7 @@ func mustIssuerVerifier(t *testing.T) (*sessionjwt.Issuer, *sessionjwt.Verifier)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ver, err := sessionjwt.NewVerifier(mustPublicPEM(t, priv), "ibex-auth", "ibex-dashboard")
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(mustPublicPEM(t, priv)), Issuer: sessionjwt.TokenIssuer("ibex-auth"), Audience: sessionjwt.TokenAudience("ibex-dashboard")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,9 +113,9 @@ func TestRefreshPair_ConsumesJTIOnce(t *testing.T) {
 	iss := mustIssuer(t, time.Minute, time.Hour, time.Minute)
 	_, refresh, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "user-1", OrgID: "org-1", Permissions: 7})
 	requireNoErr(t, err)
-	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(refresh))
 	requireNoErr(t, err)
-	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(refresh))
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("replay want ErrInvalidToken, got %v", err)
 	}
@@ -121,7 +134,7 @@ func TestIssueStepUpAndVerify(t *testing.T) {
 	}
 	claims, err := ver.Verify(tok, sessionjwt.KindStepUp)
 	requireNoErr(t, err)
-	if claims.SessionKind != sessionjwt.KindStepUp {
+	if claims.SessionKind != string(sessionjwt.KindStepUp) {
 		t.Fatalf("kind=%q", claims.SessionKind)
 	}
 	_, err = ver.Verify(tok, sessionjwt.KindAccess)
@@ -133,13 +146,13 @@ func TestIssueStepUpAndVerify(t *testing.T) {
 func TestVerifierAndIssuerConstructorsRejectBadInput(t *testing.T) {
 	t.Parallel()
 	_, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: "not-pem", Issuer: "i", Audience: "a",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM("not-pem"), Issuer: sessionjwt.TokenIssuer("i"), Audience: sessionjwt.TokenAudience("a"),
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	if err == nil {
 		t.Fatal("expected bad pem")
 	}
-	_, err = sessionjwt.NewVerifier("", "i", "a")
+	_, err = sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(""), Issuer: sessionjwt.TokenIssuer("i"), Audience: sessionjwt.TokenAudience("a")})
 	if err == nil {
 		t.Fatal("expected no keys")
 	}
@@ -158,7 +171,7 @@ func TestNewIssuer_DefaultTTLs(t *testing.T) {
 	requireNoErr(t, err)
 	privPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}))
 	iss, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: privPEM, Issuer: "iss", Audience: "aud",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(privPEM), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud"),
 	})
 	requireNoErr(t, err)
 	access, refresh, aExp, rExp, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
@@ -172,7 +185,7 @@ func TestNewIssuer_DefaultTTLs(t *testing.T) {
 	if aExp.IsZero() || rExp.IsZero() {
 		t.Fatal("zero expiry")
 	}
-	ver, err := sessionjwt.NewVerifier(mustPublicPEM(t, priv), "iss", "aud")
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(mustPublicPEM(t, priv)), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud")})
 	requireNoErr(t, err)
 	_, err = ver.Verify(access, sessionjwt.KindAccess)
 	requireNoErr(t, err)
@@ -182,14 +195,14 @@ func TestNewIssuer_RejectsKindAndSignatureMismatch(t *testing.T) {
 	t.Parallel()
 	priv, privPEM := mustRSAPrivatePEM(t)
 	iss, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: privPEM, Issuer: "iss", Audience: "aud",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(privPEM), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud"),
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	requireNoErr(t, err)
 	access, refresh, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
 	requireNoErr(t, err)
 	pubPEM := mustPublicPEM(t, priv)
-	ver, err := sessionjwt.NewVerifier(pubPEM, "iss", "aud")
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(pubPEM), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud")})
 	requireNoErr(t, err)
 
 	_, err = ver.Verify(refresh, sessionjwt.KindAccess)
@@ -206,7 +219,7 @@ func TestNewIssuer_RejectsKindAndSignatureMismatch(t *testing.T) {
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("bad sig: %v", err)
 	}
-	wrongAud, err := sessionjwt.NewVerifier(pubPEM, "iss", "other")
+	wrongAud, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(pubPEM), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("other")})
 	requireNoErr(t, err)
 	_, err = wrongAud.Verify(access, sessionjwt.KindAccess)
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
@@ -232,11 +245,11 @@ func TestRefreshPair_RejectsAccessTokenAndBadClaims(t *testing.T) {
 	iss := mustIssuer(t, time.Minute, time.Hour, time.Minute)
 	access, _, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "user-1", OrgID: "org-1", Permissions: 7})
 	requireNoErr(t, err)
-	_, _, _, _, err = iss.RefreshPair(context.Background(), access)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(access))
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("access as refresh: %v", err)
 	}
-	_, _, _, _, err = iss.RefreshPair(context.Background(), "not-a-token")
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken("not-a-token"))
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("garbage: %v", err)
 	}
@@ -251,7 +264,7 @@ func TestVerify_Expired(t *testing.T) {
 	requireNoErr(t, err)
 	// Expiry uses unix seconds and is exclusive (< now); wait past exp second.
 	time.Sleep(2100 * time.Millisecond)
-	ver, err := sessionjwt.NewVerifier(mustPublicPEM(t, priv), "ibex-auth", "ibex-dashboard")
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(mustPublicPEM(t, priv)), Issuer: sessionjwt.TokenIssuer("ibex-auth"), Audience: sessionjwt.TokenAudience("ibex-dashboard")})
 	requireNoErr(t, err)
 	_, err = ver.Verify(access, sessionjwt.KindAccess)
 	if !errors.Is(err, sessionjwt.ErrExpired) {
@@ -272,11 +285,11 @@ func TestNewVerifier_AcceptsRSACertificatePEM(t *testing.T) {
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
 	requireNoErr(t, err)
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	ver, err := sessionjwt.NewVerifier(string(certPEM), "iss", "aud")
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(string(certPEM)), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud")})
 	requireNoErr(t, err)
 	privPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}))
 	iss, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: privPEM, Issuer: "iss", Audience: "aud",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(privPEM), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud"),
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	requireNoErr(t, err)
@@ -293,11 +306,11 @@ func TestNewVerifier_RejectsNonRSAPublicKey(t *testing.T) {
 	pubDER, err := x509.MarshalPKIXPublicKey(&ec.PublicKey)
 	requireNoErr(t, err)
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
-	_, err = sessionjwt.NewVerifier(string(pubPEM), "i", "a")
+	_, err = sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(string(pubPEM)), Issuer: sessionjwt.TokenIssuer("i"), Audience: sessionjwt.TokenAudience("a")})
 	if err == nil {
 		t.Fatal("expected non-RSA public key error")
 	}
-	_, err = sessionjwt.NewVerifier("\n\n", "i", "a")
+	_, err = sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM("\n\n"), Issuer: sessionjwt.TokenIssuer("i"), Audience: sessionjwt.TokenAudience("a")})
 	if err == nil {
 		t.Fatal("expected no keys")
 	}
@@ -305,7 +318,7 @@ func TestNewVerifier_RejectsNonRSAPublicKey(t *testing.T) {
 	requireNoErr(t, err)
 	ecPrivPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8}))
 	_, err = sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: ecPrivPEM, Issuer: "i", Audience: "a",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(ecPrivPEM), Issuer: sessionjwt.TokenIssuer("i"), Audience: sessionjwt.TokenAudience("a"),
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	if err == nil {
@@ -317,7 +330,7 @@ func TestVerify_BadSignatureEncoding(t *testing.T) {
 	t.Parallel()
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	requireNoErr(t, err)
-	ver, err := sessionjwt.NewVerifier(mustPublicPEM(t, priv), "iss", "aud")
+	ver, err := sessionjwt.NewVerifier(sessionjwt.VerifierConfig{PublicKeysPEM: sessionjwt.PublicKeysPEM(mustPublicPEM(t, priv)), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud")})
 	requireNoErr(t, err)
 	_, err = ver.Verify("aaa.bbb.!!!", sessionjwt.KindAccess)
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {

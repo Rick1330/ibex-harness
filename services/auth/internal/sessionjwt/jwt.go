@@ -7,23 +7,30 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
+// Typed config fields reduce primitive string coupling for Code Health.
+type PrivateKeyPEM string
+type TokenIssuer string
+type TokenAudience string
+type Subject string
+type OrgID string
+type FamilyID string
+type RefreshToken string
+type PublicKeysPEM string
+type SessionKind string
+
 const (
-	KindAccess  = "access"
-	KindRefresh = "refresh"
-	KindStepUp  = "step_up"
-	algRS256    = "RS256"
+	KindAccess  SessionKind = "access"
+	KindRefresh SessionKind = "refresh"
+	KindStepUp  SessionKind = "step_up"
+	algRS256                = "RS256"
 )
 
 var (
@@ -47,9 +54,9 @@ type Claims struct {
 
 // IssuerConfig holds RS256 signing material and token TTLs for NewIssuer.
 type IssuerConfig struct {
-	PrivateKeyPEM string
-	Issuer        string
-	Audience      string
+	PrivateKeyPEM PrivateKeyPEM
+	Issuer        TokenIssuer
+	Audience      TokenAudience
 	AccessTTL     time.Duration
 	RefreshTTL    time.Duration
 	StepUpTTL     time.Duration
@@ -68,12 +75,12 @@ type Issuer struct {
 
 // NewIssuer parses PKCS1/PKCS8 RSA private key PEM.
 func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
-	key, err := parseRSAPrivateKey(cfg.PrivateKeyPEM)
+	key, err := parseRSAPrivateKey(string(cfg.PrivateKeyPEM))
 	if err != nil {
 		return nil, err
 	}
 	return &Issuer{
-		key: key, issuer: cfg.Issuer, audience: cfg.Audience,
+		key: key, issuer: string(cfg.Issuer), audience: string(cfg.Audience),
 		accessTTL:  defaultTTL(cfg.AccessTTL, 15*time.Minute),
 		refreshTTL: defaultTTL(cfg.RefreshTTL, 7*24*time.Hour),
 		stepUpTTL:  defaultTTL(cfg.StepUpTTL, 5*time.Minute),
@@ -99,11 +106,11 @@ func (i *Issuer) WithJTIStore(store JTIStore) *Issuer {
 
 // IssuePairParams scopes access+refresh issuance.
 type IssuePairParams struct {
-	Subject     string
-	OrgID       string
+	Subject     Subject
+	OrgID       OrgID
 	Permissions int64
 	// FamilyID binds rotated refresh tokens; empty mints a new family.
-	FamilyID string
+	FamilyID FamilyID
 }
 
 // IssuePair returns access + refresh tokens for an operator session.
@@ -111,21 +118,21 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	now := time.Now().UTC()
 	accessExp = now.Add(i.accessTTL)
 	refreshExp = now.Add(i.refreshTTL)
-	familyID := strings.TrimSpace(p.FamilyID)
+	familyID := strings.TrimSpace(string(p.FamilyID))
 	if familyID == "" {
 		familyID = uuid.NewString()
 	}
 	access, err = i.sign(Claims{
-		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
-		Permissions: p.Permissions, SessionKind: KindAccess,
+		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
+		Permissions: p.Permissions, SessionKind: string(KindAccess),
 		IssuedAt: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(),
 	})
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
 	}
 	refresh, err = i.sign(Claims{
-		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
-		Permissions: p.Permissions, SessionKind: KindRefresh, FamilyID: familyID,
+		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
+		Permissions: p.Permissions, SessionKind: string(KindRefresh), FamilyID: familyID,
 		IssuedAt: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(),
 	})
 	if err != nil {
@@ -136,8 +143,8 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 
 // IssueStepUpParams scopes step-up JWT issuance.
 type IssueStepUpParams struct {
-	Subject     string
-	OrgID       string
+	Subject     Subject
+	OrgID       OrgID
 	Permissions int64
 }
 
@@ -146,8 +153,8 @@ func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, 
 	now := time.Now().UTC()
 	exp = now.Add(i.stepUpTTL)
 	token, err = i.sign(Claims{
-		Issuer: i.issuer, Audience: i.audience, Subject: p.Subject, OrgID: p.OrgID,
-		Permissions: p.Permissions, SessionKind: KindStepUp,
+		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
+		Permissions: p.Permissions, SessionKind: string(KindStepUp),
 		IssuedAt: now.Unix(), ExpiresAt: exp.Unix(), JTI: uuid.NewString(),
 	})
 	return token, exp, err
@@ -155,7 +162,7 @@ func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, 
 
 // RefreshPair verifies a refresh JWT with the issuer's public key and rotates the pair.
 // The refresh JTI is consumed atomically via JTIStore; reuse revokes the whole family.
-func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
+func (i *Issuer) RefreshPair(ctx context.Context, refreshToken RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error) {
 	claims, err := i.verifyRefreshToken(refreshToken)
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
@@ -164,18 +171,18 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken string) (access, 
 		return "", "", time.Time{}, time.Time{}, err
 	}
 	return i.IssuePair(IssuePairParams{
-		Subject: claims.Subject, OrgID: claims.OrgID, Permissions: claims.Permissions,
-		FamilyID: claims.FamilyID,
+		Subject: Subject(claims.Subject), OrgID: OrgID(claims.OrgID), Permissions: claims.Permissions,
+		FamilyID: FamilyID(claims.FamilyID),
 	})
 }
 
-func (i *Issuer) verifyRefreshToken(refreshToken string) (Claims, error) {
+func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
 	v := &Verifier{
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
 		issuer:   i.issuer,
 		audience: i.audience,
 	}
-	claims, err := v.Verify(refreshToken, KindRefresh)
+	claims, err := v.Verify(string(refreshToken), KindRefresh)
 	if err != nil {
 		return Claims{}, err
 	}
@@ -251,139 +258,4 @@ func (i *Issuer) sign(claims Claims) (string, error) {
 		return "", err
 	}
 	return body + "." + b64(sig), nil
-}
-
-// Verifier checks RS256 JWTs against one or more PEM public keys.
-type Verifier struct {
-	keys     []*rsa.PublicKey
-	issuer   string
-	audience string
-}
-
-// NewVerifier parses one or more PEM public keys (concatenated PEM blocks).
-func NewVerifier(publicKeysPEM, issuer, audience string) (*Verifier, error) {
-	keys, err := parseRSAPublicKeys(publicKeysPEM)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) == 0 {
-		return nil, fmt.Errorf("sessionjwt: no public keys")
-	}
-	return &Verifier{keys: keys, issuer: issuer, audience: audience}, nil
-}
-
-// Verify validates signature and standard claims; expectKind must match session_kind.
-func (v *Verifier) Verify(token, expectKind string) (Claims, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return Claims{}, ErrInvalidToken
-	}
-	if err := v.verifySignature(parts[0], parts[1], parts[2]); err != nil {
-		return Claims{}, err
-	}
-	return v.parseAndValidateClaims(parts[1], expectKind)
-}
-
-func (v *Verifier) verifySignature(headerB64, payloadB64, sigB64 string) error {
-	sig, err := b64dec(sigB64)
-	if err != nil {
-		return ErrInvalidToken
-	}
-	body := headerB64 + "." + payloadB64
-	sum := sha256.Sum256([]byte(body))
-	for _, key := range v.keys {
-		// JWT RS256 (RFC 7518) requires PKCS#1 v1.5 verification.
-		if rsa.VerifyPKCS1v15(key, crypto.SHA256, sum[:], sig) == nil { // NOSONAR
-			return nil
-		}
-	}
-	return ErrInvalidToken
-}
-
-func (v *Verifier) parseAndValidateClaims(payloadB64, expectKind string) (Claims, error) {
-	raw, err := b64dec(payloadB64)
-	if err != nil {
-		return Claims{}, ErrInvalidToken
-	}
-	var claims Claims
-	if err := json.Unmarshal(raw, &claims); err != nil {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.Issuer != v.issuer || claims.Audience != v.audience {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.SessionKind != expectKind {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.ExpiresAt < time.Now().UTC().Unix() {
-		return Claims{}, ErrExpired
-	}
-	return claims, nil
-}
-
-func parseRSAPrivateKey(pemData string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemData))
-	if block == nil {
-		return nil, fmt.Errorf("sessionjwt: invalid private key pem")
-	}
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return key, nil
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("sessionjwt: parse private key: %w", err)
-	}
-	key, ok := parsed.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("sessionjwt: not an RSA private key")
-	}
-	return key, nil
-}
-
-func parseRSAPublicKeys(pemData string) ([]*rsa.PublicKey, error) {
-	var keys []*rsa.PublicKey
-	rest := []byte(pemData)
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		key, err := parseRSAPublicKeyBlock(block)
-		if err != nil {
-			return nil, err
-		}
-		if key != nil {
-			keys = append(keys, key)
-		}
-	}
-	return keys, nil
-}
-
-func parseRSAPublicKeyBlock(block *pem.Block) (*rsa.PublicKey, error) {
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err == nil {
-		rsaPub, ok := pub.(*rsa.PublicKey)
-		if !ok {
-			return nil, fmt.Errorf("sessionjwt: not an RSA public key")
-		}
-		return rsaPub, nil
-	}
-	cert, cerr := x509.ParseCertificate(block.Bytes)
-	if cerr != nil {
-		return nil, fmt.Errorf("sessionjwt: parse public key: %w", err)
-	}
-	rsaPub, ok := cert.PublicKey.(*rsa.PublicKey)
-	if !ok {
-		return nil, nil
-	}
-	return rsaPub, nil
-}
-
-func b64(b []byte) string {
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func b64dec(s string) ([]byte, error) {
-	return base64.RawURLEncoding.DecodeString(s)
 }

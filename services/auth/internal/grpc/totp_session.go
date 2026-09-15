@@ -24,7 +24,7 @@ type totpPort interface {
 
 type sessionIssuerPort interface {
 	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
-	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(ctx context.Context, refreshToken sessionjwt.RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error)
 }
 
 func (s *Server) requireTotpSelf(ctx context.Context, orgID, userID string) (CallerContext, error) {
@@ -131,7 +131,7 @@ func (s *Server) IssueOperatorSession(
 }
 
 func (s *Server) issueFromRefresh(ctx context.Context, refreshToken string) (*authv1.IssueOperatorSessionResponse, error) {
-	access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(ctx, refreshToken)
+	access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(ctx, sessionjwt.RefreshToken(refreshToken))
 	if err != nil {
 		return nil, mapRefreshPairErr(err)
 	}
@@ -159,7 +159,7 @@ func (s *Server) issueFromCaller(ctx context.Context) (*authv1.IssueOperatorSess
 		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
 	access, refresh, accessExp, refreshExp, err := s.sessionIssuer.IssuePair(sessionjwt.IssuePairParams{
-		Subject: caller.UserID, OrgID: caller.OrgID, Permissions: caller.Permissions,
+		Subject: sessionjwt.Subject(caller.UserID), OrgID: sessionjwt.OrgID(caller.OrgID), Permissions: caller.Permissions,
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, "issue session failed")

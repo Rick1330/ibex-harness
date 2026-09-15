@@ -257,9 +257,9 @@ func newSessionIssuer(cfg config.Config) (*sessionjwt.Issuer, error) {
 		return nil, nil
 	}
 	return sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: pem,
-		Issuer:        cfg.JWTIssuer,
-		Audience:      cfg.JWTAudience,
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(pem),
+		Issuer:        sessionjwt.TokenIssuer(cfg.JWTIssuer),
+		Audience:      sessionjwt.TokenAudience(cfg.JWTAudience),
 		AccessTTL:     cfg.JWTAccessTTL,
 		RefreshTTL:    cfg.JWTRefreshTTL,
 		StepUpTTL:     cfg.JWTStepUpTTL,
@@ -509,7 +509,7 @@ func optionalTotp(svc *service.TotpService) interface {
 
 func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
 	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
-	RefreshPair(ctx context.Context, refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(ctx context.Context, refreshToken sessionjwt.RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error)
 } {
 	if iss == nil {
 		return nil

@@ -111,12 +111,8 @@ def _reject_oversized_token(token: str) -> None:
         raise SessionStubError("token too large")
 
 
-def _reject_oversized_parts(header_b64: str, payload_b64: str, sig_b64: str) -> None:
-    if (
-        len(header_b64) > MAX_JWT_PART_LEN
-        or len(payload_b64) > MAX_JWT_PART_LEN
-        or len(sig_b64) > MAX_JWT_PART_LEN
-    ):
+def _reject_oversized_parts(*parts: str) -> None:
+    if any(len(part) > MAX_JWT_PART_LEN for part in parts):
         raise SessionStubError("token too large")
 
 

@@ -25,7 +25,7 @@ func newMemoryTOTPAttempts(maxFails int, lockTTL time.Duration) *memoryTOTPAttem
 }
 
 func totpAttemptKey(ref TenantRef) string {
-	orgID, userID := ref.keyParts()
+	orgID, userID := ref.KeyParts()
 	return orgID + ":" + userID
 }
 

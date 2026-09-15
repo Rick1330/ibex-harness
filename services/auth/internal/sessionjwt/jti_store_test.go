@@ -95,7 +95,7 @@ func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
 	}
 	privPEM := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)}))
 	iss, err := sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
-		PrivateKeyPEM: privPEM, Issuer: "iss", Audience: "aud",
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(privPEM), Issuer: sessionjwt.TokenIssuer("iss"), Audience: sessionjwt.TokenAudience("aud"),
 		AccessTTL: time.Minute, RefreshTTL: time.Hour, StepUpTTL: time.Minute,
 	})
 	if err != nil {
@@ -106,11 +106,11 @@ func TestIssuer_RefreshPair_UsesRedisJTIStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(refresh))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, err = iss.RefreshPair(context.Background(), refresh)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(refresh))
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("want replay err, got %v", err)
 	}
@@ -123,15 +123,15 @@ func TestRefreshPair_ReuseRevokesFamilyDescendants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, r2, _, _, err := iss.RefreshPair(context.Background(), r1)
+	_, r2, _, _, err := iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(r1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, err = iss.RefreshPair(context.Background(), r1)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(r1))
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("reuse: %v", err)
 	}
-	_, _, _, _, err = iss.RefreshPair(context.Background(), r2)
+	_, _, _, _, err = iss.RefreshPair(context.Background(), sessionjwt.RefreshToken(r2))
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("descendant after family revoke: %v", err)
 	}

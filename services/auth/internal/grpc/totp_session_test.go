@@ -43,7 +43,7 @@ type fakeSessionIssuer struct {
 func (f *fakeSessionIssuer) IssuePair(sessionjwt.IssuePairParams) (string, string, time.Time, time.Time, error) {
 	return f.access, f.refresh, f.aExp, f.rExp, f.issueErr
 }
-func (f *fakeSessionIssuer) RefreshPair(context.Context, string) (string, string, time.Time, time.Time, error) {
+func (f *fakeSessionIssuer) RefreshPair(context.Context, sessionjwt.RefreshToken) (string, string, time.Time, time.Time, error) {
 	return f.access, f.refresh, f.aExp, f.rExp, f.refreshErr
 }
 
