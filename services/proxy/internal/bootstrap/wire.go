@@ -57,6 +57,7 @@ type proxyCore struct {
 	rlConfigCancel    context.CancelFunc
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
+	mpPollCancel      context.CancelFunc
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -86,19 +87,20 @@ func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
 		revSub:    subs.revSub, revCancel: subs.revCancel,
 		dirSub: subs.dirSub, dirCancel: subs.dirCancel,
 		rlConfigSub: subs.rlSub, rlConfigCancel: subs.rlCancel,
-		mpSub: subs.mpSub, mpCancel: subs.mpCancel,
+		mpSub: subs.mpSub, mpCancel: subs.mpCancel, mpPollCancel: subs.mpPollCancel,
 	}), nil
 }
 
 type startedSubscribers struct {
-	revSub    *revocation.Subscriber
-	revCancel context.CancelFunc
-	dirSub    *directive.Subscriber
-	dirCancel context.CancelFunc
-	rlSub     *ratelimit.ConfigSubscriber
-	rlCancel  context.CancelFunc
-	mpSub     *modelpolicy.Subscriber
-	mpCancel  context.CancelFunc
+	revSub       *revocation.Subscriber
+	revCancel    context.CancelFunc
+	dirSub       *directive.Subscriber
+	dirCancel    context.CancelFunc
+	rlSub        *ratelimit.ConfigSubscriber
+	rlCancel     context.CancelFunc
+	mpSub        *modelpolicy.Subscriber
+	mpCancel     context.CancelFunc
+	mpPollCancel context.CancelFunc
 }
 
 func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput) (startedSubscribers, error) {
@@ -131,6 +133,7 @@ func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput)
 		stopSubscribersOnFailure(out)
 		return out, fmt.Errorf("model-policy subscriber: %w", err)
 	}
+	out.mpPollCancel = startModelPolicyEpochPoller(assembled.modelPolicyCache, in.log)
 	return out, nil
 }
 
@@ -147,6 +150,15 @@ func stopSubscribersOnFailure(s startedSubscribers) {
 	}
 	if s.rlSub != nil {
 		s.rlSub.Stop()
+	}
+	if s.mpPollCancel != nil {
+		s.mpPollCancel()
+	}
+	if s.mpCancel != nil {
+		s.mpCancel()
+	}
+	if s.mpSub != nil {
+		s.mpSub.Stop()
 	}
 }
 
@@ -169,6 +181,7 @@ type proxyCoreParts struct {
 	rlConfigCancel context.CancelFunc
 	mpSub          *modelpolicy.Subscriber
 	mpCancel       context.CancelFunc
+	mpPollCancel   context.CancelFunc
 }
 
 func finishProxyCore(parts proxyCoreParts) *proxyCore {
@@ -180,7 +193,7 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 		revSub:            parts.revSub, revCancel: parts.revCancel,
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		rlConfigSub: parts.rlConfigSub, rlConfigCancel: parts.rlConfigCancel,
-		mpSub: parts.mpSub, mpCancel: parts.mpCancel,
+		mpSub: parts.mpSub, mpCancel: parts.mpCancel, mpPollCancel: parts.mpPollCancel,
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,
 		traceWriter:    parts.assembled.traceWriter,
@@ -284,29 +297,11 @@ type finishAssembledCoreInput struct {
 }
 
 func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error) {
-	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
+	parts, err := buildRouterAssembleParts(in)
 	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
+		return assembledProxyCore{}, err
 	}
-	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("tokenizer registry: %w", err)
-	}
-	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
-	}
-	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(in.infra.pgDB, providerReg, in.log, in.reg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("model policy: %w", err)
-	}
-	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
-	deps := assembledRouterDeps(routerAssembleParts{
-		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
-		idempStore: idempStore, traceWriter: traceWriter,
-		modelRouter: modelRouter, agentDefaults: agentDefaults,
-	})
-	server, err := newHTTPServer(deps)
+	server, err := newHTTPServer(assembledRouterDeps(parts))
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
 	}
@@ -317,8 +312,38 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		validator: in.infra.auth.validator, limiter: in.infra.limiter,
 		directiveResolver: in.infra.directiveResolver,
 		checkpointPool:    in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
-		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
-		modelPolicyCache: mpCache, modelRouter: modelRouter, agentDefaults: agentDefaults,
+		traceWriter: parts.traceWriter, tokenizerReg: parts.tokenizerReg,
+		modelPolicyCache: parts.mpCache, modelRouter: parts.modelRouter, agentDefaults: parts.agentDefaults,
+	}, nil
+}
+
+func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts, error) {
+	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("provider registry: %w", err)
+	}
+	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("tokenizer registry: %w", err)
+	}
+	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("idempotency store: %w", err)
+	}
+	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
+		PGDB:             in.infra.pgDB,
+		Base:             providerReg,
+		Log:              in.log,
+		Metrics:          in.reg,
+		AllowPassthrough: in.cfg.ModelPolicyAllowPassthrough,
+	})
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("model policy: %w", err)
+	}
+	return routerAssembleParts{
+		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
+		idempStore: idempStore, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
+		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
 	}, nil
 }
 
@@ -330,6 +355,7 @@ type routerAssembleParts struct {
 	traceWriter   *ibexch.Writer
 	modelRouter   proxyhttp.ProviderResolver
 	agentDefaults modelpolicy.AgentDefaultLoader
+	mpCache       *modelpolicy.Cache
 }
 
 func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {

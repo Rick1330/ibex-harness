@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	ibexconfig "github.com/Rick1330/ibex-harness/packages/config"
 	"github.com/Rick1330/ibex-harness/packages/crypto"
@@ -22,6 +23,13 @@ type envConfig struct {
 	ValidateTokenRPM       int64             `env:"IBEX_AUTH_VALIDATE_RPM" envDefault:"6000"`
 	CredentialsMasterKey   ibexconfig.Secret `env:"IBEX_CREDENTIALS_MASTER_KEY" secret:"true"`
 	CredentialsMasterKeyID string            `env:"IBEX_CREDENTIALS_MASTER_KEY_ID" envDefault:"v1"`
+	TOTPEnabled            bool              `env:"IBEX_AUTH_TOTP_ENABLED" envDefault:"false"`
+	JWTPrivateKeyPEM       ibexconfig.Secret `env:"JWT_PRIVATE_KEY_PEM" secret:"true"`
+	JWTIssuer              string            `env:"JWT_ISSUER" envDefault:"ibex-harness"`
+	JWTAudience            string            `env:"JWT_AUDIENCE" envDefault:"ibex-dashboard"`
+	JWTAccessTTLRaw        string            `env:"JWT_ACCESS_TOKEN_TTL"`
+	JWTRefreshTTLRaw       string            `env:"JWT_REFRESH_TOKEN_TTL"`
+	JWTStepUpTTLRaw        string            `env:"JWT_STEP_UP_TOKEN_TTL"`
 	ShutdownTimeoutRaw     string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
 	Argon2MemoryKiB        uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
 	Argon2Time             uint32            `env:"IBEX_ARGON2_TIME"`
@@ -58,6 +66,10 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 		ValidateTokenRPM:       envCfg.ValidateTokenRPM,
 		CredentialsMasterKey:   envCfg.CredentialsMasterKey.String(),
 		CredentialsMasterKeyID: credentialKeyID(envCfg.CredentialsMasterKeyID),
+		TOTPEnabled:            envCfg.TOTPEnabled,
+		JWTPrivateKeyPEM:       envCfg.JWTPrivateKeyPEM.String(),
+		JWTIssuer:              strings.TrimSpace(envCfg.JWTIssuer),
+		JWTAudience:            strings.TrimSpace(envCfg.JWTAudience),
 		Argon2:                 crypto.ProductionParams(),
 	}
 	if err := applyAuthEnvOverrides(&cfg, envCfg); err != nil {
@@ -73,7 +85,34 @@ func applyAuthEnvOverrides(cfg *Config, envCfg envConfig) error {
 	}
 	cfg.ShutdownTimeout = timeout
 	applyArgon2Overrides(&cfg.Argon2, envCfg)
+	cfg.JWTAccessTTL, err = parseDurationOr(envCfg.JWTAccessTTLRaw, 15*time.Minute)
+	if err != nil {
+		return fmt.Errorf("JWT_ACCESS_TOKEN_TTL: %w", err)
+	}
+	cfg.JWTRefreshTTL, err = parseDurationOr(envCfg.JWTRefreshTTLRaw, 7*24*time.Hour)
+	if err != nil {
+		return fmt.Errorf("JWT_REFRESH_TOKEN_TTL: %w", err)
+	}
+	cfg.JWTStepUpTTL, err = parseDurationOr(envCfg.JWTStepUpTTLRaw, 5*time.Minute)
+	if err != nil {
+		return fmt.Errorf("JWT_STEP_UP_TOKEN_TTL: %w", err)
+	}
 	return nil
+}
+
+func parseDurationOr(raw string, fallback time.Duration) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, err
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	return d, nil
 }
 
 func applyArgon2Overrides(params *token.Argon2Params, envCfg envConfig) {

@@ -125,6 +125,9 @@ type Config struct {
 	Tokenizer            TokenizerConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
+	// ModelPolicyAllowPassthrough enables fail-open PassthroughRegistry when
+	// Postgres is unavailable (default false → DenyAllRegistry). Residual risk.
+	ModelPolicyAllowPassthrough bool
 	// Provider circuit breaker (shared defaults).
 	// FAILURES/COOLDOWN apply to self-hosted consecutive mode; WINDOW/BUCKET/
 	// MIN_SAMPLES/FAILURE_RATE apply to hosted OpenAI + Anthropic rolling mode.

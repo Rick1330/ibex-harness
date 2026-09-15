@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
@@ -21,6 +22,7 @@ import (
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/sessionjwt"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -149,6 +151,8 @@ type authServiceDeps struct {
 	validator       *token.Validator
 	tokenSvc        *service.TokenService
 	credSvc         *service.ProviderCredentialService
+	totpSvc         *service.TotpService
+	sessionIssuer   *sessionjwt.Issuer
 	agentsRepo      *repository.AgentsRepository
 	redisClient     redis.UniversalClient
 	validateLimiter ratelimit.KeyedLimiter
@@ -169,11 +173,106 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
+	sessionIssuer, totpSvc, err := newSessionAndTotp(cfg, db, core.redisClient)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 	return authServiceDeps{
 		validator: core.validator, tokenSvc: core.tokenSvc, credSvc: credSvc,
+		totpSvc: totpSvc, sessionIssuer: sessionIssuer,
 		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
 		validateLimiter: core.validateLimiter, log: log,
 	}, nil
+}
+
+func newSessionAndTotp(
+	cfg config.Config,
+	db *sql.DB,
+	redisClient redis.UniversalClient,
+) (*sessionjwt.Issuer, *service.TotpService, error) {
+	sessionIssuer, err := newSessionIssuer(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := attachRedisJTIStore(sessionIssuer, redisClient); err != nil {
+		return nil, nil, err
+	}
+	return finishSessionTotp(cfg, db, redisClient, sessionIssuer)
+}
+
+func finishSessionTotp(
+	cfg config.Config,
+	db *sql.DB,
+	redisClient redis.UniversalClient,
+	sessionIssuer *sessionjwt.Issuer,
+) (*sessionjwt.Issuer, *service.TotpService, error) {
+	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := attachRedisTOTPAttempts(cfg, totpSvc, redisClient); err != nil {
+		return nil, nil, err
+	}
+	return sessionIssuer, totpSvc, nil
+}
+
+func attachRedisJTIStore(sessionIssuer *sessionjwt.Issuer, redisClient redis.UniversalClient) error {
+	if sessionIssuer == nil {
+		return nil
+	}
+	// Session issuance requires a shared JTI store so refresh replay is consistent
+	// across replicas. Do not retain process-local MemoryJTIStore when JWT signing is on.
+	// Single-instance exception: omit JWT_PRIVATE_KEY_PEM (no session issuer).
+	if redisClient == nil {
+		return fmt.Errorf("REDIS_URL is required when JWT_PRIVATE_KEY_PEM enables session issuance")
+	}
+	jtiStore, err := sessionjwt.NewRedisJTIStore(redisClient)
+	if err != nil {
+		return err
+	}
+	sessionIssuer.WithJTIStore(jtiStore)
+	return nil
+}
+
+func attachRedisTOTPAttempts(cfg config.Config, totpSvc *service.TotpService, redisClient redis.UniversalClient) error {
+	if totpSvc == nil || !cfg.TOTPEnabled {
+		// Single-instance / Redis-less: leave the default in-process gate; TOTP RPCs stay disabled.
+		return nil
+	}
+	// Multi-replica lockouts require Redis when TOTP is enabled.
+	if redisClient == nil {
+		return fmt.Errorf("REDIS_URL is required when IBEX_AUTH_TOTP_ENABLED=true (shared attempt gate)")
+	}
+	gate, err := service.NewRedisTOTPAttempts(redisClient, 0, 0)
+	if err != nil {
+		return err
+	}
+	totpSvc.WithAttemptGate(gate)
+	return nil
+}
+
+func newSessionIssuer(cfg config.Config) (*sessionjwt.Issuer, error) {
+	pem := strings.TrimSpace(cfg.JWTPrivateKeyPEM)
+	if pem == "" {
+		return nil, nil
+	}
+	return sessionjwt.NewIssuer(sessionjwt.IssuerConfig{
+		PrivateKeyPEM: sessionjwt.PrivateKeyPEM(pem),
+		Issuer:        sessionjwt.TokenIssuer(cfg.JWTIssuer),
+		Audience:      sessionjwt.TokenAudience(cfg.JWTAudience),
+		AccessTTL:     cfg.JWTAccessTTL,
+		RefreshTTL:    cfg.JWTRefreshTTL,
+		StepUpTTL:     cfg.JWTStepUpTTL,
+	})
+}
+
+func newTotpService(cfg config.Config, db *sql.DB, jwt *sessionjwt.Issuer) (*service.TotpService, error) {
+	return service.NewTotpService(
+		repository.NewTotpSecretRepo(db),
+		service.MasterKeyConfig{Encoded: cfg.CredentialsMasterKey, KeyID: cfg.CredentialsMasterKeyID},
+		cfg.TOTPEnabled,
+		jwt,
+	)
 }
 
 type authTokenCore struct {
@@ -381,16 +480,39 @@ func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetri
 		return fmt.Errorf("agent service: %w", err)
 	}
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
-		Validator:    deps.validator,
-		TokenService: deps.tokenSvc,
-		AgentService: agentSvc,
-		CredService:  deps.credSvc,
-		Metrics:      reg,
-		Log:          deps.log,
+		Validator:     deps.validator,
+		TokenService:  deps.tokenSvc,
+		AgentService:  agentSvc,
+		CredService:   deps.credSvc,
+		TotpService:   optionalTotp(deps.totpSvc),
+		SessionIssuer: optionalSessionIssuer(deps.sessionIssuer),
+		Metrics:       reg,
+		Log:           deps.log,
 	})
 	if err != nil {
 		return fmt.Errorf("grpc auth service: %w", err)
 	}
 	authv1.RegisterAuthServiceServer(grpcSrv, srv)
 	return nil
+}
+
+func optionalTotp(svc *service.TotpService) interface {
+	BeginEnrollment(ctx context.Context, p service.BeginEnrollmentParams) (string, error)
+	ConfirmEnrollment(ctx context.Context, p service.ConfirmEnrollmentParams) error
+	CreateStepUp(ctx context.Context, p service.CreateStepUpParams) (string, time.Time, error)
+} {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
+	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(ctx context.Context, refreshToken sessionjwt.RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error)
+} {
+	if iss == nil {
+		return nil
+	}
+	return iss
 }

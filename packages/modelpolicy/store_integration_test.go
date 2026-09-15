@@ -140,16 +140,20 @@ func TestRouting_OrgPolicy_StoreEvaluate(t *testing.T) {
 	insertPolicy(t, db, org, policySeed{pattern: "claude-sonnet-4-5", allowed: false, priority: 1})
 	insertPolicy(t, db, org, policySeed{pattern: "claude-*", allowed: true, priority: 10})
 
-	policies, err := mustStore(t, db).LoadOrg(context.Background(), org)
+	snap, err := mustStore(t, db).LoadOrg(context.Background(), org)
 	if err != nil {
 		t.Fatal(err)
+	}
+	policies := snap.Policies
+	if snap.Epoch < 1 {
+		t.Fatalf("epoch=%d want >=1", snap.Epoch)
 	}
 	if len(policies) != 2 {
 		t.Fatalf("len=%d want 2", len(policies))
 	}
 	assertDecision(t, policies, decisionWant{model: "claude-sonnet-4-5", wantMatched: true, wantAllowed: false})
 	assertDecision(t, policies, decisionWant{model: "claude-opus-4", wantMatched: true, wantAllowed: true})
-	assertDecision(t, policies, decisionWant{model: "gpt-4o", wantMatched: false, wantAllowed: true})
+	assertDecision(t, policies, decisionWant{model: "gpt-4o", wantMatched: false, wantAllowed: false})
 }
 
 func TestStore_FallbackChainRoundTrip(t *testing.T) {
@@ -161,10 +165,11 @@ func TestStore_FallbackChainRoundTrip(t *testing.T) {
 	insertPolicy(t, db, org, policySeed{
 		pattern: "gpt-*", allowed: true, priority: 1, chain: want,
 	})
-	policies, err := mustStore(t, db).LoadOrg(context.Background(), org)
+	snap, err := mustStore(t, db).LoadOrg(context.Background(), org)
 	if err != nil {
 		t.Fatal(err)
 	}
+	policies := snap.Policies
 	if len(policies) != 1 {
 		t.Fatalf("len=%d", len(policies))
 	}
@@ -193,15 +198,15 @@ func TestRouting_OrgPolicy_CrossTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(polsA) != 1 {
-		t.Fatalf("orgA len=%d", len(polsA))
+	if len(polsA.Policies) != 1 {
+		t.Fatalf("orgA len=%d", len(polsA.Policies))
 	}
 	polsB, err := store.LoadOrg(context.Background(), orgB)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(polsB) != 0 {
-		t.Fatalf("orgB must not see orgA policies: %d", len(polsB))
+	if len(polsB.Policies) != 0 {
+		t.Fatalf("orgB must not see orgA policies: %d", len(polsB.Policies))
 	}
 }
 

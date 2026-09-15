@@ -45,13 +45,12 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def _require_operator_secret(settings: Settings) -> str:
+def _require_operator_secret(settings: Settings) -> str | None:
     if not settings.operator_feature_enabled:
         raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
-    secret = settings.jwt_hmac_secret
-    if not secret:
+    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
         raise ApiError(code=SERVICE_DEGRADED, message="session signing secret not configured")
-    return secret
+    return settings.jwt_hmac_secret
 
 
 def _access_cookie_raw(request: Request, settings: Settings) -> str:
@@ -61,7 +60,7 @@ def _access_cookie_raw(request: Request, settings: Settings) -> str:
     return raw
 
 
-def _verify_access_cookie(raw: str, settings: Settings, secret: str) -> SessionClaims:
+def _verify_access_cookie(raw: str, settings: Settings, secret: str | None) -> SessionClaims:
     try:
         claims = verify_token_opts(
             raw,
@@ -70,6 +69,7 @@ def _verify_access_cookie(raw: str, settings: Settings, secret: str) -> SessionC
                 issuer=settings.jwt_issuer,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=settings.jwt_public_keys_pem,
             ),
         )
     except SessionStubError as exc:

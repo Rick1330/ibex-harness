@@ -44,6 +44,7 @@ type shutdownOpts struct {
 	rlConfigCancel    context.CancelFunc
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
+	mpPollCancel      context.CancelFunc
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -177,6 +178,9 @@ func stopRateLimitPubSub(opts shutdownOpts) {
 }
 
 func stopModelPolicyPubSub(opts shutdownOpts) {
+	if opts.mpPollCancel != nil {
+		opts.mpPollCancel()
+	}
 	if opts.mpCancel != nil {
 		opts.mpCancel()
 	}

@@ -1,4 +1,4 @@
-"""Provisional HS256 session JWT helpers for 4.P.0 (stdlib only; moves to auth in 4.P.1)."""
+"""Provisional session JWT helpers (4.P.0 HS256 + 4.P.1 RS256 dual-verify)."""
 
 from __future__ import annotations
 
@@ -6,14 +6,26 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
 SESSION_KIND_ACCESS = "access"
 SESSION_KIND_REFRESH = "refresh"
+SESSION_KIND_STEP_UP = "step_up"
+
+# Bound externally supplied cookies/headers before JWT parse (DoS / memory).
+MAX_SESSION_TOKEN_LEN = 8192
+MAX_JWT_PART_LEN = 4096
+
+_LOG = logging.getLogger(__name__)
 
 
 class SessionStubError(Exception):
@@ -29,7 +41,6 @@ def _b64url_decode(data: str) -> bytes:
     try:
         return base64.urlsafe_b64decode(data + pad)
     except ValueError as exc:
-        # binascii.Error is a ValueError subclass.
         raise SessionStubError("bad encoding") from exc
 
 
@@ -38,10 +49,12 @@ class SessionClaims:
     sub: str
     org_id: UUID
     permissions: int
-    session_kind: str  # SESSION_KIND_ACCESS | SESSION_KIND_REFRESH
+    session_kind: str  # SESSION_KIND_ACCESS | SESSION_KIND_REFRESH | SESSION_KIND_STEP_UP
     exp: int
     iat: int
     jti: str
+    # Verifier outcome (not the unverified JWT header alg).
+    verify_method: str  # "RS256" | "HS256"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,10 +71,11 @@ class TokenIssueOpts:
 
 @dataclass(frozen=True, slots=True)
 class TokenVerifyOpts:
-    secret: str
+    secret: str | None
     issuer: str
     audience: str
     expect_kind: str
+    public_keys_pem: str | None = None
 
 
 def issue_token_opts(opts: TokenIssueOpts) -> str:
@@ -85,20 +99,91 @@ def issue_token_opts(opts: TokenIssueOpts) -> str:
     return f"{body}.{_b64url(sig)}"
 
 
-def _split_jwt(token: str) -> tuple[str, str, str]:
+@dataclass(frozen=True, slots=True)
+class _JWTParts:
+    header_b64: str
+    payload_b64: str
+    sig_b64: str
+
+
+def _reject_oversized_token(token: str) -> None:
+    if len(token) > MAX_SESSION_TOKEN_LEN:
+        raise SessionStubError("token too large")
+
+
+def _reject_oversized_parts(*parts: str) -> None:
+    if any(len(part) > MAX_JWT_PART_LEN for part in parts):
+        raise SessionStubError("token too large")
+
+
+def _split_jwt(token: str) -> _JWTParts:
+    _reject_oversized_token(token)
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError as exc:
         raise SessionStubError("malformed token") from exc
-    return header_b64, payload_b64, sig_b64
+    _reject_oversized_parts(header_b64, payload_b64, sig_b64)
+    return _JWTParts(header_b64=header_b64, payload_b64=payload_b64, sig_b64=sig_b64)
 
 
-def _verify_signature(header_b64: str, payload_b64: str, sig_b64: str, *, secret: str) -> None:
-    body = f"{header_b64}.{payload_b64}"
+def _verify_hs256(parts: _JWTParts, *, secret: str) -> None:
+    body = f"{parts.header_b64}.{parts.payload_b64}"
     expected = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
-    got_sig = _b64url_decode(sig_b64)
+    got_sig = _b64url_decode(parts.sig_b64)
     if not hmac.compare_digest(expected, got_sig):
         raise SessionStubError("bad signature")
+
+
+def _load_rsa_public_keys(pem_blob: str) -> list[RSAPublicKey]:
+    keys: list[RSAPublicKey] = []
+    rest = pem_blob.encode("utf-8")
+    while b"-----BEGIN" in rest:
+        try:
+            key = serialization.load_pem_public_key(rest)
+        except ValueError:
+            break
+        if not isinstance(key, RSAPublicKey):
+            raise SessionStubError("bad public key")
+        keys.append(key)
+        # Advance past this PEM block for multi-key blobs.
+        end = rest.find(b"-----END")
+        if end < 0:
+            break
+        nl = rest.find(b"\n", end)
+        rest = rest[nl + 1 :] if nl >= 0 else b""
+    return keys
+
+
+def _verify_rs256(parts: _JWTParts, *, public_keys_pem: str) -> None:
+    keys = _load_rsa_public_keys(public_keys_pem)
+    if not keys:
+        raise SessionStubError("no public keys")
+    body = f"{parts.header_b64}.{parts.payload_b64}".encode("ascii")
+    sig = _b64url_decode(parts.sig_b64)
+    last: Exception | None = None
+    for key in keys:
+        try:
+            key.verify(sig, body, padding.PKCS1v15(), hashes.SHA256())
+            return
+        except Exception as exc:  # noqa: BLE001 — try next key
+            last = exc
+            continue
+    raise SessionStubError("bad signature") from last
+
+
+def _header_alg(header_b64: str) -> str:
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+    except (json.JSONDecodeError, SessionStubError) as exc:
+        raise SessionStubError("bad header") from exc
+    if not isinstance(header, dict):
+        raise SessionStubError("bad header")
+    return str(header.get("alg", ""))
+
+
+def peek_token_alg(token: str) -> str:
+    """Return the JWT alg claim without verifying the signature."""
+    return _header_alg(_split_jwt(token).header_b64)
 
 
 def _decode_payload(payload_b64: str) -> dict[str, Any]:
@@ -116,7 +201,7 @@ def _session_kind_of(payload: dict[str, Any]) -> str | None:
     return None if kind is None else str(kind)
 
 
-def _to_claims(payload: dict[str, Any]) -> SessionClaims:
+def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
     return SessionClaims(
         sub=str(payload.get("sub", "")),
         org_id=UUID(str(payload["org_id"])),
@@ -125,23 +210,59 @@ def _to_claims(payload: dict[str, Any]) -> SessionClaims:
         exp=int(payload.get("exp", 0)),
         iat=int(payload.get("iat", 0)),
         jti=str(payload.get("jti", "")),
+        verify_method=verify_method,
     )
 
 
-def _validate_claims(payload: dict[str, Any], opts: TokenVerifyOpts) -> SessionClaims:
+def _validate_claims(
+    payload: dict[str, Any], opts: TokenVerifyOpts, *, verify_method: str
+) -> SessionClaims:
     if payload.get("iss") != opts.issuer or payload.get("aud") != opts.audience:
         raise SessionStubError("issuer/audience mismatch")
     if _session_kind_of(payload) != opts.expect_kind:
         raise SessionStubError("wrong token kind")
     if int(payload.get("exp", 0)) < int(time.time()):
         raise SessionStubError("expired")
-    return _to_claims(payload)
+    return _to_claims(payload, verify_method=verify_method)
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
-    header_b64, payload_b64, sig_b64 = _split_jwt(token)
-    _verify_signature(header_b64, payload_b64, sig_b64, secret=opts.secret)
-    return _validate_claims(_decode_payload(payload_b64), opts)
+    """Verify RS256 or HS256; protected-header alg must match the verifier used."""
+    parts = _split_jwt(token)
+    alg = _header_alg(parts.header_b64)
+    payload = _decode_payload(parts.payload_b64)
+    if alg == "RS256":
+        return _verify_rs256_token(parts, payload, opts)
+    if alg == "HS256":
+        return _verify_hs256_token(parts, payload, opts)
+    raise SessionStubError("alg mismatch")
+
+
+def _verify_rs256_token(
+    parts: _JWTParts,
+    payload: dict[str, Any],
+    opts: TokenVerifyOpts,
+) -> SessionClaims:
+    if not opts.public_keys_pem:
+        raise SessionStubError("no verify material")
+    _verify_rs256(parts, public_keys_pem=opts.public_keys_pem)
+    return _validate_claims(payload, opts, verify_method="RS256")
+
+
+def _verify_hs256_token(
+    parts: _JWTParts,
+    payload: dict[str, Any],
+    opts: TokenVerifyOpts,
+) -> SessionClaims:
+    if not opts.secret:
+        raise SessionStubError("no verify material")
+    _verify_hs256(parts, secret=opts.secret)
+    _LOG.warning(
+        "provisional_hs256_verify=1 issuer=%s audience=%s",
+        opts.issuer,
+        opts.audience,
+    )
+    return _validate_claims(payload, opts, verify_method="HS256")
 
 
 def mint_csrf_token(*, secret: str) -> str:

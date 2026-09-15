@@ -44,7 +44,7 @@ func (r *OrgAwareRegistry) ForOrg(ctx context.Context, orgID uuid.UUID, model st
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
-	if dec.Matched && !dec.Allowed {
+	if !dec.Allowed {
 		r.metrics.IncDeny()
 		return nil, ErrModelNotAllowedForOrg
 	}
@@ -67,9 +67,22 @@ func (r *OrgAwareRegistry) FallbackChain(ctx context.Context, orgID uuid.UUID, m
 // Base returns the underlying platform registry.
 func (r *OrgAwareRegistry) Base() *provider.Registry { return r.base }
 
+// DenyAllRegistry rejects every model. Used when Postgres/policy store is
+// unavailable (4.P.1 fail-closed default).
+type DenyAllRegistry struct{}
+
+// ForOrg always denies.
+func (DenyAllRegistry) ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error) {
+	return nil, ErrModelNotAllowedForOrg
+}
+
+// FallbackChain is always empty under deny-all.
+func (DenyAllRegistry) FallbackChain(context.Context, uuid.UUID, string) ([]string, error) {
+	return nil, nil
+}
+
 // PassthroughRegistry adapts *provider.Registry to ForOrg without policies.
-// Used only when Postgres is unavailable; bootstrap must Warn and set
-// ibex_proxy_model_policy_enabled=0 so operators can observe the bypass.
+// Only for explicit IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH (default off); residual risk.
 type PassthroughRegistry struct {
 	Base *provider.Registry
 }

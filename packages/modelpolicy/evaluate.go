@@ -8,7 +8,8 @@ type Decision struct {
 }
 
 // EvaluatePolicies applies first-match-wins on policies already ordered by
-// priority ASC, model_pattern ASC (store ORDER BY). No matching row → allow.
+// priority ASC, model_pattern ASC (store ORDER BY). No matching row → deny
+// (4.P.1 deny-by-default; breaking vs ADR-0075 allow-on-miss).
 func EvaluatePolicies(policies []Policy, model string) (Decision, error) {
 	for i := range policies {
 		p := &policies[i]
@@ -22,5 +23,5 @@ func EvaluatePolicies(policies []Policy, model string) (Decision, error) {
 		cp := *p
 		return Decision{Allowed: p.Allowed, Matched: true, Policy: &cp}, nil
 	}
-	return Decision{Allowed: true, Matched: false}, nil
+	return Decision{Allowed: false, Matched: false}, nil
 }
