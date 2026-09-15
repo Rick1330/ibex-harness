@@ -25,6 +25,7 @@ type FamilyID string
 type RefreshToken string
 type PublicKeysPEM string
 type SessionKind string
+type RawToken string
 
 const (
 	KindAccess  SessionKind = "access"
@@ -75,7 +76,7 @@ type Issuer struct {
 
 // NewIssuer parses PKCS1/PKCS8 RSA private key PEM.
 func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
-	key, err := parseRSAPrivateKey(string(cfg.PrivateKeyPEM))
+	key, err := parseRSAPrivateKey(cfg.PrivateKeyPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -179,10 +180,10 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken RefreshToken) (ac
 func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
 	v := &Verifier{
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
-		issuer:   i.issuer,
-		audience: i.audience,
+		issuer:   TokenIssuer(i.issuer),
+		audience: TokenAudience(i.audience),
 	}
-	claims, err := v.Verify(string(refreshToken), KindRefresh)
+	claims, err := v.Verify(RawToken(refreshToken), KindRefresh)
 	if err != nil {
 		return Claims{}, err
 	}

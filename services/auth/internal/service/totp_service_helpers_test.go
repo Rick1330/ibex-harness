@@ -21,6 +21,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+var (
+	refOrg1  = service.TenantRef{Org: "org-1", User: "user-1"}
+	refOrg   = service.TenantRef{Org: "org", User: "user"}
+	refShort = service.TenantRef{Org: "o", User: "u"}
+	refOrg2  = service.TenantRef{Org: "org2", User: "user2"}
+)
+
 type memTOTPStore struct {
 	mu     sync.Mutex
 	rows   map[string]repository.TotpSecretRow
