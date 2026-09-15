@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
@@ -54,24 +55,25 @@ def _request_with_settings(settings: Settings, *, headers: list[tuple[bytes, byt
     return Request(scope)
 
 
-def _step_up_token(
-    *,
-    settings: Settings,
-    org_id: UUID,
-    subject: str,
-    ttl: int = 300,
-    permissions: int = 0,
-) -> str:
+@dataclass(frozen=True)
+class StepUpTokenSpec:
+    org_id: UUID
+    subject: str = "user-1"
+    ttl: int = 300
+    permissions: int = 0
+
+
+def _step_up_token(settings: Settings, spec: StepUpTokenSpec) -> str:
     return issue_token_opts(
         TokenIssueOpts(
             secret=settings.jwt_hmac_secret or "h" * 32,
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
-            org_id=org_id,
-            permissions=permissions,
-            subject=subject,
+            org_id=spec.org_id,
+            permissions=spec.permissions,
+            subject=spec.subject,
             session_kind=SESSION_KIND_STEP_UP,
-            ttl_seconds=ttl,
+            ttl_seconds=spec.ttl,
         )
     )
 
@@ -170,9 +172,7 @@ def test_step_up_header_missing_sets_false() -> None:
 def test_step_up_header_valid_sets_true() -> None:
     settings = _settings()
     org = uuid4()
-    token = _step_up_token(
-        settings=settings, org_id=org, subject="user-1", permissions=SECRET_USE
-    )
+    token = _step_up_token(settings, StepUpTokenSpec(org, permissions=SECRET_USE))
     req = _step_up_request(settings, token, session_org=org, session_sub="user-1")
     require_step_up_header(req)
     assert req.state.ibex_step_up_ok is True
@@ -191,15 +191,15 @@ def test_step_up_header_denies(case: str) -> None:
     settings = _settings()
     org = uuid4()
     if case == "org_mismatch":
-        token = _step_up_token(settings=settings, org_id=uuid4(), subject="user-1")
+        token = _step_up_token(settings, StepUpTokenSpec(uuid4()))
         req = _step_up_request(settings, token, session_org=uuid4(), session_sub="user-1")
     elif case == "subject_mismatch":
-        token = _step_up_token(settings=settings, org_id=org, subject="user-1")
+        token = _step_up_token(settings, StepUpTokenSpec(org))
         req = _step_up_request(settings, token, session_org=org, session_sub="other-user")
     elif case == "expired":
-        token = _step_up_token(settings=settings, org_id=org, subject="user-1", ttl=-10)
+        token = _step_up_token(settings, StepUpTokenSpec(org, ttl=-10))
         req = _step_up_request(settings, token)
     else:
-        token = _step_up_token(settings=settings, org_id=org, subject="user-1")
+        token = _step_up_token(settings, StepUpTokenSpec(org))
         req = _step_up_request(settings, token, session_org=None, session_sub=None)
     _assert_step_up_denied(req)
