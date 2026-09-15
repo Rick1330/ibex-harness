@@ -17,7 +17,31 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthrough(t *testing.T) {
+func TestUnit_BuildModelPolicyRuntime_NilPostgresDenyAll(t *testing.T) {
+	t.Parallel()
+	base := mustTestRegistry(t)
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := ibexmetrics.NewProxy("mp-denyall-test")
+	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, log, reg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cache != nil {
+		t.Fatal("expected nil cache without postgres")
+	}
+	assertDenyAllResolver(t, resolver)
+	assertNoopDefaults(t, defaults)
+	if !strings.Contains(buf.String(), "model policy deny-all") {
+		t.Fatalf("expected deny-all warn log, got %q", buf.String())
+	}
+	assertModelPolicyEnabledGauge(t, reg, 0)
+}
+
+func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthroughEscapeHatch(t *testing.T) {
 	t.Parallel()
 	base := mustTestRegistry(t)
 	var buf bytes.Buffer
@@ -26,7 +50,7 @@ func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	reg := ibexmetrics.NewProxy("mp-passthrough-test")
-	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, log, reg)
+	cache, resolver, defaults, err := buildModelPolicyRuntime(nil, base, log, reg, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,11 +59,8 @@ func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthrough(t *testing.T) {
 	}
 	assertPassthroughResolver(t, resolver)
 	assertNoopDefaults(t, defaults)
-	if !strings.Contains(buf.String(), "model policy passthrough: org model policies disabled") {
+	if !strings.Contains(buf.String(), "model policy passthrough") {
 		t.Fatalf("expected passthrough warn log, got %q", buf.String())
-	}
-	if !strings.Contains(buf.String(), "POSTGRES_DSN unset or db handle nil") {
-		t.Fatalf("expected reason in warn log, got %q", buf.String())
 	}
 	assertModelPolicyEnabledGauge(t, reg, 0)
 }
@@ -116,6 +137,16 @@ func assertPassthroughResolver(t *testing.T, resolver interface {
 	}
 }
 
+func assertDenyAllResolver(t *testing.T, resolver interface {
+	ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error)
+}) {
+	t.Helper()
+	_, err := resolver.ForOrg(context.Background(), uuid.New(), "gpt-4o")
+	if err != modelpolicy.ErrModelNotAllowedForOrg {
+		t.Fatalf("deny-all err=%v", err)
+	}
+}
+
 func assertNoopDefaults(t *testing.T, defaults modelpolicy.AgentDefaultLoader) {
 	t.Helper()
 	got, err := defaults.Load(context.Background(), uuid.New(), uuid.New())
@@ -147,8 +178,8 @@ func assertModelPolicyEnabledGauge(t *testing.T, reg *ibexmetrics.ProxyRegistry,
 
 type mpFakeLoader struct{}
 
-func (mpFakeLoader) LoadOrg(context.Context, uuid.UUID) ([]modelpolicy.Policy, error) {
-	return nil, nil
+func (mpFakeLoader) LoadOrg(context.Context, uuid.UUID) (modelpolicy.OrgPolicies, error) {
+	return modelpolicy.OrgPolicies{Epoch: 1}, nil
 }
 
 type mpStubProvider struct {

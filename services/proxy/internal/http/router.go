@@ -54,7 +54,7 @@ type RouterDeps struct {
 	GetOrCreateTimeout time.Duration
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
-	// ModelRouter org-gates provider selection (nil → PassthroughRegistry over ProviderRegistry).
+	// ModelRouter org-gates provider selection (nil → DenyAllRegistry).
 	ModelRouter ProviderResolver
 	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
 	AgentDefaults    modelpolicy.AgentDefaultLoader
@@ -82,7 +82,7 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	}
 	modelRouter := deps.ModelRouter
 	if modelRouter == nil {
-		modelRouter = modelpolicy.PassthroughRegistry{Base: providerReg}
+		modelRouter = modelpolicy.DenyAllRegistry{}
 	}
 	mountPublicRoutes(mux, deps)
 	if deps.Validator != nil {

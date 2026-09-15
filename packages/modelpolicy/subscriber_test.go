@@ -34,7 +34,7 @@ func TestSubscriber_MalformedPayloadIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := uuid.New()
-	bad := `{"v":1,"org_id":"` + other.String() + `"}`
+	bad := `{"v":1,"org_id":"` + other.String() + `","epoch":1}`
 	if err := client.Publish(context.Background(), ChannelForOrg(warmOrg), bad).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +149,7 @@ func mustPublishInvalidate(t *testing.T, client redis.UniversalClient, org uuid.
 	}
 	if err := pub.Publish(context.Background(), InvalidateEvent{
 		Version: CurrentEventVersion,
+		Epoch:   1,
 		OrgID:   org.String(),
 	}); err != nil {
 		t.Fatal(err)

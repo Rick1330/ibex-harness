@@ -64,6 +64,7 @@ type envConfig struct {
 	AuthCacheLRUMaxTTL        time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
 	AuthCacheBloomItems       uint              `env:"IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS"`
 	AuthCacheBloomFPRate      float64           `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE"`
+	ModelPolicyAllowPassthrough string          `env:"IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH" envDefault:"false"`
 	PostgresDSN               ibexconfig.Secret `env:"POSTGRES_DSN" secret:"true"`
 	DirectiveCacheTTL         time.Duration     `env:"IBEX_DIRECTIVE_CACHE_TTL"`
 	SessionCacheTTL           time.Duration     `env:"IBEX_SESSION_CACHE_TTL"`
@@ -253,7 +254,19 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
 		return err
 	}
+	if err := applyModelPolicyPassthroughEnv(cfg, envCfg); err != nil {
+		return err
+	}
 	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
+
+func applyModelPolicyPassthroughEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.ModelPolicyAllowPassthrough, false)
+	if err != nil {
+		return fmt.Errorf("IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH: %w", err)
+	}
+	cfg.ModelPolicyAllowPassthrough = enabled
+	return nil
 }
 
 func applyProxyNumericEnv(cfg *Config, envCfg envConfig) {

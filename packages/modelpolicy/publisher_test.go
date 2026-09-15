@@ -17,7 +17,7 @@ func TestRedisPublisher_PublishRoundTrip(t *testing.T) {
 	org := uuid.New()
 	msgCh := subscribeOrgChannel(t, client, org)
 	pub := mustRedisPublisher(t, client)
-	want := InvalidateEvent{Version: CurrentEventVersion, OrgID: org.String()}
+	want := InvalidateEvent{Version: CurrentEventVersion, OrgID: org.String(), Epoch: 1}
 	if err := pub.Publish(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}

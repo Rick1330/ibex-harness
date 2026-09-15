@@ -12,6 +12,7 @@ import (
 type InvalidateEvent struct {
 	Version int    `json:"v"`
 	OrgID   string `json:"org_id"`
+	Epoch   uint64 `json:"epoch"`
 }
 
 // Validate checks required fields for schema version 1.
@@ -24,6 +25,9 @@ func (e InvalidateEvent) Validate() error {
 	}
 	if _, err := uuid.Parse(e.OrgID); err != nil {
 		return fmt.Errorf("modelpolicy: org_id: %w", err)
+	}
+	if e.Epoch < 1 {
+		return fmt.Errorf("modelpolicy: epoch must be >= 1")
 	}
 	return nil
 }

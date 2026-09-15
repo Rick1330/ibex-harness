@@ -14,6 +14,7 @@ const maxPolicyLoadAttempts = 3
 
 type cachedPolicies struct {
 	policies  []Policy
+	epoch     uint64
 	expiresAt time.Time
 	gen       uint64
 }
@@ -21,6 +22,7 @@ type cachedPolicies struct {
 // Cache is a process-local LRU + TTL policy cache in front of PolicyLoader.
 // Invalidate advances a per-org generation under the same lock used for install,
 // so in-flight loads cannot repopulate a stale snapshot (ADR-0075 fail-closed).
+// Entries also store the durable Postgres policy epoch (4.P.1).
 type Cache struct {
 	loader  PolicyLoader
 	cfg     Config
@@ -70,41 +72,69 @@ func (c *Cache) onLRUEvict(key string, entry *cachedPolicies) {
 	}
 }
 
+// Loader returns the underlying PolicyLoader (for epoch poll backstop).
+func (c *Cache) Loader() PolicyLoader {
+	return c.loader
+}
+
 // PoliciesForOrg returns cached or freshly loaded policies for orgID.
 // Loader errors and invalid patterns fail closed.
 func (c *Cache) PoliciesForOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
+	snap, err := c.SnapshotForOrg(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return snap.Policies, nil
+}
+
+// SnapshotForOrg returns policies plus durable epoch.
+func (c *Cache) SnapshotForOrg(ctx context.Context, orgID uuid.UUID) (OrgPolicies, error) {
 	key := orgID.String()
-	if policies, ok := c.lookupFresh(key); ok {
+	if snap, ok := c.lookupFresh(key); ok {
 		c.metrics.IncCacheHit("lru")
-		return policies, nil
+		return snap, nil
 	}
 	c.metrics.IncCacheMiss("lru")
 	return c.loadAndStore(ctx, orgID, key)
 }
 
-func (c *Cache) lookupFresh(key string) ([]Policy, bool) {
+// CachedEpoch returns the cached durable epoch when present and fresh.
+func (c *Cache) CachedEpoch(orgID uuid.UUID) (uint64, bool) {
+	key := orgID.String()
+	c.mu.Lock()
+	entry, ok := c.lru.Get(key)
+	if !ok || entry == nil || entry.gen != c.gens[key] || !c.now().Before(entry.expiresAt) {
+		c.mu.Unlock()
+		return 0, false
+	}
+	epoch := entry.epoch
+	c.mu.Unlock()
+	return epoch, true
+}
+
+func (c *Cache) lookupFresh(key string) (OrgPolicies, bool) {
 	c.mu.Lock()
 	entry, ok := c.lru.Get(key)
 	if !ok || entry == nil {
 		c.mu.Unlock()
-		return nil, false
+		return OrgPolicies{}, false
 	}
 	if entry.gen != c.gens[key] {
 		c.mu.Unlock()
 		c.lru.Remove(key)
-		return nil, false
+		return OrgPolicies{}, false
 	}
 	if !c.now().Before(entry.expiresAt) {
 		c.mu.Unlock()
 		c.lru.Remove(key)
-		return nil, false
+		return OrgPolicies{}, false
 	}
-	out := clonePolicies(entry.policies)
+	out := OrgPolicies{Epoch: entry.epoch, Policies: clonePolicies(entry.policies)}
 	c.mu.Unlock()
 	return out, true
 }
 
-func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, error) {
+func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (OrgPolicies, error) {
 	loadCtx := ctx
 	if c.cfg.LoadTimeout > 0 {
 		var cancel context.CancelFunc
@@ -112,48 +142,51 @@ func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (
 		defer cancel()
 	}
 	for attempt := 0; attempt < maxPolicyLoadAttempts; attempt++ {
-		policies, ok, err := c.loadOnce(loadCtx, orgID, key)
+		snap, ok, err := c.loadOnce(loadCtx, orgID, key)
 		if err != nil {
-			return nil, err
+			return OrgPolicies{}, err
 		}
 		if ok {
-			return policies, nil
+			return snap, nil
 		}
 	}
-	return nil, fmt.Errorf("%w: invalidated during load", ErrPolicyUnavailable)
+	return OrgPolicies{}, fmt.Errorf("%w: invalidated during load", ErrPolicyUnavailable)
 }
 
-func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) ([]Policy, bool, error) {
+func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) (OrgPolicies, bool, error) {
 	c.mu.Lock()
 	gen := c.gens[key]
 	c.mu.Unlock()
 
-	policies, err := c.loader.LoadOrg(ctx, orgID)
+	snap, err := c.loader.LoadOrg(ctx, orgID)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
+		return OrgPolicies{}, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
-	if policies == nil {
-		policies = []Policy{}
+	if snap.Epoch < 1 {
+		return OrgPolicies{}, false, fmt.Errorf("%w: missing policy epoch", ErrPolicyUnavailable)
 	}
-	policies, err = validateLoadedPolicies(policies)
+	if snap.Policies == nil {
+		snap.Policies = []Policy{}
+	}
+	policies, err := validateLoadedPolicies(snap.Policies)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
+		return OrgPolicies{}, false, fmt.Errorf("%w: %w", ErrPolicyUnavailable, err)
 	}
+	snap.Policies = policies
 
 	c.mu.Lock()
 	if c.gens[key] != gen {
 		c.mu.Unlock()
-		// Stale snapshot — do not cache or return; caller retries.
-		return nil, false, nil
+		return OrgPolicies{}, false, nil
 	}
 	entry := &cachedPolicies{
-		policies:  clonePolicies(policies),
+		policies:  clonePolicies(snap.Policies),
+		epoch:     snap.Epoch,
 		expiresAt: c.now().Add(c.cfg.CacheTTL),
 		gen:       gen,
 	}
 	c.mu.Unlock()
 
-	// Add outside the gen lock so onLRUEvict can take mu (capacity eviction).
 	c.lru.Add(key, entry)
 
 	c.mu.Lock()
@@ -161,12 +194,11 @@ func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) ([]Po
 	size := c.lru.Len()
 	c.mu.Unlock()
 	if stale {
-		// Invalidate raced after Add — drop only *this* install if still present.
 		c.removeIfSame(key, entry)
-		return nil, false, nil
+		return OrgPolicies{}, false, nil
 	}
 	c.metrics.SetLRUSize(float64(size))
-	return clonePolicies(policies), true, nil
+	return OrgPolicies{Epoch: snap.Epoch, Policies: clonePolicies(snap.Policies)}, true, nil
 }
 
 // removeIfSame drops key only when the LRU still holds want (pointer identity),

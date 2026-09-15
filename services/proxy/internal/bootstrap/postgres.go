@@ -343,14 +343,19 @@ func buildModelPolicyRuntime(
 	base *provider.Registry,
 	log *logger.Logger,
 	metrics *ibexmetrics.ProxyRegistry,
+	allowPassthrough bool,
 ) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
 	if pgDB == nil || base == nil {
 		reason := "POSTGRES_DSN unset or db handle nil"
 		if base == nil {
 			reason = "provider registry nil"
 		}
-		warnModelPolicyPassthrough(log, metrics, reason)
-		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
+		if allowPassthrough {
+			warnModelPolicyPassthrough(log, metrics, reason)
+			return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
+		}
+		warnModelPolicyDenyAll(log, metrics, reason)
+		return nil, modelpolicy.DenyAllRegistry{}, modelpolicy.NoopAgentDefaults{}, nil
 	}
 	m := modelPolicyMetrics(metrics)
 	cache, reg, err := newOrgPolicyStack(pgDB, base, m)
@@ -370,6 +375,19 @@ func buildModelPolicyRuntime(
 	return cache, reg, agentDefaults, nil
 }
 
+func warnModelPolicyDenyAll(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
+	if metrics != nil {
+		metrics.SetModelPolicyEnabled(false)
+	}
+	if log == nil {
+		return
+	}
+	log.WarnCtx(context.Background(),
+		"model policy deny-all: org model policies unavailable; every model denied",
+		"reason", reason,
+	)
+}
+
 func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
 	if metrics != nil {
 		metrics.SetModelPolicyEnabled(false)
@@ -380,6 +398,7 @@ func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRe
 	log.WarnCtx(context.Background(),
 		"model policy passthrough: org model policies disabled; every model allowed for every org",
 		"reason", reason,
+		"escape_hatch", "IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH",
 	)
 }
 
@@ -430,6 +449,19 @@ func startModelPolicySubscriber(
 		log.InfoCtx(context.Background(), "model-policy subscriber started", "pattern", modelpolicy.ChannelPattern)
 	}
 	return sub, cancel, nil
+}
+
+func startModelPolicyEpochPoller(cache *modelpolicy.Cache, log *logger.Logger) context.CancelFunc {
+	if cache == nil || cache.Loader() == nil {
+		return nil
+	}
+	poller := modelpolicy.NewEpochPoller(cache.Loader(), cache, log, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	go poller.Run(ctx)
+	if log != nil {
+		log.InfoCtx(context.Background(), "model-policy epoch poller started")
+	}
+	return cancel
 }
 
 func rateLimitWatcherSkipReason(

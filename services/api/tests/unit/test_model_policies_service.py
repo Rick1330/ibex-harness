@@ -68,6 +68,33 @@ class _Rows:
         return self._rows[0] if self._rows else None
 
 
+def _epoch_row(epoch: int = 2) -> SimpleNamespace:
+    return SimpleNamespace(epoch=epoch)
+
+
+def _exec_write_then_epoch(policy_row: object, *, epoch: int = 2) -> AsyncMock:
+    """INSERT/UPDATE returning policy row, then epoch bump."""
+    return AsyncMock(
+        side_effect=[
+            _Rows(row=policy_row),
+            _Rows(row=_epoch_row(epoch)),
+        ]
+    )
+
+
+def _exec_patch_then_epoch(policy_row: object, *, epoch: int = 2) -> AsyncMock:
+    return _exec_write_then_epoch(policy_row, epoch=epoch)
+
+
+def _exec_delete_then_epoch(*, epoch: int = 2) -> AsyncMock:
+    return AsyncMock(
+        side_effect=[
+            _Rows(row=SimpleNamespace()),  # delete returning
+            _Rows(row=_epoch_row(epoch)),
+        ]
+    )
+
+
 def _integrity(constraint: str) -> IntegrityError:
     return IntegrityError(
         "INSERT", {}, SimpleNamespace(constraint_name=constraint, diag=None)
@@ -147,8 +174,8 @@ async def test_get_missing_policy_is_not_found() -> None:
 async def test_create_persists_and_publishes() -> None:
     org_id = uuid4()
     session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=_Rows(row=_policy_row(org_id=org_id, model_pattern="gpt-*"))
+    session.execute = _exec_write_then_epoch(
+        _policy_row(org_id=org_id, model_pattern="gpt-*"), epoch=3
     )
     session.commit = AsyncMock()
     publisher = RecordingModelPolicyPublisher()
@@ -158,7 +185,7 @@ async def test_create_persists_and_publishes() -> None:
     )
     assert got.model_pattern == "gpt-*"
     assert got.fallback_chain == []
-    assert publisher.published == [str(org_id)]
+    assert publisher.published == [(str(org_id), 3)]
     session.commit.assert_awaited_once()
 
 
@@ -167,16 +194,14 @@ async def test_create_persists_fallback_chain() -> None:
     org_id = uuid4()
     chain = ["claude-sonnet-4-5", "gpt-4o-mini"]
     session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=_Rows(
-            row=_policy_row(org_id=org_id, model_pattern="gpt-*", fallback_chain=chain)
-        )
+    session.execute = _exec_write_then_epoch(
+        _policy_row(org_id=org_id, model_pattern="gpt-*", fallback_chain=chain)
     )
     session.commit = AsyncMock()
     body = ModelPolicyCreate(model_pattern="gpt-*", allowed=True, fallback_chain=chain)
     got = await svc.create_policy(session, org_id, body, deps=svc.WriteDeps())
     assert got.fallback_chain == chain
-    params = session.execute.await_args.args[1]
+    params = session.execute.await_args_list[0].args[1]
     assert params["fallback_chain"] == chain
 
 
@@ -193,10 +218,8 @@ async def test_patch_updates_fallback_chain() -> None:
     policy_id = uuid4()
     chain = ["gpt-4o-mini"]
     session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=_Rows(
-            row=_policy_row(id=policy_id, org_id=org_id, fallback_chain=chain)
-        )
+    session.execute = _exec_patch_then_epoch(
+        _policy_row(id=policy_id, org_id=org_id, fallback_chain=chain)
     )
     session.commit = AsyncMock()
     body = ModelPolicyPatch(fallback_chain=chain)
@@ -205,7 +228,7 @@ async def test_patch_updates_fallback_chain() -> None:
         svc.PatchArgs(org_id=org_id, policy_id=policy_id, body=body, deps=svc.WriteDeps()),
     )
     assert got.fallback_chain == chain
-    params = session.execute.await_args.args[1]
+    params = session.execute.await_args_list[0].args[1]
     assert params["fallback_chain"] == chain
 
 
@@ -238,23 +261,24 @@ async def test_create_unknown_integrity_error_is_internal() -> None:
 async def test_create_missing_returning_row_is_internal() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=_Rows(row=None))
-    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
     body = ModelPolicyCreate(model_pattern="x*", allowed=True)
     await _expect_api_error(
         svc.create_policy(session, uuid4(), body, deps=svc.WriteDeps()),
         INTERNAL_ERROR,
     )
+    session.rollback.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_create_survives_publish_failure_after_commit() -> None:
     org_id = uuid4()
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=_Rows(row=_policy_row(org_id=org_id)))
+    session.execute = _exec_write_then_epoch(_policy_row(org_id=org_id))
     session.commit = AsyncMock()
 
     class _FailingPublisher:
-        async def publish_policy_update(self, _org_id: str) -> None:
+        async def publish_policy_update(self, _org_id: str, _epoch: int = 1) -> None:
             raise RuntimeError("redis unavailable")
 
     body = ModelPolicyCreate(model_pattern="claude-*", allowed=True)
@@ -272,7 +296,7 @@ async def test_patch_applies_partial_fields_and_publishes() -> None:
         id=policy_id, org_id=org_id, model_pattern="old-*", allowed=False, priority=1
     )
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=_Rows(row=updated))
+    session.execute = _exec_patch_then_epoch(updated, epoch=4)
     session.commit = AsyncMock()
     publisher = RecordingModelPolicyPublisher()
     got = await svc.patch_policy(
@@ -285,8 +309,8 @@ async def test_patch_applies_partial_fields_and_publishes() -> None:
         ),
     )
     assert got.allowed is False
-    assert publisher.published == [str(org_id)]
-    params = session.execute.await_args.args[1]
+    assert publisher.published == [(str(org_id), 4)]
+    params = session.execute.await_args_list[0].args[1]
     assert params["allowed"] is False
     assert params["model_pattern"] is None
     assert params["priority"] is None
@@ -356,13 +380,13 @@ async def test_patch_race_deleted_row_is_not_found() -> None:
 async def test_delete_publishes_after_commit() -> None:
     org_id, policy_id = uuid4(), uuid4()
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=_Rows(row=SimpleNamespace(id=policy_id)))
+    session.execute = _exec_delete_then_epoch(epoch=5)
     session.commit = AsyncMock()
     publisher = RecordingModelPolicyPublisher()
     await svc.delete_policy(
         session, org_id, policy_id, deps=svc.WriteDeps(publisher=publisher)
     )
-    assert publisher.published == [str(org_id)]
+    assert publisher.published == [(str(org_id), 5)]
     session.commit.assert_awaited_once()
 
 

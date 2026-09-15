@@ -75,6 +75,14 @@ WHERE id = CAST(:policy_id AS uuid) AND org_id = CAST(:org_id AS uuid)
 RETURNING id
 """
 
+_BUMP_EPOCH_SQL = """
+INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
+VALUES (CAST(:org_id AS uuid), 1)
+ON CONFLICT (org_id) DO UPDATE
+SET epoch = ibex_core.org_model_policy_meta.epoch + 1
+RETURNING epoch
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class WriteDeps:
@@ -88,6 +96,16 @@ class PatchArgs:
     body: ModelPolicyPatch
     deps: WriteDeps
 
+
+async def _bump_policy_epoch(session: AsyncSession, org_id: UUID) -> int:
+    result = await session.execute(text(_BUMP_EPOCH_SQL), {"org_id": str(org_id)})
+    row = result.first()
+    if row is None:
+        raise ApiError(code=INTERNAL_ERROR, message="Unable to bump model policy epoch")
+    epoch = getattr(row, "epoch", None)
+    if epoch is None:
+        epoch = row[0]
+    return int(epoch)
 
 def _row_to_response(row) -> ModelPolicyResponse:
     chain = getattr(row, "fallback_chain", None) or []
@@ -205,13 +223,15 @@ async def create_policy(
             },
         )
         row = result.first()
+        if row is None:
+            await session.rollback()
+            raise ApiError(code=INTERNAL_ERROR, message="Unable to create model policy")
+        epoch = await _bump_policy_epoch(session, org_id)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         _raise_write_integrity(exc)
-    if row is None:
-        raise ApiError(code=INTERNAL_ERROR, message="Unable to create model policy")
-    await _publish_best_effort(deps.publisher, org_id)
+    await _publish_best_effort(deps.publisher, org_id, epoch)
     return _row_to_response(row)
 
 
@@ -226,14 +246,20 @@ def _patch_has_fields(body: ModelPolicyPatch) -> bool:
 async def patch_policy(session: AsyncSession, args: PatchArgs) -> ModelPolicyResponse:
     if not _patch_has_fields(args.body):
         return await get_policy(session, args.org_id, args.policy_id)
-    row = await _execute_patch(session, args)
-    if row is None:
+    patched = await _execute_patch(session, args)
+    if patched is None:
         raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_MSG)
-    await _publish_best_effort(args.deps.publisher, args.org_id)
-    return _row_to_response(row)
+    await _publish_best_effort(args.deps.publisher, args.org_id, patched.epoch)
+    return _row_to_response(patched.row)
 
 
-async def _execute_patch(session: AsyncSession, args: PatchArgs):
+@dataclass(frozen=True, slots=True)
+class _PatchedPolicy:
+    row: object
+    epoch: int
+
+
+async def _execute_patch(session: AsyncSession, args: PatchArgs) -> _PatchedPolicy | None:
     body = args.body
     try:
         result = await session.execute(
@@ -248,12 +274,15 @@ async def _execute_patch(session: AsyncSession, args: PatchArgs):
             },
         )
         row = result.first()
+        if row is None:
+            await session.rollback()
+            return None
+        epoch = await _bump_policy_epoch(session, args.org_id)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         _raise_write_integrity(exc)
-    return row
-
+    return _PatchedPolicy(row=row, epoch=epoch)
 
 async def delete_policy(
     session: AsyncSession,
@@ -269,16 +298,17 @@ async def delete_policy(
     if result.first() is None:
         await session.rollback()
         raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_MSG)
+    epoch = await _bump_policy_epoch(session, org_id)
     await session.commit()
-    await _publish_best_effort(deps.publisher, org_id)
+    await _publish_best_effort(deps.publisher, org_id, epoch)
 
 
 async def _publish_best_effort(
-    publisher: ModelPolicyPublisher | None, org_id: UUID
+    publisher: ModelPolicyPublisher | None, org_id: UUID, epoch: int
 ) -> None:
     pub = publisher if publisher is not None else NoopModelPolicyPublisher()
     try:
-        await pub.publish_policy_update(str(org_id))
+        await pub.publish_policy_update(str(org_id), epoch)
     except Exception as exc:  # noqa: BLE001 — best-effort; PG already committed
         logger.warning(
             "model-policy publish failed org_id=%s error_class=%s",
