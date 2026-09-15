@@ -97,6 +97,40 @@ func TestSchemaObjectsExist(t *testing.T) {
 	assertCoreTablesRLSEnabled(t, ctx, db, tables)
 }
 
+func TestIbexAppRoleAttributes_NoSuperuserNoBypassRLS(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	ctx := context.Background()
+	var rolsuper, rolbypassrls bool
+	err := db.QueryRowContext(ctx, `
+		SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'ibex_app'
+	`).Scan(&rolsuper, &rolbypassrls)
+	if err != nil {
+		t.Fatalf("pg_roles: %v", err)
+	}
+	if rolsuper || rolbypassrls {
+		t.Fatalf("ibex_app rolsuper=%v rolbypassrls=%v", rolsuper, rolbypassrls)
+	}
+}
+
+func TestOperatorActionLedgerExists(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	ctx := context.Background()
+	assertCoreTablesExist(t, ctx, db, []string{"operator_action_ledger", "user_totp_secrets", "org_model_policy_meta"})
+	assertCoreTablesRLSEnabled(t, ctx, db, []string{"operator_action_ledger", "user_totp_secrets", "org_model_policy_meta"})
+}
+
 func TestRLSUsersAndAgentsIsolation(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
