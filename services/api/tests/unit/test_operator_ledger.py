@@ -48,3 +48,37 @@ def test_dual_approval_hook_ok_when_different_actor() -> None:
         second_actor_user_id=uuid4(),
         actor_user_id=uuid4(),
     )
+
+
+def test_dual_approval_noop_when_not_required() -> None:
+    assert_dual_approval_satisfied(
+        requires_second_actor=False,
+        second_actor_user_id=None,
+        actor_user_id=uuid4(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_record_ledger_row_inserts_via_repo() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.services.operator_ledger import record_ledger_row
+
+    session = AsyncMock()
+    row_id = uuid4()
+
+    async def fake_insert(session, **kwargs):
+        assert kwargs["preview_token"] == "preview-1"
+        assert kwargs["org_id"]
+        return row_id
+
+    got = await record_ledger_row(
+        session,
+        org_id=uuid4(),
+        actor_user_id=uuid4(),
+        action="export",
+        preview_token=" preview-1 ",
+        idempotency_key="idem-1",
+        insert=fake_insert,
+    )
+    assert got == row_id

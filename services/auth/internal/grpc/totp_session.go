@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -23,6 +24,7 @@ type totpPort interface {
 
 type sessionIssuerPort interface {
 	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 }
 
 func (s *Server) BeginTotpEnrollment(
@@ -95,10 +97,22 @@ func (s *Server) CreateStepUpToken(
 
 func (s *Server) IssueOperatorSession(
 	ctx context.Context,
-	_ *authv1.IssueOperatorSessionRequest,
+	req *authv1.IssueOperatorSessionRequest,
 ) (*authv1.IssueOperatorSessionResponse, error) {
 	if s.sessionIssuer == nil {
 		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+	}
+	if rt := strings.TrimSpace(req.GetRefreshToken()); rt != "" {
+		access, refresh, accessExp, refreshExp, err := s.sessionIssuer.RefreshPair(rt)
+		if err != nil {
+			return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
+		}
+		return &authv1.IssueOperatorSessionResponse{
+			AccessToken:      access,
+			RefreshToken:     refresh,
+			AccessExpiresAt:  timestamppb.New(accessExp),
+			RefreshExpiresAt: timestamppb.New(refreshExp),
+		}, nil
 	}
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
@@ -129,6 +143,8 @@ func mapTotpErr(err error) error {
 		return status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
 	case errors.Is(err, service.ErrTOTPInvalidCode):
 		return status.Error(codes.Unauthenticated, "invalid totp code")
+	case errors.Is(err, service.ErrTOTPLockedOut):
+		return status.Error(codes.ResourceExhausted, "totp attempt limit exceeded")
 	case errors.Is(err, service.ErrTOTPNotEnrolled):
 		return status.Error(codes.FailedPrecondition, "totp not enrolled")
 	case errors.Is(err, service.ErrTOTPAlreadyDone):

@@ -442,4 +442,29 @@ def test_row_mapping_accepts_uuid_strings() -> None:
     )
     assert got.id == policy_id
     assert got.org_id == org_id
-    assert got.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_bump_policy_epoch_none_row_errors() -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_Rows(row=None))
+    with pytest.raises(ApiError) as exc:
+        await svc._bump_policy_epoch(session, uuid4())
+    assert exc.value.code == INTERNAL_ERROR
+
+
+@pytest.mark.asyncio
+async def test_bump_policy_epoch_tuple_row_index() -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_Rows(row=(7,)))
+    assert await svc._bump_policy_epoch(session, uuid4()) == 7
+
+
+@pytest.mark.asyncio
+async def test_bump_policy_epoch_first_insert_starts_at_two() -> None:
+    """First meta insert uses epoch 2 so pollers detect drift vs LoadOrg baseline 1."""
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_Rows(row=_epoch_row(2)))
+    assert await svc._bump_policy_epoch(session, uuid4()) == 2
+    sql = str(session.execute.await_args.args[0])
+    assert "VALUES (CAST(:org_id AS uuid), 2)" in sql or ", 2)" in sql

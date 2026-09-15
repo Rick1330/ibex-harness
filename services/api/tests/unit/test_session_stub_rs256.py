@@ -1,0 +1,138 @@
+"""RS256 dual-verify and CSRF edge coverage for session_stub."""
+
+from __future__ import annotations
+
+import base64
+import json
+from uuid import uuid4
+
+import pytest
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+from app.session_stub import (
+    SESSION_KIND_ACCESS,
+    SessionStubError,
+    TokenVerifyOpts,
+    mint_csrf_token,
+    verify_csrf_token,
+    verify_token_opts,
+)
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _rsa_keypair() -> tuple[rsa.RSAPrivateKey, str]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub_pem = (
+        key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
+    return key, pub_pem
+
+
+def _sign_rs256(private_key: rsa.RSAPrivateKey, header: dict, payload: dict) -> str:
+    hb = _b64url(json.dumps(header, separators=(",", ":")).encode())
+    pb = _b64url(json.dumps(payload, separators=(",", ":")).encode())
+    body = f"{hb}.{pb}"
+    sig = private_key.sign(body.encode("ascii"), padding.PKCS1v15(), hashes.SHA256())
+    return f"{body}.{_b64url(sig)}"
+
+
+def _access_payload(org_id: str, *, exp_offset: int = 60) -> dict:
+    import time
+
+    now = int(time.time())
+    return {
+        "iss": "ibex-harness",
+        "aud": "ibex-dashboard",
+        "sub": "user-1",
+        "org_id": org_id,
+        "permissions": 1,
+        "session_kind": SESSION_KIND_ACCESS,
+        "iat": now,
+        "exp": now + exp_offset,
+        "jti": "jti-1",
+    }
+
+
+def test_verify_rs256_ok_and_multi_key_rotation() -> None:
+    org = str(uuid4())
+    key, pub = _rsa_keypair()
+    _other, other_pub = _rsa_keypair()
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    claims = verify_token_opts(
+        tok,
+        TokenVerifyOpts(
+            secret=None,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            expect_kind=SESSION_KIND_ACCESS,
+            public_keys_pem=other_pub + "\n" + pub,
+        ),
+    )
+    assert str(claims.org_id) == org
+
+
+def test_verify_rs256_rejects_bad_signature_and_empty_pem() -> None:
+    org = str(uuid4())
+    key, _ = _rsa_keypair()
+    _, wrong_pub = _rsa_keypair()
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, _access_payload(org))
+    with pytest.raises(SessionStubError, match="bad signature|no public keys"):
+        verify_token_opts(
+            tok,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=wrong_pub,
+            ),
+        )
+    with pytest.raises(SessionStubError, match="no public keys|no verify material"):
+        verify_token_opts(
+            tok,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem="",
+            ),
+        )
+
+
+def test_verify_rejects_non_object_header_and_missing_material() -> None:
+    hb = _b64url(b"[1,2,3]")
+    pb = _b64url(b"{}")
+    with pytest.raises(SessionStubError, match="bad header"):
+        verify_token_opts(
+            f"{hb}.{pb}.sig",
+            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
+        )
+    # Valid JSON object header + payload, but no secret/keys → no verify material.
+    ok_h = _b64url(json.dumps({"alg": "HS256"}).encode())
+    ok_p = _b64url(json.dumps({"iss": "i"}).encode())
+    with pytest.raises(SessionStubError, match="no verify material"):
+        verify_token_opts(
+            f"{ok_h}.{ok_p}.{_b64url(b'x')}",
+            TokenVerifyOpts(
+                secret=None,
+                issuer="i",
+                audience="a",
+                expect_kind="access",
+                public_keys_pem=None,
+            ),
+        )
+
+def test_csrf_missing_cookie_or_header_false() -> None:
+    csrf = mint_csrf_token(secret="c" * 32)
+    assert not verify_csrf_token(secret="c" * 32, cookie_value=None, header_value=csrf)
+    assert not verify_csrf_token(secret="c" * 32, cookie_value=csrf, header_value=None)

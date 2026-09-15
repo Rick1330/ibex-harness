@@ -114,7 +114,7 @@ func TestUnit_CreateProviderCredential_HappyPath(t *testing.T) {
 	validated := time.Now().UTC().Truncate(time.Second)
 	fake := &fakeCredAPI{createFn: happyCreateFn(t, org, validated)}
 	resp, err := newCredServer(t, fake).CreateProviderCredential(settingsWriteCtx(org), &authv1.CreateProviderCredentialRequest{
-		OrgId: org, ProviderName: "openai", ApiKey: "sk-live", BaseUrl: "https://example.com",
+		OrgId: org, ProviderName: "openai", ApiKey: "sk-live", BaseUrl: "https://1.1.1.1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func assertCreateCredResponse(t *testing.T, resp *authv1.CreateProviderCredentia
 	if resp.GetKeyHint() != "live" {
 		t.Fatalf("hint=%q", resp.GetKeyHint())
 	}
-	if resp.GetBaseUrl() != "https://example.com" {
+	if resp.GetBaseUrl() != "https://1.1.1.1" {
 		t.Fatalf("base=%q", resp.GetBaseUrl())
 	}
 	if resp.GetLastValidatedAt() == nil {
@@ -251,7 +251,7 @@ func TestUnit_GetProviderCredential_Paths(t *testing.T) {
 				t.Fatalf("ref=%+v", ref)
 			}
 			return service.GetProviderCredentialResult{
-				APIKey: "sk-ant", BaseURL: "https://example.com",
+				APIKey: "sk-ant", BaseURL: "https://1.1.1.1",
 			}, nil
 		},
 	}
@@ -294,7 +294,7 @@ func assertGetCredResponse(t *testing.T, resp *authv1.GetProviderCredentialRespo
 	if resp.GetApiKey() != "sk-ant" {
 		t.Fatalf("api_key=%q", resp.GetApiKey())
 	}
-	if resp.GetBaseUrl() != "https://example.com" {
+	if resp.GetBaseUrl() != "https://1.1.1.1" {
 		t.Fatalf("base=%q", resp.GetBaseUrl())
 	}
 	if resp.GetIsPlatformDefault() {

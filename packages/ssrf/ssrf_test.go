@@ -24,6 +24,11 @@ func TestIsBlockedIP(t *testing.T) {
 		{"100.64.0.1", true},
 		{"192.0.2.1", true},
 		{"0.0.0.0", true},
+		{"198.18.0.1", true},
+		{"198.19.255.255", true},
+		{"255.255.255.255", true},
+		{"2001:db8::1", true},
+		{"2001:db9::1", false},
 	}
 	for _, tc := range cases {
 		got := ssrf.IsBlockedIP(net.ParseIP(tc.ip))
@@ -43,6 +48,7 @@ func TestValidateHTTPURL_BlocksPrivateAndMetadata(t *testing.T) {
 		"https://192.168.0.5:443/v1",
 		"ftp://example.com/v1",
 		"not-a-url",
+		"http://8.8.8.8/v1", // http scheme rejected for provider BaseURL
 	} {
 		if err := ssrf.ValidateHTTPURL(ctx, raw); err == nil {
 			t.Fatalf("expected deny for %q", raw)
@@ -61,5 +67,12 @@ func TestValidateAndPinHTTPURL_LiteralPublic(t *testing.T) {
 	}
 	if pin.ConnectIP != "8.8.8.8" || pin.ServerName != "8.8.8.8" {
 		t.Fatalf("pin=%+v", pin)
+	}
+}
+
+func TestValidateAndPinHTTPURL_RejectsHTTP(t *testing.T) {
+	t.Parallel()
+	if _, err := ssrf.ValidateAndPinHTTPURL(context.Background(), "http://8.8.8.8/v1"); err == nil {
+		t.Fatal("expected http scheme reject")
 	}
 }

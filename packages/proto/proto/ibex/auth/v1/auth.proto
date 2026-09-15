@@ -229,7 +229,9 @@ message CreateStepUpTokenResponse {
 }
 
 message IssueOperatorSessionRequest {
-  // Empty: issues for the authenticated caller from metadata.
+  // When empty, issues for the authenticated PAT caller.
+  // When set, Auth verifies this refresh JWT and rotates access+refresh (RS256).
+  string refresh_token = 1;
 }
 
 message IssueOperatorSessionResponse {

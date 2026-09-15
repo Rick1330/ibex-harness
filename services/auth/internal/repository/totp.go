@@ -71,14 +71,35 @@ func (r *TotpSecretRepo) Get(ctx context.Context, orgID, userID string) (TotpSec
 
 // Confirm marks enrollment confirmed.
 func (r *TotpSecretRepo) Confirm(ctx context.Context, orgID, userID string, at time.Time) error {
+	return r.ConfirmCiphertext(ctx, orgID, userID, nil, at)
+}
+
+// ConfirmCiphertext confirms only when ciphertext still matches the validated secret
+// (compare-and-set against concurrent BeginEnrollment replacement). nil ciphertext
+// falls back to org/user-only match for legacy callers.
+func (r *TotpSecretRepo) ConfirmCiphertext(
+	ctx context.Context, orgID, userID string, ciphertext []byte, at time.Time,
+) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("totp repo: nil db")
 	}
-	res, err := r.db.ExecContext(ctx, `
-		UPDATE ibex_core.user_totp_secrets
-		SET confirmed_at = $3, updated_at = NOW()
-		WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL
-	`, orgID, userID, at)
+	var (
+		res sql.Result
+		err error
+	)
+	if len(ciphertext) == 0 {
+		res, err = r.db.ExecContext(ctx, `
+			UPDATE ibex_core.user_totp_secrets
+			SET confirmed_at = $3, updated_at = NOW()
+			WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL
+		`, orgID, userID, at)
+	} else {
+		res, err = r.db.ExecContext(ctx, `
+			UPDATE ibex_core.user_totp_secrets
+			SET confirmed_at = $4, updated_at = NOW()
+			WHERE org_id = $1 AND user_id = $2 AND confirmed_at IS NULL AND ciphertext = $3
+		`, orgID, userID, ciphertext, at)
+	}
 	if err != nil {
 		return err
 	}

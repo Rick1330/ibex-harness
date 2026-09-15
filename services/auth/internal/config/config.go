@@ -69,10 +69,32 @@ func (c Config) Validate() error {
 	if err := validateCredentialsMasterKey(c); err != nil {
 		return err
 	}
+	if err := validateTOTPSessionConfig(c); err != nil {
+		return err
+	}
 	if err := validateValidateTokenRPM(c.ValidateTokenRPM); err != nil {
 		return err
 	}
 	return shutdown.ValidateTimeout(c.ShutdownTimeout)
+}
+
+func validateTOTPSessionConfig(c Config) error {
+	if !c.TOTPEnabled {
+		return nil
+	}
+	if strings.TrimSpace(c.CredentialsMasterKey) == "" {
+		return fmt.Errorf("IBEX_CREDENTIALS_MASTER_KEY is required when IBEX_AUTH_TOTP_ENABLED=true")
+	}
+	if strings.TrimSpace(c.JWTPrivateKeyPEM) == "" {
+		return fmt.Errorf("JWT_PRIVATE_KEY_PEM is required when IBEX_AUTH_TOTP_ENABLED=true")
+	}
+	if strings.TrimSpace(c.JWTIssuer) == "" {
+		return fmt.Errorf("JWT_ISSUER is required when IBEX_AUTH_TOTP_ENABLED=true")
+	}
+	if strings.TrimSpace(c.JWTAudience) == "" {
+		return fmt.Errorf("JWT_AUDIENCE is required when IBEX_AUTH_TOTP_ENABLED=true")
+	}
+	return nil
 }
 
 func validateCredentialsMasterKey(c Config) error {

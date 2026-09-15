@@ -2,15 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from typing import Protocol
 from uuid import UUID
 
 from apierror_py import INSUFFICIENT_PERMISSIONS
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
+from app.repositories import operator_ledger as ledger_repo
 
 _PREVIEW_REQUIRED = "preview token required"
+
+
+class LedgerInsert(Protocol):
+    def __call__(
+        self,
+        session: AsyncSession,
+        *,
+        org_id: UUID,
+        actor_user_id: UUID,
+        action: str,
+        preview_token: str,
+        idempotency_key: str,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        step_up_jti: str | None = None,
+        requires_second_actor: bool = False,
+    ) -> Awaitable[UUID]: ...
 
 
 def assert_preview_token(preview_token: str | None) -> str:
@@ -33,36 +52,23 @@ async def record_ledger_row(
     resource_id: str | None = None,
     step_up_jti: str | None = None,
     requires_second_actor: bool = False,
+    insert: LedgerInsert | None = None,
 ) -> UUID:
-    """Insert a ledger row. Callers must assert_preview_token first."""
+    """Insert a ledger row. Callers must assert_preview_token first (also enforced here)."""
     preview = assert_preview_token(preview_token)
-    result = await session.execute(
-        text(
-            """
-            INSERT INTO ibex_core.operator_action_ledger (
-                org_id, actor_user_id, action, resource_type, resource_id,
-                preview_token, step_up_jti, requires_second_actor, idempotency_key
-            ) VALUES (
-                :org_id, :actor_user_id, :action, :resource_type, :resource_id,
-                :preview_token, :step_up_jti, :requires_second_actor, :idempotency_key
-            )
-            RETURNING id
-            """
-        ),
-        {
-            "org_id": str(org_id),
-            "actor_user_id": str(actor_user_id),
-            "action": action,
-            "resource_type": resource_type,
-            "resource_id": resource_id,
-            "preview_token": preview,
-            "step_up_jti": step_up_jti,
-            "requires_second_actor": requires_second_actor,
-            "idempotency_key": idempotency_key,
-        },
+    write: LedgerInsert = insert or ledger_repo.insert_ledger_row
+    return await write(
+        session,
+        org_id=org_id,
+        actor_user_id=actor_user_id,
+        action=action,
+        preview_token=preview,
+        idempotency_key=idempotency_key,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        step_up_jti=step_up_jti,
+        requires_second_actor=requires_second_actor,
     )
-    row_id = result.scalar_one()
-    return UUID(str(row_id))
 
 
 def assert_dual_approval_satisfied(

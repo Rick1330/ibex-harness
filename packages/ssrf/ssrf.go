@@ -21,6 +21,24 @@ var (
 	ErrInvalidURL = errors.New("ssrf: invalid url")
 )
 
+// lookupIPAddr resolves hostnames; tests may replace it via SetLookupIPAddrForTest.
+var lookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return net.DefaultResolver.LookupIPAddr(ctx, host)
+}
+
+// SetLookupIPAddrForTest replaces hostname resolution (tests only). Restore via cleanup.
+func SetLookupIPAddrForTest(fn func(context.Context, string) ([]net.IPAddr, error)) func() {
+	prev := lookupIPAddr
+	if fn == nil {
+		lookupIPAddr = func(ctx context.Context, host string) ([]net.IPAddr, error) {
+			return net.DefaultResolver.LookupIPAddr(ctx, host)
+		}
+	} else {
+		lookupIPAddr = fn
+	}
+	return func() { lookupIPAddr = prev }
+}
+
 // IsBlockedIP reports whether addr is unsuitable for outbound provider dials.
 func IsBlockedIP(ip net.IP) bool {
 	if ip == nil {
@@ -36,7 +54,10 @@ func IsBlockedIP(ip net.IP) bool {
 		ip.IsMulticast() ||
 		ip.IsUnspecified() ||
 		isCGNAT(ip) ||
-		isDocumentation(ip)
+		isDocumentation(ip) ||
+		isBenchmarking(ip) ||
+		isBroadcast(ip) ||
+		isIPv6Documentation(ip)
 }
 
 func isCGNAT(ip net.IP) bool {
@@ -66,6 +87,28 @@ func isDocumentation(ip net.IP) bool {
 	return false
 }
 
+func isBenchmarking(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	// 198.18.0.0/15 (RFC 2544)
+	return ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19)
+}
+
+func isBroadcast(ip net.IP) bool {
+	ip4 := ip.To4()
+	return ip4 != nil && ip4[0] == 255 && ip4[1] == 255 && ip4[2] == 255 && ip4[3] == 255
+}
+
+func isIPv6Documentation(ip net.IP) bool {
+	if ip.To4() != nil {
+		return false
+	}
+	// 2001:db8::/32 (RFC 3849)
+	return len(ip) == net.IPv6len && ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x0d && ip[3] == 0xb8
+}
+
 // ValidateHTTPURL parses raw, requires http/https, resolves the host, and rejects
 // if any resolved address is blocked. empty raw is allowed (no custom base URL).
 func ValidateHTTPURL(ctx context.Context, raw string) error {
@@ -89,7 +132,8 @@ func validateHTTPURLParts(ctx context.Context, raw string) (urlParts, error) {
 		return urlParts{}, ErrInvalidURL
 	}
 	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
+	// Provider BaseURL must be https; empty raw (platform default) is allowed above.
+	if scheme != "https" {
 		return urlParts{}, ErrInvalidURL
 	}
 	serverName := u.Hostname()
@@ -110,7 +154,7 @@ func resolvePublicConnectIP(ctx context.Context, host string) (string, error) {
 		}
 		return lit.String(), nil
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	addrs, err := lookupIPAddr(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		return "", ErrBlockedDestination
 	}
@@ -163,7 +207,7 @@ func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 		var d net.Dialer
 		return d.DialContext(ctx, network, addr)
 	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	addrs, err := lookupIPAddr(ctx, host)
 	if err != nil || len(addrs) == 0 {
 		return nil, ErrBlockedDestination
 	}
@@ -207,6 +251,8 @@ func ClientWithSafeDial(base *http.Client) *http.Client {
 
 // ClientForPinnedDial returns a client that dials via SafeDialContext and, when
 // serverName is set, presents that name for TLS SNI (IP-literal BaseURL pin).
+// Redirects are restricted to the original pinned host so credentials are not
+// forwarded cross-host.
 func ClientForPinnedDial(base *http.Client, serverName string) *http.Client {
 	if base == nil {
 		base = &http.Client{Timeout: 30 * time.Second}
@@ -220,6 +266,16 @@ func ClientForPinnedDial(base *http.Client, serverName string) *http.Client {
 			t.TLSClientConfig = t.TLSClientConfig.Clone()
 		}
 		t.TLSClientConfig.ServerName = serverName
+		pinnedHost := strings.ToLower(serverName)
+		out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("ssrf: too many redirects")
+			}
+			if strings.ToLower(req.URL.Hostname()) != pinnedHost {
+				return fmt.Errorf("%w: redirect host %q != pinned %q", ErrBlockedDestination, req.URL.Hostname(), pinnedHost)
+			}
+			return nil
+		}
 	}
 	out.Transport = t
 	return &out

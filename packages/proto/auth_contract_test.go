@@ -120,6 +120,10 @@ func TestAuthProtoContractADR0006(t *testing.T) {
 		"GetProviderCredential",
 		"DeleteProviderCredential",
 		"ListProviderCredentials",
+		"BeginTotpEnrollment",
+		"ConfirmTotpEnrollment",
+		"CreateStepUpToken",
+		"IssueOperatorSession",
 	})
 
 	createResp := findMessage(fd, "CreateTokenResponse")

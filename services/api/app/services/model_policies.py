@@ -77,7 +77,7 @@ RETURNING id
 
 _BUMP_EPOCH_SQL = """
 INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
-VALUES (CAST(:org_id AS uuid), 1)
+VALUES (CAST(:org_id AS uuid), 2)
 ON CONFLICT (org_id) DO UPDATE
 SET epoch = ibex_core.org_model_policy_meta.epoch + 1
 RETURNING epoch

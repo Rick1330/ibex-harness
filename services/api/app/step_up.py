@@ -46,9 +46,11 @@ async def require_step_up_header(request: Request) -> None:
             code=INSUFFICIENT_PERMISSIONS,
             message="Step-up authentication required",
         ) from exc
-    # Bind step-up subject to session org when available on request.state.
     session_org = getattr(request.state, "ibex_session_org_id", None)
+    session_sub = getattr(request.state, "ibex_session_sub", None)
     if session_org is not None and str(claims.org_id) != str(session_org):
+        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
+    if session_sub is not None and (not claims.sub or str(claims.sub) != str(session_sub)):
         raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
     request.state.ibex_step_up_ok = True
     request.state.ibex_step_up_jti = claims.jti

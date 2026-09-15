@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	ibexcrypto "github.com/Rick1330/ibex-harness/packages/crypto"
@@ -24,15 +25,28 @@ var (
 	ErrTOTPNotEnrolled = errors.New("totp not enrolled")
 	// ErrTOTPAlreadyDone is returned when enrollment is already confirmed.
 	ErrTOTPAlreadyDone = errors.New("totp already confirmed")
+	// ErrTOTPLockedOut is returned after too many failed TOTP attempts.
+	ErrTOTPLockedOut = errors.New("totp attempt limit exceeded")
 	// ErrSessionJWTMissing is returned when step-up issuance needs RS256 but none is configured.
 	ErrSessionJWTMissing = errors.New("session jwt issuer not configured")
+)
+
+const (
+	totpMaxFailures = 5
+	totpLockTTL     = 15 * time.Minute
 )
 
 // totpStore persists sealed TOTP secrets.
 type totpStore interface {
 	UpsertPending(ctx context.Context, row repository.TotpSecretRow) error
 	Get(ctx context.Context, orgID, userID string) (repository.TotpSecretRow, error)
-	Confirm(ctx context.Context, orgID, userID string, at time.Time) error
+	ConfirmCiphertext(ctx context.Context, orgID, userID string, ciphertext []byte, at time.Time) error
+}
+
+type totpAttemptGate interface {
+	Allow(orgID, userID string) error
+	Reset(orgID, userID string)
+	Fail(orgID, userID string)
 }
 
 // TotpService handles enrollment and step-up issuance.
@@ -44,6 +58,7 @@ type TotpService struct {
 	enabled  bool
 	issuer   *sessionjwt.Issuer
 	issuerOK bool
+	attempts totpAttemptGate
 }
 
 // NewTotpService constructs a TOTP service. enabled gates all RPCs.
@@ -55,7 +70,10 @@ func NewTotpService(repo totpStore, kek MasterKeyConfig, enabled bool, jwt *sess
 	if keyID == "" {
 		keyID = "v1"
 	}
-	svc := &TotpService{repo: repo, keyID: keyID, enabled: enabled, issuer: jwt, issuerOK: jwt != nil}
+	svc := &TotpService{
+		repo: repo, keyID: keyID, enabled: enabled, issuer: jwt, issuerOK: jwt != nil,
+		attempts: newMemoryTOTPAttempts(totpMaxFailures, totpLockTTL),
+	}
 	if strings.TrimSpace(kek.Encoded) == "" {
 		return svc, nil
 	}
@@ -80,9 +98,7 @@ func (s *TotpService) BeginEnrollment(ctx context.Context, orgID, userID, accoun
 	if orgID == "" || userID == "" {
 		return "", ErrInvalidArgument
 	}
-	if existing, err := s.repo.Get(ctx, orgID, userID); err == nil && existing.ConfirmedAt.Valid {
-		return "", ErrTOTPAlreadyDone
-	} else if err != nil && !errors.Is(err, repository.ErrTotpSecretNotFound) {
+	if err := s.ensureEnrollmentAllowed(ctx, orgID, userID); err != nil {
 		return "", err
 	}
 	key, err := totp.Generate(totp.GenerateOpts{
@@ -105,29 +121,44 @@ func (s *TotpService) BeginEnrollment(ctx context.Context, orgID, userID, accoun
 	return key.URL(), nil
 }
 
+func (s *TotpService) ensureEnrollmentAllowed(ctx context.Context, orgID, userID string) error {
+	existing, err := s.repo.Get(ctx, orgID, userID)
+	if err == nil && existing.ConfirmedAt.Valid {
+		return ErrTOTPAlreadyDone
+	}
+	if err != nil && !errors.Is(err, repository.ErrTotpSecretNotFound) {
+		return err
+	}
+	return nil
+}
+
 // ConfirmEnrollment verifies a code against the pending secret.
 func (s *TotpService) ConfirmEnrollment(ctx context.Context, orgID, userID, code string) error {
-	secret, err := s.loadSecret(ctx, orgID, userID)
+	if err := s.attempts.Allow(orgID, userID); err != nil {
+		return err
+	}
+	secret, row, err := s.loadPendingSecret(ctx, orgID, userID)
 	if err != nil {
 		return err
 	}
-	row, err := s.repo.Get(ctx, orgID, userID)
-	if err != nil {
-		return mapTotpStoreErr(err)
-	}
-	if row.ConfirmedAt.Valid {
-		return ErrTOTPAlreadyDone
-	}
 	if !totp.Validate(strings.TrimSpace(code), secret) {
+		s.attempts.Fail(orgID, userID)
 		return ErrTOTPInvalidCode
 	}
-	return s.repo.Confirm(ctx, orgID, userID, time.Now().UTC())
+	if err := s.repo.ConfirmCiphertext(ctx, orgID, userID, row.Ciphertext, time.Now().UTC()); err != nil {
+		return err
+	}
+	s.attempts.Reset(orgID, userID)
+	return nil
 }
 
 // CreateStepUp verifies TOTP for a confirmed enrollment and issues a step-up JWT.
 func (s *TotpService) CreateStepUp(ctx context.Context, orgID, userID, code string, permissions int64) (string, time.Time, error) {
 	if !s.issuerOK {
 		return "", time.Time{}, ErrSessionJWTMissing
+	}
+	if err := s.attempts.Allow(orgID, userID); err != nil {
+		return "", time.Time{}, err
 	}
 	secret, err := s.loadSecret(ctx, orgID, userID)
 	if err != nil {
@@ -141,9 +172,26 @@ func (s *TotpService) CreateStepUp(ctx context.Context, orgID, userID, code stri
 		return "", time.Time{}, ErrTOTPNotEnrolled
 	}
 	if !totp.Validate(strings.TrimSpace(code), secret) {
+		s.attempts.Fail(orgID, userID)
 		return "", time.Time{}, ErrTOTPInvalidCode
 	}
+	s.attempts.Reset(orgID, userID)
 	return s.issuer.IssueStepUp(userID, orgID, permissions)
+}
+
+func (s *TotpService) loadPendingSecret(ctx context.Context, orgID, userID string) (string, repository.TotpSecretRow, error) {
+	secret, err := s.loadSecret(ctx, orgID, userID)
+	if err != nil {
+		return "", repository.TotpSecretRow{}, err
+	}
+	row, err := s.repo.Get(ctx, orgID, userID)
+	if err != nil {
+		return "", repository.TotpSecretRow{}, mapTotpStoreErr(err)
+	}
+	if row.ConfirmedAt.Valid {
+		return "", repository.TotpSecretRow{}, ErrTOTPAlreadyDone
+	}
+	return secret, row, nil
 }
 
 func (s *TotpService) loadSecret(ctx context.Context, orgID, userID string) (string, error) {
@@ -172,4 +220,60 @@ func mapTotpStoreErr(err error) error {
 		return ErrTOTPNotEnrolled
 	}
 	return err
+}
+
+type memoryTOTPAttempts struct {
+	mu      sync.Mutex
+	max     int
+	lockTTL time.Duration
+	now     func() time.Time
+	entries map[string]totpAttemptEntry
+}
+
+type totpAttemptEntry struct {
+	failures int
+	lockedUntil time.Time
+}
+
+func newMemoryTOTPAttempts(max int, lockTTL time.Duration) *memoryTOTPAttempts {
+	return &memoryTOTPAttempts{
+		max: max, lockTTL: lockTTL, now: time.Now, entries: make(map[string]totpAttemptEntry),
+	}
+}
+
+func totpAttemptKey(orgID, userID string) string {
+	return strings.TrimSpace(orgID) + ":" + strings.TrimSpace(userID)
+}
+
+func (m *memoryTOTPAttempts) Allow(orgID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := totpAttemptKey(orgID, userID)
+	ent := m.entries[key]
+	if !ent.lockedUntil.IsZero() && m.now().Before(ent.lockedUntil) {
+		return ErrTOTPLockedOut
+	}
+	if !ent.lockedUntil.IsZero() && !m.now().Before(ent.lockedUntil) {
+		delete(m.entries, key)
+	}
+	return nil
+}
+
+func (m *memoryTOTPAttempts) Fail(orgID, userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := totpAttemptKey(orgID, userID)
+	ent := m.entries[key]
+	ent.failures++
+	if ent.failures >= m.max {
+		ent.lockedUntil = m.now().Add(m.lockTTL)
+		ent.failures = 0
+	}
+	m.entries[key] = ent
+}
+
+func (m *memoryTOTPAttempts) Reset(orgID, userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.entries, totpAttemptKey(orgID, userID))
 }

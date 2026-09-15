@@ -110,6 +110,23 @@ func (i *Issuer) IssueStepUp(sub, orgID string, permissions int64) (token string
 	return token, exp, err
 }
 
+// RefreshPair verifies a refresh JWT with the issuer's public key and rotates the pair.
+func (i *Issuer) RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error) {
+	v := &Verifier{
+		keys:     []*rsa.PublicKey{&i.key.PublicKey},
+		issuer:   i.issuer,
+		audience: i.audience,
+	}
+	claims, err := v.Verify(refreshToken, KindRefresh)
+	if err != nil {
+		return "", "", time.Time{}, time.Time{}, err
+	}
+	if claims.Subject == "" || claims.OrgID == "" {
+		return "", "", time.Time{}, time.Time{}, ErrInvalidToken
+	}
+	return i.IssuePair(claims.Subject, claims.OrgID, claims.Permissions)
+}
+
 func (i *Issuer) sign(claims Claims) (string, error) {
 	header := map[string]string{"alg": algRS256, "typ": "JWT"}
 	hb, err := json.Marshal(header)

@@ -96,6 +96,34 @@ def test_assert_operator_permission_ok_with_step_up() -> None:
     )
 
 
+def test_assert_operator_permission_bitmap_missing() -> None:
+    with pytest.raises(ApiError) as exc:
+        assert_operator_permission(
+            _settings(),
+            0,
+            OPERATOR_RAW_READ,
+            step_up_ok=True,
+        )
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert "Insufficient permissions" in exc.value.message
+
+
+def test_require_operator_permission_dep_reads_step_up_flag() -> None:
+    from app.auth.client import ValidateResult
+    from app.authz import require_operator_permission
+
+    org = uuid4()
+    token = ValidateResult(org_id=org, permissions=SECRET_USE, user_id="u1")
+    dep = require_operator_permission(SECRET_USE)
+    req = _request_with_settings(_settings(operator_allow_secret_use=True))
+    req.state.ibex_step_up_ok = False
+    with pytest.raises(ApiError) as exc:
+        dep(req, token)
+    assert "Step-up" in exc.value.message
+    req.state.ibex_step_up_ok = True
+    assert dep(req, token) is token
+
+
 @pytest.mark.asyncio
 async def test_step_up_header_missing_sets_false() -> None:
     req = _request_with_settings(_settings())
@@ -106,12 +134,13 @@ async def test_step_up_header_missing_sets_false() -> None:
 @pytest.mark.asyncio
 async def test_step_up_header_valid_sets_true() -> None:
     settings = _settings()
+    org = uuid4()
     token = issue_token_opts(
         TokenIssueOpts(
             secret=settings.jwt_hmac_secret or "h" * 32,
             issuer=settings.jwt_issuer,
             audience=settings.jwt_audience,
-            org_id=uuid4(),
+            org_id=org,
             permissions=SECRET_USE,
             subject="user-1",
             session_kind=SESSION_KIND_STEP_UP,
@@ -119,8 +148,38 @@ async def test_step_up_header_valid_sets_true() -> None:
         )
     )
     req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
+    req.state.ibex_session_org_id = org
+    req.state.ibex_session_sub = "user-1"
     await require_step_up_header(req)
     assert req.state.ibex_step_up_ok is True
+
+
+@pytest.mark.asyncio
+async def test_step_up_org_and_subject_mismatch_denies() -> None:
+    settings = _settings()
+    token = issue_token_opts(
+        TokenIssueOpts(
+            secret=settings.jwt_hmac_secret or "h" * 32,
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            org_id=uuid4(),
+            permissions=0,
+            subject="user-1",
+            session_kind=SESSION_KIND_STEP_UP,
+            ttl_seconds=300,
+        )
+    )
+    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
+    req.state.ibex_session_org_id = uuid4()
+    with pytest.raises(ApiError) as exc:
+        await require_step_up_header(req)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    req2 = _request_with_settings(settings, headers=[(b"x-ibex-step-up", token.encode())])
+    req2.state.ibex_session_org_id = None
+    req2.state.ibex_session_sub = "other-user"
+    with pytest.raises(ApiError):
+        await require_step_up_header(req2)
 
 
 @pytest.mark.asyncio

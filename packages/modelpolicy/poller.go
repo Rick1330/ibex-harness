@@ -62,12 +62,19 @@ func (p *EpochPoller) reconcileOrgEpoch(ctx context.Context, orgID uuid.UUID) {
 	if !ok {
 		return
 	}
-	snap, err := p.loader.LoadOrg(ctx, orgID)
+	loadCtx := ctx
+	cancel := func() {}
+	if p.cache.cfg.LoadTimeout > 0 {
+		loadCtx, cancel = context.WithTimeout(ctx, p.cache.cfg.LoadTimeout)
+	}
+	snap, err := p.loader.LoadOrg(loadCtx, orgID)
+	cancel()
 	if err != nil {
 		if p.log != nil {
 			p.log.WarnCtx(ctx, "model policy epoch poll failed", "org_id", orgID.String(), "err", err.Error())
 		}
 		// Fail closed for this org: drop cache so next request reloads or errors.
+		// Timeouts use the same path so subsequent orgs continue to poll.
 		p.cache.Invalidate(orgID)
 		return
 	}
@@ -77,10 +84,12 @@ func (p *EpochPoller) reconcileOrgEpoch(ctx context.Context, orgID uuid.UUID) {
 }
 
 func (c *Cache) cachedOrgIDs() []uuid.UUID {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]uuid.UUID, 0, len(c.gens))
-	for key := range c.gens {
+	// Enumerate live LRU entries (not gens): Invalidate bumps gens while removing
+	// the entry, and gens may retain keys after eviction. Keys() is the durable set
+	// of organizations that still hold a cached snapshot.
+	keys := c.lru.Keys()
+	out := make([]uuid.UUID, 0, len(keys))
+	for _, key := range keys {
 		id, err := uuid.Parse(key)
 		if err != nil {
 			continue

@@ -440,6 +440,7 @@ func optionalTotp(svc *service.TotpService) interface {
 
 func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
 	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
+	RefreshPair(refreshToken string) (access, refresh string, accessExp, refreshExp time.Time, err error)
 } {
 	if iss == nil {
 		return nil

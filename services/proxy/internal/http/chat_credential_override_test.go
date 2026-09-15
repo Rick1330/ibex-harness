@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/ssrf"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	"github.com/google/uuid"
@@ -48,8 +50,15 @@ func (c *captureProvider) Complete(_ context.Context, req provider.Request) (pro
 func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 	t.Parallel()
 	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	restore := ssrf.SetLookupIPAddrForTest(func(_ context.Context, host string) ([]net.IPAddr, error) {
+		if host != "byo.example.test" {
+			t.Fatalf("unexpected host %q", host)
+		}
+		return []net.IPAddr{{IP: net.ParseIP("1.1.1.1")}}, nil
+	})
+	t.Cleanup(restore)
 	resolver := &stubCredentialResolver{result: credentials.Result{
-		APIKey: "sk-byo", BaseURL: "https://example.com/v1",
+		APIKey: "sk-byo", BaseURL: "https://byo.example.test/v1",
 	}}
 	h := chatCompletionHandler{
 		log: logger.Discard("proxy"), credentialResolver: resolver,
@@ -65,10 +74,10 @@ func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 	if provReq.APIKeyOverride != "sk-byo" {
 		t.Fatalf("APIKeyOverride=%q", provReq.APIKeyOverride)
 	}
-	if provReq.TLSServerName != "example.com" {
+	if provReq.TLSServerName != "byo.example.test" {
 		t.Fatalf("TLSServerName=%q", provReq.TLSServerName)
 	}
-	if !strings.Contains(provReq.BaseURLOverride, "/v1") || strings.Contains(provReq.BaseURLOverride, "example.com") {
+	if !strings.Contains(provReq.BaseURLOverride, "1.1.1.1") || strings.Contains(provReq.BaseURLOverride, "byo.example.test") {
 		t.Fatalf("expected IP-pinned BaseURLOverride, got %q", provReq.BaseURLOverride)
 	}
 	if resolver.last.OrgID != org.String() || resolver.last.ProviderName != "openai" {

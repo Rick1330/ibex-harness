@@ -17,6 +17,7 @@ from app.auth.client import (
     ValidateResult,
     parse_authorization_header,
 )
+from app.auth.session_refresh import refresh_operator_session
 from app.config import Settings
 from app.deps import get_validator
 from app.errors import ApiError
@@ -72,7 +73,6 @@ def _require_hmac(settings: Settings) -> str:
             detail="set JWT_HMAC_SECRET for 4.P.0 stub",
         )
     return settings.jwt_hmac_secret
-
 
 def _cookie_security(settings: Settings) -> tuple[bool, str]:
     samesite = settings.cookie_samesite
@@ -245,10 +245,37 @@ async def _validate_pat(validator: TokenValidator, pat: str) -> ValidateResult:
 async def refresh_session(request: Request, response: Response) -> dict[str, object]:
     settings = _settings(request)
     _require_operator_enabled(settings)
-    secret = _require_hmac(settings)
     raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
     if not raw:
         raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+
+    # RS256-only: Auth owns rotation via IssueOperatorSession(refresh_token=...).
+    if not settings.jwt_hmac_secret and settings.jwt_public_keys_pem:
+        try:
+            pair = await refresh_operator_session(
+                auth_grpc_addr=settings.auth_grpc_addr,
+                refresh_token=raw,
+            )
+        except AuthFailedError as exc:
+            raise ApiError(code=INVALID_TOKEN, message="invalid refresh token") from exc
+        except AuthUnavailableError as exc:
+            raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc
+        _apply_session_cookies(
+            response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+        )
+        # CSRF still needs a local secret; require HMAC for CSRF mint in RS256 mode
+        # only when configured — otherwise omit rotating CSRF (cookie may already exist).
+        csrf = ""
+        if settings.dashboard_csrf_secret:
+            csrf = mint_csrf_token(secret=settings.dashboard_csrf_secret)
+            _set_csrf_cookie(response, csrf=csrf, settings=settings)
+        return {
+            "status": "ok",
+            "provisional": False,
+            "csrf_token": csrf,
+        }
+
+    secret = _require_hmac(settings)
     try:
         claims = verify_token_opts(
             raw,

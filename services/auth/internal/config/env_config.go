@@ -85,22 +85,34 @@ func applyAuthEnvOverrides(cfg *Config, envCfg envConfig) error {
 	}
 	cfg.ShutdownTimeout = timeout
 	applyArgon2Overrides(&cfg.Argon2, envCfg)
-	cfg.JWTAccessTTL = parseDurationOr(envCfg.JWTAccessTTLRaw, 15*time.Minute)
-	cfg.JWTRefreshTTL = parseDurationOr(envCfg.JWTRefreshTTLRaw, 7*24*time.Hour)
-	cfg.JWTStepUpTTL = parseDurationOr(envCfg.JWTStepUpTTLRaw, 5*time.Minute)
+	cfg.JWTAccessTTL, err = parseDurationOr(envCfg.JWTAccessTTLRaw, 15*time.Minute)
+	if err != nil {
+		return fmt.Errorf("JWT_ACCESS_TTL: %w", err)
+	}
+	cfg.JWTRefreshTTL, err = parseDurationOr(envCfg.JWTRefreshTTLRaw, 7*24*time.Hour)
+	if err != nil {
+		return fmt.Errorf("JWT_REFRESH_TTL: %w", err)
+	}
+	cfg.JWTStepUpTTL, err = parseDurationOr(envCfg.JWTStepUpTTLRaw, 5*time.Minute)
+	if err != nil {
+		return fmt.Errorf("JWT_STEP_UP_TTL: %w", err)
+	}
 	return nil
 }
 
-func parseDurationOr(raw string, fallback time.Duration) time.Duration {
+func parseDurationOr(raw string, fallback time.Duration) (time.Duration, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return fallback
+		return fallback, nil
 	}
 	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return fallback
+	if err != nil {
+		return 0, err
 	}
-	return d
+	if d <= 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	return d, nil
 }
 
 func applyArgon2Overrides(params *token.Argon2Params, envCfg envConfig) {

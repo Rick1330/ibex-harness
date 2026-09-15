@@ -22,7 +22,7 @@ The 64-bit permission bitmap is stored on `ibex_core.tokens.permissions` and ret
 ### 1) Canonical implementation
 
 - **Package:** `packages/permissions` (`github.com/Rick1330/ibex-harness/packages/permissions`)
-- **Helpers:** `Has`, `HasAny`, `RequiresMFA`, `UsesReservedHighBits`
+- **Helpers:** `Has`, `HasAny`, `RequiresStepUp` (canonical; `RequiresMFA` is an alias), `UsesReservedHighBits`
 - **Predefined sets:** `AgentDefault`, `ProxyChatCompletion`, `ReadOnly`, `Admin`
 
 ### 2) Bit layout (v1)
