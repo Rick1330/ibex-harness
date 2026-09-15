@@ -1,4 +1,4 @@
-"""Provisional HS256 session JWT helpers for 4.P.0 (stdlib only; moves to auth in 4.P.1)."""
+"""Provisional session JWT helpers (4.P.0 HS256 + 4.P.1 RS256 dual-verify)."""
 
 from __future__ import annotations
 
@@ -6,14 +6,22 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
 SESSION_KIND_ACCESS = "access"
 SESSION_KIND_REFRESH = "refresh"
+SESSION_KIND_STEP_UP = "step_up"
+
+_LOG = logging.getLogger(__name__)
 
 
 class SessionStubError(Exception):
@@ -29,7 +37,6 @@ def _b64url_decode(data: str) -> bytes:
     try:
         return base64.urlsafe_b64decode(data + pad)
     except ValueError as exc:
-        # binascii.Error is a ValueError subclass.
         raise SessionStubError("bad encoding") from exc
 
 
@@ -38,7 +45,7 @@ class SessionClaims:
     sub: str
     org_id: UUID
     permissions: int
-    session_kind: str  # SESSION_KIND_ACCESS | SESSION_KIND_REFRESH
+    session_kind: str  # SESSION_KIND_ACCESS | SESSION_KIND_REFRESH | SESSION_KIND_STEP_UP
     exp: int
     iat: int
     jti: str
@@ -58,10 +65,11 @@ class TokenIssueOpts:
 
 @dataclass(frozen=True, slots=True)
 class TokenVerifyOpts:
-    secret: str
+    secret: str | None
     issuer: str
     audience: str
     expect_kind: str
+    public_keys_pem: str | None = None
 
 
 def issue_token_opts(opts: TokenIssueOpts) -> str:
@@ -93,12 +101,59 @@ def _split_jwt(token: str) -> tuple[str, str, str]:
     return header_b64, payload_b64, sig_b64
 
 
-def _verify_signature(header_b64: str, payload_b64: str, sig_b64: str, *, secret: str) -> None:
+def _verify_hs256(header_b64: str, payload_b64: str, sig_b64: str, *, secret: str) -> None:
     body = f"{header_b64}.{payload_b64}"
     expected = hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     got_sig = _b64url_decode(sig_b64)
     if not hmac.compare_digest(expected, got_sig):
         raise SessionStubError("bad signature")
+
+
+def _load_rsa_public_keys(pem_blob: str) -> list[RSAPublicKey]:
+    keys: list[RSAPublicKey] = []
+    rest = pem_blob.encode("utf-8")
+    while b"-----BEGIN" in rest:
+        try:
+            key = serialization.load_pem_public_key(rest)
+        except ValueError:
+            break
+        if not isinstance(key, RSAPublicKey):
+            raise SessionStubError("bad public key")
+        keys.append(key)
+        # Advance past this PEM block for multi-key blobs.
+        end = rest.find(b"-----END")
+        if end < 0:
+            break
+        nl = rest.find(b"\n", end)
+        rest = rest[nl + 1 :] if nl >= 0 else b""
+    return keys
+
+
+def _verify_rs256(header_b64: str, payload_b64: str, sig_b64: str, *, public_keys_pem: str) -> None:
+    keys = _load_rsa_public_keys(public_keys_pem)
+    if not keys:
+        raise SessionStubError("no public keys")
+    body = f"{header_b64}.{payload_b64}".encode("ascii")
+    sig = _b64url_decode(sig_b64)
+    last: Exception | None = None
+    for key in keys:
+        try:
+            key.verify(sig, body, padding.PKCS1v15(), hashes.SHA256())
+            return
+        except Exception as exc:  # noqa: BLE001 — try next key
+            last = exc
+            continue
+    raise SessionStubError("bad signature") from last
+
+
+def _header_alg(header_b64: str) -> str:
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+    except (json.JSONDecodeError, SessionStubError) as exc:
+        raise SessionStubError("bad header") from exc
+    if not isinstance(header, dict):
+        raise SessionStubError("bad header")
+    return str(header.get("alg", ""))
 
 
 def _decode_payload(payload_b64: str) -> dict[str, Any]:
@@ -139,9 +194,32 @@ def _validate_claims(payload: dict[str, Any], opts: TokenVerifyOpts) -> SessionC
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
+    """Verify RS256 first when public keys are configured; fall back to deprecated HS256."""
     header_b64, payload_b64, sig_b64 = _split_jwt(token)
-    _verify_signature(header_b64, payload_b64, sig_b64, secret=opts.secret)
-    return _validate_claims(_decode_payload(payload_b64), opts)
+    alg = _header_alg(header_b64)
+    payload = _decode_payload(payload_b64)
+
+    if opts.public_keys_pem and alg == "RS256":
+        _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
+        return _validate_claims(payload, opts)
+
+    if opts.public_keys_pem and alg != "HS256":
+        # Prefer RS256 attempt even if alg claim is wrong/missing when keys exist.
+        try:
+            _verify_rs256(header_b64, payload_b64, sig_b64, public_keys_pem=opts.public_keys_pem)
+            return _validate_claims(payload, opts)
+        except SessionStubError:
+            pass
+
+    if not opts.secret:
+        raise SessionStubError("no verify material")
+    _verify_hs256(header_b64, payload_b64, sig_b64, secret=opts.secret)
+    _LOG.warning(
+        "provisional_hs256_verify=1 issuer=%s audience=%s",
+        opts.issuer,
+        opts.audience,
+    )
+    return _validate_claims(payload, opts)
 
 
 def mint_csrf_token(*, secret: str) -> str:

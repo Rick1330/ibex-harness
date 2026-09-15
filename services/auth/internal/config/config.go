@@ -34,6 +34,13 @@ type Config struct {
 	ValidateTokenRPM       int64
 	CredentialsMasterKey   string
 	CredentialsMasterKeyID string
+	TOTPEnabled            bool
+	JWTPrivateKeyPEM       string
+	JWTIssuer              string
+	JWTAudience            string
+	JWTAccessTTL           time.Duration
+	JWTRefreshTTL          time.Duration
+	JWTStepUpTTL           time.Duration
 	Argon2                 token.Argon2Params
 	ShutdownTimeout        time.Duration
 	Telemetry              telemetry.Config

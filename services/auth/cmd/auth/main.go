@@ -21,11 +21,13 @@ import (
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/sessionjwt"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"strings"
 )
 
 func main() {
@@ -149,6 +151,8 @@ type authServiceDeps struct {
 	validator       *token.Validator
 	tokenSvc        *service.TokenService
 	credSvc         *service.ProviderCredentialService
+	totpSvc         *service.TotpService
+	sessionIssuer   *sessionjwt.Issuer
 	agentsRepo      *repository.AgentsRepository
 	redisClient     redis.UniversalClient
 	validateLimiter ratelimit.KeyedLimiter
@@ -169,11 +173,37 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
+	sessionIssuer, err := newSessionIssuer(cfg)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
+	totpSvc, err := newTotpService(cfg, db, sessionIssuer)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 	return authServiceDeps{
 		validator: core.validator, tokenSvc: core.tokenSvc, credSvc: credSvc,
+		totpSvc: totpSvc, sessionIssuer: sessionIssuer,
 		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
 		validateLimiter: core.validateLimiter, log: log,
 	}, nil
+}
+
+func newSessionIssuer(cfg config.Config) (*sessionjwt.Issuer, error) {
+	pem := strings.TrimSpace(cfg.JWTPrivateKeyPEM)
+	if pem == "" {
+		return nil, nil
+	}
+	return sessionjwt.NewIssuer(pem, cfg.JWTIssuer, cfg.JWTAudience, cfg.JWTAccessTTL, cfg.JWTRefreshTTL, cfg.JWTStepUpTTL)
+}
+
+func newTotpService(cfg config.Config, db *sql.DB, jwt *sessionjwt.Issuer) (*service.TotpService, error) {
+	return service.NewTotpService(
+		repository.NewTotpSecretRepo(db),
+		service.MasterKeyConfig{Encoded: cfg.CredentialsMasterKey, KeyID: cfg.CredentialsMasterKeyID},
+		cfg.TOTPEnabled,
+		jwt,
+	)
 }
 
 type authTokenCore struct {
@@ -381,16 +411,38 @@ func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetri
 		return fmt.Errorf("agent service: %w", err)
 	}
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
-		Validator:    deps.validator,
-		TokenService: deps.tokenSvc,
-		AgentService: agentSvc,
-		CredService:  deps.credSvc,
-		Metrics:      reg,
-		Log:          deps.log,
+		Validator:     deps.validator,
+		TokenService:  deps.tokenSvc,
+		AgentService:  agentSvc,
+		CredService:   deps.credSvc,
+		TotpService:   optionalTotp(deps.totpSvc),
+		SessionIssuer: optionalSessionIssuer(deps.sessionIssuer),
+		Metrics:       reg,
+		Log:           deps.log,
 	})
 	if err != nil {
 		return fmt.Errorf("grpc auth service: %w", err)
 	}
 	authv1.RegisterAuthServiceServer(grpcSrv, srv)
 	return nil
+}
+
+func optionalTotp(svc *service.TotpService) interface {
+	BeginEnrollment(ctx context.Context, orgID, userID, accountName string) (string, error)
+	ConfirmEnrollment(ctx context.Context, orgID, userID, code string) error
+	CreateStepUp(ctx context.Context, orgID, userID, code string, permissions int64) (string, time.Time, error)
+} {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
+	IssuePair(sub, orgID string, permissions int64) (access, refresh string, accessExp, refreshExp time.Time, err error)
+} {
+	if iss == nil {
+		return nil
+	}
+	return iss
 }

@@ -257,6 +257,7 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
                 issuer=settings.jwt_issuer,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_REFRESH,
+                public_keys_pem=settings.jwt_public_keys_pem,
             ),
         )
     except SessionStubError as exc:
@@ -313,6 +314,7 @@ def _me_cookie(raw: str, *, settings: Settings, secret: str) -> dict[str, object
                 issuer=settings.jwt_issuer,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=settings.jwt_public_keys_pem,
             ),
         )
     except SessionStubError as exc:
