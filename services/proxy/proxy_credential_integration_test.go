@@ -111,7 +111,7 @@ func mustCreateOrgCredential(t *testing.T, authFx *integrationtest.AuthGRPCFixtu
 	)
 	defer cancel()
 	_, err := authFx.Client.CreateProviderCredential(ctx, &authv1.CreateProviderCredentialRequest{
-		OrgId: seed.orgID, ProviderName: "openai", ApiKey: seed.apiKey, BaseUrl: "https://byo.example/v1",
+		OrgId: seed.orgID, ProviderName: "openai", ApiKey: seed.apiKey, BaseUrl: "https://example.com/v1",
 	})
 	if err != nil {
 		t.Fatalf("CreateProviderCredential: %v", err)
@@ -136,8 +136,12 @@ func TestProxyAuthIntegration_GetProviderCredential_BYOAndPlatformDefault(t *tes
 		t.Fatalf("BYO APIKeyOverride=%q want %q (GetProviderCredential RPC round-trip)",
 			fx.capture.last.APIKeyOverride, fx.byoAPIKey)
 	}
-	if fx.capture.last.BaseURLOverride != "https://byo.example/v1" {
-		t.Fatalf("BaseURLOverride=%q", fx.capture.last.BaseURLOverride)
+	if fx.capture.last.TLSServerName != "example.com" {
+		t.Fatalf("TLSServerName=%q", fx.capture.last.TLSServerName)
+	}
+	if strings.Contains(fx.capture.last.BaseURLOverride, "example.com") ||
+		!strings.Contains(fx.capture.last.BaseURLOverride, "/v1") {
+		t.Fatalf("BaseURLOverride=%q want IP-pinned", fx.capture.last.BaseURLOverride)
 	}
 
 	// No-row / platform-default: org B has no credential → no override.

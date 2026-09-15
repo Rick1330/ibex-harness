@@ -7,10 +7,11 @@ import (
 	"strings"
 	"time"
 
-	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	apierror 	"github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	"github.com/Rick1330/ibex-harness/packages/ssrf"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
@@ -207,7 +208,13 @@ func (h chatCompletionHandler) applyCredentialOverride(
 	if !result.PlatformDefault {
 		provReq.APIKeyOverride = result.APIKey
 		if strings.TrimSpace(result.BaseURL) != "" {
-			provReq.BaseURLOverride = strings.TrimSpace(result.BaseURL)
+			pin, err := ssrf.ValidateAndPinHTTPURL(r.Context(), result.BaseURL)
+			if err != nil {
+				h.writeCredentialResolveFailure(w, r, prov.Name(), orgID)
+				return false
+			}
+			provReq.BaseURLOverride = pin.PinnedURL
+			provReq.TLSServerName = pin.ServerName
 		}
 	}
 	return true

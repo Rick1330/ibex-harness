@@ -42,6 +42,10 @@ type Request struct {
 	// BaseURLOverride, when non-empty, replaces the process-level provider BaseURL
 	// for this request only (org BYO custom endpoint). It must not mutate shared Client config.
 	BaseURLOverride string
+
+	// TLSServerName, when non-empty, is the SNI/Host name for a pinned BaseURLOverride
+	// that uses a literal IP (SSRF dial pin).
+	TLSServerName string
 }
 
 // Message is a single turn in the conversation.

@@ -49,7 +49,7 @@ func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 	t.Parallel()
 	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	resolver := &stubCredentialResolver{result: credentials.Result{
-		APIKey: "sk-byo", BaseURL: "https://byo.example/v1",
+		APIKey: "sk-byo", BaseURL: "https://example.com/v1",
 	}}
 	h := chatCompletionHandler{
 		log: logger.Discard("proxy"), credentialResolver: resolver,
@@ -62,11 +62,36 @@ func TestUnit_ApplyCredentialOverride_BYOPropagatesKeyAndBaseURL(t *testing.T) {
 	if !ok {
 		t.Fatal("expected success")
 	}
-	if provReq.APIKeyOverride != "sk-byo" || provReq.BaseURLOverride != "https://byo.example/v1" {
-		t.Fatalf("provReq=%+v", provReq)
+	if provReq.APIKeyOverride != "sk-byo" {
+		t.Fatalf("APIKeyOverride=%q", provReq.APIKeyOverride)
+	}
+	if provReq.TLSServerName != "example.com" {
+		t.Fatalf("TLSServerName=%q", provReq.TLSServerName)
+	}
+	if !strings.Contains(provReq.BaseURLOverride, "/v1") || strings.Contains(provReq.BaseURLOverride, "example.com") {
+		t.Fatalf("expected IP-pinned BaseURLOverride, got %q", provReq.BaseURLOverride)
 	}
 	if resolver.last.OrgID != org.String() || resolver.last.ProviderName != "openai" {
 		t.Fatalf("resolve input=%+v", resolver.last)
+	}
+}
+
+func TestUnit_ApplyCredentialOverride_BlocksPrivateBaseURL(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	h := chatCompletionHandler{
+		log: logger.Discard("proxy"),
+		credentialResolver: &stubCredentialResolver{result: credentials.Result{
+			APIKey: "sk-byo", BaseURL: "https://127.0.0.1/v1",
+		}},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_test")
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: org}))
+	ok := h.applyCredentialOverride(rec, req, &captureProvider{name: "openai"}, &provider.Request{})
+	if ok || rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ok=%v status=%d", ok, rec.Code)
 	}
 }
 

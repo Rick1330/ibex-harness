@@ -84,6 +84,7 @@ func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provid
 		Body:           body,
 		Stream:         req.Stream,
 		APIKeyOverride: req.APIKeyOverride,
+		TLSServerName:  req.TLSServerName,
 	})
 }
 
@@ -92,6 +93,7 @@ type upstreamCall struct {
 	Body           []byte
 	Stream         bool
 	APIKeyOverride string
+	TLSServerName  string
 }
 
 func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call upstreamCall) (provider.Response, error) {
@@ -149,6 +151,7 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 		provider.UpstreamCall{
 			URL: call.URL, Body: call.Body, Stream: call.Stream,
 			APIKeyOverride: call.APIKeyOverride,
+			TLSServerName:  call.TLSServerName,
 		},
 	)
 }

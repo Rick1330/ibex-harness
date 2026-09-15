@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/crypto"
+	"github.com/Rick1330/ibex-harness/packages/ssrf"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -302,6 +303,7 @@ type UpstreamCall struct {
 	Body           []byte
 	Stream         bool
 	APIKeyOverride string
+	TLSServerName  string
 }
 
 // DoUpstream builds and executes one upstream request with stream-aware context/cancel.
@@ -321,6 +323,10 @@ func DoUpstream(
 	client := httpClient
 	if call.Stream {
 		client = streamClient
+	}
+	if call.TLSServerName != "" {
+		client = ssrf.ClientForPinnedDial(client, call.TLSServerName)
+		httpReq.Host = call.TLSServerName
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
