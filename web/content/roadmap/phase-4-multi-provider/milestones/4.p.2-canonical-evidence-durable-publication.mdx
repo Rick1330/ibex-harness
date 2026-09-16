@@ -87,3 +87,5 @@ Further audit context (provenance only — roadmap and engineering pages are aut
   - Deferred (degraded label): full five-component score weights; MCP hot-path tool population; MinIO archive writer.
 - [ ] Raw/conversation store decision documented with RLS; **retention policy deferred** (no TTL/job yet — `session_events` + `archived_to` / `ibex-sessions/...` linkage only).
 - [x] Golden nested-run + outbox crash/replay reports attached (integration tests in `packages/evidenceoutbox`).
+  - Golden fixture spans: `proxy.chat`, `context.assemble`, `provider.complete`, `tool.search`, `retrieval.search`, `memory.read`, `provider.retry`, `provider.fallback`, `evaluation.score` (parent/child + request_id/trace_id join keys).
+  - Crash/replay test proves **stale in_flight recovery** via `claimed_at`, not process-kill / crash-before-ack; true crash-timing coverage is a follow-up.

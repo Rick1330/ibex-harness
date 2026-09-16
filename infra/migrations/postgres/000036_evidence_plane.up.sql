@@ -6,6 +6,7 @@
 -- Tenant boundary for evidence tables: org GUC only (rls_evidence_visible). Cross-org
 -- outbox relay uses SECURITY DEFINER helpers owned by ibex_service (BYPASSRLS, NOLOGIN).
 -- ibex_service is NEVER granted to ibex_app — SET ROLE cannot forge the bypass.
+-- EXECUTE on claim/mark/recover is granted only to ibex_evidence_relay (not ibex_app).
 
 DO $$
 BEGIN
@@ -17,6 +18,19 @@ END
 $$;
 REVOKE ibex_service FROM ibex_app;
 GRANT USAGE ON SCHEMA ibex_core TO ibex_service;
+
+DO $$
+BEGIN
+    CREATE ROLE ibex_evidence_relay NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+EXCEPTION
+    WHEN duplicate_object THEN
+        ALTER ROLE ibex_evidence_relay NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+END
+$$;
+-- Future outbox-relay daemon connects as (or SET ROLE into) ibex_evidence_relay.
+-- Never grant this role to ibex_app.
+REVOKE ibex_evidence_relay FROM ibex_app;
+GRANT USAGE ON SCHEMA ibex_core TO ibex_evidence_relay;
 
 CREATE OR REPLACE FUNCTION ibex_core.rls_evidence_visible(row_org_id UUID)
 RETURNS BOOLEAN
@@ -425,7 +439,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_servic
 
 -- ================================================================
 -- OUTBOX RELAY HELPERS (SECURITY DEFINER / ibex_service owner)
--- App may EXECUTE only; cannot ASSUME ibex_service (no role membership).
+-- EXECUTE only for ibex_evidence_relay — never ibex_app (cross-org claim
+-- would otherwise return every tenant's outbox payloads).
 -- ================================================================
 CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_recover_in_flight(p_secs DOUBLE PRECISION)
 RETURNS BIGINT
@@ -561,7 +576,12 @@ REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) FROM PUB
 REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) FROM PUBLIC;
 REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) FROM PUBLIC;
 
-GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) TO ibex_app;
-GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) TO ibex_app;
-GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) TO ibex_app;
-GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) TO ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) FROM ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) FROM ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) FROM ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) FROM ibex_app;
+
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) TO ibex_evidence_relay;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) TO ibex_evidence_relay;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) TO ibex_evidence_relay;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) TO ibex_evidence_relay;

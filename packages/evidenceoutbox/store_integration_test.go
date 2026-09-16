@@ -56,6 +56,8 @@ func resetSchema(t *testing.T, db *sql.DB) {
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
 	_, _ = db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_app`)
+	_, _ = db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_evidence_relay`)
+	_, _ = db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_service`)
 }
 
 func seedOrg(t *testing.T, db *sql.DB) uuid.UUID {
@@ -220,6 +222,10 @@ func assertPersistRunMetrics(t *testing.T, db *sql.DB, runID uuid.UUID, wantTota
 }
 
 func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.T) {
+	// Proves stale in_flight recovery (SQL-forced claimed_at) → RecoverInFlight →
+	// single ProcessBatch delivery with no second claim. Does NOT simulate process
+	// kill or crash-before-ack (deliver OK, mark_delivered lost); that remains a
+	// follow-up (true crash-timing / at-least-once sink idempotency).
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 	orgID := seedOrg(t, db)
@@ -352,6 +358,11 @@ func goldenRunInput(orgID, sessionID uuid.UUID, keys goldenJoinKeys) evidenceout
 			{SpanID: keys.Child, ParentSpanID: keys.Root, OperationKind: "context.assemble", Status: "ok"},
 			{SpanID: "3333333333333333", ParentSpanID: keys.Root, OperationKind: "provider.complete", Status: "ok"},
 			{SpanID: "4444444444444444", ParentSpanID: keys.Root, OperationKind: "tool.search", Status: "ok"},
+			{SpanID: "5555555555555555", ParentSpanID: keys.Root, OperationKind: "retrieval.search", Status: "ok"},
+			{SpanID: "6666666666666666", ParentSpanID: keys.Root, OperationKind: "memory.read", Status: "ok"},
+			{SpanID: "7777777777777777", ParentSpanID: keys.Root, OperationKind: "provider.retry", Status: "ok"},
+			{SpanID: "8888888888888888", ParentSpanID: keys.Root, OperationKind: "provider.fallback", Status: "ok"},
+			{SpanID: "9999999999999999", ParentSpanID: keys.Root, OperationKind: "evaluation.score", Status: "ok"},
 		},
 		Metrics: &evidenceoutbox.AssemblyMetrics{
 			BudgetCalculationMs: 1, RankingMs: 2, PackingMs: 3, TotalMs: 10, CandidatesEvaluated: 3,
@@ -417,8 +428,8 @@ WHERE org_id = $1 AND trace_id = $2 AND request_id = $3`
 	if err := tx.QueryRowContext(context.Background(), q, orgID, keys.TraceID, keys.RequestID).Scan(&spanCount); err != nil {
 		t.Fatal(err)
 	}
-	if spanCount != 4 {
-		t.Fatalf("spans=%d want 4", spanCount)
+	if spanCount != 9 {
+		t.Fatalf("spans=%d want 9", spanCount)
 	}
 }
 
@@ -457,7 +468,7 @@ WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`
 	if err := tx.QueryRowContext(context.Background(), q, orgID, aggregateID).Scan(&outboxPending); err != nil {
 		t.Fatal(err)
 	}
-	if outboxPending < 6 {
+	if outboxPending < 11 {
 		t.Fatalf("pending outbox=%d", outboxPending)
 	}
 }

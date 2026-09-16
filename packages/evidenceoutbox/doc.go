@@ -4,6 +4,10 @@
 //
 // Scope is intentionally narrow: do not use this package for model-policy
 // invalidation or org-deletion cascades.
+//
+// Outbox claim/mark/recover SECURITY DEFINER helpers are executable only by
+// role ibex_evidence_relay (not ibex_app). Wire the future relay daemon to that
+// role; PersistRun remains on the normal app connection with org GUC RLS.
 package evidenceoutbox
 
 // SchemaVersion is the envelope version for evidence records and outbox payloads.

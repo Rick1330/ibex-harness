@@ -69,8 +69,8 @@ type RelayBatchResult struct {
 }
 
 // ProcessBatch claims up to BatchSize pending rows via SECURITY DEFINER helpers
-// (owned by ibex_service; ibex_app cannot assume that role), delivers via Deliverer,
-// and marks delivered / failed / poison.
+// (owned by ibex_service; EXECUTE granted only to ibex_evidence_relay — not ibex_app),
+// delivers via Deliverer, and marks delivered / failed / poison.
 // Crash after claim but before ack leaves rows in_flight — RecoverInFlight
 // returns them to pending for replay (at-least-once).
 func (r *Relay) ProcessBatch(ctx context.Context) (RelayBatchResult, error) {

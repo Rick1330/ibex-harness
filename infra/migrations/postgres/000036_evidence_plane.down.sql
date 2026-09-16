@@ -32,5 +32,8 @@ DROP TABLE IF EXISTS ibex_core.session_events;
 
 DROP FUNCTION IF EXISTS ibex_core.rls_evidence_visible(UUID);
 
+REVOKE USAGE ON SCHEMA ibex_core FROM ibex_evidence_relay;
+DROP ROLE IF EXISTS ibex_evidence_relay;
+
 REVOKE USAGE ON SCHEMA ibex_core FROM ibex_service;
 DROP ROLE IF EXISTS ibex_service;
