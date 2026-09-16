@@ -144,7 +144,7 @@ func (s *recordingDeliverer) unique() int {
 
 func TestIntegration_PersistRun_WritesEvidenceAndOutbox(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	orgID := seedOrg(t, db)
 	sessionID := seedSession(t, db, orgID)
 
@@ -221,7 +221,7 @@ func assertPersistRunMetrics(t *testing.T, db *sql.DB, runID uuid.UUID, wantTota
 
 func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	orgID := seedOrg(t, db)
 	store := mustStore(t, db)
 	traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -297,15 +297,13 @@ func persistMinimalRun(t *testing.T, store *evidenceoutbox.Store, orgID uuid.UUI
 
 func forceStaleInFlight(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregateID string) {
 	t.Helper()
+	// Test DSN is superuser (bypasses FORCE RLS). Production relay uses
+	// SECURITY DEFINER helpers owned by ibex_service — never SET ROLE from ibex_app.
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	const setRLS = `SET LOCAL ROLE ibex_service`
-	if _, err := tx.ExecContext(context.Background(), setRLS); err != nil {
-		t.Fatal(err)
-	}
 	const q = `
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = 'in_flight', attempts = attempts + 1, claimed_at = NOW() - interval '1 minute'
@@ -320,7 +318,7 @@ WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`
 
 func TestIntegration_GoldenNestedRun_JoinKeys(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	orgID := seedOrg(t, db)
 	sessionID := seedSession(t, db, orgID)
 	store := mustStore(t, db)
@@ -401,15 +399,12 @@ type goldenJoinKeys struct {
 
 func beginServiceTx(t *testing.T, db *sql.DB) *sql.Tx {
 	t.Helper()
+	// Superuser test DSN bypasses FORCE RLS for cross-row asserts.
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback() })
-	const setRLS = `SET LOCAL ROLE ibex_service`
-	if _, err := tx.ExecContext(context.Background(), setRLS); err != nil {
-		t.Fatal(err)
-	}
 	return tx
 }
 

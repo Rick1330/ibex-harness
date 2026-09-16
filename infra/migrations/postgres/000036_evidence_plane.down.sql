@@ -1,3 +1,8 @@
+DROP FUNCTION IF EXISTS ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER);
+DROP FUNCTION IF EXISTS ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER);
+DROP FUNCTION IF EXISTS ibex_core.evidence_outbox_claim_pending(INTEGER);
+DROP FUNCTION IF EXISTS ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION);
+
 DROP POLICY IF EXISTS evidence_outbox_isolation ON ibex_core.evidence_outbox;
 DROP TABLE IF EXISTS ibex_core.evidence_outbox;
 
@@ -27,5 +32,5 @@ DROP TABLE IF EXISTS ibex_core.session_events;
 
 DROP FUNCTION IF EXISTS ibex_core.rls_evidence_visible(UUID);
 
-REVOKE ibex_service FROM ibex_app;
+REVOKE USAGE ON SCHEMA ibex_core FROM ibex_service;
 DROP ROLE IF EXISTS ibex_service;

@@ -59,8 +59,9 @@ const (
 	maxBackoffExp       = 6
 )
 
-// ProcessBatch claims up to BatchSize pending rows (service-account RLS),
-// delivers via Deliverer, and marks delivered / failed / poison.
+// ProcessBatch claims up to BatchSize pending rows via SECURITY DEFINER helpers
+// (owned by ibex_service; ibex_app cannot assume that role), delivers via Deliverer,
+// and marks delivered / failed / poison.
 // Crash after claim but before ack leaves rows in_flight — RecoverInFlight
 // returns them to pending for replay (at-least-once).
 func (r *Relay) ProcessBatch(ctx context.Context) (RelayBatchResult, error) {
@@ -86,9 +87,6 @@ func (r *Relay) claimBatch(ctx context.Context) ([]OutboxRow, error) {
 	//nolint:errcheck
 	defer func() { _ = tx.Rollback() }()
 
-	if err := setServiceAccountRLS(ctx, tx); err != nil {
-		return nil, err
-	}
 	rows, err := claimPending(ctx, tx, r.batchSize)
 	if err != nil {
 		return nil, err
@@ -132,43 +130,24 @@ func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (i
 	}
 	//nolint:errcheck
 	defer func() { _ = tx.Rollback() }()
-	if err := setServiceAccountRLS(ctx, tx); err != nil {
-		return 0, err
-	}
-	res, err := tx.ExecContext(ctx, `
-UPDATE ibex_core.evidence_outbox
-SET delivery_status = $1
-WHERE delivery_status = $2
-  AND claimed_at IS NOT NULL
-  AND claimed_at < NOW() - make_interval(secs => $3::double precision)
-`, StatusPending, StatusInFlight, secs)
-	if err != nil {
+	var n int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT ibex_core.evidence_outbox_recover_in_flight($1)`, secs,
+	).Scan(&n); err != nil {
 		return 0, fmt.Errorf("evidenceoutbox: recover in_flight: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	n, _ := res.RowsAffected()
 	return n, nil
 }
 
 func claimPending(ctx context.Context, tx *sql.Tx, limit int) ([]OutboxRow, error) {
-	q := `
-UPDATE ibex_core.evidence_outbox o
-SET delivery_status = $1, attempts = attempts + 1, claimed_at = NOW()
-WHERE o.id IN (
-	SELECT id FROM ibex_core.evidence_outbox
-	WHERE delivery_status IN ($2, $3)
-	  AND available_at <= NOW()
-	ORDER BY available_at, created_at
-	FOR UPDATE SKIP LOCKED
-	LIMIT $4
-)
-RETURNING id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
-	event_type, payload, payload_digest, delivery_status, attempts, available_at,
-	COALESCE(last_error, ''), created_at, delivered_at
-`
-	rs, err := tx.QueryContext(ctx, q, StatusInFlight, StatusPending, StatusFailed, limit)
+	rs, err := tx.QueryContext(ctx,
+		`SELECT id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
+			event_type, payload, payload_digest, delivery_status, attempts, available_at,
+			last_error, created_at, delivered_at
+		FROM ibex_core.evidence_outbox_claim_pending($1)`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("evidenceoutbox: claim: %w", err)
 	}
@@ -210,18 +189,13 @@ func (r *Relay) markDelivered(ctx context.Context, row OutboxRow) error {
 	}
 	//nolint:errcheck
 	defer func() { _ = tx.Rollback() }()
-	if err := setServiceAccountRLS(ctx, tx); err != nil {
-		return err
-	}
-	res, err := tx.ExecContext(ctx, `
-UPDATE ibex_core.evidence_outbox
-SET delivery_status = $1, delivered_at = NOW(), last_error = NULL
-WHERE id = $2 AND delivery_status = $3 AND attempts = $4`,
-		StatusDelivered, row.ID, StatusInFlight, row.Attempts)
-	if err != nil {
+	var n int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT ibex_core.evidence_outbox_mark_delivered($1, $2)`,
+		row.ID, row.Attempts,
+	).Scan(&n); err != nil {
 		return fmt.Errorf("evidenceoutbox: mark delivered: %w", err)
 	}
-	n, _ := res.RowsAffected()
 	if n != 1 {
 		return fmt.Errorf("evidenceoutbox: stale claim ack id=%s attempts=%d affected=%d",
 			row.ID, row.Attempts, n)
@@ -236,23 +210,18 @@ func (r *Relay) markFailure(ctx context.Context, row OutboxRow, deliverErr error
 	}
 	//nolint:errcheck
 	defer func() { _ = tx.Rollback() }()
-	if err := setServiceAccountRLS(ctx, tx); err != nil {
-		return err
-	}
 	status := StatusFailed
 	if row.Attempts >= r.maxAttempts {
 		status = StatusPoison
 	}
 	delaySecs := retryBackoffSeconds(row.Attempts)
-	res, err := tx.ExecContext(ctx, `
-UPDATE ibex_core.evidence_outbox
-SET delivery_status = $1, last_error = $2, available_at = NOW() + make_interval(secs => $3::int)
-WHERE id = $4 AND delivery_status = $5 AND attempts = $6`,
-		status, truncErr(deliverErr), delaySecs, row.ID, StatusInFlight, row.Attempts)
-	if err != nil {
+	var n int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT ibex_core.evidence_outbox_mark_failure($1, $2, $3, $4, $5)`,
+		row.ID, row.Attempts, status, truncErr(deliverErr), delaySecs,
+	).Scan(&n); err != nil {
 		return fmt.Errorf("evidenceoutbox: mark failure: %w", err)
 	}
-	n, _ := res.RowsAffected()
 	if n != 1 {
 		return fmt.Errorf("evidenceoutbox: stale claim failure id=%s attempts=%d affected=%d",
 			row.ID, row.Attempts, n)
@@ -297,8 +266,8 @@ func truncErr(err error) string {
 		return ""
 	}
 	s := err.Error()
-	if len(s) > 512 {
-		return s[:512]
+	if len(s) > 500 {
+		return s[:500]
 	}
 	return s
 }

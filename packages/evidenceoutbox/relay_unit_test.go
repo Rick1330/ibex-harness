@@ -23,7 +23,7 @@ func (s *stubDeliverer) Deliver(_ context.Context, _ OutboxRow) error {
 func TestUnit_NewRelay_RequiresDeps(t *testing.T) {
 	t.Parallel()
 	db, _, _ := sqlmock.New()
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := NewRelay(nil, &stubDeliverer{}, RelayConfig{}); err == nil {
 		t.Fatal("expected db error")
 	}
@@ -38,13 +38,13 @@ func TestUnit_ProcessBatch_DeliverAndAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	d := &stubDeliverer{}
 	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 2, MaxAttempts: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := expectClaimAndAck(mock)
+	_ = expectClaimAndAck(mock)
 	res, err := relay.ProcessBatch(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,6 @@ func TestUnit_ProcessBatch_DeliverAndAck(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
-	_ = id
 }
 
 func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
@@ -62,20 +61,18 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 	eventID := uuid.New()
 	now := time.Now()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
 		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
-	mock.ExpectQuery(`UPDATE ibex_core.evidence_outbox`).WillReturnRows(rows)
+	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(2).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
-		WithArgs(StatusDelivered, id, StatusInFlight, 1).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`evidence_outbox_mark_delivered`).
+		WithArgs(id, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 	mock.ExpectCommit()
 	return id
 }
@@ -93,57 +90,42 @@ func assertDeliveredOnce(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
 	}
 }
 
-func TestUnit_ProcessBatch_DeliverFailureMarksFailed(t *testing.T) {
+func TestUnit_ProcessBatch_DeliverFailureOutcomes(t *testing.T) {
 	t.Parallel()
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name         string
+		attempts     int
+		maxAttempts  int
+		wantFailed   int
+		wantPoisoned int
+		markStatus   string
+	}{
+		{
+			name: "failed_below_max", attempts: 1, maxAttempts: 5,
+			wantFailed: 1, markStatus: StatusFailed,
+		},
+		{
+			name: "poison_at_max", attempts: 2, maxAttempts: 2,
+			wantPoisoned: 1, markStatus: StatusPoison,
+		},
 	}
-	defer db.Close()
-	d := &stubDeliverer{err: errors.New("sink down")}
-	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: 5})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	id := uuid.New()
-	org := uuid.New()
-	eventID := uuid.New()
-	now := time.Now()
-	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
-	rows := sqlmock.NewRows([]string{
-		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
-		"last_error", "created_at", "delivered_at",
-	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
-	mock.ExpectQuery(`UPDATE ibex_core.evidence_outbox`).WillReturnRows(rows)
-	mock.ExpectCommit()
-
-	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
-
-	res, err := relay.ProcessBatch(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Failed != 1 || res.Poisoned != 0 {
-		t.Fatalf("res=%+v", res)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runDeliverFailureCase(t, tc.attempts, tc.maxAttempts, tc.markStatus, tc.wantFailed, tc.wantPoisoned)
+		})
 	}
 }
 
-func TestUnit_ProcessBatch_PoisonAtMaxAttempts(t *testing.T) {
-	t.Parallel()
+func runDeliverFailureCase(t *testing.T, attempts, maxAttempts int, markStatus string, wantFailed, wantPoisoned int) {
+	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	d := &stubDeliverer{err: errors.New("still down")}
-	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: 2})
+	defer func() { _ = db.Close() }()
+	d := &stubDeliverer{err: errors.New("sink down")}
+	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: maxAttempts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,29 +135,27 @@ func TestUnit_ProcessBatch_PoisonAtMaxAttempts(t *testing.T) {
 	eventID := uuid.New()
 	now := time.Now()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, 2, now, "", now, nil)
-	mock.ExpectQuery(`UPDATE ibex_core.evidence_outbox`).WillReturnRows(rows)
+		[]byte(`{}`), "digest", StatusInFlight, attempts, now, "", now, nil)
+	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
-		WithArgs(StatusPoison, sqlmock.AnyArg(), sqlmock.AnyArg(), id, StatusInFlight, 2).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`evidence_outbox_mark_failure`).
+		WithArgs(id, attempts, markStatus, "sink down", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 	mock.ExpectCommit()
 
 	res, err := relay.ProcessBatch(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Poisoned != 1 {
-		t.Fatalf("res=%+v", res)
+	if res.Failed != wantFailed || res.Poisoned != wantPoisoned {
+		t.Fatalf("res=%+v want failed=%d poisoned=%d", res, wantFailed, wantPoisoned)
 	}
 }
 
@@ -185,17 +165,16 @@ func TestUnit_MarkDelivered_StaleWorkerErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	relay, err := NewRelay(db, &stubDeliverer{}, RelayConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := uuid.New()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
-		WithArgs(StatusDelivered, id, StatusInFlight, 1).
-		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`evidence_outbox_mark_delivered`).
+		WithArgs(id, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(0))
 	mock.ExpectRollback()
 
 	if err := relay.markDelivered(context.Background(), OutboxRow{ID: id, Attempts: 1}); err == nil {

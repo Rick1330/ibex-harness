@@ -107,6 +107,16 @@ class _RepairArgs:
     values: list[float]
 
 
+@dataclass(frozen=True, slots=True)
+class _EmptyPackArgs:
+    path: PackPath
+    skipped: int
+    evaluated: int
+    was_budget_reached: bool = False
+    budget_excluded_ids: frozenset[str] = frozenset()
+    token_estimates: Mapping[str, int] | None = None
+
+
 class ContextPacker:
     """Select a score-maximizing memory subset under a token budget (ADR-0069).
 
@@ -165,50 +175,17 @@ class ContextPacker:
             scored,
             key=lambda item: (-item.composite_score, item.memory_id),
         )
-        n = len(candidates)
-        if n == 0:
-            return _empty_pack(path="dp", skipped=0, evaluated=0)
-        if token_budget <= 0:
-            estimates = {c.memory_id: self._tokens(c) for c in candidates}
-            return _empty_pack(
-                path="dp",
-                skipped=n,
-                evaluated=n,
-                was_budget_reached=True,
-                budget_excluded_ids=frozenset(c.memory_id for c in candidates),
-                token_estimates=estimates,
-            )
+        early = self._pack_empty_or_zero_budget(candidates, token_budget, path="dp")
+        if early is not None:
+            return early
 
         tokens = [self._tokens(item) for item in candidates]
         buckets = max(1, token_budget // self._bucket_size)
         weights = [_bucket_weight(t, self._bucket_size) for t in tokens]
         values = [float(item.composite_score) for item in candidates]
-
-        cells = n * (buckets + 1)
-        examined: frozenset[int] | None = None
-        if cells > self._dp_cell_ceiling:
-            logger.warning(
-                "packer_dp_ceiling_exceeded falling_back_to_greedy "
-                "n=%s buckets=%s cells=%s ceiling=%s",
-                n,
-                buckets,
-                cells,
-                self._dp_cell_ceiling,
-            )
-            selected, examined = self._greedy_select(candidates, tokens, token_budget)
-            path: PackPath = "greedy"
-        else:
-            selected = _dp_select(weights, values, buckets)
-            selected = self._repair_exact_budget(
-                _RepairArgs(
-                    selected=selected,
-                    candidates=candidates,
-                    tokens=tokens,
-                    token_budget=token_budget,
-                    values=values,
-                )
-            )
-            path = "dp"
+        selected, path, examined = self._select_under_budget(
+            candidates, tokens, weights, values, buckets, token_budget
+        )
         return self._finalize(
             _FinalizeArgs(
                 candidates=candidates,
@@ -219,6 +196,64 @@ class ContextPacker:
                 examined=examined,
             )
         )
+
+    def _pack_empty_or_zero_budget(
+        self,
+        candidates: list[ScoredMemory],
+        token_budget: int,
+        *,
+        path: PackPath,
+    ) -> PackedMemories | None:
+        n = len(candidates)
+        if n == 0:
+            return _empty_pack(_EmptyPackArgs(path=path, skipped=0, evaluated=0))
+        if token_budget > 0:
+            return None
+        estimates = {c.memory_id: self._tokens(c) for c in candidates}
+        return _empty_pack(
+            _EmptyPackArgs(
+                path=path,
+                skipped=n,
+                evaluated=n,
+                was_budget_reached=True,
+                budget_excluded_ids=frozenset(c.memory_id for c in candidates),
+                token_estimates=estimates,
+            )
+        )
+
+    def _select_under_budget(
+        self,
+        candidates: list[ScoredMemory],
+        tokens: list[int],
+        weights: list[int],
+        values: list[float],
+        buckets: int,
+        token_budget: int,
+    ) -> tuple[list[int], PackPath, frozenset[int] | None]:
+        n = len(candidates)
+        cells = n * (buckets + 1)
+        if cells > self._dp_cell_ceiling:
+            logger.warning(
+                "packer_dp_ceiling_exceeded falling_back_to_greedy "
+                "n=%s buckets=%s cells=%s ceiling=%s",
+                n,
+                buckets,
+                cells,
+                self._dp_cell_ceiling,
+            )
+            selected, examined = self._greedy_select(candidates, tokens, token_budget)
+            return selected, "greedy", examined
+        selected = _dp_select(weights, values, buckets)
+        selected = self._repair_exact_budget(
+            _RepairArgs(
+                selected=selected,
+                candidates=candidates,
+                tokens=tokens,
+                token_budget=token_budget,
+                values=values,
+            )
+        )
+        return selected, "dp", None
 
     def pack_greedy_only(
         self,
@@ -231,19 +266,9 @@ class ContextPacker:
         and ``token_budget <= 0``. Always sets ``path="greedy"``.
         """
         candidates = list(scored)
-        n = len(candidates)
-        if n == 0:
-            return _empty_pack(path="greedy", skipped=0, evaluated=0)
-        if token_budget <= 0:
-            estimates = {c.memory_id: self._tokens(c) for c in candidates}
-            return _empty_pack(
-                path="greedy",
-                skipped=n,
-                evaluated=n,
-                was_budget_reached=True,
-                budget_excluded_ids=frozenset(c.memory_id for c in candidates),
-                token_estimates=estimates,
-            )
+        early = self._pack_empty_or_zero_budget(candidates, token_budget, path="greedy")
+        if early is not None:
+            return early
         tokens = [self._tokens(item) for item in candidates]
         selected, examined = self._greedy_select(candidates, tokens, token_budget)
         return self._finalize(
@@ -363,25 +388,17 @@ def _budget_excluded_ids(
     )
 
 
-def _empty_pack(
-    *,
-    path: PackPath,
-    skipped: int,
-    evaluated: int,
-    was_budget_reached: bool = False,
-    budget_excluded_ids: frozenset[str] = frozenset(),
-    token_estimates: Mapping[str, int] | None = None,
-) -> PackedMemories:
-    estimates: Mapping[str, int] = {} if token_estimates is None else token_estimates
+def _empty_pack(args: _EmptyPackArgs) -> PackedMemories:
+    estimates: Mapping[str, int] = {} if args.token_estimates is None else args.token_estimates
     return PackedMemories(
         memories=(),
         total_tokens=0,
         total_score=0.0,
-        skipped_count=skipped,
-        was_budget_reached=was_budget_reached,
-        path=path,
-        candidates_evaluated=evaluated,
-        budget_excluded_ids=budget_excluded_ids,
+        skipped_count=args.skipped,
+        was_budget_reached=args.was_budget_reached,
+        path=args.path,
+        candidates_evaluated=args.evaluated,
+        budget_excluded_ids=args.budget_excluded_ids,
         token_estimates=estimates,
     )
 

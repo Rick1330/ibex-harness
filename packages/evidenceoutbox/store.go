@@ -228,16 +228,6 @@ func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
 	return nil
 }
 
-func setServiceAccountRLS(ctx context.Context, tx *sql.Tx) error {
-	// Unforgeable role switch — evidence policies trust current_user = ibex_service,
-	// not the writable app.is_service_account GUC.
-	_, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_service`)
-	if err != nil {
-		return fmt.Errorf("evidenceoutbox: set service role: %w", err)
-	}
-	return nil
-}
-
 func marshalJSONObject(v any) ([]byte, error) {
 	if v == nil {
 		return []byte("{}"), nil

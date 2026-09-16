@@ -21,9 +21,29 @@ func TestUnit_FinalRankForExclusion(t *testing.T) {
 	}
 }
 
-func TestUnit_EvidenceExtrasFromAssemble_FinalRankAndMetrics(t *testing.T) {
+func TestUnit_EvidenceExtrasFromAssemble_Metrics(t *testing.T) {
 	t.Parallel()
-	result := contextclient.AssembleResult{
+	extras := evidenceExtrasFromAssemble(sampleAssembleResult())
+	if extras.Metrics == nil || extras.Metrics.TotalMs != 9 {
+		t.Fatalf("metrics=%+v", extras.Metrics)
+	}
+	if len(extras.Candidates) != 3 {
+		t.Fatalf("candidates=%d", len(extras.Candidates))
+	}
+}
+
+func TestUnit_EvidenceExtrasFromAssemble_FinalRankPackOrder(t *testing.T) {
+	t.Parallel()
+	extras := evidenceExtrasFromAssemble(sampleAssembleResult())
+	assertFinalRank(t, extras.Candidates[0].FinalRank, 1, "first included")
+	if extras.Candidates[1].FinalRank != nil {
+		t.Fatalf("budget FinalRank=%v want nil", extras.Candidates[1].FinalRank)
+	}
+	assertFinalRank(t, extras.Candidates[2].FinalRank, 2, "second included")
+}
+
+func sampleAssembleResult() contextclient.AssembleResult {
+	return contextclient.AssembleResult{
 		ScoreSchema: evidenceoutbox.ScoreSchemaInterim,
 		Metrics:     &contextclient.AssemblyMetrics{TotalMs: 9, RankingMs: 2},
 		MemoriesUsed: []contextclient.MemoryUsed{
@@ -44,20 +64,11 @@ func TestUnit_EvidenceExtrasFromAssemble_FinalRankAndMetrics(t *testing.T) {
 			},
 		},
 	}
-	extras := evidenceExtrasFromAssemble(result)
-	if extras.Metrics == nil || extras.Metrics.TotalMs != 9 {
-		t.Fatalf("metrics=%+v", extras.Metrics)
-	}
-	if len(extras.Candidates) != 3 {
-		t.Fatalf("candidates=%d", len(extras.Candidates))
-	}
-	if extras.Candidates[0].FinalRank == nil || *extras.Candidates[0].FinalRank != 1 {
-		t.Fatalf("first included FinalRank=%v want 1 (pack order)", extras.Candidates[0].FinalRank)
-	}
-	if extras.Candidates[1].FinalRank != nil {
-		t.Fatalf("budget FinalRank=%v want nil", extras.Candidates[1].FinalRank)
-	}
-	if extras.Candidates[2].FinalRank == nil || *extras.Candidates[2].FinalRank != 2 {
-		t.Fatalf("second included FinalRank=%v want 2", extras.Candidates[2].FinalRank)
+}
+
+func assertFinalRank(t *testing.T, got *int, want int, label string) {
+	t.Helper()
+	if got == nil || *got != want {
+		t.Fatalf("%s FinalRank=%v want %d", label, got, want)
 	}
 }

@@ -2,17 +2,21 @@
 -- session_events was previously DATABASE_SCHEMA-only; this introduces the applied table
 -- with evidence-plane linkage columns (trace_id, span_id, request_id, checkpoint_id).
 -- Partitioning from the schema sketch is deferred (single table + indexes) — see milestone MDX.
--- Evidence RLS uses rls_evidence_visible: org GUC match OR unforgeable SET ROLE ibex_service
--- (not the writable app.is_service_account GUC used by older tables).
+--
+-- Tenant boundary for evidence tables: org GUC only (rls_evidence_visible). Cross-org
+-- outbox relay uses SECURITY DEFINER helpers owned by ibex_service (BYPASSRLS, NOLOGIN).
+-- ibex_service is NEVER granted to ibex_app — SET ROLE cannot forge the bypass.
 
 DO $$
 BEGIN
-    CREATE ROLE ibex_service NOLOGIN;
+    CREATE ROLE ibex_service NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS;
 EXCEPTION
-    WHEN duplicate_object THEN NULL;
+    WHEN duplicate_object THEN
+        ALTER ROLE ibex_service NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS;
 END
 $$;
-GRANT ibex_service TO ibex_app;
+REVOKE ibex_service FROM ibex_app;
+GRANT USAGE ON SCHEMA ibex_core TO ibex_service;
 
 CREATE OR REPLACE FUNCTION ibex_core.rls_evidence_visible(row_org_id UUID)
 RETURNS BOOLEAN
@@ -22,8 +26,7 @@ AS $$
     SELECT (
         NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
         AND row_org_id = current_setting('app.current_org_id', true)::UUID
-    )
-    OR current_user = 'ibex_service';
+    );
 $$;
 
 REVOKE ALL ON FUNCTION ibex_core.rls_evidence_visible(UUID) FROM PUBLIC;
@@ -419,3 +422,137 @@ CREATE POLICY evidence_outbox_isolation ON ibex_core.evidence_outbox
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_service;
+
+-- ================================================================
+-- OUTBOX RELAY HELPERS (SECURITY DEFINER / ibex_service owner)
+-- App may EXECUTE only; cannot ASSUME ibex_service (no role membership).
+-- ================================================================
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_recover_in_flight(p_secs DOUBLE PRECISION)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    n BIGINT;
+BEGIN
+    UPDATE ibex_core.evidence_outbox
+    SET delivery_status = 'pending'
+    WHERE delivery_status = 'in_flight'
+      AND claimed_at IS NOT NULL
+      AND claimed_at < NOW() - make_interval(secs => p_secs);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_claim_pending(p_limit INTEGER)
+RETURNS TABLE (
+    id UUID,
+    org_id UUID,
+    event_id UUID,
+    aggregate_id TEXT,
+    aggregate_seq BIGINT,
+    schema_version TEXT,
+    event_type TEXT,
+    payload JSONB,
+    payload_digest TEXT,
+    delivery_status TEXT,
+    attempts INTEGER,
+    available_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE ibex_core.evidence_outbox o
+    SET delivery_status = 'in_flight',
+        attempts = o.attempts + 1,
+        claimed_at = NOW()
+    WHERE o.id IN (
+        SELECT e.id FROM ibex_core.evidence_outbox e
+        WHERE e.delivery_status IN ('pending', 'failed')
+          AND e.available_at <= NOW()
+        ORDER BY e.available_at, e.created_at
+        FOR UPDATE SKIP LOCKED
+        LIMIT p_limit
+    )
+    RETURNING
+        o.id, o.org_id, o.event_id, o.aggregate_id, o.aggregate_seq,
+        o.schema_version, o.event_type, o.payload, o.payload_digest,
+        o.delivery_status, o.attempts, o.available_at,
+        COALESCE(o.last_error, ''), o.created_at, o.delivered_at;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_mark_delivered(
+    p_id UUID,
+    p_attempts INTEGER
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    n BIGINT;
+BEGIN
+    UPDATE ibex_core.evidence_outbox
+    SET delivery_status = 'delivered', delivered_at = NOW(), last_error = NULL
+    WHERE id = p_id
+      AND delivery_status = 'in_flight'
+      AND attempts = p_attempts;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_mark_failure(
+    p_id UUID,
+    p_attempts INTEGER,
+    p_status TEXT,
+    p_error TEXT,
+    p_delay_secs INTEGER
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    n BIGINT;
+BEGIN
+    IF p_status NOT IN ('failed', 'poison') THEN
+        RAISE EXCEPTION 'evidence_outbox_mark_failure: invalid status %', p_status;
+    END IF;
+    UPDATE ibex_core.evidence_outbox
+    SET delivery_status = p_status,
+        last_error = p_error,
+        available_at = NOW() + make_interval(secs => p_delay_secs)
+    WHERE id = p_id
+      AND delivery_status = 'in_flight'
+      AND attempts = p_attempts;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END;
+$$;
+
+ALTER FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) OWNER TO ibex_service;
+ALTER FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) OWNER TO ibex_service;
+ALTER FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) OWNER TO ibex_service;
+ALTER FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) OWNER TO ibex_service;
+
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) TO ibex_app;

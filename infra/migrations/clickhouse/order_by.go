@@ -4,35 +4,55 @@ import "strings"
 
 // orderByKeys extracts identifiers from the ORDER BY clause of a SHOW CREATE TABLE.
 func orderByKeys(createSQL string) []string {
+	clause, ok := extractOrderByClause(createSQL)
+	if !ok {
+		return nil
+	}
+	return parseOrderByKeyList(clause)
+}
+
+func extractOrderByClause(createSQL string) (string, bool) {
 	upper := strings.ToUpper(createSQL)
 	idx := strings.Index(upper, "ORDER BY")
 	if idx < 0 {
-		return nil
+		return "", false
 	}
 	rest := createSQL[idx+len("ORDER BY"):]
+	end := orderByClauseEnd(rest)
+	return rest[:end], true
+}
+
+func orderByClauseEnd(rest string) int {
 	end := len(rest)
+	upper := strings.ToUpper(rest)
 	for _, stop := range []string{"TTL", "SETTINGS", "ENGINE"} {
-		if j := strings.Index(strings.ToUpper(rest), stop); j >= 0 && j < end {
+		if j := strings.Index(upper, stop); j >= 0 && j < end {
 			end = j
 		}
 	}
-	clause := rest[:end]
+	return end
+}
+
+func parseOrderByKeyList(clause string) []string {
 	var keys []string
 	for _, part := range strings.Split(clause, ",") {
-		tok := strings.TrimSpace(part)
-		if tok == "" {
-			continue
-		}
-		fields := strings.Fields(tok)
-		if len(fields) == 0 {
-			continue
-		}
-		key := strings.Trim(fields[0], "()`\"")
-		if key != "" {
+		if key := orderByTokenKey(part); key != "" {
 			keys = append(keys, key)
 		}
 	}
 	return keys
+}
+
+func orderByTokenKey(part string) string {
+	tok := strings.TrimSpace(part)
+	if tok == "" {
+		return ""
+	}
+	fields := strings.Fields(tok)
+	if len(fields) == 0 {
+		return ""
+	}
+	return strings.Trim(fields[0], "()`\"")
 }
 
 func orderKeysMatch(got, want []string) bool {

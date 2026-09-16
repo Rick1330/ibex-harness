@@ -21,7 +21,7 @@ func TestUnit_PersistRun_Validation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store, err := NewStore(db)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestUnit_PersistRun_HappyPathMinimal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store, err := NewStore(db)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestUnit_PersistRun_WithChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store, err := NewStore(db)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestUnit_PersistRun_RLSFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store, err := NewStore(db)
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestUnit_PersistRun_BeginFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store, err := NewStore(db)
 	if err != nil {
 		t.Fatal(err)
