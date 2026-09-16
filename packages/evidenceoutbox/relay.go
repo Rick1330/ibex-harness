@@ -31,6 +31,15 @@ type RelayConfig struct {
 	MaxAttempts int
 }
 
+const (
+	maxRetryBackoffSecs = 60
+	maxBackoffExp       = 6
+	// maxClaimBatch matches evidence_outbox_claim_pending p_limit upper bound.
+	maxClaimBatch      = 256
+	defaultBatch       = 32
+	defaultMaxAttempts = 8
+)
+
 // NewRelay constructs a Relay. deliverer and db are required.
 func NewRelay(db *sql.DB, deliverer Deliverer, cfg RelayConfig) (*Relay, error) {
 	if db == nil {
@@ -40,10 +49,13 @@ func NewRelay(db *sql.DB, deliverer Deliverer, cfg RelayConfig) (*Relay, error) 
 		return nil, fmt.Errorf("evidenceoutbox: relay deliverer is required")
 	}
 	if cfg.BatchSize <= 0 {
-		cfg.BatchSize = 32
+		cfg.BatchSize = defaultBatch
+	}
+	if cfg.BatchSize > maxClaimBatch {
+		return nil, fmt.Errorf("evidenceoutbox: batch size %d exceeds max %d", cfg.BatchSize, maxClaimBatch)
 	}
 	if cfg.MaxAttempts <= 0 {
-		cfg.MaxAttempts = 8
+		cfg.MaxAttempts = defaultMaxAttempts
 	}
 	return &Relay{db: db, deliverer: deliverer, batchSize: cfg.BatchSize, maxAttempts: cfg.MaxAttempts}, nil
 }
@@ -55,11 +67,6 @@ type RelayBatchResult struct {
 	Failed    int
 	Poisoned  int
 }
-
-const (
-	maxRetryBackoffSecs = 60
-	maxBackoffExp       = 6
-)
 
 // ProcessBatch claims up to BatchSize pending rows via SECURITY DEFINER helpers
 // (owned by ibex_service; ibex_app cannot assume that role), delivers via Deliverer,

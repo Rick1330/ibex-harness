@@ -98,48 +98,60 @@ func assertNestedStatus(t *testing.T, in evidenceoutbox.RunInput) {
 	}
 }
 
-func TestUnit_BuildEvidenceRun_RejectsNonW3CRoot(t *testing.T) {
+func TestUnit_BuildEvidenceRun_RejectsInvalidW3CIDs(t *testing.T) {
 	t.Parallel()
-	in := BuildEvidenceRun(httptrace.AssembleInput{
-		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
-		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "not-hex",
-		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
-	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "1122334455667788"})
-	if in.RootSpanID != "" {
-		t.Fatalf("root=%q want empty", in.RootSpanID)
+	cases := []struct {
+		name           string
+		traceID        string
+		rootSpanID     string
+		assembleSpanID string
+		wantTrace      string
+		wantRoot       string
+		wantMetrics    string
+		wantSpans      int
+	}{
+		{
+			name:    "bad_root",
+			traceID: "aabbccddeeff00112233445566778899", rootSpanID: "not-hex",
+			assembleSpanID: "1122334455667788",
+			wantTrace:      "aabbccddeeff00112233445566778899",
+			wantMetrics:    "1122334455667788", wantSpans: 0,
+		},
+		{
+			name:    "bad_trace",
+			traceID: "not-a-w3c-trace", rootSpanID: "aabbccddeeff0011",
+			assembleSpanID: "1122334455667788",
+			wantRoot:       "aabbccddeeff0011", wantMetrics: "1122334455667788", wantSpans: 0,
+		},
+		{
+			name:    "bad_assemble",
+			traceID: "aabbccddeeff00112233445566778899", rootSpanID: "aabbccddeeff0011",
+			assembleSpanID: "bad-span",
+			wantTrace:      "aabbccddeeff00112233445566778899", wantRoot: "aabbccddeeff0011",
+			wantSpans: 1,
+		},
 	}
-	if len(in.Spans) != 0 {
-		t.Fatalf("spans=%d want 0 without valid root", len(in.Spans))
-	}
-}
-
-func TestUnit_BuildEvidenceRun_ClearsMalformedTraceID(t *testing.T) {
-	t.Parallel()
-	in := BuildEvidenceRun(httptrace.AssembleInput{
-		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
-		TraceID: "not-a-w3c-trace", RootSpanID: "aabbccddeeff0011",
-		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
-	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "1122334455667788"})
-	if in.TraceID != "" {
-		t.Fatalf("trace=%q want empty", in.TraceID)
-	}
-	if len(in.Spans) != 0 {
-		t.Fatalf("spans=%d want 0", len(in.Spans))
-	}
-}
-
-func TestUnit_BuildEvidenceRun_ClearsMalformedAssembleSpanID(t *testing.T) {
-	t.Parallel()
-	in := BuildEvidenceRun(httptrace.AssembleInput{
-		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
-		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "aabbccddeeff0011",
-		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
-	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "bad-span"})
-	if in.MetricsSpanID != "" {
-		t.Fatalf("metrics_span=%q want empty", in.MetricsSpanID)
-	}
-	if len(in.Spans) != 1 {
-		t.Fatalf("spans=%d want root only", len(in.Spans))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			in := BuildEvidenceRun(httptrace.AssembleInput{
+				RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
+				TraceID: tc.traceID, RootSpanID: tc.rootSpanID,
+				Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+			}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: tc.assembleSpanID})
+			if in.TraceID != tc.wantTrace {
+				t.Fatalf("trace=%q want %q", in.TraceID, tc.wantTrace)
+			}
+			if in.RootSpanID != tc.wantRoot {
+				t.Fatalf("root=%q want %q", in.RootSpanID, tc.wantRoot)
+			}
+			if in.MetricsSpanID != tc.wantMetrics {
+				t.Fatalf("metrics=%q want %q", in.MetricsSpanID, tc.wantMetrics)
+			}
+			if len(in.Spans) != tc.wantSpans {
+				t.Fatalf("spans=%d want %d", len(in.Spans), tc.wantSpans)
+			}
+		})
 	}
 }
 

@@ -32,6 +32,9 @@ func TestUnit_NewRelay_RequiresDeps(t *testing.T) {
 	if _, err := NewRelay(db, nil, RelayConfig{}); err == nil {
 		t.Fatal("expected deliverer error")
 	}
+	if _, err := NewRelay(db, &stubDeliverer{}, RelayConfig{BatchSize: maxClaimBatch + 1}); err == nil {
+		t.Fatal("expected batch size error")
+	}
 }
 
 func TestUnit_ProcessBatch_DeliverAndAck(t *testing.T) {
