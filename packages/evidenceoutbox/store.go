@@ -255,8 +255,27 @@ func validateRunInput(in RunInput) error {
 	if in.RequestID == "" {
 		return fmt.Errorf("evidenceoutbox: request_id is required")
 	}
-	if in.TraceID == "" {
-		return fmt.Errorf("evidenceoutbox: trace_id is required")
+	if err := requireW3CTraceID(in.TraceID); err != nil {
+		return err
+	}
+	if err := optionalW3CSpanID("root_span_id", in.RootSpanID); err != nil {
+		return err
+	}
+	if err := optionalW3CSpanID("metrics_span_id", in.MetricsSpanID); err != nil {
+		return err
+	}
+	for i, sp := range in.Spans {
+		if err := requireW3CSpanID(fmt.Sprintf("spans[%d].span_id", i), sp.SpanID); err != nil {
+			return err
+		}
+		if err := optionalW3CSpanID(fmt.Sprintf("spans[%d].parent_span_id", i), sp.ParentSpanID); err != nil {
+			return err
+		}
+	}
+	for i, tool := range in.Tools {
+		if err := optionalW3CSpanID(fmt.Sprintf("tools[%d].span_id", i), tool.SpanID); err != nil {
+			return err
+		}
 	}
 	if in.Completeness != "" {
 		if _, ok := completenessValues[in.Completeness]; !ok {
@@ -264,6 +283,60 @@ func validateRunInput(in RunInput) error {
 		}
 	}
 	return nil
+}
+
+func requireW3CTraceID(id string) error {
+	if id == "" {
+		return fmt.Errorf("evidenceoutbox: trace_id is required")
+	}
+	if !isW3CHex(id, 32) || isAllZeroHex(id) {
+		return fmt.Errorf("evidenceoutbox: trace_id %q is not a valid W3C trace id", id)
+	}
+	return nil
+}
+
+func requireW3CSpanID(label, id string) error {
+	if id == "" {
+		return fmt.Errorf("evidenceoutbox: %s is required", label)
+	}
+	if !isW3CHex(id, 16) || isAllZeroHex(id) {
+		return fmt.Errorf("evidenceoutbox: %s %q is not a valid W3C span id", label, id)
+	}
+	return nil
+}
+
+func optionalW3CSpanID(label, id string) error {
+	if id == "" {
+		return nil
+	}
+	if !isW3CHex(id, 16) || isAllZeroHex(id) {
+		return fmt.Errorf("evidenceoutbox: %s %q is not a valid W3C span id", label, id)
+	}
+	return nil
+}
+
+func isW3CHex(s string, length int) bool {
+	if len(s) != length {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isAllZeroHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] != '0' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
 
 func defaultCompleteness(v string) string {

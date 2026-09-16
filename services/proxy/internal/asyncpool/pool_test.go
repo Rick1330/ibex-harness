@@ -256,6 +256,34 @@ func TestUnit_Pool_TrySubmitAfterShutdown(t *testing.T) {
 	}
 }
 
+func TestUnit_Pool_TrySubmitDepthCallbackShutdown(t *testing.T) {
+	t.Parallel()
+	// Depth callback must not deadlock when it re-enters Shutdown.
+	var p *asyncpool.Pool
+	var err error
+	done := make(chan struct{})
+	var once sync.Once
+	p, err = asyncpool.New(1, 4, func(float64) {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = p.Shutdown(ctx)
+			close(done)
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.TrySubmit(func() {}) {
+		t.Fatal("TrySubmit")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("depth→Shutdown deadlocked")
+	}
+}
+
 func TestUnit_Pool_TrySubmitShutdownRace(t *testing.T) {
 	t.Parallel()
 	// Stress admission vs close: must never panic (send on closed channel).

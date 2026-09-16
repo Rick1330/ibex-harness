@@ -38,10 +38,19 @@ func TestIntegration_EvidenceRLS_CrossTenantIsolation(t *testing.T) {
 
 	orgA := seedOrg(t, db)
 	orgB := seedOrg(t, db)
-	traceA := strings.ReplaceAll(uuid.NewString(), "-", "")
-	traceB := strings.ReplaceAll(uuid.NewString(), "-", "")
-	persistMinimalRun(t, store, orgA, traceA)
-	persistMinimalRun(t, store, orgB, traceB)
+	sessionA := seedSession(t, db, orgA)
+	keysA := goldenJoinKeys{
+		TraceID:    strings.ReplaceAll(uuid.NewString(), "-", ""),
+		RequestID:  uuid.NewString(),
+		Checkpoint: uuid.New(),
+		Root:       "1111111111111111",
+		Child:      "2222222222222222",
+	}
+	if _, err := store.PersistRun(context.Background(), goldenRunInput(orgA, sessionA, keysA)); err != nil {
+		t.Fatalf("persist orgA full run: %v", err)
+	}
+	seedEvidenceEvent(t, db, orgA, keysA)
+	persistMinimalRun(t, store, orgB, strings.ReplaceAll(uuid.NewString(), "-", ""))
 
 	ctx := context.Background()
 	assertAppRoleTableCount(t, ctx, appRoleCount{db: db, table: "evidence_runs", orgID: orgA, want: 1})
@@ -149,6 +158,19 @@ func loadRunID(t *testing.T, ctx context.Context, db *sql.DB, orgID uuid.UUID) u
 		t.Fatalf("load run: %v", err)
 	}
 	return id
+}
+
+func seedEvidenceEvent(t *testing.T, db *sql.DB, orgID uuid.UUID, keys goldenJoinKeys) {
+	t.Helper()
+	runID := loadRunID(t, context.Background(), db, orgID)
+	_, err := db.ExecContext(context.Background(), `
+INSERT INTO ibex_core.evidence_events (
+	org_id, run_id, span_id, trace_id, request_id, event_name, attributes
+) VALUES ($1, $2, $3, $4, $5, 'test.event', '{}'::jsonb)`,
+		orgID, runID, keys.Root, keys.TraceID, keys.RequestID)
+	if err != nil {
+		t.Fatalf("seed evidence_events: %v", err)
+	}
 }
 
 type crossTenantUpdate struct {

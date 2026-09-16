@@ -57,11 +57,14 @@ func (p *Pool) Submit(fn func()) bool {
 	if fn == nil || !p.beginSubmit() {
 		return false
 	}
-	defer p.submitWG.Done()
 	select {
 	case <-p.quit:
+		p.submitWG.Done()
 		return false
 	case p.jobs <- fn:
+		// Done before reportDepth so a depth callback that calls Shutdown
+		// cannot deadlock waiting on this submit's WaitGroup slot.
+		p.submitWG.Done()
 		p.reportDepth()
 		return true
 	}
@@ -73,19 +76,25 @@ func (p *Pool) TrySubmit(fn func()) bool {
 	if fn == nil || !p.beginSubmit() {
 		return false
 	}
-	defer p.submitWG.Done()
 	p.sendMu.Lock()
-	defer p.sendMu.Unlock()
 	if p.closed.Load() {
+		p.sendMu.Unlock()
+		p.submitWG.Done()
 		return false
 	}
+	var ok bool
 	select {
 	case p.jobs <- fn:
-		p.reportDepth()
-		return true
+		ok = true
 	default:
-		return false
 	}
+	p.sendMu.Unlock()
+	// Release sendMu and WaitGroup before reportDepth — depth may call Shutdown.
+	p.submitWG.Done()
+	if ok {
+		p.reportDepth()
+	}
+	return ok
 }
 
 // beginSubmit accounts for an in-flight submit under gate so Shutdown's Wait

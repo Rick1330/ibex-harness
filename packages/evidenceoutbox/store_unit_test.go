@@ -108,8 +108,8 @@ func TestUnit_PersistRun_WithChildren(t *testing.T) {
 	sessionID := uuid.New()
 	_, err = store.PersistRun(context.Background(), RunInput{
 		OrgID: org, RequestID: "req-2", TraceID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		RootSpanID: "rootspan1", MetricsSpanID: "assemble1",
-		Spans:   []SpanInput{{SpanID: "rootspan1", OperationKind: "proxy.chat"}},
+		RootSpanID: "1111111111111111", MetricsSpanID: "2222222222222222",
+		Spans:   []SpanInput{{SpanID: "1111111111111111", OperationKind: "proxy.chat"}},
 		Metrics: &AssemblyMetrics{TotalMs: 5},
 		Candidates: []ScoreCandidate{
 			{MemoryID: mem, RetrievalRank: 1, FinalRank: &rank, Similarity: &sim, Exclusion: "included"},
@@ -143,7 +143,7 @@ func TestUnit_PersistRun_RLSFails(t *testing.T) {
 	mock.ExpectExec(`SELECT set_config`).WillReturnError(context.Canceled)
 	mock.ExpectRollback()
 	_, err = store.PersistRun(context.Background(), RunInput{
-		OrgID: uuid.New(), RequestID: "r", TraceID: "t",
+		OrgID: uuid.New(), RequestID: "r", TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	})
 	if err == nil {
 		t.Fatal("expected RLS error")
@@ -163,7 +163,7 @@ func TestUnit_PersistRun_BeginFails(t *testing.T) {
 	}
 	mock.ExpectBegin().WillReturnError(context.DeadlineExceeded)
 	_, err = store.PersistRun(context.Background(), RunInput{
-		OrgID: uuid.New(), RequestID: "r", TraceID: "t",
+		OrgID: uuid.New(), RequestID: "r", TraceID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	})
 	if err == nil {
 		t.Fatal("expected begin error")

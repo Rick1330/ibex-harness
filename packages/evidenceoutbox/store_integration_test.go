@@ -180,10 +180,10 @@ func fullPersistRunInput(orgID, sessionID uuid.UUID) evidenceoutbox.RunInput {
 		SessionID:  &sessionID,
 		RequestID:  "req-" + uuid.NewString(),
 		TraceID:    strings.ReplaceAll(uuid.NewString(), "-", ""),
-		RootSpanID: "span-root",
+		RootSpanID: "1111111111111111",
 		Spans: []evidenceoutbox.SpanInput{
-			{SpanID: "span-root", OperationKind: "proxy.chat", Status: "ok"},
-			{SpanID: "span-assemble", ParentSpanID: "span-root", OperationKind: "context.assemble", Status: "ok"},
+			{SpanID: "1111111111111111", OperationKind: "proxy.chat", Status: "ok"},
+			{SpanID: "2222222222222222", ParentSpanID: "1111111111111111", OperationKind: "context.assemble", Status: "ok"},
 		},
 		Metrics: &evidenceoutbox.AssemblyMetrics{TotalMs: 12, RankingMs: 3, CandidatesEvaluated: 2},
 		Candidates: []evidenceoutbox.ScoreCandidate{
@@ -292,7 +292,7 @@ func persistMinimalRun(t *testing.T, store *evidenceoutbox.Store, orgID uuid.UUI
 		OrgID:     orgID,
 		RequestID: requestID,
 		TraceID:   traceID,
-		Spans:     []evidenceoutbox.SpanInput{{SpanID: "s1", OperationKind: "proxy.chat"}},
+		Spans:     []evidenceoutbox.SpanInput{{SpanID: "1111111111111111", OperationKind: "proxy.chat"}},
 		Metrics:   &evidenceoutbox.AssemblyMetrics{TotalMs: 1},
 	})
 	if err != nil {
