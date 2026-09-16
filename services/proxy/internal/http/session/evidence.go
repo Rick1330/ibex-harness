@@ -27,7 +27,8 @@ func PersistEvidence(
 	if p == nil {
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), CheckpointTaskTimeout)
+	defer cancel()
 	if in.RequestID != "" {
 		ctx = reqid.WithRequestID(ctx, in.RequestID)
 	}
@@ -44,12 +45,26 @@ func PersistEvidence(
 
 // EvidenceExtras carries assemble-time contracts into the durable evidence write.
 type EvidenceExtras struct {
-	Metrics    *evidenceoutbox.AssemblyMetrics
-	Candidates []evidenceoutbox.ScoreCandidate
+	Metrics        *evidenceoutbox.AssemblyMetrics
+	Candidates     []evidenceoutbox.ScoreCandidate
+	AssembleSpanID string
 }
 
 // BuildEvidenceRun maps a completed post-response snapshot into PersistRun input.
 func BuildEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras EvidenceExtras) evidenceoutbox.RunInput {
+	in := baseEvidenceRun(snap, meta, extras)
+	if in.TraceID == "" || in.RequestID == "" {
+		return in
+	}
+	if in.RootSpanID == "" {
+		in.RootSpanID = "unknown"
+	}
+	in.Spans = evidenceSpans(in, extras)
+	in.Directive = evidenceDirective(snap, meta)
+	return in
+}
+
+func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras EvidenceExtras) evidenceoutbox.RunInput {
 	agent := snap.AgentID
 	started := snap.Timings.RequestedAt
 	ended := snap.Timings.CompletedAt
@@ -59,7 +74,7 @@ func BuildEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Ev
 	if ended.IsZero() {
 		ended = started
 	}
-	in := evidenceoutbox.RunInput{
+	return evidenceoutbox.RunInput{
 		OrgID:        snap.OrgID,
 		AgentID:      &agent,
 		SessionID:    snap.SessionID,
@@ -74,35 +89,36 @@ func BuildEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Ev
 		Metrics:      extras.Metrics,
 		Candidates:   extras.Candidates,
 	}
-	if in.TraceID == "" || in.RequestID == "" {
-		return in
-	}
+}
+
+func evidenceSpans(in evidenceoutbox.RunInput, extras EvidenceExtras) []evidenceoutbox.SpanInput {
 	root := in.RootSpanID
-	if root == "" {
-		root = "unknown"
-		in.RootSpanID = root
+	spans := []evidenceoutbox.SpanInput{
+		{SpanID: root, OperationKind: "proxy.chat", Status: "ok", StartedAt: in.StartedAt, EndedAt: in.EndedAt},
 	}
-	in.Spans = []evidenceoutbox.SpanInput{
-		{SpanID: root, OperationKind: "proxy.chat", Status: "ok", StartedAt: started, EndedAt: ended},
+	assembleID := extras.AssembleSpanID
+	if assembleID == "" {
+		return spans
 	}
-	if meta.ContextAssemblyMs > 0 || extras.Metrics != nil {
-		in.Spans = append(in.Spans, evidenceoutbox.SpanInput{
-			SpanID:        root + ".assemble",
-			ParentSpanID:  root,
-			OperationKind: "context.assemble",
-			Status:        "ok",
-			StartedAt:     started,
-			EndedAt:       ended,
-		})
-	}
+	return append(spans, evidenceoutbox.SpanInput{
+		SpanID:        assembleID,
+		ParentSpanID:  root,
+		OperationKind: "context.assemble",
+		Status:        "ok",
+		StartedAt:     in.StartedAt,
+		EndedAt:       in.EndedAt,
+	})
+}
+
+func evidenceDirective(snap httptrace.AssembleInput, meta SnapshotMeta) *evidenceoutbox.DirectiveSnapshot {
 	vid := meta.DirectiveVersionID
 	if vid == nil {
 		vid = snap.DirectiveVersionID
 	}
-	if vid != nil {
-		in.Directive = &evidenceoutbox.DirectiveSnapshot{DirectiveVersionID: vid}
+	if vid == nil {
+		return nil
 	}
-	return in
+	return &evidenceoutbox.DirectiveSnapshot{DirectiveVersionID: vid}
 }
 
 func firstNonEmpty(values ...string) string {

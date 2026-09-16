@@ -104,6 +104,119 @@ func TestIntegration_Migrate_SchemaAndTTL(t *testing.T) {
 	assertNoContentColumns(t, db)
 	assertCreateTableDDL(t, db)
 	assertMCPToolCallsTable(t, db)
+	assertEvidencePlaneTables(t, db)
+}
+
+func assertEvidencePlaneTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertEvidenceSpansTable(t, db)
+	assertEvidenceAssemblyMetricsTable(t, db)
+}
+
+func assertEvidenceSpansTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertTableCount(t, db, "evidence_spans", 1)
+	got := loadTableColumns(t, db, "evidence_spans")
+	for _, col := range []string{
+		"event_id", "org_id", "request_id", "trace_id", "span_id",
+		"parent_span_id", "operation_kind", "status", "started_at", "event_date",
+	} {
+		if _, ok := got[col]; !ok {
+			t.Errorf("evidence_spans missing column %s", col)
+		}
+	}
+	assertCreateHasTTLAndOrder(t, db, "evidence_spans", "org_id", "trace_id", "span_id")
+}
+
+func assertEvidenceAssemblyMetricsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertTableCount(t, db, "evidence_assembly_metrics", 1)
+	got := loadTableColumns(t, db, "evidence_assembly_metrics")
+	for _, col := range []string{
+		"org_id", "request_id", "trace_id", "span_id",
+		"budget_calculation_ms", "ranking_ms", "total_ms",
+		"candidates_evaluated", "recorded_at", "event_date",
+	} {
+		if _, ok := got[col]; !ok {
+			t.Errorf("evidence_assembly_metrics missing column %s", col)
+		}
+	}
+	assertCreateHasTTLAndOrder(t, db, "evidence_assembly_metrics", "org_id", "request_id", "recorded_at")
+}
+
+func loadTableColumns(t *testing.T, db *sql.DB, table string) map[string]struct{} {
+	t.Helper()
+	q, ok := systemColumnsQuery(table)
+	if !ok {
+		t.Fatalf("unknown table %s", table)
+	}
+	rows, err := db.QueryContext(context.Background(), q)
+	if err != nil {
+		t.Fatalf("%s columns: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func systemColumnsQuery(table string) (string, bool) {
+	switch table {
+	case "evidence_spans":
+		return `
+		SELECT name FROM system.columns
+		WHERE database = 'ibex' AND table = 'evidence_spans'`, true
+	case "evidence_assembly_metrics":
+		return `
+		SELECT name FROM system.columns
+		WHERE database = 'ibex' AND table = 'evidence_assembly_metrics'`, true
+	default:
+		return "", false
+	}
+}
+
+func assertCreateHasTTLAndOrder(t *testing.T, db *sql.DB, table string, orderParts ...string) {
+	t.Helper()
+	createSQL := showCreateEvidenceTable(t, db, table)
+	if !strings.Contains(createSQL, "event_date + toIntervalDay(90)") &&
+		!strings.Contains(createSQL, "event_date + INTERVAL 90 DAY") {
+		t.Fatalf("%s expected 90-day TTL, got: %s", table, createSQL)
+	}
+	for _, part := range orderParts {
+		if !strings.Contains(createSQL, part) {
+			t.Fatalf("%s expected ORDER BY key %q in: %s", table, part, createSQL)
+		}
+	}
+	if !strings.Contains(createSQL, "ORDER BY") {
+		t.Fatalf("%s expected ORDER BY, got: %s", table, createSQL)
+	}
+}
+
+func showCreateEvidenceTable(t *testing.T, db *sql.DB, table string) string {
+	t.Helper()
+	var q string
+	switch table {
+	case "evidence_spans":
+		q = `SHOW CREATE TABLE ibex.evidence_spans`
+	case "evidence_assembly_metrics":
+		q = `SHOW CREATE TABLE ibex.evidence_assembly_metrics`
+	default:
+		t.Fatalf("unknown table %s", table)
+	}
+	var createSQL string
+	if err := db.QueryRowContext(context.Background(), q).Scan(&createSQL); err != nil {
+		t.Fatalf("show create %s: %v", table, err)
+	}
+	return createSQL
 }
 
 func assertMCPToolCallsTable(t *testing.T, db *sql.DB) {
@@ -220,8 +333,10 @@ func assertCreateTableDDL(t *testing.T, db *sql.DB) {
 func assertTableCount(t *testing.T, db *sql.DB, name string, want uint64) {
 	t.Helper()
 	allowed := map[string]struct{}{
-		"mcp_tool_calls": {},
-		"llm_traces":     {},
+		"mcp_tool_calls":            {},
+		"llm_traces":                {},
+		"evidence_spans":            {},
+		"evidence_assembly_metrics": {},
 	}
 	if _, ok := allowed[name]; !ok {
 		t.Fatalf("unknown table %s", name)

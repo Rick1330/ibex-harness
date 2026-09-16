@@ -53,13 +53,17 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 		ContextAssemblyMs: 12, Completeness: "complete",
 		Timings: httptrace.RequestTimings{RequestedAt: now, CompletedAt: now},
 	}, SnapshotMeta{ContextAssemblyMs: 12}, EvidenceExtras{
-		Metrics: &evidenceoutbox.AssemblyMetrics{TotalMs: 12},
+		Metrics:        &evidenceoutbox.AssemblyMetrics{TotalMs: 12},
+		AssembleSpanID: "assembleSpan01",
 	})
 	if in.TraceID == "" || in.CheckpointID == nil {
 		t.Fatalf("missing join keys: %+v", in)
 	}
 	if len(in.Spans) != 2 {
 		t.Fatalf("spans=%d want 2", len(in.Spans))
+	}
+	if in.Spans[1].SpanID != "assembleSpan01" {
+		t.Fatalf("assemble span=%q", in.Spans[1].SpanID)
 	}
 	if in.Spans[1].ParentSpanID != "rootspan1" {
 		t.Fatalf("parent=%q", in.Spans[1].ParentSpanID)

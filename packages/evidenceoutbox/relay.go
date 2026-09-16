@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,56 +55,79 @@ type RelayBatchResult struct {
 	Poisoned  int
 }
 
+const (
+	maxRetryBackoffSecs = 60
+	maxBackoffExp       = 6
+)
+
 // ProcessBatch claims up to BatchSize pending rows (service-account RLS),
 // delivers via Sink, and marks delivered / failed / poison.
 // Crash after claim but before ack leaves rows in_flight — RecoverInFlight
 // returns them to pending for replay (at-least-once).
 func (r *Relay) ProcessBatch(ctx context.Context) (RelayBatchResult, error) {
+	rows, err := r.claimBatch(ctx)
+	if err != nil {
+		return RelayBatchResult{}, err
+	}
+	var out RelayBatchResult
+	out.Claimed = len(rows)
+	for _, row := range rows {
+		if err := r.deliverOne(ctx, row, &out); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+func (r *Relay) claimBatch(ctx context.Context) ([]OutboxRow, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return RelayBatchResult{}, fmt.Errorf("evidenceoutbox: relay begin: %w", err)
+		return nil, fmt.Errorf("evidenceoutbox: relay begin: %w", err)
 	}
 	//nolint:errcheck
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setServiceAccountRLS(ctx, tx); err != nil {
-		return RelayBatchResult{}, err
+		return nil, err
 	}
-
 	rows, err := claimPending(ctx, tx, r.batchSize)
 	if err != nil {
-		return RelayBatchResult{}, err
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return RelayBatchResult{}, fmt.Errorf("evidenceoutbox: relay claim commit: %w", err)
+		return nil, fmt.Errorf("evidenceoutbox: relay claim commit: %w", err)
 	}
+	return rows, nil
+}
 
-	var out RelayBatchResult
-	out.Claimed = len(rows)
-	for _, row := range rows {
-		if err := r.sink.Deliver(ctx, row); err != nil {
-			if markErr := r.markFailure(ctx, row, err); markErr != nil {
-				return out, markErr
-			}
-			if row.Attempts+1 >= r.maxAttempts {
-				out.Poisoned++
-			} else {
-				out.Failed++
-			}
-			continue
+func (r *Relay) deliverOne(ctx context.Context, row OutboxRow, out *RelayBatchResult) error {
+	if err := r.sink.Deliver(ctx, row); err != nil {
+		if markErr := r.markFailure(ctx, row, err); markErr != nil {
+			return markErr
 		}
-		if err := r.markDelivered(ctx, row.ID); err != nil {
-			return out, err
+		// row.Attempts is already the post-claim count from claimPending.
+		if row.Attempts >= r.maxAttempts {
+			out.Poisoned++
+		} else {
+			out.Failed++
 		}
-		out.Delivered++
+		return nil
 	}
-	return out, nil
+	if err := r.markDelivered(ctx, row.ID); err != nil {
+		return err
+	}
+	out.Delivered++
+	return nil
 }
 
 // RecoverInFlight returns stale in_flight rows to pending for crash/replay.
 func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (int64, error) {
 	if olderThan <= 0 {
 		olderThan = 30 * time.Second
+	}
+	secs := int(olderThan.Seconds())
+	if secs < 0 {
+		secs = 0
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -118,8 +142,9 @@ func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (i
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = $1
 WHERE delivery_status = $2
-  AND created_at < NOW() - ($3::text || ' seconds')::interval
-`, StatusPending, StatusInFlight, fmt.Sprintf("%d", int(olderThan.Seconds())))
+  AND claimed_at IS NOT NULL
+  AND claimed_at < NOW() - make_interval(secs => $3::int)
+`, StatusPending, StatusInFlight, secs)
 	if err != nil {
 		return 0, fmt.Errorf("evidenceoutbox: recover in_flight: %w", err)
 	}
@@ -133,7 +158,7 @@ WHERE delivery_status = $2
 func claimPending(ctx context.Context, tx *sql.Tx, limit int) ([]OutboxRow, error) {
 	q := `
 UPDATE ibex_core.evidence_outbox o
-SET delivery_status = $1, attempts = attempts + 1
+SET delivery_status = $1, attempts = attempts + 1, claimed_at = NOW()
 WHERE o.id IN (
 	SELECT id FROM ibex_core.evidence_outbox
 	WHERE delivery_status IN ($2, $3)
@@ -154,23 +179,31 @@ RETURNING id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
 
 	var out []OutboxRow
 	for rs.Next() {
-		var row OutboxRow
-		var delivered sql.NullTime
-		if err := rs.Scan(
-			&row.ID, &row.OrgID, &row.EventID, &row.AggregateID, &row.AggregateSeq,
-			&row.SchemaVersion, &row.EventType, &row.Payload, &row.PayloadDigest,
-			&row.DeliveryStatus, &row.Attempts, &row.AvailableAt, &row.LastError,
-			&row.CreatedAt, &delivered,
-		); err != nil {
-			return nil, fmt.Errorf("evidenceoutbox: claim scan: %w", err)
-		}
-		if delivered.Valid {
-			t := delivered.Time
-			row.DeliveredAt = &t
+		row, err := scanOutboxRow(rs)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, row)
 	}
 	return out, rs.Err()
+}
+
+func scanOutboxRow(rs *sql.Rows) (OutboxRow, error) {
+	var row OutboxRow
+	var delivered sql.NullTime
+	if err := rs.Scan(
+		&row.ID, &row.OrgID, &row.EventID, &row.AggregateID, &row.AggregateSeq,
+		&row.SchemaVersion, &row.EventType, &row.Payload, &row.PayloadDigest,
+		&row.DeliveryStatus, &row.Attempts, &row.AvailableAt, &row.LastError,
+		&row.CreatedAt, &delivered,
+	); err != nil {
+		return OutboxRow{}, fmt.Errorf("evidenceoutbox: claim scan: %w", err)
+	}
+	if delivered.Valid {
+		t := delivered.Time
+		row.DeliveredAt = &t
+	}
+	return row, nil
 }
 
 func (r *Relay) markDelivered(ctx context.Context, id uuid.UUID) error {
@@ -207,15 +240,43 @@ func (r *Relay) markFailure(ctx context.Context, row OutboxRow, deliverErr error
 	if row.Attempts >= r.maxAttempts {
 		status = StatusPoison
 	}
-	backoff := time.Duration(row.Attempts) * time.Second
+	delaySecs := retryBackoffSeconds(row.Attempts)
 	_, err = tx.ExecContext(ctx, `
 UPDATE ibex_core.evidence_outbox
-SET delivery_status = $1, last_error = $2, available_at = NOW() + $3::interval
-WHERE id = $4`, status, truncErr(deliverErr), fmt.Sprintf("%d seconds", int(backoff.Seconds())), row.ID)
+SET delivery_status = $1, last_error = $2, available_at = NOW() + make_interval(secs => $3::int)
+WHERE id = $4`, status, truncErr(deliverErr), delaySecs, row.ID)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: mark failure: %w", err)
 	}
 	return tx.Commit()
+}
+
+// retryBackoffSeconds returns exponential backoff with jitter, capped at maxRetryBackoffSecs.
+func retryBackoffSeconds(attempts int) int {
+	exp := attempts
+	if exp < 0 {
+		exp = 0
+	}
+	if exp > maxBackoffExp {
+		exp = maxBackoffExp
+	}
+	base := 1 << exp
+	if base > maxRetryBackoffSecs {
+		base = maxRetryBackoffSecs
+	}
+	half := base / 2
+	if half < 1 {
+		half = 1
+	}
+	// Jitter in [half, base] so identical attempt counts do not share one delay.
+	jittered := half + rand.IntN(base-half+1)
+	if jittered < 1 {
+		jittered = 1
+	}
+	if jittered > maxRetryBackoffSecs {
+		jittered = maxRetryBackoffSecs
+	}
+	return jittered
 }
 
 func truncErr(err error) string {

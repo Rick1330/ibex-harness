@@ -370,36 +370,20 @@ def _request_from_proto(request: object) -> AssembleRequest:
         query=query,
         model=model,
         recent_messages=_messages_from_proto(raw_messages),
-        session_id=_bounded_text(
+        session_id=_optional_uuid(
             getattr(request, "session_id", ""),
             label="session_id",
-            max_chars=64,
-            required=False,
         ),
-        directive_version_id=_bounded_text(
+        directive_version_id=_optional_uuid(
             getattr(request, "directive_version_id", ""),
             label="directive_version_id",
-            max_chars=64,
-            required=False,
         ),
-        request_id=_bounded_text(
+        request_id=_optional_uuid_v7(
             getattr(request, "request_id", ""),
             label="request_id",
-            max_chars=128,
-            required=False,
         ),
-        trace_id=_bounded_text(
-            getattr(request, "trace_id", ""),
-            label="trace_id",
-            max_chars=64,
-            required=False,
-        ),
-        span_id=_bounded_text(
-            getattr(request, "span_id", ""),
-            label="span_id",
-            max_chars=32,
-            required=False,
-        ),
+        trace_id=_optional_w3c_trace_id(getattr(request, "trace_id", "")),
+        span_id=_optional_w3c_span_id(getattr(request, "span_id", "")),
         options=_options_from_proto(getattr(request, "options", None)),
     )
 
@@ -506,6 +490,54 @@ def _parse_uuid(raw: str, label: str) -> UUID:
         return UUID(text)
     except ValueError as exc:
         raise ValueError(f"{label} must be a UUID") from exc
+
+
+def _optional_uuid(raw: object, *, label: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(UUID(text))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a UUID") from exc
+
+
+def _optional_uuid_v7(raw: object, *, label: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = UUID(text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a UUID") from exc
+    if parsed.version != 7:
+        raise ValueError(f"{label} must be a UUID v7")
+    return str(parsed)
+
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _optional_w3c_trace_id(raw: object) -> str:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    if len(text) != 32 or any(c not in _HEX for c in text):
+        raise ValueError("trace_id must be a 32-character hexadecimal W3C trace id")
+    if text == "0" * 32:
+        raise ValueError("trace_id must be nonzero")
+    return text
+
+
+def _optional_w3c_span_id(raw: object) -> str:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    if len(text) != 16 or any(c not in _HEX for c in text):
+        raise ValueError("span_id must be a 16-character hexadecimal W3C span id")
+    if text == "0" * 16:
+        raise ValueError("span_id must be nonzero")
+    return text
 
 
 def main() -> None:

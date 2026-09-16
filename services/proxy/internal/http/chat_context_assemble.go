@@ -64,6 +64,7 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	}
 	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
 	defer endSpan()
+	assembleSpanID := spanIDFromContext(assembleCtx)
 	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
@@ -71,6 +72,8 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	assembleStart := time.Now()
 	result := h.contextClient.Assemble(assembleCtx, params)
 	assemblyMs := time.Since(assembleStart).Milliseconds()
+	extras := evidenceExtrasFromAssemble(result)
+	extras.AssembleSpanID = assembleSpanID
 	meta := contextAssembleMeta{
 		Attempted:        true,
 		MemoriesInjected: result.MemoriesIncluded,
@@ -78,7 +81,7 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 		Fallback:         result.Fallback,
 		AssemblyMs:       assemblyMs,
 		ScoreSchema:      result.ScoreSchema,
-		EvidenceExtras:   evidenceExtrasFromAssemble(result),
+		EvidenceExtras:   extras,
 	}
 	if result.Fallback || strings.TrimSpace(result.AssembledContext) == "" {
 		// Empty assembled text is operationally a fallback: Phase 2 directive only.
@@ -99,9 +102,8 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 }
 
 func ensureAssembleTraceContext(ctx context.Context) (context.Context, func()) {
-	if traceIDFromContext(ctx) != "" && spanIDFromContext(ctx) != "" {
-		return ctx, func() {}
-	}
+	// Always start a child assemble span so evidence/join keys use a real OTel
+	// span_id (never a synthetic root+".assemble" id).
 	tracer := otel.Tracer("github.com/Rick1330/ibex-harness/services/proxy/internal/http")
 	ctx, span := tracer.Start(ctx, "chatCompletionHandler.AssembleContext")
 	return ctx, func() { span.End() }

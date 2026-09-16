@@ -130,33 +130,40 @@ func runDeferredPostResponse(job PostResponseJob) {
 	if !job.DoCheckpoint && !job.DoTrace && !job.DoEvidence {
 		return
 	}
-	run := func() {
-		if job.DoCheckpoint {
-			ckID := job.Deps.RunCheckpoint(job.Params, job.ExternalID)
-			if ckID != uuid.Nil {
-				job.Snap.CheckpointID = &ckID
-			}
-		}
-		if job.DoTrace {
-			EmitTrace(job.TraceWriter, job.Log, job.Snap)
-		}
-		if job.DoEvidence {
-			PersistEvidence(job.Deps.Evidence, job.Log, BuildEvidenceRun(job.Snap, SnapshotMeta{
-				RequestID:          job.Snap.RequestID,
-				TraceID:            job.Snap.TraceID,
-				RootSpanID:         job.Snap.RootSpanID,
-				DirectiveVersionID: job.Snap.DirectiveVersionID,
-				ContextAssemblyMs:  job.Snap.ContextAssemblyMs,
-				ScoreSchema:        job.Snap.ScoreSchema,
-				EvidenceExtras:     job.EvidenceExtras,
-			}, job.EvidenceExtras))
-		}
-	}
+	run := func() { executeDeferredPostResponse(job) }
 	if job.Deps.Pool != nil {
 		job.Deps.Pool.Submit(run)
 		return
 	}
 	run()
+}
+
+func executeDeferredPostResponse(job PostResponseJob) {
+	if job.DoCheckpoint {
+		ckID := job.Deps.RunCheckpoint(job.Params, job.ExternalID)
+		if ckID != uuid.Nil {
+			job.Snap.CheckpointID = &ckID
+		}
+	}
+	if job.DoTrace {
+		EmitTrace(job.TraceWriter, job.Log, job.Snap)
+	}
+	if job.DoEvidence {
+		persistDeferredEvidence(job)
+	}
+}
+
+func persistDeferredEvidence(job PostResponseJob) {
+	meta := SnapshotMeta{
+		RequestID:          job.Snap.RequestID,
+		TraceID:            job.Snap.TraceID,
+		RootSpanID:         job.Snap.RootSpanID,
+		DirectiveVersionID: job.Snap.DirectiveVersionID,
+		ContextAssemblyMs:  job.Snap.ContextAssemblyMs,
+		ScoreSchema:        job.Snap.ScoreSchema,
+		EvidenceExtras:     job.EvidenceExtras,
+	}
+	PersistEvidence(job.Deps.Evidence, job.Log, BuildEvidenceRun(job.Snap, meta, job.EvidenceExtras))
 }
 
 // PreparePostResponseInput groups deps and turn data for PreparePostResponse.

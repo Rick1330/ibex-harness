@@ -15,8 +15,9 @@ from typing import Literal
 from uuid import UUID
 
 from app.budget import BudgetCalculator, Message, TokenBudget
-from app.capability_catalog import CapabilityCatalog, default_catalog
+from app.capability_catalog import CapabilityCatalog, TokenizerFamilyPolicy, default_catalog
 from app.config import ContextSettings
+from app.estimate import estimate_tokens
 from app.formatter import ContextFormatter, FormatRequest, FormattedContext
 from app.packer import BUCKET_SIZE, ContextPacker, PackedMemories, ScoredMemory
 from app.pipeline import _dedupe_hits
@@ -188,6 +189,9 @@ class ContextAssembler:
             metrics.total_ms,
             metrics.candidates_evaluated,
         )
+        policy = self._catalog.family_policy(
+            self._catalog.for_model(request.model).tokenizer_family,
+        )
         return AssemblyResult(
             formatted=formatted,
             packed=packed,
@@ -195,7 +199,7 @@ class ContextAssembler:
             retrieval=retrieval,
             metrics=metrics,
             degradation_level=level,
-            memories_used=tuple(_memory_used(item) for item in packed.memories),
+            memories_used=_memories_used(scored, packed, policy),
             tokens_used=(
                 budget.directive_tokens + budget.messages_tokens + packed.total_tokens
             ),
@@ -348,7 +352,32 @@ def _classify_degradation(
     return "L1", intentional
 
 
-def _memory_used(item: ScoredMemory) -> MemoryUsedRecord:
+def _memories_used(
+    scored: list[ScoredMemory],
+    packed: PackedMemories,
+    policy: TokenizerFamilyPolicy,
+) -> tuple[MemoryUsedRecord, ...]:
+    """Emit every scored candidate with pack inclusion / budget exclusion."""
+    included = {item.memory_id for item in packed.memories}
+    records: list[MemoryUsedRecord] = []
+    for item in scored:
+        if item.memory_id in included:
+            exclusion = "included"
+        elif packed.was_budget_reached:
+            exclusion = "budget"
+        else:
+            exclusion = "excluded"
+        token_estimate, _ = estimate_tokens(item.content, policy)
+        records.append(_memory_used(item, exclusion=exclusion, token_estimate=token_estimate))
+    return tuple(records)
+
+
+def _memory_used(
+    item: ScoredMemory,
+    *,
+    exclusion: str,
+    token_estimate: int,
+) -> MemoryUsedRecord:
     # Interim packer score only; wire does not yet expose recency/usefulness.
     return MemoryUsedRecord(
         memory_id=item.memory_id,
@@ -358,10 +387,10 @@ def _memory_used(item: ScoredMemory) -> MemoryUsedRecord:
         usefulness_score=0.0,
         rank=int(item.hit.rank),
         category=item.category,
-        exclusion="included",
+        exclusion=exclusion,
         similarity=float(item.hit.similarity),
         confidence=float(item.hit.confidence),
-        token_estimate=0,
+        token_estimate=token_estimate,
     )
 
 

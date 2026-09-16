@@ -270,6 +270,14 @@ async def test_unimplemented_rpcs(pb2, method, codec_factory, request_factory) -
         lambda pb2: {
             "recent_messages": [pb2.Message(role="r" * 80, content="hi")]
         },
+        lambda pb2: {"request_id": "not-a-uuid"},
+        lambda pb2: {"request_id": str(uuid4())},  # UUID v4 rejected
+        lambda pb2: {"trace_id": "zzzz"},
+        lambda pb2: {"trace_id": "0" * 32},
+        lambda pb2: {"span_id": "abcd"},
+        lambda pb2: {"span_id": "0" * 16},
+        lambda pb2: {"session_id": "not-a-uuid"},
+        lambda pb2: {"directive_version_id": "bad"},
     ],
 )
 async def test_assemble_rejects_invalid_argument(pb2, fields_factory) -> None:
