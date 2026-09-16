@@ -77,22 +77,26 @@ func seedSession(t *testing.T, db *sql.DB, orgID uuid.UUID) uuid.UUID {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, _ = tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`)
+	const setRLS = `SELECT set_config('app.is_service_account', 'true', true)`
+	_, _ = tx.ExecContext(ctx, setRLS)
 
 	var userID, agentID, sessionID uuid.UUID
-	if err := tx.QueryRowContext(ctx, `
+	const insertUser = `
 INSERT INTO ibex_core.users (org_id, email, name)
-VALUES ($1, $2, $3) RETURNING id`, orgID, uuid.NewString()+"@ex.com", "u").Scan(&userID); err != nil {
+VALUES ($1, $2, $3) RETURNING id`
+	if err := tx.QueryRowContext(ctx, insertUser, orgID, uuid.NewString()+"@ex.com", "u").Scan(&userID); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	if err := tx.QueryRowContext(ctx, `
+	const insertAgent = `
 INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-VALUES ($1, $2, $3, $4) RETURNING id`, orgID, userID, "a", uuid.NewString()[:8]).Scan(&agentID); err != nil {
+VALUES ($1, $2, $3, $4) RETURNING id`
+	if err := tx.QueryRowContext(ctx, insertAgent, orgID, userID, "a", uuid.NewString()[:8]).Scan(&agentID); err != nil {
 		t.Fatalf("agent: %v", err)
 	}
-	if err := tx.QueryRowContext(ctx, `
+	const insertSession = `
 INSERT INTO ibex_core.sessions (org_id, agent_id, model, provider)
-VALUES ($1, $2, 'm', 'p') RETURNING id`, orgID, agentID).Scan(&sessionID); err != nil {
+VALUES ($1, $2, 'm', 'p') RETURNING id`
+	if err := tx.QueryRowContext(ctx, insertSession, orgID, agentID).Scan(&sessionID); err != nil {
 		t.Fatalf("session: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -225,7 +229,11 @@ func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.
 	deliverer := &recordingDeliverer{}
 	relay := mustRelay(t, db, deliverer)
 	forceStaleInFlight(t, db, orgID, requestID)
+	assertRecoveredAndDeliveredOnce(t, relay, deliverer)
+}
 
+func assertRecoveredAndDeliveredOnce(t *testing.T, relay *evidenceoutbox.Relay, d *recordingDeliverer) {
+	t.Helper()
 	n, err := relay.RecoverInFlight(context.Background(), time.Nanosecond)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
@@ -233,7 +241,6 @@ func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.
 	if n == 0 {
 		t.Fatal("expected recovered in_flight rows")
 	}
-
 	res, err := relay.ProcessBatch(context.Background())
 	if err != nil {
 		t.Fatalf("process: %v", err)
@@ -241,7 +248,6 @@ func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.
 	if res.Delivered == 0 {
 		t.Fatalf("delivered=0 claimed=%d", res.Claimed)
 	}
-
 	res2, err := relay.ProcessBatch(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -249,8 +255,8 @@ func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.
 	if res2.Claimed != 0 {
 		t.Fatalf("second claim=%d want 0 (no duplicate delivery)", res2.Claimed)
 	}
-	if deliverer.unique() != deliverer.count() {
-		t.Fatalf("duplicate deliveries: unique=%d count=%d", deliverer.unique(), deliverer.count())
+	if d.unique() != d.count() {
+		t.Fatalf("duplicate deliveries: unique=%d count=%d", d.unique(), d.count())
 	}
 }
 
@@ -295,14 +301,15 @@ func forceStaleInFlight(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregateID s
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
+	const setRLS = `SELECT set_config('app.is_service_account', 'true', true)`
+	if _, err := tx.ExecContext(context.Background(), setRLS); err != nil {
 		t.Fatal(err)
 	}
-	_, err = tx.Exec(`
+	const q = `
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = 'in_flight', attempts = attempts + 1, claimed_at = NOW() - interval '1 minute'
-WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`, orgID, aggregateID)
-	if err != nil {
+WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`
+	if _, err = tx.ExecContext(context.Background(), q, orgID, aggregateID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -329,7 +336,7 @@ func TestIntegration_GoldenNestedRun_JoinKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("golden persist: %v", err)
 	}
-	assertGoldenJoins(t, db, res.RunID, orgID, keys)
+	assertGoldenJoins(t, db, res, orgID, keys)
 }
 
 func goldenRunInput(orgID, sessionID uuid.UUID, keys goldenJoinKeys) evidenceoutbox.RunInput {
@@ -365,21 +372,15 @@ func goldenRunInput(orgID, sessionID uuid.UUID, keys goldenJoinKeys) evidenceout
 	}
 }
 
-func assertGoldenJoins(
-	t *testing.T,
-	db *sql.DB,
-	runID, orgID uuid.UUID,
-	keys goldenJoinKeys,
-) {
+func assertGoldenJoins(t *testing.T, db *sql.DB, res evidenceoutbox.PersistResult, orgID uuid.UUID, keys goldenJoinKeys) {
 	t.Helper()
 	tx := beginServiceTx(t, db)
-
 	assertGoldenSpanCount(t, tx, orgID, keys)
 	assertGoldenParent(t, tx, orgID, keys)
-	assertGoldenCheckpoint(t, tx, runID, keys.Checkpoint)
+	assertGoldenCheckpoint(t, tx, res.RunID, keys.Checkpoint)
 	assertGoldenOutboxPending(t, tx, orgID, keys.RequestID)
 	_ = tx.Commit()
-	t.Logf("golden nested-run ok run_id=%s", runID)
+	t.Logf("golden nested-run ok run_id=%s", res.RunID)
 }
 
 type goldenJoinKeys struct {
@@ -397,7 +398,8 @@ func beginServiceTx(t *testing.T, db *sql.DB) *sql.Tx {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback() })
-	if _, err := tx.Exec(`SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
+	const setRLS = `SELECT set_config('app.is_service_account', 'true', true)`
+	if _, err := tx.ExecContext(context.Background(), setRLS); err != nil {
 		t.Fatal(err)
 	}
 	return tx
@@ -406,10 +408,10 @@ func beginServiceTx(t *testing.T, db *sql.DB) *sql.Tx {
 func assertGoldenSpanCount(t *testing.T, tx *sql.Tx, orgID uuid.UUID, keys goldenJoinKeys) {
 	t.Helper()
 	var spanCount int
-	if err := tx.QueryRow(`
+	const q = `
 SELECT COUNT(*) FROM ibex_core.evidence_spans
-WHERE org_id = $1 AND trace_id = $2 AND request_id = $3`,
-		orgID, keys.TraceID, keys.RequestID).Scan(&spanCount); err != nil {
+WHERE org_id = $1 AND trace_id = $2 AND request_id = $3`
+	if err := tx.QueryRowContext(context.Background(), q, orgID, keys.TraceID, keys.RequestID).Scan(&spanCount); err != nil {
 		t.Fatal(err)
 	}
 	if spanCount != 4 {
@@ -420,9 +422,10 @@ WHERE org_id = $1 AND trace_id = $2 AND request_id = $3`,
 func assertGoldenParent(t *testing.T, tx *sql.Tx, orgID uuid.UUID, keys goldenJoinKeys) {
 	t.Helper()
 	var parent string
-	if err := tx.QueryRow(`
+	const q = `
 SELECT parent_span_id FROM ibex_core.evidence_spans
-WHERE org_id = $1 AND span_id = $2`, orgID, keys.Child).Scan(&parent); err != nil {
+WHERE org_id = $1 AND span_id = $2`
+	if err := tx.QueryRowContext(context.Background(), q, orgID, keys.Child).Scan(&parent); err != nil {
 		t.Fatal(err)
 	}
 	if parent != keys.Root {
@@ -433,8 +436,8 @@ WHERE org_id = $1 AND span_id = $2`, orgID, keys.Child).Scan(&parent); err != ni
 func assertGoldenCheckpoint(t *testing.T, tx *sql.Tx, runID, checkpoint uuid.UUID) {
 	t.Helper()
 	var ck uuid.UUID
-	if err := tx.QueryRow(`
-SELECT checkpoint_id FROM ibex_core.evidence_runs WHERE id = $1`, runID).Scan(&ck); err != nil {
+	const q = `SELECT checkpoint_id FROM ibex_core.evidence_runs WHERE id = $1`
+	if err := tx.QueryRowContext(context.Background(), q, runID).Scan(&ck); err != nil {
 		t.Fatal(err)
 	}
 	if ck != checkpoint {

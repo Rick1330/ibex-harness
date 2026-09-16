@@ -4,6 +4,7 @@ go 1.25.13
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.5.4
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
 	github.com/bufbuild/protocompile v0.14.1
@@ -34,7 +35,6 @@ require (
 
 require (
 	github.com/ClickHouse/ch-go v0.67.0 // indirect
-	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect

@@ -8,18 +8,33 @@ import (
 
 func TestUnit_ToProto_CorrelationFields(t *testing.T) {
 	t.Parallel()
-	req := AssembleParams{
+	pb := toProto(AssembleParams{
 		OrgID: "o", AgentID: "a", Model: "m",
 		RequestID: "rid", TraceID: "tid", SpanID: "sid",
 		RecentMessages: []Message{{Role: "user", Content: "hi"}},
 		Options:        AssembleOptions{MaxMemories: 3},
+	})
+	assertCorrelation(t, pb)
+	assertMaxMemories(t, pb, 3)
+}
+
+func assertCorrelation(t *testing.T, pb *contextv1.AssembleContextRequest) {
+	t.Helper()
+	if pb.GetRequestId() != "rid" {
+		t.Fatalf("request_id=%q", pb.GetRequestId())
 	}
-	pb := toProto(req)
-	if pb.GetRequestId() != "rid" || pb.GetTraceId() != "tid" || pb.GetSpanId() != "sid" {
-		t.Fatalf("correlation: %+v", pb)
+	if pb.GetTraceId() != "tid" {
+		t.Fatalf("trace_id=%q", pb.GetTraceId())
 	}
-	if pb.GetOptions().GetMaxMemories() != 3 {
-		t.Fatalf("options: %+v", pb.GetOptions())
+	if pb.GetSpanId() != "sid" {
+		t.Fatalf("span_id=%q", pb.GetSpanId())
+	}
+}
+
+func assertMaxMemories(t *testing.T, pb *contextv1.AssembleContextRequest, want int32) {
+	t.Helper()
+	if pb.GetOptions().GetMaxMemories() != want {
+		t.Fatalf("max_memories=%d want %d", pb.GetOptions().GetMaxMemories(), want)
 	}
 }
 
@@ -33,7 +48,12 @@ func TestUnit_FromProto_NilFallback(t *testing.T) {
 
 func TestUnit_FromProto_MapsMetricsAndMemories(t *testing.T) {
 	t.Parallel()
-	resp := &contextv1.AssembleContextResponse{
+	got := fromProto(sampleAssembleResponse())
+	assertMappedResult(t, got)
+}
+
+func sampleAssembleResponse() *contextv1.AssembleContextResponse {
+	return &contextv1.AssembleContextResponse{
 		AssembledContext: "ctx",
 		TokensUsed:       10,
 		MemoriesIncluded: 1,
@@ -52,7 +72,10 @@ func TestUnit_FromProto_MapsMetricsAndMemories(t *testing.T) {
 			nil,
 		},
 	}
-	got := fromProto(resp)
+}
+
+func assertMappedResult(t *testing.T, got AssembleResult) {
+	t.Helper()
 	if got.AssembledContext != "ctx" || got.RequestID != "r" || got.TraceID != "t" {
 		t.Fatalf("%+v", got)
 	}

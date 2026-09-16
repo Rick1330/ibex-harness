@@ -323,15 +323,7 @@ class ContextPacker:
             )
             raise RuntimeError(msg)
         selected_set = set(args.selected)
-        if args.examined is None:
-            examined = set(range(len(args.candidates)))
-        else:
-            examined = set(args.examined)
-        budget_excluded = frozenset(
-            args.candidates[i].memory_id
-            for i in examined
-            if i not in selected_set
-        )
+        budget_excluded = _budget_excluded_ids(args.candidates, selected_set, args.examined)
         return PackedMemories(
             memories=tuple(packed),
             total_tokens=total_tokens,
@@ -342,6 +334,18 @@ class ContextPacker:
             candidates_evaluated=len(args.candidates),
             budget_excluded_ids=budget_excluded,
         )
+
+
+def _budget_excluded_ids(
+    candidates: list[ScoredMemory],
+    selected: set[int],
+    examined: set[int] | None,
+) -> frozenset[str]:
+    if examined is None:
+        examined = set(range(len(candidates)))
+    return frozenset(
+        candidates[i].memory_id for i in examined if i not in selected
+    )
 
 
 def _empty_pack(

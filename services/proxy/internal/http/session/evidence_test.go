@@ -41,12 +41,18 @@ func TestUnit_BuildEvidenceRun_RequiresTraceAndRequest(t *testing.T) {
 
 func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 	t.Parallel()
+	in := buildNestedEvidenceRun(t)
+	assertNestedEvidenceRun(t, in)
+}
+
+func buildNestedEvidenceRun(t *testing.T) evidenceoutbox.RunInput {
+	t.Helper()
 	org := uuid.New()
 	agent := uuid.New()
 	ck := uuid.New()
 	vid := uuid.New()
 	now := time.Now().UTC()
-	in := BuildEvidenceRun(httptrace.AssembleInput{
+	return BuildEvidenceRun(httptrace.AssembleInput{
 		RequestID: "req-1", OrgID: org, AgentID: agent,
 		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "rootspan1",
 		CheckpointID: &ck, DirectiveVersionID: &vid,
@@ -57,18 +63,17 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 		Metrics:        &evidenceoutbox.AssemblyMetrics{TotalMs: 12},
 		AssembleSpanID: "assembleSpan01",
 	})
+}
+
+func assertNestedEvidenceRun(t *testing.T, in evidenceoutbox.RunInput) {
+	t.Helper()
 	if in.TraceID == "" || in.CheckpointID == nil {
 		t.Fatalf("missing join keys: %+v", in)
 	}
 	if len(in.Spans) != 2 {
 		t.Fatalf("spans=%d want 2", len(in.Spans))
 	}
-	if in.Spans[1].SpanID != "assembleSpan01" {
-		t.Fatalf("assemble span=%q", in.Spans[1].SpanID)
-	}
-	if in.Spans[1].ParentSpanID != "rootspan1" {
-		t.Fatalf("parent=%q", in.Spans[1].ParentSpanID)
-	}
+	assertAssembleChildSpan(t, in)
 	if in.MetricsSpanID != "assembleSpan01" {
 		t.Fatalf("metrics span=%q want AssembleSpanID", in.MetricsSpanID)
 	}
@@ -77,6 +82,16 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 	}
 	if in.Directive == nil || in.Directive.DirectiveVersionID == nil {
 		t.Fatal("expected directive snapshot")
+	}
+}
+
+func assertAssembleChildSpan(t *testing.T, in evidenceoutbox.RunInput) {
+	t.Helper()
+	if in.Spans[1].SpanID != "assembleSpan01" {
+		t.Fatalf("assemble span=%q", in.Spans[1].SpanID)
+	}
+	if in.Spans[1].ParentSpanID != "rootspan1" {
+		t.Fatalf("parent=%q", in.Spans[1].ParentSpanID)
 	}
 }
 

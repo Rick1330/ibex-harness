@@ -44,7 +44,19 @@ func TestUnit_ProcessBatch_DeliverAndAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	id := expectClaimAndAck(mock)
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDeliveredOnce(t, res, d)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	_ = id
+}
 
+func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 	id := uuid.New()
 	org := uuid.New()
 	eventID := uuid.New()
@@ -59,23 +71,25 @@ func TestUnit_ProcessBatch_DeliverAndAck(t *testing.T) {
 		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`UPDATE ibex_core.evidence_outbox`).WillReturnRows(rows)
 	mock.ExpectCommit()
-
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
 		WithArgs(StatusDelivered, id, StatusInFlight, 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
+	return id
+}
 
-	res, err := relay.ProcessBatch(context.Background())
-	if err != nil {
-		t.Fatal(err)
+func assertDeliveredOnce(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
+	t.Helper()
+	if res.Claimed != 1 {
+		t.Fatalf("claimed=%d", res.Claimed)
 	}
-	if res.Claimed != 1 || res.Delivered != 1 || d.n != 1 {
-		t.Fatalf("res=%+v deliveries=%d", res, d.n)
+	if res.Delivered != 1 {
+		t.Fatalf("delivered=%d", res.Delivered)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
+	if d.n != 1 {
+		t.Fatalf("deliveries=%d", d.n)
 	}
 }
 

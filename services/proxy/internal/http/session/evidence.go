@@ -117,7 +117,7 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 
 func evidenceStatusFromOutcome(snap httptrace.AssembleInput) (status, completeness string) {
 	completeness = firstNonEmpty(snap.Completeness, "partial")
-	if snap.Outcome.ErrorCode != "" || (!snap.Outcome.IsComplete && snap.Outcome.StatusCode >= 400) {
+	if outcomeIsError(snap.Outcome) {
 		return "error", firstNonEmpty(completeness, "partial")
 	}
 	if !snap.Outcome.IsComplete {
@@ -127,6 +127,13 @@ func evidenceStatusFromOutcome(snap httptrace.AssembleInput) (status, completene
 		completeness = "complete"
 	}
 	return "ok", completeness
+}
+
+func outcomeIsError(outcome httptrace.RequestOutcome) bool {
+	if outcome.ErrorCode != "" {
+		return true
+	}
+	return !outcome.IsComplete && outcome.StatusCode >= 400
 }
 
 func evidenceSpans(in evidenceoutbox.RunInput, extras EvidenceExtras) []evidenceoutbox.SpanInput {

@@ -92,10 +92,17 @@ func resolveStreaming(in CheckpointInput, outcome httptrace.RequestOutcome) bool
 }
 
 func completenessFromOutcome(outcome httptrace.RequestOutcome) string {
-	if outcome.IsComplete && outcome.ErrorCode == "" && (outcome.StatusCode == 0 || outcome.StatusCode < 400) {
+	if outcomeCompleteOK(outcome) {
 		return "complete"
 	}
 	return "partial"
+}
+
+func outcomeCompleteOK(outcome httptrace.RequestOutcome) bool {
+	if !outcome.IsComplete || outcome.ErrorCode != "" {
+		return false
+	}
+	return outcome.StatusCode == 0 || outcome.StatusCode < 400
 }
 
 // EmitTrace writes an assembled row; failures are logged and never surface to clients.
@@ -142,14 +149,22 @@ func runDeferredPostResponse(job PostResponseJob) {
 		run()
 		return
 	}
-	// Evidence-only: never block the chat path on a saturated checkpoint pool.
-	if job.DoEvidence && !job.DoCheckpoint && !job.DoTrace {
-		if !job.Deps.Pool.TrySubmit(run) {
-			logEvidencePoolDrop(job)
-		}
+	if evidenceOnlyJob(job) {
+		submitEvidenceFailOpen(job, run)
 		return
 	}
 	job.Deps.Pool.Submit(run)
+}
+
+func evidenceOnlyJob(job PostResponseJob) bool {
+	return job.DoEvidence && !job.DoCheckpoint && !job.DoTrace
+}
+
+func submitEvidenceFailOpen(job PostResponseJob, run func()) {
+	if job.Deps.Pool.TrySubmit(run) {
+		return
+	}
+	logEvidencePoolDrop(job)
 }
 
 func logEvidencePoolDrop(job PostResponseJob) {
