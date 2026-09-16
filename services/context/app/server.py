@@ -384,8 +384,19 @@ def _request_from_proto(request: object) -> AssembleRequest:
         ),
         trace_id=_optional_w3c_trace_id(getattr(request, "trace_id", "")),
         span_id=_optional_w3c_span_id(getattr(request, "span_id", "")),
+        available_tokens=_available_tokens_from_proto(request),
         options=_options_from_proto(getattr(request, "options", None)),
     )
+
+
+def _available_tokens_from_proto(request: object) -> int:
+    raw = int(getattr(request, "available_tokens", 0) or 0)
+    if raw < 0:
+        raise ValueError(f"available_tokens must be >= 0, got {raw}")
+    # Bound to a sane upper ceiling (model windows are << this).
+    if raw > 10_000_000:
+        raise ValueError(f"available_tokens exceeds 10000000, got {raw}")
+    return raw
 
 
 def _bounded_text(

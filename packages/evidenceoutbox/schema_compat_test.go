@@ -23,6 +23,25 @@ func TestUnit_ValidateRunInput(t *testing.T) {
 	}
 }
 
+func TestUnit_ValidateRunInput_Completeness(t *testing.T) {
+	t.Parallel()
+	base := RunInput{
+		OrgID:     mustParseUUID("11111111-1111-1111-1111-111111111111"),
+		RequestID: "req",
+		TraceID:   "aabbccddeeff00112233445566778899",
+	}
+	ok := base
+	ok.Completeness = "complete"
+	if err := validateRunInput(ok); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	bad := base
+	bad.Completeness = "not-a-real-value"
+	if err := validateRunInput(bad); err == nil {
+		t.Fatal("expected unsupported completeness error")
+	}
+}
+
 func TestUnit_OutboxPayloadRoundTripCompatibility(t *testing.T) {
 	t.Parallel()
 	// Old consumer ignores unknown fields; new producer may add keys.

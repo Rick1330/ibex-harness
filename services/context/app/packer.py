@@ -81,7 +81,7 @@ class PackedMemories:
     candidates_evaluated: int
     # Memory IDs examined by the packer but not selected (did not fit).
     # Candidates absent from both memories and this set were never examined
-    # (e.g. greedy consecutive-skip cutoff) and should be labeled "excluded".
+    # (e.g. greedy consecutive-skip cutoff) and should be labeled "filter".
     budget_excluded_ids: frozenset[str] = frozenset()
     # Per-candidate token estimates from this packer pass. Assemble reuses these
     # so the hot path does not re-run estimate_tokens (same tokenizer family).

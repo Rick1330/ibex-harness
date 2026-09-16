@@ -242,6 +242,12 @@ func marshalJSONObject(v any) ([]byte, error) {
 	return raw, nil
 }
 
+// completenessValues matches ibex_core.evidence_runs.completeness CHECK.
+var completenessValues = map[string]struct{}{
+	"complete": {}, "partial": {}, "sampled": {}, "late": {},
+	"redacted": {}, "expired": {}, "deleted": {}, "simulated": {},
+}
+
 func validateRunInput(in RunInput) error {
 	if in.OrgID == uuid.Nil {
 		return fmt.Errorf("evidenceoutbox: org_id is required")
@@ -251,6 +257,11 @@ func validateRunInput(in RunInput) error {
 	}
 	if in.TraceID == "" {
 		return fmt.Errorf("evidenceoutbox: trace_id is required")
+	}
+	if in.Completeness != "" {
+		if _, ok := completenessValues[in.Completeness]; !ok {
+			return fmt.Errorf("evidenceoutbox: completeness %q is not supported", in.Completeness)
+		}
 	}
 	return nil
 }

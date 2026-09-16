@@ -16,8 +16,10 @@ type DepthFunc func(depth float64)
 // Pool is a fixed-worker, buffered-queue executor.
 type Pool struct {
 	jobs      chan func()
+	quit      chan struct{}
 	wg        sync.WaitGroup
 	submitWG  sync.WaitGroup
+	sendMu    sync.Mutex // serializes TrySubmit send with jobs channel close
 	depth     DepthFunc
 	closed    atomic.Bool
 	drained   chan struct{}
@@ -35,6 +37,7 @@ func New(workers, queueSize int, depth DepthFunc) (*Pool, error) {
 	}
 	p := &Pool{
 		jobs:    make(chan func(), queueSize),
+		quit:    make(chan struct{}),
 		depth:   depth,
 		drained: make(chan struct{}),
 	}
@@ -56,9 +59,13 @@ func (p *Pool) Submit(fn func()) bool {
 	if p.closed.Load() {
 		return false
 	}
-	p.jobs <- fn
-	p.reportDepth()
-	return true
+	select {
+	case <-p.quit:
+		return false
+	case p.jobs <- fn:
+		p.reportDepth()
+		return true
+	}
 }
 
 // TrySubmit enqueues fn without blocking. Returns false if the pool is shut
@@ -69,6 +76,8 @@ func (p *Pool) TrySubmit(fn func()) bool {
 	}
 	p.submitWG.Add(1)
 	defer p.submitWG.Done()
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
 	if p.closed.Load() {
 		return false
 	}
@@ -86,9 +95,12 @@ func (p *Pool) TrySubmit(fn func()) bool {
 func (p *Pool) Shutdown(ctx context.Context) error {
 	p.closed.Store(true)
 	p.drainOnce.Do(func() {
+		close(p.quit) // unblock Submit waiting on a full queue
 		go func() {
 			p.submitWG.Wait()
+			p.sendMu.Lock()
 			close(p.jobs)
+			p.sendMu.Unlock()
 			p.wg.Wait()
 			close(p.drained)
 		}()

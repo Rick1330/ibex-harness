@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from app.budget import BudgetCalculator, Message, TokenBudget
+from app.budget import MIN_VIABLE_MEMORY_BUDGET, BudgetCalculator, Message, TokenBudget
 from app.capability_catalog import CapabilityCatalog, TokenizerFamilyPolicy, default_catalog
 from app.config import ContextSettings
 from app.estimate import estimate_tokens
@@ -102,6 +102,8 @@ class AssembleRequest:
     request_id: str = ""
     trace_id: str = ""
     span_id: str = ""
+    # When > 0, caps TokenBudget.usable_budget (proto available_tokens).
+    available_tokens: int = 0
     options: AssemblyOptions = AssemblyOptions()
     tool_schemas: Sequence[str] = ()
 
@@ -147,6 +149,7 @@ class ContextAssembler:
         )
         t_budget = time.perf_counter()
         budget = self._budget.calculate(request.model, messages, directive_text)
+        budget = _apply_available_tokens(budget, request.available_tokens)
         budget_ms = _elapsed_ms(t_budget)
 
         packer = self._make_packer(request.model)
@@ -368,7 +371,8 @@ def _memories_used(
         elif item.memory_id in budget_excluded:
             exclusion = "budget"
         else:
-            exclusion = "excluded"
+            # Proto MemoryUsed.exclusion: included|budget|filter|truncated|failed|unknown
+            exclusion = "filter"
         # Reuse packer estimates on the assemble hot path; avoid a second
         # estimate_tokens pass when the packer already counted this candidate.
         if item.memory_id in estimates:
@@ -377,6 +381,22 @@ def _memories_used(
             token_estimate, _ = estimate_tokens(item.content, policy)
         records.append(_memory_used(item, exclusion=exclusion, token_estimate=token_estimate))
     return tuple(records)
+
+
+def _apply_available_tokens(budget: TokenBudget, available_tokens: int) -> TokenBudget:
+    """When available_tokens > 0, cap usable_budget to the caller-requested ceiling."""
+    if available_tokens <= 0 or available_tokens >= budget.usable_budget:
+        return budget
+    return TokenBudget(
+        context_window=budget.context_window,
+        response_reserve=budget.response_reserve,
+        safety_buffer=budget.safety_buffer,
+        usable_budget=available_tokens,
+        directive_tokens=budget.directive_tokens,
+        messages_tokens=budget.messages_tokens,
+        is_constrained=available_tokens < MIN_VIABLE_MEMORY_BUDGET,
+        estimate_kind=budget.estimate_kind,
+    )
 
 
 def _memory_used(

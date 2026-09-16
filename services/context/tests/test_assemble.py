@@ -353,4 +353,25 @@ def test_memories_used_marks_budget_exclusions() -> None:
     used = _memories_used(scored, packed, policy)
     assert len(used) == 3
     by_id = {r.memory_id: r.exclusion for r in used}
-    assert by_id == {"a": "included", "b": "budget", "c": "excluded"}
+    assert by_id == {"a": "included", "b": "budget", "c": "filter"}
+
+
+def test_apply_available_tokens_caps_usable_budget() -> None:
+    from app.assemble import _apply_available_tokens
+    from app.budget import TokenBudget
+
+    base = TokenBudget(
+        context_window=128_000,
+        response_reserve=4096,
+        safety_buffer=2560,
+        usable_budget=8000,
+        directive_tokens=10,
+        messages_tokens=20,
+        is_constrained=False,
+        estimate_kind="chars_div_4",
+    )
+    capped = _apply_available_tokens(base, 100)
+    assert capped.usable_budget == 100
+    assert capped.is_constrained is True
+    assert _apply_available_tokens(base, 0) is base
+    assert _apply_available_tokens(base, 9000) is base

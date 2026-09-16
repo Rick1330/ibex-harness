@@ -255,3 +255,28 @@ func TestUnit_Pool_TrySubmitAfterShutdown(t *testing.T) {
 		t.Fatal("TrySubmit after shutdown must fail")
 	}
 }
+
+func TestUnit_Pool_TrySubmitShutdownRace(t *testing.T) {
+	t.Parallel()
+	// Stress admission vs close: must never panic (send on closed channel).
+	const rounds = 200
+	for i := 0; i < rounds; i++ {
+		p := mustPool(t, 2, 4)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 64; j++ {
+				_ = p.TrySubmit(func() {})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_ = p.Shutdown(context.Background())
+		}()
+		wg.Wait()
+		if p.TrySubmit(func() {}) {
+			t.Fatal("TrySubmit after shutdown must fail")
+		}
+	}
+}
