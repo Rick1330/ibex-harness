@@ -51,7 +51,7 @@ wheels = [
 
 [[package]]
 name = "apierror-py"
-version = "0.1.1"
+version = "0.1.2"
 source = { directory = "../../packages/apierror_py" }
 
 [[package]]
@@ -96,7 +96,7 @@ wheels = [
 
 [[package]]
 name = "authclient"
-version = "0.1.4"
+version = "0.1.5"
 source = { directory = "../../packages/authclient" }
 
 [package.metadata]

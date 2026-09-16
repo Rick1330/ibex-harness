@@ -49,6 +49,8 @@ from app.revocation_publish import (
     RedisOrgSuspendPublisher,
 )
 from app.routers.agents import router as agents_router
+from app.routers.capture_policies import router as capture_policies_router
+from app.routers.legal_holds import router as legal_holds_router
 from app.routers.model_policies import router as model_policies_router
 from app.routers.operator_events import router as operator_events_router
 from app.routers.organizations import router as organizations_router
@@ -149,6 +151,8 @@ def create_app(
     application.include_router(providers_router)
     application.include_router(rate_limits_router)
     application.include_router(model_policies_router)
+    application.include_router(legal_holds_router)
+    application.include_router(capture_policies_router)
     application.include_router(session_router)
     application.include_router(operator_events_router)
     # Middleware: last added = outermost. CORS must be outermost (Sonar/FastAPI).

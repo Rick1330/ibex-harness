@@ -30,6 +30,7 @@ _PERMISSION_BITS: dict[str, int] = {
     "marketplace:publish": 40,
     "marketplace:install": 41,
     "federation:share": 48,
+    "admin:legal_hold_manage": 49,
 }
 
 # Bit → canonical string (bit 35 emits admin:org_manage).

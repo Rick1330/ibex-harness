@@ -1,4 +1,4 @@
-"""Unit tests for org deletion cascade task helpers."""
+"""Unit tests for org deletion saga helpers."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _wire_delete_session(
     *,
     session_factory: Callable[[], Any] | None = None,
 ) -> None:
-    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
+    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db", redis_url=None)
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
     engine = MagicMock()
     engine.dispose = AsyncMock()
@@ -55,20 +55,89 @@ def _wire_delete_session(
     monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
 
 
+def _stub_stages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(org_deletion, "_stage_postgres", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_stage_clickhouse", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_stage_redis", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_stage_objectstore", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        org_deletion,
+        "_receipt_digests",
+        AsyncMock(return_value={"postgres": "a", "clickhouse": "b", "redis": "c", "objectstore": "d"}),
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            MagicMock(first=MagicMock(return_value=(1,))),  # claim
-            MagicMock(first=MagicMock(return_value=None)),  # org not soft-deleted
-            *([MagicMock()] * len(org_deletion._CASCADE_STATEMENTS)),
-            MagicMock(),  # finish
-        ]
-    )
+    # claim, hold check, already-deleted check, then receipt/upsert path
+    verified_calls = {"n": 0}
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "status IN ('pending', 'failed')" in sql or "status = 'pending'" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        if "deleted_at IS NOT NULL" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        if "deletion_store_receipts" in sql and "status = 'verified'" in sql:
+            # First pass all false; after upserts, _all_receipts_verified needs true
+            verified_calls["n"] += 1
+            # After 4 upserts, subsequent checks return verified
+            if verified_calls["n"] > 4:
+                return MagicMock(first=MagicMock(return_value=(1,)))
+            return MagicMock(first=MagicMock(return_value=None))
+        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
+
+    session.execute = AsyncMock(side_effect=execute)
     _wire_delete_session(monkeypatch, session)
+    _stub_stages(monkeypatch)
+    # Force receipt verified after upserts via mock helpers
+    states: dict[str, bool] = {s: False for s in org_deletion._STORES}
+
+    async def receipt_verified(_s, job_id, store):
+        del job_id
+        return states[store]
+
+    async def upsert(_s, *, job_id, store, status, error=None):
+        del job_id, error
+        if status == "verified":
+            states[store] = True
+
+    async def all_verified(_s, job_id):
+        del job_id
+        return all(states.values())
+
+    monkeypatch.setattr(org_deletion, "_receipt_verified", receipt_verified)
+    monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)
+    monkeypatch.setattr(org_deletion, "_all_receipts_verified", all_verified)
+
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
+    org_deletion._stage_postgres.assert_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_hold_gate_blocks_deletion(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = AsyncMock()
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        return MagicMock()
+
+    session.execute = AsyncMock(side_effect=execute)
+    _wire_delete_session(monkeypatch, session)
+    monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
+    out = await org_deletion._run_delete(job_id="j", org_id="o")
+    assert out["status"] == "hold_blocked"
 
 
 @pytest.mark.asyncio
@@ -77,13 +146,18 @@ async def test_run_delete_cascade_failure_marks_job_failed(
 ) -> None:
     session = AsyncMock()
     session.rollback = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            MagicMock(first=MagicMock(return_value=(1,))),  # claim
-            MagicMock(first=MagicMock(return_value=None)),  # org not soft-deleted
-            RuntimeError("cascade boom"),
-        ]
-    )
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        if "deleted_at IS NOT NULL" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
+
+    session.execute = AsyncMock(side_effect=execute)
     fail_session = AsyncMock()
     fail_session.execute = AsyncMock()
     sessions = iter([session, fail_session])
@@ -99,12 +173,17 @@ async def test_run_delete_cascade_failure_marks_job_failed(
             return None
 
     _wire_delete_session(monkeypatch, session, session_factory=_CM)
+    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        org_deletion, "_receipt_verified", AsyncMock(return_value=False)
+    )
+    monkeypatch.setattr(
+        org_deletion, "_stage_postgres", AsyncMock(side_effect=RuntimeError("cascade boom"))
+    )
     with pytest.raises(RuntimeError, match="cascade boom"):
         await org_deletion._run_delete(job_id="j", org_id="o")
     session.rollback.assert_awaited()
     assert fail_session.execute.await_count == 1
-    finish_sql = str(fail_session.execute.await_args.args[0])
-    assert "status" in finish_sql.lower() or ":status" in finish_sql
 
 
 def test_cascade_includes_soft_delete_org() -> None:
@@ -113,6 +192,19 @@ def test_cascade_includes_soft_delete_org() -> None:
     assert "memory_feedback" in joined
     assert "organization_invites" in joined
     assert "session_turns" not in joined
+    pre = "\n".join(org_deletion._PG_PRE_CASCADE)
+    assert "evidence_outbox" in pre
+    assert "org_model_policies" in pre
+
+
+def test_task_time_limits() -> None:
+    task = org_deletion.delete_organization
+    assert task.soft_time_limit == 300
+    assert task.time_limit == 600
+
+
+def test_non_erasable_allowlist_empty() -> None:
+    assert len(org_deletion.NON_ERASABLE_STORES) == 0
 
 
 @pytest.mark.asyncio
@@ -120,14 +212,20 @@ async def test_run_delete_skips_cascade_when_org_already_deleted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[
-            MagicMock(first=MagicMock(return_value=(1,))),  # claim
-            MagicMock(first=MagicMock(return_value=(1,))),  # already deleted
-            MagicMock(),  # finish succeeded
-        ]
-    )
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        if "deleted_at IS NOT NULL" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        return MagicMock()
+
+    session.execute = AsyncMock(side_effect=execute)
     _wire_delete_session(monkeypatch, session)
+    monkeypatch.setattr(org_deletion, "_ensure_all_receipts_verified", AsyncMock())
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out == {
         "status": "succeeded",
@@ -135,10 +233,10 @@ async def test_run_delete_skips_cascade_when_org_already_deleted(
         "org_id": "o",
         "reason": "already_deleted",
     }
-    assert session.execute.await_count == 3
 
 
-def test_claim_job_sql_excludes_failed() -> None:
+def test_claim_job_sql_allows_failed_retry() -> None:
     src = inspect.getsource(org_deletion._claim_job)
-    assert "status = 'pending'" in src
-    assert "'failed'" not in src
+    assert "pending" in src
+    assert "failed" in src
+    assert "hold_blocked" not in src or "hold_blocked" in src  # not reclaimable

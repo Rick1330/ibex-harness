@@ -8,6 +8,7 @@ from uuid import UUID
 
 from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND, SERVICE_DEGRADED
 from authclient.permissions import (
+    LEGAL_HOLD_MANAGE,
     OPERATOR_DELETE,
     OPERATOR_EXPORT,
     OPERATOR_RAW_READ,
@@ -103,6 +104,30 @@ RequireOwnerOrgSettings = Annotated[
     ValidateResult,
     Depends(require_roles(OwnerRoles, required_permission=ORG_SETTINGS_WRITE)),
 ]
+
+
+def require_legal_hold_manage() -> Callable[..., ValidateResult]:
+    """Owner/admin + LegalHoldManage + step-up (4.P.3)."""
+
+    def _dep(
+        request: Request,
+        token: Annotated[
+            ValidateResult,
+            Depends(require_roles(AdminRoles, required_permission=LEGAL_HOLD_MANAGE)),
+        ],
+    ) -> ValidateResult:
+        step_up_ok = bool(getattr(request.state, "ibex_step_up_ok", False))
+        if requires_step_up(LEGAL_HOLD_MANAGE) and not step_up_ok:
+            raise ApiError(
+                code=INSUFFICIENT_PERMISSIONS,
+                message="Step-up authentication required",
+            )
+        return token
+
+    return _dep
+
+
+RequireLegalHoldManage = Annotated[ValidateResult, Depends(require_legal_hold_manage())]
 
 
 def assert_path_org(token_org: UUID, path_org: UUID) -> None:
