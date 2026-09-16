@@ -6,12 +6,14 @@ from uuid import UUID
 
 from apierror_py import LEGAL_HOLD_SCOPE_CONFLICT, NOT_FOUND, VALIDATION_ERROR
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
 from app.schemas.legal_holds import LegalHoldCreate, LegalHoldResponse
 
 _NOT_FOUND = "Legal hold not found"
+_SCOPE_UNIQUE = "legal_holds_one_active_per_scope"
 
 
 def _row(r) -> LegalHoldResponse:
@@ -25,6 +27,24 @@ def _row(r) -> LegalHoldResponse:
         created_at=r["created_at"],
         cleared_at=r["cleared_at"],
     )
+
+
+def _constraint_name(exc: IntegrityError) -> str:
+    orig = getattr(exc, "orig", None)
+    name = getattr(orig, "constraint_name", None)
+    if name:
+        return str(name)
+    diag = getattr(orig, "diag", None)
+    if diag is not None:
+        diag_name = getattr(diag, "constraint_name", None)
+        if diag_name:
+            return str(diag_name)
+    return str(orig or exc)
+
+
+def _is_scope_conflict(exc: IntegrityError) -> bool:
+    name = _constraint_name(exc)
+    return name == _SCOPE_UNIQUE or _SCOPE_UNIQUE in name
 
 
 async def list_active_holds(session: AsyncSession, org_id: UUID) -> list[LegalHoldResponse]:
@@ -51,30 +71,34 @@ async def set_hold(
 ) -> LegalHoldResponse:
     if not set_by:
         raise ApiError(code=VALIDATION_ERROR, message="User-scoped token required")
-    existing = await list_active_holds(session, org_id)
-    if any(h.scope == body.scope for h in existing):
-        raise ApiError(
-            code=LEGAL_HOLD_SCOPE_CONFLICT,
-            message="Active legal hold already exists for scope",
+    try:
+        result = await session.execute(
+            text(
+                """
+                INSERT INTO ibex_core.legal_holds (org_id, scope, reason, set_by)
+                VALUES (:org_id, :scope, :reason, :set_by)
+                RETURNING id, org_id, scope, reason, set_by, cleared_by, created_at, cleared_at
+                """
+            ),
+            {
+                "org_id": str(org_id),
+                "scope": body.scope,
+                "reason": body.reason,
+                "set_by": str(set_by),
+            },
         )
-    result = await session.execute(
-        text(
-            """
-            INSERT INTO ibex_core.legal_holds (org_id, scope, reason, set_by)
-            VALUES (:org_id, :scope, :reason, :set_by)
-            RETURNING id, org_id, scope, reason, set_by, cleared_by, created_at, cleared_at
-            """
-        ),
-        {
-            "org_id": str(org_id),
-            "scope": body.scope,
-            "reason": body.reason,
-            "set_by": str(set_by),
-        },
-    )
-    row = result.mappings().first()
-    await session.commit()
-    assert row is not None
+        row = result.mappings().first()
+        if row is None:
+            raise ApiError(code=VALIDATION_ERROR, message="Legal hold insert returned no row")
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if _is_scope_conflict(exc):
+            raise ApiError(
+                code=LEGAL_HOLD_SCOPE_CONFLICT,
+                message="Active legal hold already exists for scope",
+            ) from exc
+        raise
     return _row(row)
 
 

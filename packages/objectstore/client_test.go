@@ -3,8 +3,11 @@ package objectstore
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -23,11 +26,37 @@ func testMasterB64(t *testing.T) string {
 
 func testCfg(endpoint string) Config {
 	return Config{
-		Endpoint: endpoint,
-		Creds:    Credentials{AccessKey: "minioadmin", SecretKey: "minioadmin"},
-		Bucket:   "ibex-sessions",
-		Region:   "us-east-1",
-		KeyID:    "v1",
+		Endpoint:          endpoint,
+		Creds:             Credentials{AccessKey: "minioadmin", SecretKey: "minioadmin"},
+		Bucket:            "ibex-sessions",
+		Region:            "us-east-1",
+		KeyID:             "v1",
+		AllowInsecureHTTP: true,
+	}
+}
+
+func mustNew(t *testing.T, cfg Config, httpClient *http.Client) *Client {
+	t.Helper()
+	client, err := New(cfg, testMasterB64(t), httpClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func newTestServerClient(t *testing.T, h http.HandlerFunc) (*Client, *httptest.Server) {
+	t.Helper()
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	return mustNew(t, testCfg(srv.URL), srv.Client()), srv
+}
+
+func statusHandler(code int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(code)
+		if body != "" {
+			_, _ = w.Write([]byte(body))
+		}
 	}
 }
 
@@ -47,67 +76,136 @@ func TestNew_Validation(t *testing.T) {
 	}
 }
 
+func TestNew_RejectsHTTPUnlessAllowed(t *testing.T) {
+	t.Parallel()
+	mk := testMasterB64(t)
+	cfg := testCfg("http://minio.example:9000")
+	cfg.AllowInsecureHTTP = false
+	if _, err := New(cfg, mk, nil); err == nil || !strings.Contains(err.Error(), "HTTPS required") {
+		t.Fatalf("expected HTTPS required, got %v", err)
+	}
+	cfg.AllowInsecureHTTP = true
+	if _, err := New(cfg, mk, nil); err != nil {
+		t.Fatal(err)
+	}
+	httpsCfg := testCfg("https://s3.example.com")
+	httpsCfg.AllowInsecureHTTP = false
+	if _, err := New(httpsCfg, mk, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckRedirect_RejectsHTTPSDowngrade(t *testing.T) {
+	t.Parallel()
+	client := mustNew(t, testCfg("https://s3.example.com"), nil)
+	httpsReq, err := http.NewRequest(http.MethodGet, "https://s3.example.com/bucket", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpReq, err := http.NewRequest(http.MethodGet, "http://s3.example.com/bucket", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.http.CheckRedirect(httpReq, []*http.Request{httpsReq}); err == nil {
+		t.Fatal("expected HTTPS→HTTP rejection")
+	}
+	if err := client.http.CheckRedirect(httpsReq, []*http.Request{httpsReq}); err != nil {
+		t.Fatalf("same-scheme redirect: %v", err)
+	}
+}
+
 func TestPutEncrypted_RoundTripSeal(t *testing.T) {
 	t.Parallel()
+	const plaintext = "secret-payload"
 	var putBody []byte
-	var putKey string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPut {
-			putKey = r.URL.Path
-			buf := make([]byte, r.ContentLength)
-			_, _ = r.Body.Read(buf)
-			putBody = buf
-			w.WriteHeader(http.StatusOK)
+	var putPath string
+	client, _ := newTestServerClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
+		putPath = r.URL.Path
+		var err error
+		putBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
+	uri, err := client.PutEncrypted(context.Background(), ObjectKey("org/a.json"), []byte(plaintext))
 	if err != nil {
 		t.Fatal(err)
 	}
-	uri, err := client.PutEncrypted(context.Background(), ObjectKey("org/a.json"), []byte("secret-payload"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(uri.String(), "s3://ibex-sessions/") {
+	if !strings.HasPrefix(uri.String(), "s3://ibex-sessions/") || !strings.Contains(uri.String(), "org/a.json") {
 		t.Fatalf("uri=%s", uri)
 	}
-	if !strings.Contains(putKey, "org/a.json") {
-		t.Fatalf("put key=%s", putKey)
+	if !strings.Contains(putPath, "org/a.json") {
+		t.Fatalf("put path=%s", putPath)
 	}
+	assertArchivedPlaintext(t, putBody, plaintext)
+}
+
+func assertArchivedPlaintext(t *testing.T, putBody []byte, want string) {
+	t.Helper()
 	if len(putBody) == 0 {
 		t.Fatal("empty body")
+	}
+	var blob ArchivedBlob
+	if err := json.Unmarshal(putBody, &blob); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	ct, err := base64.StdEncoding.DecodeString(blob.CiphertextB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped, err := base64.StdEncoding.DecodeString(blob.WrappedDEKB64)
+	if err != nil {
+		t.Fatal(err)
 	}
 	mk, err := crypto.ParseMasterKeyBase64(testMasterB64(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := crypto.Seal(mk, "v1", []byte("x"))
+	plain, err := crypto.Open(mk, crypto.SealedBlob{
+		Ciphertext: ct,
+		WrappedDEK: wrapped,
+		KeyID:      blob.KeyID,
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open: %v", err)
 	}
-	plain, err := crypto.Open(mk, sealed)
-	if err != nil || string(plain) != "x" {
-		t.Fatalf("open: %v %q", err, plain)
+	if string(plain) != want {
+		t.Fatalf("plain=%q want=%q", plain, want)
 	}
 }
 
 func TestPutEncrypted_EmptyKey(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
+	client, _ := newTestServerClient(t, statusHandler(http.StatusOK, ""))
+	_, err := client.PutEncrypted(context.Background(), ObjectKey(""), []byte("x"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestObjectURL_EscapesPathSegments(t *testing.T) {
+	t.Parallel()
+	client := mustNew(t, testCfg("http://127.0.0.1:9"), nil)
+	got := client.objectURL(ObjectKey("org/a b?x#y.json"))
+	if !strings.Contains(got, "/org/") {
+		t.Fatalf("lost separator: %s", got)
+	}
+	if strings.Contains(got, "?") || strings.Contains(got, "#") {
+		t.Fatalf("unescaped reserved chars: %s", got)
+	}
+	u, err := url.Parse(got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.PutEncrypted(context.Background(), ObjectKey(""), []byte("x"))
-	if err == nil {
-		t.Fatal("expected error")
+	// Path is unescaped by Parse; ensure segments round-trip.
+	if !strings.Contains(u.Path, "a b") || !strings.Contains(u.EscapedPath(), "%3F") {
+		t.Fatalf("path=%q escaped=%q", u.Path, u.EscapedPath())
 	}
 }
 
@@ -121,12 +219,8 @@ func TestOrgPrefix(t *testing.T) {
 
 func TestDeleteURI_Errors(t *testing.T) {
 	t.Parallel()
-	client, err := New(testCfg("http://127.0.0.1:9"), testMasterB64(t), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []ObjectURI{"http://x", "s3://onlybucket", "s3://other/key"}
-	for _, u := range cases {
+	client := mustNew(t, testCfg("http://127.0.0.1:9"), nil)
+	for _, u := range []ObjectURI{"http://x", "s3://onlybucket", "s3://other/key"} {
 		if err := client.DeleteURI(context.Background(), u); err == nil {
 			t.Fatalf("expected error for %s", u)
 		}
@@ -135,18 +229,13 @@ func TestDeleteURI_Errors(t *testing.T) {
 
 func TestDeleteURI_NotFoundOK(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client, _ := newTestServerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := client.DeleteURI(context.Background(), ObjectURI("s3://ibex-sessions/missing")); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +244,7 @@ func TestDeleteURI_NotFoundOK(t *testing.T) {
 func TestDeletePrefix_ListsAndDeletes(t *testing.T) {
 	t.Parallel()
 	deleted := map[string]bool{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client, _ := newTestServerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "list-type=2"):
 			w.Header().Set("Content-Type", "application/xml")
@@ -171,12 +260,7 @@ func TestDeletePrefix_ListsAndDeletes(t *testing.T) {
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	org := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 	if err := client.DeletePrefix(context.Background(), org); err != nil {
 		t.Fatal(err)
@@ -195,8 +279,14 @@ func TestParseListObjectsV2_Truncated(t *testing.T) {
   <NextContinuationToken>tok</NextContinuationToken>
 </ListBucketResult>`)
 	keys, next, err := parseListObjectsV2(body)
-	if err != nil || next != "tok" || len(keys) != 1 || keys[0] != "k1" {
-		t.Fatalf("keys=%v next=%q err=%v", keys, next, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != "tok" {
+		t.Fatalf("next=%q", next)
+	}
+	if len(keys) != 1 || keys[0] != "k1" {
+		t.Fatalf("keys=%v", keys)
 	}
 }
 
@@ -215,24 +305,23 @@ func TestConfigFromEnv_Defaults(t *testing.T) {
 	t.Setenv("S3_REGION", "")
 	t.Setenv("S3_BUCKET_SESSIONS", "")
 	t.Setenv("S3_ENCRYPTION_KEY_ID", "")
+	t.Setenv("S3_ALLOW_INSECURE_HTTP", "true")
 	cfg := ConfigFromEnv()
-	if cfg.Endpoint != "http://localhost:9000" || cfg.Bucket != defaultBucket || cfg.Region != defaultRegion {
+	if cfg.Endpoint != "http://localhost:9000" {
+		t.Fatalf("endpoint=%q", cfg.Endpoint)
+	}
+	if cfg.Bucket != defaultBucket || cfg.Region != defaultRegion {
 		t.Fatalf("%+v", cfg)
+	}
+	if !cfg.AllowInsecureHTTP {
+		t.Fatal("expected AllowInsecureHTTP from env")
 	}
 }
 
 func TestPutObject_HTTPError(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte("nope"))
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.PutEncrypted(context.Background(), ObjectKey("x"), []byte("y"))
+	client, _ := newTestServerClient(t, statusHandler(http.StatusForbidden, "nope"))
+	_, err := client.PutEncrypted(context.Background(), ObjectKey("x"), []byte("y"))
 	if err == nil || !strings.Contains(err.Error(), "403") {
 		t.Fatalf("err=%v", err)
 	}
@@ -241,10 +330,10 @@ func TestPutObject_HTTPError(t *testing.T) {
 func TestListKeys_PaginationAndListError(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client, _ := newTestServerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls++
+		w.Header().Set("Content-Type", "application/xml")
 		if calls == 1 {
-			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(`<?xml version="1.0"?>
 <ListBucketResult>
   <Contents><Key>a</Key></Contents>
@@ -253,36 +342,25 @@ func TestListKeys_PaginationAndListError(t *testing.T) {
 </ListBucketResult>`))
 			return
 		}
-		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<?xml version="1.0"?>
 <ListBucketResult>
   <Contents><Key>b</Key></Contents>
   <IsTruncated>false</IsTruncated>
 </ListBucketResult>`))
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
+	})
+	keys, err := client.listKeys(context.Background(), ObjectKey("p/"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := client.listKeys(context.Background(), ObjectKey("p/"))
-	if err != nil || len(keys) != 2 {
-		t.Fatalf("keys=%v err=%v", keys, err)
+	if len(keys) != 2 {
+		t.Fatalf("keys=%v", keys)
 	}
 }
 
 func TestListPage_HTTPError(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("err"))
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = client.listPage(context.Background(), ObjectKey("p/"), "")
+	client, _ := newTestServerClient(t, statusHandler(http.StatusInternalServerError, "err"))
+	_, _, err := client.listPage(context.Background(), ObjectKey("p/"), "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -290,14 +368,7 @@ func TestListPage_HTTPError(t *testing.T) {
 
 func TestDeletePrefix_ListFailure(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, _ := newTestServerClient(t, statusHandler(http.StatusBadRequest, ""))
 	if err := client.DeletePrefix(context.Background(), uuid.New()); err == nil {
 		t.Fatal("expected error")
 	}
@@ -305,34 +376,17 @@ func TestDeletePrefix_ListFailure(t *testing.T) {
 
 func TestHTTPDo_TransportError(t *testing.T) {
 	t.Parallel()
-	client, err := New(testCfg("http://127.0.0.1:9"), testMasterB64(t), &http.Client{
+	client := mustNew(t, testCfg("http://127.0.0.1:9"), &http.Client{
 		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return nil, context.Canceled
 		}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := client.deleteObject(context.Background(), ObjectKey("x")); err == nil {
 		t.Fatal("expected transport error")
 	}
-	_, _, err = client.listPage(context.Background(), ObjectKey("p/"), "tok")
+	_, _, err := client.listPage(context.Background(), ObjectKey("p/"), "tok")
 	if err == nil {
 		t.Fatal("expected list transport error")
-	}
-}
-
-func TestBuildCanonicalHeaders_SkipsAuthorization(t *testing.T) {
-	t.Parallel()
-	req, err := http.NewRequest(http.MethodGet, "http://example/x", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "should-skip")
-	req.Header.Set("X-Amz-Date", "20260101T000000Z")
-	signed, canonical := buildCanonicalHeaders(req)
-	if strings.Contains(signed, "authorization") || strings.Contains(canonical, "authorization") {
-		t.Fatalf("signed=%q canonical=%q", signed, canonical)
 	}
 }
 
@@ -342,16 +396,9 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func TestPutEncrypted_EmptyKeyIDFailsSeal(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, _ := newTestServerClient(t, statusHandler(http.StatusOK, ""))
 	client.cfg.KeyID = ""
-	_, err = client.PutEncrypted(context.Background(), ObjectKey("x"), []byte("y"))
+	_, err := client.PutEncrypted(context.Background(), ObjectKey("x"), []byte("y"))
 	if err == nil {
 		t.Fatal("expected seal error")
 	}
@@ -359,7 +406,7 @@ func TestPutEncrypted_EmptyKeyIDFailsSeal(t *testing.T) {
 
 func TestDeletePrefix_DeleteFailure(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client, _ := newTestServerClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(`<?xml version="1.0"?><ListBucketResult>
@@ -368,12 +415,7 @@ func TestDeletePrefix_DeleteFailure(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
+	})
 	if err := client.DeletePrefix(context.Background(), uuid.New()); err == nil {
 		t.Fatal("expected error")
 	}
@@ -381,16 +423,29 @@ func TestDeletePrefix_DeleteFailure(t *testing.T) {
 
 func TestListPage_BadXML(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("not-xml"))
-	}))
-	t.Cleanup(srv.Close)
-	client, err := New(testCfg(srv.URL), testMasterB64(t), srv.Client())
+	client, _ := newTestServerClient(t, statusHandler(http.StatusOK, "not-xml"))
+	_, _, err := client.listPage(context.Background(), ObjectKey("p/"), "")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestListPage_SignsQueryWithSpaces(t *testing.T) {
+	t.Parallel()
+	var rawQuery string
+	client, _ := newTestServerClient(t, func(w http.ResponseWriter, r *http.Request) {
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))
+	})
+	_, _, err := client.listPage(context.Background(), ObjectKey("p with space/"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = client.listPage(context.Background(), ObjectKey("p/"), "")
-	if err == nil {
-		t.Fatal("expected error")
+	if strings.Contains(rawQuery, "+") {
+		t.Fatalf("SigV4 query must use %%20 not +: %s", rawQuery)
+	}
+	if !strings.Contains(rawQuery, "%20") {
+		t.Fatalf("expected escaped space in query: %s", rawQuery)
 	}
 }

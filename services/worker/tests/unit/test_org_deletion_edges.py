@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -35,18 +35,48 @@ async def test_all_receipts_verified_false_when_missing(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_stage_clickhouse_empty_dsn_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stage_clickhouse_empty_dsn_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLICKHOUSE_DSN", raising=False)
     monkeypatch.delenv("IBEX_WORKER_CLICKHOUSE_DSN", raising=False)
     settings = MagicMock(clickhouse_dsn=None)
-    await org_deletion._stage_clickhouse(settings, org_id="00000000-0000-0000-0000-000000000001")
+    with pytest.raises(RuntimeError, match="CLICKHOUSE_DSN"):
+        await org_deletion._stage_clickhouse(
+            settings, org_id="00000000-0000-0000-0000-000000000001"
+        )
 
 
 @pytest.mark.asyncio
-async def test_stage_objectstore_skips_without_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stage_objectstore_missing_endpoint_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("S3_ENDPOINT", raising=False)
     settings = MagicMock(s3_endpoint=None)
-    await org_deletion._stage_objectstore(settings, org_id="o", uris=[])
+    with pytest.raises(RuntimeError, match="S3_ENDPOINT"):
+        await org_deletion._stage_objectstore(settings, org_id="o", uris=[])
+
+
+@pytest.mark.asyncio
+async def test_stage_redis_missing_url_raises() -> None:
+    settings = MagicMock(redis_url=None)
+    with pytest.raises(RuntimeError, match="REDIS_URL"):
+        await org_deletion._stage_redis(settings, org_id="org-1")
+
+
+@pytest.mark.asyncio
+async def test_stage_objectstore_propagates_uri_delete_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
+    settings = MagicMock(s3_endpoint="http://localhost:9000")
+
+    def boom(_uri, *, settings=None):
+        del settings
+        raise RuntimeError("uri delete failed")
+
+    monkeypatch.setattr("app.objectstore_client.delete_uri", boom)
+    monkeypatch.setattr("app.objectstore_client.delete_org_prefix", MagicMock())
+    with pytest.raises(RuntimeError, match="uri delete failed"):
+        await org_deletion._stage_objectstore(
+            settings, org_id="o", uris=["s3://ibex-sessions/o/a.json"]
+        )
 
 
 @pytest.mark.asyncio
@@ -74,6 +104,7 @@ async def test_stage_redis_scan_delete(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.delete.await_count >= 1
     assert client.aclose.await_count == 1
 
+
 @pytest.mark.asyncio
 async def test_receipt_digests_stable() -> None:
     session = AsyncMock()
@@ -92,21 +123,7 @@ async def test_receipt_digests_stable() -> None:
     assert len(digests["postgres"]) == 64
 
 
-@pytest.mark.asyncio
-async def test_incomplete_receipts_marks_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = AsyncMock()
-
-    async def execute(stmt, params=None):
-        sql = str(stmt)
-        if "pending" in sql or "failed" in sql:
-            return MagicMock(first=MagicMock(return_value=(1,)))
-        if "legal_holds" in sql:
-            return MagicMock(first=MagicMock(return_value=None))
-        if "deleted_at IS NOT NULL" in sql:
-            return MagicMock(first=MagicMock(return_value=None))
-        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
-
-    session.execute = AsyncMock(side_effect=execute)
+def _wire_run(monkeypatch: pytest.MonkeyPatch, session: AsyncMock) -> None:
     settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db", redis_url=None)
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
     engine = MagicMock()
@@ -121,7 +138,23 @@ async def test_incomplete_receipts_marks_failed(monkeypatch: pytest.MonkeyPatch)
         async def __aexit__(self, *args):
             return None
 
-    monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
+
+
+@pytest.mark.asyncio
+async def test_incomplete_receipts_marks_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = AsyncMock()
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
+
+    session.execute = AsyncMock(side_effect=execute)
+    _wire_run(monkeypatch, session)
     monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
     monkeypatch.setattr(org_deletion, "_stage_postgres", AsyncMock())
     monkeypatch.setattr(org_deletion, "_stage_clickhouse", AsyncMock())
@@ -148,26 +181,10 @@ async def test_skip_verified_store_idempotent(monkeypatch: pytest.MonkeyPatch) -
             return MagicMock(first=MagicMock(return_value=(1,)))
         if "legal_holds" in sql:
             return MagicMock(first=MagicMock(return_value=None))
-        if "deleted_at IS NOT NULL" in sql:
-            return MagicMock(first=MagicMock(return_value=None))
         return MagicMock()
 
     session.execute = AsyncMock(side_effect=execute)
-    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db", redis_url=None)
-    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
-    engine = MagicMock()
-    engine.dispose = AsyncMock()
-    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
-    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
-
-    class _CM:
-        async def __aenter__(self):
-            return session
-
-        async def __aexit__(self, *args):
-            return None
-
-    monkeypatch.setattr(org_deletion, "session_as_service_account", lambda _f: _CM())
+    _wire_run(monkeypatch, session)
     monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
     stage_pg = AsyncMock()
     monkeypatch.setattr(org_deletion, "_stage_postgres", stage_pg)
@@ -183,3 +200,14 @@ async def test_skip_verified_store_idempotent(monkeypatch: pytest.MonkeyPatch) -
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
     stage_pg.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_require_no_hold_raises() -> None:
+    session = AsyncMock()
+    monkeypatch_hold = AsyncMock(return_value=True)
+    with (
+        patch.object(org_deletion, "_has_active_legal_hold", monkeypatch_hold),
+        pytest.raises(RuntimeError, match="legal_hold_active"),
+    ):
+        await org_deletion._require_no_hold(session, "o")

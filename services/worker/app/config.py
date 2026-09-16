@@ -240,6 +240,43 @@ class Settings(BaseSettings):
         ),
         description="ClickHouse HTTP DSN for llm_traces; empty skips insert",
     )
+    s3_endpoint: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_ENDPOINT", "IBEX_WORKER_S3_ENDPOINT"),
+        description="S3-compatible endpoint for session archives / org deletion",
+    )
+    s3_access_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_ACCESS_KEY", "IBEX_WORKER_S3_ACCESS_KEY"),
+    )
+    s3_secret_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_SECRET_KEY", "IBEX_WORKER_S3_SECRET_KEY"),
+    )
+    s3_bucket_sessions: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_BUCKET_SESSIONS", "IBEX_WORKER_S3_BUCKET_SESSIONS"),
+    )
+    s3_region: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_REGION", "IBEX_WORKER_S3_REGION"),
+    )
+    s3_master_key_b64: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "S3_MASTER_KEY_B64",
+            "OBJECTSTORE_MASTER_KEY_B64",
+            "IBEX_WORKER_S3_MASTER_KEY_B64",
+        ),
+        description="32-byte base64 KEK for AES-256-GCM envelope (matches Go objectstore)",
+    )
+    s3_encryption_key_id: str = Field(
+        default="v1",
+        validation_alias=AliasChoices(
+            "S3_ENCRYPTION_KEY_ID",
+            "IBEX_WORKER_S3_ENCRYPTION_KEY_ID",
+        ),
+    )
 
     @field_validator(
         "broker_url",
@@ -249,6 +286,10 @@ class Settings(BaseSettings):
         "extraction_vllm_base_url",
         "memory_base_url",
         "clickhouse_dsn",
+        "s3_endpoint",
+        "s3_access_key",
+        "s3_bucket_sessions",
+        "s3_region",
         mode="before",
     )
     @classmethod

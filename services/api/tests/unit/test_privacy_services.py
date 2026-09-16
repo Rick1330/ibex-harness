@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from apierror_py import LEGAL_HOLD_SCOPE_CONFLICT, NOT_FOUND
+from sqlalchemy.exc import IntegrityError
 
 from app.errors import ApiError
 from app.schemas.capture_policies import CapturePolicyCreate, CapturePolicyPatch
@@ -18,29 +19,25 @@ from app.services import legal_holds as hold_svc
 _TS = datetime(2026, 9, 16, 12, 0, 0, tzinfo=UTC)
 
 
+def _integrity(constraint: str) -> IntegrityError:
+    class _Orig(Exception):
+        def __init__(self) -> None:
+            self.constraint_name = constraint
+
+    return IntegrityError("stmt", {}, _Orig())
+
+
 @pytest.mark.asyncio
 async def test_set_hold_conflict_when_active() -> None:
     session = AsyncMock()
+    session.rollback = AsyncMock()
     org = uuid4()
     user = uuid4()
-    row = {
-        "id": uuid4(),
-        "org_id": org,
-        "scope": "org",
-        "reason": "r",
-        "set_by": user,
-        "cleared_by": None,
-        "created_at": _TS,
-        "cleared_at": None,
-    }
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row])))
-        )
-    )
+    session.execute = AsyncMock(side_effect=_integrity("legal_holds_one_active_per_scope"))
     with pytest.raises(ApiError) as ei:
         await hold_svc.set_hold(session, org, LegalHoldCreate(reason="x"), set_by=user)
     assert ei.value.code == LEGAL_HOLD_SCOPE_CONFLICT
+    session.rollback.assert_awaited()
 
 
 @pytest.mark.asyncio

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StringConstraints
-from typing import Annotated
+from pydantic import BaseModel, StringConstraints
 
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)]
-Scope = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+Scope = Literal["org"]
 
 
 class LegalHoldCreate(BaseModel):

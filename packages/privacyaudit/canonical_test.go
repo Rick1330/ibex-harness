@@ -1,7 +1,9 @@
 package privacyaudit
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -10,24 +12,47 @@ import (
 	"github.com/google/uuid"
 )
 
+func mustRowHash(t *testing.T, e Entry) string {
+	t.Helper()
+	h, err := RowHash(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+func hashedEntry(t *testing.T, e Entry) Entry {
+	t.Helper()
+	e.RowHash = mustRowHash(t, e)
+	return e
+}
+
 func TestCanonicalPayload_SortsKeys(t *testing.T) {
 	t.Parallel()
 	got, err := CanonicalPayload(json.RawMessage(`{"b":1,"a":2}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != `{"a":2,"b":1}` {
+	if got != `{"a": 2, "b": 1}` {
 		t.Fatalf("got %s", got)
 	}
 }
 
-func TestCanonicalPayload_EmptyAndNull(t *testing.T) {
+func TestCanonicalPayload_EmptyMapsToObject(t *testing.T) {
 	t.Parallel()
-	for _, raw := range []json.RawMessage{nil, {}, []byte("null")} {
+	for _, raw := range []json.RawMessage{nil, {}} {
 		got, err := CanonicalPayload(raw)
 		if err != nil || got != "{}" {
 			t.Fatalf("raw=%q got=%q err=%v", raw, got, err)
 		}
+	}
+}
+
+func TestCanonicalPayload_JSONNullPreserved(t *testing.T) {
+	t.Parallel()
+	got, err := CanonicalPayload(json.RawMessage(`null`))
+	if err != nil || got != "null" {
+		t.Fatalf("got=%q err=%v", got, err)
 	}
 }
 
@@ -45,8 +70,90 @@ func TestCanonicalPayload_NestedAndArray(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got, `{"a":true`) {
+	want := `{"a": true, "z": [{"a": 2, "b": 1}]}`
+	if got != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+}
+
+func TestCanonicalPayload_NoHTMLEscape(t *testing.T) {
+	t.Parallel()
+	got, err := CanonicalPayload(json.RawMessage(`{"x":"<tag>&"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"x": "<tag>&"}` {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestCanonicalPayload_UseNumber(t *testing.T) {
+	t.Parallel()
+	got, err := CanonicalPayload(json.RawMessage(`{"n":9007199254740993}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != `{"n": 9007199254740993}` {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestCanonicalString_KnownVector(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	e := Entry{
+		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
+		Payload: json.RawMessage(`{}`), CreatedAt: ts,
+	}
+	got, err := CanonicalString(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `["11111111-1111-1111-1111-111111111111", 1, "0000000000000000000000000000000000000000000000000000000000000000", "", "a", "", "", "", "", [], "", "", "", "", "", {}, "2026-01-01T00:00:00.000000Z"]`
+	if got != want {
+		t.Fatalf("canon=\n%s\nwant=\n%s", got, want)
+	}
+	sum := sha256.Sum256([]byte(want))
+	wantHash := hex.EncodeToString(sum[:])
+	h := mustRowHash(t, e)
+	if h != wantHash {
+		t.Fatalf("hash=%s want=%s", h, wantHash)
+	}
+}
+
+func TestCanonicalString_NullPayload(t *testing.T) {
+	t.Parallel()
+	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	e := Entry{
+		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
+		Payload: json.RawMessage(`null`), CreatedAt: ts,
+	}
+	got, err := CanonicalString(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSuffix := `, null, "2026-01-01T00:00:00.000000Z"]`
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Fatalf("expected JSON null in array, got %s", got)
+	}
+}
+
+func TestCanonicalString_SortedFieldsArray(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	e := Entry{
+		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
+		Fields: []string{"z", "a"}, Payload: json.RawMessage(`{}`), CreatedAt: ts,
+	}
+	got, err := CanonicalString(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `["a", "z"]`) {
+		t.Fatalf("fields not sorted JSON array: %s", got)
 	}
 }
 
@@ -55,16 +162,10 @@ func TestVerifyChain_DetectsForgedMiddle(t *testing.T) {
 	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	ts := time.Date(2026, 9, 16, 12, 0, 0, 123456000, time.UTC)
 	mk := func(seq int64, prev, action string) Entry {
-		e := Entry{
+		return hashedEntry(t, Entry{
 			OrgID: org, Seq: seq, PrevHash: prev, Action: action,
 			Payload: json.RawMessage(`{}`), CreatedAt: ts,
-		}
-		h, err := RowHash(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		e.RowHash = h
-		return e
+		})
 	}
 	e1 := mk(1, GenesisPrevHash, "a")
 	e2 := mk(2, e1.RowHash, "b")
@@ -81,14 +182,33 @@ func TestVerifyChain_DetectsPrevHashBreak(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
 	ts := time.Now().UTC()
-	e1 := Entry{OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts}
-	h, _ := RowHash(e1)
-	e1.RowHash = h
-	e2 := Entry{OrgID: org, Seq: 2, PrevHash: "deadbeef", Action: "b", Payload: json.RawMessage(`{}`), CreatedAt: ts}
-	h2, _ := RowHash(e2)
-	e2.RowHash = h2
+	e1 := hashedEntry(t, Entry{OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts})
+	e2 := hashedEntry(t, Entry{OrgID: org, Seq: 2, PrevHash: "deadbeef", Action: "b", Payload: json.RawMessage(`{}`), CreatedAt: ts})
 	err := VerifyChain([]Entry{e1, e2})
 	if BreakIndex(err) != 1 {
+		t.Fatalf("idx=%d err=%v", BreakIndex(err), err)
+	}
+}
+
+func TestVerifyChain_DetectsSeqGap(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	ts := time.Now().UTC()
+	e1 := hashedEntry(t, Entry{OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts})
+	e3 := hashedEntry(t, Entry{OrgID: org, Seq: 3, PrevHash: e1.RowHash, Action: "c", Payload: json.RawMessage(`{}`), CreatedAt: ts})
+	err := VerifyChain([]Entry{e1, e3})
+	if BreakIndex(err) != 1 {
+		t.Fatalf("idx=%d err=%v", BreakIndex(err), err)
+	}
+}
+
+func TestVerifyChain_DetectsMissingGenesis(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	ts := time.Now().UTC()
+	e2 := hashedEntry(t, Entry{OrgID: org, Seq: 2, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts})
+	err := VerifyChain([]Entry{e2})
+	if BreakIndex(err) != 0 {
 		t.Fatalf("idx=%d err=%v", BreakIndex(err), err)
 	}
 }
@@ -108,18 +228,13 @@ func TestVerifyChain_OK(t *testing.T) {
 	var entries []Entry
 	prev := GenesisPrevHash
 	for i := int64(1); i <= 3; i++ {
-		e := Entry{
+		e := hashedEntry(t, Entry{
 			OrgID: org, Seq: i, PrevHash: prev, ActorUserID: &actor,
 			Action: "delete.org", Fields: []string{"z", "a"},
 			Payload: json.RawMessage(`{"k":"v"}`), CreatedAt: ts,
-		}
-		h, err := RowHash(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		e.RowHash = h
+		})
 		entries = append(entries, e)
-		prev = h
+		prev = e.RowHash
 	}
 	if err := VerifyChain(entries); err != nil {
 		t.Fatal(err)
@@ -149,8 +264,11 @@ func TestResolveOrgs_Filter(t *testing.T) {
 	t.Parallel()
 	id := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 	got, err := ResolveOrgs(t.Context(), nil, id.String())
-	if err != nil || len(got) != 1 || got[0] != id {
-		t.Fatalf("got=%v err=%v", got, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != id {
+		t.Fatalf("got=%v", got)
 	}
 }
 

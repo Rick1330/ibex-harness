@@ -16,7 +16,24 @@ type Querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
+// Executor is the subset of *sql.Conn / *sql.Tx used to set GUCs.
+type Executor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// SetCurrentOrgID sets app.current_org_id on the connection/transaction (RLS scope).
+// is_local=true so the setting is transaction-scoped when used on a Tx.
+func SetCurrentOrgID(ctx context.Context, exec Executor, org uuid.UUID) error {
+	_, err := exec.ExecContext(ctx,
+		`SELECT set_config('app.current_org_id', $1, true)`, org.String())
+	if err != nil {
+		return fmt.Errorf("privacyaudit: set app.current_org_id: %w", err)
+	}
+	return nil
+}
+
 // ResolveOrgs returns a single org when filter is set, else distinct ledger orgs.
+// Callers under FORCE RLS must set app.current_org_id (or use BYPASSRLS) before listing.
 func ResolveOrgs(ctx context.Context, q Querier, orgFilter string) ([]uuid.UUID, error) {
 	if orgFilter != "" {
 		id, err := uuid.Parse(orgFilter)

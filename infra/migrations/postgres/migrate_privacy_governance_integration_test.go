@@ -16,9 +16,16 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-
 	ctx := context.Background()
-	var orgID, userID string
+	orgID, userID := seedPrivacyOrg(t, ctx, db)
+	assertLedgerChain(t, ctx, db, orgID, userID)
+	assertLedgerAppendOnly(t, ctx, db, orgID)
+	assertHoldAndCapturePolicy(t, ctx, db, orgID, userID)
+	assertHoldBlockedJobStatus(t, ctx, db, orgID)
+}
+
+func seedPrivacyOrg(t *testing.T, ctx context.Context, db *sql.DB) (orgID, userID string) {
+	t.Helper()
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		var e error
 		orgID, e = insertOrg(ctx, tx, "Privacy Org", "privacy-org")
@@ -39,11 +46,14 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("user id: %v", err)
 	}
+	return orgID, userID
+}
 
-	// Append two audit rows and verify chain linkage.
+func assertLedgerChain(t *testing.T, ctx context.Context, db *sql.DB, orgID, userID string) {
+	t.Helper()
 	var seq1, seq2 int64
 	var prev2, hash1, hash2 string
-	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
 		var id, oid, prev string
 		var created interface{}
 		return tx.QueryRowContext(ctx, `
@@ -58,7 +68,7 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if seq1 != 1 {
 		t.Fatalf("seq1=%d", seq1)
 	}
-	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err = withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
 		var id, oid string
 		var created interface{}
 		return tx.QueryRowContext(ctx, `
@@ -73,9 +83,11 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if seq2 != 2 || prev2 != hash1 {
 		t.Fatalf("seq2=%d prev2=%s hash1=%s hash2=%s", seq2, prev2, hash1, hash2)
 	}
+}
 
-	// UPDATE must fail (append-only trigger).
-	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+func assertLedgerAppendOnly(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+	t.Helper()
+	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `
 			UPDATE ibex_core.privacy_audit_ledger SET action = 'forged' WHERE org_id = $1::uuid`, orgID)
 		return e
@@ -83,9 +95,11 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected append-only update failure")
 	}
+}
 
-	// Legal hold insert + active check.
-	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+func assertHoldAndCapturePolicy(t *testing.T, ctx context.Context, db *sql.DB, orgID, userID string) {
+	t.Helper()
+	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.legal_holds (org_id, scope, reason, set_by)
 			VALUES ($1::uuid, 'org', 'litigation', $2::uuid)`, orgID, userID)
@@ -94,9 +108,7 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hold: %v", err)
 	}
-
-	// Capture policy default insert.
-	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err = withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.org_capture_policies (org_id, mode, priority)
 			VALUES ($1::uuid, 'metadata_only', 100)`, orgID)
@@ -105,9 +117,11 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capture policy: %v", err)
 	}
+}
 
-	// hold_blocked is a valid job status.
-	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+func assertHoldBlockedJobStatus(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+	t.Helper()
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.org_deletion_jobs (org_id, status)
 			VALUES ($1::uuid, 'hold_blocked')`, orgID)
@@ -116,4 +130,23 @@ func TestPrivacyGovernance_LedgerAppendOnlyAndHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hold_blocked job: %v", err)
 	}
+}
+
+// withOrgContext sets app.current_org_id (and service GUC) for privacy RLS + append auth.
+func withOrgContext(ctx context.Context, db *sql.DB, orgID string, fn func(*sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

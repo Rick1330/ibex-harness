@@ -4,18 +4,43 @@
 -- Non-erasable allowlist (saga MUST refuse to delete these store names):
 --   today: none (placeholder for future usage/billing ledgers — 4.P.4).
 -- Audit ledger has NO FK to organizations so rows survive org soft-delete.
+--
+-- Tenant boundary: org GUC only via rls_privacy_visible (000036 evidence pattern).
+-- No forgeable app.is_service_account bypass on these tables.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ================================================================
--- org_deletion_jobs: add hold_blocked status
+-- org_deletion_jobs: add hold_blocked status (NOT VALID then VALIDATE)
 -- ================================================================
 ALTER TABLE ibex_core.org_deletion_jobs
     DROP CONSTRAINT IF EXISTS org_deletion_jobs_status_check;
 
 ALTER TABLE ibex_core.org_deletion_jobs
     ADD CONSTRAINT org_deletion_jobs_status_check
-    CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'hold_blocked'));
+    CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'hold_blocked'))
+    NOT VALID;
+
+ALTER TABLE ibex_core.org_deletion_jobs
+    VALIDATE CONSTRAINT org_deletion_jobs_status_check;
+
+-- ================================================================
+-- rls_privacy_visible — org GUC only (no service-account forge path)
+-- ================================================================
+CREATE OR REPLACE FUNCTION ibex_core.rls_privacy_visible(row_org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT (
+        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+        AND row_org_id = current_setting('app.current_org_id', true)::UUID
+    );
+$$;
+
+REVOKE ALL ON FUNCTION ibex_core.rls_privacy_visible(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_privacy_visible(UUID) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_privacy_visible(UUID) TO ibex_service;
 
 -- ================================================================
 -- privacy_audit_ledger (append-only, org_id survives purge)
@@ -58,13 +83,7 @@ ALTER TABLE ibex_core.privacy_audit_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.privacy_audit_ledger FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY privacy_audit_ledger_isolation ON ibex_core.privacy_audit_ledger
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_privacy_visible(org_id));
 
 -- Append-only: no UPDATE/DELETE; INSERT only via privacy_audit_append (SECURITY DEFINER).
 REVOKE ALL ON TABLE ibex_core.privacy_audit_ledger FROM PUBLIC;
@@ -87,12 +106,11 @@ CREATE TRIGGER privacy_audit_ledger_no_update_delete
 
 -- ================================================================
 -- privacy_audit_append (SECURITY DEFINER / ibex_service)
--- Canonical serialization (fixed column order; jsonb keys sorted):
---   org_id|seq|prev_hash|actor_user_id|action|purpose|policy_result|
---   object_type|object_id|fields(csv sorted)|approval_ref|before_hash|
---   after_hash|correlation_id|request_id|payload_canonical|created_at_rfc3339nano
--- row_hash = encode(digest(canonical, 'sha256'), 'hex')
+-- Canonical serialization: jsonb_build_array of fixed-position fields
+-- (no pipe-delimiter collisions). payload: SQL NULL → {}; JSON null preserved.
+-- row_hash = encode(digest(canonical::text, 'sha256'), 'hex')
 -- Genesis prev_hash = 64 zero hex chars.
+-- Caller must set app.current_org_id matching p_org_id (fail closed).
 -- ================================================================
 CREATE OR REPLACE FUNCTION ibex_core.privacy_audit_append(
     p_org_id            UUID,
@@ -126,15 +144,20 @@ DECLARE
     v_prev              TEXT;
     v_seq               BIGINT;
     v_fields_sorted     TEXT[];
-    v_payload_canon     TEXT;
+    v_payload_canon     JSONB;
     v_created           TIMESTAMPTZ := clock_timestamp();
     v_canonical         TEXT;
     v_row_hash          TEXT;
     v_id                UUID := gen_random_uuid();
     v_genesis           TEXT := repeat('0', 64);
+    v_caller_org        TEXT;
 BEGIN
     IF p_org_id IS NULL THEN
         RAISE EXCEPTION 'privacy_audit_append: org_id required';
+    END IF;
+    v_caller_org := NULLIF(current_setting('app.current_org_id', true), '');
+    IF v_caller_org IS NULL OR v_caller_org::UUID IS DISTINCT FROM p_org_id THEN
+        RAISE EXCEPTION 'privacy_audit_append: org_id must match app.current_org_id';
     END IF;
     IF p_action IS NULL OR char_length(p_action) < 1 OR char_length(p_action) > 128 THEN
         RAISE EXCEPTION 'privacy_audit_append: action invalid';
@@ -165,12 +188,16 @@ BEGIN
           FROM unnest(p_fields) AS x;
     END IF;
 
-    v_payload_canon := COALESCE(p_payload, '{}'::jsonb)::text;
+    -- SQL NULL → {}; JSON null (jsonb 'null') is preserved as null.
+    IF p_payload IS NULL THEN
+        v_payload_canon := '{}'::jsonb;
+    ELSE
+        v_payload_canon := p_payload;
+    END IF;
 
-    v_canonical := concat_ws(
-        '|',
+    v_canonical := jsonb_build_array(
         p_org_id::text,
-        v_seq::text,
+        v_seq,
         v_prev,
         COALESCE(p_actor_user_id::text, ''),
         p_action,
@@ -178,7 +205,7 @@ BEGIN
         COALESCE(p_policy_result, ''),
         COALESCE(p_object_type, ''),
         COALESCE(p_object_id, ''),
-        COALESCE(array_to_string(v_fields_sorted, ','), ''),
+        to_jsonb(v_fields_sorted),
         COALESCE(p_approval_ref, ''),
         COALESCE(p_before_hash, ''),
         COALESCE(p_after_hash, ''),
@@ -186,7 +213,7 @@ BEGIN
         COALESCE(p_request_id, ''),
         v_payload_canon,
         to_char(v_created AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
-    );
+    )::text;
 
     v_row_hash := encode(digest(v_canonical, 'sha256'), 'hex');
 
@@ -201,7 +228,7 @@ BEGIN
         p_actor_user_id, p_action, p_purpose, p_policy_result,
         p_object_type, p_object_id, v_fields_sorted, p_approval_ref,
         p_before_hash, p_after_hash, p_correlation_id, p_request_id,
-        COALESCE(p_payload, '{}'::jsonb), v_created
+        v_payload_canon, v_created
     );
 
     RETURN QUERY SELECT v_id, p_org_id, v_seq, v_prev, v_row_hash, v_created;
@@ -215,12 +242,7 @@ ALTER FUNCTION ibex_core.privacy_audit_append(
 REVOKE ALL ON FUNCTION ibex_core.privacy_audit_append(
     UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
 ) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION ibex_core.privacy_audit_append(
-    UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
-) FROM ibex_app;
--- Worker/API run as ibex_app with is_service_account GUC; grant EXECUTE to
--- ibex_app so service-account sessions can append (RLS still applies on SELECT).
--- Direct INSERT remains available; forge-resistant chaining requires this helper.
+-- EXECUTE granted to ibex_app; function enforces org GUC match (fail closed).
 GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_append(
     UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
 ) TO ibex_app;
@@ -237,7 +259,7 @@ CREATE TABLE ibex_core.legal_holds (
                     REFERENCES ibex_core.organizations(id)
                     ON DELETE RESTRICT,
     scope           TEXT NOT NULL DEFAULT 'org'
-                    CHECK (char_length(scope) BETWEEN 1 AND 128),
+                    CHECK (scope = 'org'),
     reason          TEXT NOT NULL
                     CHECK (char_length(reason) BETWEEN 1 AND 1024),
     set_by          UUID NOT NULL,
@@ -250,17 +272,16 @@ CREATE INDEX idx_legal_holds_org_active
     ON ibex_core.legal_holds (org_id)
     WHERE cleared_at IS NULL;
 
+-- At most one active hold per (org_id, scope).
+CREATE UNIQUE INDEX legal_holds_one_active_per_scope
+    ON ibex_core.legal_holds (org_id, scope)
+    WHERE cleared_at IS NULL;
+
 ALTER TABLE ibex_core.legal_holds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.legal_holds FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY legal_holds_isolation ON ibex_core.legal_holds
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_privacy_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.legal_holds TO ibex_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.legal_holds TO ibex_service;
@@ -290,13 +311,7 @@ ALTER TABLE ibex_core.org_capture_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.org_capture_policies FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY org_capture_policies_isolation ON ibex_core.org_capture_policies
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_privacy_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.org_capture_policies TO ibex_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.org_capture_policies TO ibex_service;
@@ -334,18 +349,14 @@ CREATE INDEX idx_deletion_store_receipts_job
 ALTER TABLE ibex_core.deletion_store_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.deletion_store_receipts FORCE ROW LEVEL SECURITY;
 
--- Receipts inherit org visibility via join to org_deletion_jobs under service GUC,
--- or via job org when app.current_org_id is set.
+-- Receipts visible when the parent job's org matches app.current_org_id.
 CREATE POLICY deletion_store_receipts_isolation ON ibex_core.deletion_store_receipts
     USING (
-        current_setting('app.is_service_account', true) = 'true'
-        OR (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND EXISTS (
-                SELECT 1 FROM ibex_core.org_deletion_jobs j
-                WHERE j.id = deletion_store_receipts.job_id
-                  AND j.org_id = current_setting('app.current_org_id', true)::UUID
-            )
+        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+        AND EXISTS (
+            SELECT 1 FROM ibex_core.org_deletion_jobs j
+            WHERE j.id = deletion_store_receipts.job_id
+              AND j.org_id = current_setting('app.current_org_id', true)::UUID
         )
     );
 
@@ -355,3 +366,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.deletion_store_receipts TO ibe
 CREATE TRIGGER deletion_store_receipts_updated_at
     BEFORE UPDATE ON ibex_core.deletion_store_receipts
     FOR EACH ROW EXECUTE FUNCTION ibex_core.set_updated_at();
+
+-- Capture redaction persists filtered data / archived_to on session_events.
+GRANT UPDATE ON ibex_core.session_events TO ibex_app;
+GRANT UPDATE ON ibex_core.session_events TO ibex_service;

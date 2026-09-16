@@ -98,8 +98,9 @@ async def create_policy(
             raise ApiError(code=CAPTURE_POLICY_CONFLICT, message="Capture policy already exists") from exc
         raise
     row = result.mappings().first()
+    if row is None:
+        raise ApiError(code=CAPTURE_POLICY_CONFLICT, message="Capture policy insert returned no row")
     await session.commit()
-    assert row is not None
     return _row(row)
 
 

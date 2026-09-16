@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +12,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
+
+func newMockDB(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
+	t.Helper()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db, mock
+}
+
+func entryColumns() []string {
+	return []string{
+		"org_id", "seq", "prev_hash", "row_hash",
+		"actor_user_id", "action", "purpose", "policy_result",
+		"object_type", "object_id", "fields",
+		"approval_ref", "before_hash", "after_hash",
+		"correlation_id", "request_id", "payload", "created_at",
+	}
+}
+
+func expectSetOrg(mock sqlmock.Sqlmock, org uuid.UUID) {
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func expectEmptyLedger(mock sqlmock.Sqlmock, org uuid.UUID) {
+	expectSetOrg(mock, org)
+	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).
+		WillReturnRows(sqlmock.NewRows(entryColumns()))
+}
 
 func TestRun_MissingDSN(t *testing.T) {
 	t.Setenv("POSTGRES_DSN", "")
@@ -25,11 +58,7 @@ func TestRun_BadFlag(t *testing.T) {
 }
 
 func TestVerifyDB_EmptyOK(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, mock := newMockDB(t)
 	mock.ExpectQuery("SELECT DISTINCT org_id").
 		WillReturnRows(sqlmock.NewRows([]string{"org_id"}))
 	if code := verifyDB(context.Background(), db, ""); code != 0 {
@@ -38,11 +67,7 @@ func TestVerifyDB_EmptyOK(t *testing.T) {
 }
 
 func TestVerifyDB_ListError(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, mock := newMockDB(t)
 	mock.ExpectQuery("SELECT DISTINCT org_id").WillReturnError(context.Canceled)
 	if code := verifyDB(context.Background(), db, ""); code != 2 {
 		t.Fatalf("code=%d", code)
@@ -50,20 +75,11 @@ func TestVerifyDB_ListError(t *testing.T) {
 }
 
 func TestVerifyDB_ChainFail(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db, mock := newMockDB(t)
 	org := uuid.New()
 	ts := time.Now().UTC()
-	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).WillReturnRows(sqlmock.NewRows([]string{
-		"org_id", "seq", "prev_hash", "row_hash",
-		"actor_user_id", "action", "purpose", "policy_result",
-		"object_type", "object_id", "fields",
-		"approval_ref", "before_hash", "after_hash",
-		"correlation_id", "request_id", "payload", "created_at",
-	}).AddRow(
+	expectSetOrg(mock, org)
+	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).WillReturnRows(sqlmock.NewRows(entryColumns()).AddRow(
 		org, int64(1), privacyaudit.GenesisPrevHash, "bad",
 		nil, "a", "", "",
 		"", "", pq.StringArray{},
@@ -75,34 +91,54 @@ func TestVerifyDB_ChainFail(t *testing.T) {
 	}
 }
 
-func TestVerifyDB_OrgOK(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+func TestVerifyDB_OrgOK_EmptyChain(t *testing.T) {
+	db, mock := newMockDB(t)
 	org := uuid.New()
-	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"org_id", "seq", "prev_hash", "row_hash",
-			"actor_user_id", "action", "purpose", "policy_result",
-			"object_type", "object_id", "fields",
-			"approval_ref", "before_hash", "after_hash",
-			"correlation_id", "request_id", "payload", "created_at",
-		}))
+	expectEmptyLedger(mock, org)
 	if code := verifyDB(context.Background(), db, org.String()); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
 }
 
-func TestVerifyDSN_BadDriverOpen(t *testing.T) {
-	// sql.Open with empty driver name isn't available; invalid DSN still opens.
-	// Cover open error path is rare — exercise parse failure via org filter instead.
-	db, mock, err := sqlmock.New()
+func TestVerifyDB_SetConfigFail(t *testing.T) {
+	db, mock := newMockDB(t)
+	org := uuid.New()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
+		WillReturnError(context.Canceled)
+	if code := verifyDB(context.Background(), db, org.String()); code != 1 {
+		t.Fatalf("code=%d", code)
+	}
+}
+
+func TestVerifyOrg_ValidRow(t *testing.T) {
+	db, mock := newMockDB(t)
+	org := uuid.New()
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	e := privacyaudit.Entry{
+		OrgID: org, Seq: 1, PrevHash: privacyaudit.GenesisPrevHash, Action: "a",
+		Payload: json.RawMessage(`{}`), CreatedAt: ts,
+	}
+	h, err := privacyaudit.RowHash(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	e.RowHash = h
+	expectSetOrg(mock, org)
+	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).WillReturnRows(sqlmock.NewRows(entryColumns()).AddRow(
+		org, int64(1), privacyaudit.GenesisPrevHash, h,
+		nil, "a", "", "",
+		"", "", pq.StringArray{},
+		"", "", "",
+		"", "", []byte(`{}`), ts,
+	))
+	n, verr := VerifyOrg(context.Background(), db, org)
+	if verr != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, verr)
+	}
+}
+
+func TestVerifyDSN_BadOrgFilter(t *testing.T) {
+	db, mock := newMockDB(t)
 	_ = mock
 	if code := verifyDB(context.Background(), db, "bad"); code != 2 {
 		t.Fatalf("code=%d", code)

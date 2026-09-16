@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +15,7 @@ from sqlalchemy import text
 
 from app.celery_app import celery_app
 from app.config import get_settings
-from app.db import create_engine, create_session_factory, session_as_service_account
+from app.db import create_engine, create_session_factory, session_as_service_org
 from app.task_names import TASK_ORG_DELETE_ORGANIZATION
 from app.tasks.base import IbexTask
 
@@ -30,6 +31,23 @@ _CH_TABLES = (
     "evidence_spans",
     "evidence_assembly_metrics",
 )
+# Literal query strings keyed by allowlisted table (Bandit B608 — no f-string identifiers).
+_CH_DELETE_QUERIES: dict[str, str] = {
+    "llm_traces": "ALTER TABLE ibex.llm_traces DELETE WHERE org_id = {org_id:UUID}",
+    "mcp_tool_calls": "ALTER TABLE ibex.mcp_tool_calls DELETE WHERE org_id = {org_id:UUID}",
+    "evidence_spans": "ALTER TABLE ibex.evidence_spans DELETE WHERE org_id = {org_id:UUID}",
+    "evidence_assembly_metrics": (
+        "ALTER TABLE ibex.evidence_assembly_metrics DELETE WHERE org_id = {org_id:UUID}"
+    ),
+}
+_CH_COUNT_QUERIES: dict[str, str] = {
+    "llm_traces": "SELECT count() FROM ibex.llm_traces WHERE org_id = {org_id:UUID}",
+    "mcp_tool_calls": "SELECT count() FROM ibex.mcp_tool_calls WHERE org_id = {org_id:UUID}",
+    "evidence_spans": "SELECT count() FROM ibex.evidence_spans WHERE org_id = {org_id:UUID}",
+    "evidence_assembly_metrics": (
+        "SELECT count() FROM ibex.evidence_assembly_metrics WHERE org_id = {org_id:UUID}"
+    ),
+}
 _REDIS_PREFIX_TEMPLATES = (
     "{org_id}:directive:",
     "{org_id}:memory:",
@@ -116,101 +134,28 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
     engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:
-        async with session_as_service_account(factory) as session:
+        async with session_as_service_org(factory, org_id) as session:
             claimed = await _claim_job(session, job_id=job_id, org_id=org_id)
             if not claimed:
                 return {"status": "skipped", "reason": "job_not_claimable"}
             try:
-                if await _has_active_legal_hold(session, org_id):
-                    await _audit_append(
-                        session,
-                        org_id=org_id,
-                        action="org_deletion.hold_blocked",
-                        payload={"job_id": job_id},
-                    )
-                    await _finish_job(
-                        session,
-                        _JobOutcome(
-                            job_id=job_id,
-                            org_id=org_id,
-                            status="hold_blocked",
-                            error="legal_hold_active",
-                        ),
-                    )
-                    return {
-                        "status": "hold_blocked",
-                        "job_id": job_id,
-                        "org_id": org_id,
-                    }
-
-                if await _org_already_soft_deleted(session, org_id):
-                    await _ensure_all_receipts_verified(session, job_id=job_id, org_id=org_id)
-                    await _finish_job(
-                        session, _JobOutcome(job_id=job_id, org_id=org_id, status="succeeded")
-                    )
-                    return {
-                        "status": "succeeded",
-                        "job_id": job_id,
-                        "org_id": org_id,
-                        "reason": "already_deleted",
-                    }
-
+                blocked = await _finish_if_hold_blocked(session, job_id=job_id, org_id=org_id)
+                if blocked is not None:
+                    return blocked
+                # Soft-deleted orgs still run remaining store stages (no invented receipts).
                 archived_uris = await _collect_archived_uris(session, org_id)
-
-                if not await _receipt_verified(session, job_id, "postgres"):
-                    await _stage_postgres(session, org_id=org_id)
-                    await _upsert_receipt(
-                        session, job_id=job_id, store="postgres", status="verified"
-                    )
-                await _publish_model_policy_invalidate(settings, org_id)
-
-                if not await _receipt_verified(session, job_id, "clickhouse"):
-                    if await _has_active_legal_hold(session, org_id):
-                        raise RuntimeError("legal_hold_active")
-                    await _stage_clickhouse(settings, org_id=org_id)
-                    await _upsert_receipt(
-                        session, job_id=job_id, store="clickhouse", status="verified"
-                    )
-
-                if not await _receipt_verified(session, job_id, "redis"):
-                    await _stage_redis(settings, org_id=org_id)
-                    await _upsert_receipt(
-                        session, job_id=job_id, store="redis", status="verified"
-                    )
-
-                if not await _receipt_verified(session, job_id, "objectstore"):
-                    await _stage_objectstore(settings, org_id=org_id, uris=archived_uris)
-                    await _upsert_receipt(
-                        session, job_id=job_id, store="objectstore", status="verified"
-                    )
-
-                digests = await _receipt_digests(session, job_id)
-                await _audit_append(
+                await _run_store_stages(
                     session,
+                    settings,
+                    job_id=job_id,
                     org_id=org_id,
-                    action="org_deletion.certificate",
-                    payload={"job_id": job_id, "receipts": digests},
+                    archived_uris=archived_uris,
                 )
-
-                if not await _all_receipts_verified(session, job_id):
-                    await _finish_job(
-                        session,
-                        _JobOutcome(
-                            job_id=job_id,
-                            org_id=org_id,
-                            status="failed",
-                            error="incomplete_receipts",
-                        ),
-                    )
-                    return {"status": "failed", "job_id": job_id, "org_id": org_id}
-
-                await _finish_job(
-                    session, _JobOutcome(job_id=job_id, org_id=org_id, status="succeeded")
-                )
+                return await _finalize_job(session, job_id=job_id, org_id=org_id)
             except Exception as exc:
                 logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
                 await session.rollback()
-                async with session_as_service_account(factory) as fail_session:
+                async with session_as_service_org(factory, org_id) as fail_session:
                     await _finish_job(
                         fail_session,
                         _JobOutcome(
@@ -221,9 +166,89 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
                         ),
                     )
                 raise
-        return {"status": "succeeded", "job_id": job_id, "org_id": org_id}
     finally:
         await engine.dispose()
+
+
+async def _finish_if_hold_blocked(
+    session, *, job_id: str, org_id: str
+) -> dict[str, str] | None:
+    if not await _has_active_legal_hold(session, org_id):
+        return None
+    await _audit_append(
+        session,
+        org_id=org_id,
+        action="org_deletion.hold_blocked",
+        payload={"job_id": job_id},
+    )
+    await _finish_job(
+        session,
+        _JobOutcome(
+            job_id=job_id,
+            org_id=org_id,
+            status="hold_blocked",
+            error="legal_hold_active",
+        ),
+    )
+    return {"status": "hold_blocked", "job_id": job_id, "org_id": org_id}
+
+
+async def _require_no_hold(session, org_id: str) -> None:
+    if await _has_active_legal_hold(session, org_id):
+        raise RuntimeError("legal_hold_active")
+
+
+async def _run_store_stages(
+    session,
+    settings: Any,
+    *,
+    job_id: str,
+    org_id: str,
+    archived_uris: list[str],
+) -> None:
+    if not await _receipt_verified(session, job_id, "postgres"):
+        await _require_no_hold(session, org_id)
+        await _stage_postgres(session, org_id=org_id)
+        await _upsert_receipt(session, job_id=job_id, store="postgres", status="verified")
+    await _publish_model_policy_invalidate(settings, org_id)
+
+    if not await _receipt_verified(session, job_id, "clickhouse"):
+        await _require_no_hold(session, org_id)
+        await _stage_clickhouse(settings, org_id=org_id)
+        await _upsert_receipt(session, job_id=job_id, store="clickhouse", status="verified")
+
+    if not await _receipt_verified(session, job_id, "redis"):
+        await _require_no_hold(session, org_id)
+        await _stage_redis(settings, org_id=org_id)
+        await _upsert_receipt(session, job_id=job_id, store="redis", status="verified")
+
+    if not await _receipt_verified(session, job_id, "objectstore"):
+        await _require_no_hold(session, org_id)
+        await _stage_objectstore(settings, org_id=org_id, uris=archived_uris)
+        await _upsert_receipt(session, job_id=job_id, store="objectstore", status="verified")
+
+
+async def _finalize_job(session, *, job_id: str, org_id: str) -> dict[str, str]:
+    digests = await _receipt_digests(session, job_id)
+    await _audit_append(
+        session,
+        org_id=org_id,
+        action="org_deletion.certificate",
+        payload={"job_id": job_id, "receipts": digests},
+    )
+    if not await _all_receipts_verified(session, job_id):
+        await _finish_job(
+            session,
+            _JobOutcome(
+                job_id=job_id,
+                org_id=org_id,
+                status="failed",
+                error="incomplete_receipts",
+            ),
+        )
+        return {"status": "failed", "job_id": job_id, "org_id": org_id}
+    await _finish_job(session, _JobOutcome(job_id=job_id, org_id=org_id, status="succeeded"))
+    return {"status": "succeeded", "job_id": job_id, "org_id": org_id}
 
 
 async def _claim_job(session, *, job_id: str, org_id: str) -> bool:
@@ -251,20 +276,6 @@ async def _has_active_legal_hold(session, org_id: str) -> bool:
             SELECT 1 FROM ibex_core.legal_holds
             WHERE org_id = CAST(:org_id AS uuid) AND cleared_at IS NULL
             LIMIT 1
-            """
-        ),
-        {"org_id": org_id},
-    )
-    return result.first() is not None
-
-
-async def _org_already_soft_deleted(session, org_id: str) -> bool:
-    result = await session.execute(
-        text(
-            """
-            SELECT 1
-            FROM ibex_core.organizations
-            WHERE id = CAST(:org_id AS uuid) AND deleted_at IS NOT NULL
             """
         ),
         {"org_id": org_id},
@@ -372,13 +383,6 @@ async def _all_receipts_verified(session, job_id: str) -> bool:
     return True
 
 
-async def _ensure_all_receipts_verified(session, *, job_id: str, org_id: str) -> None:
-    del org_id
-    for store in _STORES:
-        if not await _receipt_verified(session, job_id, store):
-            await _upsert_receipt(session, job_id=job_id, store=store, status="verified")
-
-
 async def _receipt_digests(session, job_id: str) -> dict[str, str]:
     result = await session.execute(
         text(
@@ -440,7 +444,6 @@ async def _publish_model_policy_invalidate(settings: Any, org_id: str) -> None:
         client = Redis.from_url(redis_url, decode_responses=True, socket_timeout=1.0)
         try:
             channel = f"model_policy_updates:{org_id}"
-            # Epoch bump: use a high sentinel so caches treat as newer deny/empty.
             payload = json.dumps({"v": 1, "org_id": org_id, "epoch": int(time.time())})
             await client.publish(channel, payload)
         finally:
@@ -449,62 +452,76 @@ async def _publish_model_policy_invalidate(settings: Any, org_id: str) -> None:
         logger.warning("model_policy_invalidate_failed", extra={"org_id": org_id}, exc_info=True)
 
 
-async def _stage_clickhouse(settings: Any, *, org_id: str) -> None:
-    import os
-
+def _clickhouse_dsn(settings: Any) -> str:
     dsn = (
         getattr(settings, "clickhouse_dsn", None)
         or os.environ.get("CLICKHOUSE_DSN")
         or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN")
     )
     if not dsn or not str(dsn).strip():
-        logger.info("org_deletion_clickhouse_skipped", extra={"reason": "empty_dsn"})
-        return
+        raise RuntimeError("CLICKHOUSE_DSN required for org deletion")
+    return str(dsn)
 
-    from app.extraction.clickhouse_traces import _http_endpoint, shared_clickhouse_client
 
-    http = shared_clickhouse_client()
-    url, auth = _http_endpoint(str(dsn))
-    deadline = time.monotonic() + 120.0
-    for table in _CH_TABLES:
-        mut = f"ALTER TABLE ibex.{table} DELETE WHERE org_id = {{org_id:UUID}}"
+def _ch_unknown_table(body: str) -> bool:
+    return "UNKNOWN_TABLE" in body or "doesn't exist" in body.lower()
+
+
+async def _ch_mutate_table(http: Any, url: str, auth: Any, table: str, org_id: str) -> None:
+    mut = _CH_DELETE_QUERIES[table]
+    resp = http.post(
+        url,
+        params={"query": mut, "param_org_id": org_id},
+        auth=auth,
+        timeout=30.0,
+    )
+    if resp.status_code >= 400:
+        body = resp.text
+        if _ch_unknown_table(body):
+            return
+        raise RuntimeError(f"clickhouse mutate {table}: {resp.status_code}")
+
+
+async def _ch_wait_absent(
+    http: Any, url: str, auth: Any, table: str, org_id: str, deadline: float
+) -> None:
+    q = _CH_COUNT_QUERIES[table]
+    while time.monotonic() < deadline:
         resp = http.post(
             url,
-            params={"query": mut, "param_org_id": org_id},
+            params={"query": q, "param_org_id": org_id},
             auth=auth,
-            timeout=30.0,
+            timeout=10.0,
         )
         if resp.status_code >= 400:
             body = resp.text
-            if "UNKNOWN_TABLE" in body or "doesn't exist" in body.lower():
-                continue
-            raise RuntimeError(f"clickhouse mutate {table}: {resp.status_code}")
+            if _ch_unknown_table(body):
+                return
+            raise RuntimeError(f"clickhouse count {table}: {resp.status_code}")
+        count = int(resp.text.strip() or "0")
+        if count == 0:
+            return
+        await asyncio.sleep(0.5)
+    raise TimeoutError(f"clickhouse {table} rows remain for org")
+
+
+async def _stage_clickhouse(settings: Any, *, org_id: str) -> None:
+    from app.extraction.clickhouse_traces import _http_endpoint, shared_clickhouse_client
+
+    dsn = _clickhouse_dsn(settings)
+    http = shared_clickhouse_client()
+    url, auth = _http_endpoint(dsn)
+    deadline = time.monotonic() + 120.0
     for table in _CH_TABLES:
-        while time.monotonic() < deadline:
-            q = f"SELECT count() FROM ibex.{table} WHERE org_id = {{org_id:UUID}}"
-            resp = http.post(
-                url,
-                params={"query": q, "param_org_id": org_id},
-                auth=auth,
-                timeout=10.0,
-            )
-            if resp.status_code >= 400:
-                body = resp.text
-                if "UNKNOWN_TABLE" in body or "doesn't exist" in body.lower():
-                    break
-                raise RuntimeError(f"clickhouse count {table}: {resp.status_code}")
-            count = int(resp.text.strip() or "0")
-            if count == 0:
-                break
-            await asyncio.sleep(0.5)
-        else:
-            raise TimeoutError(f"clickhouse {table} rows remain for org")
+        await _ch_mutate_table(http, url, auth, table, org_id)
+    for table in _CH_TABLES:
+        await _ch_wait_absent(http, url, auth, table, org_id, deadline)
 
 
 async def _stage_redis(settings: Any, *, org_id: str) -> None:
     redis_url = getattr(settings, "redis_url", None)
     if not redis_url:
-        return
+        raise RuntimeError("REDIS_URL required for org deletion")
     from redis.asyncio import Redis
 
     client = Redis.from_url(redis_url, decode_responses=True, socket_timeout=5.0)
@@ -527,18 +544,17 @@ async def _scan_delete(client: Any, prefix: str) -> None:
             break
 
 
-async def _stage_objectstore(settings: Any, *, org_id: str, uris: list[str]) -> None:
-    import os
-
+def _s3_endpoint(settings: Any) -> str:
     endpoint = os.environ.get("S3_ENDPOINT") or getattr(settings, "s3_endpoint", None)
-    if not endpoint:
-        logger.info("org_deletion_objectstore_skipped", extra={"reason": "no_s3_endpoint"})
-        return
+    if not endpoint or not str(endpoint).strip():
+        raise RuntimeError("S3_ENDPOINT required for org deletion")
+    return str(endpoint)
+
+
+async def _stage_objectstore(settings: Any, *, org_id: str, uris: list[str]) -> None:
+    _s3_endpoint(settings)
     from app.objectstore_client import delete_org_prefix, delete_uri
 
     for uri in uris:
-        try:
-            delete_uri(uri)
-        except Exception:
-            logger.warning("objectstore_delete_uri_failed", extra={"uri_prefix": uri[:32]})
-    delete_org_prefix(org_id)
+        delete_uri(uri, settings=settings)
+    delete_org_prefix(org_id, settings=settings)

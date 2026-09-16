@@ -48,13 +48,13 @@ func openPostgres(dsn string) (*sql.DB, error) {
 }
 
 func verifyDB(ctx context.Context, db *sql.DB, orgFilter string) int {
-	orgs, err := privacyaudit.ResolveOrgs(ctx, db, orgFilter)
+	orgs, err := ResolveOrgs(ctx, db, orgFilter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "list orgs: %v\n", err)
 		return 2
 	}
 	for _, org := range orgs {
-		n, verr := privacyaudit.VerifyOrg(ctx, db, org)
+		n, verr := VerifyOrg(ctx, db, org)
 		if verr != nil {
 			fmt.Fprintf(os.Stderr, "VERIFY FAIL org=%s idx=%d: %v\n", org, privacyaudit.BreakIndex(verr), verr)
 			return 1

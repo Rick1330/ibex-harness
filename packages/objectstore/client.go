@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -70,6 +71,8 @@ type Config struct {
 	Bucket   string
 	Region   string
 	KeyID    string
+	// AllowInsecureHTTP permits cleartext http:// endpoints (local MinIO / tests only).
+	AllowInsecureHTTP bool
 }
 
 // ConfigFromEnv loads S3_* / MinIO-compatible settings.
@@ -86,15 +89,17 @@ func ConfigFromEnv() Config {
 	if keyID == "" {
 		keyID = defaultKeyID
 	}
+	insecure := os.Getenv("S3_ALLOW_INSECURE_HTTP")
 	return Config{
 		Endpoint: strings.TrimRight(os.Getenv("S3_ENDPOINT"), "/"),
 		Creds: Credentials{
 			AccessKey: os.Getenv("S3_ACCESS_KEY"),
 			SecretKey: os.Getenv("S3_SECRET_KEY"),
 		},
-		Bucket: bucket,
-		Region: region,
-		KeyID:  keyID,
+		Bucket:            bucket,
+		Region:            region,
+		KeyID:             keyID,
+		AllowInsecureHTTP: insecure == "1" || strings.EqualFold(insecure, "true"),
 	}
 }
 
@@ -111,6 +116,9 @@ func New(cfg Config, masterKeyB64 string, httpClient *http.Client) (*Client, err
 	if cfg.Endpoint == "" {
 		return nil, fmt.Errorf("objectstore: S3_ENDPOINT required")
 	}
+	if err := validateEndpoint(cfg); err != nil {
+		return nil, err
+	}
 	if !cfg.Creds.valid() {
 		return nil, fmt.Errorf("objectstore: S3 credentials required")
 	}
@@ -121,6 +129,7 @@ func New(cfg Config, masterKeyB64 string, httpClient *http.Client) (*Client, err
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	httpClient = withHTTPSDowngradeGuard(httpClient)
 	if cfg.Region == "" {
 		cfg.Region = defaultRegion
 	}
@@ -133,6 +142,54 @@ func New(cfg Config, masterKeyB64 string, httpClient *http.Client) (*Client, err
 		master: master,
 		signer: newAWSV4Signer(cfg.Creds, cfg.Region),
 	}, nil
+}
+
+func validateEndpoint(cfg Config) error {
+	u, err := url.Parse(cfg.Endpoint)
+	if err != nil {
+		return fmt.Errorf("objectstore: endpoint: %w", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		if cfg.AllowInsecureHTTP {
+			return nil
+		}
+		return fmt.Errorf("objectstore: HTTPS required (set AllowInsecureHTTP for local MinIO)")
+	default:
+		return fmt.Errorf("objectstore: endpoint scheme must be https (or http with AllowInsecureHTTP)")
+	}
+}
+
+// withHTTPSDowngradeGuard rejects redirects that drop TLS (HTTPS → HTTP).
+func withHTTPSDowngradeGuard(base *http.Client) *http.Client {
+	out := *base
+	prev := out.CheckRedirect
+	out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := rejectHTTPSToHTTP(req, via); err != nil {
+			return err
+		}
+		if prev != nil {
+			return prev(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("objectstore: stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &out
+}
+
+func rejectHTTPSToHTTP(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	orig := via[0].URL
+	if orig != nil && strings.EqualFold(orig.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+		return errors.New("objectstore: refusing HTTPS to HTTP redirect")
+	}
+	return nil
 }
 
 // ArchivedBlob is the on-wire envelope stored in object storage.
@@ -205,7 +262,9 @@ func (c *Client) putObject(ctx context.Context, key ObjectKey, body []byte, cont
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
-	c.signer.sign(req)
+	if err := c.signer.sign(ctx, req); err != nil {
+		return err
+	}
 	return c.doExpectOK(req, key.String(), true)
 }
 
@@ -214,7 +273,9 @@ func (c *Client) deleteObject(ctx context.Context, key ObjectKey) error {
 	if err != nil {
 		return err
 	}
-	c.signer.sign(req)
+	if err := c.signer.sign(ctx, req); err != nil {
+		return err
+	}
 	return c.doExpectOK(req, key.String(), false)
 }
 
@@ -251,17 +312,25 @@ func (c *Client) listKeys(ctx context.Context, prefix ObjectKey) ([]ObjectKey, e
 }
 
 func (c *Client) listPage(ctx context.Context, prefix ObjectKey, continuation string) ([]ObjectKey, string, error) {
-	q := url.Values{}
+	u, err := url.Parse(c.bucketURL())
+	if err != nil {
+		return nil, "", err
+	}
+	q := u.Query()
 	q.Set("list-type", "2")
 	q.Set("prefix", prefix.String())
 	if continuation != "" {
 		q.Set("continuation-token", continuation)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.bucketURL()+"?"+q.Encode(), nil)
+	// Signer rewrites RawQuery with SigV4 rules (spaces as %20, not +).
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, "", err
 	}
-	c.signer.sign(req)
+	if err := c.signer.sign(ctx, req); err != nil {
+		return nil, "", err
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, "", err
@@ -278,7 +347,17 @@ func (c *Client) listPage(ctx context.Context, prefix ObjectKey, continuation st
 }
 
 func (c *Client) objectURL(key ObjectKey) string {
-	return c.bucketURL() + "/" + key.normalized().String()
+	return c.bucketURL() + "/" + escapeKeyPath(key.normalized())
+}
+
+// escapeKeyPath percent-encodes each path segment while preserving '/' separators
+// so keys containing '?', '#', or spaces do not alter the URL target.
+func escapeKeyPath(key ObjectKey) string {
+	parts := strings.Split(string(key), "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
 }
 
 func (c *Client) bucketURL() string {
