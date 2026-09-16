@@ -317,38 +317,35 @@ func TestIntegration_GoldenNestedRun_JoinKeys(t *testing.T) {
 	sessionID := seedSession(t, db, orgID)
 	store := mustStore(t, db)
 
-	traceID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	requestID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	checkpoint := uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
-	root := "1111111111111111"
-	child := "2222222222222222"
+	keys := goldenJoinKeys{
+		TraceID:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		RequestID:  "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+		Checkpoint: uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		Root:       "1111111111111111",
+		Child:      "2222222222222222",
+	}
 
-	res, err := store.PersistRun(context.Background(), goldenRunInput(orgID, sessionID, traceID, requestID, checkpoint, root, child))
+	res, err := store.PersistRun(context.Background(), goldenRunInput(orgID, sessionID, keys))
 	if err != nil {
 		t.Fatalf("golden persist: %v", err)
 	}
-	assertGoldenJoins(t, db, res.RunID, orgID, traceID, requestID, checkpoint, root, child)
+	assertGoldenJoins(t, db, res.RunID, orgID, keys)
 }
 
-func goldenRunInput(
-	orgID, sessionID uuid.UUID,
-	traceID, requestID string,
-	checkpoint uuid.UUID,
-	root, child string,
-) evidenceoutbox.RunInput {
+func goldenRunInput(orgID, sessionID uuid.UUID, keys goldenJoinKeys) evidenceoutbox.RunInput {
 	return evidenceoutbox.RunInput{
 		OrgID:        orgID,
 		SessionID:    &sessionID,
-		RequestID:    requestID,
-		TraceID:      traceID,
-		RootSpanID:   root,
-		CheckpointID: &checkpoint,
+		RequestID:    keys.RequestID,
+		TraceID:      keys.TraceID,
+		RootSpanID:   keys.Root,
+		CheckpointID: &keys.Checkpoint,
 		Completeness: "complete",
 		Spans: []evidenceoutbox.SpanInput{
-			{SpanID: root, OperationKind: "proxy.chat", Status: "ok"},
-			{SpanID: child, ParentSpanID: root, OperationKind: "context.assemble", Status: "ok"},
-			{SpanID: "3333333333333333", ParentSpanID: root, OperationKind: "provider.complete", Status: "ok"},
-			{SpanID: "4444444444444444", ParentSpanID: root, OperationKind: "tool.search", Status: "ok"},
+			{SpanID: keys.Root, OperationKind: "proxy.chat", Status: "ok"},
+			{SpanID: keys.Child, ParentSpanID: keys.Root, OperationKind: "context.assemble", Status: "ok"},
+			{SpanID: "3333333333333333", ParentSpanID: keys.Root, OperationKind: "provider.complete", Status: "ok"},
+			{SpanID: "4444444444444444", ParentSpanID: keys.Root, OperationKind: "tool.search", Status: "ok"},
 		},
 		Metrics: &evidenceoutbox.AssemblyMetrics{
 			BudgetCalculationMs: 1, RankingMs: 2, PackingMs: 3, TotalMs: 10, CandidatesEvaluated: 3,
@@ -363,7 +360,7 @@ func goldenRunInput(
 		},
 		SessionEvents: []evidenceoutbox.SessionEventInput{
 			{SessionID: sessionID, SequenceNumber: 1, EventType: "inference_request", Data: map[string]any{"model": "m"}},
-			{SessionID: sessionID, SequenceNumber: 2, EventType: "evidence_span", Data: map[string]any{"span": child}},
+			{SessionID: sessionID, SequenceNumber: 2, EventType: "evidence_span", Data: map[string]any{"span": keys.Child}},
 		},
 	}
 }
@@ -372,38 +369,69 @@ func assertGoldenJoins(
 	t *testing.T,
 	db *sql.DB,
 	runID, orgID uuid.UUID,
-	traceID, requestID string,
-	checkpoint uuid.UUID,
-	root, child string,
+	keys goldenJoinKeys,
 ) {
+	t.Helper()
+	tx := beginServiceTx(t, db)
+	defer func() { _ = tx.Rollback() }()
+
+	assertGoldenSpanCount(t, tx, orgID, keys)
+	assertGoldenParent(t, tx, orgID, keys)
+	assertGoldenCheckpoint(t, tx, runID, keys.Checkpoint)
+	assertGoldenOutboxPending(t, tx, orgID, keys.TraceID)
+	_ = tx.Commit()
+	t.Logf("golden nested-run ok run_id=%s", runID)
+}
+
+type goldenJoinKeys struct {
+	TraceID    string
+	RequestID  string
+	Checkpoint uuid.UUID
+	Root       string
+	Child      string
+}
+
+func beginServiceTx(t *testing.T, db *sql.DB) *sql.Tx {
 	t.Helper()
 	tx, err := db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback() }()
-	_, _ = tx.Exec(`SELECT set_config('app.is_service_account', 'true', true)`)
+	if _, err := tx.Exec(`SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
+		t.Fatal(err)
+	}
+	return tx
+}
 
+func assertGoldenSpanCount(t *testing.T, tx *sql.Tx, orgID uuid.UUID, keys goldenJoinKeys) {
+	t.Helper()
 	var spanCount int
 	if err := tx.QueryRow(`
 SELECT COUNT(*) FROM ibex_core.evidence_spans
-WHERE org_id = $1 AND trace_id = $2 AND request_id = $3`, orgID, traceID, requestID).Scan(&spanCount); err != nil {
+WHERE org_id = $1 AND trace_id = $2 AND request_id = $3`,
+		orgID, keys.TraceID, keys.RequestID).Scan(&spanCount); err != nil {
 		t.Fatal(err)
 	}
 	if spanCount != 4 {
 		t.Fatalf("spans=%d want 4", spanCount)
 	}
+}
 
+func assertGoldenParent(t *testing.T, tx *sql.Tx, orgID uuid.UUID, keys goldenJoinKeys) {
+	t.Helper()
 	var parent string
 	if err := tx.QueryRow(`
 SELECT parent_span_id FROM ibex_core.evidence_spans
-WHERE org_id = $1 AND span_id = $2`, orgID, child).Scan(&parent); err != nil {
+WHERE org_id = $1 AND span_id = $2`, orgID, keys.Child).Scan(&parent); err != nil {
 		t.Fatal(err)
 	}
-	if parent != root {
-		t.Fatalf("parent=%q want %q", parent, root)
+	if parent != keys.Root {
+		t.Fatalf("parent=%q want %q", parent, keys.Root)
 	}
+}
 
+func assertGoldenCheckpoint(t *testing.T, tx *sql.Tx, runID, checkpoint uuid.UUID) {
+	t.Helper()
 	var ck uuid.UUID
 	if err := tx.QueryRow(`
 SELECT checkpoint_id FROM ibex_core.evidence_runs WHERE id = $1`, runID).Scan(&ck); err != nil {
@@ -412,16 +440,18 @@ SELECT checkpoint_id FROM ibex_core.evidence_runs WHERE id = $1`, runID).Scan(&c
 	if ck != checkpoint {
 		t.Fatalf("checkpoint=%s", ck)
 	}
+}
 
+func assertGoldenOutboxPending(t *testing.T, tx *sql.Tx, orgID uuid.UUID, traceID string) {
+	t.Helper()
 	var outboxPending int
 	if err := tx.QueryRow(`
 SELECT COUNT(*) FROM ibex_core.evidence_outbox
-WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`, orgID, traceID).Scan(&outboxPending); err != nil {
+WHERE org_id = $1 AND aggregate_id = $2 AND delivery_status = 'pending'`,
+		orgID, traceID).Scan(&outboxPending); err != nil {
 		t.Fatal(err)
 	}
 	if outboxPending < 6 {
 		t.Fatalf("pending outbox=%d", outboxPending)
 	}
-	_ = tx.Commit()
-	t.Logf("golden nested-run ok run_id=%s outbox_pending=%d spans=%d", runID, outboxPending, spanCount)
 }

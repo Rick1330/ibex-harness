@@ -519,24 +519,23 @@ _HEX = frozenset("0123456789abcdef")
 
 
 def _optional_w3c_trace_id(raw: object) -> str:
-    text = str(raw or "").strip().lower()
-    if not text:
-        return ""
-    if len(text) != 32 or any(c not in _HEX for c in text):
-        raise ValueError("trace_id must be a 32-character hexadecimal W3C trace id")
-    if text == "0" * 32:
-        raise ValueError("trace_id must be nonzero")
-    return text
+    return _optional_w3c_hex_id(raw, label="trace_id", length=32)
 
 
 def _optional_w3c_span_id(raw: object) -> str:
+    return _optional_w3c_hex_id(raw, label="span_id", length=16)
+
+
+def _optional_w3c_hex_id(raw: object, *, label: str, length: int) -> str:
     text = str(raw or "").strip().lower()
     if not text:
         return ""
-    if len(text) != 16 or any(c not in _HEX for c in text):
-        raise ValueError("span_id must be a 16-character hexadecimal W3C span id")
-    if text == "0" * 16:
-        raise ValueError("span_id must be nonzero")
+    if len(text) != length or any(c not in _HEX for c in text):
+        raise ValueError(
+            f"{label} must be a {length}-character hexadecimal W3C {label}"
+        )
+    if text == "0" * length:
+        raise ValueError(f"{label} must be nonzero")
     return text
 
 

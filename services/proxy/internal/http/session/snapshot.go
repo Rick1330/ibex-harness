@@ -127,7 +127,7 @@ func flushBuffer(job PostResponseJob) {
 }
 
 func runDeferredPostResponse(job PostResponseJob) {
-	if !job.DoCheckpoint && !job.DoTrace && !job.DoEvidence {
+	if !deferredPostResponseNeeded(job) {
 		return
 	}
 	run := func() { executeDeferredPostResponse(job) }
@@ -136,6 +136,10 @@ func runDeferredPostResponse(job PostResponseJob) {
 		return
 	}
 	run()
+}
+
+func deferredPostResponseNeeded(job PostResponseJob) bool {
+	return job.DoCheckpoint || job.DoTrace || job.DoEvidence
 }
 
 func executeDeferredPostResponse(job PostResponseJob) {
