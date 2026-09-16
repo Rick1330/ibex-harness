@@ -44,60 +44,88 @@ func TestIntegration_EvidenceRLS_CrossTenantIsolation(t *testing.T) {
 	persistMinimalRun(t, store, orgB, traceB)
 
 	ctx := context.Background()
-	assertAppRoleTableCount(t, ctx, db, "evidence_runs", orgA, 1)
-	assertAppRoleTableCount(t, ctx, db, "evidence_runs", orgB, 1)
-	assertAppRoleTableCount(t, ctx, db, "evidence_outbox", orgA, -1)
-	assertAppRoleSeesOnlyOwnOrg(t, ctx, db, orgA, orgB)
+	assertAppRoleTableCount(t, ctx, appRoleCount{db: db, table: "evidence_runs", orgID: orgA, want: 1})
+	assertAppRoleTableCount(t, ctx, appRoleCount{db: db, table: "evidence_runs", orgID: orgB, want: 1})
+	assertAppRoleTableCount(t, ctx, appRoleCount{db: db, table: "evidence_outbox", orgID: orgA, want: -1})
+	assertAppRoleSeesOnlyOwnOrg(t, ctx, appRoleOrgs{db: db, orgA: orgA, orgB: orgB})
 
 	runAID := loadRunID(t, ctx, db, orgA)
-	assertCrossTenantUpdateBlocked(t, ctx, db, orgB, runAID)
+	assertCrossTenantUpdateBlocked(t, ctx, crossTenantUpdate{db: db, orgB: orgB, runAID: runAID})
 }
 
-func assertAppRoleTableCount(t *testing.T, ctx context.Context, db *sql.DB, table string, orgID uuid.UUID, want int) {
+type appRoleCount struct {
+	db    *sql.DB
+	table string
+	orgID uuid.UUID
+	want  int
+}
+
+func assertAppRoleTableCount(t *testing.T, ctx context.Context, a appRoleCount) {
 	t.Helper()
+	q, ok := evidenceTableCountSQL[a.table]
+	if !ok {
+		t.Fatalf("unknown evidence table %q", a.table)
+	}
 	var count int
-	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID.String()); err != nil {
+	err := withAppRole(ctx, a.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, a.orgID.String()); err != nil {
 			return err
 		}
-		q := fmt.Sprintf(`SELECT COUNT(*) FROM ibex_core.%s`, table) //nolint:gosec // table is a fixed test literal
 		return tx.QueryRowContext(ctx, q).Scan(&count)
 	})
 	if err != nil {
-		t.Fatalf("count %s org=%s: %v", table, orgID, err)
+		t.Fatalf("count %s org=%s: %v", a.table, a.orgID, err)
 	}
-	if want < 0 {
+	if a.want < 0 {
 		if count < 1 {
-			t.Fatalf("%s org=%s count=%d want >= 1", table, orgID, count)
+			t.Fatalf("%s org=%s count=%d want >= 1", a.table, a.orgID, count)
 		}
 		return
 	}
-	if count != want {
-		t.Fatalf("%s org=%s count=%d want %d", table, orgID, count, want)
+	if count != a.want {
+		t.Fatalf("%s org=%s count=%d want %d", a.table, a.orgID, count, a.want)
 	}
 }
 
-func assertAppRoleSeesOnlyOwnOrg(t *testing.T, ctx context.Context, db *sql.DB, orgA, orgB uuid.UUID) {
+// evidenceTableCountSQL whitelists table names (no fmt.Sprintf into SQL).
+var evidenceTableCountSQL = map[string]string{
+	"session_events":               `SELECT COUNT(*) FROM ibex_core.session_events`,
+	"evidence_runs":                `SELECT COUNT(*) FROM ibex_core.evidence_runs`,
+	"evidence_spans":               `SELECT COUNT(*) FROM ibex_core.evidence_spans`,
+	"evidence_events":              `SELECT COUNT(*) FROM ibex_core.evidence_events`,
+	"evidence_assembly_metrics":    `SELECT COUNT(*) FROM ibex_core.evidence_assembly_metrics`,
+	"evidence_score_candidates":    `SELECT COUNT(*) FROM ibex_core.evidence_score_candidates`,
+	"evidence_directive_snapshots": `SELECT COUNT(*) FROM ibex_core.evidence_directive_snapshots`,
+	"evidence_tool_audits":         `SELECT COUNT(*) FROM ibex_core.evidence_tool_audits`,
+	"evidence_outbox":              `SELECT COUNT(*) FROM ibex_core.evidence_outbox`,
+}
+
+var evidenceTableOrgCountSQL = map[string]string{
+	"session_events":               `SELECT COUNT(*) FROM ibex_core.session_events WHERE org_id = $1`,
+	"evidence_runs":                `SELECT COUNT(*) FROM ibex_core.evidence_runs WHERE org_id = $1`,
+	"evidence_spans":               `SELECT COUNT(*) FROM ibex_core.evidence_spans WHERE org_id = $1`,
+	"evidence_events":              `SELECT COUNT(*) FROM ibex_core.evidence_events WHERE org_id = $1`,
+	"evidence_assembly_metrics":    `SELECT COUNT(*) FROM ibex_core.evidence_assembly_metrics WHERE org_id = $1`,
+	"evidence_score_candidates":    `SELECT COUNT(*) FROM ibex_core.evidence_score_candidates WHERE org_id = $1`,
+	"evidence_directive_snapshots": `SELECT COUNT(*) FROM ibex_core.evidence_directive_snapshots WHERE org_id = $1`,
+	"evidence_tool_audits":         `SELECT COUNT(*) FROM ibex_core.evidence_tool_audits WHERE org_id = $1`,
+	"evidence_outbox":              `SELECT COUNT(*) FROM ibex_core.evidence_outbox WHERE org_id = $1`,
+}
+
+type appRoleOrgs struct {
+	db         *sql.DB
+	orgA, orgB uuid.UUID
+}
+
+func assertAppRoleSeesOnlyOwnOrg(t *testing.T, ctx context.Context, a appRoleOrgs) {
 	t.Helper()
-	tables := []string{
-		"session_events",
-		"evidence_runs",
-		"evidence_spans",
-		"evidence_events",
-		"evidence_assembly_metrics",
-		"evidence_score_candidates",
-		"evidence_directive_snapshots",
-		"evidence_tool_audits",
-		"evidence_outbox",
-	}
-	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgB.String()); err != nil {
+	err := withAppRole(ctx, a.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, a.orgB.String()); err != nil {
 			return err
 		}
-		for _, table := range tables {
+		for table, q := range evidenceTableOrgCountSQL {
 			var n int
-			q := fmt.Sprintf(`SELECT COUNT(*) FROM ibex_core.%s WHERE org_id = $1`, table) //nolint:gosec
-			if err := tx.QueryRowContext(ctx, q, orgA).Scan(&n); err != nil {
+			if err := tx.QueryRowContext(ctx, q, a.orgA).Scan(&n); err != nil {
 				return fmt.Errorf("%s: %w", table, err)
 			}
 			if n != 0 {
@@ -123,15 +151,21 @@ func loadRunID(t *testing.T, ctx context.Context, db *sql.DB, orgID uuid.UUID) u
 	return id
 }
 
-func assertCrossTenantUpdateBlocked(t *testing.T, ctx context.Context, db *sql.DB, orgB, runAID uuid.UUID) {
+type crossTenantUpdate struct {
+	db     *sql.DB
+	orgB   uuid.UUID
+	runAID uuid.UUID
+}
+
+func assertCrossTenantUpdateBlocked(t *testing.T, ctx context.Context, a crossTenantUpdate) {
 	t.Helper()
 	var updated int64
-	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgB.String()); err != nil {
+	err := withAppRole(ctx, a.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, a.orgB.String()); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `
-UPDATE ibex_core.evidence_runs SET status = 'error' WHERE id = $1`, runAID)
+UPDATE ibex_core.evidence_runs SET status = 'error' WHERE id = $1`, a.runAID)
 		if err != nil {
 			return err
 		}
