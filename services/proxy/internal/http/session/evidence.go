@@ -72,14 +72,13 @@ type EvidenceExtras struct {
 // BuildEvidenceRun maps a completed post-response snapshot into PersistRun input.
 func BuildEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras EvidenceExtras) evidenceoutbox.RunInput {
 	in := baseEvidenceRun(snap, meta, extras)
-	if in.TraceID == "" || in.RequestID == "" {
-		return in
-	}
 	in.TraceID = w3cTraceIDOrEmpty(in.TraceID)
 	in.RootSpanID = w3cSpanIDOrEmpty(in.RootSpanID)
 	extras.AssembleSpanID = w3cSpanIDOrEmpty(extras.AssembleSpanID)
-	if extras.AssembleSpanID != "" {
-		in.MetricsSpanID = extras.AssembleSpanID
+	// Always overwrite so a raw invalid AssembleSpanID cannot linger from baseEvidenceRun.
+	in.MetricsSpanID = extras.AssembleSpanID
+	if in.TraceID == "" || in.RequestID == "" {
+		return in
 	}
 	if in.RootSpanID != "" {
 		in.Spans = evidenceSpans(in, extras)
@@ -99,7 +98,7 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		ended = started
 	}
 	status, completeness := evidenceStatusFromOutcome(snap)
-	in := evidenceoutbox.RunInput{
+	return evidenceoutbox.RunInput{
 		OrgID:        snap.OrgID,
 		AgentID:      &agent,
 		SessionID:    snap.SessionID,
@@ -115,10 +114,6 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		Metrics:      extras.Metrics,
 		Candidates:   extras.Candidates,
 	}
-	if extras.AssembleSpanID != "" {
-		in.MetricsSpanID = extras.AssembleSpanID
-	}
-	return in
 }
 
 func evidenceStatusFromOutcome(snap httptrace.AssembleInput) (status, completeness string) {

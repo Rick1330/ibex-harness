@@ -436,6 +436,9 @@ AS $$
 DECLARE
     n BIGINT;
 BEGIN
+    IF p_secs IS NULL OR p_secs <= 0 THEN
+        RAISE EXCEPTION 'evidence_outbox_recover_in_flight: p_secs must be positive';
+    END IF;
     UPDATE ibex_core.evidence_outbox
     SET delivery_status = 'pending'
     WHERE delivery_status = 'in_flight'
@@ -469,6 +472,9 @@ SECURITY DEFINER
 SET search_path = ibex_core, pg_temp
 AS $$
 BEGIN
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 256 THEN
+        RAISE EXCEPTION 'evidence_outbox_claim_pending: p_limit must be between 1 and 256';
+    END IF;
     RETURN QUERY
     UPDATE ibex_core.evidence_outbox o
     SET delivery_status = 'in_flight',
@@ -529,6 +535,9 @@ DECLARE
 BEGIN
     IF p_status NOT IN ('failed', 'poison') THEN
         RAISE EXCEPTION 'evidence_outbox_mark_failure: invalid status %', p_status;
+    END IF;
+    IF p_delay_secs IS NULL OR p_delay_secs <= 0 THEN
+        RAISE EXCEPTION 'evidence_outbox_mark_failure: p_delay_secs must be positive';
     END IF;
     UPDATE ibex_core.evidence_outbox
     SET delivery_status = p_status,

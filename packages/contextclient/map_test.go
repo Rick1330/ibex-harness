@@ -95,6 +95,9 @@ func assertMappedContext(t *testing.T, got AssembleResult) {
 	if got.SpanID != "s" {
 		t.Fatalf("span_id=%q", got.SpanID)
 	}
+	if got.ScoreSchema != "interim_v1" {
+		t.Fatalf("score_schema=%q", got.ScoreSchema)
+	}
 }
 
 func assertMappedMetrics(t *testing.T, got AssembleResult) {

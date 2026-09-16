@@ -3,8 +3,10 @@ package evidenceoutbox
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -184,5 +186,30 @@ func TestUnit_MarkDelivered_StaleWorkerErrors(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUnit_TruncErr_UTF8SafeCap(t *testing.T) {
+	t.Parallel()
+	if got := truncErr(nil); got != "" {
+		t.Fatalf("nil=%q", got)
+	}
+	// Invalid UTF-8 byte sequence should be replaced, not passed through.
+	raw := errors.New("bad\xfftrail")
+	got := truncErr(raw)
+	if !utf8.ValidString(got) {
+		t.Fatalf("invalid utf8: %q", got)
+	}
+	if !strings.Contains(got, "bad") || !strings.Contains(got, "trail") {
+		t.Fatalf("got=%q", got)
+	}
+	// Cap at 500 bytes without splitting a multibyte rune.
+	long := strings.Repeat("a", 498) + "日本語"
+	got = truncErr(errors.New(long))
+	if len(got) > 500 {
+		t.Fatalf("len=%d", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("split rune: %q", got)
 	}
 }

@@ -6,7 +6,9 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Deliverer delivers one outbox row to a durable projection (ClickHouse, Redis, etc.).
@@ -265,9 +267,13 @@ func truncErr(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
-	if len(s) > 500 {
-		return s[:500]
+	s := strings.ToValidUTF8(err.Error(), "\uFFFD")
+	if len(s) <= 500 {
+		return s
+	}
+	s = s[:500]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
 	}
 	return s
 }
