@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type fakeContextAssembler struct {
@@ -40,7 +42,20 @@ func contextTestAuthCtx(t *testing.T) context.Context {
 	org := uuid.MustParse(testChatOrgID)
 	agent := uuid.MustParse(testChatAgentID)
 	ctx := auth.WithContext(context.Background(), &auth.ValidateResult{OrgID: org})
-	return WithAgent(ctx, auth.AgentRecord{ID: agent, OrgID: org})
+	ctx = WithAgent(ctx, auth.AgentRecord{ID: agent, OrgID: org})
+	return trace.ContextWithSpanContext(ctx, testSpanContext())
+}
+
+func testSpanContext() trace.SpanContext {
+	var tid trace.TraceID
+	var sid trace.SpanID
+	_, _ = rand.Read(tid[:])
+	_, _ = rand.Read(sid[:])
+	return trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    tid,
+		SpanID:     sid,
+		TraceFlags: trace.FlagsSampled,
+	})
 }
 
 func baseChatMessages() []llm.Message {

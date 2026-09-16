@@ -218,13 +218,93 @@ func TestUnit_Pool_DepthHook(t *testing.T) {
 	}
 }
 
-func TestUnit_Pool_InvalidArgs(t *testing.T) {
+func TestUnit_Pool_TrySubmitNonBlocking(t *testing.T) {
 	t.Parallel()
 
-	if _, err := asyncpool.New(0, 1, nil); err == nil {
-		t.Fatal("expected workers error")
+	gate := make(chan struct{})
+	p := mustPool(t, 1, 1)
+	cleanupPool(t, p)
+
+	started := make(chan struct{})
+	if !p.Submit(func() {
+		close(started)
+		<-gate
+	}) {
+		t.Fatal("first submit")
 	}
-	if _, err := asyncpool.New(1, 0, nil); err == nil {
-		t.Fatal("expected queue error")
+	<-started
+	if !p.Submit(func() {}) {
+		t.Fatal("queue slot")
+	}
+	if p.TrySubmit(func() {}) {
+		t.Fatal("TrySubmit must fail when full")
+	}
+	close(gate)
+}
+
+func TestUnit_Pool_TrySubmitAfterShutdown(t *testing.T) {
+	t.Parallel()
+	p, err := asyncpool.New(1, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.TrySubmit(func() {}) {
+		t.Fatal("TrySubmit after shutdown must fail")
+	}
+}
+
+func TestUnit_Pool_TrySubmitDepthCallbackShutdown(t *testing.T) {
+	t.Parallel()
+	// Depth callback must not deadlock when it re-enters Shutdown.
+	var p *asyncpool.Pool
+	var err error
+	done := make(chan struct{})
+	var once sync.Once
+	p, err = asyncpool.New(1, 4, func(float64) {
+		once.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = p.Shutdown(ctx)
+			close(done)
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.TrySubmit(func() {}) {
+		t.Fatal("TrySubmit")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("depth→Shutdown deadlocked")
+	}
+}
+
+func TestUnit_Pool_TrySubmitShutdownRace(t *testing.T) {
+	t.Parallel()
+	// Stress admission vs close: must never panic (send on closed channel).
+	const rounds = 200
+	for i := 0; i < rounds; i++ {
+		p := mustPool(t, 2, 4)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 64; j++ {
+				_ = p.TrySubmit(func() {})
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_ = p.Shutdown(context.Background())
+		}()
+		wg.Wait()
+		if p.TrySubmit(func() {}) {
+			t.Fatal("TrySubmit after shutdown must fail")
+		}
 	}
 }

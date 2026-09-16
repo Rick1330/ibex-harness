@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -20,7 +21,7 @@ INSERT INTO ibex_core.checkpoints (
 	$1::uuid, $2::uuid, $3::uuid, $4, $5,
 	$6, $7, $8, $9, $10,
 	$11, $12, $13, $14, $15
-)`
+) RETURNING id`
 
 const updateSessionStatsSQL = `
 UPDATE ibex_core.sessions
@@ -31,7 +32,8 @@ SET turn_count = turn_count + 1,
 WHERE id = $4::uuid AND org_id = $5::uuid AND deleted_at IS NULL`
 
 // AppendCheckpoint inserts an immutable turn and updates session aggregates atomically.
-func (s *PostgresStore) AppendCheckpoint(ctx context.Context, p CheckpointParams) error {
+// On success it returns the new checkpoint row id (4.P.2 Trace Inspector join key).
+func (s *PostgresStore) AppendCheckpoint(ctx context.Context, p CheckpointParams) (uuid.UUID, error) {
 	ctx, span := s.tracer.Start(ctx, "PostgresStore.AppendCheckpoint",
 		trace.WithAttributes(
 			attribute.String("db.system", "postgresql"),
@@ -45,52 +47,53 @@ func (s *PostgresStore) AppendCheckpoint(ctx context.Context, p CheckpointParams
 		s.metrics.IncSessionCheckpoint(ResultError)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return err
+		return uuid.Nil, err
 	}
 
-	err := s.appendCheckpoint(ctx, p)
+	id, err := s.appendCheckpoint(ctx, p)
 	if err == nil {
 		s.metrics.IncSessionCheckpoint(ResultOK)
-		return nil
+		return id, nil
 	}
 	if errors.Is(err, ErrDuplicateTurn) {
 		s.metrics.IncSessionCheckpoint(ResultDuplicate)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return err
+		return uuid.Nil, err
 	}
 	s.metrics.IncSessionCheckpoint(ResultError)
 	span.RecordError(err)
 	span.SetStatus(codes.Error, err.Error())
-	return err
+	return uuid.Nil, err
 }
 
-func (s *PostgresStore) appendCheckpoint(ctx context.Context, p CheckpointParams) error {
+func (s *PostgresStore) appendCheckpoint(ctx context.Context, p CheckpointParams) (uuid.UUID, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("session: begin checkpoint session_id=%s org_id=%s turn_index=%d: %w",
+		return uuid.Nil, fmt.Errorf("session: begin checkpoint session_id=%s org_id=%s turn_index=%d: %w",
 			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
 	//nolint:errcheck // rollback after successful commit is a no-op; discard is intentional
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setOrgRLS(ctx, tx, p.OrgID); err != nil {
-		return err
+		return uuid.Nil, err
 	}
-	if err := insertCheckpoint(ctx, tx, p); err != nil {
-		return err
+	id, err := insertCheckpoint(ctx, tx, p)
+	if err != nil {
+		return uuid.Nil, err
 	}
 	if err := bumpSessionStats(ctx, tx, p); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("session: commit checkpoint session_id=%s org_id=%s turn_index=%d: %w",
+		return uuid.Nil, fmt.Errorf("session: commit checkpoint session_id=%s org_id=%s turn_index=%d: %w",
 			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
-	return nil
+	return id, nil
 }
 
-func insertCheckpoint(ctx context.Context, tx *sql.Tx, p CheckpointParams) error {
+func insertCheckpoint(ctx context.Context, tx *sql.Tx, p CheckpointParams) (uuid.UUID, error) {
 	var completion any
 	if p.CompletionHash != "" {
 		completion = p.CompletionHash
@@ -99,19 +102,20 @@ func insertCheckpoint(ctx context.Context, tx *sql.Tx, p CheckpointParams) error
 	if p.ProviderRequestID != "" {
 		providerReq = p.ProviderRequestID
 	}
-	_, err := tx.ExecContext(ctx, insertCheckpointSQL,
+	var id uuid.UUID
+	err := tx.QueryRowContext(ctx, insertCheckpointSQL,
 		p.SessionID, p.OrgID, p.AgentID, p.TurnIndex, p.RequestID,
 		p.MessagesHash, p.InputTokens, p.OutputTokens, p.Model, p.Provider,
 		completion, p.LatencyMs, providerReq, p.IsStreaming, p.IsComplete,
-	)
+	).Scan(&id)
 	if isUniqueViolation(err) {
-		return ErrDuplicateTurn
+		return uuid.Nil, ErrDuplicateTurn
 	}
 	if err != nil {
-		return fmt.Errorf("session: insert checkpoint session_id=%s org_id=%s turn_index=%d: %w",
+		return uuid.Nil, fmt.Errorf("session: insert checkpoint session_id=%s org_id=%s turn_index=%d: %w",
 			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
-	return nil
+	return id, nil
 }
 
 func bumpSessionStats(ctx context.Context, tx *sql.Tx, p CheckpointParams) error {

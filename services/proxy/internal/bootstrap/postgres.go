@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
@@ -114,6 +115,7 @@ type sessionStackSetup struct {
 
 type sessionStack struct {
 	store      session.Store
+	evidence   *evidenceoutbox.Store
 	cache      *sessioncache.Cache
 	pool       *asyncpool.Pool
 	turnBuffer *extractionbuffer.Buffer
@@ -124,6 +126,10 @@ func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
 	store, err := newSessionStore(in.DB, in.Reg, in.Tracer)
 	if err != nil {
 		return sessionStack{}, fmt.Errorf("session store: %w", err)
+	}
+	evidence, err := newEvidenceStore(in.DB)
+	if err != nil {
+		return sessionStack{}, fmt.Errorf("evidence store: %w", err)
 	}
 	parts, err := setupSessionHotPath(in.Redis, in.Config, in.Reg)
 	if err != nil {
@@ -136,9 +142,16 @@ func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
 		return sessionStack{}, err
 	}
 	return sessionStack{
-		store: store, cache: parts.cache, pool: parts.pool,
+		store: store, evidence: evidence, cache: parts.cache, pool: parts.pool,
 		turnBuffer: parts.turnBuffer, sweeper: sweeper,
 	}, nil
+}
+
+func newEvidenceStore(db *sql.DB) (*evidenceoutbox.Store, error) {
+	if db == nil {
+		return nil, nil
+	}
+	return evidenceoutbox.NewStore(db)
 }
 
 func setupSessionHotPath(

@@ -35,4 +35,11 @@ type TraceRecord struct {
 	OriginalModel  *string
 	FallbackModel  *string
 	FallbackReason string
+	// 4.P.2 evidence-plane join columns (ClickHouse 000004). Empty when unset.
+	TraceID            string
+	RootSpanID         string
+	DirectiveVersionID *uuid.UUID
+	ContextAssemblyMs  uint32
+	ScoreSchema        string
+	Completeness       string
 }

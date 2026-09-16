@@ -24,6 +24,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
@@ -52,8 +53,10 @@ type RouterDeps struct {
 	SessionCache       *sessioncache.Cache
 	CheckpointPool     *asyncpool.Pool
 	GetOrCreateTimeout time.Duration
-	Health             *healthcheck.Server
-	ProviderRegistry   *provider.Registry
+	// EvidenceStore persists nested evidence + outbox rows (nil disables; 4.P.2).
+	EvidenceStore    httpsession.EvidencePersister
+	Health           *healthcheck.Server
+	ProviderRegistry *provider.Registry
 	// ModelRouter org-gates provider selection (nil → DenyAllRegistry).
 	ModelRouter ProviderResolver
 	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
@@ -131,6 +134,7 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		sessionCache:             deps.SessionCache,
 		checkpointPool:           deps.CheckpointPool,
 		getOrCreateTimeout:       deps.GetOrCreateTimeout,
+		evidenceStore:            deps.EvidenceStore,
 		docsBase:                 deps.Config.ErrorDocsBase,
 		providerRegistry:         providerReg,
 		modelRouter:              modelRouter,
@@ -215,6 +219,7 @@ type chatCompletionHandler struct {
 	sessionCache             *sessioncache.Cache
 	checkpointPool           *asyncpool.Pool
 	getOrCreateTimeout       time.Duration
+	evidenceStore            httpsession.EvidencePersister
 	traceWriter              TraceWriter
 	idempotencyStore         idempotency.Store
 	idempotencyTimeout       time.Duration

@@ -366,6 +366,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
 		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
+		EvidenceStore:    in.infra.sessionStack.evidence,
 		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
 		ProviderRegistry: p.providerReg,
 		ModelRouter:      p.modelRouter,

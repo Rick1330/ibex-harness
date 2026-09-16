@@ -12,6 +12,7 @@ import (
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
+	"github.com/google/uuid"
 )
 
 // WantCheckpoint is true for successful or streaming turns with a durable session.
@@ -58,31 +59,32 @@ func hashLLMMessages(msgs []llm.Message) string {
 }
 
 // RunCheckpoint appends a checkpoint (with duplicate-turn retry) off the hot path.
-func (d LifecycleDeps) RunCheckpoint(params pkgsession.CheckpointParams, externalID string) {
+// Returns the checkpoint id on success (uuid.Nil on failure) for evidence/trace joins.
+func (d LifecycleDeps) RunCheckpoint(params pkgsession.CheckpointParams, externalID string) uuid.UUID {
 	ctx, cancel := context.WithTimeout(context.Background(), CheckpointTaskTimeout)
 	defer cancel()
 	if params.RequestID != "" {
 		ctx = reqid.WithRequestID(ctx, params.RequestID)
 	}
-	err := d.Store.AppendCheckpoint(ctx, params)
+	id, err := d.Store.AppendCheckpoint(ctx, params)
 	if err == nil {
 		d.cacheSet(ctx, sessioncache.LookupKey{
 			OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
 		}, sessioncache.Entry{SessionID: params.SessionID, TurnCount: params.TurnIndex + 1})
-		return
+		return id
 	}
 	if errors.Is(err, pkgsession.ErrDuplicateTurn) {
-		d.retryCheckpoint(ctx, params, externalID)
-		return
+		return d.retryCheckpoint(ctx, params, externalID)
 	}
 	d.warnCheckpoint(ctx, params, err)
+	return uuid.Nil
 }
 
 func (d LifecycleDeps) retryCheckpoint(
 	ctx context.Context,
 	params pkgsession.CheckpointParams,
 	externalID string,
-) {
+) uuid.UUID {
 	if d.Cache != nil {
 		d.Cache.Invalidate(ctx, sessioncache.LookupKey{
 			OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
@@ -94,17 +96,19 @@ func (d LifecycleDeps) retryCheckpoint(
 	})
 	if err != nil {
 		d.warnCheckpoint(ctx, params, err)
-		return
+		return uuid.Nil
 	}
 	params.SessionID = sess.ID
 	params.TurnIndex = sess.TurnCount
-	if err := d.Store.AppendCheckpoint(ctx, params); err != nil {
+	id, err := d.Store.AppendCheckpoint(ctx, params)
+	if err != nil {
 		d.warnCheckpoint(ctx, params, err)
-		return
+		return uuid.Nil
 	}
 	d.cacheSet(ctx, sessioncache.LookupKey{
 		OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
 	}, sessioncache.Entry{SessionID: sess.ID, TurnCount: params.TurnIndex + 1})
+	return id
 }
 
 func (d LifecycleDeps) warnCheckpoint(ctx context.Context, params pkgsession.CheckpointParams, err error) {

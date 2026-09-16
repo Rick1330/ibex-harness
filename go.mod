@@ -4,6 +4,7 @@ go 1.25.13
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.5.4
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
 	github.com/bufbuild/protocompile v0.14.1

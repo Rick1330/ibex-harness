@@ -15,9 +15,14 @@ type DepthFunc func(depth float64)
 
 // Pool is a fixed-worker, buffered-queue executor.
 type Pool struct {
-	jobs      chan func()
-	wg        sync.WaitGroup
-	submitWG  sync.WaitGroup
+	jobs     chan func()
+	quit     chan struct{}
+	wg       sync.WaitGroup
+	submitWG sync.WaitGroup
+	// gate serializes closed+quit with submitWG.Add so Wait never races Add.
+	gate sync.Mutex
+	// sendMu serializes TrySubmit's non-blocking send with close(jobs).
+	sendMu    sync.Mutex
 	depth     DepthFunc
 	closed    atomic.Bool
 	drained   chan struct{}
@@ -35,6 +40,7 @@ func New(workers, queueSize int, depth DepthFunc) (*Pool, error) {
 	}
 	p := &Pool{
 		jobs:    make(chan func(), queueSize),
+		quit:    make(chan struct{}),
 		depth:   depth,
 		drained: make(chan struct{}),
 	}
@@ -46,29 +52,76 @@ func New(workers, queueSize int, depth DepthFunc) (*Pool, error) {
 }
 
 // Submit enqueues fn. It blocks when the queue is full until capacity frees
-// or Shutdown completes in-flight submits. Returns false if the pool is shut down.
+// or Shutdown unblocks via quit. Returns false if the pool is shut down.
 func (p *Pool) Submit(fn func()) bool {
-	if fn == nil || p.closed.Load() {
+	if fn == nil || !p.beginSubmit() {
 		return false
 	}
-	p.submitWG.Add(1)
-	defer p.submitWG.Done()
+	select {
+	case <-p.quit:
+		p.submitWG.Done()
+		return false
+	case p.jobs <- fn:
+		// Done before reportDepth so a depth callback that calls Shutdown
+		// cannot deadlock waiting on this submit's WaitGroup slot.
+		p.submitWG.Done()
+		p.reportDepth()
+		return true
+	}
+}
+
+// TrySubmit enqueues fn without blocking. Returns false if the pool is shut
+// down or the queue is full (caller should fail-open / drop).
+func (p *Pool) TrySubmit(fn func()) bool {
+	if fn == nil || !p.beginSubmit() {
+		return false
+	}
+	p.sendMu.Lock()
+	if p.closed.Load() {
+		p.sendMu.Unlock()
+		p.submitWG.Done()
+		return false
+	}
+	var ok bool
+	select {
+	case p.jobs <- fn:
+		ok = true
+	default:
+	}
+	p.sendMu.Unlock()
+	// Release sendMu and WaitGroup before reportDepth — depth may call Shutdown.
+	p.submitWG.Done()
+	if ok {
+		p.reportDepth()
+	}
+	return ok
+}
+
+// beginSubmit accounts for an in-flight submit under gate so Shutdown's Wait
+// cannot complete before Add (avoids WaitGroup Add/Wait data race).
+func (p *Pool) beginSubmit() bool {
+	p.gate.Lock()
+	defer p.gate.Unlock()
 	if p.closed.Load() {
 		return false
 	}
-	p.jobs <- fn
-	p.reportDepth()
+	p.submitWG.Add(1)
 	return true
 }
 
 // Shutdown stops accepting new work, drains the queue, and waits for workers.
 // The context deadline bounds how long to wait for in-flight jobs.
 func (p *Pool) Shutdown(ctx context.Context) error {
-	p.closed.Store(true)
 	p.drainOnce.Do(func() {
+		p.gate.Lock()
+		p.closed.Store(true)
+		close(p.quit) // unblock Submit waiting on a full queue
+		p.gate.Unlock()
 		go func() {
 			p.submitWG.Wait()
+			p.sendMu.Lock()
 			close(p.jobs)
+			p.sendMu.Unlock()
 			p.wg.Wait()
 			close(p.drained)
 		}()

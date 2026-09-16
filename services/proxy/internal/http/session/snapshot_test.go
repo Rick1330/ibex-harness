@@ -133,6 +133,103 @@ func testBufferedLogger(t *testing.T) *logger.Logger {
 	return log
 }
 
+func TestUnit_PreparePostResponse_EvidenceWhenConfigured(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	meta.RootSpanID = "aabbccddeeff0011"
+	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	ev := &fakeEvidenceStore{}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:     LifecycleDeps{Store: newMemSessionStore(), Evidence: ev},
+		Log:      logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if !job.DoEvidence {
+		t.Fatal("expected DoEvidence when store + trace present")
+	}
+}
+
+func TestUnit_PreparePostResponse_TypedNilEvidenceOff(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	var typedNil *fakeEvidenceStore
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps: LifecycleDeps{Store: newMemSessionStore(), Evidence: typedNil},
+		Log:  logger.Discard("t"),
+		Resolved: Resolved{
+			SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID,
+		},
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if job.DoEvidence {
+		t.Fatal("typed-nil Evidence must keep DoEvidence off")
+	}
+}
+
+func TestUnit_EnqueuePostResponse_EvidenceOnlyTrySubmitDrops(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	meta.RootSpanID = "aabbccddeeff0011"
+	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	require.True(t, ok)
+
+	// workers=1, queue=1: fill both so TrySubmit fails without blocking.
+	gate := make(chan struct{})
+	pool, err := asyncpool.New(1, 1, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		close(gate)
+		_ = pool.Shutdown(context.Background())
+	})
+	started := make(chan struct{})
+	require.True(t, pool.Submit(func() { close(started); <-gate }))
+	<-started
+	require.True(t, pool.Submit(func() {}))
+
+	ev := &fakeEvidenceStore{}
+	EnqueuePostResponse(PostResponseJob{
+		Deps: LifecycleDeps{Evidence: ev, Pool: pool},
+		Log:  logger.Discard("t"),
+		Snap: snap, SnapOK: true, DoEvidence: true,
+	})
+	if ev.calls != 0 {
+		t.Fatalf("evidence must be dropped on full pool, calls=%d", ev.calls)
+	}
+}
+
+func TestUnit_EnqueuePostResponse_EvidenceRuns(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	meta.RootSpanID = "aabbccddeeff0011"
+	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	require.True(t, ok)
+	ev := &fakeEvidenceStore{}
+	EnqueuePostResponse(PostResponseJob{
+		Deps: LifecycleDeps{Evidence: ev},
+		Log:  logger.Discard("t"),
+		Snap: snap, SnapOK: true, DoEvidence: true,
+		EvidenceExtras: EvidenceExtras{AssembleSpanID: "1122334455667788"},
+	})
+	if ev.calls != 1 {
+		t.Fatalf("calls=%d", ev.calls)
+	}
+	if ev.last.MetricsSpanID != "1122334455667788" {
+		t.Fatalf("metrics_span=%q", ev.last.MetricsSpanID)
+	}
+}
+
 func TestUnit_EnqueuePostResponse(t *testing.T) {
 	t.Parallel()
 

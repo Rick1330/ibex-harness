@@ -1,0 +1,587 @@
+-- Milestone 4.P.2: canonical evidence plane + transactional outbox + session_events.
+-- session_events was previously DATABASE_SCHEMA-only; this introduces the applied table
+-- with evidence-plane linkage columns (trace_id, span_id, request_id, checkpoint_id).
+-- Partitioning from the schema sketch is deferred (single table + indexes) — see milestone MDX.
+--
+-- Tenant boundary for evidence tables: org GUC only (rls_evidence_visible). Cross-org
+-- outbox relay uses SECURITY DEFINER helpers owned by ibex_service (BYPASSRLS, NOLOGIN).
+-- ibex_service is NEVER granted to ibex_app — SET ROLE cannot forge the bypass.
+-- EXECUTE on claim/mark/recover is granted only to ibex_evidence_relay (not ibex_app).
+
+DO $$
+BEGIN
+    CREATE ROLE ibex_service NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS;
+EXCEPTION
+    WHEN duplicate_object THEN
+        ALTER ROLE ibex_service NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS;
+END
+$$;
+REVOKE ibex_service FROM ibex_app;
+GRANT USAGE ON SCHEMA ibex_core TO ibex_service;
+
+DO $$
+BEGIN
+    CREATE ROLE ibex_evidence_relay NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+EXCEPTION
+    WHEN duplicate_object THEN
+        ALTER ROLE ibex_evidence_relay NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+END
+$$;
+-- Future outbox-relay daemon connects as (or SET ROLE into) ibex_evidence_relay.
+-- Never grant this role to ibex_app.
+REVOKE ibex_evidence_relay FROM ibex_app;
+GRANT USAGE ON SCHEMA ibex_core TO ibex_evidence_relay;
+
+CREATE OR REPLACE FUNCTION ibex_core.rls_evidence_visible(row_org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT (
+        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+        AND row_org_id = current_setting('app.current_org_id', true)::UUID
+    );
+$$;
+
+REVOKE ALL ON FUNCTION ibex_core.rls_evidence_visible(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_evidence_visible(UUID) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_evidence_visible(UUID) TO ibex_service;
+
+-- ================================================================
+-- SESSION EVENTS (append-only conversation / raw-payload log)
+-- ================================================================
+CREATE TABLE ibex_core.session_events (
+    id              BIGSERIAL PRIMARY KEY,
+    session_id      UUID NOT NULL,
+    org_id          UUID NOT NULL
+                    REFERENCES ibex_core.organizations(id)
+                    ON DELETE CASCADE,
+    sequence_number INTEGER NOT NULL,
+    event_type      TEXT NOT NULL
+                    CHECK (event_type IN (
+                        'session_started',
+                        'session_completed',
+                        'session_failed',
+                        'session_suspended',
+                        'session_resumed',
+                        'checkpoint_created',
+                        'inference_request',
+                        'inference_response',
+                        'memory_read',
+                        'memory_written',
+                        'tool_called',
+                        'tool_completed',
+                        'tool_failed',
+                        'directive_updated',
+                        'loop_detected',
+                        'error_occurred',
+                        'evidence_span',
+                        'evidence_assembly',
+                        'evidence_archived'
+                    )),
+    data            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    archived_to     TEXT,
+    -- Evidence-plane linkage (4.P.2)
+    trace_id        TEXT,
+    span_id         TEXT,
+    request_id      TEXT,
+    checkpoint_id   UUID,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (session_id, sequence_number),
+    CONSTRAINT session_events_session_org_fk
+        FOREIGN KEY (session_id, org_id)
+        REFERENCES ibex_core.sessions (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_session_events_session_seq
+    ON ibex_core.session_events (session_id, sequence_number);
+CREATE INDEX idx_session_events_org_created
+    ON ibex_core.session_events (org_id, created_at DESC);
+CREATE INDEX idx_session_events_trace
+    ON ibex_core.session_events (org_id, trace_id)
+    WHERE trace_id IS NOT NULL;
+CREATE INDEX idx_session_events_request
+    ON ibex_core.session_events (org_id, request_id)
+    WHERE request_id IS NOT NULL;
+
+ALTER TABLE ibex_core.session_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.session_events FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY session_events_isolation ON ibex_core.session_events
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT ON ibex_core.session_events TO ibex_app;
+GRANT SELECT, INSERT ON ibex_core.session_events TO ibex_service;
+GRANT USAGE, SELECT ON SEQUENCE ibex_core.session_events_id_seq TO ibex_app;
+GRANT USAGE, SELECT ON SEQUENCE ibex_core.session_events_id_seq TO ibex_service;
+
+-- ================================================================
+-- EVIDENCE RUNS (one aggregate per request / OTel trace)
+-- ================================================================
+CREATE TABLE ibex_core.evidence_runs (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE CASCADE,
+    agent_id            UUID,
+    session_id          UUID,
+    request_id          TEXT NOT NULL,
+    trace_id            TEXT NOT NULL,
+    checkpoint_id       UUID,
+    turn_id             INTEGER,
+    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
+    completeness        TEXT NOT NULL DEFAULT 'partial'
+                        CHECK (completeness IN (
+                            'complete', 'partial', 'sampled', 'late',
+                            'redacted', 'expired', 'deleted', 'simulated'
+                        )),
+    status              TEXT NOT NULL DEFAULT 'ok',
+    error_code          TEXT,
+    capture_mode        TEXT NOT NULL DEFAULT 'metadata',
+    sample_decision     TEXT NOT NULL DEFAULT 'sampled',
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at            TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (id, org_id),
+    UNIQUE (org_id, request_id),
+    UNIQUE (org_id, trace_id, request_id)
+);
+
+CREATE INDEX idx_evidence_runs_org_trace
+    ON ibex_core.evidence_runs (org_id, trace_id);
+CREATE INDEX idx_evidence_runs_org_session
+    ON ibex_core.evidence_runs (org_id, session_id)
+    WHERE session_id IS NOT NULL;
+
+ALTER TABLE ibex_core.evidence_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_runs FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_runs_isolation ON ibex_core.evidence_runs
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_runs TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_runs TO ibex_service;
+
+-- ================================================================
+-- EVIDENCE SPANS (nested OTel-compatible span identity)
+-- ================================================================
+CREATE TABLE ibex_core.evidence_spans (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE CASCADE,
+    run_id              UUID NOT NULL,
+    trace_id            TEXT NOT NULL,
+    span_id             TEXT NOT NULL,
+    parent_span_id      TEXT,
+    request_id          TEXT NOT NULL,
+    session_id          UUID,
+    checkpoint_id       UUID,
+    operation_kind      TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'ok',
+    error_code          TEXT,
+    attributes          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at            TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (org_id, trace_id, span_id),
+    CONSTRAINT evidence_spans_run_org_fk
+        FOREIGN KEY (run_id, org_id)
+        REFERENCES ibex_core.evidence_runs (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_evidence_spans_run
+    ON ibex_core.evidence_spans (run_id);
+CREATE INDEX idx_evidence_spans_parent
+    ON ibex_core.evidence_spans (org_id, trace_id, parent_span_id);
+
+ALTER TABLE ibex_core.evidence_spans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_spans FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_spans_isolation ON ibex_core.evidence_spans
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_spans TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_spans TO ibex_service;
+
+-- ================================================================
+-- EVIDENCE EVENTS (immutable event identity within a span)
+-- ================================================================
+CREATE TABLE ibex_core.evidence_events (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE CASCADE,
+    run_id              UUID NOT NULL,
+    span_id             TEXT NOT NULL,
+    trace_id            TEXT NOT NULL,
+    request_id          TEXT NOT NULL,
+    event_name          TEXT NOT NULL,
+    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
+    attributes          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT evidence_events_run_org_fk
+        FOREIGN KEY (run_id, org_id)
+        REFERENCES ibex_core.evidence_runs (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_evidence_events_run
+    ON ibex_core.evidence_events (run_id, occurred_at);
+
+ALTER TABLE ibex_core.evidence_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_events FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_events_isolation ON ibex_core.evidence_events
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_events TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_events TO ibex_service;
+
+-- ================================================================
+-- ASSEMBLY METRICS / SCORE / DIRECTIVE / TOOL CONTRACTS
+-- ================================================================
+CREATE TABLE ibex_core.evidence_assembly_metrics (
+    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id                      UUID NOT NULL
+                                REFERENCES ibex_core.organizations(id)
+                                ON DELETE CASCADE,
+    run_id                      UUID NOT NULL,
+    request_id                  TEXT NOT NULL,
+    trace_id                    TEXT NOT NULL,
+    span_id                     TEXT,
+    budget_calculation_ms       INTEGER NOT NULL DEFAULT 0
+                                CHECK (budget_calculation_ms >= 0),
+    directive_load_ms           INTEGER NOT NULL DEFAULT 0
+                                CHECK (directive_load_ms >= 0),
+    hot_memory_retrieval_ms     INTEGER NOT NULL DEFAULT 0
+                                CHECK (hot_memory_retrieval_ms >= 0),
+    cold_memory_retrieval_ms    INTEGER NOT NULL DEFAULT 0
+                                CHECK (cold_memory_retrieval_ms >= 0),
+    ranking_ms                  INTEGER NOT NULL DEFAULT 0
+                                CHECK (ranking_ms >= 0),
+    packing_ms                  INTEGER NOT NULL DEFAULT 0
+                                CHECK (packing_ms >= 0),
+    formatting_ms               INTEGER NOT NULL DEFAULT 0
+                                CHECK (formatting_ms >= 0),
+    total_ms                    INTEGER NOT NULL DEFAULT 0
+                                CHECK (total_ms >= 0),
+    candidates_evaluated        INTEGER NOT NULL DEFAULT 0
+                                CHECK (candidates_evaluated >= 0),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (org_id, request_id),
+    CONSTRAINT evidence_assembly_metrics_run_org_fk
+        FOREIGN KEY (run_id, org_id)
+        REFERENCES ibex_core.evidence_runs (id, org_id)
+        ON DELETE CASCADE
+);
+
+ALTER TABLE ibex_core.evidence_assembly_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_assembly_metrics FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_assembly_metrics_isolation ON ibex_core.evidence_assembly_metrics
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_assembly_metrics TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_assembly_metrics TO ibex_service;
+
+CREATE TABLE ibex_core.evidence_score_candidates (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE CASCADE,
+    run_id              UUID NOT NULL,
+    request_id          TEXT NOT NULL,
+    trace_id            TEXT NOT NULL,
+    memory_id           UUID NOT NULL,
+    retrieval_rank      INTEGER NOT NULL
+                        CHECK (retrieval_rank >= 0),
+    final_rank          INTEGER
+                        CHECK (final_rank IS NULL OR final_rank >= 0),
+    delta_rank          INTEGER,
+    similarity          DOUBLE PRECISION,
+    confidence          DOUBLE PRECISION
+                        CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    composite_score     DOUBLE PRECISION,
+    score_schema        TEXT NOT NULL DEFAULT 'interim_v1',
+    score_components    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    exclusion           TEXT NOT NULL DEFAULT 'included',
+    token_estimate      INTEGER
+                        CHECK (token_estimate IS NULL OR token_estimate >= 0),
+    category            TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT evidence_score_candidates_run_org_fk
+        FOREIGN KEY (run_id, org_id)
+        REFERENCES ibex_core.evidence_runs (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_evidence_score_candidates_request
+    ON ibex_core.evidence_score_candidates (org_id, request_id);
+
+ALTER TABLE ibex_core.evidence_score_candidates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_score_candidates FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_score_candidates_isolation ON ibex_core.evidence_score_candidates
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_score_candidates TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_score_candidates TO ibex_service;
+
+CREATE TABLE ibex_core.evidence_directive_snapshots (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id                  UUID NOT NULL
+                            REFERENCES ibex_core.organizations(id)
+                            ON DELETE CASCADE,
+    run_id                  UUID NOT NULL,
+    request_id              TEXT NOT NULL,
+    trace_id                TEXT NOT NULL,
+    directive_version_id    UUID,
+    content_hash            TEXT,
+    schema_version          TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (org_id, request_id),
+    CONSTRAINT evidence_directive_snapshots_run_org_fk
+        FOREIGN KEY (run_id, org_id)
+        REFERENCES ibex_core.evidence_runs (id, org_id)
+        ON DELETE CASCADE
+);
+
+ALTER TABLE ibex_core.evidence_directive_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_directive_snapshots FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_directive_snapshots_isolation ON ibex_core.evidence_directive_snapshots
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_directive_snapshots TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_directive_snapshots TO ibex_service;
+
+CREATE TABLE ibex_core.evidence_tool_audits (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE CASCADE,
+    run_id              UUID NOT NULL,
+    request_id          TEXT NOT NULL,
+    trace_id            TEXT NOT NULL,
+    span_id             TEXT,
+    tool_name           TEXT NOT NULL,
+    idempotency_key     TEXT,
+    sanitized_args      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status              TEXT NOT NULL DEFAULT 'ok',
+    error_code          TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT evidence_tool_audits_run_org_fk
+        FOREIGN KEY (run_id, org_id)
+        REFERENCES ibex_core.evidence_runs (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_evidence_tool_audits_request
+    ON ibex_core.evidence_tool_audits (org_id, request_id);
+
+ALTER TABLE ibex_core.evidence_tool_audits ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_tool_audits FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_tool_audits_isolation ON ibex_core.evidence_tool_audits
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_tool_audits TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_tool_audits TO ibex_service;
+
+-- ================================================================
+-- EVIDENCE OUTBOX (transactional publication; evidence-scoped only)
+-- ================================================================
+CREATE TABLE ibex_core.evidence_outbox (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE CASCADE,
+    event_id            UUID NOT NULL,
+    aggregate_id        TEXT NOT NULL,
+    aggregate_seq       BIGINT NOT NULL,
+    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
+    event_type          TEXT NOT NULL,
+    payload             JSONB NOT NULL,
+    payload_digest      TEXT NOT NULL,
+    delivery_status     TEXT NOT NULL DEFAULT 'pending' -- NOSONAR
+                        CHECK (delivery_status IN (
+                            'pending', 'in_flight', 'delivered', 'failed', 'poison' -- NOSONAR
+                        )),
+    attempts            INTEGER NOT NULL DEFAULT 0,
+    available_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    claimed_at          TIMESTAMPTZ,
+    last_error          TEXT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delivered_at        TIMESTAMPTZ,
+    UNIQUE (org_id, event_id),
+    UNIQUE (org_id, aggregate_id, aggregate_seq)
+);
+
+CREATE INDEX idx_evidence_outbox_pending
+    ON ibex_core.evidence_outbox (available_at, created_at)
+    WHERE delivery_status IN ('pending', 'failed');
+
+CREATE INDEX idx_evidence_outbox_org_agg
+    ON ibex_core.evidence_outbox (org_id, aggregate_id, aggregate_seq);
+
+ALTER TABLE ibex_core.evidence_outbox ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.evidence_outbox FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY evidence_outbox_isolation ON ibex_core.evidence_outbox
+    USING (ibex_core.rls_evidence_visible(org_id));
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_service;
+
+-- ================================================================
+-- OUTBOX RELAY HELPERS (SECURITY DEFINER / ibex_service owner)
+-- EXECUTE only for ibex_evidence_relay — never ibex_app (cross-org claim
+-- would otherwise return every tenant's outbox payloads).
+-- ================================================================
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_recover_in_flight(p_secs DOUBLE PRECISION)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    n BIGINT;
+BEGIN
+    IF p_secs IS NULL OR p_secs <= 0 THEN
+        RAISE EXCEPTION 'evidence_outbox_recover_in_flight: p_secs must be positive';
+    END IF;
+    UPDATE ibex_core.evidence_outbox
+    SET delivery_status = 'pending'
+    WHERE delivery_status = 'in_flight'
+      AND claimed_at IS NOT NULL
+      AND claimed_at < NOW() - make_interval(secs => p_secs);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_claim_pending(p_limit INTEGER)
+RETURNS TABLE (
+    id UUID,
+    org_id UUID,
+    event_id UUID,
+    aggregate_id TEXT,
+    aggregate_seq BIGINT,
+    schema_version TEXT,
+    event_type TEXT,
+    payload JSONB,
+    payload_digest TEXT,
+    delivery_status TEXT,
+    attempts INTEGER,
+    available_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+BEGIN
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 256 THEN
+        RAISE EXCEPTION 'evidence_outbox_claim_pending: p_limit must be between 1 and 256';
+    END IF;
+    RETURN QUERY
+    UPDATE ibex_core.evidence_outbox o
+    SET delivery_status = 'in_flight',
+        attempts = o.attempts + 1,
+        claimed_at = NOW()
+    WHERE o.id IN (
+        SELECT e.id FROM ibex_core.evidence_outbox e
+        WHERE e.delivery_status IN ('pending', 'failed')
+          AND e.available_at <= NOW()
+        ORDER BY e.available_at, e.created_at
+        FOR UPDATE SKIP LOCKED
+        LIMIT p_limit
+    )
+    RETURNING
+        o.id, o.org_id, o.event_id, o.aggregate_id, o.aggregate_seq,
+        o.schema_version, o.event_type, o.payload, o.payload_digest,
+        o.delivery_status, o.attempts, o.available_at,
+        COALESCE(o.last_error, ''), o.created_at, o.delivered_at;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_mark_delivered(
+    p_id UUID,
+    p_attempts INTEGER
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    n BIGINT;
+BEGIN
+    UPDATE ibex_core.evidence_outbox
+    SET delivery_status = 'delivered', delivered_at = NOW(), last_error = NULL
+    WHERE id = p_id
+      AND delivery_status = 'in_flight'
+      AND attempts = p_attempts;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ibex_core.evidence_outbox_mark_failure(
+    p_id UUID,
+    p_attempts INTEGER,
+    p_status TEXT,
+    p_error TEXT,
+    p_delay_secs INTEGER
+)
+RETURNS BIGINT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    n BIGINT;
+BEGIN
+    IF p_status NOT IN ('failed', 'poison') THEN
+        RAISE EXCEPTION 'evidence_outbox_mark_failure: invalid status %', p_status;
+    END IF;
+    IF p_delay_secs IS NULL OR p_delay_secs <= 0 THEN
+        RAISE EXCEPTION 'evidence_outbox_mark_failure: p_delay_secs must be positive';
+    END IF;
+    UPDATE ibex_core.evidence_outbox
+    SET delivery_status = p_status,
+        last_error = p_error,
+        available_at = NOW() + make_interval(secs => p_delay_secs)
+    WHERE id = p_id
+      AND delivery_status = 'in_flight'
+      AND attempts = p_attempts;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RETURN n;
+END;
+$$;
+
+ALTER FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) OWNER TO ibex_service;
+ALTER FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) OWNER TO ibex_service;
+ALTER FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) OWNER TO ibex_service;
+ALTER FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) OWNER TO ibex_service;
+
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) FROM PUBLIC;
+
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) FROM ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) FROM ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) FROM ibex_app;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) FROM ibex_app;
+
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_recover_in_flight(DOUBLE PRECISION) TO ibex_evidence_relay;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER) TO ibex_evidence_relay;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_delivered(UUID, INTEGER) TO ibex_evidence_relay;
+GRANT EXECUTE ON FUNCTION ibex_core.evidence_outbox_mark_failure(UUID, INTEGER, TEXT, TEXT, INTEGER) TO ibex_evidence_relay;
