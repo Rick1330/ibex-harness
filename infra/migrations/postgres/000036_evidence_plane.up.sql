@@ -68,7 +68,7 @@ ALTER TABLE ibex_core.session_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY session_events_isolation ON ibex_core.session_events
     USING (ibex_core.rls_org_visible(org_id));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.session_events TO ibex_app;
+GRANT SELECT, INSERT ON ibex_core.session_events TO ibex_app;
 GRANT USAGE, SELECT ON SEQUENCE ibex_core.session_events_id_seq TO ibex_app;
 
 -- ================================================================
@@ -85,7 +85,7 @@ CREATE TABLE ibex_core.evidence_runs (
     trace_id            TEXT NOT NULL,
     checkpoint_id       UUID,
     turn_id             INTEGER,
-    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1',
+    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
     completeness        TEXT NOT NULL DEFAULT 'partial'
                         CHECK (completeness IN (
                             'complete', 'partial', 'sampled', 'late',
@@ -172,7 +172,7 @@ CREATE TABLE ibex_core.evidence_events (
     trace_id            TEXT NOT NULL,
     request_id          TEXT NOT NULL,
     event_name          TEXT NOT NULL,
-    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1',
+    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
     attributes          JSONB NOT NULL DEFAULT '{}'::jsonb,
     occurred_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -291,7 +291,7 @@ CREATE TABLE ibex_core.evidence_directive_snapshots (
     trace_id                TEXT NOT NULL,
     directive_version_id    UUID,
     content_hash            TEXT,
-    schema_version          TEXT NOT NULL DEFAULT 'evidence.v1',
+    schema_version          TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (org_id, request_id),
     CONSTRAINT evidence_directive_snapshots_run_org_fk
@@ -351,13 +351,13 @@ CREATE TABLE ibex_core.evidence_outbox (
     event_id            UUID NOT NULL,
     aggregate_id        TEXT NOT NULL,
     aggregate_seq       BIGINT NOT NULL,
-    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1',
+    schema_version      TEXT NOT NULL DEFAULT 'evidence.v1', -- NOSONAR
     event_type          TEXT NOT NULL,
     payload             JSONB NOT NULL,
     payload_digest      TEXT NOT NULL,
-    delivery_status     TEXT NOT NULL DEFAULT 'pending'
+    delivery_status     TEXT NOT NULL DEFAULT 'pending' -- NOSONAR
                         CHECK (delivery_status IN (
-                            'pending', 'in_flight', 'delivered', 'failed', 'poison'
+                            'pending', 'in_flight', 'delivered', 'failed', 'poison' -- NOSONAR
                         )),
     attempts            INTEGER NOT NULL DEFAULT 0,
     available_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),

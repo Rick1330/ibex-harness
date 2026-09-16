@@ -38,7 +38,7 @@ func CaptureTraceSnapshot(args CaptureTraceArgs) (httptrace.AssembleInput, bool)
 		DirectiveVersionID: args.Meta.DirectiveVersionID,
 		ContextAssemblyMs:  args.Meta.ContextAssemblyMs,
 		ScoreSchema:        args.Meta.ScoreSchema,
-		Completeness:       "complete",
+		Completeness:       completenessFromOutcome(args.Outcome),
 		Timings: httptrace.RequestTimings{
 			AuthMs:       args.Meta.AuthMs,
 			DirectiveMs:  args.Meta.DirectiveMs,
@@ -91,6 +91,13 @@ func resolveStreaming(in CheckpointInput, outcome httptrace.RequestOutcome) bool
 	return in.IsStreaming
 }
 
+func completenessFromOutcome(outcome httptrace.RequestOutcome) string {
+	if outcome.IsComplete && outcome.ErrorCode == "" && (outcome.StatusCode == 0 || outcome.StatusCode < 400) {
+		return "complete"
+	}
+	return "partial"
+}
+
 // EmitTrace writes an assembled row; failures are logged and never surface to clients.
 func EmitTrace(w httptrace.TraceWriter, log *logger.Logger, snap httptrace.AssembleInput) {
 	if w == nil {
@@ -131,11 +138,32 @@ func runDeferredPostResponse(job PostResponseJob) {
 		return
 	}
 	run := func() { executeDeferredPostResponse(job) }
-	if job.Deps.Pool != nil {
-		job.Deps.Pool.Submit(run)
+	if job.Deps.Pool == nil {
+		run()
 		return
 	}
-	run()
+	// Evidence-only: never block the chat path on a saturated checkpoint pool.
+	if job.DoEvidence && !job.DoCheckpoint && !job.DoTrace {
+		if !job.Deps.Pool.TrySubmit(run) {
+			logEvidencePoolDrop(job)
+		}
+		return
+	}
+	job.Deps.Pool.Submit(run)
+}
+
+func logEvidencePoolDrop(job PostResponseJob) {
+	if job.Log == nil {
+		return
+	}
+	ctx := context.Background()
+	if job.Snap.RequestID != "" {
+		ctx = reqid.WithRequestID(ctx, job.Snap.RequestID)
+	}
+	job.Log.WarnCtx(ctx, "evidence persist dropped: pool full",
+		"request_id", job.Snap.RequestID,
+		"org_id", job.Snap.OrgID.String(),
+	)
 }
 
 func deferredPostResponseNeeded(job PostResponseJob) bool {
@@ -188,7 +216,7 @@ func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	})
 	doCheckpoint := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome)
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
-	doEvidence := snapOK && in.Deps.Evidence != nil && firstNonEmpty(snap.TraceID, in.Meta.TraceID) != ""
+	doEvidence := snapOK && EffectiveEvidence(in.Deps.Evidence) != nil && firstNonEmpty(snap.TraceID, in.Meta.TraceID) != ""
 	doBuffer := wantExtractionBuffer(in)
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,

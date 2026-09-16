@@ -61,6 +61,26 @@ func (p *Pool) Submit(fn func()) bool {
 	return true
 }
 
+// TrySubmit enqueues fn without blocking. Returns false if the pool is shut
+// down or the queue is full (caller should fail-open / drop).
+func (p *Pool) TrySubmit(fn func()) bool {
+	if fn == nil || p.closed.Load() {
+		return false
+	}
+	p.submitWG.Add(1)
+	defer p.submitWG.Done()
+	if p.closed.Load() {
+		return false
+	}
+	select {
+	case p.jobs <- fn:
+		p.reportDepth()
+		return true
+	default:
+		return false
+	}
+}
+
 // Shutdown stops accepting new work, drains the queue, and waits for workers.
 // The context deadline bounds how long to wait for in-flight jobs.
 func (p *Pool) Shutdown(ctx context.Context) error {

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
@@ -17,6 +18,22 @@ type EvidencePersister interface {
 	PersistRun(ctx context.Context, in evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error)
 }
 
+// EffectiveEvidence returns a true-nil interface when p is nil or a typed-nil
+// pointer/interface (same pattern as httptrace.EffectiveWriter).
+func EffectiveEvidence(p EvidencePersister) EvidencePersister {
+	if p == nil {
+		return nil
+	}
+	v := reflect.ValueOf(p)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+		if v.IsNil() {
+			return nil
+		}
+	}
+	return p
+}
+
 // PersistEvidence writes nested evidence + outbox rows when a persister is configured.
 // Failures are logged and discarded (same policy as EmitTrace / ClickHouse).
 func PersistEvidence(
@@ -24,6 +41,7 @@ func PersistEvidence(
 	log *logger.Logger,
 	in evidenceoutbox.RunInput,
 ) {
+	p = EffectiveEvidence(p)
 	if p == nil {
 		return
 	}
@@ -74,7 +92,8 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 	if ended.IsZero() {
 		ended = started
 	}
-	return evidenceoutbox.RunInput{
+	status, completeness := evidenceStatusFromOutcome(snap)
+	in := evidenceoutbox.RunInput{
 		OrgID:        snap.OrgID,
 		AgentID:      &agent,
 		SessionID:    snap.SessionID,
@@ -82,19 +101,45 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		TraceID:      firstNonEmpty(snap.TraceID, meta.TraceID),
 		RootSpanID:   firstNonEmpty(snap.RootSpanID, meta.RootSpanID),
 		CheckpointID: snap.CheckpointID,
-		Completeness: firstNonEmpty(snap.Completeness, "partial"),
-		Status:       "ok",
+		Completeness: completeness,
+		Status:       status,
+		ErrorCode:    snap.Outcome.ErrorCode,
 		StartedAt:    started,
 		EndedAt:      ended,
 		Metrics:      extras.Metrics,
 		Candidates:   extras.Candidates,
 	}
+	if extras.AssembleSpanID != "" {
+		in.MetricsSpanID = extras.AssembleSpanID
+	}
+	return in
+}
+
+func evidenceStatusFromOutcome(snap httptrace.AssembleInput) (status, completeness string) {
+	completeness = firstNonEmpty(snap.Completeness, "partial")
+	if snap.Outcome.ErrorCode != "" || (!snap.Outcome.IsComplete && snap.Outcome.StatusCode >= 400) {
+		return "error", firstNonEmpty(completeness, "partial")
+	}
+	if !snap.Outcome.IsComplete {
+		return "ok", firstNonEmpty(completeness, "partial")
+	}
+	if completeness == "" {
+		completeness = "complete"
+	}
+	return "ok", completeness
 }
 
 func evidenceSpans(in evidenceoutbox.RunInput, extras EvidenceExtras) []evidenceoutbox.SpanInput {
+	spanStatus := "ok"
+	if in.Status != "ok" {
+		spanStatus = in.Status
+	}
 	root := in.RootSpanID
 	spans := []evidenceoutbox.SpanInput{
-		{SpanID: root, OperationKind: "proxy.chat", Status: "ok", StartedAt: in.StartedAt, EndedAt: in.EndedAt},
+		{
+			SpanID: root, OperationKind: "proxy.chat", Status: spanStatus,
+			ErrorCode: in.ErrorCode, StartedAt: in.StartedAt, EndedAt: in.EndedAt,
+		},
 	}
 	assembleID := extras.AssembleSpanID
 	if assembleID == "" {
@@ -104,7 +149,8 @@ func evidenceSpans(in evidenceoutbox.RunInput, extras EvidenceExtras) []evidence
 		SpanID:        assembleID,
 		ParentSpanID:  root,
 		OperationKind: "context.assemble",
-		Status:        "ok",
+		Status:        spanStatus,
+		ErrorCode:     in.ErrorCode,
 		StartedAt:     in.StartedAt,
 		EndedAt:       in.EndedAt,
 	})

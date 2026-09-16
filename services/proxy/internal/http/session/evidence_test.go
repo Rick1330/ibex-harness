@@ -52,6 +52,7 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 		CheckpointID: &ck, DirectiveVersionID: &vid,
 		ContextAssemblyMs: 12, Completeness: "complete",
 		Timings: httptrace.RequestTimings{RequestedAt: now, CompletedAt: now},
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	}, SnapshotMeta{ContextAssemblyMs: 12}, EvidenceExtras{
 		Metrics:        &evidenceoutbox.AssemblyMetrics{TotalMs: 12},
 		AssembleSpanID: "assembleSpan01",
@@ -68,8 +69,54 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 	if in.Spans[1].ParentSpanID != "rootspan1" {
 		t.Fatalf("parent=%q", in.Spans[1].ParentSpanID)
 	}
+	if in.MetricsSpanID != "assembleSpan01" {
+		t.Fatalf("metrics span=%q want AssembleSpanID", in.MetricsSpanID)
+	}
+	if in.Status != "ok" || in.Completeness != "complete" {
+		t.Fatalf("status=%q completeness=%q", in.Status, in.Completeness)
+	}
 	if in.Directive == nil || in.Directive.DirectiveVersionID == nil {
 		t.Fatal("expected directive snapshot")
+	}
+}
+
+func TestUnit_BuildEvidenceRun_ErrorOutcome(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	agent := uuid.New()
+	in := BuildEvidenceRun(httptrace.AssembleInput{
+		RequestID: "req-err", OrgID: org, AgentID: agent,
+		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "rootspan1",
+		Outcome: httptrace.RequestOutcome{
+			StatusCode: 502, IsComplete: false, ErrorCode: "PROVIDER_UNAVAILABLE",
+		},
+	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "assembleSpan01"})
+	if in.Status != "error" {
+		t.Fatalf("status=%q want error", in.Status)
+	}
+	if in.Completeness != "partial" {
+		t.Fatalf("completeness=%q", in.Completeness)
+	}
+	if in.Spans[0].Status != "error" || in.Spans[1].Status != "error" {
+		t.Fatalf("span statuses=%q/%q", in.Spans[0].Status, in.Spans[1].Status)
+	}
+	if in.ErrorCode != "PROVIDER_UNAVAILABLE" {
+		t.Fatalf("error_code=%q", in.ErrorCode)
+	}
+}
+
+func TestUnit_EffectiveEvidence_TypedNil(t *testing.T) {
+	t.Parallel()
+	var typedNil *fakeEvidenceStore
+	if EffectiveEvidence(typedNil) != nil {
+		t.Fatal("typed-nil must become true nil")
+	}
+	if EffectiveEvidence(nil) != nil {
+		t.Fatal("nil interface")
+	}
+	real := &fakeEvidenceStore{}
+	if EffectiveEvidence(real) == nil {
+		t.Fatal("non-nil store must pass through")
 	}
 }
 
@@ -83,4 +130,8 @@ func TestUnit_PersistEvidence_FailOpen(t *testing.T) {
 		t.Fatalf("calls=%d", store.calls)
 	}
 	PersistEvidence(nil, logger.Discard("t"), evidenceoutbox.RunInput{})
+	var typedNil *fakeEvidenceStore
+	PersistEvidence(typedNil, logger.Discard("t"), evidenceoutbox.RunInput{
+		OrgID: uuid.New(), RequestID: "r", TraceID: "t",
+	})
 }

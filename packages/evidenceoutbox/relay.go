@@ -2,24 +2,23 @@ package evidenceoutbox
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"math/rand/v2"
+	"math/big"
 	"time"
-
-	"github.com/google/uuid"
 )
 
-// Sink delivers one outbox row to a durable projection (ClickHouse, Redis, etc.).
+// Deliverer delivers one outbox row to a durable projection (ClickHouse, Redis, etc.).
 // Implementations must be idempotent on EventID + AggregateSeq.
-type Sink interface {
+type Deliverer interface {
 	Deliver(ctx context.Context, row OutboxRow) error
 }
 
 // Relay claims pending outbox rows and delivers them at-least-once.
 type Relay struct {
 	db          *sql.DB
-	sink        Sink
+	deliverer   Deliverer
 	batchSize   int
 	maxAttempts int
 }
@@ -30,13 +29,13 @@ type RelayConfig struct {
 	MaxAttempts int
 }
 
-// NewRelay constructs a Relay. sink and db are required.
-func NewRelay(db *sql.DB, sink Sink, cfg RelayConfig) (*Relay, error) {
+// NewRelay constructs a Relay. deliverer and db are required.
+func NewRelay(db *sql.DB, deliverer Deliverer, cfg RelayConfig) (*Relay, error) {
 	if db == nil {
 		return nil, fmt.Errorf("evidenceoutbox: relay db is required")
 	}
-	if sink == nil {
-		return nil, fmt.Errorf("evidenceoutbox: relay sink is required")
+	if deliverer == nil {
+		return nil, fmt.Errorf("evidenceoutbox: relay deliverer is required")
 	}
 	if cfg.BatchSize <= 0 {
 		cfg.BatchSize = 32
@@ -44,7 +43,7 @@ func NewRelay(db *sql.DB, sink Sink, cfg RelayConfig) (*Relay, error) {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 8
 	}
-	return &Relay{db: db, sink: sink, batchSize: cfg.BatchSize, maxAttempts: cfg.MaxAttempts}, nil
+	return &Relay{db: db, deliverer: deliverer, batchSize: cfg.BatchSize, maxAttempts: cfg.MaxAttempts}, nil
 }
 
 // RelayBatchResult summarizes one Relay.ProcessBatch invocation.
@@ -61,7 +60,7 @@ const (
 )
 
 // ProcessBatch claims up to BatchSize pending rows (service-account RLS),
-// delivers via Sink, and marks delivered / failed / poison.
+// delivers via Deliverer, and marks delivered / failed / poison.
 // Crash after claim but before ack leaves rows in_flight — RecoverInFlight
 // returns them to pending for replay (at-least-once).
 func (r *Relay) ProcessBatch(ctx context.Context) (RelayBatchResult, error) {
@@ -101,7 +100,7 @@ func (r *Relay) claimBatch(ctx context.Context) ([]OutboxRow, error) {
 }
 
 func (r *Relay) deliverOne(ctx context.Context, row OutboxRow, out *RelayBatchResult) error {
-	if err := r.sink.Deliver(ctx, row); err != nil {
+	if err := r.deliverer.Deliver(ctx, row); err != nil {
 		if markErr := r.markFailure(ctx, row, err); markErr != nil {
 			return markErr
 		}
@@ -113,7 +112,7 @@ func (r *Relay) deliverOne(ctx context.Context, row OutboxRow, out *RelayBatchRe
 		}
 		return nil
 	}
-	if err := r.markDelivered(ctx, row.ID); err != nil {
+	if err := r.markDelivered(ctx, row); err != nil {
 		return err
 	}
 	out.Delivered++
@@ -175,7 +174,7 @@ RETURNING id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
 	if err != nil {
 		return nil, fmt.Errorf("evidenceoutbox: claim: %w", err)
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }()
 
 	var out []OutboxRow
 	for rs.Next() {
@@ -206,7 +205,7 @@ func scanOutboxRow(rs *sql.Rows) (OutboxRow, error) {
 	return row, nil
 }
 
-func (r *Relay) markDelivered(ctx context.Context, id uuid.UUID) error {
+func (r *Relay) markDelivered(ctx context.Context, row OutboxRow) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -216,10 +215,12 @@ func (r *Relay) markDelivered(ctx context.Context, id uuid.UUID) error {
 	if err := setServiceAccountRLS(ctx, tx); err != nil {
 		return err
 	}
+	// Only ack if this claim is still the active in_flight owner (attempts match).
 	_, err = tx.ExecContext(ctx, `
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = $1, delivered_at = NOW(), last_error = NULL
-WHERE id = $2`, StatusDelivered, id)
+WHERE id = $2 AND delivery_status = $3 AND attempts = $4`,
+		StatusDelivered, row.ID, StatusInFlight, row.Attempts)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: mark delivered: %w", err)
 	}
@@ -244,14 +245,15 @@ func (r *Relay) markFailure(ctx context.Context, row OutboxRow, deliverErr error
 	_, err = tx.ExecContext(ctx, `
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = $1, last_error = $2, available_at = NOW() + make_interval(secs => $3::int)
-WHERE id = $4`, status, truncErr(deliverErr), delaySecs, row.ID)
+WHERE id = $4 AND delivery_status = $5 AND attempts = $6`,
+		status, truncErr(deliverErr), delaySecs, row.ID, StatusInFlight, row.Attempts)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: mark failure: %w", err)
 	}
 	return tx.Commit()
 }
 
-// retryBackoffSeconds returns exponential backoff with jitter, capped at maxRetryBackoffSecs.
+// retryBackoffSeconds returns exponential backoff with crypto jitter, capped at maxRetryBackoffSecs.
 func retryBackoffSeconds(attempts int) int {
 	exp := attempts
 	if exp < 0 {
@@ -268,8 +270,12 @@ func retryBackoffSeconds(attempts int) int {
 	if half < 1 {
 		half = 1
 	}
-	// Jitter in [half, base] so identical attempt counts do not share one delay.
-	jittered := half + rand.IntN(base-half+1)
+	span := base - half + 1
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(span)))
+	if err != nil {
+		return half
+	}
+	jittered := half + int(n.Int64())
 	if jittered < 1 {
 		jittered = 1
 	}

@@ -46,8 +46,8 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 		return PersistResult{}, err
 	}
 
-	w := &runWriter{ctx: ctx, tx: tx, runID: runID, in: in}
-	outboxIDs, err := w.persistAll()
+	w := &runWriter{tx: tx, runID: runID, in: in}
+	outboxIDs, err := w.persistAll(ctx)
 	if err != nil {
 		return PersistResult{}, err
 	}
@@ -55,12 +55,11 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 	if err := tx.Commit(); err != nil {
 		return PersistResult{}, fmt.Errorf("evidenceoutbox: commit: %w", err)
 	}
-	return PersistResult{RunID: runID, OutboxIDs: outboxIDs, AggregateID: in.TraceID}, nil
+	return PersistResult{RunID: runID, OutboxIDs: outboxIDs, AggregateID: in.RequestID}, nil
 }
 
 // runWriter sequences child inserts + outbox rows for one PersistRun transaction.
 type runWriter struct {
-	ctx      context.Context
 	tx       *sql.Tx
 	runID    uuid.UUID
 	in       RunInput
@@ -68,8 +67,8 @@ type runWriter struct {
 	outboxID []uuid.UUID
 }
 
-func (w *runWriter) persistAll() ([]uuid.UUID, error) {
-	if err := w.enqueue(EventTypeRunCommitted, map[string]any{
+func (w *runWriter) persistAll(ctx context.Context) ([]uuid.UUID, error) {
+	if err := w.enqueue(ctx, EventTypeRunCommitted, map[string]any{
 		"run_id":         w.runID.String(),
 		"request_id":     w.in.RequestID,
 		"trace_id":       w.in.TraceID,
@@ -80,32 +79,32 @@ func (w *runWriter) persistAll() ([]uuid.UUID, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := w.writeSpans(); err != nil {
+	if err := w.writeSpans(ctx); err != nil {
 		return nil, err
 	}
-	if err := w.writeMetrics(); err != nil {
+	if err := w.writeMetrics(ctx); err != nil {
 		return nil, err
 	}
-	if err := w.writeCandidates(); err != nil {
+	if err := w.writeCandidates(ctx); err != nil {
 		return nil, err
 	}
-	if err := w.writeDirective(); err != nil {
+	if err := w.writeDirective(ctx); err != nil {
 		return nil, err
 	}
-	if err := w.writeTools(); err != nil {
+	if err := w.writeTools(ctx); err != nil {
 		return nil, err
 	}
-	if err := w.writeSessionEvents(); err != nil {
+	if err := w.writeSessionEvents(ctx); err != nil {
 		return nil, err
 	}
 	return w.outboxID, nil
 }
 
-func (w *runWriter) enqueue(eventType string, payload any) error {
+func (w *runWriter) enqueue(ctx context.Context, eventType string, payload any) error {
 	w.seq++
-	id, err := enqueueOutbox(w.ctx, w.tx, outboxWrite{
+	id, err := enqueueOutbox(ctx, w.tx, outboxWrite{
 		OrgID:       w.in.OrgID,
-		AggregateID: w.in.TraceID,
+		AggregateID: w.in.RequestID,
 		Seq:         w.seq,
 		EventType:   eventType,
 		Payload:     payload,
@@ -117,12 +116,12 @@ func (w *runWriter) enqueue(eventType string, payload any) error {
 	return nil
 }
 
-func (w *runWriter) writeSpans() error {
+func (w *runWriter) writeSpans(ctx context.Context) error {
 	for _, sp := range w.in.Spans {
-		if err := insertSpan(w, sp); err != nil {
+		if err := insertSpan(ctx, w, sp); err != nil {
 			return err
 		}
-		if err := w.enqueue(EventTypeSpanCommitted, map[string]any{
+		if err := w.enqueue(ctx, EventTypeSpanCommitted, map[string]any{
 			"run_id":         w.runID.String(),
 			"trace_id":       w.in.TraceID,
 			"span_id":        sp.SpanID,
@@ -137,14 +136,14 @@ func (w *runWriter) writeSpans() error {
 	return nil
 }
 
-func (w *runWriter) writeMetrics() error {
+func (w *runWriter) writeMetrics(ctx context.Context) error {
 	if w.in.Metrics == nil {
 		return nil
 	}
-	if err := insertMetrics(w, *w.in.Metrics); err != nil {
+	if err := insertMetrics(ctx, w, *w.in.Metrics); err != nil {
 		return err
 	}
-	return w.enqueue(EventTypeAssemblyMetrics, map[string]any{
+	return w.enqueue(ctx, EventTypeAssemblyMetrics, map[string]any{
 		"run_id":     w.runID.String(),
 		"request_id": w.in.RequestID,
 		"trace_id":   w.in.TraceID,
@@ -152,14 +151,14 @@ func (w *runWriter) writeMetrics() error {
 	})
 }
 
-func (w *runWriter) writeCandidates() error {
+func (w *runWriter) writeCandidates(ctx context.Context) error {
 	if len(w.in.Candidates) == 0 {
 		return nil
 	}
-	if err := insertCandidates(w, w.in.Candidates); err != nil {
+	if err := insertCandidates(ctx, w, w.in.Candidates); err != nil {
 		return err
 	}
-	return w.enqueue(EventTypeScoreCandidates, map[string]any{
+	return w.enqueue(ctx, EventTypeScoreCandidates, map[string]any{
 		"run_id":     w.runID.String(),
 		"request_id": w.in.RequestID,
 		"trace_id":   w.in.TraceID,
@@ -167,14 +166,14 @@ func (w *runWriter) writeCandidates() error {
 	})
 }
 
-func (w *runWriter) writeDirective() error {
+func (w *runWriter) writeDirective(ctx context.Context) error {
 	if w.in.Directive == nil {
 		return nil
 	}
-	if err := insertDirective(w, *w.in.Directive); err != nil {
+	if err := insertDirective(ctx, w, *w.in.Directive); err != nil {
 		return err
 	}
-	return w.enqueue(EventTypeDirectiveSnap, map[string]any{
+	return w.enqueue(ctx, EventTypeDirectiveSnap, map[string]any{
 		"run_id":               w.runID.String(),
 		"request_id":           w.in.RequestID,
 		"trace_id":             w.in.TraceID,
@@ -183,12 +182,12 @@ func (w *runWriter) writeDirective() error {
 	})
 }
 
-func (w *runWriter) writeTools() error {
+func (w *runWriter) writeTools(ctx context.Context) error {
 	for _, tool := range w.in.Tools {
-		if err := insertTool(w, tool); err != nil {
+		if err := insertTool(ctx, w, tool); err != nil {
 			return err
 		}
-		if err := w.enqueue(EventTypeToolAudit, map[string]any{
+		if err := w.enqueue(ctx, EventTypeToolAudit, map[string]any{
 			"run_id":          w.runID.String(),
 			"request_id":      w.in.RequestID,
 			"trace_id":        w.in.TraceID,
@@ -201,12 +200,12 @@ func (w *runWriter) writeTools() error {
 	return nil
 }
 
-func (w *runWriter) writeSessionEvents() error {
+func (w *runWriter) writeSessionEvents(ctx context.Context) error {
 	for _, se := range w.in.SessionEvents {
-		if err := insertSessionEvent(w, se); err != nil {
+		if err := insertSessionEvent(ctx, w, se); err != nil {
 			return err
 		}
-		if err := w.enqueue(EventTypeSessionEvent, map[string]any{
+		if err := w.enqueue(ctx, EventTypeSessionEvent, map[string]any{
 			"session_id":      se.SessionID.String(),
 			"sequence_number": se.SequenceNumber,
 			"event_type":      se.EventType,
@@ -337,7 +336,7 @@ INSERT INTO ibex_core.evidence_runs (
 	return id, nil
 }
 
-func insertSpan(w *runWriter, sp SpanInput) error {
+func insertSpan(ctx context.Context, w *runWriter, sp SpanInput) error {
 	attrs, err := json.Marshal(sp.Attributes)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal span attrs: %w", err)
@@ -361,7 +360,7 @@ func insertSpan(w *runWriter, sp SpanInput) error {
 	if sp.ParentSpanID != "" {
 		parent = sp.ParentSpanID
 	}
-	_, err = w.tx.ExecContext(w.ctx, `
+	_, err = w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_spans (
 	id, org_id, run_id, trace_id, span_id, parent_span_id, request_id,
 	session_id, checkpoint_id, operation_kind, status, error_code, attributes,
@@ -379,8 +378,8 @@ INSERT INTO ibex_core.evidence_spans (
 	return nil
 }
 
-func insertMetrics(w *runWriter, m AssemblyMetrics) error {
-	_, err := w.tx.ExecContext(w.ctx, `
+func insertMetrics(ctx context.Context, w *runWriter, m AssemblyMetrics) error {
+	_, err := w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_assembly_metrics (
 	id, org_id, run_id, request_id, trace_id, span_id,
 	budget_calculation_ms, directive_load_ms, hot_memory_retrieval_ms, cold_memory_retrieval_ms,
@@ -389,7 +388,7 @@ INSERT INTO ibex_core.evidence_assembly_metrics (
 	$1, $2, $3, $4, $5, $6,
 	$7, $8, $9, $10,
 	$11, $12, $13, $14, $15
-)`, uuid.New(), w.in.OrgID, w.runID, w.in.RequestID, w.in.TraceID, nullEmpty(w.in.RootSpanID),
+)`, uuid.New(), w.in.OrgID, w.runID, w.in.RequestID, w.in.TraceID, nullEmpty(firstNonEmptyStr(w.in.MetricsSpanID, w.in.RootSpanID)),
 		m.BudgetCalculationMs, m.DirectiveLoadMs, m.HotMemoryRetrievalMs, m.ColdMemoryRetrievalMs,
 		m.RankingMs, m.PackingMs, m.FormattingMs, m.TotalMs, m.CandidatesEvaluated)
 	if err != nil {
@@ -398,16 +397,16 @@ INSERT INTO ibex_core.evidence_assembly_metrics (
 	return nil
 }
 
-func insertCandidates(w *runWriter, cands []ScoreCandidate) error {
+func insertCandidates(ctx context.Context, w *runWriter, cands []ScoreCandidate) error {
 	for _, c := range cands {
-		if err := insertOneCandidate(w, c); err != nil {
+		if err := insertOneCandidate(ctx, w, c); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func insertOneCandidate(w *runWriter, c ScoreCandidate) error {
+func insertOneCandidate(ctx context.Context, w *runWriter, c ScoreCandidate) error {
 	schema := c.ScoreSchema
 	if schema == "" {
 		schema = ScoreSchemaInterim
@@ -423,7 +422,7 @@ func insertOneCandidate(w *runWriter, c ScoreCandidate) error {
 	if comps == nil {
 		comps = []byte("{}")
 	}
-	_, err = w.tx.ExecContext(w.ctx, `
+	_, err = w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_score_candidates (
 	id, org_id, run_id, request_id, trace_id, memory_id,
 	retrieval_rank, final_rank, delta_rank, similarity, confidence, composite_score,
@@ -441,8 +440,8 @@ INSERT INTO ibex_core.evidence_score_candidates (
 	return nil
 }
 
-func insertDirective(w *runWriter, d DirectiveSnapshot) error {
-	_, err := w.tx.ExecContext(w.ctx, `
+func insertDirective(ctx context.Context, w *runWriter, d DirectiveSnapshot) error {
+	_, err := w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_directive_snapshots (
 	id, org_id, run_id, request_id, trace_id, directive_version_id, content_hash, schema_version
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -454,7 +453,7 @@ INSERT INTO ibex_core.evidence_directive_snapshots (
 	return nil
 }
 
-func insertTool(w *runWriter, t ToolAudit) error {
+func insertTool(ctx context.Context, w *runWriter, t ToolAudit) error {
 	args, err := json.Marshal(t.SanitizedArgs)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal tool args: %w", err)
@@ -466,7 +465,7 @@ func insertTool(w *runWriter, t ToolAudit) error {
 	if status == "" {
 		status = "ok"
 	}
-	_, err = w.tx.ExecContext(w.ctx, `
+	_, err = w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_tool_audits (
 	id, org_id, run_id, request_id, trace_id, span_id,
 	tool_name, idempotency_key, sanitized_args, status, error_code
@@ -479,7 +478,7 @@ INSERT INTO ibex_core.evidence_tool_audits (
 	return nil
 }
 
-func insertSessionEvent(w *runWriter, se SessionEventInput) error {
+func insertSessionEvent(ctx context.Context, w *runWriter, se SessionEventInput) error {
 	data, err := json.Marshal(se.Data)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal session event: %w", err)
@@ -487,7 +486,7 @@ func insertSessionEvent(w *runWriter, se SessionEventInput) error {
 	if data == nil {
 		data = []byte("{}")
 	}
-	_, err = w.tx.ExecContext(w.ctx, `
+	_, err = w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.session_events (
 	session_id, org_id, sequence_number, event_type, data, archived_to,
 	trace_id, span_id, request_id, checkpoint_id
@@ -505,4 +504,13 @@ func nullEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+func firstNonEmptyStr(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

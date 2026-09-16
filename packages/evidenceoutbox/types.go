@@ -100,6 +100,7 @@ type RunInput struct {
 	RequestID      string
 	TraceID        string
 	RootSpanID     string
+	MetricsSpanID  string // optional; assembly metrics join key (prefer assemble span)
 	CheckpointID   *uuid.UUID
 	TurnID         *int
 	Completeness   string

@@ -314,7 +314,7 @@ async def test_retrieval_wall_uses_deadline_ms() -> None:
 
 
 def test_memories_used_marks_budget_exclusions() -> None:
-    """Scored candidates not in packed.memories get exclusion=budget when budget hit."""
+    """Scored candidates not in packed.memories get exclusion=budget when fit failed."""
     from app.assemble import _memories_used
     from app.capability_catalog import default_catalog
     from app.packer import PackedMemories, ScoredMemory
@@ -345,6 +345,7 @@ def test_memories_used_marks_budget_exclusions() -> None:
         was_budget_reached=True,
         path="dp",
         candidates_evaluated=3,
+        budget_excluded_ids=frozenset({"b"}),
     )
     policy = default_catalog().family_policy(
         default_catalog().for_model(MODEL).tokenizer_family,
@@ -352,4 +353,4 @@ def test_memories_used_marks_budget_exclusions() -> None:
     used = _memories_used(scored, packed, policy)
     assert len(used) == 3
     by_id = {r.memory_id: r.exclusion for r in used}
-    assert by_id == {"a": "included", "b": "budget", "c": "budget"}
+    assert by_id == {"a": "included", "b": "budget", "c": "excluded"}

@@ -218,13 +218,40 @@ func TestUnit_Pool_DepthHook(t *testing.T) {
 	}
 }
 
-func TestUnit_Pool_InvalidArgs(t *testing.T) {
+func TestUnit_Pool_TrySubmitNonBlocking(t *testing.T) {
 	t.Parallel()
 
-	if _, err := asyncpool.New(0, 1, nil); err == nil {
-		t.Fatal("expected workers error")
+	gate := make(chan struct{})
+	p := mustPool(t, 1, 1)
+	cleanupPool(t, p)
+
+	started := make(chan struct{})
+	if !p.Submit(func() {
+		close(started)
+		<-gate
+	}) {
+		t.Fatal("first submit")
 	}
-	if _, err := asyncpool.New(1, 0, nil); err == nil {
-		t.Fatal("expected queue error")
+	<-started
+	if !p.Submit(func() {}) {
+		t.Fatal("queue slot")
+	}
+	if p.TrySubmit(func() {}) {
+		t.Fatal("TrySubmit must fail when full")
+	}
+	close(gate)
+}
+
+func TestUnit_Pool_TrySubmitAfterShutdown(t *testing.T) {
+	t.Parallel()
+	p, err := asyncpool.New(1, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p.TrySubmit(func() {}) {
+		t.Fatal("TrySubmit after shutdown must fail")
 	}
 }

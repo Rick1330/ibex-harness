@@ -357,13 +357,14 @@ def _memories_used(
     packed: PackedMemories,
     policy: TokenizerFamilyPolicy,
 ) -> tuple[MemoryUsedRecord, ...]:
-    """Emit every scored candidate with pack inclusion / budget exclusion."""
+    """Emit every scored candidate with pack inclusion / budget / unexamined exclusion."""
     included = {item.memory_id for item in packed.memories}
+    budget_excluded = packed.budget_excluded_ids
     records: list[MemoryUsedRecord] = []
     for item in scored:
         if item.memory_id in included:
             exclusion = "included"
-        elif packed.was_budget_reached:
+        elif item.memory_id in budget_excluded:
             exclusion = "budget"
         else:
             exclusion = "excluded"

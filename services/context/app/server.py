@@ -378,7 +378,7 @@ def _request_from_proto(request: object) -> AssembleRequest:
             getattr(request, "directive_version_id", ""),
             label="directive_version_id",
         ),
-        request_id=_optional_uuid_v7(
+        request_id=_optional_uuid(
             getattr(request, "request_id", ""),
             label="request_id",
         ),
@@ -502,20 +502,11 @@ def _optional_uuid(raw: object, *, label: str) -> str:
         raise ValueError(f"{label} must be a UUID") from exc
 
 
-def _optional_uuid_v7(raw: object, *, label: str) -> str:
-    text = str(raw or "").strip()
-    if not text:
-        return ""
-    try:
-        parsed = UUID(text)
-    except ValueError as exc:
-        raise ValueError(f"{label} must be a UUID") from exc
-    if parsed.version != 7:
-        raise ValueError(f"{label} must be a UUID v7")
-    return str(parsed)
-
-
 _HEX = frozenset("0123456789abcdef")
+
+
+def _is_w3c_hex(text: str, length: int) -> bool:
+    return len(text) == length and all(c in _HEX for c in text)
 
 
 def _optional_w3c_trace_id(raw: object) -> str:
@@ -530,7 +521,7 @@ def _optional_w3c_hex_id(raw: object, *, label: str, length: int) -> str:
     text = str(raw or "").strip().lower()
     if not text:
         return ""
-    if len(text) != length or any(c not in _HEX for c in text):
+    if not _is_w3c_hex(text, length):
         raise ValueError(
             f"{label} must be a {length}-character hexadecimal W3C {label}"
         )

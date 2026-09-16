@@ -145,7 +145,7 @@ func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession
 		extras.Candidates = append(extras.Candidates, evidenceoutbox.ScoreCandidate{
 			MemoryID:       id,
 			RetrievalRank:  rank,
-			FinalRank:      &rank,
+			FinalRank:      finalRankForExclusion(excl, rank),
 			Similarity:     &sim,
 			Confidence:     &conf,
 			CompositeScore: &comp,
@@ -160,6 +160,14 @@ func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession
 		})
 	}
 	return extras
+}
+
+func finalRankForExclusion(exclusion string, rank int) *int {
+	if exclusion != "" && exclusion != "included" {
+		return nil
+	}
+	r := rank
+	return &r
 }
 
 // emptyAssembleFallbackReason labels handler-side empty AssembledContext fail-open

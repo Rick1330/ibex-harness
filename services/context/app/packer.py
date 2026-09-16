@@ -79,6 +79,10 @@ class PackedMemories:
     was_budget_reached: bool
     path: PackPath
     candidates_evaluated: int
+    # Memory IDs examined by the packer but not selected (did not fit).
+    # Candidates absent from both memories and this set were never examined
+    # (e.g. greedy consecutive-skip cutoff) and should be labeled "excluded".
+    budget_excluded_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +92,7 @@ class _FinalizeArgs:
     tokens: list[int]
     token_budget: int
     path: PackPath
+    examined: frozenset[int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +166,13 @@ class ContextPacker:
         if n == 0:
             return _empty_pack(path="dp", skipped=0, evaluated=0)
         if token_budget <= 0:
-            return _empty_pack(path="dp", skipped=n, evaluated=n, was_budget_reached=True)
+            return _empty_pack(
+                path="dp",
+                skipped=n,
+                evaluated=n,
+                was_budget_reached=True,
+                budget_excluded_ids=frozenset(c.memory_id for c in candidates),
+            )
 
         tokens = [self._tokens(item) for item in candidates]
         buckets = max(1, token_budget // self._bucket_size)
@@ -169,6 +180,7 @@ class ContextPacker:
         values = [float(item.composite_score) for item in candidates]
 
         cells = n * (buckets + 1)
+        examined: frozenset[int] | None = None
         if cells > self._dp_cell_ceiling:
             logger.warning(
                 "packer_dp_ceiling_exceeded falling_back_to_greedy "
@@ -178,7 +190,7 @@ class ContextPacker:
                 cells,
                 self._dp_cell_ceiling,
             )
-            selected = self._greedy_select(candidates, tokens, token_budget)
+            selected, examined = self._greedy_select(candidates, tokens, token_budget)
             path: PackPath = "greedy"
         else:
             selected = _dp_select(weights, values, buckets)
@@ -199,6 +211,7 @@ class ContextPacker:
                 tokens=tokens,
                 token_budget=token_budget,
                 path=path,
+                examined=examined,
             )
         )
 
@@ -217,9 +230,15 @@ class ContextPacker:
         if n == 0:
             return _empty_pack(path="greedy", skipped=0, evaluated=0)
         if token_budget <= 0:
-            return _empty_pack(path="greedy", skipped=n, evaluated=n, was_budget_reached=True)
+            return _empty_pack(
+                path="greedy",
+                skipped=n,
+                evaluated=n,
+                was_budget_reached=True,
+                budget_excluded_ids=frozenset(c.memory_id for c in candidates),
+            )
         tokens = [self._tokens(item) for item in candidates]
-        selected = self._greedy_select(candidates, tokens, token_budget)
+        selected, examined = self._greedy_select(candidates, tokens, token_budget)
         return self._finalize(
             _FinalizeArgs(
                 candidates=candidates,
@@ -227,6 +246,7 @@ class ContextPacker:
                 tokens=tokens,
                 token_budget=token_budget,
                 path="greedy",
+                examined=examined,
             )
         )
 
@@ -239,15 +259,17 @@ class ContextPacker:
         candidates: list[ScoredMemory],
         tokens: list[int],
         token_budget: int,
-    ) -> list[int]:
+    ) -> tuple[list[int], frozenset[int]]:
         order = sorted(
             range(len(candidates)),
             key=lambda i: (-candidates[i].composite_score, candidates[i].memory_id),
         )
         selected: list[int] = []
+        examined: set[int] = set()
         used = 0
         consecutive_skips = 0
         for idx in order:
+            examined.add(idx)
             cost = tokens[idx]
             if cost <= token_budget - used:
                 selected.append(idx)
@@ -257,7 +279,7 @@ class ContextPacker:
             consecutive_skips += 1
             if consecutive_skips > self._max_consecutive_skips:
                 break
-        return selected
+        return selected, frozenset(examined)
 
     def _repair_exact_budget(self, args: _RepairArgs) -> list[int]:
         """Drop over-budget picks, then refill freed capacity from rejects."""
@@ -300,6 +322,16 @@ class ContextPacker:
                 f"internal packer bug: tokens {total_tokens} > budget {args.token_budget}"
             )
             raise RuntimeError(msg)
+        selected_set = set(args.selected)
+        if args.examined is None:
+            examined = set(range(len(args.candidates)))
+        else:
+            examined = set(args.examined)
+        budget_excluded = frozenset(
+            args.candidates[i].memory_id
+            for i in examined
+            if i not in selected_set
+        )
         return PackedMemories(
             memories=tuple(packed),
             total_tokens=total_tokens,
@@ -308,6 +340,7 @@ class ContextPacker:
             was_budget_reached=was_budget_reached,
             path=args.path,
             candidates_evaluated=len(args.candidates),
+            budget_excluded_ids=budget_excluded,
         )
 
 
@@ -317,6 +350,7 @@ def _empty_pack(
     skipped: int,
     evaluated: int,
     was_budget_reached: bool = False,
+    budget_excluded_ids: frozenset[str] = frozenset(),
 ) -> PackedMemories:
     return PackedMemories(
         memories=(),
@@ -326,6 +360,7 @@ def _empty_pack(
         was_budget_reached=was_budget_reached,
         path=path,
         candidates_evaluated=evaluated,
+        budget_excluded_ids=budget_excluded_ids,
     )
 
 
