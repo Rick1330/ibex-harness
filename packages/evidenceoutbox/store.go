@@ -229,12 +229,27 @@ func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
 }
 
 func setServiceAccountRLS(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx,
-		`SELECT set_config('app.is_service_account', 'true', true)`)
+	// Unforgeable role switch — evidence policies trust current_user = ibex_service,
+	// not the writable app.is_service_account GUC.
+	_, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_service`)
 	if err != nil {
-		return fmt.Errorf("evidenceoutbox: set service account rls: %w", err)
+		return fmt.Errorf("evidenceoutbox: set service role: %w", err)
 	}
 	return nil
+}
+
+func marshalJSONObject(v any) ([]byte, error) {
+	if v == nil {
+		return []byte("{}"), nil
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return []byte("{}"), nil
+	}
+	return raw, nil
 }
 
 func validateRunInput(in RunInput) error {
@@ -337,12 +352,9 @@ INSERT INTO ibex_core.evidence_runs (
 }
 
 func insertSpan(ctx context.Context, w *runWriter, sp SpanInput) error {
-	attrs, err := json.Marshal(sp.Attributes)
+	attrs, err := marshalJSONObject(sp.Attributes)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal span attrs: %w", err)
-	}
-	if attrs == nil {
-		attrs = []byte("{}")
 	}
 	started := sp.StartedAt
 	if started.IsZero() {
@@ -415,12 +427,9 @@ func insertOneCandidate(ctx context.Context, w *runWriter, c ScoreCandidate) err
 	if excl == "" {
 		excl = "included"
 	}
-	comps, err := json.Marshal(c.ScoreComponents)
+	comps, err := marshalJSONObject(c.ScoreComponents)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal score components: %w", err)
-	}
-	if comps == nil {
-		comps = []byte("{}")
 	}
 	_, err = w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_score_candidates (
@@ -454,12 +463,9 @@ INSERT INTO ibex_core.evidence_directive_snapshots (
 }
 
 func insertTool(ctx context.Context, w *runWriter, t ToolAudit) error {
-	args, err := json.Marshal(t.SanitizedArgs)
+	args, err := marshalJSONObject(t.SanitizedArgs)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal tool args: %w", err)
-	}
-	if args == nil {
-		args = []byte("{}")
 	}
 	status := t.Status
 	if status == "" {
@@ -479,12 +485,9 @@ INSERT INTO ibex_core.evidence_tool_audits (
 }
 
 func insertSessionEvent(ctx context.Context, w *runWriter, se SessionEventInput) error {
-	data, err := json.Marshal(se.Data)
+	data, err := marshalJSONObject(se.Data)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: marshal session event: %w", err)
-	}
-	if data == nil {
-		data = []byte("{}")
 	}
 	_, err = w.tx.ExecContext(ctx, `
 INSERT INTO ibex_core.session_events (

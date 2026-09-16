@@ -360,6 +360,7 @@ def _memories_used(
     """Emit every scored candidate with pack inclusion / budget / unexamined exclusion."""
     included = {item.memory_id for item in packed.memories}
     budget_excluded = packed.budget_excluded_ids
+    estimates = packed.token_estimates
     records: list[MemoryUsedRecord] = []
     for item in scored:
         if item.memory_id in included:
@@ -368,7 +369,12 @@ def _memories_used(
             exclusion = "budget"
         else:
             exclusion = "excluded"
-        token_estimate, _ = estimate_tokens(item.content, policy)
+        # Reuse packer estimates on the assemble hot path; avoid a second
+        # estimate_tokens pass when the packer already counted this candidate.
+        if item.memory_id in estimates:
+            token_estimate = estimates[item.memory_id]
+        else:
+            token_estimate, _ = estimate_tokens(item.content, policy)
         records.append(_memory_used(item, exclusion=exclusion, token_estimate=token_estimate))
     return tuple(records)
 

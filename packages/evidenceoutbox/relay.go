@@ -124,10 +124,8 @@ func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (i
 	if olderThan <= 0 {
 		olderThan = 30 * time.Second
 	}
-	secs := int(olderThan.Seconds())
-	if secs < 0 {
-		secs = 0
-	}
+	// Preserve sub-second ages (int(seconds) truncates time.Nanosecond → 0).
+	secs := olderThan.Seconds()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("evidenceoutbox: recover begin: %w", err)
@@ -142,7 +140,7 @@ UPDATE ibex_core.evidence_outbox
 SET delivery_status = $1
 WHERE delivery_status = $2
   AND claimed_at IS NOT NULL
-  AND claimed_at < NOW() - make_interval(secs => $3::int)
+  AND claimed_at < NOW() - make_interval(secs => $3::double precision)
 `, StatusPending, StatusInFlight, secs)
 	if err != nil {
 		return 0, fmt.Errorf("evidenceoutbox: recover in_flight: %w", err)
@@ -215,14 +213,18 @@ func (r *Relay) markDelivered(ctx context.Context, row OutboxRow) error {
 	if err := setServiceAccountRLS(ctx, tx); err != nil {
 		return err
 	}
-	// Only ack if this claim is still the active in_flight owner (attempts match).
-	_, err = tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = $1, delivered_at = NOW(), last_error = NULL
 WHERE id = $2 AND delivery_status = $3 AND attempts = $4`,
 		StatusDelivered, row.ID, StatusInFlight, row.Attempts)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: mark delivered: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("evidenceoutbox: stale claim ack id=%s attempts=%d affected=%d",
+			row.ID, row.Attempts, n)
 	}
 	return tx.Commit()
 }
@@ -242,13 +244,18 @@ func (r *Relay) markFailure(ctx context.Context, row OutboxRow, deliverErr error
 		status = StatusPoison
 	}
 	delaySecs := retryBackoffSeconds(row.Attempts)
-	_, err = tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 UPDATE ibex_core.evidence_outbox
 SET delivery_status = $1, last_error = $2, available_at = NOW() + make_interval(secs => $3::int)
 WHERE id = $4 AND delivery_status = $5 AND attempts = $6`,
 		status, truncErr(deliverErr), delaySecs, row.ID, StatusInFlight, row.Attempts)
 	if err != nil {
 		return fmt.Errorf("evidenceoutbox: mark failure: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("evidenceoutbox: stale claim failure id=%s attempts=%d affected=%d",
+			row.ID, row.Attempts, n)
 	}
 	return tx.Commit()
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
@@ -74,10 +75,15 @@ func BuildEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Ev
 	if in.TraceID == "" || in.RequestID == "" {
 		return in
 	}
-	if in.RootSpanID == "" {
-		in.RootSpanID = "unknown"
+	in.TraceID = w3cTraceIDOrEmpty(in.TraceID)
+	in.RootSpanID = w3cSpanIDOrEmpty(in.RootSpanID)
+	extras.AssembleSpanID = w3cSpanIDOrEmpty(extras.AssembleSpanID)
+	if extras.AssembleSpanID != "" {
+		in.MetricsSpanID = extras.AssembleSpanID
 	}
-	in.Spans = evidenceSpans(in, extras)
+	if in.RootSpanID != "" {
+		in.Spans = evidenceSpans(in, extras)
+	}
 	in.Directive = evidenceDirective(snap, meta)
 	return in
 }
@@ -116,17 +122,13 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 }
 
 func evidenceStatusFromOutcome(snap httptrace.AssembleInput) (status, completeness string) {
-	completeness = firstNonEmpty(snap.Completeness, "partial")
 	if outcomeIsError(snap.Outcome) {
-		return "error", firstNonEmpty(completeness, "partial")
+		return "error", firstNonEmpty(snap.Completeness, "partial")
 	}
 	if !snap.Outcome.IsComplete {
-		return "ok", firstNonEmpty(completeness, "partial")
+		return "ok", firstNonEmpty(snap.Completeness, "partial")
 	}
-	if completeness == "" {
-		completeness = "complete"
-	}
-	return "ok", completeness
+	return "ok", firstNonEmpty(snap.Completeness, "complete")
 }
 
 func outcomeIsError(outcome httptrace.RequestOutcome) bool {
@@ -181,4 +183,33 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func w3cTraceIDOrEmpty(id string) string {
+	if !isW3CHex(id, 32) || id == strings.Repeat("0", 32) {
+		return ""
+	}
+	return strings.ToLower(id)
+}
+
+func w3cSpanIDOrEmpty(id string) string {
+	if !isW3CHex(id, 16) || id == strings.Repeat("0", 16) {
+		return ""
+	}
+	return strings.ToLower(id)
+}
+
+func isW3CHex(s string, length int) bool {
+	if len(s) != length {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }

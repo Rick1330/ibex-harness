@@ -12,8 +12,8 @@ Packed output is ordered by descending interim ``composite_score``, then
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Final, Literal
 
 import numpy as np
@@ -83,6 +83,9 @@ class PackedMemories:
     # Candidates absent from both memories and this set were never examined
     # (e.g. greedy consecutive-skip cutoff) and should be labeled "excluded".
     budget_excluded_ids: frozenset[str] = frozenset()
+    # Per-candidate token estimates from this packer pass. Assemble reuses these
+    # so the hot path does not re-run estimate_tokens (same tokenizer family).
+    token_estimates: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,12 +169,14 @@ class ContextPacker:
         if n == 0:
             return _empty_pack(path="dp", skipped=0, evaluated=0)
         if token_budget <= 0:
+            estimates = {c.memory_id: self._tokens(c) for c in candidates}
             return _empty_pack(
                 path="dp",
                 skipped=n,
                 evaluated=n,
                 was_budget_reached=True,
                 budget_excluded_ids=frozenset(c.memory_id for c in candidates),
+                token_estimates=estimates,
             )
 
         tokens = [self._tokens(item) for item in candidates]
@@ -230,12 +235,14 @@ class ContextPacker:
         if n == 0:
             return _empty_pack(path="greedy", skipped=0, evaluated=0)
         if token_budget <= 0:
+            estimates = {c.memory_id: self._tokens(c) for c in candidates}
             return _empty_pack(
                 path="greedy",
                 skipped=n,
                 evaluated=n,
                 was_budget_reached=True,
                 budget_excluded_ids=frozenset(c.memory_id for c in candidates),
+                token_estimates=estimates,
             )
         tokens = [self._tokens(item) for item in candidates]
         selected, examined = self._greedy_select(candidates, tokens, token_budget)
@@ -324,6 +331,10 @@ class ContextPacker:
             raise RuntimeError(msg)
         selected_set = set(args.selected)
         budget_excluded = _budget_excluded_ids(args.candidates, selected_set, args.examined)
+        estimates = {
+            args.candidates[i].memory_id: args.tokens[i]
+            for i in range(len(args.candidates))
+        }
         return PackedMemories(
             memories=tuple(packed),
             total_tokens=total_tokens,
@@ -333,18 +344,22 @@ class ContextPacker:
             path=args.path,
             candidates_evaluated=len(args.candidates),
             budget_excluded_ids=budget_excluded,
+            token_estimates=estimates,
         )
 
 
 def _budget_excluded_ids(
     candidates: list[ScoredMemory],
     selected: set[int],
-    examined: set[int] | None,
+    examined: frozenset[int] | None,
 ) -> frozenset[str]:
+    indices: Iterable[int]
     if examined is None:
-        examined = set(range(len(candidates)))
+        indices = range(len(candidates))
+    else:
+        indices = examined
     return frozenset(
-        candidates[i].memory_id for i in examined if i not in selected
+        candidates[i].memory_id for i in indices if i not in selected
     )
 
 
@@ -355,7 +370,9 @@ def _empty_pack(
     evaluated: int,
     was_budget_reached: bool = False,
     budget_excluded_ids: frozenset[str] = frozenset(),
+    token_estimates: Mapping[str, int] | None = None,
 ) -> PackedMemories:
+    estimates: Mapping[str, int] = {} if token_estimates is None else token_estimates
     return PackedMemories(
         memories=(),
         total_tokens=0,
@@ -365,6 +382,7 @@ def _empty_pack(
         path=path,
         candidates_evaluated=evaluated,
         budget_excluded_ids=budget_excluded_ids,
+        token_estimates=estimates,
     )
 
 

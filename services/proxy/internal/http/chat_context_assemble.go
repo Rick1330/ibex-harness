@@ -128,6 +128,7 @@ func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession
 	if schema == "" {
 		schema = evidenceoutbox.ScoreSchemaInterim
 	}
+	finalRank := 0
 	for _, m := range result.MemoriesUsed {
 		id, err := uuid.Parse(m.MemoryID)
 		if err != nil {
@@ -142,10 +143,16 @@ func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession
 		if excl == "" {
 			excl = "included"
 		}
+		var packedRank *int
+		if excl == "included" {
+			finalRank++
+			r := finalRank
+			packedRank = &r
+		}
 		extras.Candidates = append(extras.Candidates, evidenceoutbox.ScoreCandidate{
 			MemoryID:       id,
 			RetrievalRank:  rank,
-			FinalRank:      finalRankForExclusion(excl, rank),
+			FinalRank:      packedRank,
 			Similarity:     &sim,
 			Confidence:     &conf,
 			CompositeScore: &comp,

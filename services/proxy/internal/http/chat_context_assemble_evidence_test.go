@@ -19,10 +19,6 @@ func TestUnit_FinalRankForExclusion(t *testing.T) {
 	if got == nil || *got != 1 {
 		t.Fatalf("included FinalRank=%v", got)
 	}
-	got = finalRankForExclusion("", 4)
-	if got == nil || *got != 4 {
-		t.Fatalf("empty exclusion treated as included: %v", got)
-	}
 }
 
 func TestUnit_EvidenceExtrasFromAssemble_FinalRankAndMetrics(t *testing.T) {
@@ -33,7 +29,7 @@ func TestUnit_EvidenceExtrasFromAssemble_FinalRankAndMetrics(t *testing.T) {
 		MemoriesUsed: []contextclient.MemoryUsed{
 			{
 				MemoryID: "11111111-1111-1111-1111-111111111111",
-				Rank:     1, Exclusion: "included", Similarity: 0.9, Confidence: 0.8,
+				Rank:     5, Exclusion: "included", Similarity: 0.9, Confidence: 0.8,
 				CompositeScore: 0.85, TokenEstimate: 10, Category: "fact",
 			},
 			{
@@ -41,19 +37,27 @@ func TestUnit_EvidenceExtrasFromAssemble_FinalRankAndMetrics(t *testing.T) {
 				Rank:     2, Exclusion: "budget", Similarity: 0.7, Confidence: 0.6,
 				CompositeScore: 0.65, TokenEstimate: 8,
 			},
+			{
+				MemoryID: "33333333-3333-3333-3333-333333333333",
+				Rank:     9, Exclusion: "included", Similarity: 0.5, Confidence: 0.5,
+				CompositeScore: 0.5, TokenEstimate: 4,
+			},
 		},
 	}
 	extras := evidenceExtrasFromAssemble(result)
 	if extras.Metrics == nil || extras.Metrics.TotalMs != 9 {
 		t.Fatalf("metrics=%+v", extras.Metrics)
 	}
-	if len(extras.Candidates) != 2 {
+	if len(extras.Candidates) != 3 {
 		t.Fatalf("candidates=%d", len(extras.Candidates))
 	}
 	if extras.Candidates[0].FinalRank == nil || *extras.Candidates[0].FinalRank != 1 {
-		t.Fatalf("included FinalRank=%v", extras.Candidates[0].FinalRank)
+		t.Fatalf("first included FinalRank=%v want 1 (pack order)", extras.Candidates[0].FinalRank)
 	}
 	if extras.Candidates[1].FinalRank != nil {
 		t.Fatalf("budget FinalRank=%v want nil", extras.Candidates[1].FinalRank)
+	}
+	if extras.Candidates[2].FinalRank == nil || *extras.Candidates[2].FinalRank != 2 {
+		t.Fatalf("second included FinalRank=%v want 2", extras.Candidates[2].FinalRank)
 	}
 }

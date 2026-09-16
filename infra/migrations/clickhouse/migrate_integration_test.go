@@ -191,13 +191,12 @@ func assertCreateHasTTLAndOrder(t *testing.T, db *sql.DB, table string, orderPar
 		!strings.Contains(createSQL, "event_date + INTERVAL 90 DAY") {
 		t.Fatalf("%s expected 90-day TTL, got: %s", table, createSQL)
 	}
-	for _, part := range orderParts {
-		if !strings.Contains(createSQL, part) {
-			t.Fatalf("%s expected ORDER BY key %q in: %s", table, part, createSQL)
-		}
-	}
-	if !strings.Contains(createSQL, "ORDER BY") {
+	gotOrder := orderByKeys(createSQL)
+	if len(gotOrder) == 0 {
 		t.Fatalf("%s expected ORDER BY, got: %s", table, createSQL)
+	}
+	if !orderKeysMatch(gotOrder, orderParts) {
+		t.Fatalf("%s ORDER BY=%v want keys %v in: %s", table, gotOrder, orderParts, createSQL)
 	}
 }
 

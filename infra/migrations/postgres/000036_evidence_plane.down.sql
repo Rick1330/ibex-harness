@@ -24,3 +24,8 @@ DROP TABLE IF EXISTS ibex_core.evidence_runs;
 
 DROP POLICY IF EXISTS session_events_isolation ON ibex_core.session_events;
 DROP TABLE IF EXISTS ibex_core.session_events;
+
+DROP FUNCTION IF EXISTS ibex_core.rls_evidence_visible(UUID);
+
+REVOKE ibex_service FROM ibex_app;
+DROP ROLE IF EXISTS ibex_service;

@@ -77,6 +77,7 @@ func seedSession(t *testing.T, db *sql.DB, orgID uuid.UUID) uuid.UUID {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// users/agents/sessions still use platform rls_org_visible (GUC), not evidence role.
 	const setRLS = `SELECT set_config('app.is_service_account', 'true', true)`
 	_, _ = tx.ExecContext(ctx, setRLS)
 
@@ -301,7 +302,7 @@ func forceStaleInFlight(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregateID s
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	const setRLS = `SELECT set_config('app.is_service_account', 'true', true)`
+	const setRLS = `SET LOCAL ROLE ibex_service`
 	if _, err := tx.ExecContext(context.Background(), setRLS); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +337,7 @@ func TestIntegration_GoldenNestedRun_JoinKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("golden persist: %v", err)
 	}
-	assertGoldenJoins(t, db, res, orgID, keys)
+	assertGoldenJoins(t, goldenAssert{db: db, res: res, orgID: orgID, keys: keys})
 }
 
 func goldenRunInput(orgID, sessionID uuid.UUID, keys goldenJoinKeys) evidenceoutbox.RunInput {
@@ -372,15 +373,22 @@ func goldenRunInput(orgID, sessionID uuid.UUID, keys goldenJoinKeys) evidenceout
 	}
 }
 
-func assertGoldenJoins(t *testing.T, db *sql.DB, res evidenceoutbox.PersistResult, orgID uuid.UUID, keys goldenJoinKeys) {
+func assertGoldenJoins(t *testing.T, a goldenAssert) {
 	t.Helper()
-	tx := beginServiceTx(t, db)
-	assertGoldenSpanCount(t, tx, orgID, keys)
-	assertGoldenParent(t, tx, orgID, keys)
-	assertGoldenCheckpoint(t, tx, res.RunID, keys.Checkpoint)
-	assertGoldenOutboxPending(t, tx, orgID, keys.RequestID)
+	tx := beginServiceTx(t, a.db)
+	assertGoldenSpanCount(t, tx, a.orgID, a.keys)
+	assertGoldenParent(t, tx, a.orgID, a.keys)
+	assertGoldenCheckpoint(t, tx, a.res.RunID, a.keys.Checkpoint)
+	assertGoldenOutboxPending(t, tx, a.orgID, a.keys.RequestID)
 	_ = tx.Commit()
-	t.Logf("golden nested-run ok run_id=%s", res.RunID)
+	t.Logf("golden nested-run ok run_id=%s", a.res.RunID)
+}
+
+type goldenAssert struct {
+	db    *sql.DB
+	res   evidenceoutbox.PersistResult
+	orgID uuid.UUID
+	keys  goldenJoinKeys
 }
 
 type goldenJoinKeys struct {
@@ -398,7 +406,7 @@ func beginServiceTx(t *testing.T, db *sql.DB) *sql.Tx {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = tx.Rollback() })
-	const setRLS = `SELECT set_config('app.is_service_account', 'true', true)`
+	const setRLS = `SET LOCAL ROLE ibex_service`
 	if _, err := tx.ExecContext(context.Background(), setRLS); err != nil {
 		t.Fatal(err)
 	}

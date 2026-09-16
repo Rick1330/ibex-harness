@@ -62,7 +62,7 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 	eventID := uuid.New()
 	now := time.Now()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
@@ -72,7 +72,7 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 	mock.ExpectQuery(`UPDATE ibex_core.evidence_outbox`).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
 		WithArgs(StatusDelivered, id, StatusInFlight, 1).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -111,7 +111,7 @@ func TestUnit_ProcessBatch_DeliverFailureMarksFailed(t *testing.T) {
 	eventID := uuid.New()
 	now := time.Now()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
@@ -122,7 +122,7 @@ func TestUnit_ProcessBatch_DeliverFailureMarksFailed(t *testing.T) {
 	mock.ExpectCommit()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -153,7 +153,7 @@ func TestUnit_ProcessBatch_PoisonAtMaxAttempts(t *testing.T) {
 	eventID := uuid.New()
 	now := time.Now()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
@@ -164,7 +164,7 @@ func TestUnit_ProcessBatch_PoisonAtMaxAttempts(t *testing.T) {
 	mock.ExpectCommit()
 
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
 		WithArgs(StatusPoison, sqlmock.AnyArg(), sqlmock.AnyArg(), id, StatusInFlight, 2).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -179,7 +179,7 @@ func TestUnit_ProcessBatch_PoisonAtMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestUnit_MarkDelivered_StaleWorkerNoOp(t *testing.T) {
+func TestUnit_MarkDelivered_StaleWorkerErrors(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -192,15 +192,14 @@ func TestUnit_MarkDelivered_StaleWorkerNoOp(t *testing.T) {
 	}
 	id := uuid.New()
 	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
-	// Conditional UPDATE matches 0 rows (stale claim).
+	mock.ExpectExec(`SET LOCAL ROLE`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core.evidence_outbox`).
 		WithArgs(StatusDelivered, id, StatusInFlight, 1).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
+	mock.ExpectRollback()
 
-	if err := relay.markDelivered(context.Background(), OutboxRow{ID: id, Attempts: 1}); err != nil {
-		t.Fatal(err)
+	if err := relay.markDelivered(context.Background(), OutboxRow{ID: id, Attempts: 1}); err == nil {
+		t.Fatal("expected stale claim error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

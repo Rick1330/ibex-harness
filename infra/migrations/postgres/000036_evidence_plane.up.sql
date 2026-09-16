@@ -2,7 +2,33 @@
 -- session_events was previously DATABASE_SCHEMA-only; this introduces the applied table
 -- with evidence-plane linkage columns (trace_id, span_id, request_id, checkpoint_id).
 -- Partitioning from the schema sketch is deferred (single table + indexes) — see milestone MDX.
--- RLS uses shared ibex_core.rls_org_visible(org_id) (000009).
+-- Evidence RLS uses rls_evidence_visible: org GUC match OR unforgeable SET ROLE ibex_service
+-- (not the writable app.is_service_account GUC used by older tables).
+
+DO $$
+BEGIN
+    CREATE ROLE ibex_service NOLOGIN;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$$;
+GRANT ibex_service TO ibex_app;
+
+CREATE OR REPLACE FUNCTION ibex_core.rls_evidence_visible(row_org_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT (
+        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+        AND row_org_id = current_setting('app.current_org_id', true)::UUID
+    )
+    OR current_user = 'ibex_service';
+$$;
+
+REVOKE ALL ON FUNCTION ibex_core.rls_evidence_visible(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_evidence_visible(UUID) TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_evidence_visible(UUID) TO ibex_service;
 
 -- ================================================================
 -- SESSION EVENTS (append-only conversation / raw-payload log)
@@ -66,10 +92,12 @@ ALTER TABLE ibex_core.session_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.session_events FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY session_events_isolation ON ibex_core.session_events
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT ON ibex_core.session_events TO ibex_app;
+GRANT SELECT, INSERT ON ibex_core.session_events TO ibex_service;
 GRANT USAGE, SELECT ON SEQUENCE ibex_core.session_events_id_seq TO ibex_app;
+GRANT USAGE, SELECT ON SEQUENCE ibex_core.session_events_id_seq TO ibex_service;
 
 -- ================================================================
 -- EVIDENCE RUNS (one aggregate per request / OTel trace)
@@ -113,9 +141,10 @@ ALTER TABLE ibex_core.evidence_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_runs FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_runs_isolation ON ibex_core.evidence_runs
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_runs TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_runs TO ibex_service;
 
 -- ================================================================
 -- EVIDENCE SPANS (nested OTel-compatible span identity)
@@ -155,9 +184,10 @@ ALTER TABLE ibex_core.evidence_spans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_spans FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_spans_isolation ON ibex_core.evidence_spans
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_spans TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_spans TO ibex_service;
 
 -- ================================================================
 -- EVIDENCE EVENTS (immutable event identity within a span)
@@ -189,9 +219,10 @@ ALTER TABLE ibex_core.evidence_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_events FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_events_isolation ON ibex_core.evidence_events
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_events TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_events TO ibex_service;
 
 -- ================================================================
 -- ASSEMBLY METRICS / SCORE / DIRECTIVE / TOOL CONTRACTS
@@ -235,9 +266,10 @@ ALTER TABLE ibex_core.evidence_assembly_metrics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_assembly_metrics FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_assembly_metrics_isolation ON ibex_core.evidence_assembly_metrics
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_assembly_metrics TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_assembly_metrics TO ibex_service;
 
 CREATE TABLE ibex_core.evidence_score_candidates (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -277,9 +309,10 @@ ALTER TABLE ibex_core.evidence_score_candidates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_score_candidates FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_score_candidates_isolation ON ibex_core.evidence_score_candidates
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_score_candidates TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_score_candidates TO ibex_service;
 
 CREATE TABLE ibex_core.evidence_directive_snapshots (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -304,9 +337,10 @@ ALTER TABLE ibex_core.evidence_directive_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_directive_snapshots FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_directive_snapshots_isolation ON ibex_core.evidence_directive_snapshots
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_directive_snapshots TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_directive_snapshots TO ibex_service;
 
 CREATE TABLE ibex_core.evidence_tool_audits (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -336,9 +370,10 @@ ALTER TABLE ibex_core.evidence_tool_audits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_tool_audits FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_tool_audits_isolation ON ibex_core.evidence_tool_audits
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_tool_audits TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_tool_audits TO ibex_service;
 
 -- ================================================================
 -- EVIDENCE OUTBOX (transactional publication; evidence-scoped only)
@@ -380,6 +415,7 @@ ALTER TABLE ibex_core.evidence_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.evidence_outbox FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY evidence_outbox_isolation ON ibex_core.evidence_outbox
-    USING (ibex_core.rls_org_visible(org_id));
+    USING (ibex_core.rls_evidence_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.evidence_outbox TO ibex_service;

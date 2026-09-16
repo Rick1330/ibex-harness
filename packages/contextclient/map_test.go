@@ -76,13 +76,43 @@ func sampleAssembleResponse() *contextv1.AssembleContextResponse {
 
 func assertMappedResult(t *testing.T, got AssembleResult) {
 	t.Helper()
-	if got.AssembledContext != "ctx" || got.RequestID != "r" || got.TraceID != "t" {
-		t.Fatalf("%+v", got)
+	assertMappedContext(t, got)
+	assertMappedMetrics(t, got)
+	assertMappedMemories(t, got)
+}
+
+func assertMappedContext(t *testing.T, got AssembleResult) {
+	t.Helper()
+	if got.AssembledContext != "ctx" {
+		t.Fatalf("context=%q", got.AssembledContext)
 	}
-	if got.Metrics == nil || got.Metrics.TotalMs != 12 {
-		t.Fatalf("metrics=%+v", got.Metrics)
+	if got.RequestID != "r" {
+		t.Fatalf("request_id=%q", got.RequestID)
 	}
-	if len(got.MemoriesUsed) != 1 || got.MemoriesUsed[0].Exclusion != "included" {
-		t.Fatalf("memories=%+v", got.MemoriesUsed)
+	if got.TraceID != "t" {
+		t.Fatalf("trace_id=%q", got.TraceID)
+	}
+	if got.SpanID != "s" {
+		t.Fatalf("span_id=%q", got.SpanID)
+	}
+}
+
+func assertMappedMetrics(t *testing.T, got AssembleResult) {
+	t.Helper()
+	if got.Metrics == nil {
+		t.Fatal("nil metrics")
+	}
+	if got.Metrics.TotalMs != 12 {
+		t.Fatalf("total_ms=%d", got.Metrics.TotalMs)
+	}
+}
+
+func assertMappedMemories(t *testing.T, got AssembleResult) {
+	t.Helper()
+	if len(got.MemoriesUsed) != 1 {
+		t.Fatalf("memories=%d", len(got.MemoriesUsed))
+	}
+	if got.MemoriesUsed[0].Exclusion != "included" {
+		t.Fatalf("exclusion=%q", got.MemoriesUsed[0].Exclusion)
 	}
 }

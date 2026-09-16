@@ -54,18 +54,25 @@ func buildNestedEvidenceRun(t *testing.T) evidenceoutbox.RunInput {
 	now := time.Now().UTC()
 	return BuildEvidenceRun(httptrace.AssembleInput{
 		RequestID: "req-1", OrgID: org, AgentID: agent,
-		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "rootspan1",
+		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "aabbccddeeff0011",
 		CheckpointID: &ck, DirectiveVersionID: &vid,
 		ContextAssemblyMs: 12, Completeness: "complete",
 		Timings: httptrace.RequestTimings{RequestedAt: now, CompletedAt: now},
 		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	}, SnapshotMeta{ContextAssemblyMs: 12}, EvidenceExtras{
 		Metrics:        &evidenceoutbox.AssemblyMetrics{TotalMs: 12},
-		AssembleSpanID: "assembleSpan01",
+		AssembleSpanID: "1122334455667788",
 	})
 }
 
 func assertNestedEvidenceRun(t *testing.T, in evidenceoutbox.RunInput) {
+	t.Helper()
+	assertJoinKeys(t, in)
+	assertAssembleChildSpan(t, in)
+	assertNestedStatus(t, in)
+}
+
+func assertJoinKeys(t *testing.T, in evidenceoutbox.RunInput) {
 	t.Helper()
 	if in.TraceID == "" || in.CheckpointID == nil {
 		t.Fatalf("missing join keys: %+v", in)
@@ -73,24 +80,45 @@ func assertNestedEvidenceRun(t *testing.T, in evidenceoutbox.RunInput) {
 	if len(in.Spans) != 2 {
 		t.Fatalf("spans=%d want 2", len(in.Spans))
 	}
-	assertAssembleChildSpan(t, in)
-	if in.MetricsSpanID != "assembleSpan01" {
+	if in.MetricsSpanID != "1122334455667788" {
 		t.Fatalf("metrics span=%q want AssembleSpanID", in.MetricsSpanID)
 	}
-	if in.Status != "ok" || in.Completeness != "complete" {
-		t.Fatalf("status=%q completeness=%q", in.Status, in.Completeness)
+}
+
+func assertNestedStatus(t *testing.T, in evidenceoutbox.RunInput) {
+	t.Helper()
+	if in.Status != "ok" {
+		t.Fatalf("status=%q", in.Status)
+	}
+	if in.Completeness != "complete" {
+		t.Fatalf("completeness=%q", in.Completeness)
 	}
 	if in.Directive == nil || in.Directive.DirectiveVersionID == nil {
 		t.Fatal("expected directive snapshot")
 	}
 }
 
+func TestUnit_BuildEvidenceRun_RejectsNonW3CRoot(t *testing.T) {
+	t.Parallel()
+	in := BuildEvidenceRun(httptrace.AssembleInput{
+		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
+		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "not-hex",
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "1122334455667788"})
+	if in.RootSpanID != "" {
+		t.Fatalf("root=%q want empty", in.RootSpanID)
+	}
+	if len(in.Spans) != 0 {
+		t.Fatalf("spans=%d want 0 without valid root", len(in.Spans))
+	}
+}
+
 func assertAssembleChildSpan(t *testing.T, in evidenceoutbox.RunInput) {
 	t.Helper()
-	if in.Spans[1].SpanID != "assembleSpan01" {
+	if in.Spans[1].SpanID != "1122334455667788" {
 		t.Fatalf("assemble span=%q", in.Spans[1].SpanID)
 	}
-	if in.Spans[1].ParentSpanID != "rootspan1" {
+	if in.Spans[1].ParentSpanID != "aabbccddeeff0011" {
 		t.Fatalf("parent=%q", in.Spans[1].ParentSpanID)
 	}
 }
@@ -101,11 +129,11 @@ func TestUnit_BuildEvidenceRun_ErrorOutcome(t *testing.T) {
 	agent := uuid.New()
 	in := BuildEvidenceRun(httptrace.AssembleInput{
 		RequestID: "req-err", OrgID: org, AgentID: agent,
-		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "rootspan1",
+		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "aabbccddeeff0011",
 		Outcome: httptrace.RequestOutcome{
 			StatusCode: 502, IsComplete: false, ErrorCode: "PROVIDER_UNAVAILABLE",
 		},
-	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "assembleSpan01"})
+	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "1122334455667788"})
 	if in.Status != "error" {
 		t.Fatalf("status=%q want error", in.Status)
 	}

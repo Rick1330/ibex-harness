@@ -137,7 +137,7 @@ func TestUnit_PreparePostResponse_EvidenceWhenConfigured(t *testing.T) {
 	t.Parallel()
 	meta := testSnapshotMeta()
 	meta.TraceID = "aabbccddeeff00112233445566778899"
-	meta.RootSpanID = "rootspan1"
+	meta.RootSpanID = "aabbccddeeff0011"
 	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
 	ev := &fakeEvidenceStore{}
 	job := PreparePostResponse(PreparePostResponseInput{
@@ -174,7 +174,7 @@ func TestUnit_EnqueuePostResponse_EvidenceOnlyTrySubmitDrops(t *testing.T) {
 	t.Parallel()
 	meta := testSnapshotMeta()
 	meta.TraceID = "aabbccddeeff00112233445566778899"
-	meta.RootSpanID = "rootspan1"
+	meta.RootSpanID = "aabbccddeeff0011"
 	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
 		Meta: meta, In: testCheckpointInput(),
 		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
@@ -209,7 +209,7 @@ func TestUnit_EnqueuePostResponse_EvidenceRuns(t *testing.T) {
 	t.Parallel()
 	meta := testSnapshotMeta()
 	meta.TraceID = "aabbccddeeff00112233445566778899"
-	meta.RootSpanID = "rootspan1"
+	meta.RootSpanID = "aabbccddeeff0011"
 	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
 		Meta: meta, In: testCheckpointInput(),
 		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
@@ -220,12 +220,12 @@ func TestUnit_EnqueuePostResponse_EvidenceRuns(t *testing.T) {
 		Deps: LifecycleDeps{Evidence: ev},
 		Log:  logger.Discard("t"),
 		Snap: snap, SnapOK: true, DoEvidence: true,
-		EvidenceExtras: EvidenceExtras{AssembleSpanID: "assembleSpan01"},
+		EvidenceExtras: EvidenceExtras{AssembleSpanID: "1122334455667788"},
 	})
 	if ev.calls != 1 {
 		t.Fatalf("calls=%d", ev.calls)
 	}
-	if ev.last.MetricsSpanID != "assembleSpan01" {
+	if ev.last.MetricsSpanID != "1122334455667788" {
 		t.Fatalf("metrics_span=%q", ev.last.MetricsSpanID)
 	}
 }
