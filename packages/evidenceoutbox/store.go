@@ -249,37 +249,61 @@ var completenessValues = map[string]struct{}{
 }
 
 func validateRunInput(in RunInput) error {
+	if err := validateRunIdentity(in); err != nil {
+		return err
+	}
+	if err := validateRunTraceFields(in); err != nil {
+		return err
+	}
+	if err := validateRunSpans(in.Spans); err != nil {
+		return err
+	}
+	return validateRunToolSpanIDs(in.Tools)
+}
+
+func validateRunIdentity(in RunInput) error {
 	if in.OrgID == uuid.Nil {
 		return fmt.Errorf("evidenceoutbox: org_id is required")
 	}
 	if in.RequestID == "" {
 		return fmt.Errorf("evidenceoutbox: request_id is required")
 	}
+	if in.Completeness == "" {
+		return nil
+	}
+	if _, ok := completenessValues[in.Completeness]; ok {
+		return nil
+	}
+	return fmt.Errorf("evidenceoutbox: completeness %q is not supported", in.Completeness)
+}
+
+func validateRunTraceFields(in RunInput) error {
 	if err := requireW3CTraceID(in.TraceID); err != nil {
 		return err
 	}
 	if err := optionalW3CSpanID("root_span_id", in.RootSpanID); err != nil {
 		return err
 	}
-	if err := optionalW3CSpanID("metrics_span_id", in.MetricsSpanID); err != nil {
-		return err
-	}
-	for i, sp := range in.Spans {
+	return optionalW3CSpanID("metrics_span_id", in.MetricsSpanID)
+}
+
+func validateRunSpans(spans []SpanInput) error {
+	for i, sp := range spans {
 		if err := requireW3CSpanID(fmt.Sprintf("spans[%d].span_id", i), sp.SpanID); err != nil {
 			return err
 		}
-		if err := optionalW3CSpanID(fmt.Sprintf("spans[%d].parent_span_id", i), sp.ParentSpanID); err != nil {
+		label := fmt.Sprintf("spans[%d].parent_span_id", i)
+		if err := optionalW3CSpanID(label, sp.ParentSpanID); err != nil {
 			return err
 		}
 	}
-	for i, tool := range in.Tools {
+	return nil
+}
+
+func validateRunToolSpanIDs(tools []ToolAudit) error {
+	for i, tool := range tools {
 		if err := optionalW3CSpanID(fmt.Sprintf("tools[%d].span_id", i), tool.SpanID); err != nil {
 			return err
-		}
-	}
-	if in.Completeness != "" {
-		if _, ok := completenessValues[in.Completeness]; !ok {
-			return fmt.Errorf("evidenceoutbox: completeness %q is not supported", in.Completeness)
 		}
 	}
 	return nil
@@ -320,14 +344,15 @@ func isW3CHex(s string, length int) bool {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
-		default:
+		if !isHexDigit(s[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 func isAllZeroHex(s string) bool {
