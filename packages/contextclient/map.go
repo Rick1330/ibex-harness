@@ -34,8 +34,26 @@ func fromProto(resp *contextv1.AssembleContextResponse) AssembleResult {
 	if resp == nil {
 		return AssembleResult{Fallback: true, FallbackReason: "nil_response"}
 	}
-	memories := make([]MemoryUsed, 0, len(resp.GetMemoriesUsed()))
-	for _, m := range resp.GetMemoriesUsed() {
+	return AssembleResult{
+		AssembledContext: resp.GetAssembledContext(),
+		TokensUsed:       resp.GetTokensUsed(),
+		MemoriesIncluded: resp.GetMemoriesIncluded(),
+		DirectiveTokens:  resp.GetDirectiveTokens(),
+		HistoryTokens:    resp.GetHistoryTokens(),
+		MemoryTokens:     resp.GetMemoryTokens(),
+		MemoriesUsed:     memoriesFromProto(resp.GetMemoriesUsed()),
+		Metrics:          metricsFromProto(resp.GetMetrics()),
+		RequestID:        resp.GetRequestId(),
+		TraceID:          resp.GetTraceId(),
+		SpanID:           resp.GetSpanId(),
+		ScoreSchema:      resp.GetScoreSchema(),
+		Fallback:         false,
+	}
+}
+
+func memoriesFromProto(in []*contextv1.MemoryUsed) []MemoryUsed {
+	memories := make([]MemoryUsed, 0, len(in))
+	for _, m := range in {
 		if m == nil {
 			continue
 		}
@@ -53,33 +71,22 @@ func fromProto(resp *contextv1.AssembleContextResponse) AssembleResult {
 			TokenEstimate:   m.GetTokenEstimate(),
 		})
 	}
-	var metrics *AssemblyMetrics
-	if m := resp.GetMetrics(); m != nil {
-		metrics = &AssemblyMetrics{
-			BudgetCalculationMs:   m.GetBudgetCalculationMs(),
-			DirectiveLoadMs:       m.GetDirectiveLoadMs(),
-			HotMemoryRetrievalMs:  m.GetHotMemoryRetrievalMs(),
-			ColdMemoryRetrievalMs: m.GetColdMemoryRetrievalMs(),
-			RankingMs:             m.GetRankingMs(),
-			PackingMs:             m.GetPackingMs(),
-			FormattingMs:          m.GetFormattingMs(),
-			TotalMs:               m.GetTotalMs(),
-			CandidatesEvaluated:   m.GetCandidatesEvaluated(),
-		}
+	return memories
+}
+
+func metricsFromProto(m *contextv1.AssemblyMetrics) *AssemblyMetrics {
+	if m == nil {
+		return nil
 	}
-	return AssembleResult{
-		AssembledContext: resp.GetAssembledContext(),
-		TokensUsed:       resp.GetTokensUsed(),
-		MemoriesIncluded: resp.GetMemoriesIncluded(),
-		DirectiveTokens:  resp.GetDirectiveTokens(),
-		HistoryTokens:    resp.GetHistoryTokens(),
-		MemoryTokens:     resp.GetMemoryTokens(),
-		MemoriesUsed:     memories,
-		Metrics:          metrics,
-		RequestID:        resp.GetRequestId(),
-		TraceID:          resp.GetTraceId(),
-		SpanID:           resp.GetSpanId(),
-		ScoreSchema:      resp.GetScoreSchema(),
-		Fallback:         false,
+	return &AssemblyMetrics{
+		BudgetCalculationMs:   m.GetBudgetCalculationMs(),
+		DirectiveLoadMs:       m.GetDirectiveLoadMs(),
+		HotMemoryRetrievalMs:  m.GetHotMemoryRetrievalMs(),
+		ColdMemoryRetrievalMs: m.GetColdMemoryRetrievalMs(),
+		RankingMs:             m.GetRankingMs(),
+		PackingMs:             m.GetPackingMs(),
+		FormattingMs:          m.GetFormattingMs(),
+		TotalMs:               m.GetTotalMs(),
+		CandidatesEvaluated:   m.GetCandidatesEvaluated(),
 	}
 }

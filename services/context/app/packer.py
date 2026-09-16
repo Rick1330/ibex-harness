@@ -117,6 +117,16 @@ class _EmptyPackArgs:
     token_estimates: Mapping[str, int] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _SelectArgs:
+    candidates: list[ScoredMemory]
+    tokens: list[int]
+    weights: list[int]
+    values: list[float]
+    buckets: int
+    token_budget: int
+
+
 class ContextPacker:
     """Select a score-maximizing memory subset under a token budget (ADR-0069).
 
@@ -184,7 +194,14 @@ class ContextPacker:
         weights = [_bucket_weight(t, self._bucket_size) for t in tokens]
         values = [float(item.composite_score) for item in candidates]
         selected, path, examined = self._select_under_budget(
-            candidates, tokens, weights, values, buckets, token_budget
+            _SelectArgs(
+                candidates=candidates,
+                tokens=tokens,
+                weights=weights,
+                values=values,
+                buckets=buckets,
+                token_budget=token_budget,
+            )
         )
         return self._finalize(
             _FinalizeArgs(
@@ -223,34 +240,31 @@ class ContextPacker:
 
     def _select_under_budget(
         self,
-        candidates: list[ScoredMemory],
-        tokens: list[int],
-        weights: list[int],
-        values: list[float],
-        buckets: int,
-        token_budget: int,
+        args: _SelectArgs,
     ) -> tuple[list[int], PackPath, frozenset[int] | None]:
-        n = len(candidates)
-        cells = n * (buckets + 1)
+        n = len(args.candidates)
+        cells = n * (args.buckets + 1)
         if cells > self._dp_cell_ceiling:
             logger.warning(
                 "packer_dp_ceiling_exceeded falling_back_to_greedy "
                 "n=%s buckets=%s cells=%s ceiling=%s",
                 n,
-                buckets,
+                args.buckets,
                 cells,
                 self._dp_cell_ceiling,
             )
-            selected, examined = self._greedy_select(candidates, tokens, token_budget)
+            selected, examined = self._greedy_select(
+                args.candidates, args.tokens, args.token_budget
+            )
             return selected, "greedy", examined
-        selected = _dp_select(weights, values, buckets)
+        selected = _dp_select(args.weights, args.values, args.buckets)
         selected = self._repair_exact_budget(
             _RepairArgs(
                 selected=selected,
-                candidates=candidates,
-                tokens=tokens,
-                token_budget=token_budget,
-                values=values,
+                candidates=args.candidates,
+                tokens=args.tokens,
+                token_budget=args.token_budget,
+                values=args.values,
             )
         )
         return selected, "dp", None

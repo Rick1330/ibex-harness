@@ -92,14 +92,7 @@ func assertDeliveredOnce(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
 
 func TestUnit_ProcessBatch_DeliverFailureOutcomes(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name         string
-		attempts     int
-		maxAttempts  int
-		wantFailed   int
-		wantPoisoned int
-		markStatus   string
-	}{
+	cases := []deliverFailureCase{
 		{
 			name: "failed_below_max", attempts: 1, maxAttempts: 5,
 			wantFailed: 1, markStatus: StatusFailed,
@@ -112,12 +105,21 @@ func TestUnit_ProcessBatch_DeliverFailureOutcomes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			runDeliverFailureCase(t, tc.attempts, tc.maxAttempts, tc.markStatus, tc.wantFailed, tc.wantPoisoned)
+			runDeliverFailureCase(t, tc)
 		})
 	}
 }
 
-func runDeliverFailureCase(t *testing.T, attempts, maxAttempts int, markStatus string, wantFailed, wantPoisoned int) {
+type deliverFailureCase struct {
+	name         string
+	attempts     int
+	maxAttempts  int
+	wantFailed   int
+	wantPoisoned int
+	markStatus   string
+}
+
+func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -125,7 +127,7 @@ func runDeliverFailureCase(t *testing.T, attempts, maxAttempts int, markStatus s
 	}
 	defer func() { _ = db.Close() }()
 	d := &stubDeliverer{err: errors.New("sink down")}
-	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: maxAttempts})
+	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: tc.maxAttempts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,13 +142,13 @@ func runDeliverFailureCase(t *testing.T, attempts, maxAttempts int, markStatus s
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, attempts, now, "", now, nil)
+		[]byte(`{}`), "digest", StatusInFlight, tc.attempts, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`evidence_outbox_mark_failure`).
-		WithArgs(id, attempts, markStatus, "sink down", sqlmock.AnyArg()).
+		WithArgs(id, tc.attempts, tc.markStatus, "sink down", sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 	mock.ExpectCommit()
 
@@ -154,8 +156,8 @@ func runDeliverFailureCase(t *testing.T, attempts, maxAttempts int, markStatus s
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Failed != wantFailed || res.Poisoned != wantPoisoned {
-		t.Fatalf("res=%+v want failed=%d poisoned=%d", res, wantFailed, wantPoisoned)
+	if res.Failed != tc.wantFailed || res.Poisoned != tc.wantPoisoned {
+		t.Fatalf("res=%+v want failed=%d poisoned=%d", res, tc.wantFailed, tc.wantPoisoned)
 	}
 }
 

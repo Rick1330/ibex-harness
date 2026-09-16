@@ -64,28 +64,32 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	}
 	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
 	defer endSpan()
-	assembleSpanID := spanIDFromContext(assembleCtx)
 	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
+	return h.injectAssembledOrDirective(ctx, assembleCtx, messages, params)
+}
+
+func (h chatCompletionHandler) injectAssembledOrDirective(
+	ctx, assembleCtx context.Context,
+	messages []provider.Message,
+	params contextclient.AssembleParams,
+) messageInjectionOutcome {
 	assembleStart := time.Now()
 	result := h.contextClient.Assemble(assembleCtx, params)
-	assemblyMs := time.Since(assembleStart).Milliseconds()
 	extras := evidenceExtrasFromAssemble(result)
-	extras.AssembleSpanID = assembleSpanID
+	extras.AssembleSpanID = spanIDFromContext(assembleCtx)
 	meta := contextAssembleMeta{
 		Attempted:        true,
 		MemoriesInjected: result.MemoriesIncluded,
 		ContextTokens:    result.TokensUsed,
 		Fallback:         result.Fallback,
-		AssemblyMs:       assemblyMs,
+		AssemblyMs:       time.Since(assembleStart).Milliseconds(),
 		ScoreSchema:      result.ScoreSchema,
 		EvidenceExtras:   extras,
 	}
 	if result.Fallback || strings.TrimSpace(result.AssembledContext) == "" {
-		// Empty assembled text is operationally a fallback: Phase 2 directive only.
-		// Promote Fallback so headers/metrics match (D.1 client only records RPC Fallback).
 		if !meta.Fallback {
 			meta.Fallback = true
 			h.recordAssembleFallback(emptyAssembleFallbackReason)
@@ -95,8 +99,6 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 			Meta:     meta,
 		}
 	}
-	// AssembledContext already includes directive + memories (formatter ordering).
-	// Inject as system_first so the blob is additive; leave client history intact.
 	injected := injection.Inject(messages, result.AssembledContext, injection.ModeSystemFirst)
 	return messageInjectionOutcome{Messages: injected, Meta: meta}
 }
@@ -110,63 +112,89 @@ func ensureAssembleTraceContext(ctx context.Context) (context.Context, func()) {
 }
 
 func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession.EvidenceExtras {
-	extras := httpsession.EvidenceExtras{}
-	if result.Metrics != nil {
-		extras.Metrics = &evidenceoutbox.AssemblyMetrics{
-			BudgetCalculationMs:   int(result.Metrics.BudgetCalculationMs),
-			DirectiveLoadMs:       int(result.Metrics.DirectiveLoadMs),
-			HotMemoryRetrievalMs:  int(result.Metrics.HotMemoryRetrievalMs),
-			ColdMemoryRetrievalMs: int(result.Metrics.ColdMemoryRetrievalMs),
-			RankingMs:             int(result.Metrics.RankingMs),
-			PackingMs:             int(result.Metrics.PackingMs),
-			FormattingMs:          int(result.Metrics.FormattingMs),
-			TotalMs:               int(result.Metrics.TotalMs),
-			CandidatesEvaluated:   int(result.Metrics.CandidatesEvaluated),
-		}
+	extras := httpsession.EvidenceExtras{
+		Metrics: assemblyMetricsFromClient(result.Metrics),
 	}
 	schema := result.ScoreSchema
 	if schema == "" {
 		schema = evidenceoutbox.ScoreSchemaInterim
 	}
+	extras.Candidates = scoreCandidatesFromMemories(result.MemoriesUsed, schema)
+	return extras
+}
+
+func assemblyMetricsFromClient(m *contextclient.AssemblyMetrics) *evidenceoutbox.AssemblyMetrics {
+	if m == nil {
+		return nil
+	}
+	return &evidenceoutbox.AssemblyMetrics{
+		BudgetCalculationMs:   int(m.BudgetCalculationMs),
+		DirectiveLoadMs:       int(m.DirectiveLoadMs),
+		HotMemoryRetrievalMs:  int(m.HotMemoryRetrievalMs),
+		ColdMemoryRetrievalMs: int(m.ColdMemoryRetrievalMs),
+		RankingMs:             int(m.RankingMs),
+		PackingMs:             int(m.PackingMs),
+		FormattingMs:          int(m.FormattingMs),
+		TotalMs:               int(m.TotalMs),
+		CandidatesEvaluated:   int(m.CandidatesEvaluated),
+	}
+}
+
+func scoreCandidatesFromMemories(memories []contextclient.MemoryUsed, schema string) []evidenceoutbox.ScoreCandidate {
+	out := make([]evidenceoutbox.ScoreCandidate, 0, len(memories))
 	finalRank := 0
-	for _, m := range result.MemoriesUsed {
+	for _, m := range memories {
 		id, err := uuid.Parse(m.MemoryID)
 		if err != nil {
 			continue
 		}
-		rank := int(m.Rank)
-		sim := float64(m.Similarity)
-		conf := float64(m.Confidence)
-		comp := float64(m.CompositeScore)
-		tok := int(m.TokenEstimate)
 		excl := m.Exclusion
 		if excl == "" {
 			excl = "included"
 		}
-		var packedRank *int
-		if excl == "included" {
-			finalRank++
-			r := finalRank
-			packedRank = &r
-		}
-		extras.Candidates = append(extras.Candidates, evidenceoutbox.ScoreCandidate{
-			MemoryID:       id,
-			RetrievalRank:  rank,
-			FinalRank:      packedRank,
-			Similarity:     &sim,
-			Confidence:     &conf,
-			CompositeScore: &comp,
-			ScoreSchema:    schema,
-			ScoreComponents: map[string]float64{
-				"similarity": sim,
-				"confidence": conf,
-			},
-			Exclusion:     excl,
-			TokenEstimate: &tok,
-			Category:      m.Category,
-		})
+		out = append(out, scoreCandidateFromMemory(scoreCandidateInput{
+			id: id, mem: m, exclusion: excl, schema: schema, finalRank: &finalRank,
+		}))
 	}
-	return extras
+	return out
+}
+
+type scoreCandidateInput struct {
+	id        uuid.UUID
+	mem       contextclient.MemoryUsed
+	exclusion string
+	schema    string
+	finalRank *int
+}
+
+func scoreCandidateFromMemory(in scoreCandidateInput) evidenceoutbox.ScoreCandidate {
+	rank := int(in.mem.Rank)
+	sim := float64(in.mem.Similarity)
+	conf := float64(in.mem.Confidence)
+	comp := float64(in.mem.CompositeScore)
+	tok := int(in.mem.TokenEstimate)
+	var packedRank *int
+	if in.exclusion == "included" {
+		*in.finalRank++
+		r := *in.finalRank
+		packedRank = &r
+	}
+	return evidenceoutbox.ScoreCandidate{
+		MemoryID:       in.id,
+		RetrievalRank:  rank,
+		FinalRank:      packedRank,
+		Similarity:     &sim,
+		Confidence:     &conf,
+		CompositeScore: &comp,
+		ScoreSchema:    in.schema,
+		ScoreComponents: map[string]float64{
+			"similarity": sim,
+			"confidence": conf,
+		},
+		Exclusion:     in.exclusion,
+		TokenEstimate: &tok,
+		Category:      in.mem.Category,
+	}
 }
 
 func finalRankForExclusion(exclusion string, rank int) *int {
