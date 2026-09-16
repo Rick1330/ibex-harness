@@ -370,6 +370,36 @@ def _request_from_proto(request: object) -> AssembleRequest:
         query=query,
         model=model,
         recent_messages=_messages_from_proto(raw_messages),
+        session_id=_bounded_text(
+            getattr(request, "session_id", ""),
+            label="session_id",
+            max_chars=64,
+            required=False,
+        ),
+        directive_version_id=_bounded_text(
+            getattr(request, "directive_version_id", ""),
+            label="directive_version_id",
+            max_chars=64,
+            required=False,
+        ),
+        request_id=_bounded_text(
+            getattr(request, "request_id", ""),
+            label="request_id",
+            max_chars=128,
+            required=False,
+        ),
+        trace_id=_bounded_text(
+            getattr(request, "trace_id", ""),
+            label="trace_id",
+            max_chars=64,
+            required=False,
+        ),
+        span_id=_bounded_text(
+            getattr(request, "span_id", ""),
+            label="span_id",
+            max_chars=32,
+            required=False,
+        ),
         options=_options_from_proto(getattr(request, "options", None)),
     )
 
@@ -435,6 +465,10 @@ def _response_to_proto(pb2: object, result: AssemblyResult) -> object:
             usefulness_score=m.usefulness_score,
             rank=m.rank,
             category=m.category,
+            exclusion=m.exclusion,
+            similarity=m.similarity,
+            confidence=m.confidence,
+            token_estimate=m.token_estimate,
         )
         for m in result.memories_used
     ]
@@ -457,6 +491,10 @@ def _response_to_proto(pb2: object, result: AssemblyResult) -> object:
             total_ms=metrics.total_ms,
             candidates_evaluated=metrics.candidates_evaluated,
         ),
+        request_id=result.request_id,
+        trace_id=result.trace_id,
+        span_id=result.span_id,
+        score_schema=result.score_schema,
     )
 
 

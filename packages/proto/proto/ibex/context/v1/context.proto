@@ -28,6 +28,10 @@ message AssembleContextRequest {
   int32 available_tokens = 7;
   repeated Message recent_messages = 8;
   AssemblyOptions options = 9;
+  // 4.P.2 evidence-plane correlation (OTel W3C TraceID/SpanID + request UUID v7).
+  string request_id = 10;
+  string trace_id = 11;
+  string span_id = 12;
 }
 
 message AssemblyOptions {
@@ -49,6 +53,12 @@ message AssembleContextResponse {
   int32 history_tokens = 6;
   int32 memory_tokens = 7;
   AssemblyMetrics metrics = 8;
+  // Echo correlation IDs from the request (4.P.2 Trace Inspector join keys).
+  string request_id = 9;
+  string trace_id = 10;
+  string span_id = 11;
+  // Score payload schema label: "interim_v1" (0.85/0.15) until five-component lands.
+  string score_schema = 12;
 }
 
 message AssemblyMetrics {
@@ -71,6 +81,11 @@ message MemoryUsed {
   float usefulness_score = 5;
   int32 rank = 6;
   string category = 7;
+  // Exclusion when not packed: included|budget|filter|truncated|failed|unknown (4.P.2).
+  string exclusion = 8;
+  float similarity = 9;
+  float confidence = 10;
+  int32 token_estimate = 11;
 }
 
 message Message {

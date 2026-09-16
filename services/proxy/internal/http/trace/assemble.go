@@ -26,7 +26,9 @@ func Assemble(in AssembleInput) ibexch.TraceRecord {
 		OrgID:              in.OrgID,
 		AgentID:            in.AgentID,
 		SessionID:          in.SessionID,
-		CheckpointID:       nil, // AppendCheckpoint does not return IDs yet
+		CheckpointID:       in.CheckpointID,
+		TraceID:            in.TraceID,
+		RootSpanID:         in.RootSpanID,
 		Model:              in.Model,
 		Provider:           in.Provider,
 		IsStreaming:        in.Streaming,
@@ -45,7 +47,18 @@ func Assemble(in AssembleInput) ibexch.TraceRecord {
 		OriginalModel:      optionalNonEmpty(in.OriginalModel),
 		FallbackModel:      optionalNonEmpty(in.FallbackModel),
 		FallbackReason:     in.FallbackReason,
+		DirectiveVersionID: in.DirectiveVersionID,
+		ContextAssemblyMs:  in.ContextAssemblyMs,
+		ScoreSchema:        in.ScoreSchema,
+		Completeness:       completenessOrDefault(in.Completeness),
 	}
+}
+
+func completenessOrDefault(v string) string {
+	if v == "" {
+		return "partial"
+	}
+	return v
 }
 
 func optionalNonEmpty(s string) *string {

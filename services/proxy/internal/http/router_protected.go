@@ -18,6 +18,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 )
 
@@ -34,6 +35,7 @@ type protectedRouteDeps struct {
 	sessionCache             *sessioncache.Cache
 	checkpointPool           *asyncpool.Pool
 	getOrCreateTimeout       time.Duration
+	evidenceStore            httpsession.EvidencePersister
 	docsBase                 string
 	providerRegistry         *provider.Registry
 	modelRouter              ProviderResolver
@@ -158,6 +160,7 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		sessionCache:             deps.sessionCache,
 		checkpointPool:           deps.checkpointPool,
 		getOrCreateTimeout:       deps.getOrCreateTimeout,
+		evidenceStore:            deps.evidenceStore,
 		traceWriter:              deps.traceWriter,
 		idempotencyStore:         deps.idempotencyStore,
 		idempotencyTimeout:       deps.idempotencyTimeout,

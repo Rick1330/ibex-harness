@@ -32,8 +32,8 @@ type terminateStoreFake struct {
 func (f *terminateStoreFake) GetOrCreate(context.Context, session.GetOrCreateParams) (*session.Session, error) {
 	return nil, nil
 }
-func (f *terminateStoreFake) AppendCheckpoint(context.Context, session.CheckpointParams) error {
-	return nil
+func (f *terminateStoreFake) AppendCheckpoint(context.Context, session.CheckpointParams) (uuid.UUID, error) {
+	return uuid.Nil, nil
 }
 func (f *terminateStoreFake) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
 	return session.CompleteOK, nil

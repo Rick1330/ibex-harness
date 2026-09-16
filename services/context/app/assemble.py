@@ -63,6 +63,10 @@ class MemoryUsedRecord:
     usefulness_score: float
     rank: int
     category: str
+    exclusion: str = "included"
+    similarity: float = 0.0
+    confidence: float = 0.0
+    token_estimate: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +81,10 @@ class AssemblyResult:
     degradation_level: DegradationLevel
     memories_used: tuple[MemoryUsedRecord, ...]
     tokens_used: int
+    request_id: str = ""
+    trace_id: str = ""
+    span_id: str = ""
+    score_schema: str = "interim_v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +96,11 @@ class AssembleRequest:
     query: str
     model: str
     recent_messages: Sequence[Message]
+    session_id: str = ""
+    directive_version_id: str = ""
+    request_id: str = ""
+    trace_id: str = ""
+    span_id: str = ""
     options: AssemblyOptions = AssemblyOptions()
     tool_schemas: Sequence[str] = ()
 
@@ -186,6 +199,9 @@ class ContextAssembler:
             tokens_used=(
                 budget.directive_tokens + budget.messages_tokens + packed.total_tokens
             ),
+            request_id=request.request_id,
+            trace_id=request.trace_id,
+            span_id=request.span_id,
         )
 
     async def _retrieve(
@@ -342,6 +358,10 @@ def _memory_used(item: ScoredMemory) -> MemoryUsedRecord:
         usefulness_score=0.0,
         rank=int(item.hit.rank),
         category=item.category,
+        exclusion="included",
+        similarity=float(item.hit.similarity),
+        confidence=float(item.hit.confidence),
+        token_estimate=0,
     )
 
 

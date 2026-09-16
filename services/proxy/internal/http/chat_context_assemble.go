@@ -8,10 +8,14 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 )
 
 // Header names for context-assembly outcome (3.5.D.2). Embedded ibex JSON is 3.5.D.3.
@@ -37,6 +41,8 @@ type contextAssembleMeta struct {
 	ContextTokens    int32
 	Fallback         bool
 	AssemblyMs       int64
+	ScoreSchema      string
+	EvidenceExtras   httpsession.EvidenceExtras
 }
 
 type messageInjectionOutcome struct {
@@ -56,12 +62,14 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	if !h.shouldAssemble(r) {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
-	params, ok := assembleParamsFromRequest(ctx, model, messages)
+	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
+	defer endSpan()
+	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
 	assembleStart := time.Now()
-	result := h.contextClient.Assemble(ctx, params)
+	result := h.contextClient.Assemble(assembleCtx, params)
 	assemblyMs := time.Since(assembleStart).Milliseconds()
 	meta := contextAssembleMeta{
 		Attempted:        true,
@@ -69,6 +77,8 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 		ContextTokens:    result.TokensUsed,
 		Fallback:         result.Fallback,
 		AssemblyMs:       assemblyMs,
+		ScoreSchema:      result.ScoreSchema,
+		EvidenceExtras:   evidenceExtrasFromAssemble(result),
 	}
 	if result.Fallback || strings.TrimSpace(result.AssembledContext) == "" {
 		// Empty assembled text is operationally a fallback: Phase 2 directive only.
@@ -86,6 +96,68 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	// Inject as system_first so the blob is additive; leave client history intact.
 	injected := injection.Inject(messages, result.AssembledContext, injection.ModeSystemFirst)
 	return messageInjectionOutcome{Messages: injected, Meta: meta}
+}
+
+func ensureAssembleTraceContext(ctx context.Context) (context.Context, func()) {
+	if traceIDFromContext(ctx) != "" && spanIDFromContext(ctx) != "" {
+		return ctx, func() {}
+	}
+	tracer := otel.Tracer("github.com/Rick1330/ibex-harness/services/proxy/internal/http")
+	ctx, span := tracer.Start(ctx, "chatCompletionHandler.AssembleContext")
+	return ctx, func() { span.End() }
+}
+
+func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession.EvidenceExtras {
+	extras := httpsession.EvidenceExtras{}
+	if result.Metrics != nil {
+		extras.Metrics = &evidenceoutbox.AssemblyMetrics{
+			BudgetCalculationMs:   int(result.Metrics.BudgetCalculationMs),
+			DirectiveLoadMs:       int(result.Metrics.DirectiveLoadMs),
+			HotMemoryRetrievalMs:  int(result.Metrics.HotMemoryRetrievalMs),
+			ColdMemoryRetrievalMs: int(result.Metrics.ColdMemoryRetrievalMs),
+			RankingMs:             int(result.Metrics.RankingMs),
+			PackingMs:             int(result.Metrics.PackingMs),
+			FormattingMs:          int(result.Metrics.FormattingMs),
+			TotalMs:               int(result.Metrics.TotalMs),
+			CandidatesEvaluated:   int(result.Metrics.CandidatesEvaluated),
+		}
+	}
+	schema := result.ScoreSchema
+	if schema == "" {
+		schema = evidenceoutbox.ScoreSchemaInterim
+	}
+	for _, m := range result.MemoriesUsed {
+		id, err := uuid.Parse(m.MemoryID)
+		if err != nil {
+			continue
+		}
+		rank := int(m.Rank)
+		sim := float64(m.Similarity)
+		conf := float64(m.Confidence)
+		comp := float64(m.CompositeScore)
+		tok := int(m.TokenEstimate)
+		excl := m.Exclusion
+		if excl == "" {
+			excl = "included"
+		}
+		extras.Candidates = append(extras.Candidates, evidenceoutbox.ScoreCandidate{
+			MemoryID:       id,
+			RetrievalRank:  rank,
+			FinalRank:      &rank,
+			Similarity:     &sim,
+			Confidence:     &conf,
+			CompositeScore: &comp,
+			ScoreSchema:    schema,
+			ScoreComponents: map[string]float64{
+				"similarity": sim,
+				"confidence": conf,
+			},
+			Exclusion:     excl,
+			TokenEstimate: &tok,
+			Category:      m.Category,
+		})
+	}
+	return extras
 }
 
 // emptyAssembleFallbackReason labels handler-side empty AssembledContext fail-open
@@ -121,12 +193,30 @@ func assembleParamsFromRequest(ctx context.Context, model string, messages []pro
 	if !ok {
 		return contextclient.AssembleParams{}, false
 	}
+	var sessionID string
+	if id, ok := durableSessionID(ctx); ok {
+		sessionID = id.String()
+	}
+	var directiveVersionID string
+	if id := directiveVersionPtr(ctx); id != nil {
+		directiveVersionID = id.String()
+	}
+	traceID := traceIDFromContext(ctx)
+	spanID := spanIDFromContext(ctx)
+	if traceID == "" || spanID == "" {
+		return contextclient.AssembleParams{}, false
+	}
 	return contextclient.AssembleParams{
-		OrgID:          orgID.String(),
-		AgentID:        agentID.String(),
-		Model:          model,
-		Query:          lastUserQuery(messages),
-		RecentMessages: toAssembleMessages(messages),
+		OrgID:              orgID.String(),
+		AgentID:            agentID.String(),
+		SessionID:          sessionID,
+		Model:              model,
+		Query:              lastUserQuery(messages),
+		DirectiveVersionID: directiveVersionID,
+		RequestID:          RequestIDFromContext(ctx),
+		TraceID:            traceID,
+		SpanID:             spanID,
+		RecentMessages:     toAssembleMessages(messages),
 	}, true
 }
 

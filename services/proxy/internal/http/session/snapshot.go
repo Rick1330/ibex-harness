@@ -25,14 +25,20 @@ func CaptureTraceSnapshot(args CaptureTraceArgs) (httptrace.AssembleInput, bool)
 	}
 	completed := time.Now().UTC()
 	return httptrace.AssembleInput{
-		RequestID: args.Meta.RequestID,
-		OrgID:     args.Meta.OrgID,
-		AgentID:   args.Meta.AgentID,
-		SessionID: args.Meta.SessionID,
-		Model:     args.In.Model,
-		Provider:  args.In.Provider,
-		Streaming: resolveStreaming(args.In, args.Outcome),
-		Usage:     args.In.Usage,
+		RequestID:          args.Meta.RequestID,
+		TraceID:            args.Meta.TraceID,
+		RootSpanID:         args.Meta.RootSpanID,
+		OrgID:              args.Meta.OrgID,
+		AgentID:            args.Meta.AgentID,
+		SessionID:          args.Meta.SessionID,
+		Model:              args.In.Model,
+		Provider:           args.In.Provider,
+		Streaming:          resolveStreaming(args.In, args.Outcome),
+		Usage:              args.In.Usage,
+		DirectiveVersionID: args.Meta.DirectiveVersionID,
+		ContextAssemblyMs:  args.Meta.ContextAssemblyMs,
+		ScoreSchema:        args.Meta.ScoreSchema,
+		Completeness:       "complete",
 		Timings: httptrace.RequestTimings{
 			AuthMs:       args.Meta.AuthMs,
 			DirectiveMs:  args.Meta.DirectiveMs,
@@ -121,15 +127,29 @@ func flushBuffer(job PostResponseJob) {
 }
 
 func runDeferredPostResponse(job PostResponseJob) {
-	if !job.DoCheckpoint && !job.DoTrace {
+	if !job.DoCheckpoint && !job.DoTrace && !job.DoEvidence {
 		return
 	}
 	run := func() {
 		if job.DoCheckpoint {
-			job.Deps.RunCheckpoint(job.Params, job.ExternalID)
+			ckID := job.Deps.RunCheckpoint(job.Params, job.ExternalID)
+			if ckID != uuid.Nil {
+				job.Snap.CheckpointID = &ckID
+			}
 		}
 		if job.DoTrace {
 			EmitTrace(job.TraceWriter, job.Log, job.Snap)
+		}
+		if job.DoEvidence {
+			PersistEvidence(job.Deps.Evidence, job.Log, BuildEvidenceRun(job.Snap, SnapshotMeta{
+				RequestID:          job.Snap.RequestID,
+				TraceID:            job.Snap.TraceID,
+				RootSpanID:         job.Snap.RootSpanID,
+				DirectiveVersionID: job.Snap.DirectiveVersionID,
+				ContextAssemblyMs:  job.Snap.ContextAssemblyMs,
+				ScoreSchema:        job.Snap.ScoreSchema,
+				EvidenceExtras:     job.EvidenceExtras,
+			}, job.EvidenceExtras))
 		}
 	}
 	if job.Deps.Pool != nil {
@@ -157,11 +177,12 @@ func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	})
 	doCheckpoint := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome)
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
+	doEvidence := snapOK && in.Deps.Evidence != nil && firstNonEmpty(snap.TraceID, in.Meta.TraceID) != ""
 	doBuffer := wantExtractionBuffer(in)
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,
-		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoBuffer: doBuffer,
-		TraceWriter: in.Writer, Log: in.Log,
+		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoEvidence: doEvidence, DoBuffer: doBuffer,
+		TraceWriter: in.Writer, Log: in.Log, EvidenceExtras: in.Meta.EvidenceExtras,
 	}
 	if doCheckpoint {
 		job.Params = BuildCheckpointParams(in.Resolved, in.In, in.Meta.RequestID)

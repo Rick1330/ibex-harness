@@ -25,6 +25,8 @@ var requiredLLMTraceColumns = []string{
 	"status_code", "is_complete", "error_code",
 	"requested_at", "completed_at", "event_date",
 	"original_model", "fallback_model", "fallback_reason",
+	"trace_id", "root_span_id", "directive_version_id", "context_assembly_ms",
+	"score_schema", "completeness",
 }
 
 func testMigrateConn() Conn {
@@ -54,6 +56,8 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	drops := []string{
+		`DROP TABLE IF EXISTS ibex.evidence_assembly_metrics`,
+		`DROP TABLE IF EXISTS ibex.evidence_spans`,
 		`DROP TABLE IF EXISTS ibex.mcp_tool_calls`,
 		`DROP TABLE IF EXISTS ibex.llm_traces`,
 		`DROP TABLE IF EXISTS ibex.schema_migrations`,
@@ -83,8 +87,8 @@ func TestIntegration_Migrate_UpIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if dirty || v != 2 {
-		t.Fatalf("version=%d dirty=%v want 2/clean", v, dirty)
+	if dirty || v != 4 {
+		t.Fatalf("version=%d dirty=%v want 4/clean", v, dirty)
 	}
 }
 

@@ -2,7 +2,7 @@
 title: "Canonical Evidence Plane & Durable Publication"
 description: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
 summary: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
-status: "planned"
+status: "in-progress"
 milestoneId: "4.P.2"
 track: "P"
 trackTitle: "Operator Readiness, Evidence & Control Plane"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication"
 
 # Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication
 
-**Status:** Planned  
+**Status:** In progress  
 **Outcome:** A multi-step agent run is a versioned, queryable, replay-aware evidence graph with durable publication.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
 **Dependencies:** 4.P.0; 4.P.1  
@@ -24,6 +24,16 @@ fullTitle: "Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication"
 
 <Callout type="note" title="Completion contract">
   Flat `llm_traces` aggregate rows are not enough. Nested span/event identity, correlation IDs, checkpoint joins, outbox relays, and Trace Inspector prerequisites (F4-021–027) must land before 4.D.2 claims real data.
+</Callout>
+
+<Callout type="warning" title="Planning baseline (sketch deviations)">
+  Locked for the shipped 4.P.2 implementation:
+  - Durable `trace_id` is the existing OpenTelemetry `SpanContext.TraceID()`; `span_id` comes from the active span. Proxy assembly creates a span when tests or non-middleware callers arrive without one.
+  - The transactional outbox is **evidence-scoped only** via `packages/evidenceoutbox`; model-policy invalidation and org-deletion flows remain separate follow-ups.
+  - Conversation/raw linkage uses `ibex_core.session_events` plus existing `archived_to` / `ibex-sessions/{org_id}/{session_id}/...` archival references rather than a new raw table or bucket layout.
+  - `ibex.llm_traces` stays fail-open and remains the legacy aggregate during the dual-write window; nested evidence lives in Postgres + companion ClickHouse projections.
+  - `session_events` ships as an applied append-only table with evidence linkage now; monthly partitioning from the schema sketch remains a follow-up optimization.
+  - Score payloads are versioned as `interim_v1` until the full five-component `0.40/0.25/0.20/0.10/0.05` contract is computed end-to-end.
 </Callout>
 
 ## Why this milestone exists
@@ -70,8 +80,10 @@ Further audit context (provenance only — roadmap and engineering pages are aut
 - [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
 ## Exit checklist
 
-- [ ] Envelope and outbox schemas versioned with compatibility tests.
-- [ ] Correlation ID + checkpoint ID write path proven.
-- [ ] AssemblyMetrics, score, directive, tool contracts persisted or explicitly deferred with degraded labels.
-- [ ] Raw/conversation store decision documented with RLS/retention.
-- [ ] Golden nested-run + outbox crash/replay reports attached.
+- [x] Envelope and outbox schemas versioned with compatibility tests.
+- [x] Correlation ID + checkpoint ID write path proven.
+- [x] AssemblyMetrics, score, directive, tool contracts persisted or explicitly deferred with degraded labels.
+  - Persisted: AssemblyMetrics, interim_v1 scores + exclusion, directive version, tool audit schema.
+  - Deferred (degraded label): full five-component score weights; MCP hot-path tool population; MinIO archive writer.
+- [x] Raw/conversation store decision documented with RLS/retention (`session_events` + `archived_to` / `ibex-sessions/...`).
+- [x] Golden nested-run + outbox crash/replay reports attached (integration tests in `packages/evidenceoutbox`).

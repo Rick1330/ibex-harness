@@ -22,6 +22,7 @@ func (h chatCompletionHandler) lifecycle() httpsession.LifecycleDeps {
 	return httpsession.LifecycleDeps{
 		Store: h.sessionStore, Cache: h.sessionCache, Pool: h.checkpointPool,
 		GetOrCreateTO: h.getOrCreateTimeout, Log: h.log, TurnBuffer: h.turnBuffer,
+		Evidence: h.evidenceStore,
 	}
 }
 
@@ -118,14 +119,24 @@ func (h chatCompletionHandler) enqueuePostResponse(
 func snapshotMetaFromContext(ctx context.Context) httpsession.SnapshotMeta {
 	orgID, agentID, _ := tenantIDsFromContext(ctx)
 	meta := httpsession.SnapshotMeta{
-		RequestID:   RequestIDFromContext(ctx),
-		OrgID:       orgID,
-		AgentID:     agentID,
-		AuthMs:      AuthLatencyMsFromContext(ctx),
-		DirectiveMs: DirectiveLatencyMsFromContext(ctx),
+		RequestID:          RequestIDFromContext(ctx),
+		TraceID:            traceIDFromContext(ctx),
+		RootSpanID:         spanIDFromContext(ctx),
+		OrgID:              orgID,
+		AgentID:            agentID,
+		DirectiveVersionID: directiveVersionPtr(ctx),
+		AuthMs:             AuthLatencyMsFromContext(ctx),
+		DirectiveMs:        DirectiveLatencyMsFromContext(ctx),
 	}
 	if id, ok := durableSessionID(ctx); ok {
 		meta.SessionID = &id
+	}
+	if assemble, ok := contextAssembleMetaFromContext(ctx); ok {
+		if assemble.AssemblyMs > 0 {
+			meta.ContextAssemblyMs = uint32(assemble.AssemblyMs)
+		}
+		meta.ScoreSchema = assemble.ScoreSchema
+		meta.EvidenceExtras = assemble.EvidenceExtras
 	}
 	if start, ok := RequestStartFromContext(ctx); ok {
 		meta.RequestedAt = start

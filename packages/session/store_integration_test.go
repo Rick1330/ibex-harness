@@ -62,7 +62,7 @@ func TestStore_GetOrCreate_ExternalIDSemantics(t *testing.T) {
 func TestStore_AppendCheckpoint_AtomicStats(t *testing.T) {
 	ids := setupStore(t)
 	sess := mustCreate(t, ids, "ext-stats")
-	err := ids.store.AppendCheckpoint(context.Background(), session.CheckpointParams{
+	_, err := ids.store.AppendCheckpoint(context.Background(), session.CheckpointParams{
 		SessionID: sess.ID, OrgID: ids.orgID, AgentID: ids.agentID, TurnIndex: 0,
 		RequestID: "req-1", MessagesHash: "mh1", InputTokens: 10, OutputTokens: 20,
 		Model: "gpt-4o", Provider: "openai", LatencyMs: 100, IsComplete: true,
@@ -83,10 +83,10 @@ func TestStore_AppendCheckpoint_DuplicateTurn(t *testing.T) {
 		RequestID: "req-1", MessagesHash: "mh1", Model: "gpt-4o", Provider: "openai",
 		LatencyMs: 1, IsComplete: true,
 	}
-	if err := ids.store.AppendCheckpoint(context.Background(), p); err != nil {
+	if _, err := ids.store.AppendCheckpoint(context.Background(), p); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	err := ids.store.AppendCheckpoint(context.Background(), p)
+	_, err := ids.store.AppendCheckpoint(context.Background(), p)
 	if !errors.Is(err, session.ErrDuplicateTurn) {
 		t.Fatalf("expected ErrDuplicateTurn, got %v", err)
 	}
@@ -136,7 +136,7 @@ func TestStore_AppendCheckpoint_MissingSession(t *testing.T) {
 	ids := setupStore(t)
 	sess := mustCreate(t, ids, "ext-soft-del")
 	softDeleteSession(t, ids, sess.ID)
-	err := ids.store.AppendCheckpoint(context.Background(), session.CheckpointParams{
+	_, err := ids.store.AppendCheckpoint(context.Background(), session.CheckpointParams{
 		SessionID: sess.ID, OrgID: ids.orgID, AgentID: ids.agentID, TurnIndex: 0,
 		RequestID: "req", MessagesHash: "mh", Model: "gpt-4o", Provider: "openai",
 		LatencyMs: 1, IsComplete: true,
@@ -269,7 +269,7 @@ func TestStore_RLS_CrossOrg(t *testing.T) {
 	ids := storeIDs{db: db, store: store, orgID: orgA, agentID: agentA}
 	sess := mustCreate(t, ids, "ext-rls")
 
-	err := store.AppendCheckpoint(context.Background(), session.CheckpointParams{
+	_, err := store.AppendCheckpoint(context.Background(), session.CheckpointParams{
 		SessionID: sess.ID, OrgID: orgB, AgentID: agentA, TurnIndex: 0,
 		RequestID: "x", MessagesHash: "h", Model: "gpt-4o", Provider: "openai",
 		LatencyMs: 1, IsComplete: true,
