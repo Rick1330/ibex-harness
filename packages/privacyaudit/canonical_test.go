@@ -92,6 +92,8 @@ func assertBreakAt(t *testing.T, err error, wantIdx int) {
 func TestCanonicalPayload_SortsKeys(t *testing.T) {
 	t.Parallel()
 	assertCanonicalPayload(t, `{"b":1,"a":2}`, `{"a": 2, "b": 1}`)
+	// PostgreSQL jsonb: shorter keys first, then bytewise (b before aa).
+	assertCanonicalPayload(t, `{"aa":1,"b":2}`, `{"b": 2, "aa": 1}`)
 }
 
 func TestCanonicalPayload_EmptyMapsToObject(t *testing.T) {
@@ -128,6 +130,27 @@ func TestCanonicalPayload_NestedAndArray(t *testing.T) {
 func TestCanonicalPayload_NoHTMLEscape(t *testing.T) {
 	t.Parallel()
 	assertCanonicalPayload(t, `{"x":"<tag>&"}`, `{"x": "<tag>&"}`)
+}
+
+func TestCanonicalPayload_LineSeparatorLiteral(t *testing.T) {
+	t.Parallel()
+	// U+2028 / U+2029 must remain literal UTF-8 (PG jsonb_out); Go json escapes them.
+	raw := "{\"x\":\"a\u2028b\u2029c\"}"
+	want := "{\"x\": \"a\u2028b\u2029c\"}"
+	assertCanonicalPayload(t, raw, want)
+	e := hashedEntry(t, baseEntry(baseEntryOpts{
+		payload: json.RawMessage(raw),
+	}))
+	canon, err := CanonicalString(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(canon, "\u2028") || !strings.Contains(canon, "\u2029") {
+		t.Fatalf("canonical missing line separators: %s", canon)
+	}
+	if strings.Contains(canon, `\u2028`) || strings.Contains(canon, `\u2029`) {
+		t.Fatalf("canonical escaped line separators: %s", canon)
+	}
 }
 
 func TestCanonicalPayload_UseNumber(t *testing.T) {

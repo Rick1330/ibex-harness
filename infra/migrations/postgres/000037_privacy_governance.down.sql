@@ -15,6 +15,7 @@ DROP TRIGGER IF EXISTS privacy_audit_ledger_no_update_delete ON ibex_core.privac
 DROP FUNCTION IF EXISTS ibex_core.privacy_audit_append(
     UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
 );
+DROP FUNCTION IF EXISTS ibex_core.privacy_audit_list_orgs();
 DROP FUNCTION IF EXISTS ibex_core.privacy_audit_ledger_forbid_mutate();
 DROP TABLE IF EXISTS ibex_core.privacy_audit_ledger;
 DROP FUNCTION IF EXISTS ibex_core.rls_privacy_visible(UUID);

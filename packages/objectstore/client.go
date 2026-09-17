@@ -129,7 +129,7 @@ func New(cfg Config, masterKeyB64 string, httpClient *http.Client) (*Client, err
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	httpClient = withHTTPSDowngradeGuard(httpClient)
+	httpClient = withNoRedirectClient(httpClient)
 	if cfg.Region == "" {
 		cfg.Region = defaultRegion
 	}
@@ -149,6 +149,12 @@ func validateEndpoint(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("objectstore: endpoint: %w", err)
 	}
+	if u.Host == "" {
+		return fmt.Errorf("objectstore: endpoint host required")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("objectstore: endpoint must not include query or fragment")
+	}
 	switch strings.ToLower(u.Scheme) {
 	case "https":
 		return nil
@@ -162,34 +168,14 @@ func validateEndpoint(cfg Config) error {
 	}
 }
 
-// withHTTPSDowngradeGuard rejects redirects that drop TLS (HTTPS → HTTP).
-func withHTTPSDowngradeGuard(base *http.Client) *http.Client {
+// withNoRedirectClient refuses redirects: SigV4 signatures bind host/path/query
+// and cannot be safely reused on a redirected URL without re-signing.
+func withNoRedirectClient(base *http.Client) *http.Client {
 	out := *base
-	prev := out.CheckRedirect
-	out.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if err := rejectHTTPSToHTTP(req, via); err != nil {
-			return err
-		}
-		if prev != nil {
-			return prev(req, via)
-		}
-		if len(via) >= 10 {
-			return errors.New("objectstore: stopped after 10 redirects")
-		}
-		return nil
+	out.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("objectstore: redirects not followed (re-sign required)")
 	}
 	return &out
-}
-
-func rejectHTTPSToHTTP(req *http.Request, via []*http.Request) error {
-	if len(via) == 0 {
-		return nil
-	}
-	orig := via[0].URL
-	if orig != nil && strings.EqualFold(orig.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
-		return errors.New("objectstore: refusing HTTPS to HTTP redirect")
-	}
-	return nil
 }
 
 // ArchivedBlob is the on-wire envelope stored in object storage.
@@ -284,7 +270,7 @@ func (c *Client) doExpectOK(req *http.Request, key string, failNotFound bool) er
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 300 {
 		return nil
 	}
@@ -335,7 +321,7 @@ func (c *Client) listPage(ctx context.Context, prefix ObjectKey, continuation st
 	if err != nil {
 		return nil, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, "", err

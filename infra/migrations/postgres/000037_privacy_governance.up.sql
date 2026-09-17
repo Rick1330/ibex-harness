@@ -33,8 +33,10 @@ LANGUAGE sql
 STABLE
 AS $$
     SELECT (
-        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-        AND row_org_id = current_setting('app.current_org_id', true)::UUID
+        SELECT org_txt IS NOT NULL AND row_org_id = org_txt::UUID
+        FROM (
+            SELECT NULLIF(current_setting('app.current_org_id', true), '') AS org_txt
+        ) AS guc
     );
 $$;
 
@@ -139,7 +141,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = ibex_core, pg_temp
+SET search_path = ibex_core, public, pg_temp
 AS $$
 DECLARE
     v_prev              TEXT;
@@ -216,7 +218,8 @@ BEGIN
         to_char(v_created AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
     )::text;
 
-    v_row_hash := encode(digest(v_canonical, 'sha256'), 'hex');
+    -- Qualify digest: SECURITY DEFINER search_path excludes public unless listed.
+    v_row_hash := encode(public.digest(convert_to(v_canonical::text, 'UTF8'), 'sha256'), 'hex');
 
     INSERT INTO ibex_core.privacy_audit_ledger (
         id, org_id, seq, prev_hash, row_hash,
@@ -250,6 +253,22 @@ GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_append(
 GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_append(
     UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT[], TEXT, TEXT, TEXT, TEXT, TEXT, JSONB
 ) TO ibex_service;
+
+-- Privileged org discovery for privacy-audit-verify (SECURITY DEFINER / BYPASSRLS owner).
+-- Callers with EXECUTE can list distinct ledger orgs without forging app.is_service_account.
+CREATE OR REPLACE FUNCTION ibex_core.privacy_audit_list_orgs()
+RETURNS SETOF UUID
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = ibex_core, pg_temp
+AS $$
+    SELECT DISTINCT org_id FROM ibex_core.privacy_audit_ledger ORDER BY org_id ASC;
+$$;
+
+ALTER FUNCTION ibex_core.privacy_audit_list_orgs() OWNER TO ibex_service;
+REVOKE ALL ON FUNCTION ibex_core.privacy_audit_list_orgs() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_list_orgs() TO ibex_app;
+GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_list_orgs() TO ibex_service;
 
 -- ================================================================
 -- legal_holds
@@ -353,11 +372,10 @@ ALTER TABLE ibex_core.deletion_store_receipts FORCE ROW LEVEL SECURITY;
 -- Receipts visible when the parent job's org matches app.current_org_id.
 CREATE POLICY deletion_store_receipts_isolation ON ibex_core.deletion_store_receipts
     USING (
-        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-        AND EXISTS (
+        EXISTS (
             SELECT 1 FROM ibex_core.org_deletion_jobs j
             WHERE j.id = deletion_store_receipts.job_id
-              AND j.org_id = current_setting('app.current_org_id', true)::UUID
+              AND ibex_core.rls_privacy_visible(j.org_id)
         )
     );
 

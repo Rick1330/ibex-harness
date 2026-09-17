@@ -33,15 +33,17 @@ func entryColumns() []string {
 	}
 }
 
-func expectSetOrg(mock sqlmock.Sqlmock, org uuid.UUID) {
+func expectSetOrgTx(mock sqlmock.Sqlmock, org uuid.UUID) {
+	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
 func expectEmptyLedger(mock sqlmock.Sqlmock, org uuid.UUID) {
-	expectSetOrg(mock, org)
+	expectSetOrgTx(mock, org)
 	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).
 		WillReturnRows(sqlmock.NewRows(entryColumns()))
+	mock.ExpectCommit()
 }
 
 func TestRun_MissingDSN(t *testing.T) {
@@ -59,7 +61,7 @@ func TestRun_BadFlag(t *testing.T) {
 
 func TestVerifyDB_EmptyOK(t *testing.T) {
 	db, mock := newMockDB(t)
-	mock.ExpectQuery("SELECT DISTINCT org_id").
+	mock.ExpectQuery("privacy_audit_list_orgs").
 		WillReturnRows(sqlmock.NewRows([]string{"org_id"}))
 	if code := verifyDB(context.Background(), db, ""); code != 0 {
 		t.Fatalf("code=%d", code)
@@ -68,7 +70,7 @@ func TestVerifyDB_EmptyOK(t *testing.T) {
 
 func TestVerifyDB_ListError(t *testing.T) {
 	db, mock := newMockDB(t)
-	mock.ExpectQuery("SELECT DISTINCT org_id").WillReturnError(context.Canceled)
+	mock.ExpectQuery("privacy_audit_list_orgs").WillReturnError(context.Canceled)
 	if code := verifyDB(context.Background(), db, ""); code != 2 {
 		t.Fatalf("code=%d", code)
 	}
@@ -78,7 +80,7 @@ func TestVerifyDB_ChainFail(t *testing.T) {
 	db, mock := newMockDB(t)
 	org := uuid.New()
 	ts := time.Now().UTC()
-	expectSetOrg(mock, org)
+	expectSetOrgTx(mock, org)
 	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).WillReturnRows(sqlmock.NewRows(entryColumns()).AddRow(
 		org, int64(1), privacyaudit.GenesisPrevHash, "bad",
 		nil, "a", "", "",
@@ -86,6 +88,7 @@ func TestVerifyDB_ChainFail(t *testing.T) {
 		"", "", "",
 		"", "", []byte(`{}`), ts,
 	))
+	mock.ExpectRollback()
 	if code := verifyDB(context.Background(), db, org.String()); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
@@ -103,8 +106,10 @@ func TestVerifyDB_OrgOK_EmptyChain(t *testing.T) {
 func TestVerifyDB_SetConfigFail(t *testing.T) {
 	db, mock := newMockDB(t)
 	org := uuid.New()
+	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
 		WillReturnError(context.Canceled)
+	mock.ExpectRollback()
 	if code := verifyDB(context.Background(), db, org.String()); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
@@ -123,7 +128,7 @@ func TestVerifyOrg_ValidRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.RowHash = h
-	expectSetOrg(mock, org)
+	expectSetOrgTx(mock, org)
 	mock.ExpectQuery("SELECT org_id, seq").WithArgs(org).WillReturnRows(sqlmock.NewRows(entryColumns()).AddRow(
 		org, int64(1), privacyaudit.GenesisPrevHash, h,
 		nil, "a", "", "",
@@ -131,6 +136,7 @@ func TestVerifyOrg_ValidRow(t *testing.T) {
 		"", "", "",
 		"", "", []byte(`{}`), ts,
 	))
+	mock.ExpectCommit()
 	n, verr := VerifyOrg(context.Background(), db, org)
 	if verr != nil || n != 1 {
 		t.Fatalf("n=%d err=%v", n, verr)

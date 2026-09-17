@@ -56,11 +56,13 @@ def _parse_job(kwargs: dict[str, Any]) -> _CaptureJob:
     if not org_id or not isinstance(org_id, str):
         raise ValueError("org_id is required")
     payload = kwargs.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
     return _CaptureJob(
         org_id=org_id,
         event_id=kwargs.get("event_id"),
         agent_id=kwargs.get("agent_id"),
-        payload=payload if isinstance(payload, dict) else {},
+        payload=payload,
     )
 
 
@@ -80,15 +82,26 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
 
 
 async def _apply_mode(session, settings: Any, mode: str, job: _CaptureJob) -> dict[str, str]:
-    payload = job.payload or {}
     if mode == "none":
         return {"status": "skipped", "mode": mode}
     if mode == "metadata_only":
         return {"status": "redacted", "mode": mode}
     if mode == "redacted":
-        filtered = {k: v for k, v in payload.items() if k not in _STRIP_KEYS}
-        await _persist_redacted(session, settings, job, filtered)
-        return {"status": "redacted", "mode": mode, "event_id": job.event_id or ""}
+        return await _mode_redacted(session, settings, job)
+    return await _mode_archive(session, settings, job, mode)
+
+
+async def _mode_redacted(session, settings: Any, job: _CaptureJob) -> dict[str, str]:
+    payload = job.payload or {}
+    filtered = {k: v for k, v in payload.items() if k not in _STRIP_KEYS}
+    await _persist_redacted(session, settings, job, filtered)
+    return {"status": "redacted", "mode": "redacted", "event_id": job.event_id or ""}
+
+
+async def _mode_archive(
+    session, settings: Any, job: _CaptureJob, mode: str
+) -> dict[str, str]:
+    payload = job.payload or {}
     if payload:
         await _archive_payload(session, settings, job, payload)
     return {"status": "archived", "mode": mode, "event_id": job.event_id or ""}
@@ -171,9 +184,12 @@ async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
 
 
 def _put_archive_blob(settings: Any, job: _CaptureJob, payload: dict[str, Any], kind: str) -> str:
+    from uuid import uuid4
+
     from app.objectstore_client import put_encrypted_json
 
-    key = f"{job.org_id}/capture/{kind}/{job.event_id or 'anon'}.json"
+    object_id = job.event_id or str(uuid4())
+    key = f"{job.org_id}/capture/{kind}/{object_id}.json"
     body = json.dumps(
         {"org_id": job.org_id, "event_id": job.event_id, "payload": payload}
     ).encode()

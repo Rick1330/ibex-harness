@@ -22,8 +22,13 @@ def _clear_s3_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "S3_MASTER_KEY_B64",
         "OBJECTSTORE_MASTER_KEY_B64",
         "S3_ENCRYPTION_KEY_ID",
+        "S3_ALLOW_INSECURE_HTTP",
     ):
         monkeypatch.delenv(key, raising=False)
+
+
+def _allow_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
 
 
 def test_cfg_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,6 +99,7 @@ def test_delete_uri_malformed() -> None:
 
 def test_delete_uri_bucket_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
+    _allow_http(monkeypatch)
     monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
     monkeypatch.setenv("S3_BUCKET_SESSIONS", "ibex-sessions")
     with pytest.raises(ValueError, match="bucket mismatch"):
@@ -102,6 +108,7 @@ def test_delete_uri_bucket_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_delete_uri_success(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
+    _allow_http(monkeypatch)
     monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
     monkeypatch.setenv("S3_ACCESS_KEY", "ak")
     monkeypatch.setenv("S3_SECRET_KEY", "sk")
@@ -115,6 +122,7 @@ def test_delete_uri_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_put_encrypted_json_seals_and_puts(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
+    _allow_http(monkeypatch)
     master = secrets_key_b64()
     monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
     monkeypatch.setenv("S3_ACCESS_KEY", "ak")
@@ -156,9 +164,75 @@ def test_parse_list_xml_truncated_with_continuation() -> None:
 
 def test_parse_list_xml_truncated_missing_token() -> None:
     xml = "<ListBucketResult><Key>k</Key><IsTruncated>true</IsTruncated></ListBucketResult>"
+    with pytest.raises(RuntimeError, match="NextContinuationToken"):
+        osc._parse_list_xml(xml)
+
+
+def test_extract_xml_keys_unescapes_entities() -> None:
+    xml = "<ListBucketResult><Key>a&amp;b</Key><IsTruncated>false</IsTruncated></ListBucketResult>"
     keys, cont = osc._parse_list_xml(xml)
-    assert keys == ["k"]
+    assert keys == ["a&b"]
     assert cont == ""
+
+
+def test_canonical_query_sorts_and_escapes_slash() -> None:
+    q = osc._canonical_query({"prefix": "a/b", "list-type": "2"})
+    assert q == "list-type=2&prefix=a%2Fb"
+
+
+def test_require_endpoint_rejects_http_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_s3_env(monkeypatch)
+    monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
+    cfg = osc._S3Cfg(
+        endpoint="http://minio.example:9000",
+        access_key="ak",
+        secret_key="sk",
+        bucket="b",
+        region="us-east-1",
+        master_key_b64="",
+        key_id="v1",
+    )
+    with pytest.raises(RuntimeError, match="HTTPS"):
+        osc._require_endpoint(cfg)
+
+
+def test_require_endpoint_allows_http_with_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_s3_env(monkeypatch)
+    monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
+    cfg = osc._S3Cfg(
+        endpoint="http://127.0.0.1:9000",
+        access_key="ak",
+        secret_key="sk",
+        bucket="b",
+        region="us-east-1",
+        master_key_b64="",
+        key_id="v1",
+    )
+    osc._require_endpoint(cfg)
+
+
+def test_secret_key_preserves_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_s3_env(monkeypatch)
+    monkeypatch.setenv("S3_ENDPOINT", "https://s3.example.com")
+    monkeypatch.setenv("S3_SECRET_KEY", "sk/")
+    cfg = osc._cfg()
+    assert cfg["secret_key"] == "sk/"
+
+
+def test_put_rejects_failed_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_s3_env(monkeypatch)
+    master = secrets_key_b64()
+    monkeypatch.setenv("S3_ENDPOINT", "https://s3.example.com")
+    monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
+    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
+    monkeypatch.setenv("S3_SECRET_KEY", "sk")
+    monkeypatch.setenv("S3_MASTER_KEY_B64", master)
+    mock_resp = MagicMock(status_code=403)
+    with (
+        patch.object(osc.httpx, "request", return_value=mock_resp),
+        pytest.raises(RuntimeError, match="s3 put"),
+    ):
+        osc.put_encrypted_json("org/blob.json", b'{"x":1}')
 
 
 def test_escape_key_path() -> None:
@@ -188,6 +262,7 @@ def test_parse_master_key_invalid_encoding() -> None:
 
 def test_delete_org_prefix_lists_and_deletes(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
+    _allow_http(monkeypatch)
     monkeypatch.setenv("S3_ENDPOINT", "http://localhost:9000")
     monkeypatch.setenv("S3_ACCESS_KEY", "ak")
     monkeypatch.setenv("S3_SECRET_KEY", "sk")

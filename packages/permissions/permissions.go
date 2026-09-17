@@ -47,8 +47,8 @@ const (
 	BreakGlass         int64 = 1 << 47 // requires step-up
 
 	// Federation operations (bits 48-55).
-	FederationShare  int64 = 1 << 48
-	LegalHoldManage  int64 = 1 << 49 // requires step-up (4.P.3)
+	FederationShare int64 = 1 << 48
+	LegalHoldManage int64 = 1 << 49 // requires step-up (4.P.3)
 )
 
 // Predefined permission sets.

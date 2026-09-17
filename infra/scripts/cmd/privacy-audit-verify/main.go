@@ -11,7 +11,7 @@ import (
 	"os"
 
 	"github.com/Rick1330/ibex-harness/packages/privacyaudit"
-	_ "github.com/lib/pq"
+	_ "github.com/lib/pq" // PostgreSQL driver registered via blank import
 )
 
 func main() {

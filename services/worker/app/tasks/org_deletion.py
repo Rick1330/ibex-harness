@@ -229,33 +229,53 @@ async def _run_store_stages(ctx: _StageCtx, *, archived_uris: list[str]) -> None
         "postgres",
         lambda: _stage_postgres(ctx.session, org_id=ctx.org_id),
     )
+    # Fail closed: invalidation errors must mark the job failed for retry.
     await _publish_model_policy_invalidate(ctx.settings, ctx.org_id)
 
-    await _run_one_store(
+    await _run_optional_store(
         ctx,
         "clickhouse",
+        _clickhouse_configured(ctx.settings),
         lambda: _stage_clickhouse(ctx.settings, org_id=ctx.org_id),
     )
-    await _run_one_store(
+    await _run_optional_store(
         ctx,
         "redis",
+        _redis_configured(ctx.settings),
         lambda: _stage_redis(ctx.settings, org_id=ctx.org_id),
     )
-    await _run_one_store(
+    await _run_optional_store(
         ctx,
         "objectstore",
+        _objectstore_configured(ctx.settings),
         lambda: _stage_objectstore(ctx.settings, org_id=ctx.org_id, uris=archived_uris),
     )
 
 
+async def _run_optional_store(
+    ctx: _StageCtx,
+    store: str,
+    configured: bool,
+    runner: Callable[[], Awaitable[None]],
+) -> None:
+    if await _receipt_verified(ctx.session, ctx.job_id, store):
+        return
+    if not configured:
+        # Deployment has no such store: nothing to purge; record verified absence.
+        await _upsert_receipt(
+            ctx.session,
+            job_id=ctx.job_id,
+            store=store,
+            status="verified",
+            error="unconfigured",
+        )
+        return
+    await _require_no_hold(ctx.session, ctx.org_id)
+    await runner()
+    await _upsert_receipt(ctx.session, job_id=ctx.job_id, store=store, status="verified")
+
+
 async def _finalize_job(ctx: _StageCtx) -> dict[str, str]:
-    digests = await _receipt_digests(ctx.session, ctx.job_id)
-    await _audit_append(
-        ctx.session,
-        org_id=ctx.org_id,
-        action="org_deletion.certificate",
-        payload={"job_id": ctx.job_id, "receipts": digests},
-    )
     if not await _all_receipts_verified(ctx.session, ctx.job_id):
         await _finish_job(
             ctx.session,
@@ -267,6 +287,13 @@ async def _finalize_job(ctx: _StageCtx) -> dict[str, str]:
             ),
         )
         return {"status": "failed", "job_id": ctx.job_id, "org_id": ctx.org_id}
+    digests = await _receipt_digests(ctx.session, ctx.job_id)
+    await _audit_append(
+        ctx.session,
+        org_id=ctx.org_id,
+        action="org_deletion.certificate",
+        payload={"job_id": ctx.job_id, "receipts": digests},
+    )
     await _finish_job(
         ctx.session,
         _JobOutcome(job_id=ctx.job_id, org_id=ctx.org_id, status="succeeded"),
@@ -366,12 +393,26 @@ async def _receipt_verified(session, job_id: str, store: str) -> bool:
     return result.first() is not None
 
 
+@dataclass(frozen=True, slots=True)
+class _ReceiptWrite:
+    job_id: str
+    store: str
+    status: str
+    error: str | None = None
+
+
 async def _upsert_receipt(
     session, *, job_id: str, store: str, status: str, error: str | None = None
 ) -> None:
-    if store in NON_ERASABLE_STORES:
-        raise ValueError(f"store {store!r} is non-erasable")
-    idem = f"{job_id}:{store}:org"
+    await _upsert_receipt_write(
+        session, _ReceiptWrite(job_id=job_id, store=store, status=status, error=error)
+    )
+
+
+async def _upsert_receipt_write(session, receipt: _ReceiptWrite) -> None:
+    if receipt.store in NON_ERASABLE_STORES:
+        raise ValueError(f"store {receipt.store!r} is non-erasable")
+    idem = f"{receipt.job_id}:{receipt.store}:org"
     await session.execute(
         text(
             """
@@ -390,11 +431,11 @@ async def _upsert_receipt(
             """
         ),
         {
-            "job_id": job_id,
-            "store": store,
-            "status": status,
+            "job_id": receipt.job_id,
+            "store": receipt.store,
+            "status": receipt.status,
             "idem": idem,
-            "error": error,
+            "error": receipt.error,
         },
     )
 
@@ -457,22 +498,37 @@ async def _audit_append(session, *, org_id: str, action: str, payload: dict[str,
 
 
 async def _publish_model_policy_invalidate(settings: Any, org_id: str) -> None:
-    """Best-effort Redis PUBLISH so proxy cache cannot reinstall deleted policies."""
+    """Redis PUBLISH so proxy cache cannot reinstall deleted policies. Failures propagate."""
     redis_url = getattr(settings, "redis_url", None)
     if not redis_url:
         return
-    try:
-        from redis.asyncio import Redis
+    from redis.asyncio import Redis
 
-        client = Redis.from_url(redis_url, decode_responses=True, socket_timeout=1.0)
-        try:
-            channel = f"model_policy_updates:{org_id}"
-            payload = json.dumps({"v": 1, "org_id": org_id, "epoch": int(time.time())})
-            await client.publish(channel, payload)
-        finally:
-            await client.aclose()
-    except Exception:
-        logger.warning("model_policy_invalidate_failed", extra={"org_id": org_id}, exc_info=True)
+    client = Redis.from_url(redis_url, decode_responses=True, socket_timeout=1.0)
+    try:
+        channel = f"model_policy_updates:{org_id}"
+        payload = json.dumps({"v": 1, "org_id": org_id, "epoch": int(time.time())})
+        await client.publish(channel, payload)
+    finally:
+        await client.aclose()
+
+
+def _clickhouse_configured(settings: Any) -> bool:
+    dsn = (
+        getattr(settings, "clickhouse_dsn", None)
+        or os.environ.get("CLICKHOUSE_DSN")
+        or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN")
+    )
+    return bool(dsn and str(dsn).strip())
+
+
+def _redis_configured(settings: Any) -> bool:
+    return bool(getattr(settings, "redis_url", None))
+
+
+def _objectstore_configured(settings: Any) -> bool:
+    endpoint = os.environ.get("S3_ENDPOINT") or getattr(settings, "s3_endpoint", None)
+    return bool(endpoint and str(endpoint).strip())
 
 
 def _clickhouse_dsn(settings: Any) -> str:
@@ -490,42 +546,58 @@ def _ch_unknown_table(body: str) -> bool:
     return "UNKNOWN_TABLE" in body or "doesn't exist" in body.lower()
 
 
-async def _ch_mutate_table(http: Any, url: str, auth: Any, table: str, org_id: str) -> None:
-    mut = _CH_DELETE_QUERIES[table]
-    resp = http.post(
-        url,
-        params={"query": mut, "param_org_id": org_id},
-        auth=auth,
+@dataclass(frozen=True, slots=True)
+class _CHClient:
+    http: Any
+    url: str
+    auth: Any
+
+
+@dataclass(frozen=True, slots=True)
+class _CHOp:
+    client: _CHClient
+    table: str
+    org_id: str
+
+
+def _ch_mutate_table(op: _CHOp) -> None:
+    mut = _CH_DELETE_QUERIES[op.table]
+    resp = op.client.http.post(
+        op.client.url,
+        params={"query": mut, "param_org_id": op.org_id},
+        auth=op.client.auth,
         timeout=30.0,
     )
     if resp.status_code >= 400:
         body = resp.text
         if _ch_unknown_table(body):
             return
-        raise RuntimeError(f"clickhouse mutate {table}: {resp.status_code}")
+        raise RuntimeError(f"clickhouse mutate {op.table}: {resp.status_code}")
 
 
-async def _ch_wait_absent(
-    http: Any, url: str, auth: Any, table: str, org_id: str, deadline: float
-) -> None:
-    q = _CH_COUNT_QUERIES[table]
+async def _ch_wait_absent(op: _CHOp, deadline: float) -> None:
+    q = _CH_COUNT_QUERIES[op.table]
     while time.monotonic() < deadline:
-        resp = http.post(
-            url,
-            params={"query": q, "param_org_id": org_id},
-            auth=auth,
-            timeout=10.0,
-        )
-        if resp.status_code >= 400:
-            body = resp.text
-            if _ch_unknown_table(body):
-                return
-            raise RuntimeError(f"clickhouse count {table}: {resp.status_code}")
-        count = int(resp.text.strip() or "0")
+        count = await _ch_count_org(op, q)
         if count == 0:
             return
         await asyncio.sleep(0.5)
-    raise TimeoutError(f"clickhouse {table} rows remain for org")
+    raise TimeoutError(f"clickhouse {op.table} rows remain for org")
+
+
+async def _ch_count_org(op: _CHOp, query: str) -> int:
+    resp = await asyncio.to_thread(
+        op.client.http.post,
+        op.client.url,
+        params={"query": query, "param_org_id": op.org_id},
+        auth=op.client.auth,
+        timeout=10.0,
+    )
+    if resp.status_code < 400:
+        return int(resp.text.strip() or "0")
+    if _ch_unknown_table(resp.text):
+        return 0
+    raise RuntimeError(f"clickhouse count {op.table}: {resp.status_code}")
 
 
 async def _stage_clickhouse(settings: Any, *, org_id: str) -> None:
@@ -534,11 +606,12 @@ async def _stage_clickhouse(settings: Any, *, org_id: str) -> None:
     dsn = _clickhouse_dsn(settings)
     http = shared_clickhouse_client()
     url, auth = _http_endpoint(dsn)
+    client = _CHClient(http=http, url=url, auth=auth)
     deadline = time.monotonic() + 120.0
     for table in _CH_TABLES:
-        await _ch_mutate_table(http, url, auth, table, org_id)
+        await asyncio.to_thread(_ch_mutate_table, _CHOp(client, table, org_id))
     for table in _CH_TABLES:
-        await _ch_wait_absent(http, url, auth, table, org_id, deadline)
+        await _ch_wait_absent(_CHOp(client, table, org_id), deadline)
 
 
 async def _stage_redis(settings: Any, *, org_id: str) -> None:
@@ -574,10 +647,14 @@ def _s3_endpoint(settings: Any) -> str:
     return str(endpoint)
 
 
-async def _stage_objectstore(settings: Any, *, org_id: str, uris: list[str]) -> None:
+def _delete_objectstore_sync(settings: Any, org_id: str, uris: list[str]) -> None:
     _s3_endpoint(settings)
     from app.objectstore_client import delete_org_prefix, delete_uri
 
     for uri in uris:
         delete_uri(uri, settings=settings)
     delete_org_prefix(org_id, settings=settings)
+
+
+async def _stage_objectstore(settings: Any, *, org_id: str, uris: list[str]) -> None:
+    await asyncio.to_thread(_delete_objectstore_sync, settings, org_id, uris)

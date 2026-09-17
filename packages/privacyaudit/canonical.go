@@ -126,12 +126,18 @@ func sortJSONArray(a []any) (any, error) {
 	return out, nil
 }
 
+// sortedMapKeys orders keys like PostgreSQL jsonb (length ascending, then bytewise).
 func sortedMapKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) < len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
 	return keys
 }
 
@@ -183,22 +189,40 @@ func writeJSONBool(b *strings.Builder, v bool) error {
 	return nil
 }
 
-// writeJSONString encodes s without HTML escaping (<, >, & stay literal),
-// matching PostgreSQL jsonb_out (not Go's default json.Marshal).
+// writeJSONString encodes s like PostgreSQL jsonb_out: no HTML escaping,
+// and U+2028 / U+2029 stay as literal UTF-8 (Go's encoding/json escapes them).
 func writeJSONString(b *strings.Builder, s string) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(s); err != nil {
-		return fmt.Errorf("privacyaudit: marshal string: %w", err)
+	b.WriteByte('"')
+	for _, r := range s {
+		if err := writeJSONStringRune(b, r); err != nil {
+			return err
+		}
 	}
-	// Encode appends a newline.
-	out := buf.Bytes()
-	if len(out) > 0 && out[len(out)-1] == '\n' {
-		out = out[:len(out)-1]
-	}
-	b.Write(out)
+	b.WriteByte('"')
 	return nil
+}
+
+func writeJSONStringRune(b *strings.Builder, r rune) error {
+	if esc, ok := jsonStringEscapes[r]; ok {
+		b.WriteString(esc)
+		return nil
+	}
+	if r < 0x20 {
+		_, err := fmt.Fprintf(b, `\u%04x`, r)
+		return err
+	}
+	b.WriteRune(r)
+	return nil
+}
+
+var jsonStringEscapes = map[rune]string{
+	'"':  `\"`,
+	'\\': `\\`,
+	'\b': `\b`,
+	'\f': `\f`,
+	'\n': `\n`,
+	'\r': `\r`,
+	'\t': `\t`,
 }
 
 func writeJSONObject(b *strings.Builder, m map[string]any) error {

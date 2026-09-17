@@ -127,10 +127,9 @@ async def test_run_full_archive_exception_propagates(monkeypatch: pytest.MonkeyP
         "_put_archive_blob",
         MagicMock(side_effect=RuntimeError("seal failed")),
     )
+    job = _CaptureJob(org_id="o", event_id="1", payload={"content": "secret"})
     with pytest.raises(RuntimeError, match="seal failed"):
-        await capture_redaction._run(
-            _CaptureJob(org_id="o", event_id="1", payload={"content": "secret"})
-        )
+        await capture_redaction._run(job)
 
 
 def test_parse_job_from_kwargs() -> None:
@@ -138,3 +137,28 @@ def test_parse_job_from_kwargs() -> None:
     assert job.org_id == "o"
     assert job.event_id == "1"
     assert job.payload == {"a": 1}
+
+
+def test_parse_job_rejects_non_object_payload() -> None:
+    with pytest.raises(ValueError, match="payload must be an object"):
+        capture_redaction._parse_job({"org_id": "o", "payload": ["not", "object"]})
+
+
+def test_put_archive_blob_unique_key_without_event_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    keys: list[str] = []
+
+    def fake_put(key: str, body: bytes, *, settings=None):
+        del body, settings
+        keys.append(key)
+        return f"s3://ibex-sessions/{key}"
+
+    monkeypatch.setattr("app.objectstore_client.put_encrypted_json", fake_put)
+    settings = MagicMock()
+    job = _CaptureJob(org_id="org-1", payload={"a": 1})
+    capture_redaction._put_archive_blob(settings, job, {"a": 1}, "full")
+    capture_redaction._put_archive_blob(settings, job, {"a": 1}, "full")
+    assert len(keys) == 2
+    assert keys[0] != keys[1]
+    assert keys[0].startswith("org-1/capture/full/")
+    assert not keys[0].endswith("/anon.json")
+

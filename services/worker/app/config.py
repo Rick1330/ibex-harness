@@ -14,7 +14,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def require_https_or_loopback(url: str | None) -> str | None:
-    """Remote extraction URLs must be HTTPS; HTTP is allowed only on loopback."""
+    """Remote URLs must be HTTPS; HTTP is allowed only on loopback."""
     if url is None:
         return None
     trimmed = url.strip()
@@ -22,8 +22,7 @@ def require_https_or_loopback(url: str | None) -> str | None:
     host = parsed.hostname
     if host is None:
         raise ValueError(
-            "extraction base URL must include a hostname "
-            "(https:// or http:// on loopback)"
+            "URL must include a hostname (https:// or http:// on loopback)"
         )
     host = host.lower()
     if parsed.scheme == "https":
@@ -31,9 +30,14 @@ def require_https_or_loopback(url: str | None) -> str | None:
     if parsed.scheme == "http" and host in _LOOPBACK_HOSTS:
         return trimmed
     raise ValueError(
-        "extraction base URL must use https:// or http:// on loopback "
-        "(127.0.0.1, localhost, ::1)"
+        "URL must use https:// or http:// on loopback "
+        "(127.0.0.1, localhost, ::1); set S3_ALLOW_INSECURE_HTTP=1 for other HTTP S3"
     )
+
+
+def _s3_insecure_http_allowed() -> bool:
+    raw = os.environ.get("S3_ALLOW_INSECURE_HTTP", "")
+    return raw == "1" or raw.lower() == "true"
 
 
 def redis_url_with_db(base_url: str, db_index: int) -> str:
@@ -312,6 +316,15 @@ class Settings(BaseSettings):
     @field_validator("extraction_openai_base_url", "extraction_vllm_base_url")
     @classmethod
     def _https_or_loopback_extraction_url(cls, value: str | None) -> str | None:
+        return require_https_or_loopback(value)
+
+    @field_validator("s3_endpoint")
+    @classmethod
+    def _s3_endpoint_https(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if _s3_insecure_http_allowed():
+            return value
         return require_https_or_loopback(value)
 
     @property

@@ -33,9 +33,10 @@ async def test_set_hold_conflict_when_active() -> None:
     session.rollback = AsyncMock()
     org = uuid4()
     user = uuid4()
+    body = LegalHoldCreate(reason="x")
     session.execute = AsyncMock(side_effect=_integrity("legal_holds_one_active_per_scope"))
     with pytest.raises(ApiError) as ei:
-        await hold_svc.set_hold(session, org, LegalHoldCreate(reason="x"), set_by=user)
+        await hold_svc.set_hold(session, org, body, set_by=user)
     assert ei.value.code == LEGAL_HOLD_SCOPE_CONFLICT
     session.rollback.assert_awaited()
 

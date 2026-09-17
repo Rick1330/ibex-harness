@@ -34,7 +34,12 @@ def _wire_delete_session(
     *,
     session_factory: Callable[[], Any] | None = None,
 ) -> None:
-    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db", redis_url=None)
+    settings = MagicMock(
+        database_url="postgresql+asyncpg://u:p@localhost/db",
+        redis_url="redis://127.0.0.1:6379/0",
+        clickhouse_dsn="http://127.0.0.1:8123",
+        s3_endpoint="http://127.0.0.1:9000",
+    )
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
     engine = MagicMock()
     engine.dispose = AsyncMock()
@@ -245,8 +250,15 @@ def test_claim_job_sql_allows_failed_retry() -> None:
 
 
 def test_ch_queries_are_literal_mapping() -> None:
+    src_delete = inspect.getsource(org_deletion)
     for table in org_deletion._CH_TABLES:
         assert table in org_deletion._CH_DELETE_QUERIES
         assert table in org_deletion._CH_COUNT_QUERIES
-        assert "f-string" not in org_deletion._CH_DELETE_QUERIES[table]
-        assert table in org_deletion._CH_DELETE_QUERIES[table]
+        q = org_deletion._CH_DELETE_QUERIES[table]
+        assert "f-string" not in q
+        assert table in q
+        # Binding uses param_org_id, not an interpolated identifier.
+        assert "{org_id:UUID}" in q
+    assert "_CH_DELETE_QUERIES" in src_delete
+    assert "f\"ALTER TABLE" not in src_delete
+    assert "f'ALTER TABLE" not in src_delete

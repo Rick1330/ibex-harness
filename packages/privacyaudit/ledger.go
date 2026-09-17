@@ -52,7 +52,7 @@ func listDistinctOrgs(ctx context.Context, q Querier) ([]uuid.UUID, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanUUIDs(rows)
 }
 
@@ -83,7 +83,7 @@ func LoadEntries(ctx context.Context, q Querier, org uuid.UUID) ([]Entry, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanEntries(rows)
 }
 
