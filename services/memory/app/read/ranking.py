@@ -3,7 +3,7 @@
 FTS supplemental hits have no cosine similarity. For composite scoring only we use a fixed
 conservative relevance sentinel (0.5) so FTS rows rank below strong vector matches on the
 relevance component while still competing on recency/confidence/usefulness. HTTP ``similarity``
-remains the retrieval metric (cosine or raw ts_rank_cd).
+remains the retrieval metric (cosine similarity, or FTS ``ts_rank_cd`` clamped to ``[0, 1]``).
 
 Scoring-time relevance floor (ADR-0068): candidates whose composite relevance component is
 below ``relevance_floor`` are excluded *before* ``composite_score``. This is distinct from
