@@ -27,15 +27,71 @@ func hashedEntry(t *testing.T, e Entry) Entry {
 	return e
 }
 
-func TestCanonicalPayload_SortsKeys(t *testing.T) {
-	t.Parallel()
-	got, err := CanonicalPayload(json.RawMessage(`{"b":1,"a":2}`))
+func fixedOrg() uuid.UUID {
+	return uuid.MustParse("11111111-1111-1111-1111-111111111111")
+}
+
+func fixedTS() time.Time {
+	return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+}
+
+type baseEntryOpts struct {
+	org     uuid.UUID
+	seq     int64
+	prev    string
+	action  string
+	payload json.RawMessage
+	fields  []string
+	actor   *uuid.UUID
+	ts      time.Time
+}
+
+func baseEntry(o baseEntryOpts) Entry {
+	if o.org == uuid.Nil {
+		o.org = fixedOrg()
+	}
+	if o.prev == "" {
+		o.prev = GenesisPrevHash
+	}
+	if o.action == "" {
+		o.action = "a"
+	}
+	if o.payload == nil {
+		o.payload = json.RawMessage(`{}`)
+	}
+	if o.ts.IsZero() {
+		o.ts = fixedTS()
+	}
+	if o.seq == 0 {
+		o.seq = 1
+	}
+	return Entry{
+		OrgID: o.org, Seq: o.seq, PrevHash: o.prev, ActorUserID: o.actor,
+		Action: o.action, Fields: o.fields, Payload: o.payload, CreatedAt: o.ts,
+	}
+}
+
+func assertCanonicalPayload(t *testing.T, raw, want string) {
+	t.Helper()
+	got, err := CanonicalPayload(json.RawMessage(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != `{"a": 2, "b": 1}` {
-		t.Fatalf("got %s", got)
+	if got != want {
+		t.Fatalf("got %s want %s", got, want)
 	}
+}
+
+func assertBreakAt(t *testing.T, err error, wantIdx int) {
+	t.Helper()
+	if BreakIndex(err) != wantIdx {
+		t.Fatalf("want break at %d, got idx=%d err=%v", wantIdx, BreakIndex(err), err)
+	}
+}
+
+func TestCanonicalPayload_SortsKeys(t *testing.T) {
+	t.Parallel()
+	assertCanonicalPayload(t, `{"b":1,"a":2}`, `{"a": 2, "b": 1}`)
 }
 
 func TestCanonicalPayload_EmptyMapsToObject(t *testing.T) {
@@ -66,46 +122,22 @@ func TestCanonicalPayload_InvalidJSON(t *testing.T) {
 
 func TestCanonicalPayload_NestedAndArray(t *testing.T) {
 	t.Parallel()
-	got, err := CanonicalPayload(json.RawMessage(`{"z":[{"b":1,"a":2}],"a":true}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := `{"a": true, "z": [{"a": 2, "b": 1}]}`
-	if got != want {
-		t.Fatalf("got %s want %s", got, want)
-	}
+	assertCanonicalPayload(t, `{"z":[{"b":1,"a":2}],"a":true}`, `{"a": true, "z": [{"a": 2, "b": 1}]}`)
 }
 
 func TestCanonicalPayload_NoHTMLEscape(t *testing.T) {
 	t.Parallel()
-	got, err := CanonicalPayload(json.RawMessage(`{"x":"<tag>&"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != `{"x": "<tag>&"}` {
-		t.Fatalf("got %s", got)
-	}
+	assertCanonicalPayload(t, `{"x":"<tag>&"}`, `{"x": "<tag>&"}`)
 }
 
 func TestCanonicalPayload_UseNumber(t *testing.T) {
 	t.Parallel()
-	got, err := CanonicalPayload(json.RawMessage(`{"n":9007199254740993}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != `{"n": 9007199254740993}` {
-		t.Fatalf("got %s", got)
-	}
+	assertCanonicalPayload(t, `{"n":9007199254740993}`, `{"n": 9007199254740993}`)
 }
 
 func TestCanonicalString_KnownVector(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	e := Entry{
-		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
-		Payload: json.RawMessage(`{}`), CreatedAt: ts,
-	}
+	e := baseEntry(baseEntryOpts{})
 	got, err := CanonicalString(e)
 	if err != nil {
 		t.Fatal(err)
@@ -124,12 +156,7 @@ func TestCanonicalString_KnownVector(t *testing.T) {
 
 func TestCanonicalString_NullPayload(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	e := Entry{
-		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
-		Payload: json.RawMessage(`null`), CreatedAt: ts,
-	}
+	e := baseEntry(baseEntryOpts{payload: json.RawMessage(`null`)})
 	got, err := CanonicalString(e)
 	if err != nil {
 		t.Fatal(err)
@@ -142,12 +169,9 @@ func TestCanonicalString_NullPayload(t *testing.T) {
 
 func TestCanonicalString_SortedFieldsArray(t *testing.T) {
 	t.Parallel()
-	org := uuid.New()
-	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	e := Entry{
-		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
-		Fields: []string{"z", "a"}, Payload: json.RawMessage(`{}`), CreatedAt: ts,
-	}
+	e := baseEntry(baseEntryOpts{
+		org: uuid.New(), fields: []string{"z", "a"},
+	})
 	got, err := CanonicalString(e)
 	if err != nil {
 		t.Fatal(err)
@@ -159,58 +183,46 @@ func TestCanonicalString_SortedFieldsArray(t *testing.T) {
 
 func TestVerifyChain_DetectsForgedMiddle(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	ts := time.Date(2026, 9, 16, 12, 0, 0, 123456000, time.UTC)
 	mk := func(seq int64, prev, action string) Entry {
-		return hashedEntry(t, Entry{
-			OrgID: org, Seq: seq, PrevHash: prev, Action: action,
-			Payload: json.RawMessage(`{}`), CreatedAt: ts,
-		})
+		return hashedEntry(t, baseEntry(baseEntryOpts{
+			seq: seq, prev: prev, action: action, ts: ts,
+		}))
 	}
 	e1 := mk(1, GenesisPrevHash, "a")
 	e2 := mk(2, e1.RowHash, "b")
 	e3 := mk(3, e2.RowHash, "c")
 	forged := e2
 	forged.Action = "forged"
-	err := VerifyChain([]Entry{e1, forged, e3})
-	if BreakIndex(err) != 1 {
-		t.Fatalf("want break at 1, got idx=%d err=%v", BreakIndex(err), err)
-	}
+	assertBreakAt(t, VerifyChain([]Entry{e1, forged, e3}), 1)
 }
 
 func TestVerifyChain_DetectsPrevHashBreak(t *testing.T) {
 	t.Parallel()
-	org := uuid.New()
-	ts := time.Now().UTC()
-	e1 := hashedEntry(t, Entry{OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts})
-	e2 := hashedEntry(t, Entry{OrgID: org, Seq: 2, PrevHash: "deadbeef", Action: "b", Payload: json.RawMessage(`{}`), CreatedAt: ts})
-	err := VerifyChain([]Entry{e1, e2})
-	if BreakIndex(err) != 1 {
-		t.Fatalf("idx=%d err=%v", BreakIndex(err), err)
-	}
+	org, ts := uuid.New(), time.Now().UTC()
+	e1 := hashedEntry(t, baseEntry(baseEntryOpts{org: org, ts: ts}))
+	e2 := hashedEntry(t, baseEntry(baseEntryOpts{
+		org: org, seq: 2, prev: "deadbeef", action: "b", ts: ts,
+	}))
+	assertBreakAt(t, VerifyChain([]Entry{e1, e2}), 1)
 }
 
 func TestVerifyChain_DetectsSeqGap(t *testing.T) {
 	t.Parallel()
-	org := uuid.New()
-	ts := time.Now().UTC()
-	e1 := hashedEntry(t, Entry{OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts})
-	e3 := hashedEntry(t, Entry{OrgID: org, Seq: 3, PrevHash: e1.RowHash, Action: "c", Payload: json.RawMessage(`{}`), CreatedAt: ts})
-	err := VerifyChain([]Entry{e1, e3})
-	if BreakIndex(err) != 1 {
-		t.Fatalf("idx=%d err=%v", BreakIndex(err), err)
-	}
+	org, ts := uuid.New(), time.Now().UTC()
+	e1 := hashedEntry(t, baseEntry(baseEntryOpts{org: org, ts: ts}))
+	e3 := hashedEntry(t, baseEntry(baseEntryOpts{
+		org: org, seq: 3, prev: e1.RowHash, action: "c", ts: ts,
+	}))
+	assertBreakAt(t, VerifyChain([]Entry{e1, e3}), 1)
 }
 
 func TestVerifyChain_DetectsMissingGenesis(t *testing.T) {
 	t.Parallel()
-	org := uuid.New()
-	ts := time.Now().UTC()
-	e2 := hashedEntry(t, Entry{OrgID: org, Seq: 2, PrevHash: GenesisPrevHash, Action: "a", Payload: json.RawMessage(`{}`), CreatedAt: ts})
-	err := VerifyChain([]Entry{e2})
-	if BreakIndex(err) != 0 {
-		t.Fatalf("idx=%d err=%v", BreakIndex(err), err)
-	}
+	e2 := hashedEntry(t, baseEntry(baseEntryOpts{
+		org: uuid.New(), seq: 2, ts: time.Now().UTC(),
+	}))
+	assertBreakAt(t, VerifyChain([]Entry{e2}), 0)
 }
 
 func TestVerifyChain_EmptyOK(t *testing.T) {
@@ -228,11 +240,11 @@ func TestVerifyChain_OK(t *testing.T) {
 	var entries []Entry
 	prev := GenesisPrevHash
 	for i := int64(1); i <= 3; i++ {
-		e := hashedEntry(t, Entry{
-			OrgID: org, Seq: i, PrevHash: prev, ActorUserID: &actor,
-			Action: "delete.org", Fields: []string{"z", "a"},
-			Payload: json.RawMessage(`{"k":"v"}`), CreatedAt: ts,
-		})
+		e := hashedEntry(t, baseEntry(baseEntryOpts{
+			org: org, seq: i, prev: prev, actor: &actor,
+			action: "delete.org", fields: []string{"z", "a"},
+			payload: json.RawMessage(`{"k":"v"}`), ts: ts,
+		}))
 		entries = append(entries, e)
 		prev = e.RowHash
 	}

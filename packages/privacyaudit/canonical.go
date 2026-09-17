@@ -13,6 +13,9 @@
 // PostgreSQL to_char(..., 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')).
 // Payload: SQL NULL → {}; JSON null preserved as null.
 // jsonb::text uses spaces after ':' and ',' (PostgreSQL jsonb_out).
+//
+// Numbers use json.Decoder.UseNumber (not float64) and strings use
+// json.Encoder.SetEscapeHTML(false) so VerifyChain matches PG jsonb::text.
 package privacyaudit
 
 import (
@@ -68,14 +71,16 @@ func payloadValue(raw json.RawMessage) (any, error) {
 	if len(raw) == 0 {
 		return map[string]any{}, nil
 	}
-	v, err := decodeJSON(raw)
+	v, err := decodeJSONNumber(raw)
 	if err != nil {
 		return nil, fmt.Errorf("privacyaudit: payload: %w", err)
 	}
 	return sortJSON(v)
 }
 
-func decodeJSON(raw []byte) (any, error) {
+// decodeJSONNumber decodes with UseNumber so large integers stay exact
+// (float64 would lose precision vs PostgreSQL jsonb).
+func decodeJSONNumber(raw []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var v any
@@ -96,15 +101,11 @@ func sortJSON(v any) (any, error) {
 	}
 }
 
-func sortJSONObject(t map[string]any) (any, error) {
-	keys := make([]string, 0, len(t))
-	for k := range t {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+func sortJSONObject(m map[string]any) (any, error) {
+	keys := sortedMapKeys(m)
 	out := make(map[string]any, len(keys))
 	for _, k := range keys {
-		sv, err := sortJSON(t[k])
+		sv, err := sortJSON(m[k])
 		if err != nil {
 			return nil, err
 		}
@@ -113,9 +114,9 @@ func sortJSONObject(t map[string]any) (any, error) {
 	return out, nil
 }
 
-func sortJSONArray(t []any) (any, error) {
-	out := make([]any, len(t))
-	for i, el := range t {
+func sortJSONArray(a []any) (any, error) {
+	out := make([]any, len(a))
+	for i, el := range a {
 		sv, err := sortJSON(el)
 		if err != nil {
 			return nil, err
@@ -123,6 +124,15 @@ func sortJSONArray(t []any) (any, error) {
 		out[i] = sv
 	}
 	return out, nil
+}
+
+func sortedMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // marshalJSONB encodes v like PostgreSQL jsonb::text (spaces after ':' and ',').
@@ -140,12 +150,7 @@ func writeJSONB(b *strings.Builder, v any) error {
 		b.WriteString("null")
 		return nil
 	case bool:
-		if t {
-			b.WriteString("true")
-		} else {
-			b.WriteString("false")
-		}
-		return nil
+		return writeJSONBool(b, t)
 	case json.Number:
 		b.WriteString(string(t))
 		return nil
@@ -169,6 +174,17 @@ func writeJSONB(b *strings.Builder, v any) error {
 	}
 }
 
+func writeJSONBool(b *strings.Builder, v bool) error {
+	if v {
+		b.WriteString("true")
+	} else {
+		b.WriteString("false")
+	}
+	return nil
+}
+
+// writeJSONString encodes s without HTML escaping (<, >, & stay literal),
+// matching PostgreSQL jsonb_out (not Go's default json.Marshal).
 func writeJSONString(b *strings.Builder, s string) error {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -186,11 +202,7 @@ func writeJSONString(b *strings.Builder, s string) error {
 }
 
 func writeJSONObject(b *strings.Builder, m map[string]any) error {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := sortedMapKeys(m)
 	b.WriteByte('{')
 	for i, k := range keys {
 		if i > 0 {
@@ -229,31 +241,25 @@ func FormatCreatedAt(t time.Time) string {
 
 // CanonicalString builds the jsonb_build_array(... )::text preimage for row_hash.
 func CanonicalString(e Entry) (string, error) {
-	fields := append([]string(nil), e.Fields...)
-	sort.Strings(fields)
-	fieldAny := make([]any, len(fields))
-	for i, f := range fields {
-		fieldAny[i] = f
-	}
 	payload, err := payloadValue(e.Payload)
 	if err != nil {
 		return "", err
 	}
-	actor := ""
-	if e.ActorUserID != nil {
-		actor = e.ActorUserID.String()
-	}
-	arr := []any{
+	return marshalJSONB(entryArray(e, payload))
+}
+
+func entryArray(e Entry, payload any) []any {
+	return []any{
 		e.OrgID.String(),
 		e.Seq,
 		e.PrevHash,
-		actor,
+		actorString(e.ActorUserID),
 		e.Action,
 		e.Purpose,
 		e.PolicyResult,
 		e.ObjectType,
 		e.ObjectID,
-		fieldAny,
+		sortedFieldsAny(e.Fields),
 		e.ApprovalRef,
 		e.BeforeHash,
 		e.AfterHash,
@@ -262,7 +268,23 @@ func CanonicalString(e Entry) (string, error) {
 		payload,
 		FormatCreatedAt(e.CreatedAt),
 	}
-	return marshalJSONB(arr)
+}
+
+func actorString(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
+}
+
+func sortedFieldsAny(fields []string) []any {
+	sorted := append([]string(nil), fields...)
+	sort.Strings(sorted)
+	out := make([]any, len(sorted))
+	for i, f := range sorted {
+		out[i] = f
+	}
+	return out
 }
 
 // RowHash computes sha256 hex of the canonical string.
@@ -291,43 +313,65 @@ func (b ChainBreak) Error() string {
 
 // VerifyChain walks entries in seq order. On success returns nil.
 // Requires first seq == 1 and each subsequent seq == previous+1 before hash checks.
+// Row hashes are recomputed via CanonicalString (UseNumber + no HTML escape).
 // On failure returns *ChainBreak with Index set.
 func VerifyChain(entries []Entry) error {
 	var prev string
 	for i, e := range entries {
-		wantSeq := int64(i + 1)
-		if e.Seq != wantSeq {
-			return &ChainBreak{
-				Index: i,
-				Seq:   e.Seq,
-				Err:   fmt.Errorf("privacyaudit: expected seq %d, got %d", wantSeq, e.Seq),
-			}
+		if err := checkSeq(i, e); err != nil {
+			return err
 		}
-		wantPrev := GenesisPrevHash
-		if i > 0 {
-			wantPrev = prev
+		if err := checkPrevHash(i, e, prev); err != nil {
+			return err
 		}
-		if e.PrevHash != wantPrev {
-			return &ChainBreak{
-				Index: i,
-				Seq:   e.Seq,
-				Err:   fmt.Errorf("privacyaudit: seq %d prev_hash mismatch", e.Seq),
-			}
-		}
-		got, herr := RowHash(e)
-		if herr != nil {
-			return &ChainBreak{Index: i, Seq: e.Seq, Err: herr}
-		}
-		if got != e.RowHash {
-			return &ChainBreak{
-				Index: i,
-				Seq:   e.Seq,
-				Err:   fmt.Errorf("privacyaudit: seq %d row_hash mismatch", e.Seq),
-			}
+		if err := checkRowHash(i, e); err != nil {
+			return err
 		}
 		prev = e.RowHash
 	}
 	return nil
+}
+
+func checkSeq(i int, e Entry) error {
+	wantSeq := int64(i + 1)
+	if e.Seq == wantSeq {
+		return nil
+	}
+	return &ChainBreak{
+		Index: i,
+		Seq:   e.Seq,
+		Err:   fmt.Errorf("privacyaudit: expected seq %d, got %d", wantSeq, e.Seq),
+	}
+}
+
+func checkPrevHash(i int, e Entry, prev string) error {
+	wantPrev := GenesisPrevHash
+	if i > 0 {
+		wantPrev = prev
+	}
+	if e.PrevHash == wantPrev {
+		return nil
+	}
+	return &ChainBreak{
+		Index: i,
+		Seq:   e.Seq,
+		Err:   fmt.Errorf("privacyaudit: seq %d prev_hash mismatch", e.Seq),
+	}
+}
+
+func checkRowHash(i int, e Entry) error {
+	got, err := RowHash(e)
+	if err != nil {
+		return &ChainBreak{Index: i, Seq: e.Seq, Err: err}
+	}
+	if got == e.RowHash {
+		return nil
+	}
+	return &ChainBreak{
+		Index: i,
+		Seq:   e.Seq,
+		Err:   fmt.Errorf("privacyaudit: seq %d row_hash mismatch", e.Seq),
+	}
 }
 
 // BreakIndex returns the failing index from a VerifyChain error, or -1.

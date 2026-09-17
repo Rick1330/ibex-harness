@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import NoReturn
 from uuid import UUID
 
 from apierror_py import LEGAL_HOLD_SCOPE_CONFLICT, NOT_FOUND, VALIDATION_ERROR
@@ -47,6 +48,16 @@ def _is_scope_conflict(exc: IntegrityError) -> bool:
     return name == _SCOPE_UNIQUE or _SCOPE_UNIQUE in name
 
 
+def _reraise_hold_unique_violation(exc: IntegrityError) -> NoReturn:
+    """Map active-scope unique violations to LEGAL_HOLD_SCOPE_CONFLICT; re-raise others."""
+    if _is_scope_conflict(exc):
+        raise ApiError(
+            code=LEGAL_HOLD_SCOPE_CONFLICT,
+            message="Active legal hold already exists for scope",
+        ) from exc
+    raise exc
+
+
 async def list_active_holds(session: AsyncSession, org_id: UUID) -> list[LegalHoldResponse]:
     result = await session.execute(
         text(
@@ -72,34 +83,45 @@ async def set_hold(
     if not set_by:
         raise ApiError(code=VALIDATION_ERROR, message="User-scoped token required")
     try:
-        result = await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.legal_holds (org_id, scope, reason, set_by)
-                VALUES (:org_id, :scope, :reason, :set_by)
-                RETURNING id, org_id, scope, reason, set_by, cleared_by, created_at, cleared_at
-                """
-            ),
-            {
-                "org_id": str(org_id),
-                "scope": body.scope,
-                "reason": body.reason,
-                "set_by": str(set_by),
-            },
-        )
-        row = result.mappings().first()
-        if row is None:
-            raise ApiError(code=VALIDATION_ERROR, message="Legal hold insert returned no row")
+        row = await _insert_hold(session, org_id, body, set_by=set_by)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        if _is_scope_conflict(exc):
-            raise ApiError(
-                code=LEGAL_HOLD_SCOPE_CONFLICT,
-                message="Active legal hold already exists for scope",
-            ) from exc
-        raise
+        _reraise_hold_unique_violation(exc)
     return _row(row)
+
+
+async def _insert_hold(
+    session: AsyncSession,
+    org_id: UUID,
+    body: LegalHoldCreate,
+    *,
+    set_by: UUID,
+):
+    # Same advisory key as org-deletion hold checks (serialize create vs purge).
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(CAST(:org_id AS text)))"),
+        {"org_id": str(org_id)},
+    )
+    result = await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.legal_holds (org_id, scope, reason, set_by)
+            VALUES (:org_id, :scope, :reason, :set_by)
+            RETURNING id, org_id, scope, reason, set_by, cleared_by, created_at, cleared_at
+            """
+        ),
+        {
+            "org_id": str(org_id),
+            "scope": body.scope,
+            "reason": body.reason,
+            "set_by": str(set_by),
+        },
+    )
+    row = result.mappings().first()
+    if row is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Legal hold insert returned no row")
+    return row
 
 
 async def clear_hold(

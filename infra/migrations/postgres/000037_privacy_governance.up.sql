@@ -88,8 +88,9 @@ CREATE POLICY privacy_audit_ledger_isolation ON ibex_core.privacy_audit_ledger
 -- Append-only: no UPDATE/DELETE; INSERT only via privacy_audit_append (SECURITY DEFINER).
 REVOKE ALL ON TABLE ibex_core.privacy_audit_ledger FROM PUBLIC;
 REVOKE UPDATE, DELETE, INSERT ON ibex_core.privacy_audit_ledger FROM ibex_app;
+-- SELECT only: all inserts must go through privacy_audit_append (canonical hash + lock).
 GRANT SELECT ON ibex_core.privacy_audit_ledger TO ibex_app;
-GRANT SELECT, INSERT ON ibex_core.privacy_audit_ledger TO ibex_service;
+GRANT SELECT ON ibex_core.privacy_audit_ledger TO ibex_service;
 
 CREATE OR REPLACE FUNCTION ibex_core.privacy_audit_ledger_forbid_mutate()
 RETURNS TRIGGER
@@ -367,6 +368,6 @@ CREATE TRIGGER deletion_store_receipts_updated_at
     BEFORE UPDATE ON ibex_core.deletion_store_receipts
     FOR EACH ROW EXECUTE FUNCTION ibex_core.set_updated_at();
 
--- Capture redaction persists filtered data / archived_to on session_events.
-GRANT UPDATE ON ibex_core.session_events TO ibex_app;
-GRANT UPDATE ON ibex_core.session_events TO ibex_service;
+-- Capture redaction may only touch data / archived_to (not evidence identity columns).
+GRANT UPDATE (data, archived_to) ON ibex_core.session_events TO ibex_app;
+GRANT UPDATE (data, archived_to) ON ibex_core.session_events TO ibex_service;

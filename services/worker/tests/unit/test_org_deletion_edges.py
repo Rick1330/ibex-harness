@@ -9,6 +9,64 @@ import pytest
 from app.tasks import org_deletion
 
 
+def _wire_run(monkeypatch: pytest.MonkeyPatch, session: AsyncMock) -> None:
+    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db", redis_url=None)
+    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
+    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
+
+    class _CM:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, *args):
+            return None
+
+    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
+
+
+def _claimable_session_execute():
+    """SQL side-effect: claim succeeds, no legal hold, empty otherwise."""
+
+    async def execute(stmt, params=None):
+        del params
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
+
+    return execute
+
+
+def _stub_store_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    receipt_verified: bool,
+    all_verified: bool,
+) -> AsyncMock | None:
+    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    stage_pg = AsyncMock()
+    monkeypatch.setattr(org_deletion, "_stage_postgres", stage_pg)
+    monkeypatch.setattr(org_deletion, "_stage_clickhouse", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_stage_redis", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_stage_objectstore", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_receipt_digests", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        org_deletion, "_receipt_verified", AsyncMock(return_value=receipt_verified)
+    )
+    monkeypatch.setattr(org_deletion, "_upsert_receipt", AsyncMock())
+    monkeypatch.setattr(
+        org_deletion, "_all_receipts_verified", AsyncMock(return_value=all_verified)
+    )
+    return stage_pg
+
+
 @pytest.mark.asyncio
 async def test_receipt_verified_refuses_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(org_deletion, "NON_ERASABLE_STORES", frozenset({"billing"}))
@@ -123,49 +181,12 @@ async def test_receipt_digests_stable() -> None:
     assert len(digests["postgres"]) == 64
 
 
-def _wire_run(monkeypatch: pytest.MonkeyPatch, session: AsyncMock) -> None:
-    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db", redis_url=None)
-    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
-    engine = MagicMock()
-    engine.dispose = AsyncMock()
-    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
-    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
-
-    class _CM:
-        async def __aenter__(self):
-            return session
-
-        async def __aexit__(self, *args):
-            return None
-
-    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
-
-
 @pytest.mark.asyncio
 async def test_incomplete_receipts_marks_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     session = AsyncMock()
-
-    async def execute(stmt, params=None):
-        sql = str(stmt)
-        if "pending" in sql or "failed" in sql:
-            return MagicMock(first=MagicMock(return_value=(1,)))
-        if "legal_holds" in sql:
-            return MagicMock(first=MagicMock(return_value=None))
-        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
-
-    session.execute = AsyncMock(side_effect=execute)
+    session.execute = AsyncMock(side_effect=_claimable_session_execute())
     _wire_run(monkeypatch, session)
-    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
-    monkeypatch.setattr(org_deletion, "_stage_postgres", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_stage_clickhouse", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_stage_redis", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_stage_objectstore", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_receipt_digests", AsyncMock(return_value={}))
-    monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=False))
-    monkeypatch.setattr(org_deletion, "_upsert_receipt", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=False))
+    _stub_store_pipeline(monkeypatch, receipt_verified=False, all_verified=False)
 
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "failed"
@@ -174,31 +195,13 @@ async def test_incomplete_receipts_marks_failed(monkeypatch: pytest.MonkeyPatch)
 @pytest.mark.asyncio
 async def test_skip_verified_store_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     session = AsyncMock()
-
-    async def execute(stmt, params=None):
-        sql = str(stmt)
-        if "pending" in sql or "failed" in sql:
-            return MagicMock(first=MagicMock(return_value=(1,)))
-        if "legal_holds" in sql:
-            return MagicMock(first=MagicMock(return_value=None))
-        return MagicMock()
-
-    session.execute = AsyncMock(side_effect=execute)
+    session.execute = AsyncMock(side_effect=_claimable_session_execute())
     _wire_run(monkeypatch, session)
-    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
-    stage_pg = AsyncMock()
-    monkeypatch.setattr(org_deletion, "_stage_postgres", stage_pg)
-    monkeypatch.setattr(org_deletion, "_stage_clickhouse", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_stage_redis", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_stage_objectstore", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_receipt_digests", AsyncMock(return_value={}))
-    monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=True))
-    monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+    stage_pg = _stub_store_pipeline(monkeypatch, receipt_verified=True, all_verified=True)
 
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
+    assert stage_pg is not None
     stage_pg.assert_not_awaited()
 
 

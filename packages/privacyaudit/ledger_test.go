@@ -32,13 +32,27 @@ func entryColumns() []string {
 	}
 }
 
-func addEntryRow(rows *sqlmock.Rows, e Entry, actor any, fields pq.StringArray, payload []byte) *sqlmock.Rows {
+type entryRowOpts struct {
+	entry   Entry
+	actor   any
+	fields  pq.StringArray
+	payload []byte
+}
+
+func addEntryRow(rows *sqlmock.Rows, o entryRowOpts) *sqlmock.Rows {
+	e := o.entry
+	if o.fields == nil {
+		o.fields = pq.StringArray{}
+	}
+	if o.payload == nil {
+		o.payload = []byte(`{}`)
+	}
 	return rows.AddRow(
 		e.OrgID, e.Seq, e.PrevHash, e.RowHash,
-		actor, e.Action, e.Purpose, e.PolicyResult,
-		e.ObjectType, e.ObjectID, fields,
+		o.actor, e.Action, e.Purpose, e.PolicyResult,
+		e.ObjectType, e.ObjectID, o.fields,
 		e.ApprovalRef, e.BeforeHash, e.AfterHash,
-		e.CorrelationID, e.RequestID, payload, e.CreatedAt,
+		e.CorrelationID, e.RequestID, o.payload, e.CreatedAt,
 	)
 }
 
@@ -48,16 +62,29 @@ func expectLoadEntries(mock sqlmock.Sqlmock, org uuid.UUID, rows *sqlmock.Rows) 
 		WillReturnRows(rows)
 }
 
+func assertOneOrg(t *testing.T, got []uuid.UUID, want uuid.UUID) {
+	t.Helper()
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got=%v want=[%s]", got, want)
+	}
+}
+
+func assertOneEntryWithActor(t *testing.T, entries []Entry) {
+	t.Helper()
+	if len(entries) != 1 {
+		t.Fatalf("entries len=%d", len(entries))
+	}
+	if entries[0].ActorUserID == nil {
+		t.Fatal("expected actor")
+	}
+}
+
 func TestLoadEntries_AndVerifyOrg(t *testing.T) {
 	t.Parallel()
 	db, mock := newMockDB(t)
 	org := uuid.MustParse("55555555-5555-5555-5555-555555555555")
-	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	e := hashedEntry(t, Entry{
-		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
-		Payload: json.RawMessage(`{}`), CreatedAt: ts,
-	})
-	rows := addEntryRow(sqlmock.NewRows(entryColumns()), e, nil, pq.StringArray{}, []byte(`{}`))
+	e := hashedEntry(t, baseEntry(baseEntryOpts{org: org}))
+	rows := addEntryRow(sqlmock.NewRows(entryColumns()), entryRowOpts{entry: e})
 	expectLoadEntries(mock, org, rows)
 
 	n, err := VerifyOrg(context.Background(), db, org)
@@ -79,9 +106,7 @@ func TestResolveOrgs_Distinct(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != org {
-		t.Fatalf("got=%v", got)
-	}
+	assertOneOrg(t, got, org)
 }
 
 func TestLoadEntries_QueryError(t *testing.T) {
@@ -99,38 +124,32 @@ func TestVerifyOrg_ChainBreak(t *testing.T) {
 	t.Parallel()
 	db, mock := newMockDB(t)
 	org := uuid.New()
-	ts := time.Now().UTC()
-	e := Entry{
-		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, Action: "a",
-		RowHash: "badhash", Payload: json.RawMessage(`{}`), CreatedAt: ts,
-	}
-	rows := addEntryRow(sqlmock.NewRows(entryColumns()), e, nil, pq.StringArray{}, []byte(`{}`))
+	e := baseEntry(baseEntryOpts{org: org, ts: time.Now().UTC()})
+	e.RowHash = "badhash"
+	rows := addEntryRow(sqlmock.NewRows(entryColumns()), entryRowOpts{entry: e})
 	expectLoadEntries(mock, org, rows)
 	_, err := VerifyOrg(context.Background(), db, org)
-	if BreakIndex(err) != 0 {
-		t.Fatalf("err=%v", err)
-	}
+	assertBreakAt(t, err, 0)
 }
 
 func TestLoadEntries_WithActor(t *testing.T) {
 	t.Parallel()
 	db, mock := newMockDB(t)
-	org := uuid.New()
-	actor := uuid.New()
+	org, actor := uuid.New(), uuid.New()
 	ts := time.Date(2026, 2, 2, 2, 2, 2, 0, time.UTC)
-	e := hashedEntry(t, Entry{
-		OrgID: org, Seq: 1, PrevHash: GenesisPrevHash, ActorUserID: &actor,
-		Action: "x", Fields: []string{"a", "b"}, Payload: json.RawMessage(`{}`), CreatedAt: ts,
+	e := hashedEntry(t, baseEntry(baseEntryOpts{
+		org: org, actor: &actor, action: "x",
+		fields: []string{"a", "b"}, ts: ts,
+	}))
+	rows := addEntryRow(sqlmock.NewRows(entryColumns()), entryRowOpts{
+		entry: e, actor: actor.String(), fields: pq.StringArray{"b", "a"},
 	})
-	rows := addEntryRow(sqlmock.NewRows(entryColumns()), e, actor.String(), pq.StringArray{"b", "a"}, []byte(`{}`))
 	expectLoadEntries(mock, org, rows)
 	entries, err := LoadEntries(context.Background(), db, org)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].ActorUserID == nil {
-		t.Fatalf("entries=%v", entries)
-	}
+	assertOneEntryWithActor(t, entries)
 }
 
 func TestListDistinctOrgs_QueryError(t *testing.T) {
@@ -164,10 +183,9 @@ func TestChainBreak_WithErr(t *testing.T) {
 
 func TestCanonicalString_InvalidPayload(t *testing.T) {
 	t.Parallel()
-	_, err := CanonicalString(Entry{
-		OrgID: uuid.New(), Seq: 1, PrevHash: GenesisPrevHash,
-		Action: "a", Payload: json.RawMessage(`{`), CreatedAt: time.Now().UTC(),
-	})
+	_, err := CanonicalString(baseEntry(baseEntryOpts{
+		org: uuid.New(), payload: json.RawMessage(`{`), ts: time.Now().UTC(),
+	}))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -175,10 +193,9 @@ func TestCanonicalString_InvalidPayload(t *testing.T) {
 
 func TestRowHash_InvalidPayload(t *testing.T) {
 	t.Parallel()
-	_, err := RowHash(Entry{
-		OrgID: uuid.New(), Seq: 1, PrevHash: GenesisPrevHash,
-		Action: "a", Payload: json.RawMessage(`{`), CreatedAt: time.Now().UTC(),
-	})
+	_, err := RowHash(baseEntry(baseEntryOpts{
+		org: uuid.New(), payload: json.RawMessage(`{`), ts: time.Now().UTC(),
+	}))
 	if err == nil {
 		t.Fatal("expected error")
 	}

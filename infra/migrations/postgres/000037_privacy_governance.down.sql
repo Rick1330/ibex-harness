@@ -1,7 +1,7 @@
 -- Reverse 000037_privacy_governance.
 
-REVOKE UPDATE ON ibex_core.session_events FROM ibex_app;
-REVOKE UPDATE ON ibex_core.session_events FROM ibex_service;
+REVOKE UPDATE (data, archived_to) ON ibex_core.session_events FROM ibex_app;
+REVOKE UPDATE (data, archived_to) ON ibex_core.session_events FROM ibex_service;
 
 DROP TRIGGER IF EXISTS deletion_store_receipts_updated_at ON ibex_core.deletion_store_receipts;
 DROP TABLE IF EXISTS ibex_core.deletion_store_receipts;

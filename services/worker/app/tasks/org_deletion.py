@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -78,8 +79,8 @@ _PG_PRE_CASCADE: tuple[str, ...] = (
     "DELETE FROM ibex_core.rate_limit_overrides WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.user_totp_secrets WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.operator_action_ledger WHERE org_id = CAST(:org_id AS uuid)",
-    # legal_holds cleared after gate; active hold blocks earlier
-    "DELETE FROM ibex_core.legal_holds WHERE org_id = CAST(:org_id AS uuid)",
+    # Only cleared holds — never remove an active hold mid-saga (TOCTOU-safe).
+    "DELETE FROM ibex_core.legal_holds WHERE org_id = CAST(:org_id AS uuid) AND cleared_at IS NOT NULL",
 )
 
 _CASCADE_STATEMENTS: tuple[str, ...] = (
@@ -113,6 +114,16 @@ class _JobOutcome:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class _StageCtx:
+    """Shared saga context for store stages (avoids excess kwargs / deep nesting)."""
+
+    job_id: str
+    org_id: str
+    settings: Any
+    session: Any
+
+
 @celery_app.task(
     bind=True,
     base=IbexTask,
@@ -135,120 +146,132 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
     factory = create_session_factory(engine)
     try:
         async with session_as_service_org(factory, org_id) as session:
-            claimed = await _claim_job(session, job_id=job_id, org_id=org_id)
-            if not claimed:
-                return {"status": "skipped", "reason": "job_not_claimable"}
-            try:
-                blocked = await _finish_if_hold_blocked(session, job_id=job_id, org_id=org_id)
-                if blocked is not None:
-                    return blocked
-                # Soft-deleted orgs still run remaining store stages (no invented receipts).
-                archived_uris = await _collect_archived_uris(session, org_id)
-                await _run_store_stages(
-                    session,
-                    settings,
-                    job_id=job_id,
-                    org_id=org_id,
-                    archived_uris=archived_uris,
-                )
-                return await _finalize_job(session, job_id=job_id, org_id=org_id)
-            except Exception as exc:
-                logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
-                await session.rollback()
-                async with session_as_service_org(factory, org_id) as fail_session:
-                    await _finish_job(
-                        fail_session,
-                        _JobOutcome(
-                            job_id=job_id,
-                            org_id=org_id,
-                            status="failed",
-                            error=str(exc)[:500],
-                        ),
-                    )
-                raise
+            ctx = _StageCtx(job_id=job_id, org_id=org_id, settings=settings, session=session)
+            return await _execute_claimed_job(ctx, factory)
     finally:
         await engine.dispose()
 
 
-async def _finish_if_hold_blocked(
-    session, *, job_id: str, org_id: str
-) -> dict[str, str] | None:
-    if not await _has_active_legal_hold(session, org_id):
+async def _execute_claimed_job(ctx: _StageCtx, factory: Any) -> dict[str, str]:
+    claimed = await _claim_job(ctx.session, job_id=ctx.job_id, org_id=ctx.org_id)
+    if not claimed:
+        return {"status": "skipped", "reason": "job_not_claimable"}
+    try:
+        blocked = await _finish_if_hold_blocked(ctx)
+        if blocked is not None:
+            return blocked
+        # Soft-deleted orgs still run remaining store stages (no invented receipts).
+        archived_uris = await _collect_archived_uris(ctx.session, ctx.org_id)
+        await _run_store_stages(ctx, archived_uris=archived_uris)
+        return await _finalize_job(ctx)
+    except Exception as exc:
+        logger.exception("org deletion failed job_id=%s org_id=%s", ctx.job_id, ctx.org_id)
+        await ctx.session.rollback()
+        async with session_as_service_org(factory, ctx.org_id) as fail_session:
+            await _finish_job(
+                fail_session,
+                _JobOutcome(
+                    job_id=ctx.job_id,
+                    org_id=ctx.org_id,
+                    status="failed",
+                    error=str(exc)[:500],
+                ),
+            )
+        raise
+
+
+async def _finish_if_hold_blocked(ctx: _StageCtx) -> dict[str, str] | None:
+    if not await _has_active_legal_hold(ctx.session, ctx.org_id):
         return None
     await _audit_append(
-        session,
-        org_id=org_id,
+        ctx.session,
+        org_id=ctx.org_id,
         action="org_deletion.hold_blocked",
-        payload={"job_id": job_id},
+        payload={"job_id": ctx.job_id},
     )
     await _finish_job(
-        session,
+        ctx.session,
         _JobOutcome(
-            job_id=job_id,
-            org_id=org_id,
+            job_id=ctx.job_id,
+            org_id=ctx.org_id,
             status="hold_blocked",
             error="legal_hold_active",
         ),
     )
-    return {"status": "hold_blocked", "job_id": job_id, "org_id": org_id}
+    return {"status": "hold_blocked", "job_id": ctx.job_id, "org_id": ctx.org_id}
 
 
 async def _require_no_hold(session, org_id: str) -> None:
+    # Serialize with set_hold (same advisory key) so a hold cannot land mid-stage.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(CAST(:org_id AS text)))"),
+        {"org_id": org_id},
+    )
     if await _has_active_legal_hold(session, org_id):
         raise RuntimeError("legal_hold_active")
 
 
-async def _run_store_stages(
-    session,
-    settings: Any,
-    *,
-    job_id: str,
-    org_id: str,
-    archived_uris: list[str],
+async def _run_one_store(
+    ctx: _StageCtx,
+    store: str,
+    runner: Callable[[], Awaitable[None]],
 ) -> None:
-    if not await _receipt_verified(session, job_id, "postgres"):
-        await _require_no_hold(session, org_id)
-        await _stage_postgres(session, org_id=org_id)
-        await _upsert_receipt(session, job_id=job_id, store="postgres", status="verified")
-    await _publish_model_policy_invalidate(settings, org_id)
-
-    if not await _receipt_verified(session, job_id, "clickhouse"):
-        await _require_no_hold(session, org_id)
-        await _stage_clickhouse(settings, org_id=org_id)
-        await _upsert_receipt(session, job_id=job_id, store="clickhouse", status="verified")
-
-    if not await _receipt_verified(session, job_id, "redis"):
-        await _require_no_hold(session, org_id)
-        await _stage_redis(settings, org_id=org_id)
-        await _upsert_receipt(session, job_id=job_id, store="redis", status="verified")
-
-    if not await _receipt_verified(session, job_id, "objectstore"):
-        await _require_no_hold(session, org_id)
-        await _stage_objectstore(settings, org_id=org_id, uris=archived_uris)
-        await _upsert_receipt(session, job_id=job_id, store="objectstore", status="verified")
+    if await _receipt_verified(ctx.session, ctx.job_id, store):
+        return
+    await _require_no_hold(ctx.session, ctx.org_id)
+    await runner()
+    await _upsert_receipt(ctx.session, job_id=ctx.job_id, store=store, status="verified")
 
 
-async def _finalize_job(session, *, job_id: str, org_id: str) -> dict[str, str]:
-    digests = await _receipt_digests(session, job_id)
-    await _audit_append(
-        session,
-        org_id=org_id,
-        action="org_deletion.certificate",
-        payload={"job_id": job_id, "receipts": digests},
+async def _run_store_stages(ctx: _StageCtx, *, archived_uris: list[str]) -> None:
+    await _run_one_store(
+        ctx,
+        "postgres",
+        lambda: _stage_postgres(ctx.session, org_id=ctx.org_id),
     )
-    if not await _all_receipts_verified(session, job_id):
+    await _publish_model_policy_invalidate(ctx.settings, ctx.org_id)
+
+    await _run_one_store(
+        ctx,
+        "clickhouse",
+        lambda: _stage_clickhouse(ctx.settings, org_id=ctx.org_id),
+    )
+    await _run_one_store(
+        ctx,
+        "redis",
+        lambda: _stage_redis(ctx.settings, org_id=ctx.org_id),
+    )
+    await _run_one_store(
+        ctx,
+        "objectstore",
+        lambda: _stage_objectstore(ctx.settings, org_id=ctx.org_id, uris=archived_uris),
+    )
+
+
+async def _finalize_job(ctx: _StageCtx) -> dict[str, str]:
+    digests = await _receipt_digests(ctx.session, ctx.job_id)
+    await _audit_append(
+        ctx.session,
+        org_id=ctx.org_id,
+        action="org_deletion.certificate",
+        payload={"job_id": ctx.job_id, "receipts": digests},
+    )
+    if not await _all_receipts_verified(ctx.session, ctx.job_id):
         await _finish_job(
-            session,
+            ctx.session,
             _JobOutcome(
-                job_id=job_id,
-                org_id=org_id,
+                job_id=ctx.job_id,
+                org_id=ctx.org_id,
                 status="failed",
                 error="incomplete_receipts",
             ),
         )
-        return {"status": "failed", "job_id": job_id, "org_id": org_id}
-    await _finish_job(session, _JobOutcome(job_id=job_id, org_id=org_id, status="succeeded"))
-    return {"status": "succeeded", "job_id": job_id, "org_id": org_id}
+        return {"status": "failed", "job_id": ctx.job_id, "org_id": ctx.org_id}
+    await _finish_job(
+        ctx.session,
+        _JobOutcome(job_id=ctx.job_id, org_id=ctx.org_id, status="succeeded"),
+    )
+    return {"status": "succeeded", "job_id": ctx.job_id, "org_id": ctx.org_id}
 
 
 async def _claim_job(session, *, job_id: str, org_id: str) -> bool:

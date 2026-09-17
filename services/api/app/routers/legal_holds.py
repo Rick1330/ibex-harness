@@ -8,9 +8,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.client import ValidateResult
 from app.authz import RequireLegalHoldManage, assert_path_org
 from app.deps import org_session, require_token
-from app.auth.client import ValidateResult
 from app.schemas.legal_holds import LegalHoldCreate, LegalHoldResponse
 from app.services import legal_holds as hold_service
 

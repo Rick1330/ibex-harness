@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from authclient.permissions import LEGAL_HOLD_MANAGE, requires_step_up, bitmap_for_role
+from authclient.permissions import LEGAL_HOLD_MANAGE, bitmap_for_role, requires_step_up
 
 
 def test_legal_hold_bit_in_admin_role_bitmap() -> None:
