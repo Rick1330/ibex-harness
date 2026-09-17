@@ -90,9 +90,9 @@ CREATE POLICY privacy_audit_ledger_isolation ON ibex_core.privacy_audit_ledger
 -- Append-only: no UPDATE/DELETE; INSERT only via privacy_audit_append (SECURITY DEFINER).
 REVOKE ALL ON TABLE ibex_core.privacy_audit_ledger FROM PUBLIC;
 REVOKE UPDATE, DELETE, INSERT ON ibex_core.privacy_audit_ledger FROM ibex_app;
--- SELECT only: all inserts must go through privacy_audit_append (canonical hash + lock).
+-- App: SELECT only. Service: SELECT + INSERT (definer body of privacy_audit_append).
 GRANT SELECT ON ibex_core.privacy_audit_ledger TO ibex_app;
-GRANT SELECT ON ibex_core.privacy_audit_ledger TO ibex_service;
+GRANT SELECT, INSERT ON ibex_core.privacy_audit_ledger TO ibex_service;
 
 CREATE OR REPLACE FUNCTION ibex_core.privacy_audit_ledger_forbid_mutate()
 RETURNS TRIGGER
@@ -267,7 +267,7 @@ $$;
 
 ALTER FUNCTION ibex_core.privacy_audit_list_orgs() OWNER TO ibex_service;
 REVOKE ALL ON FUNCTION ibex_core.privacy_audit_list_orgs() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_list_orgs() TO ibex_app;
+-- Verifier / service only — not callable by tenant app role.
 GRANT EXECUTE ON FUNCTION ibex_core.privacy_audit_list_orgs() TO ibex_service;
 
 -- ================================================================

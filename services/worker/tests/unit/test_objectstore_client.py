@@ -211,6 +211,46 @@ def test_require_endpoint_allows_http_with_opt_in(monkeypatch: pytest.MonkeyPatc
     osc._require_endpoint(cfg)
 
 
+def test_require_endpoint_allows_loopback_http_without_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_s3_env(monkeypatch)
+    monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
+    cfg = osc._S3Cfg(
+        endpoint="http://127.0.0.1:9000",
+        access_key="ak",
+        secret_key="sk",
+        bucket="b",
+        region="us-east-1",
+        master_key_b64="",
+        key_id="v1",
+    )
+    osc._require_endpoint(cfg)
+
+
+def test_settings_loopback_endpoint_accepted_by_require_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Settings validator + _require_endpoint agree on loopback HTTP without the flag."""
+    from app.config import Settings
+
+    _clear_s3_env(monkeypatch)
+    monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
+    settings = Settings(
+        database_url="postgresql+asyncpg://u:p@localhost/db",
+        s3_endpoint="http://127.0.0.1:9000",
+    )
+    assert settings.s3_endpoint == "http://127.0.0.1:9000"
+    cfg = osc._load_cfg(settings)
+    osc._require_endpoint(cfg)
+
+
+def test_extract_xml_keys_unterminated_raises() -> None:
+    xml = "<ListBucketResult><Key>partial-only"
+    with pytest.raises(RuntimeError, match="unterminated"):
+        osc._extract_xml_keys(xml)
+
+
 def test_secret_key_preserves_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
     monkeypatch.setenv("S3_ENDPOINT", "https://s3.example.com")

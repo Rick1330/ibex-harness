@@ -72,38 +72,51 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
         raise ValueError("database_url is required")
     engine = create_engine(settings)
     factory = create_session_factory(engine)
+    uploaded: list[str] = []
     try:
         async with session_as_service_org(factory, job.org_id) as session:
             parsed_agent = UUID(job.agent_id) if job.agent_id else None
             mode = await resolve_capture_mode(session, org_id=job.org_id, agent_id=parsed_agent)
-            return await _apply_mode(session, settings, mode, job)
+            return await _apply_mode(session, settings, mode, job, uploaded)
+    except Exception:
+        for uri in uploaded:
+            _compensate_upload(uri, settings)
+        raise
     finally:
         await engine.dispose()
 
 
-async def _apply_mode(session, settings: Any, mode: str, job: _CaptureJob) -> dict[str, str]:
+async def _apply_mode(
+    session,
+    settings: Any,
+    mode: str,
+    job: _CaptureJob,
+    uploaded: list[str],
+) -> dict[str, str]:
     if mode == "none":
         return {"status": "skipped", "mode": mode}
     if mode == "metadata_only":
         return {"status": "redacted", "mode": mode}
     if mode == "redacted":
-        return await _mode_redacted(session, settings, job)
-    return await _mode_archive(session, settings, job, mode)
+        return await _mode_redacted(session, settings, job, uploaded)
+    return await _mode_archive(session, settings, job, mode, uploaded)
 
 
-async def _mode_redacted(session, settings: Any, job: _CaptureJob) -> dict[str, str]:
+async def _mode_redacted(
+    session, settings: Any, job: _CaptureJob, uploaded: list[str]
+) -> dict[str, str]:
     payload = job.payload or {}
     filtered = {k: v for k, v in payload.items() if k not in _STRIP_KEYS}
-    await _persist_redacted(session, settings, job, filtered)
+    await _persist_redacted(session, settings, job, filtered, uploaded)
     return {"status": "redacted", "mode": "redacted", "event_id": job.event_id or ""}
 
 
 async def _mode_archive(
-    session, settings: Any, job: _CaptureJob, mode: str
+    session, settings: Any, job: _CaptureJob, mode: str, uploaded: list[str]
 ) -> dict[str, str]:
     payload = job.payload or {}
     if payload:
-        await _archive_payload(session, settings, job, payload)
+        await _archive_payload(session, settings, job, payload, uploaded)
     return {"status": "archived", "mode": mode, "event_id": job.event_id or ""}
 
 
@@ -136,7 +149,13 @@ async def resolve_capture_mode(session, *, org_id: str, agent_id: UUID | None) -
     return str(row[0])
 
 
-async def _persist_redacted(session, settings: Any, job: _CaptureJob, filtered: dict[str, Any]) -> None:
+async def _persist_redacted(
+    session,
+    settings: Any,
+    job: _CaptureJob,
+    filtered: dict[str, Any],
+    uploaded: list[str],
+) -> None:
     if not job.event_id:
         return
     await session.execute(
@@ -160,13 +179,32 @@ async def _persist_redacted(session, settings: Any, job: _CaptureJob, filtered: 
         if "S3_ENDPOINT" in str(exc) or "MASTER_KEY" in str(exc):
             return
         raise
-    await _set_archived_to(session, job, uri)
-
-
-async def _archive_payload(session, settings: Any, job: _CaptureJob, payload: dict[str, Any]) -> None:
-    uri = _put_archive_blob(settings, job, payload, "full")
-    if job.event_id:
+    uploaded.append(uri)
+    try:
         await _set_archived_to(session, job, uri)
+    except Exception:
+        _compensate_upload(uri, settings)
+        uploaded.remove(uri)
+        raise
+
+
+async def _archive_payload(
+    session,
+    settings: Any,
+    job: _CaptureJob,
+    payload: dict[str, Any],
+    uploaded: list[str],
+) -> None:
+    uri = _put_archive_blob(settings, job, payload, "full")
+    uploaded.append(uri)
+    if not job.event_id:
+        return
+    try:
+        await _set_archived_to(session, job, uri)
+    except Exception:
+        _compensate_upload(uri, settings)
+        uploaded.remove(uri)
+        raise
 
 
 async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
@@ -181,6 +219,16 @@ async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
         ),
         {"event_id": job.event_id, "org_id": job.org_id, "uri": uri},
     )
+
+
+def _compensate_upload(uri: str, settings: Any) -> None:
+    """Best-effort delete of an uploaded archive when DB persist/commit fails."""
+    try:
+        from app.objectstore_client import delete_uri
+
+        delete_uri(uri, settings=settings)
+    except Exception:
+        logger.exception("failed to compensate archive upload uri=%s", uri)
 
 
 def _put_archive_blob(settings: Any, job: _CaptureJob, payload: dict[str, Any], kind: str) -> str:

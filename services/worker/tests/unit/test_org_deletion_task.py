@@ -100,10 +100,9 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         del job_id
         return states[store]
 
-    async def upsert(_s, *, job_id, store, status, error=None):
-        del job_id, error
-        if status == "verified":
-            states[store] = True
+    async def upsert(_s, receipt):
+        if receipt.status == "verified":
+            states[receipt.store] = True
 
     async def all_verified(_s, job_id):
         del job_id
@@ -116,6 +115,7 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
     org_deletion._stage_postgres.assert_awaited()  # type: ignore[attr-defined]
+    org_deletion._publish_model_policy_invalidate.assert_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -173,10 +173,13 @@ async def test_run_delete_cascade_failure_marks_job_failed(
     monkeypatch.setattr(
         org_deletion, "_stage_postgres", AsyncMock(side_effect=RuntimeError("cascade boom"))
     )
+    inv = AsyncMock()
+    monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", inv)
     with pytest.raises(RuntimeError, match="cascade boom"):
         await org_deletion._run_delete(job_id="j", org_id="o")
     session.rollback.assert_awaited()
     assert fail_session.execute.await_count == 1
+    inv.assert_not_awaited()
 
 
 def test_cascade_includes_soft_delete_org() -> None:
@@ -224,10 +227,9 @@ async def test_run_delete_still_runs_stages_when_org_already_deleted(
         del job_id
         return states[store]
 
-    async def upsert(_s, *, job_id, store, status, error=None):
-        del job_id, error
-        if status == "verified":
-            states[store] = True
+    async def upsert(_s, receipt):
+        if receipt.status == "verified":
+            states[receipt.store] = True
 
     monkeypatch.setattr(org_deletion, "_receipt_verified", receipt_verified)
     monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)

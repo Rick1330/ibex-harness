@@ -86,7 +86,8 @@ async def test_upsert_receipt_refuses_allowlist(monkeypatch: pytest.MonkeyPatch)
     session = AsyncMock()
     with pytest.raises(ValueError, match="non-erasable"):
         await org_deletion._upsert_receipt(
-            session, job_id="j", store="billing", status="verified"
+            session,
+            org_deletion._ReceiptWrite(job_id="j", store="billing", status="verified"),
         )
 
 
@@ -156,9 +157,9 @@ async def test_optional_stores_skip_when_unconfigured(monkeypatch: pytest.Monkey
     stage_redis.assert_not_awaited()
     stage_s3.assert_not_awaited()
     skipped = {
-        c.kwargs["store"]
+        c.args[1].store
         for c in upsert.await_args_list
-        if c.kwargs.get("error") == "unconfigured"
+        if getattr(c.args[1], "error", None) == "unconfigured"
     }
     assert skipped == {"clickhouse", "redis", "objectstore"}
 
@@ -271,6 +272,9 @@ async def test_skip_verified_store_idempotent(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_require_no_hold_raises() -> None:
     session = AsyncMock()
-    with patch.object(org_deletion, "_has_active_legal_hold", AsyncMock(return_value=True)):
-        with pytest.raises(RuntimeError, match="legal_hold_active"):
-            await org_deletion._require_no_hold(session, "o")
+    hold = AsyncMock(return_value=True)
+    with (
+        patch.object(org_deletion, "_has_active_legal_hold", hold),
+        pytest.raises(RuntimeError, match="legal_hold_active"),
+    ):
+        await org_deletion._require_no_hold(session, "o")

@@ -145,39 +145,107 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
     engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:
-        async with session_as_service_org(factory, org_id) as session:
-            ctx = _StageCtx(job_id=job_id, org_id=org_id, settings=settings, session=session)
-            return await _execute_claimed_job(ctx, factory)
+        early, archived_uris = await _claim_and_purge_postgres(
+            factory, job_id=job_id, org_id=org_id, settings=settings
+        )
+        if early is not None:
+            return early
+        # Invalidate only after postgres purge transaction committed.
+        return await _run_post_postgres(
+            factory,
+            job_id=job_id,
+            org_id=org_id,
+            settings=settings,
+            archived_uris=archived_uris or [],
+        )
     finally:
         await engine.dispose()
 
 
-async def _execute_claimed_job(ctx: _StageCtx, factory: Any) -> dict[str, str]:
-    claimed = await _claim_job(ctx.session, job_id=ctx.job_id, org_id=ctx.org_id)
-    if not claimed:
-        return {"status": "skipped", "reason": "job_not_claimable"}
+async def _claim_and_purge_postgres(
+    factory: Any,
+    *,
+    job_id: str,
+    org_id: str,
+    settings: Any,
+) -> tuple[dict[str, str] | None, list[str] | None]:
+    """Claim job + postgres purge in one txn. Returns (early_result, archived_uris)."""
+    async with session_as_service_org(factory, org_id) as session:
+        ctx = _StageCtx(job_id=job_id, org_id=org_id, settings=settings, session=session)
+        claimed = await _claim_job(session, job_id=job_id, org_id=org_id)
+        if not claimed:
+            return {"status": "skipped", "reason": "job_not_claimable"}, None
+        try:
+            blocked = await _finish_if_hold_blocked(ctx)
+            if blocked is not None:
+                return blocked, None
+            # Soft-deleted orgs still run remaining store stages (no invented receipts).
+            archived_uris = await _collect_archived_uris(session, org_id)
+            await _run_one_store(
+                ctx,
+                "postgres",
+                lambda: _stage_postgres(session, org_id=org_id),
+            )
+            return None, archived_uris
+        except Exception as exc:
+            await _mark_job_failed(factory, ctx, session, exc)
+            raise
+
+
+async def _run_post_postgres(
+    factory: Any,
+    *,
+    job_id: str,
+    org_id: str,
+    settings: Any,
+    archived_uris: list[str],
+) -> dict[str, str]:
+    """Publish cache invalidation then optional stores + finalize (new txn)."""
     try:
-        blocked = await _finish_if_hold_blocked(ctx)
-        if blocked is not None:
-            return blocked
-        # Soft-deleted orgs still run remaining store stages (no invented receipts).
-        archived_uris = await _collect_archived_uris(ctx.session, ctx.org_id)
-        await _run_store_stages(ctx, archived_uris=archived_uris)
-        return await _finalize_job(ctx)
+        # Fail closed: invalidation errors must mark the job failed for retry.
+        await _publish_model_policy_invalidate(settings, org_id)
     except Exception as exc:
-        logger.exception("org deletion failed job_id=%s org_id=%s", ctx.job_id, ctx.org_id)
-        await ctx.session.rollback()
-        async with session_as_service_org(factory, ctx.org_id) as fail_session:
+        logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
+        async with session_as_service_org(factory, org_id) as fail_session:
             await _finish_job(
                 fail_session,
                 _JobOutcome(
-                    job_id=ctx.job_id,
-                    org_id=ctx.org_id,
+                    job_id=job_id,
+                    org_id=org_id,
                     status="failed",
                     error=str(exc)[:500],
                 ),
             )
         raise
+
+    async with session_as_service_org(factory, org_id) as session:
+        ctx = _StageCtx(job_id=job_id, org_id=org_id, settings=settings, session=session)
+        try:
+            await _run_optional_store_stages(ctx, archived_uris=archived_uris)
+            return await _finalize_job(ctx)
+        except Exception as exc:
+            await _mark_job_failed(factory, ctx, session, exc)
+            raise
+
+
+async def _mark_job_failed(
+    factory: Any,
+    ctx: _StageCtx,
+    session: Any,
+    exc: Exception,
+) -> None:
+    logger.exception("org deletion failed job_id=%s org_id=%s", ctx.job_id, ctx.org_id)
+    await session.rollback()
+    async with session_as_service_org(factory, ctx.org_id) as fail_session:
+        await _finish_job(
+            fail_session,
+            _JobOutcome(
+                job_id=ctx.job_id,
+                org_id=ctx.org_id,
+                status="failed",
+                error=str(exc)[:500],
+            ),
+        )
 
 
 async def _finish_if_hold_blocked(ctx: _StageCtx) -> dict[str, str] | None:
@@ -220,18 +288,12 @@ async def _run_one_store(
         return
     await _require_no_hold(ctx.session, ctx.org_id)
     await runner()
-    await _upsert_receipt(ctx.session, job_id=ctx.job_id, store=store, status="verified")
-
-
-async def _run_store_stages(ctx: _StageCtx, *, archived_uris: list[str]) -> None:
-    await _run_one_store(
-        ctx,
-        "postgres",
-        lambda: _stage_postgres(ctx.session, org_id=ctx.org_id),
+    await _upsert_receipt(
+        ctx.session, _ReceiptWrite(job_id=ctx.job_id, store=store, status="verified")
     )
-    # Fail closed: invalidation errors must mark the job failed for retry.
-    await _publish_model_policy_invalidate(ctx.settings, ctx.org_id)
 
+
+async def _run_optional_store_stages(ctx: _StageCtx, *, archived_uris: list[str]) -> None:
     await _run_optional_store(
         ctx,
         "clickhouse",
@@ -264,15 +326,19 @@ async def _run_optional_store(
         # Deployment has no such store: nothing to purge; record verified absence.
         await _upsert_receipt(
             ctx.session,
-            job_id=ctx.job_id,
-            store=store,
-            status="verified",
-            error="unconfigured",
+            _ReceiptWrite(
+                job_id=ctx.job_id,
+                store=store,
+                status="verified",
+                error="unconfigured",
+            ),
         )
         return
     await _require_no_hold(ctx.session, ctx.org_id)
     await runner()
-    await _upsert_receipt(ctx.session, job_id=ctx.job_id, store=store, status="verified")
+    await _upsert_receipt(
+        ctx.session, _ReceiptWrite(job_id=ctx.job_id, store=store, status="verified")
+    )
 
 
 async def _finalize_job(ctx: _StageCtx) -> dict[str, str]:
@@ -401,12 +467,8 @@ class _ReceiptWrite:
     error: str | None = None
 
 
-async def _upsert_receipt(
-    session, *, job_id: str, store: str, status: str, error: str | None = None
-) -> None:
-    await _upsert_receipt_write(
-        session, _ReceiptWrite(job_id=job_id, store=store, status=status, error=error)
-    )
+async def _upsert_receipt(session, receipt: _ReceiptWrite) -> None:
+    await _upsert_receipt_write(session, receipt)
 
 
 async def _upsert_receipt_write(session, receipt: _ReceiptWrite) -> None:

@@ -23,6 +23,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -150,27 +151,13 @@ func marshalJSONB(v any) (string, error) {
 	return b.String(), nil
 }
 
+var errNotPrimitive = errors.New("privacyaudit: not primitive")
+
 func writeJSONB(b *strings.Builder, v any) error {
+	if err := writeJSONBPrimitive(b, v); !errors.Is(err, errNotPrimitive) {
+		return err
+	}
 	switch t := v.(type) {
-	case nil:
-		b.WriteString("null")
-		return nil
-	case bool:
-		return writeJSONBool(b, t)
-	case json.Number:
-		b.WriteString(string(t))
-		return nil
-	case int64:
-		b.WriteString(strconv.FormatInt(t, 10))
-		return nil
-	case int:
-		b.WriteString(strconv.Itoa(t))
-		return nil
-	case float64:
-		b.WriteString(strconv.FormatFloat(t, 'f', -1, 64))
-		return nil
-	case string:
-		return writeJSONString(b, t)
 	case map[string]any:
 		return writeJSONObject(b, t)
 	case []any:
@@ -178,6 +165,28 @@ func writeJSONB(b *strings.Builder, v any) error {
 	default:
 		return fmt.Errorf("privacyaudit: unsupported jsonb type %T", v)
 	}
+}
+
+func writeJSONBPrimitive(b *strings.Builder, v any) error {
+	switch t := v.(type) {
+	case nil:
+		b.WriteString("null")
+	case bool:
+		return writeJSONBool(b, t)
+	case json.Number:
+		b.WriteString(string(t))
+	case int64:
+		b.WriteString(strconv.FormatInt(t, 10))
+	case int:
+		b.WriteString(strconv.Itoa(t))
+	case float64:
+		b.WriteString(strconv.FormatFloat(t, 'f', -1, 64))
+	case string:
+		return writeJSONString(b, t)
+	default:
+		return errNotPrimitive
+	}
+	return nil
 }
 
 func writeJSONBool(b *strings.Builder, v bool) error {

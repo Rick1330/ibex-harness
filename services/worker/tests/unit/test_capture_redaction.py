@@ -162,3 +162,69 @@ def test_put_archive_blob_unique_key_without_event_id(monkeypatch: pytest.Monkey
     assert keys[0].startswith("org-1/capture/full/")
     assert not keys[0].endswith("/anon.json")
 
+
+@pytest.mark.asyncio
+async def test_archive_compensates_when_set_archived_to_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sess = _wire_run(monkeypatch, mode="full")
+    uri = "s3://ibex-sessions/o/capture/full/1.json"
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", MagicMock(return_value=uri))
+    deleted: list[str] = []
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("db update failed")
+
+    monkeypatch.setattr(capture_redaction, "_set_archived_to", boom)
+    monkeypatch.setattr(
+        capture_redaction,
+        "_compensate_upload",
+        lambda u, _s: deleted.append(u),
+    )
+    job = _CaptureJob(org_id="o", event_id="1", payload={"content": "secret"})
+    with pytest.raises(RuntimeError, match="db update failed"):
+        await capture_redaction._run(job)
+    assert deleted == [uri]
+    assert sess.execute.await_count >= 0
+
+
+@pytest.mark.asyncio
+async def test_archive_compensates_when_session_commit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outer _run deletes uploaded blobs if the service-org transaction aborts."""
+    settings = MagicMock(database_url="postgresql+asyncpg://u:p@localhost/db")
+    monkeypatch.setattr(capture_redaction, "get_settings", lambda: settings)
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr(capture_redaction, "create_engine", lambda _s: engine)
+    monkeypatch.setattr(capture_redaction, "create_session_factory", lambda _e: MagicMock())
+    sess = AsyncMock()
+    uri = "s3://ibex-sessions/o/capture/full/1.json"
+    deleted: list[str] = []
+
+    class _BoomCM:
+        async def __aenter__(self):
+            return sess
+
+        async def __aexit__(self, *args):
+            raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(capture_redaction, "session_as_service_org", lambda _f, _org: _BoomCM())
+    monkeypatch.setattr(
+        capture_redaction, "resolve_capture_mode", AsyncMock(return_value="full")
+    )
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", MagicMock(return_value=uri))
+    monkeypatch.setattr(capture_redaction, "_set_archived_to", AsyncMock())
+    monkeypatch.setattr(
+        capture_redaction,
+        "_compensate_upload",
+        lambda u, _s: deleted.append(u),
+    )
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await capture_redaction._run(
+            _CaptureJob(org_id="o", event_id="1", payload={"content": "x"})
+        )
+    assert deleted == [uri]
+

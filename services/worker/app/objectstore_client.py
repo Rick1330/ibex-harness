@@ -53,14 +53,19 @@ class _S3Cfg:
 
 
 @dataclass(frozen=True, slots=True)
+class _ReqBody:
+    content: bytes | None = None
+    headers: dict[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class _SignedReq:
     """Bundles request pieces so signing helpers stay under CodeScene arity limits."""
 
     method: str
     url: str
     cfg: _S3Cfg
-    body: bytes | None = None
-    extra_headers: dict[str, str] | None = None
+    payload: _ReqBody | None = None
 
 
 def _secret_or_str(val: Any) -> str:
@@ -149,17 +154,21 @@ def _require_endpoint(cfg: _S3Cfg) -> None:
 
 
 def _validate_endpoint_scheme(endpoint: str) -> None:
-    parsed = urlparse(endpoint)
-    if not parsed.hostname:
-        raise RuntimeError("S3_ENDPOINT host required")
-    scheme = (parsed.scheme or "").lower()
-    if scheme == "https":
+    """Match Settings / require_https_or_loopback: HTTPS or loopback HTTP; else opt-in."""
+    from app.config import require_https_or_loopback
+
+    if _allow_insecure_http():
+        parsed = urlparse(endpoint)
+        if not parsed.hostname:
+            raise RuntimeError("S3_ENDPOINT host required")
         return
-    if scheme == "http" and _allow_insecure_http():
-        return
-    raise RuntimeError(
-        "S3_ENDPOINT must use HTTPS (set S3_ALLOW_INSECURE_HTTP=1 for local MinIO)"
-    )
+    try:
+        require_https_or_loopback(endpoint)
+    except ValueError as exc:
+        raise RuntimeError(
+            "S3_ENDPOINT must use HTTPS or loopback HTTP "
+            "(set S3_ALLOW_INSECURE_HTTP=1 for other HTTP)"
+        ) from exc
 
 
 def _escape_key_path(key: str) -> str:
@@ -218,8 +227,7 @@ def put_encrypted_json(key: str, plaintext: bytes, *, settings: Any | None = Non
             "PUT",
             _object_url(cfg, key),
             cfg,
-            body=body,
-            extra_headers={"Content-Type": "application/json"},
+            payload=_ReqBody(content=body, headers={"Content-Type": "application/json"}),
         )
     )
     if resp.status_code >= 300:
@@ -298,7 +306,7 @@ def _extract_xml_keys(text: str) -> list[str]:
             return keys
         j = text.find("</Key>", i)
         if j < 0:
-            return keys
+            raise RuntimeError("s3 list response has unterminated <Key> element")
         keys.append(unescape(text[i + 5 : j]))
         start = j + 6
 
@@ -332,11 +340,13 @@ def _build_signed_headers(req: _SignedReq) -> dict[str, str]:
         "x-amz-date": amz_date,
         "x-amz-content-sha256": payload_hash,
     }
-    if req.extra_headers:
-        for k, v in req.extra_headers.items():
+    body = req.payload.content if req.payload else None
+    extra = req.payload.headers if req.payload else None
+    if extra:
+        for k, v in extra.items():
             hdrs[k.lower()] = v
-    if req.body is not None:
-        hdrs["content-length"] = str(len(req.body))
+    if body is not None:
+        hdrs["content-length"] = str(len(body))
     signed_keys = sorted(hdrs)
     canonical_headers = "".join(f"{k}:{hdrs[k].strip()}\n" for k in signed_keys)
     signed_headers = ";".join(signed_keys)
@@ -365,10 +375,11 @@ def _build_signed_headers(req: _SignedReq) -> dict[str, str]:
 
 def _sign_and_request(req: _SignedReq) -> httpx.Response:
     headers = _build_signed_headers(req)
+    body = req.payload.content if req.payload else None
     return httpx.request(
         req.method,
         req.url,
-        content=req.body,
+        content=body,
         headers=headers,
         timeout=30.0,
         follow_redirects=False,

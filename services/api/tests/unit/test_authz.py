@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND
+from apierror_py import INSUFFICIENT_PERMISSIONS, NOT_FOUND, SERVICE_DEGRADED
 from authclient.permissions import ADMIN, READ_ONLY, USER_MANAGE
 
 from app.auth.client import ValidateResult
@@ -79,3 +79,67 @@ def test_assert_path_org_mismatch() -> None:
         assert_path_org(org, uuid4())
     assert exc.value.code == NOT_FOUND
     assert_path_org(org, org)
+
+
+def test_require_legal_hold_manage_step_up() -> None:
+    from unittest.mock import MagicMock
+
+    from authclient.permissions import LEGAL_HOLD_MANAGE, bitmap_for_role
+
+    from app.authz import require_legal_hold_manage
+
+    dep = require_legal_hold_manage()
+    org = uuid4()
+    token = ValidateResult(
+        org_id=org,
+        permissions=bitmap_for_role("admin"),
+        user_id=str(uuid4()),
+    )
+    request = MagicMock()
+    request.state.ibex_step_up_ok = False
+    with pytest.raises(ApiError) as exc:
+        dep(request=request, token=token)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    request.state.ibex_step_up_ok = True
+    assert dep(request=request, token=token) is token
+    assert LEGAL_HOLD_MANAGE
+
+
+def test_assert_operator_permission_gates() -> None:
+    from unittest.mock import MagicMock
+
+    from authclient.permissions import OPERATOR_DELETE
+
+    from app.authz import assert_operator_permission
+
+    settings = MagicMock(operator_feature_enabled=False)
+    with pytest.raises(ApiError) as exc:
+        assert_operator_permission(settings, OPERATOR_DELETE, OPERATOR_DELETE)
+    assert exc.value.code == SERVICE_DEGRADED
+
+    settings = MagicMock(
+        operator_feature_enabled=True,
+        operator_allow_delete=False,
+    )
+    with pytest.raises(ApiError) as exc:
+        assert_operator_permission(settings, OPERATOR_DELETE, OPERATOR_DELETE)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    settings = MagicMock(
+        operator_feature_enabled=True,
+        operator_allow_delete=True,
+    )
+    with pytest.raises(ApiError) as exc:
+        assert_operator_permission(settings, 0, OPERATOR_DELETE, step_up_ok=True)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    with pytest.raises(ApiError) as exc:
+        assert_operator_permission(
+            settings, OPERATOR_DELETE, OPERATOR_DELETE, step_up_ok=False
+        )
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+    assert_operator_permission(
+        settings, OPERATOR_DELETE, OPERATOR_DELETE, step_up_ok=True
+    )
