@@ -32,6 +32,16 @@ class _CaptureJob:
     payload: dict[str, Any] | None = None
 
 
+@dataclass
+class _RedactCtx:
+    """Session + settings + upload ledger for one redaction run."""
+
+    session: Any
+    settings: Any
+    job: _CaptureJob
+    uploaded: list[str]
+
+
 @celery_app.task(
     bind=True,
     base=IbexTask,
@@ -77,7 +87,8 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
         async with session_as_service_org(factory, job.org_id) as session:
             parsed_agent = UUID(job.agent_id) if job.agent_id else None
             mode = await resolve_capture_mode(session, org_id=job.org_id, agent_id=parsed_agent)
-            return await _apply_mode(session, settings, mode, job, uploaded)
+            ctx = _RedactCtx(session=session, settings=settings, job=job, uploaded=uploaded)
+            return await _apply_mode(ctx, mode)
     except Exception:
         for uri in uploaded:
             _compensate_upload(uri, settings)
@@ -86,38 +97,28 @@ async def _run(job: _CaptureJob) -> dict[str, str]:
         await engine.dispose()
 
 
-async def _apply_mode(
-    session,
-    settings: Any,
-    mode: str,
-    job: _CaptureJob,
-    uploaded: list[str],
-) -> dict[str, str]:
+async def _apply_mode(ctx: _RedactCtx, mode: str) -> dict[str, str]:
     if mode == "none":
         return {"status": "skipped", "mode": mode}
     if mode == "metadata_only":
         return {"status": "redacted", "mode": mode}
     if mode == "redacted":
-        return await _mode_redacted(session, settings, job, uploaded)
-    return await _mode_archive(session, settings, job, mode, uploaded)
+        return await _mode_redacted(ctx)
+    return await _mode_archive(ctx, mode)
 
 
-async def _mode_redacted(
-    session, settings: Any, job: _CaptureJob, uploaded: list[str]
-) -> dict[str, str]:
-    payload = job.payload or {}
+async def _mode_redacted(ctx: _RedactCtx) -> dict[str, str]:
+    payload = ctx.job.payload or {}
     filtered = {k: v for k, v in payload.items() if k not in _STRIP_KEYS}
-    await _persist_redacted(session, settings, job, filtered, uploaded)
-    return {"status": "redacted", "mode": "redacted", "event_id": job.event_id or ""}
+    await _persist_redacted(ctx, filtered)
+    return {"status": "redacted", "mode": "redacted", "event_id": ctx.job.event_id or ""}
 
 
-async def _mode_archive(
-    session, settings: Any, job: _CaptureJob, mode: str, uploaded: list[str]
-) -> dict[str, str]:
-    payload = job.payload or {}
+async def _mode_archive(ctx: _RedactCtx, mode: str) -> dict[str, str]:
+    payload = ctx.job.payload or {}
     if payload:
-        await _archive_payload(session, settings, job, payload, uploaded)
-    return {"status": "archived", "mode": mode, "event_id": job.event_id or ""}
+        await _archive_payload(ctx, payload)
+    return {"status": "archived", "mode": mode, "event_id": ctx.job.event_id or ""}
 
 
 async def resolve_capture_mode(session, *, org_id: str, agent_id: UUID | None) -> str:
@@ -149,16 +150,11 @@ async def resolve_capture_mode(session, *, org_id: str, agent_id: UUID | None) -
     return str(row[0])
 
 
-async def _persist_redacted(
-    session,
-    settings: Any,
-    job: _CaptureJob,
-    filtered: dict[str, Any],
-    uploaded: list[str],
-) -> None:
+async def _persist_redacted(ctx: _RedactCtx, filtered: dict[str, Any]) -> None:
+    job = ctx.job
     if not job.event_id:
         return
-    await session.execute(
+    await ctx.session.execute(
         text(
             """
             UPDATE ibex_core.session_events
@@ -174,36 +170,30 @@ async def _persist_redacted(
         },
     )
     try:
-        uri = _put_archive_blob(settings, job, filtered, "redacted")
+        uri = _put_archive_blob(ctx.settings, job, filtered, "redacted")
     except RuntimeError as exc:
         if "S3_ENDPOINT" in str(exc) or "MASTER_KEY" in str(exc):
             return
         raise
-    uploaded.append(uri)
+    ctx.uploaded.append(uri)
     try:
-        await _set_archived_to(session, job, uri)
+        await _set_archived_to(ctx.session, job, uri)
     except Exception:
-        _compensate_upload(uri, settings)
-        uploaded.remove(uri)
+        _compensate_upload(uri, ctx.settings)
+        ctx.uploaded.remove(uri)
         raise
 
 
-async def _archive_payload(
-    session,
-    settings: Any,
-    job: _CaptureJob,
-    payload: dict[str, Any],
-    uploaded: list[str],
-) -> None:
-    uri = _put_archive_blob(settings, job, payload, "full")
-    uploaded.append(uri)
-    if not job.event_id:
+async def _archive_payload(ctx: _RedactCtx, payload: dict[str, Any]) -> None:
+    uri = _put_archive_blob(ctx.settings, ctx.job, payload, "full")
+    ctx.uploaded.append(uri)
+    if not ctx.job.event_id:
         return
     try:
-        await _set_archived_to(session, job, uri)
+        await _set_archived_to(ctx.session, ctx.job, uri)
     except Exception:
-        _compensate_upload(uri, settings)
-        uploaded.remove(uri)
+        _compensate_upload(uri, ctx.settings)
+        ctx.uploaded.remove(uri)
         raise
 
 

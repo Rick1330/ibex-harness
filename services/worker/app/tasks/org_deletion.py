@@ -146,33 +146,53 @@ async def _run_delete(*, job_id: str, org_id: str) -> dict[str, str]:
     factory = create_session_factory(engine)
     try:
         early, archived_uris = await _claim_and_purge_postgres(
-            factory, job_id=job_id, org_id=org_id, settings=settings
+            _ClaimPurgeArgs(factory=factory, job_id=job_id, org_id=org_id, settings=settings)
         )
         if early is not None:
             return early
         # Invalidate only after postgres purge transaction committed.
         return await _run_post_postgres(
-            factory,
-            job_id=job_id,
-            org_id=org_id,
-            settings=settings,
-            archived_uris=archived_uris or [],
+            _PostPostgresArgs(
+                factory=factory,
+                job_id=job_id,
+                org_id=org_id,
+                settings=settings,
+                archived_uris=archived_uris or [],
+            )
         )
     finally:
         await engine.dispose()
 
 
+@dataclass(frozen=True)
+class _ClaimPurgeArgs:
+    factory: Any
+    job_id: str
+    org_id: str
+    settings: Any
+
+
+@dataclass(frozen=True)
+class _PostPostgresArgs:
+    factory: Any
+    job_id: str
+    org_id: str
+    settings: Any
+    archived_uris: list[str]
+
+
 async def _claim_and_purge_postgres(
-    factory: Any,
-    *,
-    job_id: str,
-    org_id: str,
-    settings: Any,
+    args: _ClaimPurgeArgs,
 ) -> tuple[dict[str, str] | None, list[str] | None]:
     """Claim job + postgres purge in one txn. Returns (early_result, archived_uris)."""
-    async with session_as_service_org(factory, org_id) as session:
-        ctx = _StageCtx(job_id=job_id, org_id=org_id, settings=settings, session=session)
-        claimed = await _claim_job(session, job_id=job_id, org_id=org_id)
+    async with session_as_service_org(args.factory, args.org_id) as session:
+        ctx = _StageCtx(
+            job_id=args.job_id,
+            org_id=args.org_id,
+            settings=args.settings,
+            session=session,
+        )
+        claimed = await _claim_job(session, job_id=args.job_id, org_id=args.org_id)
         if not claimed:
             return {"status": "skipped", "reason": "job_not_claimable"}, None
         try:
@@ -180,51 +200,49 @@ async def _claim_and_purge_postgres(
             if blocked is not None:
                 return blocked, None
             # Soft-deleted orgs still run remaining store stages (no invented receipts).
-            archived_uris = await _collect_archived_uris(session, org_id)
+            archived_uris = await _collect_archived_uris(session, args.org_id)
             await _run_one_store(
                 ctx,
                 "postgres",
-                lambda: _stage_postgres(session, org_id=org_id),
+                lambda: _stage_postgres(session, org_id=args.org_id),
             )
             return None, archived_uris
         except Exception as exc:
-            await _mark_job_failed(factory, ctx, session, exc)
+            await _mark_job_failed(args.factory, ctx, session, exc)
             raise
 
 
-async def _run_post_postgres(
-    factory: Any,
-    *,
-    job_id: str,
-    org_id: str,
-    settings: Any,
-    archived_uris: list[str],
-) -> dict[str, str]:
+async def _run_post_postgres(args: _PostPostgresArgs) -> dict[str, str]:
     """Publish cache invalidation then optional stores + finalize (new txn)."""
     try:
         # Fail closed: invalidation errors must mark the job failed for retry.
-        await _publish_model_policy_invalidate(settings, org_id)
+        await _publish_model_policy_invalidate(args.settings, args.org_id)
     except Exception as exc:
-        logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
-        async with session_as_service_org(factory, org_id) as fail_session:
+        logger.exception("org deletion failed job_id=%s org_id=%s", args.job_id, args.org_id)
+        async with session_as_service_org(args.factory, args.org_id) as fail_session:
             await _finish_job(
                 fail_session,
                 _JobOutcome(
-                    job_id=job_id,
-                    org_id=org_id,
+                    job_id=args.job_id,
+                    org_id=args.org_id,
                     status="failed",
                     error=str(exc)[:500],
                 ),
             )
         raise
 
-    async with session_as_service_org(factory, org_id) as session:
-        ctx = _StageCtx(job_id=job_id, org_id=org_id, settings=settings, session=session)
+    async with session_as_service_org(args.factory, args.org_id) as session:
+        ctx = _StageCtx(
+            job_id=args.job_id,
+            org_id=args.org_id,
+            settings=args.settings,
+            session=session,
+        )
         try:
-            await _run_optional_store_stages(ctx, archived_uris=archived_uris)
+            await _run_optional_store_stages(ctx, archived_uris=args.archived_uris)
             return await _finalize_job(ctx)
         except Exception as exc:
-            await _mark_job_failed(factory, ctx, session, exc)
+            await _mark_job_failed(args.factory, ctx, session, exc)
             raise
 
 

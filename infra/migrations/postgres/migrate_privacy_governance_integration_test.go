@@ -173,13 +173,16 @@ func assertPrivacyRLSCrossTenant(t *testing.T, ctx context.Context, db *sql.DB, 
 	}
 }
 
-// withOrgContext sets app.current_org_id for privacy RLS + append auth.
+# withOrgContext sets ibex_app role + app.current_org_id for privacy RLS + append auth.
 func withOrgContext(ctx context.Context, db *sql.DB, orgID string, fn func(*sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
+		return fmt.Errorf("set role ibex_app: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
 		return err
 	}
