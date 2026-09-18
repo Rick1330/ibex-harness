@@ -158,6 +158,15 @@ func TestCanonicalPayload_UseNumber(t *testing.T) {
 	assertCanonicalPayload(t, `{"n":9007199254740993}`, `{"n": 9007199254740993}`)
 }
 
+func TestCanonicalPayload_ExponentNumberDecimal(t *testing.T) {
+	t.Parallel()
+	// PostgreSQL jsonb stores numbers as numeric; E-notation becomes decimal text.
+	assertCanonicalPayload(t, `{"reading":1.230e-5}`, `{"reading": 0.00001230}`)
+	assertCanonicalPayload(t, `{"n":1.23e4}`, `{"n": 12300}`)
+	assertCanonicalPayload(t, `{"n":-1.5E+2}`, `{"n": -150}`)
+	assertCanonicalPayload(t, `{"n":1e-1}`, `{"n": 0.1}`)
+}
+
 func TestCanonicalString_KnownVector(t *testing.T) {
 	t.Parallel()
 	e := baseEntry(baseEntryOpts{})
@@ -201,6 +210,22 @@ func TestCanonicalString_SortedFieldsArray(t *testing.T) {
 	}
 	if !strings.Contains(got, `["a", "z"]`) {
 		t.Fatalf("fields not sorted JSON array: %s", got)
+	}
+}
+
+func TestCanonicalString_FieldsBytewiseOrder(t *testing.T) {
+	t.Parallel()
+	// Bytewise / COLLATE "C": 'Z' (0x5A) before 'a' (0x61); UTF-8 ä after ASCII.
+	e := baseEntry(baseEntryOpts{
+		org: uuid.New(), fields: []string{"apple", "Zebra", "äppel", "Banana"},
+	})
+	got, err := CanonicalString(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `["Banana", "Zebra", "apple", "äppel"]`
+	if !strings.Contains(got, want) {
+		t.Fatalf("fields not bytewise-sorted: %s want %s", got, want)
 	}
 }
 

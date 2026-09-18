@@ -191,7 +191,9 @@ BEGIN
     IF p_fields IS NULL OR array_length(p_fields, 1) IS NULL THEN
         v_fields_sorted := ARRAY[]::TEXT[];
     ELSE
-        SELECT COALESCE(array_agg(x ORDER BY x), ARRAY[]::TEXT[])
+        -- COLLATE "C" matches Go sort.Strings (bytewise); default DB collation
+        -- can reorder case / non-ASCII and break VerifyChain.
+        SELECT COALESCE(array_agg(x ORDER BY x COLLATE "C"), ARRAY[]::TEXT[])
           INTO v_fields_sorted
           FROM unnest(p_fields) AS x;
     END IF;

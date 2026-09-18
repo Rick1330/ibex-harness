@@ -72,6 +72,27 @@ def test_cfg_from_settings_overrides_env(monkeypatch: pytest.MonkeyPatch) -> Non
     assert cfg["key_id"] == "v9"
 
 
+def test_cfg_empty_secretstr_falls_back_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty SecretStr must not block env fallback (str(SecretStr('')) is truthy)."""
+    _clear_s3_env(monkeypatch)
+    monkeypatch.setenv("S3_ENDPOINT", "http://env:9000")
+    monkeypatch.setenv("S3_SECRET_KEY", "from-env")
+    from pydantic import SecretStr
+
+    settings = SimpleNamespace(
+        s3_endpoint=SecretStr(""),
+        s3_access_key=None,
+        s3_secret_key=SecretStr(""),
+        s3_bucket_sessions=None,
+        s3_region=None,
+        s3_master_key_b64=None,
+        s3_encryption_key_id=None,
+    )
+    cfg = osc._cfg(settings)
+    assert cfg["endpoint"] == "http://env:9000"
+    assert cfg["secret_key"] == "from-env"
+
+
 def test_cfg_defaults_when_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
     cfg = osc._cfg()

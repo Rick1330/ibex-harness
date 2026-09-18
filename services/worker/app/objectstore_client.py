@@ -85,9 +85,11 @@ def _from_settings(settings: Any, pick: _CfgPick) -> str | None:
     if settings is None or not pick.attr:
         return None
     val = getattr(settings, pick.attr, None)
-    if val is None or not str(val).strip():
+    if val is None:
         return None
     raw = _secret_or_str(val)
+    if not raw.strip():
+        return None
     return raw.rstrip("/") if pick.strip_slash else raw
 
 

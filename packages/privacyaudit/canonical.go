@@ -14,8 +14,10 @@
 // Payload: SQL NULL → {}; JSON null preserved as null.
 // jsonb::text uses spaces after ':' and ',' (PostgreSQL jsonb_out).
 //
-// Numbers use json.Decoder.UseNumber (not float64) and strings use
-// json.Encoder.SetEscapeHTML(false) so VerifyChain matches PG jsonb::text.
+// Numbers use json.Decoder.UseNumber (not float64); exponent-form numbers are
+// expanded to PostgreSQL numeric decimal text (e.g. 1.230e-5 → 0.00001230).
+// Strings use no HTML escaping so VerifyChain matches PG jsonb::text.
+// Fields are sorted bytewise (Go sort.Strings); SQL uses ORDER BY … COLLATE "C".
 package privacyaudit
 
 import (
@@ -174,7 +176,11 @@ func writeJSONBPrimitive(b *strings.Builder, v any) error {
 	case bool:
 		return writeJSONBool(b, t)
 	case json.Number:
-		b.WriteString(string(t))
+		s, err := formatJSONBNumber(t)
+		if err != nil {
+			return err
+		}
+		b.WriteString(s)
 	case int64:
 		b.WriteString(strconv.FormatInt(t, 10))
 	case int:
@@ -187,6 +193,80 @@ func writeJSONBPrimitive(b *strings.Builder, v any) error {
 		return errNotPrimitive
 	}
 	return nil
+}
+
+// formatJSONBNumber emits PostgreSQL jsonb/numeric decimal text.
+// Non-exponent forms keep their lexical representation; E-notation is expanded
+// (e.g. 1.230e-5 → 0.00001230) to match jsonb::text.
+func formatJSONBNumber(n json.Number) (string, error) {
+	s := string(n)
+	ei := strings.IndexAny(s, "eE")
+	if ei < 0 {
+		return s, nil
+	}
+	if ei == 0 || ei == len(s)-1 {
+		return "", fmt.Errorf("privacyaudit: invalid json number %q", s)
+	}
+	exp, err := strconv.Atoi(s[ei+1:])
+	if err != nil {
+		return "", fmt.Errorf("privacyaudit: invalid json number %q: %w", s, err)
+	}
+	return expandScientificDecimal(s[:ei], exp)
+}
+
+func expandScientificDecimal(significand string, exp int) (string, error) {
+	sign := ""
+	if strings.HasPrefix(significand, "+") {
+		significand = significand[1:]
+	} else if strings.HasPrefix(significand, "-") {
+		sign = "-"
+		significand = significand[1:]
+	}
+	if significand == "" {
+		return "", fmt.Errorf("privacyaudit: invalid json number significand")
+	}
+	dot := strings.IndexByte(significand, '.')
+	fracDigits := 0
+	digits := significand
+	if dot >= 0 {
+		fracDigits = len(significand) - dot - 1
+		digits = significand[:dot] + significand[dot+1:]
+	}
+	if digits == "" || !allASCIIDigits(digits) {
+		return "", fmt.Errorf("privacyaudit: invalid json number significand %q", significand)
+	}
+	// value = digits * 10^(exp - fracDigits)
+	power := exp - fracDigits
+	if power >= 0 {
+		return sign + digits + strings.Repeat("0", power), nil
+	}
+	return sign + placeDecimal(digits, -power), nil
+}
+
+func allASCIIDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// placeDecimal inserts a decimal point scale digits from the right of digits,
+// padding with leading zeros when needed (PostgreSQL numeric_out style).
+func placeDecimal(digits string, scale int) string {
+	if scale <= 0 {
+		return digits
+	}
+	for len(digits) <= scale {
+		digits = "0" + digits
+	}
+	i := len(digits) - scale
+	intPart := strings.TrimLeft(digits[:i], "0")
+	if intPart == "" {
+		intPart = "0"
+	}
+	return intPart + "." + digits[i:]
 }
 
 func writeJSONBool(b *strings.Builder, v bool) error {
@@ -310,6 +390,8 @@ func actorString(id *uuid.UUID) string {
 	return id.String()
 }
 
+// sortedFieldsAny orders fields bytewise (sort.Strings), matching SQL
+// array_agg(x ORDER BY x COLLATE "C") in privacy_audit_append.
 func sortedFieldsAny(fields []string) []any {
 	sorted := append([]string(nil), fields...)
 	sort.Strings(sorted)
