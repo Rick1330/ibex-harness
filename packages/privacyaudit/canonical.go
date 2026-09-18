@@ -246,8 +246,18 @@ func expandScientificDecimal(significand string, exp int) (string, error) {
 const maxExpandedJSONNumberLen = 4096
 
 func checkExpandedNumberLen(base, pad int) error {
-	if pad < 0 || base < 0 || base > maxExpandedJSONNumberLen || pad > maxExpandedJSONNumberLen-base {
-		return fmt.Errorf("privacyaudit: json number expansion exceeds %d digits", maxExpandedJSONNumberLen)
+	errExceeds := fmt.Errorf("privacyaudit: json number expansion exceeds %d digits", maxExpandedJSONNumberLen)
+	if pad < 0 {
+		return errExceeds
+	}
+	if base < 0 {
+		return errExceeds
+	}
+	if base > maxExpandedJSONNumberLen {
+		return errExceeds
+	}
+	if pad > maxExpandedJSONNumberLen-base {
+		return errExceeds
 	}
 	return nil
 }
