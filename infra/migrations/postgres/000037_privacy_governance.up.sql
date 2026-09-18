@@ -24,6 +24,11 @@ ALTER TABLE ibex_core.org_deletion_jobs
 ALTER TABLE ibex_core.org_deletion_jobs
     VALIDATE CONSTRAINT org_deletion_jobs_status_check;
 
+-- Snapshot of session_events.archived_to collected before Postgres purge so
+-- object-store retries still delete URIs outside the org prefix after events are gone.
+ALTER TABLE ibex_core.org_deletion_jobs
+    ADD COLUMN IF NOT EXISTS archived_uri_snapshot JSONB;
+
 -- ================================================================
 -- rls_privacy_visible — org GUC only (no service-account forge path)
 -- ================================================================

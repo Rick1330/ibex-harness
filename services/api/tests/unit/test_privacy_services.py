@@ -45,6 +45,30 @@ def _hold_row(*, org, hold_id=None, cleared=False):
     }
 
 
+def _policy_row(*, org, pid=None, mode="redacted", priority=1):
+    return {
+        "id": pid or uuid4(),
+        "org_id": org,
+        "agent_id": None,
+        "mode": mode,
+        "priority": priority,
+        "created_at": _TS,
+        "updated_at": _TS,
+    }
+
+
+def _mappings_first(row):
+    return MagicMock(
+        mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=row)))
+    )
+
+
+def _mappings_all(rows):
+    return MagicMock(
+        mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=rows)))
+    )
+
+
 @pytest.mark.asyncio
 async def test_set_hold_conflict_when_active() -> None:
     session = AsyncMock()
@@ -62,8 +86,10 @@ async def test_set_hold_conflict_when_active() -> None:
 @pytest.mark.asyncio
 async def test_set_hold_requires_user() -> None:
     session = AsyncMock()
+    org = uuid4()
+    body = LegalHoldCreate(reason="x")
     with pytest.raises(ApiError) as ei:
-        await hold_svc.set_hold(session, uuid4(), LegalHoldCreate(reason="x"), set_by=None)  # type: ignore[arg-type]
+        await hold_svc.set_hold(session, org, body, set_by=None)  # type: ignore[arg-type]
     assert ei.value.code == VALIDATION_ERROR
 
 
@@ -76,9 +102,7 @@ async def test_set_hold_happy() -> None:
     session.execute = AsyncMock(
         side_effect=[
             MagicMock(),  # advisory lock
-            MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=row)))
-            ),
+            _mappings_first(row),
         ]
     )
     session.commit = AsyncMock()
@@ -91,16 +115,17 @@ async def test_set_hold_happy() -> None:
 @pytest.mark.asyncio
 async def test_set_hold_insert_no_row() -> None:
     session = AsyncMock()
+    org = uuid4()
+    body = LegalHoldCreate(reason="x")
+    user = uuid4()
     session.execute = AsyncMock(
         side_effect=[
             MagicMock(),
-            MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-            ),
+            _mappings_first(None),
         ]
     )
     with pytest.raises(ApiError) as ei:
-        await hold_svc.set_hold(session, uuid4(), LegalHoldCreate(reason="x"), set_by=uuid4())
+        await hold_svc.set_hold(session, org, body, set_by=user)
     assert ei.value.code == VALIDATION_ERROR
 
 
@@ -108,9 +133,12 @@ async def test_set_hold_insert_no_row() -> None:
 async def test_set_hold_other_integrity_reraises() -> None:
     session = AsyncMock()
     session.rollback = AsyncMock()
+    org = uuid4()
+    body = LegalHoldCreate(reason="x")
+    user = uuid4()
     session.execute = AsyncMock(side_effect=_integrity("some_other_constraint"))
     with pytest.raises(IntegrityError):
-        await hold_svc.set_hold(session, uuid4(), LegalHoldCreate(reason="x"), set_by=uuid4())
+        await hold_svc.set_hold(session, org, body, set_by=user)
 
 
 @pytest.mark.asyncio
@@ -118,11 +146,7 @@ async def test_list_active_holds() -> None:
     session = AsyncMock()
     org = uuid4()
     row = _hold_row(org=org)
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row])))
-        )
-    )
+    session.execute = AsyncMock(return_value=_mappings_all([row]))
     out = await hold_svc.list_active_holds(session, org)
     assert len(out) == 1
     assert out[0].id == row["id"]
@@ -139,21 +163,18 @@ async def test_list_active_holds() -> None:
 )
 async def test_privacy_not_found(kind: str) -> None:
     session = AsyncMock()
+    org, oid, actor = uuid4(), uuid4(), uuid4()
     if kind == "delete_policy":
         session.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+        call = capture_svc.delete_policy(session, org, oid)
+    elif kind == "get_policy":
+        session.execute = AsyncMock(return_value=_mappings_first(None))
+        call = capture_svc.get_policy(session, org, oid)
     else:
-        session.execute = AsyncMock(
-            return_value=MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-            )
-        )
+        session.execute = AsyncMock(return_value=_mappings_first(None))
+        call = hold_svc.clear_hold(session, org, oid, cleared_by=actor)
     with pytest.raises(ApiError) as ei:
-        if kind == "clear_hold":
-            await hold_svc.clear_hold(session, uuid4(), uuid4(), cleared_by=uuid4())
-        elif kind == "get_policy":
-            await capture_svc.get_policy(session, uuid4(), uuid4())
-        else:
-            await capture_svc.delete_policy(session, uuid4(), uuid4())
+        await call
     assert ei.value.code == NOT_FOUND
 
 
@@ -162,11 +183,7 @@ async def test_clear_hold_happy() -> None:
     session = AsyncMock()
     org = uuid4()
     row = _hold_row(org=org, cleared=True)
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=row)))
-        )
-    )
+    session.execute = AsyncMock(return_value=_mappings_first(row))
     session.commit = AsyncMock()
     out = await hold_svc.clear_hold(session, org, row["id"], cleared_by=uuid4())
     assert out.cleared_at is not None
@@ -206,27 +223,30 @@ async def test_resolve_mode_with_agent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_policies() -> None:
+@pytest.mark.parametrize(
+    ("kind", "mode", "priority"),
+    [
+        ("list", "redacted", 1),
+        ("create", "redacted", 10),
+    ],
+)
+async def test_policy_list_and_create(kind: str, mode: str, priority: int) -> None:
     session = AsyncMock()
     org = uuid4()
-    pid = uuid4()
-    row = {
-        "id": pid,
-        "org_id": org,
-        "agent_id": None,
-        "mode": "redacted",
-        "priority": 1,
-        "created_at": _TS,
-        "updated_at": _TS,
-    }
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[row])))
-        )
+    row = _policy_row(org=org, mode=mode, priority=priority)
+    if kind == "list":
+        session.execute = AsyncMock(return_value=_mappings_all([row]))
+        out = await capture_svc.list_policies(session, org)
+        assert len(out) == 1
+        assert out[0].mode == mode
+        return
+    session.execute = AsyncMock(return_value=_mappings_first(row))
+    session.commit = AsyncMock()
+    created = await capture_svc.create_policy(
+        session, org, CapturePolicyCreate(mode=mode, priority=priority)
     )
-    out = await capture_svc.list_policies(session, org)
-    assert len(out) == 1
-    assert out[0].mode == "redacted"
+    assert created.id == row["id"]
+    assert created.mode == mode
 
 
 @pytest.mark.asyncio
@@ -239,33 +259,6 @@ async def test_delete_policy_happy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_policy_happy() -> None:
-    session = AsyncMock()
-    org = uuid4()
-    pid = uuid4()
-    row = {
-        "id": pid,
-        "org_id": org,
-        "agent_id": None,
-        "mode": "redacted",
-        "priority": 10,
-        "created_at": _TS,
-        "updated_at": _TS,
-    }
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=row)))
-        )
-    )
-    session.commit = AsyncMock()
-    out = await capture_svc.create_policy(
-        session, org, CapturePolicyCreate(mode="redacted", priority=10)
-    )
-    assert out.id == pid
-    assert out.mode == "redacted"
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("execute_side",),
     [
@@ -275,78 +268,41 @@ async def test_create_policy_happy() -> None:
 )
 async def test_create_policy_conflict_paths(execute_side: object) -> None:
     session = AsyncMock()
+    org = uuid4()
+    body = CapturePolicyCreate(mode="none", priority=1)
     if execute_side == "no_row":
-        session.execute = AsyncMock(
-            return_value=MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-            )
-        )
+        session.execute = AsyncMock(return_value=_mappings_first(None))
     else:
         session.execute = AsyncMock(side_effect=execute_side)
     with pytest.raises(ApiError) as ei:
-        await capture_svc.create_policy(
-            session, uuid4(), CapturePolicyCreate(mode="none", priority=1)
-        )
+        await capture_svc.create_policy(session, org, body)
     assert ei.value.code == CAPTURE_POLICY_CONFLICT
 
 
 @pytest.mark.asyncio
-async def test_patch_policy_updates() -> None:
+@pytest.mark.parametrize(
+    ("updated_mode", "expect_ok"),
+    [
+        ("full", True),
+        (None, False),
+    ],
+)
+async def test_patch_policy_paths(updated_mode: str | None, expect_ok: bool) -> None:
     session = AsyncMock()
     org = uuid4()
     pid = uuid4()
-    current = {
-        "id": pid,
-        "org_id": org,
-        "agent_id": None,
-        "mode": "none",
-        "priority": 1,
-        "created_at": _TS,
-        "updated_at": _TS,
-    }
-    updated = {**current, "mode": "full", "priority": 2}
+    current = _policy_row(org=org, pid=pid, mode="none", priority=1)
+    updated = None if updated_mode is None else {**current, "mode": updated_mode, "priority": 2}
     session.execute = AsyncMock(
-        side_effect=[
-            MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=current)))
-            ),
-            MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=updated)))
-            ),
-        ]
+        side_effect=[_mappings_first(current), _mappings_first(updated)]
     )
-    session.commit = AsyncMock()
-    out = await capture_svc.patch_policy(
-        session, org, pid, CapturePolicyPatch(mode="full", priority=2)
-    )
-    assert out.mode == "full"
-    assert out.priority == 2
-
-
-@pytest.mark.asyncio
-async def test_patch_policy_update_race_not_found() -> None:
-    session = AsyncMock()
-    org = uuid4()
-    pid = uuid4()
-    current = {
-        "id": pid,
-        "org_id": org,
-        "agent_id": None,
-        "mode": "none",
-        "priority": 1,
-        "created_at": _TS,
-        "updated_at": _TS,
-    }
-    session.execute = AsyncMock(
-        side_effect=[
-            MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=current)))
-            ),
-            MagicMock(
-                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-            ),
-        ]
-    )
+    body = CapturePolicyPatch(mode="full", priority=2) if expect_ok else CapturePolicyPatch(mode="full")
+    if expect_ok:
+        session.commit = AsyncMock()
+        out = await capture_svc.patch_policy(session, org, pid, body)
+        assert out.mode == "full"
+        assert out.priority == 2
+        return
     with pytest.raises(ApiError) as ei:
-        await capture_svc.patch_policy(session, org, pid, CapturePolicyPatch(mode="full"))
+        await capture_svc.patch_policy(session, org, pid, body)
     assert ei.value.code == NOT_FOUND

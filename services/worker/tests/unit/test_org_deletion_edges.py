@@ -53,7 +53,7 @@ def _stub_store_pipeline(
     receipt_verified: bool,
     all_verified: bool,
 ) -> AsyncMock | None:
-    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(org_deletion, "_resolve_archived_uris", AsyncMock(return_value=[]))
     stage_pg = AsyncMock()
     monkeypatch.setattr(org_deletion, "_stage_postgres", stage_pg)
     monkeypatch.setattr(org_deletion, "_stage_clickhouse", AsyncMock())
@@ -76,19 +76,19 @@ def _stub_store_pipeline(
 async def test_receipt_verified_refuses_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(org_deletion, "NON_ERASABLE_STORES", frozenset({"billing"}))
     session = AsyncMock()
+    call = org_deletion._receipt_verified(session, "j", "billing")
     with pytest.raises(ValueError, match="non-erasable"):
-        await org_deletion._receipt_verified(session, "j", "billing")
+        await call
 
 
 @pytest.mark.asyncio
 async def test_upsert_receipt_refuses_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(org_deletion, "NON_ERASABLE_STORES", frozenset({"billing"}))
     session = AsyncMock()
+    receipt = org_deletion._ReceiptWrite(job_id="j", store="billing", status="verified")
+    call = org_deletion._upsert_receipt(session, receipt)
     with pytest.raises(ValueError, match="non-erasable"):
-        await org_deletion._upsert_receipt(
-            session,
-            org_deletion._ReceiptWrite(job_id="j", store="billing", status="verified"),
-        )
+        await call
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_optional_stores_skip_when_unconfigured(monkeypatch: pytest.Monkey
     stage_ch = AsyncMock()
     stage_redis = AsyncMock()
     stage_s3 = AsyncMock()
-    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(org_deletion, "_resolve_archived_uris", AsyncMock(return_value=[]))
     monkeypatch.setattr(org_deletion, "_stage_postgres", AsyncMock())
     monkeypatch.setattr(org_deletion, "_stage_clickhouse", stage_ch)
     monkeypatch.setattr(org_deletion, "_stage_redis", stage_redis)

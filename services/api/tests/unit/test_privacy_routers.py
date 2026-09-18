@@ -62,11 +62,13 @@ async def test_list_holds_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_hold_mutations_require_user_id(call: str) -> None:
     org = uuid4()
     token = _token(org, user_id=None)
+    session = AsyncMock()
+    if call == "set":
+        pending = holds_router.set_hold(org, LegalHoldCreate(reason="x"), token, session)
+    else:
+        pending = holds_router.clear_hold(org, uuid4(), token, session)
     with pytest.raises(ApiError) as ei:
-        if call == "set":
-            await holds_router.set_hold(org, LegalHoldCreate(reason="x"), token, AsyncMock())
-        else:
-            await holds_router.clear_hold(org, uuid4(), token, AsyncMock())
+        await pending
     assert ei.value.code == INSUFFICIENT_PERMISSIONS
 
 
@@ -160,7 +162,9 @@ async def test_capture_create_patch_delete(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_make_ctx_asserts_org() -> None:
     org = uuid4()
-    ctx = capture_router._make_ctx(org, org, MagicMock())
+    session = MagicMock()
+    ctx = capture_router._make_ctx(org, org, session)
     assert ctx.org_id == org
+    other = uuid4()
     with pytest.raises(ApiError):
-        capture_router._make_ctx(org, uuid4(), MagicMock())
+        capture_router._make_ctx(org, other, session)

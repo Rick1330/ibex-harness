@@ -200,7 +200,10 @@ async def _claim_and_purge_postgres(
             if blocked is not None:
                 return blocked, None
             # Soft-deleted orgs still run remaining store stages (no invented receipts).
-            archived_uris = await _collect_archived_uris(session, args.org_id)
+            # Persist URIs before purge so object-store retries still see non-prefix archives.
+            archived_uris = await _resolve_archived_uris(
+                session, job_id=args.job_id, org_id=args.org_id
+            )
             await _run_one_store(
                 ctx,
                 "postgres",
@@ -446,6 +449,42 @@ async def _finish_job(session, outcome: _JobOutcome) -> None:
     )
 
 
+async def _load_archived_uri_snapshot(session, job_id: str) -> list[str] | None:
+    """Return persisted URI list, or None when no snapshot has been written yet."""
+    result = await session.execute(
+        text(
+            """
+            SELECT archived_uri_snapshot
+            FROM ibex_core.org_deletion_jobs
+            WHERE id = CAST(:job_id AS uuid)
+            """
+        ),
+        {"job_id": job_id},
+    )
+    row = result.first()
+    if row is None or row[0] is None:
+        return None
+    raw = row[0]
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    if not isinstance(raw, list):
+        return []
+    return [str(u) for u in raw]
+
+
+async def _save_archived_uri_snapshot(session, job_id: str, uris: list[str]) -> None:
+    await session.execute(
+        text(
+            """
+            UPDATE ibex_core.org_deletion_jobs
+            SET archived_uri_snapshot = CAST(:uris AS jsonb)
+            WHERE id = CAST(:job_id AS uuid)
+            """
+        ),
+        {"job_id": job_id, "uris": json.dumps(uris)},
+    )
+
+
 async def _collect_archived_uris(session, org_id: str) -> list[str]:
     result = await session.execute(
         text(
@@ -460,6 +499,16 @@ async def _collect_archived_uris(session, org_id: str) -> list[str]:
         {"org_id": org_id},
     )
     return [str(r[0]) for r in result.fetchall()]
+
+
+async def _resolve_archived_uris(session, *, job_id: str, org_id: str) -> list[str]:
+    """Reuse a prior snapshot on retry; otherwise collect + persist before Postgres purge."""
+    existing = await _load_archived_uri_snapshot(session, job_id)
+    if existing is not None:
+        return existing
+    uris = await _collect_archived_uris(session, org_id)
+    await _save_archived_uri_snapshot(session, job_id, uris)
+    return uris
 
 
 async def _stage_postgres(session, *, org_id: str) -> None:

@@ -69,7 +69,7 @@ def _stub_stages(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(org_deletion, "_stage_objectstore", AsyncMock())
     monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", AsyncMock())
     monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
-    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(org_deletion, "_resolve_archived_uris", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         org_deletion,
         "_receipt_digests",
@@ -168,7 +168,7 @@ async def test_run_delete_cascade_failure_marks_job_failed(
             return None
 
     _wire_delete_session(monkeypatch, session, session_factory=_CM)
-    monkeypatch.setattr(org_deletion, "_collect_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(org_deletion, "_resolve_archived_uris", AsyncMock(return_value=[]))
     monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=False))
     monkeypatch.setattr(
         org_deletion, "_stage_postgres", AsyncMock(side_effect=RuntimeError("cascade boom"))
@@ -292,6 +292,80 @@ async def test_run_delete_still_runs_stages_when_org_already_deleted(
     org_deletion._stage_objectstore.assert_awaited()  # type: ignore[attr-defined]
     assert not hasattr(org_deletion, "_ensure_all_receipts_verified")
 
+
+@pytest.mark.asyncio
+async def test_resolve_archived_uris_reuses_snapshot() -> None:
+    """After Postgres purge, retries must reuse the persisted URI snapshot."""
+    session = AsyncMock()
+    uris = ["s3://bucket/archives/outside-prefix.json"]
+    session.execute = AsyncMock(
+        return_value=MagicMock(first=MagicMock(return_value=(uris,)))
+    )
+    out = await org_deletion._resolve_archived_uris(session, job_id="j", org_id="o")
+    assert out == uris
+    assert session.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_archived_uris_collects_and_persists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            MagicMock(first=MagicMock(return_value=(None,))),  # no snapshot
+            MagicMock(),  # save
+        ]
+    )
+    monkeypatch.setattr(
+        org_deletion,
+        "_collect_archived_uris",
+        AsyncMock(return_value=["s3://b/x", "s3://b/y"]),
+    )
+    out = await org_deletion._resolve_archived_uris(session, job_id="j", org_id="o")
+    assert out == ["s3://b/x", "s3://b/y"]
+    assert session.execute.await_count == 2
+    save_params = session.execute.await_args_list[1].args[1]
+    assert '"s3://b/x"' in save_params["uris"]
+
+
+@pytest.mark.asyncio
+async def test_retry_passes_snapshot_uris_to_objectstore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-postgres retry must forward snapshot URIs even when collect would be empty."""
+    session = AsyncMock()
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
+
+    session.execute = AsyncMock(side_effect=execute)
+    _wire_delete_session(monkeypatch, session)
+    _stub_stages(monkeypatch)
+    snapshot = ["s3://other-bucket/org-archives/blob.bin"]
+    monkeypatch.setattr(
+        org_deletion, "_resolve_archived_uris", AsyncMock(return_value=snapshot)
+    )
+    # Postgres already verified — collect would be empty after purge.
+    monkeypatch.setattr(
+        org_deletion,
+        "_receipt_verified",
+        AsyncMock(side_effect=lambda _s, _j, store: store == "postgres"),
+    )
+    monkeypatch.setattr(org_deletion, "_upsert_receipt", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+
+    out = await org_deletion._run_delete(job_id="j", org_id="o")
+    assert out["status"] == "succeeded"
+    org_deletion._stage_postgres.assert_not_awaited()  # type: ignore[attr-defined]
+    org_deletion._stage_objectstore.assert_awaited_once()  # type: ignore[attr-defined]
+    kwargs = org_deletion._stage_objectstore.await_args.kwargs  # type: ignore[attr-defined]
+    assert kwargs["uris"] == snapshot
 
 
 def test_claim_job_sql_allows_failed_retry() -> None:

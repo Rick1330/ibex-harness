@@ -27,6 +27,9 @@ SET status = 'failed',
 WHERE status = 'hold_blocked';
 
 ALTER TABLE ibex_core.org_deletion_jobs
+    DROP COLUMN IF EXISTS archived_uri_snapshot;
+
+ALTER TABLE ibex_core.org_deletion_jobs
     DROP CONSTRAINT IF EXISTS org_deletion_jobs_status_check;
 
 ALTER TABLE ibex_core.org_deletion_jobs

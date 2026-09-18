@@ -222,9 +222,8 @@ async def test_archive_compensates_when_session_commit_fails(
         lambda u, _s: deleted.append(u),
     )
 
+    job = _CaptureJob(org_id="o", event_id="1", payload={"content": "x"})
     with pytest.raises(RuntimeError, match="commit failed"):
-        await capture_redaction._run(
-            _CaptureJob(org_id="o", event_id="1", payload={"content": "x"})
-        )
+        await capture_redaction._run(job)
     assert deleted == [uri]
 
