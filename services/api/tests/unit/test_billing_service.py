@@ -140,12 +140,9 @@ async def test_publish_rate_card_version_not_found() -> None:
         prices=[PriceRow(provider="o", model_pattern="*", input_cents_per_1k=1, output_cents_per_1k=1)]
     )
     deps = svc.WriteDeps()
+    inp = svc.PublishRateCardVersionInput(org_id=uuid4(), card_id=uuid4(), body=body)
     with pytest.raises(ApiError):
-        await svc.publish_rate_card_version(
-            session,
-            svc.PublishRateCardVersionInput(org_id=uuid4(), card_id=uuid4(), body=body),
-            deps=deps,
-        )
+        await svc.publish_rate_card_version(session, inp, deps=deps)
 
 
 @pytest.mark.asyncio
@@ -280,9 +277,7 @@ async def test_publish_insert_returns_none() -> None:
     body = RateCardVersionPublish(
         prices=[PriceRow(provider="o", model_pattern="*", input_cents_per_1k=1, output_cents_per_1k=1)]
     )
+    inp = svc.PublishRateCardVersionInput(org_id=org_id, card_id=card_id, body=body)
+    deps = svc.WriteDeps()
     with pytest.raises(ApiError):
-        await svc.publish_rate_card_version(
-            session,
-            svc.PublishRateCardVersionInput(org_id=org_id, card_id=card_id, body=body),
-            deps=svc.WriteDeps(),
-        )
+        await svc.publish_rate_card_version(session, inp, deps=deps)

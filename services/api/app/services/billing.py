@@ -140,7 +140,12 @@ async def publish_rate_card_version(
 ) -> RateCardVersionResponse:
     await _lock_rate_card(session, inp.org_id, inp.card_id)
     version = await _next_rate_card_version(session, inp.card_id)
-    row = await _insert_rate_card_version(session, inp.org_id, inp.card_id, version, inp.body)
+    row = await _insert_rate_card_version(
+        session,
+        InsertRateCardVersionInput(
+            org_id=inp.org_id, card_id=inp.card_id, version=version, body=inp.body
+        ),
+    )
     await _mark_rate_card_published(session, inp.org_id, inp.card_id)
     await session.commit()
     await _publish(deps, inp.org_id)
@@ -203,14 +208,18 @@ async def _next_rate_card_version(session: AsyncSession, card_id: UUID) -> int:
     return int(next_ver.scalar_one())
 
 
+@dataclass(frozen=True, slots=True)
+class InsertRateCardVersionInput:
+    org_id: UUID
+    card_id: UUID
+    version: int
+    body: RateCardVersionPublish
+
+
 async def _insert_rate_card_version(
-    session: AsyncSession,
-    org_id: UUID,
-    card_id: UUID,
-    version: int,
-    body: RateCardVersionPublish,
+    session: AsyncSession, inp: InsertRateCardVersionInput
 ):
-    prices_json = json.dumps([p.model_dump() for p in body.prices])
+    prices_json = json.dumps([p.model_dump() for p in inp.body.prices])
     result = await session.execute(
         text(
             """
@@ -223,9 +232,9 @@ async def _insert_rate_card_version(
             """
         ),
         {
-            "card_id": str(card_id),
-            "org_id": str(org_id),
-            "version": version,
+            "card_id": str(inp.card_id),
+            "org_id": str(inp.org_id),
+            "version": inp.version,
             "prices": prices_json,
         },
     )

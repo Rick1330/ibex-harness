@@ -294,7 +294,13 @@ func validateFactIDs(f UsageFact) error {
 }
 
 func requireFactIdentity(f UsageFact) error {
-	if f.RequestID == "" || f.OrgID == uuid.Nil || f.AgentID == uuid.Nil {
+	if f.RequestID == "" {
+		return fmt.Errorf("billing: usage fact missing required ids")
+	}
+	if f.OrgID == uuid.Nil {
+		return fmt.Errorf("billing: usage fact missing required ids")
+	}
+	if f.AgentID == uuid.Nil {
 		return fmt.Errorf("billing: usage fact missing required ids")
 	}
 	return nil

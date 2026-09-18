@@ -93,37 +93,35 @@ func TestUnit_OrgSubscriber_goodPayloadInvalidates(t *testing.T) {
 
 func TestUnit_OrgSubscriber_malformedIgnored(t *testing.T) {
 	t.Parallel()
-	warmOrg := uuid.New()
-	rec := &recordingInvalidator{seen: make(chan uuid.UUID, 4)}
-	client := newMiniRedis(t)
-	startOrgSubscriber(t, client, rec, parseOrgID)
-	waitPubSubPatterns(t, client)
-
-	prefix := "ibex:test:invalidate:"
-	mustPublish(t, client, prefix+warmOrg.String(), `{`)
-
-	sentinel := uuid.New()
-	mustPublish(t, client, prefix+sentinel.String(),
-		`{"v":1,"org_id":"`+sentinel.String()+`","epoch":1}`)
-	waitInvalidated(t, rec, sentinel)
-
-	if got := rec.orgsSnapshot(); len(got) != 1 || got[0] != sentinel {
-		t.Fatalf("invalidated=%v want only sentinel %s", got, sentinel)
-	}
+	runIgnoreThenSentinel(t, ignoreThenSentinelCase{
+		badChannelOrg: uuid.New(),
+		badPayload:    `{`,
+	})
 }
 
 func TestUnit_OrgSubscriber_orgMismatchIgnored(t *testing.T) {
 	t.Parallel()
 	channelOrg := uuid.New()
-	eventOrg := uuid.New()
+	runIgnoreThenSentinel(t, ignoreThenSentinelCase{
+		badChannelOrg: channelOrg,
+		badPayload:    `{"v":1,"org_id":"` + uuid.New().String() + `","epoch":1}`,
+	})
+}
+
+type ignoreThenSentinelCase struct {
+	badChannelOrg uuid.UUID
+	badPayload    string
+}
+
+func runIgnoreThenSentinel(t *testing.T, tc ignoreThenSentinelCase) {
+	t.Helper()
 	rec := &recordingInvalidator{seen: make(chan uuid.UUID, 4)}
 	client := newMiniRedis(t)
 	startOrgSubscriber(t, client, rec, parseOrgID)
 	waitPubSubPatterns(t, client)
 
 	prefix := "ibex:test:invalidate:"
-	mustPublish(t, client, prefix+channelOrg.String(),
-		`{"v":1,"org_id":"`+eventOrg.String()+`","epoch":1}`)
+	mustPublish(t, client, prefix+tc.badChannelOrg.String(), tc.badPayload)
 
 	sentinel := uuid.New()
 	mustPublish(t, client, prefix+sentinel.String(),

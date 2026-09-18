@@ -250,7 +250,7 @@ func TestUnit_OptionalStringPtr(t *testing.T) {
 	}
 }
 
-func TestUnit_EstimateCostChecked(t *testing.T) {
+func TestUnit_EstimateCostChecked_Match(t *testing.T) {
 	t.Parallel()
 	card := billing.CardVersion{
 		Version: "3",
@@ -259,23 +259,43 @@ func TestUnit_EstimateCostChecked(t *testing.T) {
 			InputCentsPer1k: 250, OutputCentsPer1k: 1000,
 		}},
 	}
-	cents, ver, ok := estimateCostChecked(card, "openai", "gpt-4o-mini", 1, 1)
-	if !ok || ver != "3" || cents != 2 {
-		t.Fatalf("ok=%v cents=%d ver=%s", ok, cents, ver)
+	cents, ver, ok := estimateCostChecked(estimateCostInput{
+		card: card, provider: "openai", model: "gpt-4o-mini", inTok: 1, outTok: 1,
+	})
+	if !ok {
+		t.Fatal("expected ok")
 	}
-	if _, _, ok := estimateCostChecked(billing.CardVersion{Version: "1"}, "x", "y", 1, 1); ok {
+	if ver != "3" {
+		t.Fatalf("ver=%s", ver)
+	}
+	if cents != 2 {
+		t.Fatalf("cents=%d", cents)
+	}
+}
+
+func TestUnit_EstimateCostChecked_NoMatch(t *testing.T) {
+	t.Parallel()
+	_, _, ok := estimateCostChecked(estimateCostInput{
+		card: billing.CardVersion{Version: "1"}, provider: "x", model: "y", inTok: 1, outTok: 1,
+	})
+	if ok {
 		t.Fatal("expected fail for empty prices")
 	}
 }
 
-func TestUnit_ResolvePublishedCard(t *testing.T) {
+func TestUnit_ResolvePublishedCard_NilCache(t *testing.T) {
 	t.Parallel()
-
 	got := resolvePublishedCard(context.Background(), nil, uuid.New())
-	if got.Version != "0" || got.Prices != nil {
-		t.Fatalf("nil cache: got=%+v", got)
+	if got.Version != "0" {
+		t.Fatalf("version=%s", got.Version)
 	}
+	if got.Prices != nil {
+		t.Fatalf("prices=%v", got.Prices)
+	}
+}
 
+func TestUnit_ResolvePublishedCard_FromCache(t *testing.T) {
+	t.Parallel()
 	org := uuid.New()
 	published := billing.CardVersion{
 		Version: "9",
@@ -290,15 +310,99 @@ func TestUnit_ResolvePublishedCard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = resolvePublishedCard(context.Background(), cache, org)
-	if got.Version != "9" || len(got.Prices) != 1 {
-		t.Fatalf("published: got=%+v", got)
+	got := resolvePublishedCard(context.Background(), cache, org)
+	if got.Version != "9" {
+		t.Fatalf("version=%s", got.Version)
+	}
+	if len(got.Prices) != 1 {
+		t.Fatalf("prices=%d", len(got.Prices))
 	}
 }
 
-func TestUnit_BuildFrozenUsageFact(t *testing.T) {
+func TestUnit_BuildFrozenUsageFact_MatchingPrice(t *testing.T) {
 	t.Parallel()
+	org, agent, cache := frozenUsageFactFixture(t)
+	fixed := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
+		meta: httpsession.SnapshotMeta{
+			RequestID: "req-1", OrgID: org, AgentID: agent, RequestedAt: fixed,
+		},
+		in: checkpointInput{
+			Provider: "openai", Model: "gpt-4o-mini",
+			Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: true,
+		},
+		budgetCache: cache,
+	})
+	assertFrozenFact(t, fact, frozenFactWant{cents: 2, ver: "5", completeness: "complete", occurred: fixed})
+}
 
+func TestUnit_BuildFrozenUsageFact_EstimateFails(t *testing.T) {
+	t.Parallel()
+	org, agent, _ := frozenUsageFactFixture(t)
+	emptyCache, err := billing.NewCache(stubBudgetLoader{
+		snap: billing.BudgetSnapshot{PublishedCard: billing.CardVersion{Version: "1"}},
+	}, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
+		meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent},
+		in: checkpointInput{
+			Provider: "openai", Model: "gpt-4o",
+			Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: true,
+		},
+		budgetCache: emptyCache,
+	})
+	if fact != nil {
+		t.Fatalf("expected nil, got %+v", fact)
+	}
+}
+
+func TestUnit_BuildFrozenUsageFact_PartialCompleteness(t *testing.T) {
+	t.Parallel()
+	org, agent, cache := frozenUsageFactFixture(t)
+	fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
+		meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent, RequestedAt: time.Now().UTC()},
+		in: checkpointInput{
+			Provider: "openai", Model: "gpt-4o-mini",
+			Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: false,
+		},
+		budgetCache: cache,
+	})
+	if fact == nil {
+		t.Fatal("expected fact")
+	}
+	if fact.Completeness != "partial" {
+		t.Fatalf("completeness=%s", fact.Completeness)
+	}
+}
+
+func TestUnit_BuildFrozenUsageFact_ZeroRequestedAt(t *testing.T) {
+	t.Parallel()
+	org, agent, cache := frozenUsageFactFixture(t)
+	before := time.Now().UTC().Add(-time.Second)
+	fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
+		meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent},
+		in: checkpointInput{
+			Provider: "openai", Model: "gpt-4o-mini",
+			Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: true,
+		},
+		budgetCache: cache,
+	})
+	after := time.Now().UTC().Add(time.Second)
+	if fact == nil {
+		t.Fatal("expected fact")
+	}
+	if fact.OccurredAt.Before(before) {
+		t.Fatalf("occurred=%v before %v", fact.OccurredAt, before)
+	}
+	if fact.OccurredAt.After(after) {
+		t.Fatalf("occurred=%v after %v", fact.OccurredAt, after)
+	}
+}
+
+func frozenUsageFactFixture(t *testing.T) (uuid.UUID, uuid.UUID, *billing.Cache) {
+	t.Helper()
 	org := uuid.New()
 	agent := uuid.New()
 	published := billing.CardVersion{
@@ -314,87 +418,31 @@ func TestUnit_BuildFrozenUsageFact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return org, agent, cache
+}
 
-	t.Run("matching price", func(t *testing.T) {
-		t.Parallel()
-		fixed := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
-		fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
-			meta: httpsession.SnapshotMeta{
-				RequestID: "req-1", OrgID: org, AgentID: agent, RequestedAt: fixed,
-			},
-			in: checkpointInput{
-				Provider: "openai", Model: "gpt-4o-mini",
-				Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: true,
-			},
-			budgetCache: cache,
-		})
-		if fact == nil {
-			t.Fatal("expected fact")
-		}
-		if fact.EstimatedCostCents != 2 || fact.RateCardVersion != "5" {
-			t.Fatalf("cents=%d ver=%s", fact.EstimatedCostCents, fact.RateCardVersion)
-		}
-		if fact.Completeness != "complete" {
-			t.Fatalf("completeness=%s", fact.Completeness)
-		}
-		if !fact.OccurredAt.Equal(fixed) {
-			t.Fatalf("occurred=%v want %v", fact.OccurredAt, fixed)
-		}
-	})
+type frozenFactWant struct {
+	cents        int64
+	ver          string
+	completeness string
+	occurred     time.Time
+}
 
-	t.Run("estimate fails empty prices", func(t *testing.T) {
-		t.Parallel()
-		emptyCache, err := billing.NewCache(stubBudgetLoader{
-			snap: billing.BudgetSnapshot{PublishedCard: billing.CardVersion{Version: "1"}},
-		}, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
-			meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent},
-			in: checkpointInput{
-				Provider: "openai", Model: "gpt-4o",
-				Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: true,
-			},
-			budgetCache: emptyCache,
-		})
-		if fact != nil {
-			t.Fatalf("expected nil, got %+v", fact)
-		}
-	})
-
-	t.Run("partial completeness", func(t *testing.T) {
-		t.Parallel()
-		fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
-			meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent, RequestedAt: time.Now().UTC()},
-			in: checkpointInput{
-				Provider: "openai", Model: "gpt-4o-mini",
-				Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: false,
-			},
-			budgetCache: cache,
-		})
-		if fact == nil || fact.Completeness != "partial" {
-			t.Fatalf("got=%+v", fact)
-		}
-	})
-
-	t.Run("zero requested at sets time", func(t *testing.T) {
-		t.Parallel()
-		before := time.Now().UTC().Add(-time.Second)
-		fact := buildFrozenUsageFact(context.Background(), freezeUsageFactInput{
-			meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent},
-			in: checkpointInput{
-				Provider: "openai", Model: "gpt-4o-mini",
-				Usage: &provider.Usage{InputTokens: 1, OutputTokens: 1}, IsComplete: true,
-			},
-			budgetCache: cache,
-		})
-		after := time.Now().UTC().Add(time.Second)
-		if fact == nil {
-			t.Fatal("expected fact")
-		}
-		if fact.OccurredAt.Before(before) || fact.OccurredAt.After(after) {
-			t.Fatalf("occurred=%v not in [%v,%v]", fact.OccurredAt, before, after)
-		}
-	})
+func assertFrozenFact(t *testing.T, fact *billing.UsageFact, want frozenFactWant) {
+	t.Helper()
+	if fact == nil {
+		t.Fatal("expected fact")
+	}
+	if fact.EstimatedCostCents != want.cents {
+		t.Fatalf("cents=%d want %d", fact.EstimatedCostCents, want.cents)
+	}
+	if fact.RateCardVersion != want.ver {
+		t.Fatalf("ver=%s want %s", fact.RateCardVersion, want.ver)
+	}
+	if fact.Completeness != want.completeness {
+		t.Fatalf("completeness=%s", fact.Completeness)
+	}
+	if !fact.OccurredAt.Equal(want.occurred) {
+		t.Fatalf("occurred=%v want %v", fact.OccurredAt, want.occurred)
+	}
 }

@@ -49,9 +49,9 @@ func TestUnit_OrgInvalidateEvent_Validate(t *testing.T) {
 			wantErr: "testdomain: epoch must be >= 1",
 		},
 		{
-			name:   "default prefix",
-			event:  redissub.OrgInvalidateEvent{Version: 99, OrgID: org},
-			policy: redissub.EventPolicy{CurrentVersion: 1},
+			name:    "default prefix",
+			event:   redissub.OrgInvalidateEvent{Version: 99, OrgID: org},
+			policy:  redissub.EventPolicy{CurrentVersion: 1},
 			wantErr: "redissub: unsupported event version 99",
 		},
 	}

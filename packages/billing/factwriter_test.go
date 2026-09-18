@@ -131,20 +131,51 @@ func TestNewUsageFactWriterWithInserter_WriteFlushShutdown(t *testing.T) {
 
 func TestUsageFactWriter_ValidateFailures(t *testing.T) {
 	t.Parallel()
+	w := newValidateWriter(t)
+	base := validUsageFact()
+	for _, tc := range usageFactValidateCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := w.Write(tc.mut(base))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err=%v want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestUsageFactWriter_WriteAfterShutdown(t *testing.T) {
+	t.Parallel()
 	ins := &fakeUsageFactInserter{}
 	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
-		MaxBatchSize:  10,
-		MaxBufferSize: 100,
-		FlushInterval: time.Hour,
+		MaxBatchSize: 10, MaxBufferSize: 100, FlushInterval: time.Hour,
+	})
+	if err := w.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	err := w.Write(validUsageFact())
+	if err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("closed write err=%v", err)
+	}
+}
+
+type usageFactValidateCase struct {
+	name string
+	mut  func(UsageFact) UsageFact
+	want string
+}
+
+func newValidateWriter(t *testing.T) *UsageFactWriter {
+	t.Helper()
+	ins := &fakeUsageFactInserter{}
+	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
+		MaxBatchSize: 10, MaxBufferSize: 100, FlushInterval: time.Hour,
 	})
 	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
+	return w
+}
 
-	base := validUsageFact()
-	cases := []struct {
-		name string
-		mut  func(UsageFact) UsageFact
-		want string
-	}{
+func usageFactValidateCases() []usageFactValidateCase {
+	return []usageFactValidateCase{
 		{
 			name: "missing ids",
 			mut:  func(f UsageFact) UsageFact { f.OrgID = uuid.Nil; return f },
@@ -196,22 +227,6 @@ func TestUsageFactWriter_ValidateFailures(t *testing.T) {
 			mut:  func(f UsageFact) UsageFact { f.EstimatedCostCents = -1; return f },
 			want: "estimated_cost_cents must be non-negative",
 		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := w.Write(tc.mut(base))
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err=%v want substring %q", err, tc.want)
-			}
-		})
-	}
-
-	if err := w.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	err := w.Write(validUsageFact())
-	if err == nil || !strings.Contains(err.Error(), "closed") {
-		t.Fatalf("closed write err=%v", err)
 	}
 }
 

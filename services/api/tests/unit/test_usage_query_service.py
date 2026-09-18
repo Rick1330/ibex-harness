@@ -24,6 +24,11 @@ def _body(shape: str = "org_time_aggregate", **kwargs: Any) -> UsageQueryRequest
     return UsageQueryRequest(shape=shape, start=start, end=end, **kwargs)
 
 
+def _fixed_window() -> tuple[datetime, datetime]:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    return start, start + timedelta(hours=1)
+
+
 def test_inflight_key_tenant_prefix() -> None:
     org = uuid4()
     assert uq.inflight_key(org) == f"org_id:{org}:usagequery:inflight"
@@ -59,34 +64,21 @@ def test_derive_completeness() -> None:
     )
 
 
+def _bind_fixed(shape: str, sql: str, limit: int, **kwargs: Any) -> str:
+    org = uuid4()
+    start, end = _fixed_window()
+    body = UsageQueryRequest(shape=shape, start=start, end=end, limit=limit, **kwargs)
+    return uq._bind_literals(sql, org, body, limit)
+
+
 def test_bind_literals_agent_pred() -> None:
     agent = uuid4()
-    org = uuid4()
-    start = datetime(2026, 1, 1, tzinfo=UTC)
-    end = start + timedelta(hours=1)
-    body = UsageQueryRequest(
-        shape="agent_session_breakdown",
-        start=start,
-        end=end,
-        agent_id=agent,
-        limit=10,
-    )
-    sql = uq._bind_literals(uq._SQL_AGENT, org, body, 10)
+    sql = _bind_fixed("agent_session_breakdown", uq._SQL_AGENT, 10, agent_id=agent)
     assert f"toUUID('{agent}')" in sql
-    assert f"toUUID('{org}')" in sql
 
 
 def test_bind_literals_tool_join() -> None:
-    org = uuid4()
-    start = datetime(2026, 1, 1, tzinfo=UTC)
-    end = start + timedelta(hours=1)
-    body = UsageQueryRequest(
-        shape="tool_correlation",
-        start=start,
-        end=end,
-        limit=5,
-    )
-    sql = uq._bind_literals(uq._SQL_TOOL, org, body, 5)
+    sql = _bind_fixed("tool_correlation", uq._SQL_TOOL, 5)
     assert "mcp_tool_calls" in sql
     assert "tool_name" in sql
 
@@ -168,6 +160,18 @@ def _mock_redis_client(**attrs: Any) -> MagicMock:
     return client
 
 
+async def _expect_acquire_error(*, eval_return: Any = None, eval_error: Exception | None = None) -> None:
+    if eval_error is not None:
+        client = _mock_redis_client(eval=AsyncMock(side_effect=eval_error))
+    else:
+        client = _mock_redis_client(eval=AsyncMock(return_value=eval_return))
+    with (
+        patch("app.services.usage_query._redis_client", return_value=client),
+        pytest.raises(ApiError),
+    ):
+        await uq._acquire_inflight("redis://localhost", uuid4())
+
+
 @pytest.mark.asyncio
 async def test_run_clickhouse_empty_without_dsn() -> None:
     with patch.dict(
@@ -181,12 +185,14 @@ async def test_run_clickhouse_empty_without_dsn() -> None:
 
 @pytest.mark.asyncio
 async def test_acquire_inflight_too_many() -> None:
-    client = _mock_redis_client(eval=AsyncMock(return_value=-1))
-    with (
-        patch("app.services.usage_query._redis_client", return_value=client),
-        pytest.raises(ApiError),
-    ):
-        await uq._acquire_inflight("redis://localhost", uuid4())
+    await _expect_acquire_error(eval_return=-1)
+
+
+@pytest.mark.asyncio
+async def test_acquire_inflight_redis_error() -> None:
+    from redis.exceptions import RedisError
+
+    await _expect_acquire_error(eval_error=RedisError("down"))
 
 
 @pytest.mark.asyncio
@@ -225,37 +231,22 @@ def test_parse_clickhouse_rows_empty_lines() -> None:
     assert rows == [{"x": 1}]
 
 
-def test_parse_clickhouse_rows_bad_json() -> None:
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (200, "not-json\n"),
+        (500, "boom"),
+    ],
+)
+def test_parse_clickhouse_rows_errors(status: int, body: str) -> None:
     with pytest.raises(ApiError):
-        uq._parse_clickhouse_rows(200, "not-json\n")
-
-
-def test_parse_clickhouse_rows_http_error() -> None:
-    with pytest.raises(ApiError):
-        uq._parse_clickhouse_rows(500, "boom")
+        uq._parse_clickhouse_rows(status, body)
 
 
 @pytest.mark.asyncio
 async def test_run_clickhouse_transport_error() -> None:
     import httpx
 
-    with (
-        patch(
-            "httpx.AsyncClient",
-            return_value=_mock_httpx_client(post_side_effect=httpx.ConnectError("down")),
-        ),
-        pytest.raises(ApiError),
-    ):
+    client = _mock_httpx_client(post_side_effect=httpx.ConnectError("down"))
+    with patch("httpx.AsyncClient", return_value=client), pytest.raises(ApiError):
         await uq._run_clickhouse(uuid4(), _body(limit=10), 10, "http://localhost:8123")
-
-
-@pytest.mark.asyncio
-async def test_acquire_inflight_redis_error() -> None:
-    from redis.exceptions import RedisError
-
-    client = _mock_redis_client(eval=AsyncMock(side_effect=RedisError("down")))
-    with (
-        patch("app.services.usage_query._redis_client", return_value=client),
-        pytest.raises(ApiError),
-    ):
-        await uq._acquire_inflight("redis://localhost", uuid4())

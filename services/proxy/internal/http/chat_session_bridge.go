@@ -128,7 +128,7 @@ func (h chatCompletionHandler) freezeUsageFact(
 	meta httpsession.SnapshotMeta,
 	in checkpointInput,
 ) *billing.UsageFact {
-	if h.usageFactWriter == nil || meta.OrgID == uuid.Nil || meta.AgentID == uuid.Nil {
+	if !canFreezeUsageFact(h.usageFactWriter, meta) {
 		return nil
 	}
 	return buildFrozenUsageFact(ctx, freezeUsageFactInput{
@@ -136,6 +136,20 @@ func (h chatCompletionHandler) freezeUsageFact(
 		in:          in,
 		budgetCache: h.budgetCache,
 	})
+}
+
+func canFreezeUsageFact(writer *billing.UsageFactWriter, meta httpsession.SnapshotMeta) bool {
+	if writer == nil {
+		return false
+	}
+	return metaHasTenantIDs(meta)
+}
+
+func metaHasTenantIDs(meta httpsession.SnapshotMeta) bool {
+	if meta.OrgID == uuid.Nil {
+		return false
+	}
+	return meta.AgentID != uuid.Nil
 }
 
 type freezeUsageFactInput struct {
@@ -147,7 +161,9 @@ type freezeUsageFactInput struct {
 func buildFrozenUsageFact(ctx context.Context, p freezeUsageFactInput) *billing.UsageFact {
 	card := resolvePublishedCard(ctx, p.budgetCache, p.meta.OrgID)
 	inTok, outTok := tokenCounts(p.in)
-	cents, ver, ok := estimateCostChecked(card, p.in.Provider, p.in.Model, inTok, outTok)
+	cents, ver, ok := estimateCostChecked(estimateCostInput{
+		card: card, provider: p.in.Provider, model: p.in.Model, inTok: inTok, outTok: outTok,
+	})
 	if !ok {
 		// Do not persist EstimatedCostCents=0 for failed estimates (would corrupt spend).
 		return nil
@@ -187,10 +203,14 @@ func resolvePublishedCard(ctx context.Context, cache *billing.Cache, orgID uuid.
 	if cache == nil {
 		return card
 	}
-	if published, err := cache.PublishedCard(ctx, orgID); err == nil && published.Version != "" {
-		return published
+	published, err := cache.PublishedCard(ctx, orgID)
+	if err != nil {
+		return card
 	}
-	return card
+	if published.Version == "" {
+		return card
+	}
+	return published
 }
 
 func tokenCounts(in checkpointInput) (inTok, outTok int64) {
@@ -200,9 +220,17 @@ func tokenCounts(in checkpointInput) (inTok, outTok int64) {
 	return int64(in.Usage.InputTokens), int64(in.Usage.OutputTokens)
 }
 
-func estimateCostChecked(card billing.CardVersion, provider, model string, inTok, outTok int64) (int64, string, bool) {
-	cents, ver, err := billing.EstimateCost(card, billing.TokenUsage{
-		Provider: provider, Model: model, InputTokens: inTok, OutputTokens: outTok,
+type estimateCostInput struct {
+	card     billing.CardVersion
+	provider string
+	model    string
+	inTok    int64
+	outTok   int64
+}
+
+func estimateCostChecked(in estimateCostInput) (int64, string, bool) {
+	cents, ver, err := billing.EstimateCost(in.card, billing.TokenUsage{
+		Provider: in.provider, Model: in.model, InputTokens: in.inTok, OutputTokens: in.outTok,
 	})
 	if err != nil {
 		return 0, "", false

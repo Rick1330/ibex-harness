@@ -12,6 +12,16 @@ import (
 )
 
 func TestStartInvalidateSubscriber_PublishesInvalidate(t *testing.T) {
+	org, loader, cache := warmBudgetCache(t)
+	client := newMiniRedisClient(t)
+	startInvalidateSub(t, client, cache)
+	waitPubSubPatterns(t, client)
+	publishOrgInvalidate(t, client, org)
+	cacheReloadWait{cache: cache, loader: loader, org: org, wantCalls: 2}.until(t)
+}
+
+func warmBudgetCache(t *testing.T) (uuid.UUID, *fakeBudgetLoader, *Cache) {
+	t.Helper()
 	org := uuid.New()
 	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
 		org: {HasHardCap: true, CapCents: 1000, SpentCents: 10, EnforcementMode: EnforcementHardCap},
@@ -26,11 +36,19 @@ func TestStartInvalidateSubscriber_PublishesInvalidate(t *testing.T) {
 	if loader.callCount() != 1 {
 		t.Fatalf("warmup calls=%d", loader.callCount())
 	}
+	return org, loader, cache
+}
 
+func newMiniRedisClient(t *testing.T) *redis.Client {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
 
+func startInvalidateSub(t *testing.T, client *redis.Client, cache *Cache) {
+	t.Helper()
 	sub, err := StartInvalidateSubscriber(client, cache, logger.Discard("billing-test"))
 	if err != nil {
 		t.Fatal(err)
@@ -42,20 +60,23 @@ func TestStartInvalidateSubscriber_PublishesInvalidate(t *testing.T) {
 		sub.Stop()
 		<-sub.Done()
 	})
+}
 
+func waitPubSubPatterns(t *testing.T, client *redis.Client) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		n, err := client.PubSubNumPat(context.Background()).Result()
 		if err == nil && n > 0 {
-			break
+			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	n, err := client.PubSubNumPat(context.Background()).Result()
-	if err != nil || n == 0 {
-		t.Fatal("pubsub pattern not registered")
-	}
+	t.Fatal("pubsub pattern not registered")
+}
 
+func publishOrgInvalidate(t *testing.T, client *redis.Client, org uuid.UUID) {
+	t.Helper()
 	payload, err := MarshalInvalidate(InvalidateEvent{
 		Version: CurrentEventVersion,
 		OrgID:   org.String(),
@@ -66,16 +87,26 @@ func TestStartInvalidateSubscriber_PublishesInvalidate(t *testing.T) {
 	if err := client.Publish(context.Background(), ChannelForOrg(org), string(payload)).Err(); err != nil {
 		t.Fatal(err)
 	}
+}
 
-	deadline = time.Now().Add(2 * time.Second)
+type cacheReloadWait struct {
+	cache     *Cache
+	loader    *fakeBudgetLoader
+	org       uuid.UUID
+	wantCalls int
+}
+
+func (w cacheReloadWait) until(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, _, err := cache.Check(context.Background(), org); err != nil {
+		if _, _, err := w.cache.Check(context.Background(), w.org); err != nil {
 			t.Fatal(err)
 		}
-		if loader.callCount() >= 2 {
+		if w.loader.callCount() >= w.wantCalls {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("cache not invalidated; loader.calls=%d", loader.callCount())
+	t.Fatalf("cache not invalidated; loader.calls=%d", w.loader.callCount())
 }

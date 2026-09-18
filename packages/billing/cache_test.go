@@ -91,30 +91,33 @@ func TestEstimateCost_NoMatch(t *testing.T) {
 	}
 }
 
-func TestCache_CheckHardCapDeny(t *testing.T) {
+func TestCache_Check(t *testing.T) {
 	t.Parallel()
-	org := uuid.New()
-	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
-		org: hardCapSnap(100, 100),
-	}}
-	cache := newTestCache(t, loader, 8)
-	allowed, rem, err := cache.Check(context.Background(), org)
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name        string
+		snap        BudgetSnapshot
+		wantAllowed bool
+		wantRem     int64
+	}{
+		{name: "hard cap deny", snap: hardCapSnap(100, 100), wantAllowed: false, wantRem: 0},
+		{name: "no hard cap allow", snap: BudgetSnapshot{}, wantAllowed: true},
 	}
-	if allowed || rem != 0 {
-		t.Fatalf("allowed=%v rem=%d", allowed, rem)
-	}
-}
-
-func TestCache_CheckNoHardCapAllow(t *testing.T) {
-	t.Parallel()
-	org := uuid.New()
-	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{org: {}}}
-	cache := newTestCache(t, loader, 4)
-	allowed, _, err := cache.Check(context.Background(), org)
-	if err != nil || !allowed {
-		t.Fatalf("allowed=%v err=%v", allowed, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			org := uuid.New()
+			cache := newTestCache(t, &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{org: tc.snap}}, 8)
+			allowed, rem, err := cache.Check(context.Background(), org)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if allowed != tc.wantAllowed {
+				t.Fatalf("allowed=%v want %v", allowed, tc.wantAllowed)
+			}
+			if !tc.wantAllowed && rem != tc.wantRem {
+				t.Fatalf("rem=%d want %d", rem, tc.wantRem)
+			}
+		})
 	}
 }
 
@@ -175,12 +178,34 @@ func TestEstimateCost_Overflow(t *testing.T) {
 
 func TestCache_EvictionKeepsGeneration(t *testing.T) {
 	t.Parallel()
-	orgA := uuid.New()
-	orgB := uuid.New()
-	orgC := uuid.New()
+	orgA, orgB, orgC, loader, cache, release := setupEvictionFixture(t)
+	errCh := startBlockedLoad(cache, orgA)
+	<-loader.block
+	cache.Invalidate(orgA)
+	mustSnapshot(t, cache, orgB)
+	mustSnapshot(t, cache, orgC)
+	close(release)
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	assertOrgAReloaded(t, loader, orgA)
+	assertGenerationRetained(t, cache, orgA)
+	assertGenerationSurvivesPurge(t, cache, loader, orgA)
+}
+
+func setupEvictionFixture(t *testing.T) (
+	orgA, orgB, orgC uuid.UUID,
+	loader *blockingBudgetLoader,
+	cache *Cache,
+	release chan struct{},
+) {
+	t.Helper()
+	orgA = uuid.New()
+	orgB = uuid.New()
+	orgC = uuid.New()
 	block := make(chan struct{})
-	release := make(chan struct{})
-	loader := &blockingBudgetLoader{
+	release = make(chan struct{})
+	loader = &blockingBudgetLoader{
 		snaps: map[uuid.UUID]BudgetSnapshot{
 			orgA: hardCapSnap(100, 0),
 			orgB: hardCapSnap(100, 0),
@@ -191,50 +216,54 @@ func TestCache_EvictionKeepsGeneration(t *testing.T) {
 		release:    release,
 		callsByOrg: make(map[uuid.UUID]int),
 	}
-	cache := newTestCache(t, loader, 2)
-	if _, err := cache.SnapshotForOrg(context.Background(), orgB); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cache.SnapshotForOrg(context.Background(), orgC); err != nil {
-		t.Fatal(err)
-	}
+	cache = newTestCache(t, loader, 2)
+	mustSnapshot(t, cache, orgB)
+	mustSnapshot(t, cache, orgC)
+	return orgA, orgB, orgC, loader, cache, release
+}
+
+func startBlockedLoad(cache *Cache, org uuid.UUID) <-chan error {
 	errCh := make(chan error, 1)
 	go func() {
-		_, e := cache.SnapshotForOrg(context.Background(), orgA)
+		_, e := cache.SnapshotForOrg(context.Background(), org)
 		errCh <- e
 	}()
-	<-block
-	cache.Invalidate(orgA)
-	// Capacity eviction while A is mid-load: touch B/C then release A.
-	if _, err := cache.SnapshotForOrg(context.Background(), orgB); err != nil {
+	return errCh
+}
+
+func mustSnapshot(t *testing.T, cache *Cache, org uuid.UUID) {
+	t.Helper()
+	if _, err := cache.SnapshotForOrg(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.SnapshotForOrg(context.Background(), orgC); err != nil {
-		t.Fatal(err)
-	}
-	close(release)
-	if err := <-errCh; err != nil {
-		t.Fatal(err)
-	}
+}
+
+func assertOrgAReloaded(t *testing.T, loader *blockingBudgetLoader, orgA uuid.UUID) {
+	t.Helper()
 	loader.mu.Lock()
 	orgALoads := loader.callsByOrg[orgA]
 	loader.mu.Unlock()
 	if orgALoads < 2 {
-		t.Fatalf("expected orgA loaded twice after Invalidate (stale load rejected); got %d", orgALoads)
+		t.Fatalf("expected orgA loaded twice after Invalidate; got %d", orgALoads)
 	}
+}
+
+func assertGenerationRetained(t *testing.T, cache *Cache, orgA uuid.UUID) {
+	t.Helper()
 	cache.mu.Lock()
 	gen := cache.gens[orgA.String()]
 	cache.mu.Unlock()
 	if gen == 0 {
 		t.Fatal("expected monotonic generation retained after invalidate/eviction")
 	}
-	// Evict all LRU entries and ensure gen for A still blocks zero-value install.
+}
+
+func assertGenerationSurvivesPurge(t *testing.T, cache *Cache, loader *blockingBudgetLoader, orgA uuid.UUID) {
+	t.Helper()
 	orgD := uuid.New()
 	loader.snaps[orgD] = BudgetSnapshot{}
 	loader.blockOn = uuid.Nil
-	if _, err := cache.SnapshotForOrg(context.Background(), orgD); err != nil {
-		t.Fatal(err)
-	}
+	mustSnapshot(t, cache, orgD)
 	cache.lru.Purge()
 	cache.mu.Lock()
 	genAfterPurge := cache.gens[orgA.String()]
@@ -292,10 +321,7 @@ func TestCache_PublishedCard(t *testing.T) {
 	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
 		org: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap, PublishedCard: card},
 	}}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t, loader, 8)
 	got, err := cache.PublishedCard(context.Background(), org)
 	if err != nil {
 		t.Fatal(err)
@@ -308,10 +334,7 @@ func TestCache_PublishedCard(t *testing.T) {
 func TestCache_NilOrgCheck(t *testing.T) {
 	t.Parallel()
 	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{}}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 2}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t, loader, 2)
 	if _, _, err := cache.Check(context.Background(), uuid.Nil); err == nil {
 		t.Fatal("expected error for nil org")
 	}
