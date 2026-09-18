@@ -96,6 +96,7 @@ func loadPublishedCard(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (CardVe
 		SELECT v.version, v.prices
 		FROM ibex_billing.rate_card_versions v
 		JOIN current_card c ON c.id = v.rate_card_id
+		WHERE v.org_id = $1::uuid
 		ORDER BY v.published_at DESC, v.id DESC
 		LIMIT 1`, orgID).Scan(&version, &pricesJSON)
 	if err == sql.ErrNoRows {

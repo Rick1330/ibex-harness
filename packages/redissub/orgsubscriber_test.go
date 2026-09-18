@@ -91,21 +91,36 @@ func TestUnit_OrgSubscriber_goodPayloadInvalidates(t *testing.T) {
 	waitInvalidated(t, rec, org)
 }
 
-func TestUnit_OrgSubscriber_malformedIgnored(t *testing.T) {
+func TestUnit_OrgSubscriber_ignoresBadEvents(t *testing.T) {
 	t.Parallel()
-	runIgnoreThenSentinel(t, ignoreThenSentinelCase{
-		badChannelOrg: uuid.New(),
-		badPayload:    `{`,
-	})
-}
-
-func TestUnit_OrgSubscriber_orgMismatchIgnored(t *testing.T) {
-	t.Parallel()
-	channelOrg := uuid.New()
-	runIgnoreThenSentinel(t, ignoreThenSentinelCase{
-		badChannelOrg: channelOrg,
-		badPayload:    `{"v":1,"org_id":"` + uuid.New().String() + `","epoch":1}`,
-	})
+	tests := []struct {
+		name          string
+		badChannelOrg func() uuid.UUID
+		badPayload    func(channelOrg uuid.UUID) string
+	}{
+		{
+			name:          "malformed payload",
+			badChannelOrg: uuid.New,
+			badPayload:    func(uuid.UUID) string { return `{` },
+		},
+		{
+			name:          "org mismatch",
+			badChannelOrg: uuid.New,
+			badPayload: func(uuid.UUID) string {
+				return `{"v":1,"org_id":"` + uuid.New().String() + `","epoch":1}`
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			channelOrg := tt.badChannelOrg()
+			runIgnoreThenSentinel(t, ignoreThenSentinelCase{
+				badChannelOrg: channelOrg,
+				badPayload:    tt.badPayload(channelOrg),
+			})
+		})
+	}
 }
 
 type ignoreThenSentinelCase struct {

@@ -12,6 +12,7 @@ from redis.exceptions import RedisError
 
 from app.tasks.billing_reconcile import (
     BudgetPeriodWindow,
+    ClickHouseQueryError,
     HttpClickHouseQuerier,
     budget_spent_rollup,
     reconcile_usage_actuals,
@@ -214,8 +215,8 @@ def test_http_clickhouse_querier_error_status() -> None:
             period_start=start,
             period_end=end,
         )
-        raise AssertionError("expected RuntimeError")
-    except RuntimeError as exc:
+        raise AssertionError("expected ClickHouseQueryError")
+    except ClickHouseQueryError as exc:
         assert "503" in str(exc)
 
 
@@ -335,6 +336,7 @@ def test_budget_spent_rollup_runs_with_deps(monkeypatch: Any) -> None:
 def test_budget_spent_rollup_task_autoretry_configured() -> None:
     assert RedisError in budget_spent_rollup.autoretry_for
     assert OSError in budget_spent_rollup.autoretry_for
-    assert RuntimeError in budget_spent_rollup.autoretry_for
+    assert ClickHouseQueryError in budget_spent_rollup.autoretry_for
+    assert RuntimeError not in budget_spent_rollup.autoretry_for
     assert budget_spent_rollup.retry_backoff is True
     assert budget_spent_rollup.retry_jitter is True

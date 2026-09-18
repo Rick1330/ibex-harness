@@ -139,7 +139,7 @@ async def publish_rate_card_version(
     deps: WriteDeps,
 ) -> RateCardVersionResponse:
     await _lock_rate_card(session, inp.org_id, inp.card_id)
-    version = await _next_rate_card_version(session, inp.card_id)
+    version = await _next_rate_card_version(session, inp.org_id, inp.card_id)
     row = await _insert_rate_card_version(
         session,
         InsertRateCardVersionInput(
@@ -194,16 +194,19 @@ async def _lock_rate_card(session: AsyncSession, org_id: UUID, card_id: UUID) ->
         raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_CARD)
 
 
-async def _next_rate_card_version(session: AsyncSession, card_id: UUID) -> int:
+async def _next_rate_card_version(
+    session: AsyncSession, org_id: UUID, card_id: UUID
+) -> int:
     next_ver = await session.execute(
         text(
             """
             SELECT COALESCE(MAX(version), 0) + 1 AS v
             FROM ibex_billing.rate_card_versions
             WHERE rate_card_id = CAST(:card_id AS uuid)
+              AND org_id = CAST(:org_id AS uuid)
             """
         ),
-        {"card_id": str(card_id)},
+        {"card_id": str(card_id), "org_id": str(org_id)},
     )
     return int(next_ver.scalar_one())
 

@@ -149,6 +149,7 @@ func TestUsageFactWriter_WriteAfterShutdown(t *testing.T) {
 	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
 		MaxBatchSize: 10, MaxBufferSize: 100, FlushInterval: time.Hour,
 	})
+	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
 	if err := w.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -333,6 +334,7 @@ func TestUsageFactWriter_CloseDrains(t *testing.T) {
 	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
 		MaxBatchSize: 100, MaxBufferSize: 100, FlushInterval: time.Hour, ShutdownFlushTimeout: time.Second,
 	})
+	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
 	fact := validUsageFact()
 	if err := w.Write(fact); err != nil {
 		t.Fatal(err)
@@ -351,6 +353,7 @@ func TestUsageFactWriter_FlushIntervalTriggers(t *testing.T) {
 	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
 		MaxBatchSize: 100, MaxBufferSize: 100, FlushInterval: 20 * time.Millisecond, ShutdownFlushTimeout: time.Second,
 	})
+	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
 	if err := w.Write(validUsageFact()); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +367,6 @@ func TestUsageFactWriter_FlushIntervalTriggers(t *testing.T) {
 	if ins.callCount() < 1 {
 		t.Fatal("expected interval flush")
 	}
-	_ = w.Shutdown(context.Background())
 }
 
 func TestValidateOptionalModelTooLong(t *testing.T) {

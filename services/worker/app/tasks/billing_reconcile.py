@@ -27,6 +27,10 @@ _BUDGET_EVENT_VERSION = 1
 _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 
 
+class ClickHouseQueryError(Exception):
+    """Transient ClickHouse HTTP failure during spent rollup."""
+
+
 @dataclass(frozen=True, slots=True)
 class BudgetPeriodWindow:
     period_id: str
@@ -106,19 +110,22 @@ class HttpClickHouseQuerier:
             "FORMAT JSONEachRow"
         )
         url, auth = _http_endpoint(self._dsn)
-        resp = self._client.post(
-            url,
-            params={
-                "query": sql,
-                "param_org_id": org_id,
-                "param_period_start": _fmt_ts(period_start),
-                "param_period_end": _fmt_ts(period_end),
-            },
-            auth=auth,
-            timeout=30.0,
-        )
+        try:
+            resp = self._client.post(
+                url,
+                params={
+                    "query": sql,
+                    "param_org_id": org_id,
+                    "param_period_start": _fmt_ts(period_start),
+                    "param_period_end": _fmt_ts(period_end),
+                },
+                auth=auth,
+                timeout=30.0,
+            )
+        except httpx.HTTPError as exc:
+            raise ClickHouseQueryError(f"clickhouse rollup transport failed: {exc}") from exc
         if resp.status_code >= 400:
-            raise RuntimeError(f"clickhouse rollup query failed: {resp.status_code}")
+            raise ClickHouseQueryError(f"clickhouse rollup query failed: {resp.status_code}")
         spent = 0
         for line in resp.text.splitlines():
             line = line.strip()
@@ -206,7 +213,7 @@ async def run_budget_spent_rollup(
         # Publish only after the UPDATE transaction has committed.
         try:
             await inv.publish_budget_update(period.org_id)
-        except (OSError, RuntimeError, RedisError) as exc:
+        except (OSError, RedisError) as exc:
             # Spent writes already committed; re-raise so Celery retries invalidate
             # with backoff+jitter. Period UPDATEs are idempotent for the same totals.
             logger.warning(
@@ -239,7 +246,7 @@ def reconcile_usage_actuals(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     base=IbexTask,
     name=TASK_BUDGET_SPENT_ROLLUP,
     queue="maintenance",
-    autoretry_for=(OSError, RuntimeError, RedisError),
+    autoretry_for=(OSError, ClickHouseQueryError, RedisError),
     retry_backoff=True,
     retry_jitter=True,
     max_retries=5,
