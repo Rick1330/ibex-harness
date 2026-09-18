@@ -22,6 +22,15 @@ from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
 
+
+class StoreUnreachableError(RuntimeError):
+    """Deployed store missing runtime config; receipt must survive stage-txn rollback."""
+
+    def __init__(self, store: str) -> None:
+        self.store = store
+        super().__init__(f"{store} is deployed but unreachable (missing runtime config)")
+
+
 # Non-erasable allowlist: saga refuses to target these store names (4.P.4 placeholders).
 # Tests monkeypatch this name; receipt helpers read it lazily.
 NON_ERASABLE_STORES: frozenset[str] = frozenset()
@@ -275,6 +284,17 @@ async def _record_job_failed(
     """Mark job failed in a fresh txn (safe after a closed/failed stage session)."""
     logger.exception("org deletion failed job_id=%s org_id=%s", job_id, org_id)
     async with session_as_service_org(factory, org_id) as fail_session:
+        # Stage txn rolls back on raise — re-persist fail-closed unreachable receipts here.
+        if isinstance(exc, StoreUnreachableError):
+            await _upsert_receipt(
+                fail_session,
+                _ReceiptWrite(
+                    job_id=job_id,
+                    store=exc.store,
+                    status="failed",
+                    error="store_unreachable",
+                ),
+            )
         await _finish_job(
             fail_session,
             _JobOutcome(
@@ -374,17 +394,9 @@ async def _run_optional_store(
         )
         return
     if not configured:
-        # Deployed but unreachable/misconfigured — fail closed (never verified-skip).
-        await _upsert_receipt(
-            ctx.session,
-            _ReceiptWrite(
-                job_id=ctx.job_id,
-                store=store,
-                status="failed",
-                error="store_unreachable",
-            ),
-        )
-        raise RuntimeError(f"{store} is deployed but unreachable (missing runtime config)")
+        # Deployed but unreachable — fail closed. Receipt is written in _record_job_failed
+        # because raising here rolls back the stage transaction.
+        raise StoreUnreachableError(store)
     await _require_no_hold(ctx.session, ctx.org_id)
     await runner()
     await _upsert_receipt(
@@ -539,23 +551,25 @@ async def _stage_postgres(session, *, org_id: str) -> None:
 
 
 async def _audit_append(session, *, org_id: str, action: str, payload: dict[str, Any]) -> None:
+    # Explicit casts: asyncpg leaves unbound string/NULL literals as `unknown`,
+    # which fails to resolve privacy_audit_append's TEXT/UUID parameters.
     await session.execute(
         text(
             """
             SELECT * FROM ibex_core.privacy_audit_append(
                 CAST(:org_id AS uuid),
-                NULL,
-                :action,
-                'org_deletion',
-                'allow',
-                'organization',
-                :org_id,
+                NULL::uuid,
+                CAST(:action AS text),
+                CAST('org_deletion' AS text),
+                CAST('allow' AS text),
+                CAST('organization' AS text),
+                CAST(:org_id AS text),
                 ARRAY[]::TEXT[],
-                NULL,
-                NULL,
-                NULL,
-                :corr,
-                NULL,
+                NULL::text,
+                NULL::text,
+                NULL::text,
+                CAST(:corr AS text),
+                NULL::text,
                 CAST(:payload AS jsonb)
             )
             """

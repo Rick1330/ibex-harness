@@ -80,9 +80,20 @@ def _async_pg_dsn(dsn: str) -> str:
     return dsn
 
 
+def _async_engine(dsn: str):
+    from ibex_async_db import parse_async_database_url
+
+    target = parse_async_database_url(dsn)
+    return create_async_engine(
+        target.url,
+        pool_pre_ping=True,
+        connect_args=dict(target.connect_args),
+    )
+
+
 @pytest.fixture
 async def async_pg(multistore_env: dict[str, str]) -> AsyncIterator[AsyncSession]:
-    eng = create_async_engine(_async_pg_dsn(multistore_env["postgres"]))
+    eng = _async_engine(multistore_env["postgres"])
     SessionLocal = async_sessionmaker(eng, expire_on_commit=False, class_=AsyncSession)
     session = SessionLocal()
     try:
