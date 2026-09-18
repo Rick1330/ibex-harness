@@ -219,7 +219,20 @@ def _vector_candidates(hits: list[SearchHit]) -> list[RankedCandidate]:
 
 
 def _fts_candidates(hits: list[FullTextHit], *, cap: int) -> list[RankedCandidate]:
+    # ts_rank_cd is unbounded; HTTP/context treat ``similarity`` as a [0, 1] unit.
     return [
-        RankedCandidate(memory_id=hit.memory_id, score=hit.rank, source="full_text")
+        RankedCandidate(
+            memory_id=hit.memory_id,
+            score=_clamp_unit_interval(hit.rank),
+            source="full_text",
+        )
         for hit in hits[:cap]
     ]
+
+
+def _clamp_unit_interval(value: float) -> float:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value

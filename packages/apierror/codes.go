@@ -56,6 +56,12 @@ const (
 	CodeIdempotencyKeyReuse Code = "IDEMPOTENCY_KEY_REUSE"
 	// CodeIdempotencyInProgress tells clients a request with this Idempotency-Key is still in flight.
 	CodeIdempotencyInProgress Code = "IDEMPOTENCY_IN_PROGRESS"
+	// CodeLegalHoldScopeConflict tells clients an active legal hold already exists for the scope.
+	CodeLegalHoldScopeConflict Code = "LEGAL_HOLD_SCOPE_CONFLICT"
+	// CodeLegalHoldActive tells clients org deletion is blocked by an uncleared legal hold.
+	CodeLegalHoldActive Code = "LEGAL_HOLD_ACTIVE"
+	// CodeCapturePolicyConflict tells clients the org/agent capture policy row already exists.
+	CodeCapturePolicyConflict Code = "CAPTURE_POLICY_CONFLICT"
 )
 
 // Server / dependency error codes (5xx).

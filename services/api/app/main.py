@@ -49,6 +49,8 @@ from app.revocation_publish import (
     RedisOrgSuspendPublisher,
 )
 from app.routers.agents import router as agents_router
+from app.routers.capture_policies import router as capture_policies_router
+from app.routers.legal_holds import router as legal_holds_router
 from app.routers.model_policies import router as model_policies_router
 from app.routers.operator_events import router as operator_events_router
 from app.routers.organizations import router as organizations_router
@@ -140,17 +142,31 @@ def create_app(
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     application.add_exception_handler(StarletteHTTPException, http_exception_handler)
     application.add_exception_handler(Exception, unhandled_error_handler)
-    application.include_router(probe_router)
-    application.include_router(tenant_router)
-    application.include_router(organizations_router)
-    application.include_router(users_router)
-    application.include_router(agents_router)
-    application.include_router(tokens_router)
-    application.include_router(providers_router)
-    application.include_router(rate_limits_router)
-    application.include_router(model_policies_router)
-    application.include_router(session_router)
-    application.include_router(operator_events_router)
+    _mount_routers(application)
+    _mount_middleware(application, cfg)
+    return application
+
+
+def _mount_routers(application: FastAPI) -> None:
+    for router in (
+        probe_router,
+        tenant_router,
+        organizations_router,
+        users_router,
+        agents_router,
+        tokens_router,
+        providers_router,
+        rate_limits_router,
+        model_policies_router,
+        legal_holds_router,
+        capture_policies_router,
+        session_router,
+        operator_events_router,
+    ):
+        application.include_router(router)
+
+
+def _mount_middleware(application: FastAPI, cfg: Settings) -> None:
     # Middleware: last added = outermost. CORS must be outermost (Sonar/FastAPI).
     # CSRF is pure ASGI so RequestId contextvars remain visible to handlers.
     application.add_middleware(HTTPMetricsMiddleware)
@@ -172,7 +188,6 @@ def create_app(
         expose_headers=["X-Request-ID", "X-IBEX-Drain"],
         max_age=600,
     )
-    return application
 
 
 def _mark_not_ready(state: ApiAppState, message: str) -> None:

@@ -186,7 +186,9 @@ async def test_enqueue_job_missing_after_insert() -> None:
     org_id = uuid4()
     current = _org(id=org_id)
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[_MapResult(current), _MapResult(None)])
+    session.execute = AsyncMock(
+        side_effect=[_MapResult(current), _MapResult(None), _MapResult(None)]
+    )
     session.flush = AsyncMock()
     session.commit = AsyncMock()
     with pytest.raises(ApiError) as exc:

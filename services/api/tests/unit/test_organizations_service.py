@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from apierror_py import NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
+from apierror_py import LEGAL_HOLD_ACTIVE, NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
 
 from app.errors import ApiError
 from app.revocation_publish import RecordingOrgSuspendPublisher
@@ -25,6 +25,10 @@ class _MapResult:
 
     def first(self):
         return self._row
+
+
+def _no_active_hold() -> _MapResult:
+    return _MapResult(None)
 
 
 def _org(**overrides):
@@ -104,12 +108,29 @@ async def test_enqueue_already_cancelled_without_failed_job() -> None:
     session.execute = AsyncMock(
         side_effect=[
             _MapResult(_org(id=org_id, status="cancelled")),
+            _no_active_hold(),
             _MapResult({"status": "succeeded"}),
         ]
     )
     with pytest.raises(ApiError) as exc:
         await org_service.enqueue_org_deletion(session, org_id, enqueue_fn=lambda *_: None)
     assert exc.value.code == VALIDATION_ERROR
+
+
+@pytest.mark.asyncio
+async def test_enqueue_rejects_active_legal_hold() -> None:
+    org_id = uuid4()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            _MapResult(_org(id=org_id)),
+            _MapResult((1,)),  # active hold row
+        ]
+    )
+    with pytest.raises(ApiError) as exc:
+        await org_service.enqueue_org_deletion(session, org_id, enqueue_fn=lambda *_: None)
+    assert exc.value.code == LEGAL_HOLD_ACTIVE
+    assert "legal hold" in exc.value.message.lower()
 
 
 @pytest.mark.asyncio
@@ -137,8 +158,13 @@ def _pending_job_fixture(org_id, *, extra_executes: int = 0):
         finished_at=None,
     )
     session = AsyncMock()
-    # get org, create job, cancel org (after successful enqueue)
-    side_effect: list = [_MapResult(current), _MapResult(job), MagicMock()]
+    # get org, hold check, create job, cancel org (after successful enqueue)
+    side_effect: list = [
+        _MapResult(current),
+        _no_active_hold(),
+        _MapResult(job),
+        MagicMock(),
+    ]
     side_effect.extend(MagicMock() for _ in range(extra_executes))
     session.execute = AsyncMock(side_effect=side_effect)
     session.flush = AsyncMock()
@@ -176,8 +202,10 @@ async def test_enqueue_marks_failed_without_cancelling_org() -> None:
         finished_at=None,
     )
     session = AsyncMock()
-    # get, create, mark failed (no cancel)
-    session.execute = AsyncMock(side_effect=[_MapResult(current), _MapResult(job), MagicMock()])
+    # get, hold check, create, mark failed (no cancel)
+    session.execute = AsyncMock(
+        side_effect=[_MapResult(current), _no_active_hold(), _MapResult(job), MagicMock()]
+    )
     session.flush = AsyncMock()
     session.commit = AsyncMock()
 
@@ -211,6 +239,7 @@ async def test_enqueue_retries_when_prior_job_failed() -> None:
     session.execute = AsyncMock(
         side_effect=[
             _MapResult(cancelled),
+            _no_active_hold(),
             _MapResult({"status": "failed"}),
             _MapResult(job),
             MagicMock(),  # cancel

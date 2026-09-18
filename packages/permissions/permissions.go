@@ -48,6 +48,7 @@ const (
 
 	// Federation operations (bits 48-55).
 	FederationShare int64 = 1 << 48
+	LegalHoldManage int64 = 1 << 49 // requires step-up (4.P.3)
 )
 
 // Predefined permission sets.
@@ -75,14 +76,14 @@ const (
 	// MemberOperatorDefault matches viewer operator defaults.
 	MemberOperatorDefault = ViewerOperatorDefault
 
-	// AdminOperatorDefault adds export + policy-change without raw/secret/break-glass.
-	AdminOperatorDefault = MemberOperatorDefault | OperatorExport | PolicyChange
+	// AdminOperatorDefault adds export + policy-change + legal-hold without raw/secret/break-glass.
+	AdminOperatorDefault = MemberOperatorDefault | OperatorExport | PolicyChange | LegalHoldManage
 )
 
-// stepUpMask is the set of permissions that require recent TOTP step-up (4.P.1).
+// stepUpMask is the set of permissions that require recent TOTP step-up (4.P.1 / 4.P.3).
 const stepUpMask = DirectivePromote | DirectiveRevoke |
 	OperatorRawRead | OperatorExport | OperatorDelete | OperatorReplay |
-	SecretUse | PolicyChange | BreakGlass
+	SecretUse | PolicyChange | BreakGlass | LegalHoldManage
 
 // Has returns true if bitmap includes all required permissions.
 func Has(bitmap, required int64) bool {

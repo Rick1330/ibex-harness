@@ -64,7 +64,8 @@ The 64-bit permission bitmap is stored on `ibex_core.tokens.permissions` and ret
 | 46 | Operator | `PolicyChange` (step-up; 4.P.1) |
 | 47 | Operator | `BreakGlass` (step-up; 4.P.1) |
 | 48 | Federation | `FederationShare` |
-| 49-55 | Federation | Reserved |
+| 49 | Federation / Governance | `LegalHoldManage` (step-up; 4.P.3) |
+| 50-55 | Federation | Reserved |
 | 56-63 | — | Reserved (do not use in v1) |
 
 ### 2b) 4.P.1 amendment
@@ -72,6 +73,10 @@ The 64-bit permission bitmap is stored on `ibex_core.tokens.permissions` and ret
 - Helpers: `RequiresStepUp` (canonical); `RequiresMFA` remains an alias.
 - Role defaults: `ViewerOperatorDefault` / `MemberOperatorDefault` = metadata+redacted; `AdminOperatorDefault` adds export+policy-change **without** raw/secret-use/break-glass.
 - `Admin` management set still excludes operator raw/secret/break-glass.
+
+### 2c) 4.P.3 amendment
+
+- `LegalHoldManage` (bit 49) requires step-up; included in `AdminOperatorDefault` so owner/admin role bitmaps can set/clear holds.
 
 ### 3) Phase 2 proxy minimum
 
