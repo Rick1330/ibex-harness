@@ -3,7 +3,9 @@ package http
 import (
 	"context"
 	"net/http"
+	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
@@ -104,16 +106,141 @@ func (h chatCompletionHandler) enqueuePostResponse(
 	outcome requestOutcome,
 ) {
 	rs, _ := ResolvedSessionFromContext(ctx)
+	meta := snapshotMetaFromContext(ctx)
 	job := httpsession.PreparePostResponse(httpsession.PreparePostResponseInput{
-		Deps:     h.lifecycle(),
-		Writer:   httptrace.EffectiveWriter(h.traceWriter),
-		Log:      h.log,
-		Resolved: rs,
-		Meta:     snapshotMetaFromContext(ctx),
-		In:       in,
-		Outcome:  outcome,
+		Deps:            h.lifecycle(),
+		Writer:          httptrace.EffectiveWriter(h.traceWriter),
+		UsageFactWriter: h.usageFactWriter,
+		UsageFact:       h.freezeUsageFact(ctx, meta, in),
+		Log:             h.log,
+		Resolved:        rs,
+		Meta:            meta,
+		In:              in,
+		Outcome:         outcome,
 	})
 	httpsession.EnqueuePostResponse(job)
+}
+
+// freezeUsageFact builds a write-time frozen usage_facts row (estimate + rate card version).
+// Returns nil when the writer is disabled or tenant ids are missing.
+func (h chatCompletionHandler) freezeUsageFact(
+	ctx context.Context,
+	meta httpsession.SnapshotMeta,
+	in checkpointInput,
+) *billing.UsageFact {
+	if h.usageFactWriter == nil || meta.OrgID == uuid.Nil || meta.AgentID == uuid.Nil {
+		return nil
+	}
+	return buildFrozenUsageFact(freezeUsageFactInput{
+		ctx:         ctx,
+		meta:        meta,
+		in:          in,
+		budgetCache: h.budgetCache,
+	})
+}
+
+type freezeUsageFactInput struct {
+	ctx         context.Context
+	meta        httpsession.SnapshotMeta
+	in          checkpointInput
+	budgetCache *billing.Cache
+}
+
+func buildFrozenUsageFact(p freezeUsageFactInput) *billing.UsageFact {
+	card := resolvePublishedCard(p.ctx, p.budgetCache, p.meta.OrgID)
+	inTok, outTok := tokenCounts(p.in)
+	cents, ver := estimateOrZero(card, p.in.Provider, p.in.Model, inTok, outTok)
+	completeness := "partial"
+	if p.in.Usage != nil && p.in.IsComplete {
+		completeness = "complete"
+	}
+	occurred := p.meta.RequestedAt
+	if occurred.IsZero() {
+		occurred = time.Now().UTC()
+	}
+	return &billing.UsageFact{
+		RequestID:          p.meta.RequestID,
+		OrgID:              p.meta.OrgID,
+		AgentID:            p.meta.AgentID,
+		Provider:           p.in.Provider,
+		Model:              p.in.Model,
+		OriginalModel:      optionalStringPtr(p.in.OriginalModel),
+		FallbackModel:      optionalStringPtr(p.in.FallbackModel),
+		FallbackReason:     p.in.FallbackReason,
+		InputTokens:        clampUint32Tokens(inTok),
+		OutputTokens:       clampUint32Tokens(outTok),
+		TotalTokens:        clampUint32Tokens(safeAddInt64(inTok, outTok)),
+		EstimatedCostCents: cents,
+		RateCardVersion:    ver,
+		Completeness:       completeness,
+		OccurredAt:         occurred,
+	}
+}
+
+func resolvePublishedCard(ctx context.Context, cache *billing.Cache, orgID uuid.UUID) billing.CardVersion {
+	card := billing.CardVersion{Version: "0"}
+	if cache == nil {
+		return card
+	}
+	if published, err := cache.PublishedCard(ctx, orgID); err == nil && published.Version != "" {
+		return published
+	}
+	return card
+}
+
+func tokenCounts(in checkpointInput) (inTok, outTok int64) {
+	if in.Usage == nil {
+		return 0, 0
+	}
+	return int64(in.Usage.InputTokens), int64(in.Usage.OutputTokens)
+}
+
+func estimateOrZero(card billing.CardVersion, provider, model string, inTok, outTok int64) (int64, string) {
+	cents, ver, err := billing.EstimateCost(card, billing.TokenUsage{
+		Provider: provider, Model: model, InputTokens: inTok, OutputTokens: outTok,
+	})
+	if err != nil {
+		ver = card.Version
+		if ver == "" {
+			ver = "0"
+		}
+		return 0, ver
+	}
+	return cents, ver
+}
+
+func optionalStringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	out := s
+	return &out
+}
+
+func clampUint32Tokens(n int64) uint32 {
+	if n <= 0 {
+		return 0
+	}
+	if n > int64(^uint32(0)) {
+		return ^uint32(0)
+	}
+	return uint32(n)
+}
+
+func safeAddInt64(a, b int64) int64 {
+	a = maxInt64(a, 0)
+	b = maxInt64(b, 0)
+	if a > (1<<63-1)-b {
+		return 1<<63 - 1
+	}
+	return a + b
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func snapshotMetaFromContext(ctx context.Context) httpsession.SnapshotMeta {

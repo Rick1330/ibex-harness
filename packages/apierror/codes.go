@@ -52,6 +52,8 @@ const (
 	CodeAgentStatusConflict Code = "AGENT_STATUS_CONFLICT"
 	// CodeRateLimited tells clients to back off and retry after the rate-limit window.
 	CodeRateLimited Code = "RATE_LIMITED"
+	// CodeBudgetExceeded tells clients the org spend hard-cap is exhausted (HTTP 402).
+	CodeBudgetExceeded Code = "BUDGET_EXCEEDED"
 	// CodeIdempotencyKeyReuse tells clients the Idempotency-Key was already used with a different request body.
 	CodeIdempotencyKeyReuse Code = "IDEMPOTENCY_KEY_REUSE"
 	// CodeIdempotencyInProgress tells clients a request with this Idempotency-Key is still in flight.

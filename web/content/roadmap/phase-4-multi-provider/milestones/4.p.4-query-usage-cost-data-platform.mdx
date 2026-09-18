@@ -26,6 +26,18 @@ fullTitle: "Milestone 4.P.4 — Query, Usage & Cost Data Platform"
   Charts over request counts are not cost governance. Every ClickHouse query shape requires an explicit `org_id` parameter and predicate.
 </Callout>
 
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Locked for implementation (4.P.4):
+
+  - **Hybrid ledger:** ClickHouse `ibex.usage_facts` (immutable per-call facts) + Postgres `ibex_billing` (rate cards, budget periods, enforcement decisions).
+  - **No TTL** on `usage_facts` (indefinite retention; explicit ops purge later) — matches billing retention carve-out.
+  - **Write-time freeze:** `estimated_cost_cents` + `rate_card_version` frozen at enqueue; `actual_cost_cents` only via worker reconciliation (stubbed until invoice source exists).
+  - **Spend caps fail-closed** via `packages/billing` cache (`budget_updates:{org_id}`); proxy `BudgetMiddleware` returns **402 `BUDGET_EXCEEDED`**. RPM / `packages/ratelimit` fail-open is untouched.
+  - **Typed usagequery AST** in Go (`packages/usagequery`); Python Management API executes constrained SQL templates kept in sync via golden fixtures.
+  - **Org deletion** does **not** erase CH `usage_facts` or PG billing rows (SECURITY.md billing carve-out).
+  - **Deferred:** OpenAI-compat non-stream `Usage` unset (tracked separately); Track D UI / 4.P.5 / 4.P.6 out of scope.
+</Callout>
+
 ## Why this milestone exists
 
 Ad hoc client filtering cannot scale; billing schema was falsely assumed to exist (F4-005).

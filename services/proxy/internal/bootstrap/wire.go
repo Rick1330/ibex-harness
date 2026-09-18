@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -58,6 +59,10 @@ type proxyCore struct {
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
 	mpPollCancel      context.CancelFunc
+	budgetSub         *billing.Subscriber
+	budgetCancel      context.CancelFunc
+	budgetCache       *billing.Cache
+	usageFactWriter   *billing.UsageFactWriter
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -88,6 +93,7 @@ func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
 		dirSub: subs.dirSub, dirCancel: subs.dirCancel,
 		rlConfigSub: subs.rlSub, rlConfigCancel: subs.rlCancel,
 		mpSub: subs.mpSub, mpCancel: subs.mpCancel, mpPollCancel: subs.mpPollCancel,
+		budgetSub: subs.budgetSub, budgetCancel: subs.budgetCancel,
 	}), nil
 }
 
@@ -101,6 +107,8 @@ type startedSubscribers struct {
 	mpSub        *modelpolicy.Subscriber
 	mpCancel     context.CancelFunc
 	mpPollCancel context.CancelFunc
+	budgetSub    *billing.Subscriber
+	budgetCancel context.CancelFunc
 }
 
 func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput) (startedSubscribers, error) {
@@ -134,6 +142,13 @@ func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput)
 		return out, fmt.Errorf("model-policy subscriber: %w", err)
 	}
 	out.mpPollCancel = startModelPolicyEpochPoller(assembled.modelPolicyCache, in.log)
+	out.budgetSub, out.budgetCancel, err = startBudgetSubscriber(
+		assembled.redisClient, assembled.budgetCache, in.log, in.reg,
+	)
+	if err != nil {
+		stopSubscribersOnFailure(out)
+		return out, fmt.Errorf("budget subscriber: %w", err)
+	}
 	return out, nil
 }
 
@@ -160,6 +175,12 @@ func stopSubscribersOnFailure(s startedSubscribers) {
 	if s.mpSub != nil {
 		s.mpSub.Stop()
 	}
+	if s.budgetCancel != nil {
+		s.budgetCancel()
+	}
+	if s.budgetSub != nil {
+		s.budgetSub.Stop()
+	}
 }
 
 func stopRevocationOnFailure(sub *revocation.Subscriber, cancel context.CancelFunc) {
@@ -182,6 +203,8 @@ type proxyCoreParts struct {
 	mpSub          *modelpolicy.Subscriber
 	mpCancel       context.CancelFunc
 	mpPollCancel   context.CancelFunc
+	budgetSub      *billing.Subscriber
+	budgetCancel   context.CancelFunc
 }
 
 func finishProxyCore(parts proxyCoreParts) *proxyCore {
@@ -194,10 +217,13 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		rlConfigSub: parts.rlConfigSub, rlConfigCancel: parts.rlConfigCancel,
 		mpSub: parts.mpSub, mpCancel: parts.mpCancel, mpPollCancel: parts.mpPollCancel,
-		checkpointPool: parts.assembled.checkpointPool,
-		sessionSweeper: parts.assembled.sessionSweeper,
-		traceWriter:    parts.assembled.traceWriter,
-		tokenizerReg:   parts.assembled.tokenizerReg,
+		budgetSub: parts.budgetSub, budgetCancel: parts.budgetCancel,
+		budgetCache:     parts.assembled.budgetCache,
+		usageFactWriter: parts.assembled.usageFactWriter,
+		checkpointPool:  parts.assembled.checkpointPool,
+		sessionSweeper:  parts.assembled.sessionSweeper,
+		traceWriter:     parts.assembled.traceWriter,
+		tokenizerReg:    parts.assembled.tokenizerReg,
 	}
 }
 
@@ -217,6 +243,8 @@ type assembledProxyCore struct {
 	modelPolicyCache  *modelpolicy.Cache
 	modelRouter       proxyhttp.ProviderResolver
 	agentDefaults     modelpolicy.AgentDefaultLoader
+	budgetCache       *billing.Cache
+	usageFactWriter   *billing.UsageFactWriter
 }
 
 type proxyInfra struct {
@@ -314,6 +342,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		checkpointPool:    in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
 		traceWriter: parts.traceWriter, tokenizerReg: parts.tokenizerReg,
 		modelPolicyCache: parts.mpCache, modelRouter: parts.modelRouter, agentDefaults: parts.agentDefaults,
+		budgetCache: parts.budgetCache, usageFactWriter: parts.usageFactWriter,
 	}, nil
 }
 
@@ -340,22 +369,29 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 	if err != nil {
 		return routerAssembleParts{}, fmt.Errorf("model policy: %w", err)
 	}
+	budgetCache, err := newBudgetCache(in.infra.pgDB, in.reg)
+	if err != nil {
+		return routerAssembleParts{}, wrapBudgetCacheErr(err)
+	}
 	return routerAssembleParts{
 		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
 		idempStore: idempStore, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
 		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
+		budgetCache: budgetCache, usageFactWriter: optionalUsageFactWriter(in.cfg.ClickHouseDSN, in.log),
 	}, nil
 }
 
 type routerAssembleParts struct {
-	in            finishAssembledCoreInput
-	providerReg   *provider.Registry
-	tokenizerReg  *tokenizer.Registry
-	idempStore    idempotency.Store
-	traceWriter   *ibexch.Writer
-	modelRouter   proxyhttp.ProviderResolver
-	agentDefaults modelpolicy.AgentDefaultLoader
-	mpCache       *modelpolicy.Cache
+	in              finishAssembledCoreInput
+	providerReg     *provider.Registry
+	tokenizerReg    *tokenizer.Registry
+	idempStore      idempotency.Store
+	traceWriter     *ibexch.Writer
+	modelRouter     proxyhttp.ProviderResolver
+	agentDefaults   modelpolicy.AgentDefaultLoader
+	mpCache         *modelpolicy.Cache
+	budgetCache     *billing.Cache
+	usageFactWriter *billing.UsageFactWriter
 }
 
 func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
@@ -363,7 +399,8 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
-		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
+		Limiter: in.infra.limiter, BudgetCache: p.budgetCache, UsageFactWriter: p.usageFactWriter,
+		DirectiveResolver: in.infra.directiveResolver,
 		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
 		EvidenceStore:    in.infra.sessionStack.evidence,
