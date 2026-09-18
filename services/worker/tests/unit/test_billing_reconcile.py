@@ -240,7 +240,8 @@ def test_http_clickhouse_querier_skips_blank_lines() -> None:
 def test_fmt_ts_naive_and_aware() -> None:
     from app.tasks.billing_reconcile import _fmt_ts
 
-    naive = datetime(2026, 1, 1, 12, 0, 0)
+    # Intentionally naive: _fmt_ts must attach UTC when tzinfo is missing.
+    naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
     assert _fmt_ts(naive).startswith("2026-01-01 12:00:00")
     aware = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
     assert _fmt_ts(aware).startswith("2026-01-01 12:00:00")
