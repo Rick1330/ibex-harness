@@ -173,25 +173,33 @@ func writeJSONBPrimitive(b *strings.Builder, v any) error {
 	switch t := v.(type) {
 	case nil:
 		b.WriteString("null")
+		return nil
 	case bool:
 		return writeJSONBool(b, t)
 	case json.Number:
-		s, err := formatJSONBNumber(t)
-		if err != nil {
-			return err
-		}
-		b.WriteString(s)
+		return writeJSONBNumber(b, t)
 	case int64:
 		b.WriteString(strconv.FormatInt(t, 10))
+		return nil
 	case int:
 		b.WriteString(strconv.Itoa(t))
+		return nil
 	case float64:
 		b.WriteString(strconv.FormatFloat(t, 'f', -1, 64))
+		return nil
 	case string:
 		return writeJSONString(b, t)
 	default:
 		return errNotPrimitive
 	}
+}
+
+func writeJSONBNumber(b *strings.Builder, n json.Number) error {
+	s, err := formatJSONBNumber(n)
+	if err != nil {
+		return err
+	}
+	b.WriteString(s)
 	return nil
 }
 
@@ -215,7 +223,18 @@ func formatJSONBNumber(n json.Number) (string, error) {
 }
 
 func expandScientificDecimal(significand string, exp int) (string, error) {
-	sign := ""
+	sign, digits, fracDigits, err := splitSignificand(significand)
+	if err != nil {
+		return "", err
+	}
+	power := exp - fracDigits
+	if power >= 0 {
+		return sign + digits + strings.Repeat("0", power), nil
+	}
+	return sign + placeDecimal(digits, -power), nil
+}
+
+func splitSignificand(significand string) (sign, digits string, fracDigits int, err error) {
 	if strings.HasPrefix(significand, "+") {
 		significand = significand[1:]
 	} else if strings.HasPrefix(significand, "-") {
@@ -223,24 +242,18 @@ func expandScientificDecimal(significand string, exp int) (string, error) {
 		significand = significand[1:]
 	}
 	if significand == "" {
-		return "", fmt.Errorf("privacyaudit: invalid json number significand")
+		return "", "", 0, fmt.Errorf("privacyaudit: invalid json number significand")
 	}
 	dot := strings.IndexByte(significand, '.')
-	fracDigits := 0
-	digits := significand
+	digits = significand
 	if dot >= 0 {
 		fracDigits = len(significand) - dot - 1
 		digits = significand[:dot] + significand[dot+1:]
 	}
 	if digits == "" || !allASCIIDigits(digits) {
-		return "", fmt.Errorf("privacyaudit: invalid json number significand %q", significand)
+		return "", "", 0, fmt.Errorf("privacyaudit: invalid json number significand %q", significand)
 	}
-	// value = digits * 10^(exp - fracDigits)
-	power := exp - fracDigits
-	if power >= 0 {
-		return sign + digits + strings.Repeat("0", power), nil
-	}
-	return sign + placeDecimal(digits, -power), nil
+	return sign, digits, fracDigits, nil
 }
 
 func allASCIIDigits(s string) bool {

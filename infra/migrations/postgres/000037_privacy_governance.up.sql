@@ -311,7 +311,8 @@ CREATE POLICY legal_holds_isolation ON ibex_core.legal_holds
     USING (ibex_core.rls_privacy_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE ON ibex_core.legal_holds TO ibex_app;
-GRANT SELECT, INSERT, UPDATE ON ibex_core.legal_holds TO ibex_service;
+-- DELETE: service may purge cleared holds during org deletion (active holds blocked by saga).
+GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.legal_holds TO ibex_service;
 
 -- ================================================================
 -- org_capture_policies (priority load like org_model_policies)

@@ -205,7 +205,10 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     slash = rest.find("/")
     if slash < 1:
         raise ValueError("malformed uri")
-    return rest[:slash], rest[slash + 1 :]
+    key = rest[slash + 1 :]
+    if not key:
+        raise ValueError("empty object key")
+    return rest[:slash], key
 
 
 def delete_uri(uri: str, *, settings: Any | None = None) -> None:

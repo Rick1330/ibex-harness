@@ -118,6 +118,11 @@ def test_delete_uri_malformed() -> None:
         osc.delete_uri("s3://nobucket")
 
 
+def test_delete_uri_empty_key() -> None:
+    with pytest.raises(ValueError, match="empty object key"):
+        osc.delete_uri("s3://ibex-sessions/")
+
+
 def test_delete_uri_bucket_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
     _allow_http(monkeypatch)
