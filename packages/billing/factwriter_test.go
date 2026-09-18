@@ -99,34 +99,80 @@ func TestUsageFactConfig_ApplyDefaults(t *testing.T) {
 	}
 }
 
-func TestNewUsageFactWriterWithInserter_WriteFlushShutdown(t *testing.T) {
+func TestUsageFactWriter_FlushWaitsBeforeShutdownClose(t *testing.T) {
 	t.Parallel()
-	ins := &fakeUsageFactInserter{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	ins := &blockingUsageFactInserter{started: started, release: release}
 	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
-		MaxBatchSize:  10,
-		MaxBufferSize: 100,
-		FlushInterval: time.Hour,
+		MaxBatchSize: 10, MaxBufferSize: 100, FlushInterval: time.Hour,
 	})
-	fact := validUsageFact()
-	if err := w.Write(fact); err != nil {
+	if err := w.Write(validUsageFact()); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Flush(context.Background()); err != nil {
+	errCh := make(chan error, 1)
+	go func() { errCh <- w.Flush(context.Background()) }()
+	<-started
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if err := w.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown: %v", err)
+		}
+	}()
+	select {
+	case <-done:
+		t.Fatal("Shutdown closed inserter while Flush still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
-	if ins.callCount() != 1 {
-		t.Fatalf("inserts=%d want 1", ins.callCount())
-	}
-	got := ins.lastRows()
-	if len(got) != 1 || got[0].RequestID != fact.RequestID {
-		t.Fatalf("rows=%+v", got)
-	}
-	if err := w.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	<-done
 	if ins.closeCount() != 1 {
 		t.Fatalf("closes=%d want 1", ins.closeCount())
 	}
+	if ins.insertCount() != 1 {
+		t.Fatalf("inserts=%d want 1", ins.insertCount())
+	}
+}
+
+type blockingUsageFactInserter struct {
+	mu        sync.Mutex
+	started   chan struct{}
+	release   chan struct{}
+	closed    int
+	inserts   int
+	startOnce sync.Once
+}
+
+func (b *blockingUsageFactInserter) InsertUsageFacts(_ context.Context, _ []UsageFact) error {
+	b.mu.Lock()
+	b.inserts++
+	b.mu.Unlock()
+	b.startOnce.Do(func() { close(b.started) })
+	<-b.release
+	return nil
+}
+
+func (b *blockingUsageFactInserter) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed++
+	return nil
+}
+
+func (b *blockingUsageFactInserter) closeCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closed
+}
+
+func (b *blockingUsageFactInserter) insertCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.inserts
 }
 
 func TestUsageFactWriter_ValidateFailures(t *testing.T) {

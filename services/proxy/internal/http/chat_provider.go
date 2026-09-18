@@ -307,9 +307,14 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
 	h.finishIdempotency(p.claim, p.resp.StatusCode, out)
+	usage := p.resp.Usage
+	if usage == nil {
+		// openaicompatible leaves Response.Usage nil; recover from forwarded JSON.
+		usage = httpsession.UsageFromJSON(out)
+	}
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
-		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: p.resp.Usage,
+		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
 		OriginalModel: p.audit.OriginalModel, FallbackModel: p.audit.FallbackModel, FallbackReason: p.audit.Reason,

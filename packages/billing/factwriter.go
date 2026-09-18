@@ -91,7 +91,8 @@ type UsageFactWriter struct {
 	closed  bool
 	stopCh  chan struct{}
 	flushCh chan struct{}
-	wg      sync.WaitGroup
+	wg      sync.WaitGroup // flush loop
+	flushWG sync.WaitGroup // in-flight Flush / insertRows
 	onDrop  func(n int)
 	onFlush func(n int, d time.Duration, err error)
 }
@@ -153,6 +154,8 @@ func (w *UsageFactWriter) Write(fact UsageFact) error {
 
 // Flush forces an immediate batch insert. On failure, rows are restored to the buffer.
 func (w *UsageFactWriter) Flush(ctx context.Context) error {
+	w.flushWG.Add(1)
+	defer w.flushWG.Done()
 	rows := w.takeBuffer()
 	if len(rows) == 0 {
 		return nil
@@ -183,7 +186,10 @@ func (w *UsageFactWriter) Shutdown(ctx context.Context) error {
 	close(w.stopCh)
 	w.mu.Unlock()
 	w.wg.Wait()
+	// Wait for any concurrent public Flush before the final drain + Close.
+	w.flushWG.Wait()
 	flushErr := w.Flush(ctx)
+	w.flushWG.Wait()
 	closeErr := w.ins.Close()
 	return errors.Join(flushErr, closeErr)
 }
