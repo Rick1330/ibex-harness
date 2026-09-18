@@ -11,12 +11,12 @@ import base64
 import os
 import secrets
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 import pytest
 import redis as redis_sync
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import Settings
 from app.tasks import org_deletion
@@ -69,38 +69,31 @@ def multistore_env() -> dict[str, str]:
     return env
 
 
-def _sync_pg_dsn(dsn: str) -> str:
-    """Normalize CI/local DSNs for SQLAlchemy sync (psycopg)."""
+def _async_pg_dsn(dsn: str) -> str:
+    """Normalize CI/local DSNs for SQLAlchemy async (asyncpg)."""
     if dsn.startswith("postgresql+asyncpg://"):
-        dsn = "postgresql://" + dsn.removeprefix("postgresql+asyncpg://")
+        return dsn
     if dsn.startswith("postgres://"):
         dsn = "postgresql://" + dsn.removeprefix("postgres://")
-    return dsn
-
-
-def _async_pg_dsn(dsn: str) -> str:
-    """Normalize DSNs for SQLAlchemy async (asyncpg)."""
-    dsn = _sync_pg_dsn(dsn)
     if dsn.startswith("postgresql://"):
         return "postgresql+asyncpg://" + dsn.removeprefix("postgresql://")
     return dsn
 
 
 @pytest.fixture
-def sync_pg(multistore_env: dict[str, str]) -> Iterator[Session]:
-    dsn = _sync_pg_dsn(multistore_env["postgres"])
-    eng = create_engine(dsn)
-    SessionLocal = sessionmaker(bind=eng)
+async def async_pg(multistore_env: dict[str, str]) -> AsyncIterator[AsyncSession]:
+    eng = create_async_engine(_async_pg_dsn(multistore_env["postgres"]))
+    SessionLocal = async_sessionmaker(eng, expire_on_commit=False, class_=AsyncSession)
     session = SessionLocal()
     try:
         yield session
-        session.commit()
+        await session.commit()
     except Exception:
-        session.rollback()
+        await session.rollback()
         raise
     finally:
-        session.close()
-        eng.dispose()
+        await session.close()
+        await eng.dispose()
 
 
 def _master_key_b64() -> str:
@@ -110,11 +103,11 @@ def _master_key_b64() -> str:
     return base64.b64encode(secrets.token_bytes(32)).decode()
 
 
-def _seed_org(session: Session) -> tuple[str, str]:
+async def _seed_org(session: AsyncSession) -> tuple[str, str]:
     org_id = str(uuid.uuid4())
     job_id = str(uuid.uuid4())
     slug = f"del-{org_id[:8]}"
-    session.execute(
+    await session.execute(
         text(
             """
             INSERT INTO ibex_core.organizations (id, name, slug, status)
@@ -123,7 +116,7 @@ def _seed_org(session: Session) -> tuple[str, str]:
         ),
         {"id": org_id, "name": f"Delete Me {slug}", "slug": slug},
     )
-    session.execute(
+    await session.execute(
         text(
             """
             INSERT INTO ibex_core.org_deletion_jobs (id, org_id, status)
@@ -132,7 +125,7 @@ def _seed_org(session: Session) -> tuple[str, str]:
         ),
         {"job": job_id, "org": org_id},
     )
-    session.commit()
+    await session.commit()
     return org_id, job_id
 
 
@@ -205,16 +198,18 @@ def _redis_key_exists(redis_url: str, key: str) -> bool:
         client.close()
 
 
-def _org_deleted(session: Session, org_id: str) -> bool:
-    row = session.execute(
-        text(
-            """
-            SELECT status, deleted_at IS NOT NULL
-            FROM ibex_core.organizations
-            WHERE id = CAST(:o AS uuid)
-            """
-        ),
-        {"o": org_id},
+async def _org_deleted(session: AsyncSession, org_id: str) -> bool:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT status, deleted_at IS NOT NULL
+                FROM ibex_core.organizations
+                WHERE id = CAST(:o AS uuid)
+                """
+            ),
+            {"o": org_id},
+        )
     ).first()
     return row is not None and row[0] == "cancelled" and bool(row[1])
 
@@ -223,7 +218,7 @@ def _org_deleted(session: Session, org_id: str) -> bool:
 async def test_org_deletion_clears_all_four_stores(
     monkeypatch: pytest.MonkeyPatch,
     multistore_env: dict[str, str],
-    sync_pg: Session,
+    async_pg: AsyncSession,
 ) -> None:
     monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
     monkeypatch.setenv(
@@ -238,11 +233,8 @@ async def test_org_deletion_clears_all_four_stores(
     )
     monkeypatch.setenv("S3_REGION", os.environ.get("S3_REGION", "us-east-1"))
 
-    # asyncpg URL for worker settings
-    pg_async = _async_pg_dsn(multistore_env["postgres"])
-
     settings = Settings(
-        database_url=pg_async,
+        database_url=_async_pg_dsn(multistore_env["postgres"]),
         redis_url=multistore_env["redis"],
         clickhouse_dsn=multistore_env["clickhouse"],
         s3_endpoint=multistore_env["s3"],
@@ -255,7 +247,7 @@ async def test_org_deletion_clears_all_four_stores(
     )
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
 
-    org_id, job_id = _seed_org(sync_pg)
+    org_id, job_id = await _seed_org(async_pg)
     rkey = _seed_redis(org_id, multistore_env["redis"])
     assert _redis_key_exists(multistore_env["redis"], rkey)
     _seed_clickhouse(org_id, multistore_env["clickhouse"])
@@ -266,21 +258,22 @@ async def test_org_deletion_clears_all_four_stores(
     out = await org_deletion._run_delete(job_id=job_id, org_id=org_id)
     assert out["status"] == "succeeded", out
 
-    sync_pg.expire_all()
-    assert _org_deleted(sync_pg, org_id)
+    async_pg.expire_all()
+    assert await _org_deleted(async_pg, org_id)
     assert not _redis_key_exists(multistore_env["redis"], rkey)
     assert _ch_count(org_id, multistore_env["clickhouse"]) == 0
     assert not _object_exists(org_id, settings)
 
-    # Receipts: all four verified (deployed topology)
-    rows = sync_pg.execute(
-        text(
-            """
-            SELECT store, status, error FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:j AS uuid) ORDER BY store
-            """
-        ),
-        {"j": job_id},
+    rows = (
+        await async_pg.execute(
+            text(
+                """
+                SELECT store, status, error FROM ibex_core.deletion_store_receipts
+                WHERE job_id = CAST(:j AS uuid) ORDER BY store
+                """
+            ),
+            {"j": job_id},
+        )
     ).fetchall()
     by_store = {r[0]: (r[1], r[2]) for r in rows}
     for store in org_deletion._STORES:
@@ -292,13 +285,11 @@ async def test_org_deletion_clears_all_four_stores(
 async def test_deployed_misconfigured_store_fails_not_verified(
     monkeypatch: pytest.MonkeyPatch,
     multistore_env: dict[str, str],
-    sync_pg: Session,
+    async_pg: AsyncSession,
 ) -> None:
     """Deliberate misconfig of a deployed store must fail the job (B1)."""
-    pg_async = _async_pg_dsn(multistore_env["postgres"])
-
     settings = Settings(
-        database_url=pg_async,
+        database_url=_async_pg_dsn(multistore_env["postgres"]),
         redis_url=multistore_env["redis"],
         clickhouse_dsn=None,  # misconfigured
         s3_endpoint=None,
@@ -309,27 +300,31 @@ async def test_deployed_misconfigured_store_fails_not_verified(
     monkeypatch.delenv("IBEX_WORKER_CLICKHOUSE_DSN", raising=False)
     monkeypatch.delenv("S3_ENDPOINT", raising=False)
 
-    org_id, job_id = _seed_org(sync_pg)
+    org_id, job_id = await _seed_org(async_pg)
     with pytest.raises(RuntimeError, match="deployed but unreachable"):
         await org_deletion._run_delete(job_id=job_id, org_id=org_id)
 
-    row = sync_pg.execute(
-        text(
-            """
-            SELECT status, error FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:j AS uuid) AND store = 'clickhouse'
-            """
-        ),
-        {"j": job_id},
+    row = (
+        await async_pg.execute(
+            text(
+                """
+                SELECT status, error FROM ibex_core.deletion_store_receipts
+                WHERE job_id = CAST(:j AS uuid) AND store = 'clickhouse'
+                """
+            ),
+            {"j": job_id},
+        )
     ).first()
     assert row is not None
     assert row[0] == "failed"
     assert row[1] == "store_unreachable"
-    job = sync_pg.execute(
-        text(
-            "SELECT status FROM ibex_core.org_deletion_jobs WHERE id = CAST(:j AS uuid)"
-        ),
-        {"j": job_id},
+    job = (
+        await async_pg.execute(
+            text(
+                "SELECT status FROM ibex_core.org_deletion_jobs WHERE id = CAST(:j AS uuid)"
+            ),
+            {"j": job_id},
+        )
     ).first()
     assert job is not None
     assert job[0] == "failed"
