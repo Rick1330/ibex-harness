@@ -22,6 +22,7 @@ from app.schemas.billing import UsageQueryRequest, UsageQueryResponse
 
 logger = logging.getLogger(__name__)
 
+_USAGE_QUERY_FAILED = "Usage query failed"
 _MAX_RANGE = timedelta(days=31)
 _MAX_ROWS = 10_000
 _MAX_CONCURRENT = 4
@@ -268,10 +269,10 @@ async def _run_clickhouse(
             )
     except httpx.HTTPError as exc:
         logger.warning("clickhouse usage query transport failed: %s", exc)
-        raise ApiError(code=SERVICE_DEGRADED, message="Usage query failed") from exc
+        raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED) from exc
     if resp.status_code >= 400:
         logger.warning("clickhouse usage query failed status=%s", resp.status_code)
-        raise ApiError(code=SERVICE_DEGRADED, message="Usage query failed")
+        raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED)
     rows: list[dict[str, Any]] = []
     for line in resp.text.splitlines():
         line = line.strip()
@@ -280,7 +281,7 @@ async def _run_clickhouse(
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError as exc:
-            raise ApiError(code=SERVICE_DEGRADED, message="Usage query failed") from exc
+            raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED) from exc
     return rows
 
 

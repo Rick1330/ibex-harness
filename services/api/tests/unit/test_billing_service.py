@@ -86,10 +86,10 @@ async def test_create_rate_card_duplicate_name() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("dup")))
     session.rollback = AsyncMock()
+    body = RateCardCreate(name="default")
+    deps = svc.WriteDeps()
     with pytest.raises(ApiError) as ei:
-        await svc.create_rate_card(
-            session, org_id, RateCardCreate(name="default"), deps=svc.WriteDeps()
-        )
+        await svc.create_rate_card(session, org_id, body, deps=deps)
     assert ei.value.code == VALIDATION_ERROR
     assert "already" in ei.value.message.lower()
 
@@ -134,16 +134,12 @@ async def test_publish_rate_card_version_for_update() -> None:
 async def test_publish_rate_card_version_not_found() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=SimpleNamespace(first=lambda: None))
+    body = RateCardVersionPublish(
+        prices=[PriceRow(provider="o", model_pattern="*", input_cents_per_1k=1, output_cents_per_1k=1)]
+    )
+    deps = svc.WriteDeps()
     with pytest.raises(ApiError):
-        await svc.publish_rate_card_version(
-            session,
-            uuid4(),
-            uuid4(),
-            RateCardVersionPublish(
-                prices=[PriceRow(provider="o", model_pattern="*", input_cents_per_1k=1, output_cents_per_1k=1)]
-            ),
-            deps=svc.WriteDeps(),
-        )
+        await svc.publish_rate_card_version(session, uuid4(), uuid4(), body, deps=deps)
 
 
 @pytest.mark.asyncio
@@ -180,10 +176,10 @@ async def test_create_rate_card_returns_none_row() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=SimpleNamespace(first=lambda: None))
     session.commit = AsyncMock()
+    body = RateCardCreate(name="x")
+    deps = svc.WriteDeps()
     with pytest.raises(ApiError):
-        await svc.create_rate_card(
-            session, uuid4(), RateCardCreate(name="x"), deps=svc.WriteDeps()
-        )
+        await svc.create_rate_card(session, uuid4(), body, deps=deps)
 
 
 @pytest.mark.asyncio
@@ -209,14 +205,11 @@ async def test_create_budget_period_none_row() -> None:
     session.execute = AsyncMock(return_value=SimpleNamespace(first=lambda: None))
     session.commit = AsyncMock()
     start = datetime.now(UTC)
+    body = BudgetPeriodCreate(
+        period_start=start,
+        period_end=start + timedelta(days=1),
+        cap_cents=1,
+    )
+    deps = svc.WriteDeps()
     with pytest.raises(ApiError):
-        await svc.create_budget_period(
-            session,
-            uuid4(),
-            BudgetPeriodCreate(
-                period_start=start,
-                period_end=start + timedelta(days=1),
-                cap_cents=1,
-            ),
-            deps=svc.WriteDeps(),
-        )
+        await svc.create_budget_period(session, uuid4(), body, deps=deps)

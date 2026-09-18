@@ -8,6 +8,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -54,16 +55,17 @@ func startBudgetSubscriber(
 	cache *billing.Cache,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
-) (*billing.Subscriber, context.CancelFunc, error) {
+) (*redissub.OrgSubscriber, context.CancelFunc, error) {
 	if redisClient == nil || cache == nil {
 		return nil, nil, nil
 	}
-	sub, err := billing.NewSubscriber(redisClient, cache, log, billingMetrics(reg))
+	_ = reg // metrics for invalidate are recorded via cache.Invalidate path
+	sub, err := billing.StartInvalidateSubscriber(redisClient, cache, log)
 	if err != nil {
 		return nil, nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go sub.Run(ctx)
+	go sub.Run(ctx, "billing")
 	if log != nil {
 		log.InfoCtx(context.Background(), "budget subscriber started", "pattern", billing.ChannelPattern)
 	}

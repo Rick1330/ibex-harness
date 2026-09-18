@@ -130,40 +130,16 @@ ALTER TABLE ibex_billing.enforcement_decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_billing.enforcement_decisions FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY rate_cards_isolation ON ibex_billing.rate_cards
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_org_visible(org_id));
 
 CREATE POLICY rate_card_versions_isolation ON ibex_billing.rate_card_versions
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_org_visible(org_id));
 
 CREATE POLICY budget_periods_isolation ON ibex_billing.budget_periods
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_org_visible(org_id));
 
 CREATE POLICY enforcement_decisions_isolation ON ibex_billing.enforcement_decisions
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_org_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_billing.rate_cards TO ibex_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_billing.rate_cards TO ibex_service;
@@ -174,6 +150,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_billing.budget_periods TO ibex_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_billing.budget_periods TO ibex_service;
 GRANT SELECT, INSERT ON ibex_billing.enforcement_decisions TO ibex_app;
 GRANT SELECT, INSERT ON ibex_billing.enforcement_decisions TO ibex_service;
+-- Column-scoped UPDATE so period-delete trigger can clear budget_period_id (000014/000037).
+GRANT UPDATE (budget_period_id) ON ibex_billing.enforcement_decisions TO ibex_app;
+GRANT UPDATE (budget_period_id) ON ibex_billing.enforcement_decisions TO ibex_service;
 
 CREATE TRIGGER rate_cards_updated_at
     BEFORE UPDATE ON ibex_billing.rate_cards

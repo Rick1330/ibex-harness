@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from apierror_py import INTERNAL_ERROR, NOT_FOUND, VALIDATION_ERROR
@@ -204,12 +205,13 @@ async def publish_rate_card_version(
 async def list_budget_periods(
     session: AsyncSession, org_id: UUID, *, cursor: str | None = None, limit: int = 50
 ) -> CursorPage[BudgetPeriodResponse]:
-    cursor_start = None
-    cursor_id = None
+    cursor_start: datetime | None = None
+    cursor_id: str | None = None
     if cursor:
         try:
             payload = decode_cursor(cursor) or {}
-            cursor_start = payload["period_start"]
+            raw_start = str(payload["period_start"]).replace("Z", "+00:00")
+            cursor_start = datetime.fromisoformat(raw_start)
             cursor_id = str(payload["id"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ApiError(code=VALIDATION_ERROR, message="invalid cursor") from exc
@@ -234,7 +236,7 @@ async def list_budget_periods(
         ),
         {
             "org_id": str(org_id),
-            "cursor_start": cursor_start,
+            "cursor_start": cursor_start.isoformat() if cursor_start else None,
             "cursor_id": cursor_id,
             "limit": limit + 1,
         },

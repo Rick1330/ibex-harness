@@ -15,6 +15,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -46,7 +47,7 @@ type shutdownOpts struct {
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
 	mpPollCancel      context.CancelFunc
-	budgetSub         *billing.Subscriber
+	budgetSub         *redissub.OrgSubscriber
 	budgetCancel      context.CancelFunc
 	usageFactWriter   *billing.UsageFactWriter
 	checkpointPool    *asyncpool.Pool

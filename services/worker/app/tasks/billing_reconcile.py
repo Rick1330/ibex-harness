@@ -50,22 +50,24 @@ class HttpClickHouseQuerier:
     def sum_spent(
         self, *, org_id: str, period_start: datetime, period_end: datetime
     ) -> int:
-        # Explicit org_id required (ClickHouse has no RLS).
-        start = _fmt_ts(period_start)
-        end = _fmt_ts(period_end)
+        # Explicit org_id required (ClickHouse has no RLS). Named params avoid B608.
         sql = (
             "SELECT coalesce(sum(estimated_cost_cents), 0) AS spent_cents "
             "FROM ibex.usage_facts "
-            f"WHERE org_id = toUUID('{org_id}') "
-            f"AND occurred_at >= toDateTime64('{start}', 3, 'UTC') "
-            f"AND occurred_at < toDateTime64('{end}', 3, 'UTC') "
+            "WHERE org_id = {org_id:UUID} "
+            "AND occurred_at >= {period_start:DateTime64(3, 'UTC')} "
+            "AND occurred_at < {period_end:DateTime64(3, 'UTC')} "
             "FORMAT JSONEachRow"
         )
         url, auth = _http_endpoint(self._dsn)
         resp = self._client.post(
             url,
-            content=sql + "\n",
-            headers={"Content-Type": "text/plain"},
+            params={
+                "query": sql,
+                "param_org_id": org_id,
+                "param_period_start": _fmt_ts(period_start),
+                "param_period_end": _fmt_ts(period_end),
+            },
             auth=auth,
             timeout=30.0,
         )

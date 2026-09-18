@@ -274,12 +274,29 @@ func (w *UsageFactWriter) insertRows(ctx context.Context, rows []UsageFact) erro
 }
 
 func validateUsageFact(f UsageFact) error {
+	if err := validateFactIDs(f); err != nil {
+		return err
+	}
+	if err := validateFactModels(f); err != nil {
+		return err
+	}
+	return validateFactTokens(f)
+}
+
+func validateFactIDs(f UsageFact) error {
 	if f.RequestID == "" || f.OrgID == uuid.Nil || f.AgentID == uuid.Nil {
 		return fmt.Errorf("billing: usage fact missing required ids")
 	}
 	if len(f.RequestID) > maxRequestIDLen {
 		return fmt.Errorf("billing: request_id too long")
 	}
+	if f.OccurredAt.IsZero() {
+		return fmt.Errorf("billing: usage fact missing occurred_at")
+	}
+	return nil
+}
+
+func validateFactModels(f UsageFact) error {
 	if strings.TrimSpace(f.Provider) == "" || strings.TrimSpace(f.Model) == "" {
 		return fmt.Errorf("billing: provider and model are required")
 	}
@@ -298,9 +315,10 @@ func validateUsageFact(f UsageFact) error {
 	if f.RateCardVersion == "" || len(f.RateCardVersion) > maxRateCardVerLen {
 		return fmt.Errorf("billing: usage fact missing or invalid rate_card_version")
 	}
-	if f.OccurredAt.IsZero() {
-		return fmt.Errorf("billing: usage fact missing occurred_at")
-	}
+	return nil
+}
+
+func validateFactTokens(f UsageFact) error {
 	completeness := f.Completeness
 	if completeness == "" {
 		completeness = "partial"

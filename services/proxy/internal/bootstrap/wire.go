@@ -19,6 +19,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/tokenizer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
@@ -59,7 +60,7 @@ type proxyCore struct {
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
 	mpPollCancel      context.CancelFunc
-	budgetSub         *billing.Subscriber
+	budgetSub         *redissub.OrgSubscriber
 	budgetCancel      context.CancelFunc
 	budgetCache       *billing.Cache
 	usageFactWriter   *billing.UsageFactWriter
@@ -107,7 +108,7 @@ type startedSubscribers struct {
 	mpSub        *modelpolicy.Subscriber
 	mpCancel     context.CancelFunc
 	mpPollCancel context.CancelFunc
-	budgetSub    *billing.Subscriber
+	budgetSub    *redissub.OrgSubscriber
 	budgetCancel context.CancelFunc
 }
 
@@ -203,7 +204,7 @@ type proxyCoreParts struct {
 	mpSub          *modelpolicy.Subscriber
 	mpCancel       context.CancelFunc
 	mpPollCancel   context.CancelFunc
-	budgetSub      *billing.Subscriber
+	budgetSub      *redissub.OrgSubscriber
 	budgetCancel   context.CancelFunc
 }
 

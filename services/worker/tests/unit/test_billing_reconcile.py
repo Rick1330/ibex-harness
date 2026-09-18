@@ -109,7 +109,10 @@ def test_http_clickhouse_querier_parses_spent() -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     end = start + timedelta(days=1)
     assert q.sum_spent(org_id="11111111-1111-1111-1111-111111111111", period_start=start, period_end=end) == 99
-    body = client.post.call_args.kwargs.get("content") or client.post.call_args.args[1]
-    assert "toUUID('11111111-1111-1111-1111-111111111111')" in body
-    assert "occurred_at >=" in body
-    assert "occurred_at <" in body
+    params = client.post.call_args.kwargs["params"]
+    assert params["param_org_id"] == "11111111-1111-1111-1111-111111111111"
+    assert "{org_id:UUID}" in params["query"]
+    assert "param_period_start" in params
+    assert "param_period_end" in params
+    assert "occurred_at >=" in params["query"]
+    assert "occurred_at <" in params["query"]

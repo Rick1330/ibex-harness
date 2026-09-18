@@ -131,8 +131,7 @@ func (h chatCompletionHandler) freezeUsageFact(
 	if h.usageFactWriter == nil || meta.OrgID == uuid.Nil || meta.AgentID == uuid.Nil {
 		return nil
 	}
-	return buildFrozenUsageFact(freezeUsageFactInput{
-		ctx:         ctx,
+    return buildFrozenUsageFact(ctx, freezeUsageFactInput{
 		meta:        meta,
 		in:          in,
 		budgetCache: h.budgetCache,
@@ -140,14 +139,13 @@ func (h chatCompletionHandler) freezeUsageFact(
 }
 
 type freezeUsageFactInput struct {
-	ctx         context.Context
 	meta        httpsession.SnapshotMeta
 	in          checkpointInput
 	budgetCache *billing.Cache
 }
 
-func buildFrozenUsageFact(p freezeUsageFactInput) *billing.UsageFact {
-	card := resolvePublishedCard(p.ctx, p.budgetCache, p.meta.OrgID)
+func buildFrozenUsageFact(ctx context.Context, p freezeUsageFactInput) *billing.UsageFact {
+	card := resolvePublishedCard(ctx, p.budgetCache, p.meta.OrgID)
 	inTok, outTok := tokenCounts(p.in)
 	cents, ver, ok := estimateCostChecked(card, p.in.Provider, p.in.Model, inTok, outTok)
 	if !ok {
