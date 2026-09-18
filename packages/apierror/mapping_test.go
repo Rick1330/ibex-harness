@@ -41,6 +41,7 @@ func TestHTTPStatus_allRegisteredCodes(t *testing.T) {
 		{apierror.CodeIdempotencyKeyReuse, http.StatusConflict},
 		{apierror.CodeIdempotencyInProgress, http.StatusConflict},
 		{apierror.CodeLegalHoldScopeConflict, http.StatusConflict},
+		{apierror.CodeLegalHoldActive, http.StatusConflict},
 		{apierror.CodeCapturePolicyConflict, http.StatusConflict},
 		{apierror.CodeInternalError, http.StatusInternalServerError},
 		{apierror.CodeServiceDegraded, http.StatusServiceUnavailable},

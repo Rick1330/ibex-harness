@@ -27,7 +27,7 @@ fullTitle: "Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance"
 </Callout>
 
 <Callout type="note" title="Completion contract">
-  ClickHouse TTL is storage hygiene, not a deletion SLA (F4-004). Org delete that stops at Postgres is a P0 defect (F4-019) — saga requires verified receipts for Postgres, ClickHouse, Redis, and object store before `succeeded`.
+  ClickHouse TTL is storage hygiene, not a deletion SLA (F4-004 residual under hold). Org delete that stops at Postgres is a P0 defect (F4-019) — saga requires verified receipts for every **deployed** store (Postgres, ClickHouse, Redis, object store) and `not_applicable` only for stores omitted from `IBEX_ORG_DELETION_DEPLOYED_STORES`; misconfigured deployed stores fail closed (`store_unreachable`).
 </Callout>
 
 ## Why this milestone exists
@@ -55,7 +55,7 @@ Worker constant `NON_ERASABLE_STORES` is empty today. Future usage/billing ledge
 
 ### ClickHouse TTL residual
 
-MergeTree TTL cannot be paused per-row without table redesign. Mutations honor legal hold (hold gate before any `ALTER DELETE`). TTL may still age rows while a hold is active — honest residual until a hold-aware TTL strategy exists.
+MergeTree TTL cannot be paused per-row without table redesign. Mutations honor legal hold (hold gate before any `ALTER DELETE`). TTL may still age rows while a hold is active — honest residual tracked in [#853](https://github.com/Rick1330/ibex-harness/issues/853). Broker/result + backup erasure: [#854](https://github.com/Rick1330/ibex-harness/issues/854). Python/Go crypto twin parity: [#855](https://github.com/Rick1330/ibex-harness/issues/855).
 
 ### Model-policy epoch spike
 
@@ -65,15 +65,16 @@ After PG policy delete, the saga PUBLISHes `model_policy_updates:{org_id}` with 
 
 | Finding | Disposition |
 |---|---|
-| F4-019 / F4-004 | Closed with receipted multi-store saga + CH mutate/poll (integration proof required in PR). |
-| F4-024 remainder | Closed if writer + delete path unit-tested (`packages/objectstore`); live MinIO skipped when `S3_ENDPOINT` unset. |
-| F4-006 / F4-008 | **Partial**: hold bit + capture modes + CSP note. Full safe-rendering / DOMPurify suite remains Track D. |
-| F4-020 | Closed: deletion task `soft_time_limit=300`, `time_limit=600`. |
+| F4-019 | **Closed**: fail-closed deployed-store config (`not_applicable` vs `verified`); worker-integration seeds PG+CH+Redis+MinIO then asserts absence after saga success. |
+| F4-004 | **Closed** for operator erasure path; **residual** CH MergeTree TTL under active hold (follow-up issue). |
+| F4-024 remainder | **Closed**: `packages/objectstore` + worker client; live MinIO in worker-integration. |
+| F4-006 / F4-008 | **Partial**: hold bit + capture modes + `metadata_only` sink tests. Full safe-rendering / DOMPurify suite remains Track D. |
+| F4-020 | **Partial**: deletion task `soft_time_limit=300` / `time_limit=600` only — retention scheduler / API readiness remain elsewhere. |
 
 ## Exit checklist
 
 - [x] Capture/redaction policy versioned (`org_capture_policies` + async redaction task).
-- [x] Cross-store deletion with receipts demonstrated (unit + integration against compose when available).
-- [x] Legal hold and tombstone behavior tested (hold gate → `hold_blocked`).
-- [ ] Safe-rendering / hostile-content suite attached — **deferred Track D** (F4-008 partial).
+- [x] Cross-store deletion with receipts demonstrated (unit + worker-integration multistore absence).
+- [x] Legal hold and tombstone behavior tested (API enqueue `LEGAL_HOLD_ACTIVE` + worker hold gate → `hold_blocked`).
+- [ ] Safe-rendering / hostile-content suite attached — **deferred Track D** (F4-008 partial; milestone `done` does not claim this closed).
 - [x] Evidence-bundle / archive path: encrypted object writer for privileged payloads (async).

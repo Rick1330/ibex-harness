@@ -358,7 +358,7 @@ CREATE TABLE ibex_core.deletion_store_receipts (
     scope               TEXT NOT NULL DEFAULT 'org'
                         CHECK (char_length(scope) BETWEEN 1 AND 256),
     status              TEXT NOT NULL
-                        CHECK (status IN ('pending', 'verified', 'failed')),
+                        CHECK (status IN ('pending', 'verified', 'failed', 'not_applicable')),
     verified_absent_at  TIMESTAMPTZ,
     idempotency_key     TEXT NOT NULL
                         CHECK (char_length(idempotency_key) BETWEEN 1 AND 256),

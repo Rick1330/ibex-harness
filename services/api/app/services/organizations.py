@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from apierror_py import NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
+from apierror_py import LEGAL_HOLD_ACTIVE, NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -203,6 +203,22 @@ async def _latest_deletion_job_status(session: AsyncSession, org_id: UUID) -> st
 
 
 async def _assert_deletion_allowed(session: AsyncSession, org: OrganizationResponse) -> None:
+    # Fail closed at enqueue: active legal hold must reject before the worker runs.
+    hold = await session.execute(
+        text(
+            """
+            SELECT 1 FROM ibex_core.legal_holds
+            WHERE org_id = CAST(:org_id AS uuid) AND cleared_at IS NULL
+            LIMIT 1
+            """
+        ),
+        {"org_id": str(org.id)},
+    )
+    if hold.first() is not None:
+        raise ApiError(
+            code=LEGAL_HOLD_ACTIVE,
+            message="Organization deletion blocked by an active legal hold",
+        )
     if org.status != "cancelled":
         return
     latest = await _latest_deletion_job_status(session, org.id)

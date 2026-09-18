@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run services/worker integration tests (Redis broker + migrated Postgres for dead-letter).
+# Run services/worker integration tests (Redis + Postgres + optional CH/MinIO multistore).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,6 +25,35 @@ export POSTGRES_MIGRATE_DSN="${POSTGRES_MIGRATE_DSN:-${POSTGRES_TEST_DSN}}"
 
 cd "$ROOT"
 bash "$ROOT/infra/scripts/db-migrate.sh" up
+
+# Multi-store org-deletion absence tests (pytest skips if env incomplete).
+if [[ -n "${CLICKHOUSE_DSN:-}" ]]; then
+  if [[ -z "${CLICKHOUSE_MIGRATE_DSN:-}" ]]; then
+    if [[ -n "${CLICKHOUSE_NATIVE_DSN:-}" ]]; then
+      export CLICKHOUSE_MIGRATE_DSN="${CLICKHOUSE_NATIVE_DSN}"
+    elif [[ "${CLICKHOUSE_DSN}" == http* ]] || [[ "${CLICKHOUSE_DSN}" == https* ]]; then
+      echo "CLICKHOUSE_MIGRATE_DSN (native) required when CLICKHOUSE_DSN is HTTP" >&2
+      exit 1
+    else
+      export CLICKHOUSE_MIGRATE_DSN="${CLICKHOUSE_DSN}"
+    fi
+  fi
+  bash "$ROOT/infra/scripts/clickhouse-migrate.sh" up
+  export IBEX_ORG_DELETION_MULTISTORE_TEST="${IBEX_ORG_DELETION_MULTISTORE_TEST:-1}"
+  export IBEX_ORG_DELETION_DEPLOYED_STORES="${IBEX_ORG_DELETION_DEPLOYED_STORES:-postgres,clickhouse,redis,objectstore}"
+fi
+
+if [[ -n "${S3_ENDPOINT:-}" ]]; then
+  export S3_ALLOW_INSECURE_HTTP="${S3_ALLOW_INSECURE_HTTP:-1}"
+  export S3_ACCESS_KEY="${S3_ACCESS_KEY:-minioadmin}"
+  export S3_SECRET_KEY="${S3_SECRET_KEY:-minioadmin}"
+  export S3_BUCKET_SESSIONS="${S3_BUCKET_SESSIONS:-ibex-sessions}"
+  export S3_REGION="${S3_REGION:-us-east-1}"
+  if [[ -z "${S3_MASTER_KEY_B64:-}" ]]; then
+    S3_MASTER_KEY_B64="$(python3 -c 'import base64,os; print(base64.b64encode(os.urandom(32)).decode())')"
+    export S3_MASTER_KEY_B64
+  fi
+fi
 
 cd "$WORKER_DIR"
 bash "$ROOT/infra/scripts/worker-uv-sync.sh"

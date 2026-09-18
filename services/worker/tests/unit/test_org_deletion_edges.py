@@ -15,6 +15,7 @@ def _wire_run(monkeypatch: pytest.MonkeyPatch, session: AsyncMock) -> None:
         redis_url="redis://127.0.0.1:6379/0",
         clickhouse_dsn="http://127.0.0.1:8123",
         s3_endpoint="http://127.0.0.1:9000",
+        org_deletion_deployed_stores="postgres,clickhouse,redis,objectstore",
     )
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
     engine = MagicMock()
@@ -65,9 +66,15 @@ def _stub_store_pipeline(
     monkeypatch.setattr(
         org_deletion, "_receipt_verified", AsyncMock(return_value=receipt_verified)
     )
+    monkeypatch.setattr(
+        org_deletion, "_receipt_terminal", AsyncMock(return_value=receipt_verified)
+    )
     monkeypatch.setattr(org_deletion, "_upsert_receipt", AsyncMock())
     monkeypatch.setattr(
         org_deletion, "_all_receipts_verified", AsyncMock(return_value=all_verified)
+    )
+    monkeypatch.setattr(
+        org_deletion, "_all_receipts_satisfied", AsyncMock(return_value=all_verified)
     )
     return stage_pg
 
@@ -120,7 +127,10 @@ async def test_stage_objectstore_missing_endpoint_raises(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
-async def test_optional_stores_skip_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_optional_stores_not_applicable_when_not_deployed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stores omitted from DEPLOYED_STORES get not_applicable — never verified-skip."""
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=_claimable_session_execute())
     _wire_run(monkeypatch, session)
@@ -129,6 +139,7 @@ async def test_optional_stores_skip_when_unconfigured(monkeypatch: pytest.Monkey
         redis_url=None,
         clickhouse_dsn=None,
         s3_endpoint=None,
+        org_deletion_deployed_stores="postgres",
     )
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
     monkeypatch.delenv("S3_ENDPOINT", raising=False)
@@ -147,21 +158,107 @@ async def test_optional_stores_skip_when_unconfigured(monkeypatch: pytest.Monkey
     monkeypatch.setattr(org_deletion, "_audit_append", AsyncMock())
     monkeypatch.setattr(org_deletion, "_receipt_digests", AsyncMock(return_value={}))
     monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=False))
+    monkeypatch.setattr(org_deletion, "_receipt_terminal", AsyncMock(return_value=False))
     upsert = AsyncMock()
     monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)
-    monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+    monkeypatch.setattr(org_deletion, "_all_receipts_satisfied", AsyncMock(return_value=True))
 
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
     stage_ch.assert_not_awaited()
     stage_redis.assert_not_awaited()
     stage_s3.assert_not_awaited()
-    skipped = {
-        c.args[1].store
+    by_store = {c.args[1].store: c.args[1] for c in upsert.await_args_list if len(c.args) > 1}
+    for store in ("clickhouse", "redis", "objectstore"):
+        assert by_store[store].status == "not_applicable"
+        assert by_store[store].error == "store_not_deployed"
+    assert "unconfigured" not in {getattr(r, "error", None) for r in by_store.values()}
+
+
+@pytest.mark.asyncio
+async def test_deployed_unconfigured_store_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deployed store with empty runtime config → failed receipt + job failure."""
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=_claimable_session_execute())
+    fail_session = AsyncMock()
+    fail_session.execute = AsyncMock()
+    # 1) claim+postgres  2) optional stores (raises)  3) fail marker
+    pool = [session, session, fail_session]
+    n = {"i": 0}
+
+    class _CM:
+        def __init__(self):
+            self._session = pool[min(n["i"], len(pool) - 1)]
+            n["i"] += 1
+
+        async def __aenter__(self):
+            return self._session
+
+        async def __aexit__(self, *args):
+            return None
+
+    settings = MagicMock(
+        database_url="postgresql+asyncpg://u:p@localhost/db",
+        redis_url="redis://127.0.0.1:6379/0",
+        clickhouse_dsn=None,
+        s3_endpoint="http://127.0.0.1:9000",
+        org_deletion_deployed_stores="postgres,clickhouse,redis,objectstore",
+    )
+    monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr(org_deletion, "create_engine", lambda _s: engine)
+    monkeypatch.setattr(org_deletion, "create_session_factory", lambda _e: MagicMock())
+    monkeypatch.setattr(org_deletion, "session_as_service_org", lambda _f, _org: _CM())
+    monkeypatch.delenv("CLICKHOUSE_DSN", raising=False)
+    monkeypatch.delenv("IBEX_WORKER_CLICKHOUSE_DSN", raising=False)
+
+    monkeypatch.setattr(org_deletion, "_resolve_archived_uris", AsyncMock(return_value=[]))
+    monkeypatch.setattr(org_deletion, "_stage_postgres", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", AsyncMock())
+    monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=False))
+    monkeypatch.setattr(org_deletion, "_receipt_terminal", AsyncMock(return_value=False))
+    upsert = AsyncMock()
+    monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)
+
+    with pytest.raises(RuntimeError, match="clickhouse is deployed but unreachable"):
+        await org_deletion._run_delete(job_id="j", org_id="o")
+    failed = [
+        c.args[1]
         for c in upsert.await_args_list
-        if getattr(c.args[1], "error", None) == "unconfigured"
+        if getattr(c.args[1], "error", None) == "store_unreachable"
+    ]
+    assert len(failed) == 1
+    assert failed[0].store == "clickhouse"
+    assert failed[0].status == "failed"
+    assert fail_session.execute.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_all_receipts_satisfied_distinguishes_not_applicable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statuses = {
+        "postgres": "verified",
+        "clickhouse": "not_applicable",
+        "redis": "not_applicable",
+        "objectstore": "not_applicable",
     }
-    assert skipped == {"clickhouse", "redis", "objectstore"}
+
+    async def status(_s, _j, store):
+        return statuses[store]
+
+    monkeypatch.setattr(org_deletion, "_receipt_status", status)
+    settings = MagicMock(org_deletion_deployed_stores="postgres")
+    assert await org_deletion._all_receipts_satisfied(AsyncMock(), "j", settings) is True
+    # Strict verified-only check must reject not_applicable as unverified.
+    async def verified(_s, _j, store):
+        return statuses[store] == "verified"
+
+    monkeypatch.setattr(org_deletion, "_receipt_verified", verified)
+    assert await org_deletion._all_receipts_verified(AsyncMock(), "j") is False
 
 
 @pytest.mark.asyncio

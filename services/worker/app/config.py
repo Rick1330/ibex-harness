@@ -281,6 +281,22 @@ class Settings(BaseSettings):
             "IBEX_WORKER_S3_ENCRYPTION_KEY_ID",
         ),
     )
+    # Comma-separated store names expected in this deployment's topology.
+    # Optional stores listed here but missing runtime config fail the job
+    # (store_unreachable). Stores omitted here get receipt status not_applicable.
+    # Default: all four stores deployed (fail-closed if misconfigured).
+    org_deletion_deployed_stores: str = Field(
+        default="postgres,clickhouse,redis,objectstore",
+        validation_alias=AliasChoices(
+            "IBEX_ORG_DELETION_DEPLOYED_STORES",
+            "ORG_DELETION_DEPLOYED_STORES",
+            "IBEX_WORKER_ORG_DELETION_DEPLOYED_STORES",
+        ),
+        description=(
+            "Comma-separated deletion stores deployed in this environment "
+            "(postgres,clickhouse,redis,objectstore). Distinct from empty env vars."
+        ),
+    )
 
     @field_validator(
         "broker_url",

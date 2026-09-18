@@ -73,8 +73,62 @@ async def test_run_none_skips(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_run_metadata_only(monkeypatch: pytest.MonkeyPatch) -> None:
     _wire_run(monkeypatch, mode="metadata_only")
-    out = await capture_redaction._run(_CaptureJob(org_id="o", event_id="1", payload={"a": 1}))
+    put = MagicMock()
+    persist = AsyncMock()
+    ch_insert = MagicMock()
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", put)
+    monkeypatch.setattr(capture_redaction, "_persist_redacted", persist)
+    monkeypatch.setattr(
+        "app.extraction.clickhouse_traces.insert_extraction_trace", ch_insert, raising=False
+    )
+    raw = {"prompt": "secret user prompt", "content": "secret completion", "meta": 1}
+    out = await capture_redaction._run(
+        _CaptureJob(org_id="o", event_id="1", payload=raw)
+    )
     assert out == {"status": "redacted", "mode": "metadata_only"}
+    put.assert_not_called()
+    persist.assert_not_awaited()
+    ch_insert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_never_forwards_raw_to_archive_or_ch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default capture mode must not emit raw prompt/completion to archive or CH sinks."""
+    sess = _wire_run(monkeypatch, mode="metadata_only")
+    calls: list[str] = []
+
+    def track_put(*_a, **_k):
+        calls.append("put")
+        raise AssertionError("archive put must not run under metadata_only")
+
+    async def track_persist(*_a, **_k):
+        calls.append("persist")
+        raise AssertionError("persist must not run under metadata_only")
+
+    monkeypatch.setattr(capture_redaction, "_put_archive_blob", track_put)
+    monkeypatch.setattr(capture_redaction, "_persist_redacted", track_persist)
+    monkeypatch.setattr(capture_redaction, "_mode_archive", AsyncMock())
+    monkeypatch.setattr(capture_redaction, "_mode_redacted", AsyncMock())
+
+    out = await capture_redaction._apply_mode(
+        capture_redaction._RedactCtx(
+            session=sess,
+            settings=MagicMock(),
+            job=_CaptureJob(
+                org_id="o",
+                event_id="9",
+                payload={"prompt": "PII prompt", "completion": "raw out"},
+            ),
+            uploaded=[],
+        ),
+        "metadata_only",
+    )
+    assert out["mode"] == "metadata_only"
+    assert calls == []
+    capture_redaction._mode_archive.assert_not_awaited()  # type: ignore[attr-defined]
+    capture_redaction._mode_redacted.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

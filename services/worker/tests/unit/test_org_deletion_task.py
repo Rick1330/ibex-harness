@@ -39,6 +39,7 @@ def _wire_delete_session(
         redis_url="redis://127.0.0.1:6379/0",
         clickhouse_dsn="http://127.0.0.1:8123",
         s3_endpoint="http://127.0.0.1:9000",
+        org_deletion_deployed_stores="postgres,clickhouse,redis,objectstore",
     )
     monkeypatch.setattr(org_deletion, "get_settings", lambda: settings)
     engine = MagicMock()
@@ -104,13 +105,15 @@ async def test_run_delete_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         if receipt.status == "verified":
             states[receipt.store] = True
 
-    async def all_verified(_s, job_id):
-        del job_id
+    async def all_verified(_s, job_id, settings=None):
+        del job_id, settings
         return all(states.values())
 
     monkeypatch.setattr(org_deletion, "_receipt_verified", receipt_verified)
+    monkeypatch.setattr(org_deletion, "_receipt_terminal", receipt_verified)
     monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)
     monkeypatch.setattr(org_deletion, "_all_receipts_verified", all_verified)
+    monkeypatch.setattr(org_deletion, "_all_receipts_satisfied", all_verified)
 
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
@@ -219,7 +222,9 @@ async def test_post_postgres_commit_failure_marks_job_failed(
     _wire_delete_session(monkeypatch, session, session_factory=_CM)
     _stub_stages(monkeypatch)
     monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=False))
+    monkeypatch.setattr(org_deletion, "_receipt_terminal", AsyncMock(return_value=False))
     monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+    monkeypatch.setattr(org_deletion, "_all_receipts_satisfied", AsyncMock(return_value=True))
 
     async def upsert(_s, receipt):
         del receipt
@@ -281,8 +286,10 @@ async def test_run_delete_still_runs_stages_when_org_already_deleted(
             states[receipt.store] = True
 
     monkeypatch.setattr(org_deletion, "_receipt_verified", receipt_verified)
+    monkeypatch.setattr(org_deletion, "_receipt_terminal", receipt_verified)
     monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)
     monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+    monkeypatch.setattr(org_deletion, "_all_receipts_satisfied", AsyncMock(return_value=True))
 
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"
@@ -352,13 +359,14 @@ async def test_retry_passes_snapshot_uris_to_objectstore(
         org_deletion, "_resolve_archived_uris", AsyncMock(return_value=snapshot)
     )
     # Postgres already verified — collect would be empty after purge.
-    monkeypatch.setattr(
-        org_deletion,
-        "_receipt_verified",
-        AsyncMock(side_effect=lambda _s, _j, store: store == "postgres"),
-    )
+    async def pg_only(_s, _j, store):
+        return store == "postgres"
+
+    monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(side_effect=pg_only))
+    monkeypatch.setattr(org_deletion, "_receipt_terminal", AsyncMock(side_effect=pg_only))
     monkeypatch.setattr(org_deletion, "_upsert_receipt", AsyncMock())
     monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+    monkeypatch.setattr(org_deletion, "_all_receipts_satisfied", AsyncMock(return_value=True))
 
     out = await org_deletion._run_delete(job_id="j", org_id="o")
     assert out["status"] == "succeeded"

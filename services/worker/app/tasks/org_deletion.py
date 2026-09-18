@@ -349,20 +349,33 @@ async def _run_optional_store(
     configured: bool,
     runner: Callable[[], Awaitable[None]],
 ) -> None:
-    if await _receipt_verified(ctx.session, ctx.job_id, store):
+    if await _receipt_terminal(ctx.session, ctx.job_id, store):
         return
-    if not configured:
-        # Deployment has no such store: nothing to purge; record verified absence.
+    deployed = _store_is_deployed(ctx.settings, store)
+    if not deployed:
+        # Explicit topology omission — distinct from verified deletion.
         await _upsert_receipt(
             ctx.session,
             _ReceiptWrite(
                 job_id=ctx.job_id,
                 store=store,
-                status="verified",
-                error="unconfigured",
+                status="not_applicable",
+                error="store_not_deployed",
             ),
         )
         return
+    if not configured:
+        # Deployed but unreachable/misconfigured — fail closed (never verified-skip).
+        await _upsert_receipt(
+            ctx.session,
+            _ReceiptWrite(
+                job_id=ctx.job_id,
+                store=store,
+                status="failed",
+                error="store_unreachable",
+            ),
+        )
+        raise RuntimeError(f"{store} is deployed but unreachable (missing runtime config)")
     await _require_no_hold(ctx.session, ctx.org_id)
     await runner()
     await _upsert_receipt(
@@ -371,7 +384,7 @@ async def _run_optional_store(
 
 
 async def _finalize_job(ctx: _StageCtx) -> dict[str, str]:
-    if not await _all_receipts_verified(ctx.session, ctx.job_id):
+    if not await _all_receipts_satisfied(ctx.session, ctx.job_id, ctx.settings):
         await _finish_job(
             ctx.session,
             _JobOutcome(
@@ -534,6 +547,42 @@ async def _receipt_verified(session, job_id: str, store: str) -> bool:
     return result.first() is not None
 
 
+async def _receipt_terminal(session, job_id: str, store: str) -> bool:
+    """True when this store already has a terminal receipt (verified or not_applicable)."""
+    if store in NON_ERASABLE_STORES:
+        raise ValueError(f"store {store!r} is non-erasable")
+    result = await session.execute(
+        text(
+            """
+            SELECT status FROM ibex_core.deletion_store_receipts
+            WHERE job_id = CAST(:job_id AS uuid)
+              AND store = :store
+              AND status IN ('verified', 'not_applicable')
+            LIMIT 1
+            """
+        ),
+        {"job_id": job_id, "store": store},
+    )
+    return result.first() is not None
+
+
+async def _receipt_status(session, job_id: str, store: str) -> str | None:
+    result = await session.execute(
+        text(
+            """
+            SELECT status FROM ibex_core.deletion_store_receipts
+            WHERE job_id = CAST(:job_id AS uuid)
+              AND store = :store
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ),
+        {"job_id": job_id, "store": store},
+    )
+    row = result.first()
+    return str(row[0]) if row is not None else None
+
+
 @dataclass(frozen=True, slots=True)
 class _ReceiptWrite:
     job_id: str
@@ -577,9 +626,47 @@ async def _upsert_receipt_write(session, receipt: _ReceiptWrite) -> None:
     )
 
 
+def _parse_deployed_stores(settings: Any) -> frozenset[str]:
+    raw = getattr(settings, "org_deletion_deployed_stores", None) or os.environ.get(
+        "IBEX_ORG_DELETION_DEPLOYED_STORES", ""
+    )
+    if not str(raw).strip():
+        # Empty override means "declare no optional stores" — postgres still required.
+        return frozenset({"postgres"})
+    allowed = frozenset(_STORES)
+    parsed = {s.strip().lower() for s in str(raw).split(",") if s.strip()}
+    unknown = parsed - allowed
+    if unknown:
+        raise ValueError(f"unknown org_deletion_deployed_stores: {sorted(unknown)}")
+    if "postgres" not in parsed:
+        parsed.add("postgres")
+    return frozenset(parsed)
+
+
+def _store_is_deployed(settings: Any, store: str) -> bool:
+    return store in _parse_deployed_stores(settings)
+
+
 async def _all_receipts_verified(session, job_id: str) -> bool:
+    """True only when every store has status=verified (strict; excludes not_applicable)."""
     for store in _STORES:
         if not await _receipt_verified(session, job_id, store):
+            return False
+    return True
+
+
+async def _all_receipts_satisfied(session, job_id: str, settings: Any) -> bool:
+    """Finalize gate: deployed stores must be verified; others must be not_applicable.
+
+    not_applicable is never treated as verified — digests and this check keep them distinct.
+    """
+    deployed = _parse_deployed_stores(settings)
+    for store in _STORES:
+        status = await _receipt_status(session, job_id, store)
+        if store in deployed:
+            if status != "verified":
+                return False
+        elif status != "not_applicable":
             return False
     return True
 
