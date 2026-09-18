@@ -37,32 +37,58 @@ def _multistore_opted_in() -> bool:
     return False
 
 
-def _require_multistore_env() -> dict[str, str]:
-    if not _multistore_opted_in():
-        pytest.skip(f"set {_OPT_IN}=1 (or CI) to run multi-store deletion absence tests")
-    env = {
-        "postgres": os.environ.get("POSTGRES_TEST_DSN") or os.environ.get("DATABASE_URL") or "",
-        "redis": os.environ.get("REDIS_URL") or "",
-        "clickhouse": (
-            os.environ.get("CLICKHOUSE_DSN") or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN") or ""
-        ),
-        "s3": os.environ.get("S3_ENDPOINT") or "",
+def _env_first(*keys: str) -> str:
+    for key in keys:
+        value = os.environ.get(key)
+        if value:
+            return value
+    return ""
+
+
+def _collect_multistore_env() -> dict[str, str]:
+    return {
+        "postgres": _env_first("POSTGRES_TEST_DSN", "DATABASE_URL"),
+        "redis": _env_first("REDIS_URL"),
+        "clickhouse": _env_first("CLICKHOUSE_DSN", "IBEX_WORKER_CLICKHOUSE_DSN"),
+        "s3": _env_first("S3_ENDPOINT"),
     }
+
+
+def _skip_incomplete(env: dict[str, str]) -> None:
     missing = [name for name, value in env.items() if not value]
     if missing:
         pytest.skip(f"multi-store deletion test missing env for: {', '.join(missing)}")
-    return env
 
 
 @pytest.fixture(scope="module")
 def multistore_env() -> dict[str, str]:
-    return _require_multistore_env()
+    if not _multistore_opted_in():
+        pytest.skip(f"set {_OPT_IN}=1 (or CI) to run multi-store deletion absence tests")
+    env = _collect_multistore_env()
+    _skip_incomplete(env)
+    return env
+
+
+def _sync_pg_dsn(dsn: str) -> str:
+    """Normalize CI/local DSNs for SQLAlchemy sync (psycopg)."""
+    if dsn.startswith("postgresql+asyncpg://"):
+        dsn = "postgresql://" + dsn.removeprefix("postgresql+asyncpg://")
+    if dsn.startswith("postgres://"):
+        dsn = "postgresql://" + dsn.removeprefix("postgres://")
+    return dsn
+
+
+def _async_pg_dsn(dsn: str) -> str:
+    """Normalize DSNs for SQLAlchemy async (asyncpg)."""
+    dsn = _sync_pg_dsn(dsn)
+    if dsn.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + dsn.removeprefix("postgresql://")
+    return dsn
 
 
 @pytest.fixture
 def sync_pg(multistore_env: dict[str, str]) -> Iterator[Session]:
-    # asyncpg DSN → psycopg for sync seed helpers
-    dsn = multistore_env["postgres"].replace("postgresql+asyncpg://", "postgresql://")
+    dsn = _sync_pg_dsn(multistore_env["postgres"])
     eng = create_engine(dsn)
     SessionLocal = sessionmaker(bind=eng)
     session = SessionLocal()
@@ -213,11 +239,7 @@ async def test_org_deletion_clears_all_four_stores(
     monkeypatch.setenv("S3_REGION", os.environ.get("S3_REGION", "us-east-1"))
 
     # asyncpg URL for worker settings
-    pg = multistore_env["postgres"]
-    if pg.startswith("postgresql://"):
-        pg_async = pg.replace("postgresql://", "postgresql+asyncpg://", 1)
-    else:
-        pg_async = pg
+    pg_async = _async_pg_dsn(multistore_env["postgres"])
 
     settings = Settings(
         database_url=pg_async,
@@ -273,11 +295,7 @@ async def test_deployed_misconfigured_store_fails_not_verified(
     sync_pg: Session,
 ) -> None:
     """Deliberate misconfig of a deployed store must fail the job (B1)."""
-    pg = multistore_env["postgres"]
-    if pg.startswith("postgresql://"):
-        pg_async = pg.replace("postgresql://", "postgresql+asyncpg://", 1)
-    else:
-        pg_async = pg
+    pg_async = _async_pg_dsn(multistore_env["postgres"])
 
     settings = Settings(
         database_url=pg_async,

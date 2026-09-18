@@ -12,11 +12,24 @@ from sqlalchemy import text
 # Store names live here; NON_ERASABLE_STORES is owned by org_deletion (tests patch it).
 STORES = ("postgres", "clickhouse", "redis", "objectstore")
 
+_RECEIPT_BY_STORE = """
+SELECT status FROM ibex_core.deletion_store_receipts
+WHERE job_id = CAST(:job_id AS uuid)
+  AND store = :store
+ORDER BY updated_at DESC
+LIMIT 1
+"""
+
 
 def _non_erasable() -> frozenset[str]:
     from app.tasks import org_deletion as od
 
     return od.NON_ERASABLE_STORES
+
+
+def _refuse_non_erasable(store: str) -> None:
+    if store in _non_erasable():
+        raise ValueError(f"store {store!r} is non-erasable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,63 +40,33 @@ class ReceiptWrite:
     error: str | None = None
 
 
-async def receipt_verified(session, job_id: str, store: str) -> bool:
-    if store in _non_erasable():
-        raise ValueError(f"store {store!r} is non-erasable")
+async def _latest_receipt_status(session, job_id: str, store: str) -> str | None:
     result = await session.execute(
-        text(
-            """
-            SELECT 1 FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-              AND store = :store
-              AND status = 'verified'
-            LIMIT 1
-            """
-        ),
-        {"job_id": job_id, "store": store},
-    )
-    return result.first() is not None
-
-
-async def receipt_terminal(session, job_id: str, store: str) -> bool:
-    """True when this store already has a terminal receipt (verified or not_applicable)."""
-    if store in _non_erasable():
-        raise ValueError(f"store {store!r} is non-erasable")
-    result = await session.execute(
-        text(
-            """
-            SELECT status FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-              AND store = :store
-              AND status IN ('verified', 'not_applicable')
-            LIMIT 1
-            """
-        ),
-        {"job_id": job_id, "store": store},
-    )
-    return result.first() is not None
-
-
-async def receipt_status(session, job_id: str, store: str) -> str | None:
-    result = await session.execute(
-        text(
-            """
-            SELECT status FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-              AND store = :store
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """
-        ),
+        text(_RECEIPT_BY_STORE),
         {"job_id": job_id, "store": store},
     )
     row = result.first()
     return str(row[0]) if row is not None else None
 
 
+async def receipt_verified(session, job_id: str, store: str) -> bool:
+    _refuse_non_erasable(store)
+    return await _latest_receipt_status(session, job_id, store) == "verified"
+
+
+async def receipt_terminal(session, job_id: str, store: str) -> bool:
+    """True when this store already has a terminal receipt (verified or not_applicable)."""
+    _refuse_non_erasable(store)
+    status = await _latest_receipt_status(session, job_id, store)
+    return status in {"verified", "not_applicable"}
+
+
+async def receipt_status(session, job_id: str, store: str) -> str | None:
+    return await _latest_receipt_status(session, job_id, store)
+
+
 async def upsert_receipt(session, receipt: ReceiptWrite) -> None:
-    if receipt.store in _non_erasable():
-        raise ValueError(f"store {receipt.store!r} is non-erasable")
+    _refuse_non_erasable(receipt.store)
     idem = f"{receipt.job_id}:{receipt.store}:org"
     await session.execute(
         text(
