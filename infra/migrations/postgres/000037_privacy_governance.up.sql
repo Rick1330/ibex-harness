@@ -308,8 +308,8 @@ ALTER TABLE ibex_core.legal_holds FORCE ROW LEVEL SECURITY;
 CREATE POLICY legal_holds_isolation ON ibex_core.legal_holds
     USING (ibex_core.rls_privacy_visible(org_id));
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.legal_holds TO ibex_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.legal_holds TO ibex_service;
+GRANT SELECT, INSERT, UPDATE ON ibex_core.legal_holds TO ibex_app;
+GRANT SELECT, INSERT, UPDATE ON ibex_core.legal_holds TO ibex_service;
 
 -- ================================================================
 -- org_capture_policies (priority load like org_model_policies)
@@ -384,8 +384,9 @@ CREATE POLICY deletion_store_receipts_isolation ON ibex_core.deletion_store_rece
         )
     );
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.deletion_store_receipts TO ibex_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.deletion_store_receipts TO ibex_service;
+-- App may read receipts; only service role may write (worker upserts).
+GRANT SELECT ON ibex_core.deletion_store_receipts TO ibex_app;
+GRANT SELECT, INSERT, UPDATE ON ibex_core.deletion_store_receipts TO ibex_service;
 
 CREATE TRIGGER deletion_store_receipts_updated_at
     BEFORE UPDATE ON ibex_core.deletion_store_receipts

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -18,14 +17,49 @@ from app.celery_app import celery_app
 from app.config import get_settings
 from app.db import create_engine, create_session_factory, session_as_service_org
 from app.task_names import TASK_ORG_DELETE_ORGANIZATION
+from app.tasks import org_deletion_receipts as _rcpt
 from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
 
 # Non-erasable allowlist: saga refuses to target these store names (4.P.4 placeholders).
+# Tests monkeypatch this name; receipt helpers read it lazily.
 NON_ERASABLE_STORES: frozenset[str] = frozenset()
+_STORES = _rcpt.STORES
+_ReceiptWrite = _rcpt.ReceiptWrite
+_upsert_receipt = _rcpt.upsert_receipt
+_receipt_verified = _rcpt.receipt_verified
+_receipt_terminal = _rcpt.receipt_terminal
+_receipt_status = _rcpt.receipt_status
+_parse_deployed_stores = _rcpt.parse_deployed_stores
+_store_is_deployed = _rcpt.store_is_deployed
+_receipt_digests = _rcpt.receipt_digests
 
-_STORES = ("postgres", "clickhouse", "redis", "objectstore")
+
+async def _all_receipts_verified(session, job_id: str) -> bool:
+    """True only when every store has status=verified (strict; excludes not_applicable)."""
+    for store in _STORES:
+        if not await _receipt_verified(session, job_id, store):
+            return False
+    return True
+
+
+async def _all_receipts_satisfied(session, job_id: str, settings: Any) -> bool:
+    """Finalize gate: deployed stores must be verified; others must be not_applicable.
+
+    not_applicable is never treated as verified — digests and this check keep them distinct.
+    """
+    deployed = _parse_deployed_stores(settings)
+    for store in _STORES:
+        status = await _receipt_status(session, job_id, store)
+        if store in deployed:
+            if status != "verified":
+                return False
+        elif status != "not_applicable":
+            return False
+    return True
+
+
 _CH_TABLES = (
     "llm_traces",
     "mcp_tool_calls",
@@ -527,167 +561,6 @@ async def _resolve_archived_uris(session, *, job_id: str, org_id: str) -> list[s
 async def _stage_postgres(session, *, org_id: str) -> None:
     for stmt in (*_PG_PRE_CASCADE, *_CASCADE_STATEMENTS):
         await session.execute(text(stmt), {"org_id": org_id})
-
-
-async def _receipt_verified(session, job_id: str, store: str) -> bool:
-    if store in NON_ERASABLE_STORES:
-        raise ValueError(f"store {store!r} is non-erasable")
-    result = await session.execute(
-        text(
-            """
-            SELECT 1 FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-              AND store = :store
-              AND status = 'verified'
-            LIMIT 1
-            """
-        ),
-        {"job_id": job_id, "store": store},
-    )
-    return result.first() is not None
-
-
-async def _receipt_terminal(session, job_id: str, store: str) -> bool:
-    """True when this store already has a terminal receipt (verified or not_applicable)."""
-    if store in NON_ERASABLE_STORES:
-        raise ValueError(f"store {store!r} is non-erasable")
-    result = await session.execute(
-        text(
-            """
-            SELECT status FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-              AND store = :store
-              AND status IN ('verified', 'not_applicable')
-            LIMIT 1
-            """
-        ),
-        {"job_id": job_id, "store": store},
-    )
-    return result.first() is not None
-
-
-async def _receipt_status(session, job_id: str, store: str) -> str | None:
-    result = await session.execute(
-        text(
-            """
-            SELECT status FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-              AND store = :store
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """
-        ),
-        {"job_id": job_id, "store": store},
-    )
-    row = result.first()
-    return str(row[0]) if row is not None else None
-
-
-@dataclass(frozen=True, slots=True)
-class _ReceiptWrite:
-    job_id: str
-    store: str
-    status: str
-    error: str | None = None
-
-
-async def _upsert_receipt(session, receipt: _ReceiptWrite) -> None:
-    await _upsert_receipt_write(session, receipt)
-
-
-async def _upsert_receipt_write(session, receipt: _ReceiptWrite) -> None:
-    if receipt.store in NON_ERASABLE_STORES:
-        raise ValueError(f"store {receipt.store!r} is non-erasable")
-    idem = f"{receipt.job_id}:{receipt.store}:org"
-    await session.execute(
-        text(
-            """
-            INSERT INTO ibex_core.deletion_store_receipts (
-                job_id, store, scope, status, verified_absent_at, idempotency_key, error
-            ) VALUES (
-                CAST(:job_id AS uuid), :store, 'org', :status,
-                CASE WHEN :status = 'verified' THEN NOW() ELSE NULL END,
-                :idem, :error
-            )
-            ON CONFLICT (job_id, store, idempotency_key) DO UPDATE
-            SET status = EXCLUDED.status,
-                verified_absent_at = EXCLUDED.verified_absent_at,
-                error = EXCLUDED.error,
-                updated_at = NOW()
-            """
-        ),
-        {
-            "job_id": receipt.job_id,
-            "store": receipt.store,
-            "status": receipt.status,
-            "idem": idem,
-            "error": receipt.error,
-        },
-    )
-
-
-def _parse_deployed_stores(settings: Any) -> frozenset[str]:
-    raw = getattr(settings, "org_deletion_deployed_stores", None) or os.environ.get(
-        "IBEX_ORG_DELETION_DEPLOYED_STORES", ""
-    )
-    if not str(raw).strip():
-        # Empty override means "declare no optional stores" — postgres still required.
-        return frozenset({"postgres"})
-    allowed = frozenset(_STORES)
-    parsed = {s.strip().lower() for s in str(raw).split(",") if s.strip()}
-    unknown = parsed - allowed
-    if unknown:
-        raise ValueError(f"unknown org_deletion_deployed_stores: {sorted(unknown)}")
-    if "postgres" not in parsed:
-        parsed.add("postgres")
-    return frozenset(parsed)
-
-
-def _store_is_deployed(settings: Any, store: str) -> bool:
-    return store in _parse_deployed_stores(settings)
-
-
-async def _all_receipts_verified(session, job_id: str) -> bool:
-    """True only when every store has status=verified (strict; excludes not_applicable)."""
-    for store in _STORES:
-        if not await _receipt_verified(session, job_id, store):
-            return False
-    return True
-
-
-async def _all_receipts_satisfied(session, job_id: str, settings: Any) -> bool:
-    """Finalize gate: deployed stores must be verified; others must be not_applicable.
-
-    not_applicable is never treated as verified — digests and this check keep them distinct.
-    """
-    deployed = _parse_deployed_stores(settings)
-    for store in _STORES:
-        status = await _receipt_status(session, job_id, store)
-        if store in deployed:
-            if status != "verified":
-                return False
-        elif status != "not_applicable":
-            return False
-    return True
-
-
-async def _receipt_digests(session, job_id: str) -> dict[str, str]:
-    result = await session.execute(
-        text(
-            """
-            SELECT store, status, COALESCE(verified_absent_at::text, ''), COALESCE(error, '')
-            FROM ibex_core.deletion_store_receipts
-            WHERE job_id = CAST(:job_id AS uuid)
-            ORDER BY store
-            """
-        ),
-        {"job_id": job_id},
-    )
-    out: dict[str, str] = {}
-    for store, status, verified, err in result.fetchall():
-        raw = f"{store}|{status}|{verified}|{err}"
-        out[str(store)] = hashlib.sha256(raw.encode()).hexdigest()
-    return out
 
 
 async def _audit_append(session, *, org_id: str, action: str, payload: dict[str, Any]) -> None:

@@ -33,23 +33,18 @@ def _truthy(name: str) -> bool:
 def _require_multistore_env() -> dict[str, str]:
     if not (_truthy("CI") or _truthy(_OPT_IN) or _truthy("IBEX_WORKER_INTEGRATION_TESTS")):
         pytest.skip(f"set {_OPT_IN}=1 (or CI) to run multi-store deletion absence tests")
-    needed = {
-        "postgres": os.environ.get("POSTGRES_TEST_DSN") or os.environ.get("DATABASE_URL"),
-        "redis": os.environ.get("REDIS_URL"),
-        "clickhouse": os.environ.get("CLICKHOUSE_DSN")
-        or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN"),
-        "s3": os.environ.get("S3_ENDPOINT"),
+    env = {
+        "postgres": os.environ.get("POSTGRES_TEST_DSN") or os.environ.get("DATABASE_URL") or "",
+        "redis": os.environ.get("REDIS_URL") or "",
+        "clickhouse": (
+            os.environ.get("CLICKHOUSE_DSN") or os.environ.get("IBEX_WORKER_CLICKHOUSE_DSN") or ""
+        ),
+        "s3": os.environ.get("S3_ENDPOINT") or "",
     }
-    missing = [k for k, v in needed.items() if not v]
+    missing = [name for name, value in env.items() if not value]
     if missing:
         pytest.skip(f"multi-store deletion test missing env for: {', '.join(missing)}")
-    assert needed["postgres"] and needed["redis"] and needed["clickhouse"] and needed["s3"]
-    return {
-        "postgres": needed["postgres"],
-        "redis": needed["redis"],
-        "clickhouse": needed["clickhouse"],
-        "s3": needed["s3"],
-    }
+    return env
 
 
 @pytest.fixture(scope="module")
@@ -197,14 +192,18 @@ async def test_org_deletion_clears_all_four_stores(
     multistore_env: dict[str, str],
     sync_pg: Session,
 ) -> None:
-    os.environ["S3_ALLOW_INSECURE_HTTP"] = "1"
-    os.environ["IBEX_ORG_DELETION_DEPLOYED_STORES"] = "postgres,clickhouse,redis,objectstore"
+    monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
+    monkeypatch.setenv(
+        "IBEX_ORG_DELETION_DEPLOYED_STORES", "postgres,clickhouse,redis,objectstore"
+    )
     master = _master_key_b64()
-    os.environ["S3_MASTER_KEY_B64"] = master
-    os.environ.setdefault("S3_ACCESS_KEY", "minioadmin")
-    os.environ.setdefault("S3_SECRET_KEY", "minioadmin")
-    os.environ.setdefault("S3_BUCKET_SESSIONS", "ibex-sessions")
-    os.environ.setdefault("S3_REGION", "us-east-1")
+    monkeypatch.setenv("S3_MASTER_KEY_B64", master)
+    monkeypatch.setenv("S3_ACCESS_KEY", os.environ.get("S3_ACCESS_KEY", "minioadmin"))
+    monkeypatch.setenv("S3_SECRET_KEY", os.environ.get("S3_SECRET_KEY", "minioadmin"))
+    monkeypatch.setenv(
+        "S3_BUCKET_SESSIONS", os.environ.get("S3_BUCKET_SESSIONS", "ibex-sessions")
+    )
+    monkeypatch.setenv("S3_REGION", os.environ.get("S3_REGION", "us-east-1"))
 
     # asyncpg URL for worker settings
     pg = multistore_env["postgres"]

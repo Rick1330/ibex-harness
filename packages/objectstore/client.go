@@ -238,6 +238,9 @@ func (c *Client) DeleteURI(ctx context.Context, uri ObjectURI) error {
 	if bucket != c.cfg.Bucket {
 		return fmt.Errorf("objectstore: bucket mismatch")
 	}
+	if key.empty() {
+		return fmt.Errorf("objectstore: key required")
+	}
 	return c.deleteObject(ctx, key)
 }
 

@@ -239,7 +239,7 @@ def _parse_master_key(encoded: str) -> bytes:
     if not encoded:
         raise RuntimeError("S3_MASTER_KEY_B64 or OBJECTSTORE_MASTER_KEY_B64 required")
     try:
-        raw = base64.b64decode(encoded, validate=False)
+        raw = base64.b64decode(encoded, validate=True)
     except Exception as exc:
         raise RuntimeError("invalid master key encoding") from exc
     if len(raw) != _DEK_SIZE:

@@ -1225,7 +1225,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       clickhouse:
-        image: clickhouse/clickhouse-server:24.8.14.39
+        # Immutable pin of clickhouse/clickhouse-server:24.8.14.39 (multi-arch index).
+        image: clickhouse/clickhouse-server:24.8.14.39@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
         env:
           CLICKHOUSE_DB: ibex
           CLICKHOUSE_USER: default
@@ -1266,11 +1267,13 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
         run: |
           set -euo pipefail
+          # Docker Hub minio/minio tag is gone; quay.io is the current upstream.
           docker run -d --name ibex-ci-minio \
             -p 9100:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:RELEASE.2024-12-18T13-15-44Z server /data
+            quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3 \
+            server /data
           for _ in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:9100/minio/health/live >/dev/null; then
               break

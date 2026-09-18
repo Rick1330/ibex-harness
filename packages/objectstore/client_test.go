@@ -237,7 +237,7 @@ func TestOrgPrefix(t *testing.T) {
 func TestDeleteURI_Errors(t *testing.T) {
 	t.Parallel()
 	client := mustNew(t, testCfg("http://127.0.0.1:9"), nil)
-	for _, u := range []ObjectURI{"http://x", "s3://onlybucket", "s3://other/key"} {
+	for _, u := range []ObjectURI{"http://x", "s3://onlybucket", "s3://other/key", "s3://ibex-sessions/"} {
 		if err := client.DeleteURI(context.Background(), u); err == nil {
 			t.Fatalf("expected error for %s", u)
 		}

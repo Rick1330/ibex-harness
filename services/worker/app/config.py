@@ -340,7 +340,7 @@ class Settings(BaseSettings):
         if value is None:
             return None
         if _s3_insecure_http_allowed():
-            return value
+            return value.strip() if isinstance(value, str) else value
         return require_https_or_loopback(value)
 
     @property

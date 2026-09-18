@@ -198,7 +198,7 @@ async def _archive_payload(ctx: _RedactCtx, payload: dict[str, Any]) -> None:
 
 
 async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
-    await session.execute(
+    result = await session.execute(
         text(
             """
             UPDATE ibex_core.session_events
@@ -209,6 +209,10 @@ async def _set_archived_to(session, job: _CaptureJob, uri: str) -> None:
         ),
         {"event_id": job.event_id, "org_id": job.org_id, "uri": uri},
     )
+    if result.rowcount == 0:
+        raise RuntimeError(
+            f"session_events archive update matched 0 rows event_id={job.event_id}"
+        )
 
 
 def _compensate_upload(uri: str, settings: Any) -> None:
