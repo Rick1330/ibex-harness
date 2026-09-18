@@ -183,24 +183,47 @@ def test_canonical_query_sorts_and_escapes_slash() -> None:
 def test_require_endpoint_rejects_http_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     _clear_s3_env(monkeypatch)
     monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
-    cfg = osc._S3Cfg(
-        endpoint="http://minio.example:9000",
-        access_key="ak",
-        secret_key="sk",
-        bucket="b",
-        region="us-east-1",
-        master_key_b64="",
-        key_id="v1",
-    )
+    cfg = _s3_cfg("http://minio.example:9000")
     with pytest.raises(RuntimeError, match="HTTPS"):
         osc._require_endpoint(cfg)
 
 
-def test_require_endpoint_allows_http_with_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("endpoint", "allow_insecure", "via_settings"),
+    [
+        ("http://127.0.0.1:9000", True, False),
+        ("http://127.0.0.1:9000", False, False),
+        ("http://127.0.0.1:9000", False, True),
+    ],
+)
+def test_require_endpoint_allows_loopback_or_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    allow_insecure: bool,
+    via_settings: bool,
+) -> None:
     _clear_s3_env(monkeypatch)
-    monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
-    cfg = osc._S3Cfg(
-        endpoint="http://127.0.0.1:9000",
+    if allow_insecure:
+        monkeypatch.setenv("S3_ALLOW_INSECURE_HTTP", "1")
+    else:
+        monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
+    if via_settings:
+        from app.config import Settings
+
+        settings = Settings(
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            s3_endpoint=endpoint,
+        )
+        assert settings.s3_endpoint == endpoint
+        cfg = osc._load_cfg(settings)
+    else:
+        cfg = _s3_cfg(endpoint)
+    osc._require_endpoint(cfg)
+
+
+def _s3_cfg(endpoint: str) -> osc._S3Cfg:
+    return osc._S3Cfg(
+        endpoint=endpoint,
         access_key="ak",
         secret_key="sk",
         bucket="b",
@@ -208,41 +231,6 @@ def test_require_endpoint_allows_http_with_opt_in(monkeypatch: pytest.MonkeyPatc
         master_key_b64="",
         key_id="v1",
     )
-    osc._require_endpoint(cfg)
-
-
-def test_require_endpoint_allows_loopback_http_without_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _clear_s3_env(monkeypatch)
-    monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
-    cfg = osc._S3Cfg(
-        endpoint="http://127.0.0.1:9000",
-        access_key="ak",
-        secret_key="sk",
-        bucket="b",
-        region="us-east-1",
-        master_key_b64="",
-        key_id="v1",
-    )
-    osc._require_endpoint(cfg)
-
-
-def test_settings_loopback_endpoint_accepted_by_require_endpoint(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Settings validator + _require_endpoint agree on loopback HTTP without the flag."""
-    from app.config import Settings
-
-    _clear_s3_env(monkeypatch)
-    monkeypatch.delenv("S3_ALLOW_INSECURE_HTTP", raising=False)
-    settings = Settings(
-        database_url="postgresql+asyncpg://u:p@localhost/db",
-        s3_endpoint="http://127.0.0.1:9000",
-    )
-    assert settings.s3_endpoint == "http://127.0.0.1:9000"
-    cfg = osc._load_cfg(settings)
-    osc._require_endpoint(cfg)
 
 
 def test_extract_xml_keys_unterminated_raises() -> None:

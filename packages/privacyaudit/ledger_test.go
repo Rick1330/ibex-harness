@@ -111,13 +111,15 @@ func TestResolveOrgs_Distinct(t *testing.T) {
 
 func TestLoadEntries_QueryError(t *testing.T) {
 	t.Parallel()
-	db, mock := newMockDB(t)
-	org := uuid.New()
-	mock.ExpectQuery("SELECT org_id, seq").WillReturnError(context.Canceled)
-	_, err := LoadEntries(context.Background(), db, org)
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	runQueryErrorCase(t, queryErrorCase{
+		expect: func(mock sqlmock.Sqlmock, org uuid.UUID) {
+			mock.ExpectQuery("SELECT org_id, seq").WillReturnError(context.Canceled)
+		},
+		run: func(db *sql.DB, org uuid.UUID) error {
+			_, err := LoadEntries(context.Background(), db, org)
+			return err
+		},
+	})
 }
 
 func TestVerifyOrg_ChainBreak(t *testing.T) {
@@ -154,23 +156,28 @@ func TestLoadEntries_WithActor(t *testing.T) {
 
 func TestListDistinctOrgs_QueryError(t *testing.T) {
 	t.Parallel()
-	db, mock := newMockDB(t)
-	mock.ExpectQuery("SELECT DISTINCT org_id").WillReturnError(context.Canceled)
-	_, err := ResolveOrgs(context.Background(), db, "")
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	runQueryErrorCase(t, queryErrorCase{
+		expect: func(mock sqlmock.Sqlmock, _ uuid.UUID) {
+			mock.ExpectQuery("SELECT DISTINCT org_id").WillReturnError(context.Canceled)
+		},
+		run: func(db *sql.DB, _ uuid.UUID) error {
+			_, err := ResolveOrgs(context.Background(), db, "")
+			return err
+		},
+	})
 }
 
 func TestVerifyOrg_LoadError(t *testing.T) {
 	t.Parallel()
-	db, mock := newMockDB(t)
-	org := uuid.New()
-	mock.ExpectQuery("SELECT org_id, seq").WillReturnError(context.Canceled)
-	_, err := VerifyOrg(context.Background(), db, org)
-	if err == nil {
-		t.Fatal("expected error")
-	}
+	runQueryErrorCase(t, queryErrorCase{
+		expect: func(mock sqlmock.Sqlmock, org uuid.UUID) {
+			mock.ExpectQuery("SELECT org_id, seq").WillReturnError(context.Canceled)
+		},
+		run: func(db *sql.DB, org uuid.UUID) error {
+			_, err := VerifyOrg(context.Background(), db, org)
+			return err
+		},
+	})
 }
 
 func TestChainBreak_WithErr(t *testing.T) {
@@ -243,11 +250,28 @@ func TestSetCurrentOrgID(t *testing.T) {
 
 func TestSetCurrentOrgID_Error(t *testing.T) {
 	t.Parallel()
+	runQueryErrorCase(t, queryErrorCase{
+		expect: func(mock sqlmock.Sqlmock, org uuid.UUID) {
+			mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
+				WillReturnError(context.Canceled)
+		},
+		run: func(db *sql.DB, org uuid.UUID) error {
+			return SetCurrentOrgID(context.Background(), db, org)
+		},
+	})
+}
+
+type queryErrorCase struct {
+	expect func(sqlmock.Sqlmock, uuid.UUID)
+	run    func(*sql.DB, uuid.UUID) error
+}
+
+func runQueryErrorCase(t *testing.T, c queryErrorCase) {
+	t.Helper()
 	db, mock := newMockDB(t)
 	org := uuid.New()
-	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).
-		WillReturnError(context.Canceled)
-	if err := SetCurrentOrgID(context.Background(), db, org); err == nil {
+	c.expect(mock, org)
+	if err := c.run(db, org); err == nil {
 		t.Fatal("expected error")
 	}
 }

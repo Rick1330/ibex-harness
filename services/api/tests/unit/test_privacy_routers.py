@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import INSUFFICIENT_PERMISSIONS
@@ -27,21 +27,23 @@ def _token(org_id, *, user_id=None) -> ValidateResult:
     return ValidateResult(org_id=org_id, permissions=0, user_id=user_id)
 
 
+def _hold_resp(org: UUID, *, user: UUID, cleared: bool = False) -> LegalHoldResponse:
+    return LegalHoldResponse(
+        id=uuid4(),
+        org_id=org,
+        scope="org",
+        reason="x",
+        set_by=user,
+        cleared_by=user if cleared else None,
+        created_at=_TS,
+        cleared_at=_TS if cleared else None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_holds_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     org = uuid4()
-    expected = [
-        LegalHoldResponse(
-            id=uuid4(),
-            org_id=org,
-            scope="org",
-            reason="r",
-            set_by=uuid4(),
-            cleared_by=None,
-            created_at=_TS,
-            cleared_at=None,
-        )
-    ]
+    expected = [_hold_resp(org, user=uuid4())]
     monkeypatch.setattr(
         holds_router.hold_service, "list_active_holds", AsyncMock(return_value=expected)
     )
@@ -50,66 +52,49 @@ async def test_list_holds_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_hold_requires_user_id() -> None:
+@pytest.mark.parametrize(
+    ("call",),
+    [
+        ("set",),
+        ("clear",),
+    ],
+)
+async def test_hold_mutations_require_user_id(call: str) -> None:
     org = uuid4()
+    token = _token(org, user_id=None)
     with pytest.raises(ApiError) as ei:
-        await holds_router.set_hold(
-            org, LegalHoldCreate(reason="x"), _token(org, user_id=None), AsyncMock()
-        )
+        if call == "set":
+            await holds_router.set_hold(org, LegalHoldCreate(reason="x"), token, AsyncMock())
+        else:
+            await holds_router.clear_hold(org, uuid4(), token, AsyncMock())
     assert ei.value.code == INSUFFICIENT_PERMISSIONS
 
 
 @pytest.mark.asyncio
-async def test_set_hold_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("call", "cleared"),
+    [
+        ("set", False),
+        ("clear", True),
+    ],
+)
+async def test_hold_mutations_ok(
+    monkeypatch: pytest.MonkeyPatch, call: str, cleared: bool
+) -> None:
     org = uuid4()
     user = uuid4()
-    resp = LegalHoldResponse(
-        id=uuid4(),
-        org_id=org,
-        scope="org",
-        reason="x",
-        set_by=user,
-        cleared_by=None,
-        created_at=_TS,
-        cleared_at=None,
-    )
+    resp = _hold_resp(org, user=user, cleared=cleared)
     mock = AsyncMock(return_value=resp)
-    monkeypatch.setattr(holds_router.hold_service, "set_hold", mock)
-    out = await holds_router.set_hold(
-        org, LegalHoldCreate(reason="x"), _token(org, user_id=str(user)), AsyncMock()
-    )
-    assert out.id == resp.id
+    attr = "set_hold" if call == "set" else "clear_hold"
+    monkeypatch.setattr(holds_router.hold_service, attr, mock)
+    token = _token(org, user_id=str(user))
+    if call == "set":
+        out = await holds_router.set_hold(org, LegalHoldCreate(reason="x"), token, AsyncMock())
+        assert out.id == resp.id
+    else:
+        out = await holds_router.clear_hold(org, resp.id, token, AsyncMock())
+        assert out.cleared_at is not None
     mock.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_clear_hold_requires_user_id() -> None:
-    org = uuid4()
-    with pytest.raises(ApiError) as ei:
-        await holds_router.clear_hold(org, uuid4(), _token(org, user_id=None), AsyncMock())
-    assert ei.value.code == INSUFFICIENT_PERMISSIONS
-
-
-@pytest.mark.asyncio
-async def test_clear_hold_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    org = uuid4()
-    user = uuid4()
-    resp = LegalHoldResponse(
-        id=uuid4(),
-        org_id=org,
-        scope="org",
-        reason="x",
-        set_by=user,
-        cleared_by=user,
-        created_at=_TS,
-        cleared_at=_TS,
-    )
-    mock = AsyncMock(return_value=resp)
-    monkeypatch.setattr(holds_router.hold_service, "clear_hold", mock)
-    out = await holds_router.clear_hold(
-        org, resp.id, _token(org, user_id=str(user)), AsyncMock()
-    )
-    assert out.cleared_at is not None
 
 
 @pytest.mark.asyncio
@@ -164,7 +149,9 @@ async def test_capture_create_patch_delete(monkeypatch: pytest.MonkeyPatch) -> N
         capture_router.capture_service, "patch_policy", AsyncMock(return_value=row)
     )
     monkeypatch.setattr(capture_router.capture_service, "delete_policy", AsyncMock())
-    assert (await capture_router.create_capture_policy(CapturePolicyCreate(mode="redacted"), ctx)).id == pid
+    assert (
+        await capture_router.create_capture_policy(CapturePolicyCreate(mode="redacted"), ctx)
+    ).id == pid
     assert (
         await capture_router.patch_capture_policy(pid, CapturePolicyPatch(priority=3), ctx)
     ).id == pid

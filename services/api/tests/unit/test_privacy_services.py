@@ -129,15 +129,31 @@ async def test_list_active_holds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_hold_not_found() -> None:
+@pytest.mark.parametrize(
+    ("kind",),
+    [
+        ("clear_hold",),
+        ("get_policy",),
+        ("delete_policy",),
+    ],
+)
+async def test_privacy_not_found(kind: str) -> None:
     session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    if kind == "delete_policy":
+        session.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    else:
+        session.execute = AsyncMock(
+            return_value=MagicMock(
+                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+            )
         )
-    )
     with pytest.raises(ApiError) as ei:
-        await hold_svc.clear_hold(session, uuid4(), uuid4(), cleared_by=uuid4())
+        if kind == "clear_hold":
+            await hold_svc.clear_hold(session, uuid4(), uuid4(), cleared_by=uuid4())
+        elif kind == "get_policy":
+            await capture_svc.get_policy(session, uuid4(), uuid4())
+        else:
+            await capture_svc.delete_policy(session, uuid4(), uuid4())
     assert ei.value.code == NOT_FOUND
 
 
@@ -214,28 +230,6 @@ async def test_list_policies() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_policy_not_found() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-        )
-    )
-    with pytest.raises(ApiError) as ei:
-        await capture_svc.get_policy(session, uuid4(), uuid4())
-    assert ei.value.code == NOT_FOUND
-
-
-@pytest.mark.asyncio
-async def test_delete_policy_not_found() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-    with pytest.raises(ApiError) as ei:
-        await capture_svc.delete_policy(session, uuid4(), uuid4())
-    assert ei.value.code == NOT_FOUND
-
-
-@pytest.mark.asyncio
 async def test_delete_policy_happy() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=(uuid4(),))))
@@ -272,26 +266,23 @@ async def test_create_policy_happy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_policy_conflict() -> None:
+@pytest.mark.parametrize(
+    ("execute_side",),
+    [
+        (Exception("org_capture_policies_org_agent_unique violated"),),
+        ("no_row",),
+    ],
+)
+async def test_create_policy_conflict_paths(execute_side: object) -> None:
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=Exception("org_capture_policies_org_agent_unique violated")
-    )
-    with pytest.raises(ApiError) as ei:
-        await capture_svc.create_policy(
-            session, uuid4(), CapturePolicyCreate(mode="none", priority=1)
+    if execute_side == "no_row":
+        session.execute = AsyncMock(
+            return_value=MagicMock(
+                mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+            )
         )
-    assert ei.value.code == CAPTURE_POLICY_CONFLICT
-
-
-@pytest.mark.asyncio
-async def test_create_policy_insert_no_row() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(
-        return_value=MagicMock(
-            mappings=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-        )
-    )
+    else:
+        session.execute = AsyncMock(side_effect=execute_side)
     with pytest.raises(ApiError) as ei:
         await capture_svc.create_policy(
             session, uuid4(), CapturePolicyCreate(mode="none", priority=1)

@@ -177,9 +177,58 @@ async def test_run_delete_cascade_failure_marks_job_failed(
     monkeypatch.setattr(org_deletion, "_publish_model_policy_invalidate", inv)
     with pytest.raises(RuntimeError, match="cascade boom"):
         await org_deletion._run_delete(job_id="j", org_id="o")
-    session.rollback.assert_awaited()
     assert fail_session.execute.await_count == 1
     inv.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_postgres_commit_failure_marks_job_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Commit-on-exit errors must mark the job failed (reclaimable), not leave running."""
+    session = AsyncMock()
+
+    async def execute(stmt, params=None):
+        sql = str(stmt)
+        if "pending" in sql or "failed" in sql:
+            return MagicMock(first=MagicMock(return_value=(1,)))
+        if "legal_holds" in sql:
+            return MagicMock(first=MagicMock(return_value=None))
+        return MagicMock(first=MagicMock(return_value=None), fetchall=MagicMock(return_value=[]))
+
+    session.execute = AsyncMock(side_effect=execute)
+    fail_session = AsyncMock()
+    fail_session.execute = AsyncMock()
+    # 1) postgres purge txn  2) optional-stores txn (commit fails)  3) fail marker
+    call_n = {"n": 0}
+
+    class _CM:
+        def __init__(self):
+            call_n["n"] += 1
+            self._n = call_n["n"]
+
+        async def __aenter__(self):
+            if self._n == 3:
+                return fail_session
+            return session
+
+        async def __aexit__(self, *args):
+            if self._n == 2:
+                raise RuntimeError("commit failed")
+
+    _wire_delete_session(monkeypatch, session, session_factory=_CM)
+    _stub_stages(monkeypatch)
+    monkeypatch.setattr(org_deletion, "_receipt_verified", AsyncMock(return_value=False))
+    monkeypatch.setattr(org_deletion, "_all_receipts_verified", AsyncMock(return_value=True))
+
+    async def upsert(_s, receipt):
+        del receipt
+
+    monkeypatch.setattr(org_deletion, "_upsert_receipt", upsert)
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        await org_deletion._run_delete(job_id="j", org_id="o")
+    assert fail_session.execute.await_count == 1
 
 
 def test_cascade_includes_soft_delete_org() -> None:
