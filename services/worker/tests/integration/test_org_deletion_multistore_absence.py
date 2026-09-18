@@ -30,8 +30,15 @@ def _truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
+def _multistore_opted_in() -> bool:
+    for key in ("CI", _OPT_IN, "IBEX_WORKER_INTEGRATION_TESTS"):
+        if _truthy(key):
+            return True
+    return False
+
+
 def _require_multistore_env() -> dict[str, str]:
-    if not (_truthy("CI") or _truthy(_OPT_IN) or _truthy("IBEX_WORKER_INTEGRATION_TESTS")):
+    if not _multistore_opted_in():
         pytest.skip(f"set {_OPT_IN}=1 (or CI) to run multi-store deletion absence tests")
     env = {
         "postgres": os.environ.get("POSTGRES_TEST_DSN") or os.environ.get("DATABASE_URL") or "",
