@@ -152,10 +152,6 @@ func buildFrozenUsageFact(ctx context.Context, p freezeUsageFactInput) *billing.
 		// Do not persist EstimatedCostCents=0 for failed estimates (would corrupt spend).
 		return nil
 	}
-	completeness := "partial"
-	if p.in.Usage != nil && p.in.IsComplete {
-		completeness = "complete"
-	}
 	occurred := p.meta.RequestedAt
 	if occurred.IsZero() {
 		occurred = time.Now().UTC()
@@ -174,9 +170,16 @@ func buildFrozenUsageFact(ctx context.Context, p freezeUsageFactInput) *billing.
 		TotalTokens:        clampUint32Tokens(safeAddInt64(inTok, outTok)),
 		EstimatedCostCents: cents,
 		RateCardVersion:    ver,
-		Completeness:       completeness,
+		Completeness:       usageCompleteness(p.in),
 		OccurredAt:         occurred,
 	}
+}
+
+func usageCompleteness(in checkpointInput) string {
+	if in.Usage != nil && in.IsComplete {
+		return "complete"
+	}
+	return "partial"
 }
 
 func resolvePublishedCard(ctx context.Context, cache *billing.Cache, orgID uuid.UUID) billing.CardVersion {

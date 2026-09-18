@@ -59,8 +59,16 @@ func EstimateCost(card CardVersion, usage TokenUsage) (cents int64, version stri
 }
 
 func rejectNegativeOperands(usage TokenUsage, row PriceRow) error {
-	if usage.InputTokens < 0 || usage.OutputTokens < 0 ||
-		row.InputCentsPer1k < 0 || row.OutputCentsPer1k < 0 {
+	if usage.InputTokens < 0 {
+		return fmt.Errorf("billing: negative token or price operand")
+	}
+	if usage.OutputTokens < 0 {
+		return fmt.Errorf("billing: negative token or price operand")
+	}
+	if row.InputCentsPer1k < 0 {
+		return fmt.Errorf("billing: negative token or price operand")
+	}
+	if row.OutputCentsPer1k < 0 {
 		return fmt.Errorf("billing: negative token or price operand")
 	}
 	return nil

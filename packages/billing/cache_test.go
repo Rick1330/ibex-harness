@@ -187,9 +187,10 @@ func TestCache_EvictionKeepsGeneration(t *testing.T) {
 			orgB: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap},
 			orgC: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap},
 		},
-		blockOn: orgA,
-		block:   block,
-		release: release,
+		blockOn:    orgA,
+		block:      block,
+		release:    release,
+		callsByOrg: make(map[uuid.UUID]int),
 	}
 	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 2}, NoopMetrics{})
 	if err != nil {
@@ -216,7 +217,15 @@ func TestCache_EvictionKeepsGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	loader.mu.Lock()
+	orgALoads := loader.callsByOrg[orgA]
+	loader.mu.Unlock()
+	if orgALoads < 2 {
+		t.Fatalf("expected orgA loaded twice after Invalidate (stale load rejected); got %d", orgALoads)
+	}
 	cache.mu.Lock()
 	gen := cache.gens[orgA.String()]
 	cache.mu.Unlock()
@@ -253,17 +262,22 @@ func TestParseInvalidateEvent(t *testing.T) {
 }
 
 type blockingBudgetLoader struct {
-	snaps   map[uuid.UUID]BudgetSnapshot
-	blockOn uuid.UUID
-	block   chan struct{}
-	release chan struct{}
-	mu      sync.Mutex
-	calls   int
+	snaps      map[uuid.UUID]BudgetSnapshot
+	blockOn    uuid.UUID
+	block      chan struct{}
+	release    chan struct{}
+	mu         sync.Mutex
+	calls      int
+	callsByOrg map[uuid.UUID]int
 }
 
 func (f *blockingBudgetLoader) LoadOrg(_ context.Context, orgID uuid.UUID) (BudgetSnapshot, error) {
 	f.mu.Lock()
 	f.calls++
+	if f.callsByOrg == nil {
+		f.callsByOrg = make(map[uuid.UUID]int)
+	}
+	f.callsByOrg[orgID]++
 	f.mu.Unlock()
 	if orgID == f.blockOn {
 		select {

@@ -61,6 +61,13 @@ func (b *BudgetLimits) ApplyDefaults() {
 // Validate checks org_id, time range, and shape-specific requirements.
 func Validate(q Query, limits BudgetLimits) error {
 	limits.ApplyDefaults()
+	if err := validateOrgAndWindow(q, limits); err != nil {
+		return err
+	}
+	return validateShape(q)
+}
+
+func validateOrgAndWindow(q Query, limits BudgetLimits) error {
 	if q.OrgID == uuid.Nil {
 		return fmt.Errorf("usagequery: org_id is required")
 	}
@@ -80,6 +87,10 @@ func Validate(q Query, limits BudgetLimits) error {
 	if limit > limits.MaxRows {
 		return fmt.Errorf("usagequery: limit %d exceeds max_rows %d", limit, limits.MaxRows)
 	}
+	return nil
+}
+
+func validateShape(q Query) error {
 	switch q.Shape {
 	case ShapeOrgTimeAggregate, ShapeAgentSessionBreakdown, ShapeFallbackAttribution, ShapeToolCorrelation:
 		return nil

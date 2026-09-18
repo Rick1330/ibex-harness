@@ -253,9 +253,7 @@ async def _run_clickhouse(
     limit: int,
     clickhouse_url: str | None,
 ) -> list[dict[str, Any]]:
-    dsn = clickhouse_url or os.environ.get("CLICKHOUSE_HTTP_URL") or os.environ.get(
-        "IBEX_CLICKHOUSE_HTTP_URL"
-    )
+    dsn = _clickhouse_dsn(clickhouse_url)
     if not dsn:
         logger.info("usage query skipped: clickhouse not configured")
         return []
@@ -264,8 +262,7 @@ async def _run_clickhouse(
     except ImportError as exc:  # pragma: no cover
         raise ApiError(code=SERVICE_DEGRADED, message="ClickHouse client unavailable") from exc
 
-    sql = TEMPLATES[body.shape]
-    safe_sql = _bind_literals(sql, org_id, body, limit)
+    safe_sql = _bind_literals(TEMPLATES[body.shape], org_id, body, limit)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -276,11 +273,23 @@ async def _run_clickhouse(
     except httpx.HTTPError as exc:
         logger.warning("clickhouse usage query transport failed: %s", exc)
         raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED) from exc
-    if resp.status_code >= 400:
-        logger.warning("clickhouse usage query failed status=%s", resp.status_code)
+    return _parse_clickhouse_rows(resp.status_code, resp.text)
+
+
+def _clickhouse_dsn(clickhouse_url: str | None) -> str | None:
+    return (
+        clickhouse_url
+        or os.environ.get("CLICKHOUSE_HTTP_URL")
+        or os.environ.get("IBEX_CLICKHOUSE_HTTP_URL")
+    )
+
+
+def _parse_clickhouse_rows(status_code: int, body: str) -> list[dict[str, Any]]:
+    if status_code >= 400:
+        logger.warning("clickhouse usage query failed status=%s", status_code)
         raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED)
     rows: list[dict[str, Any]] = []
-    for line in resp.text.splitlines():
+    for line in body.splitlines():
         line = line.strip()
         if not line:
             continue

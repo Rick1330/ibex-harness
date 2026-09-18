@@ -40,7 +40,7 @@ async def _publish(deps: WriteDeps, org_id: UUID) -> None:
     pub = deps.publisher or NoopBudgetPublisher()
     try:
         await pub.publish_budget_update(str(org_id))
-    except (OSError, RuntimeError, TimeoutError) as exc:
+    except (OSError, RuntimeError) as exc:
         logger.warning("budget publish failed: %s", exc)
 
 
@@ -133,6 +133,33 @@ async def publish_rate_card_version(
     *,
     deps: WriteDeps,
 ) -> RateCardVersionResponse:
+    await _lock_rate_card(session, org_id, card_id)
+    version = await _next_rate_card_version(session, card_id)
+    row = await _insert_rate_card_version(session, org_id, card_id, version, body)
+    await session.execute(
+        text(
+            """
+            UPDATE ibex_billing.rate_cards
+            SET status = 'published', updated_at = now()
+            WHERE id = CAST(:card_id AS uuid) AND org_id = CAST(:org_id AS uuid)
+            """
+        ),
+        {"card_id": str(card_id), "org_id": str(org_id)},
+    )
+    await session.commit()
+    await _publish(deps, org_id)
+    prices = row.prices if isinstance(row.prices, list) else json.loads(row.prices)
+    return RateCardVersionResponse(
+        id=UUID(str(row.id)),
+        rate_card_id=UUID(str(row.rate_card_id)),
+        org_id=UUID(str(row.org_id)),
+        version=int(row.version),
+        published_at=row.published_at,
+        prices=prices,
+    )
+
+
+async def _lock_rate_card(session: AsyncSession, org_id: UUID, card_id: UUID) -> None:
     existing = await session.execute(
         text(
             """
@@ -146,6 +173,8 @@ async def publish_rate_card_version(
     if existing.first() is None:
         raise ApiError(code=NOT_FOUND, message=_NOT_FOUND_CARD)
 
+
+async def _next_rate_card_version(session: AsyncSession, card_id: UUID) -> int:
     next_ver = await session.execute(
         text(
             """
@@ -156,7 +185,16 @@ async def publish_rate_card_version(
         ),
         {"card_id": str(card_id)},
     )
-    version = int(next_ver.scalar_one())
+    return int(next_ver.scalar_one())
+
+
+async def _insert_rate_card_version(
+    session: AsyncSession,
+    org_id: UUID,
+    card_id: UUID,
+    version: int,
+    body: RateCardVersionPublish,
+):
     prices_json = json.dumps([p.model_dump() for p in body.prices])
     result = await session.execute(
         text(
@@ -179,27 +217,7 @@ async def publish_rate_card_version(
     row = result.first()
     if row is None:
         raise ApiError(code=INTERNAL_ERROR, message="Unable to publish rate card version")
-    await session.execute(
-        text(
-            """
-            UPDATE ibex_billing.rate_cards
-            SET status = 'published', updated_at = now()
-            WHERE id = CAST(:card_id AS uuid) AND org_id = CAST(:org_id AS uuid)
-            """
-        ),
-        {"card_id": str(card_id), "org_id": str(org_id)},
-    )
-    await session.commit()
-    await _publish(deps, org_id)
-    prices = row.prices if isinstance(row.prices, list) else json.loads(row.prices)
-    return RateCardVersionResponse(
-        id=UUID(str(row.id)),
-        rate_card_id=UUID(str(row.rate_card_id)),
-        org_id=UUID(str(row.org_id)),
-        version=int(row.version),
-        published_at=row.published_at,
-        prices=prices,
-    )
+    return row
 
 
 def _parse_budget_period_cursor(cursor: str) -> tuple[datetime, str]:

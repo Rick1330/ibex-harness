@@ -213,3 +213,68 @@ async def test_create_budget_period_none_row() -> None:
     deps = svc.WriteDeps()
     with pytest.raises(ApiError):
         await svc.create_budget_period(session, uuid4(), body, deps=deps)
+
+
+def test_parse_budget_period_cursor_ok() -> None:
+    from app.pagination import encode_cursor
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    pid = str(uuid4())
+    cursor = encode_cursor({"period_start": start.isoformat(), "id": pid})
+    got_start, got_id = svc._parse_budget_period_cursor(cursor)
+    assert got_start == start
+    assert got_id == pid
+
+
+def test_parse_budget_period_cursor_invalid() -> None:
+    with pytest.raises(ApiError) as ei:
+        svc._parse_budget_period_cursor("not-a-cursor")
+    assert ei.value.code == VALIDATION_ERROR
+
+
+def test_parse_budget_period_cursor_naive_rejected() -> None:
+    from app.pagination import encode_cursor
+
+    cursor = encode_cursor(
+        {"period_start": "2026-01-01T00:00:00", "id": str(uuid4())}
+    )
+    with pytest.raises(ApiError):
+        svc._parse_budget_period_cursor(cursor)
+
+
+@pytest.mark.asyncio
+async def test_list_budget_periods_with_cursor_and_page() -> None:
+    org_id = uuid4()
+    from app.pagination import encode_cursor
+
+    rows = [_period_ns(org_id=org_id) for _ in range(3)]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=SimpleNamespace(fetchall=lambda: rows))
+    cursor = encode_cursor(
+        {"period_start": rows[0].period_start.isoformat(), "id": str(rows[0].id)}
+    )
+    out = await svc.list_budget_periods(session, org_id, cursor=cursor, limit=2)
+    assert len(out.data) == 2
+    assert out.pagination.has_more is True
+    assert out.pagination.next_cursor is not None
+
+
+@pytest.mark.asyncio
+async def test_publish_insert_returns_none() -> None:
+    org_id = uuid4()
+    card_id = uuid4()
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            SimpleNamespace(first=lambda: SimpleNamespace(id=card_id)),
+            SimpleNamespace(scalar_one=lambda: 1),
+            SimpleNamespace(first=lambda: None),
+        ]
+    )
+    body = RateCardVersionPublish(
+        prices=[PriceRow(provider="o", model_pattern="*", input_cents_per_1k=1, output_cents_per_1k=1)]
+    )
+    with pytest.raises(ApiError):
+        await svc.publish_rate_card_version(
+            session, org_id, card_id, body, deps=svc.WriteDeps()
+        )

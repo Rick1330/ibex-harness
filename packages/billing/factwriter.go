@@ -312,7 +312,11 @@ func validateFactModels(f UsageFact) error {
 	if err := validateOptionalModelLen(f.FallbackModel, "fallback_model"); err != nil {
 		return err
 	}
-	if f.RateCardVersion == "" || len(f.RateCardVersion) > maxRateCardVerLen {
+	return validateRateCardVersion(f.RateCardVersion)
+}
+
+func validateRateCardVersion(ver string) error {
+	if ver == "" || len(ver) > maxRateCardVerLen {
 		return fmt.Errorf("billing: usage fact missing or invalid rate_card_version")
 	}
 	return nil

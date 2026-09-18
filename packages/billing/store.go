@@ -80,14 +80,23 @@ func loadActiveHardCap(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (Budget
 }
 
 func loadPublishedCard(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (CardVersion, error) {
+	// Pick the org's current published card (most recently updated), then its
+	// latest publication by published_at (id tie-break). Card-local version
+	// alone is wrong across multiple published cards.
 	var version int64
 	var pricesJSON []byte
 	err := tx.QueryRowContext(ctx, `
+		WITH current_card AS (
+			SELECT id
+			FROM ibex_billing.rate_cards
+			WHERE org_id = $1::uuid AND status = 'published'
+			ORDER BY updated_at DESC, id DESC
+			LIMIT 1
+		)
 		SELECT v.version, v.prices
 		FROM ibex_billing.rate_card_versions v
-		JOIN ibex_billing.rate_cards c ON c.id = v.rate_card_id
-		WHERE c.org_id = $1::uuid AND c.status = 'published'
-		ORDER BY v.version DESC
+		JOIN current_card c ON c.id = v.rate_card_id
+		ORDER BY v.published_at DESC, v.id DESC
 		LIMIT 1`, orgID).Scan(&version, &pricesJSON)
 	if err == sql.ErrNoRows {
 		return CardVersion{}, nil

@@ -54,6 +54,7 @@ class BudgetCacheInvalidator(Protocol):
 class NoopBudgetCacheInvalidator:
     async def publish_budget_update(self, org_id: str) -> None:
         del org_id
+        await asyncio.sleep(0)
 
 
 class RedisBudgetCacheInvalidator:
@@ -205,12 +206,15 @@ async def run_budget_spent_rollup(
         # Publish only after the UPDATE transaction has committed.
         try:
             await inv.publish_budget_update(period.org_id)
-        except (OSError, RuntimeError, TimeoutError, RedisError) as exc:
+        except (OSError, RuntimeError, RedisError) as exc:
+            # Spent writes already committed; re-raise so Celery retries invalidate
+            # with backoff+jitter. Period UPDATEs are idempotent for the same totals.
             logger.warning(
                 "budget invalidate after rollup failed org_id=%s: %s",
                 period.org_id,
                 exc,
             )
+            raise
         updated += 1
     return {"status": "ok", "periods_updated": updated}
 
@@ -235,6 +239,10 @@ def reconcile_usage_actuals(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     base=IbexTask,
     name=TASK_BUDGET_SPENT_ROLLUP,
     queue="maintenance",
+    autoretry_for=(OSError, RuntimeError, RedisError),
+    retry_backoff=True,
+    retry_jitter=True,
+    max_retries=5,
 )
 def budget_spent_rollup(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     """Refresh each active budget_periods.spent_cents_cached from CH period window."""

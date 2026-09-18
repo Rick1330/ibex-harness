@@ -17,7 +17,8 @@ type BudgetSnapshot struct {
 	PeriodEnd       time.Time
 	// HasHardCap is true when an active hard_cap period exists.
 	HasHardCap bool
-	// PublishedCard is the org's latest published rate card version (may be empty).
+	// PublishedCard is the org's current published rate card (most recently
+	// updated published card, then that card's latest version).
 	PublishedCard CardVersion
 }
 

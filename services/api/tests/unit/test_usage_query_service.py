@@ -214,3 +214,92 @@ def test_validate_query_ok_defaults() -> None:
 def test_fmt_ts_naive() -> None:
     ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC).replace(tzinfo=None)
     assert "2026-01-01" in uq._fmt_ts(ts)
+
+def test_parse_clickhouse_rows_empty_lines() -> None:
+    rows = uq._parse_clickhouse_rows(200, '\n\n{"x":1}\n')
+    assert rows == [{"x": 1}]
+
+
+def test_parse_clickhouse_rows_bad_json() -> None:
+    with pytest.raises(ApiError):
+        uq._parse_clickhouse_rows(200, "not-json\n")
+
+
+def test_parse_clickhouse_rows_http_error() -> None:
+    with pytest.raises(ApiError):
+        uq._parse_clickhouse_rows(500, "boom")
+
+
+@pytest.mark.asyncio
+async def test_run_clickhouse_transport_error() -> None:
+    import httpx
+
+    body = UsageQueryRequest(
+        shape="org_time_aggregate",
+        start=datetime.now(UTC) - timedelta(hours=1),
+        end=datetime.now(UTC),
+        limit=10,
+    )
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(side_effect=httpx.ConnectError("down"))
+    with patch("httpx.AsyncClient", return_value=client), pytest.raises(ApiError):
+        await uq._run_clickhouse(uuid4(), body, 10, "http://localhost:8123")
+
+
+@pytest.mark.asyncio
+async def test_acquire_inflight_redis_error() -> None:
+    from redis.exceptions import RedisError
+
+    client = MagicMock()
+    client.eval = AsyncMock(side_effect=RedisError("down"))
+    client.aclose = AsyncMock()
+    with (
+        patch("app.services.usage_query._redis_client", return_value=client),
+        pytest.raises(ApiError),
+    ):
+        await uq._acquire_inflight("redis://localhost", uuid4())
+
+
+def test_bind_literals_agent_and_request() -> None:
+    org = uuid4()
+    agent = uuid4()
+    body = UsageQueryRequest(
+        shape="agent_session_breakdown",
+        start=datetime.now(UTC) - timedelta(hours=1),
+        end=datetime.now(UTC),
+        agent_id=agent,
+        request_id="req'1",
+        limit=5,
+    )
+    sql = (
+        "WHERE org={org_id:UUID} {agent_pred} AND t>={start:DateTime64(3)} "
+        "AND t<{end:DateTime64(3)} AND rid={request_id:String} "
+        "LIMIT {limit:UInt32} MAX {max_rows:UInt64}"
+    )
+    out = uq._bind_literals(sql, org, body, 5)
+    assert str(org) in out
+    assert str(agent) in out
+    assert "LIMIT 5" in out
+
+
+def test_validate_query_request_id_required() -> None:
+    body = UsageQueryRequest(
+        shape="request_point_lookup",
+        start=datetime.now(UTC) - timedelta(hours=1),
+        end=datetime.now(UTC),
+    )
+    with pytest.raises(ApiError):
+        uq.validate_query(uuid4(), body)
+
+
+def test_derive_completeness_empty_and_mixed() -> None:
+    assert uq._derive_completeness([]) == "partial"
+    assert uq._derive_completeness([{"completeness": "complete"}]) == "complete"
+    assert (
+        uq._derive_completeness(
+            [{"completeness": "complete"}, {"completeness": "partial"}]
+        )
+        == "partial"
+    )
