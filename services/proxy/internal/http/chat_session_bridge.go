@@ -131,7 +131,7 @@ func (h chatCompletionHandler) freezeUsageFact(
 	if h.usageFactWriter == nil || meta.OrgID == uuid.Nil || meta.AgentID == uuid.Nil {
 		return nil
 	}
-    return buildFrozenUsageFact(ctx, freezeUsageFactInput{
+	return buildFrozenUsageFact(ctx, freezeUsageFactInput{
 		meta:        meta,
 		in:          in,
 		budgetCache: h.budgetCache,

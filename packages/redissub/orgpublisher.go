@@ -18,12 +18,12 @@ const PublishTimeout = 2 * time.Second
 
 // OrgPublisherConfig wires a domain-specific invalidate publisher.
 type OrgPublisherConfig struct {
-	Client       redis.UniversalClient
-	Log          *logger.Logger
+	Client        redis.UniversalClient
+	Log           *logger.Logger
 	ChannelPrefix string
-	ErrPrefix    string
-	TracerName   string
-	SpanName     string
+	ErrPrefix     string
+	TracerName    string
+	SpanName      string
 }
 
 // OrgPublisher PUBLISHes opaque JSON payloads to org channels.

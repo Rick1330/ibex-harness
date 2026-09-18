@@ -72,7 +72,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal, deps bootstrapDeps) int {
 		mpSub: core.mpSub, mpCancel: core.mpCancel, mpPollCancel: core.mpPollCancel,
 		budgetSub: core.budgetSub, budgetCancel: core.budgetCancel,
 		usageFactWriter: core.usageFactWriter,
-		checkpointPool: core.checkpointPool, sessionSweeper: core.sessionSweeper,
+		checkpointPool:  core.checkpointPool, sessionSweeper: core.sessionSweeper,
 		traceWriter: core.traceWriter,
 		signalCh:    signalCh,
 	})

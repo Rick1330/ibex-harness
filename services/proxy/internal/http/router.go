@@ -42,15 +42,15 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config             config.Config
-	Logger             *logger.Logger
-	Metrics            *metrics.ProxyRegistry
-	Tracer             trace.Tracer
-	Validator          TokenValidator
-	AgentVerifier      AgentVerifier
-	Limiter            ratelimit.Limiter
+	Config        config.Config
+	Logger        *logger.Logger
+	Metrics       *metrics.ProxyRegistry
+	Tracer        trace.Tracer
+	Validator     TokenValidator
+	AgentVerifier AgentVerifier
+	Limiter       ratelimit.Limiter
 	// BudgetCache enforces spend hard-caps after RPM (nil disables).
-	BudgetCache        *billing.Cache
+	BudgetCache *billing.Cache
 	// UsageFactWriter batches usage_facts inserts (nil disables; fail-open).
 	UsageFactWriter    *billing.UsageFactWriter
 	DirectiveResolver  directive.Resolver

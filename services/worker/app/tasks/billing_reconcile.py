@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
+from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from app.celery_app import celery_app
@@ -20,6 +21,10 @@ from app.task_names import TASK_BUDGET_SPENT_ROLLUP, TASK_RECONCILE_USAGE_ACTUAL
 from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
+
+_BUDGET_CHANNEL_PREFIX = "budget_updates:"
+_BUDGET_EVENT_VERSION = 1
+_REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +45,46 @@ class PostgresSpendStore(Protocol):
     async def list_active_periods(self) -> list[BudgetPeriodWindow]: ...
 
     async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None: ...
+
+
+class BudgetCacheInvalidator(Protocol):
+    async def publish_budget_update(self, org_id: str) -> None: ...
+
+
+class NoopBudgetCacheInvalidator:
+    async def publish_budget_update(self, org_id: str) -> None:
+        del org_id
+
+
+class RedisBudgetCacheInvalidator:
+    """PUBLISH budget_updates:{org_id} after spent_cents_cached commits."""
+
+    def __init__(self, redis_url: str) -> None:
+        self._redis_url = redis_url
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            from redis.asyncio import Redis
+
+            self._client = Redis.from_url(
+                self._redis_url,
+                decode_responses=True,
+                socket_connect_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+                socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+            )
+        return self._client
+
+    async def publish_budget_update(self, org_id: str) -> None:
+        client = self._get_client()
+        channel = f"{_BUDGET_CHANNEL_PREFIX}{org_id}"
+        payload = json.dumps({"v": _BUDGET_EVENT_VERSION, "org_id": org_id})
+        await client.publish(channel, payload)
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
 
 class HttpClickHouseQuerier:
@@ -127,6 +172,7 @@ class SqlAlchemySpendStore:
                 ),
                 {"period_id": period_id, "org_id": org_id, "spent": int(spent_cents)},
             )
+        # session.begin() commits on successful exit — only then is spent durable.
 
     async def aclose(self) -> None:
         await self._engine.dispose()
@@ -144,7 +190,9 @@ async def run_budget_spent_rollup(
     *,
     querier: ClickHouseQuerier,
     store: PostgresSpendStore,
+    invalidator: BudgetCacheInvalidator | None = None,
 ) -> dict[str, Any]:
+    inv = invalidator or NoopBudgetCacheInvalidator()
     periods = await store.list_active_periods()
     updated = 0
     for period in periods:
@@ -154,6 +202,15 @@ async def run_budget_spent_rollup(
             period_end=period.period_end,
         )
         await store.update_period_spent(period.period_id, period.org_id, spent)
+        # Publish only after the UPDATE transaction has committed.
+        try:
+            await inv.publish_budget_update(period.org_id)
+        except (OSError, RuntimeError, TimeoutError, RedisError) as exc:
+            logger.warning(
+                "budget invalidate after rollup failed org_id=%s: %s",
+                period.org_id,
+                exc,
+            )
         updated += 1
     return {"status": "ok", "periods_updated": updated}
 
@@ -190,7 +247,18 @@ def budget_spent_rollup(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
         return {"status": "skipped", "reason": "missing_dsn"}
     querier = HttpClickHouseQuerier(dsn)
     store = SqlAlchemySpendStore(db_url)
+    redis_url = getattr(settings, "redis_url", None)
+    invalidator: BudgetCacheInvalidator
+    if redis_url:
+        invalidator = RedisBudgetCacheInvalidator(str(redis_url))
+    else:
+        invalidator = NoopBudgetCacheInvalidator()
     try:
-        return asyncio.run(run_budget_spent_rollup(querier=querier, store=store))
+        return asyncio.run(
+            run_budget_spent_rollup(querier=querier, store=store, invalidator=invalidator)
+        )
     finally:
         asyncio.run(store.aclose())
+        aclose = getattr(invalidator, "aclose", None)
+        if aclose is not None:
+            asyncio.run(aclose())

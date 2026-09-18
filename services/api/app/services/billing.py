@@ -212,7 +212,9 @@ async def list_budget_periods(
             payload = decode_cursor(cursor) or {}
             raw_start = str(payload["period_start"]).replace("Z", "+00:00")
             cursor_start = datetime.fromisoformat(raw_start)
-            cursor_id = str(payload["id"])
+            if cursor_start.tzinfo is None:
+                raise ValueError("period_start must be timezone-aware")
+            cursor_id = str(UUID(str(payload["id"])))
         except (KeyError, TypeError, ValueError) as exc:
             raise ApiError(code=VALIDATION_ERROR, message="invalid cursor") from exc
     result = await session.execute(

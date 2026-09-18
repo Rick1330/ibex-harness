@@ -402,7 +402,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
 		Limiter: in.infra.limiter, BudgetCache: p.budgetCache, UsageFactWriter: p.usageFactWriter,
 		DirectiveResolver: in.infra.directiveResolver,
-		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
+		SessionStore:      in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
 		EvidenceStore:    in.infra.sessionStack.evidence,
 		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),

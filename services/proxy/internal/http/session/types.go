@@ -118,22 +118,22 @@ type UsageFactWriter interface {
 
 // PostResponseJob bundles checkpoint/trace/buffer work for the bounded pool Submit.
 type PostResponseJob struct {
-	Deps           LifecycleDeps
-	In             CheckpointInput
-	Snap           httptrace.AssembleInput
-	SnapOK         bool
-	DoCheckpoint   bool
-	DoTrace        bool
-	DoEvidence     bool
-	DoBuffer       bool
-	DoUsageFact    bool
-	BufferTurns    []extractionbuffer.Turn
-	BufferKey      extractionbuffer.LookupKey
-	TraceWriter    httptrace.TraceWriter
+	Deps            LifecycleDeps
+	In              CheckpointInput
+	Snap            httptrace.AssembleInput
+	SnapOK          bool
+	DoCheckpoint    bool
+	DoTrace         bool
+	DoEvidence      bool
+	DoBuffer        bool
+	DoUsageFact     bool
+	BufferTurns     []extractionbuffer.Turn
+	BufferKey       extractionbuffer.LookupKey
+	TraceWriter     httptrace.TraceWriter
 	UsageFactWriter UsageFactWriter
-	UsageFact      billing.UsageFact
-	Log            *logger.Logger
-	ExternalID     string
-	Params         pkgsession.CheckpointParams
-	EvidenceExtras EvidenceExtras
+	UsageFact       billing.UsageFact
+	Log             *logger.Logger
+	ExternalID      string
+	Params          pkgsession.CheckpointParams
+	EvidenceExtras  EvidenceExtras
 }

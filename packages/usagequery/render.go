@@ -103,8 +103,8 @@ WHERE org_id = ?
 LIMIT 1
 %s`, settings))
 	return Rendered{
-		SQL: sql,
-		Args: []any{q.OrgID, q.RequestID, q.Start.UTC(), q.End.UTC()},
+		SQL:     sql,
+		Args:    []any{q.OrgID, q.RequestID, q.Start.UTC(), q.End.UTC()},
 		MaxRows: 1,
 	}, nil
 }

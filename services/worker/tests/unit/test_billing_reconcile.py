@@ -63,12 +63,21 @@ def test_run_budget_spent_rollup_period_scoped() -> None:
         async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
             self.updates.append((period_id, org_id, spent_cents))
 
+    class FakeInv:
+        def __init__(self) -> None:
+            self.published: list[str] = []
+
+        async def publish_budget_update(self, org_id: str) -> None:
+            self.published.append(org_id)
+
     ch = FakeCH()
     pg = FakePG()
-    out = asyncio.run(run_budget_spent_rollup(querier=ch, store=pg))
+    inv = FakeInv()
+    out = asyncio.run(run_budget_spent_rollup(querier=ch, store=pg, invalidator=inv))
     assert out == {"status": "ok", "periods_updated": 1}
     assert ch.calls == [(period.org_id, start, end)]
     assert pg.updates == [(period.period_id, period.org_id, 4200)]
+    assert inv.published == [period.org_id]
 
 
 def test_run_budget_spent_rollup_zero_spend_period() -> None:
@@ -95,8 +104,45 @@ def test_run_budget_spent_rollup_zero_spend_period() -> None:
         async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
             self.updates.append(spent_cents)
 
-    out = asyncio.run(run_budget_spent_rollup(querier=FakeCH(), store=FakePG()))
+    pg = FakePG()
+    out = asyncio.run(run_budget_spent_rollup(querier=FakeCH(), store=pg))
     assert out["periods_updated"] == 1
+    assert pg.updates == [0]
+
+
+def test_run_budget_spent_rollup_skips_invalidate_on_update_failure() -> None:
+    period = BudgetPeriodWindow(
+        period_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+        org_id="33333333-3333-3333-3333-333333333333",
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC) + timedelta(days=1),
+    )
+
+    class FakeCH:
+        def sum_spent(self, **kwargs: Any) -> int:
+            return 1
+
+    class BoomPG:
+        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
+            return [period]
+
+        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+            raise RuntimeError("db down")
+
+    class FakeInv:
+        def __init__(self) -> None:
+            self.published: list[str] = []
+
+        async def publish_budget_update(self, org_id: str) -> None:
+            self.published.append(org_id)
+
+    inv = FakeInv()
+    try:
+        asyncio.run(run_budget_spent_rollup(querier=FakeCH(), store=BoomPG(), invalidator=inv))
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError:
+        pass
+    assert inv.published == []
 
 
 def test_http_clickhouse_querier_parses_spent() -> None:

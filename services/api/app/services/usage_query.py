@@ -217,9 +217,15 @@ async def _acquire_inflight(redis_url: str | None, org_id: UUID) -> None:
     client = _redis_client(redis_url)
     try:
         key = inflight_key(org_id)
-        n = await client.eval(
-            _INFLIGHT_LUA, 1, key, str(_INFLIGHT_TTL_SECONDS), str(_MAX_CONCURRENT)
-        )
+        try:
+            n = await client.eval(
+                _INFLIGHT_LUA, 1, key, str(_INFLIGHT_TTL_SECONDS), str(_MAX_CONCURRENT)
+            )
+        except RedisError as exc:
+            raise ApiError(
+                code=SERVICE_DEGRADED,
+                message="Usage query concurrency limit unavailable",
+            ) from exc
         if int(n) < 0:
             raise ApiError(
                 code=SERVICE_DEGRADED,

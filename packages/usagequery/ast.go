@@ -22,8 +22,8 @@ const (
 
 // Defaults for query budgets.
 const (
-	DefaultMaxTimeRange = 31 * 24 * time.Hour
-	DefaultMaxRows      = 10000
+	DefaultMaxTimeRange  = 31 * 24 * time.Hour
+	DefaultMaxRows       = 10000
 	DefaultMaxConcurrent = 4
 )
 
@@ -40,9 +40,9 @@ type Query struct {
 
 // BudgetLimits constrains validation.
 type BudgetLimits struct {
-	MaxTimeRange   time.Duration
-	MaxRows        int
-	MaxConcurrent  int
+	MaxTimeRange  time.Duration
+	MaxRows       int
+	MaxConcurrent int
 }
 
 // ApplyDefaults fills zero fields.
