@@ -125,17 +125,31 @@ async def create_rate_card(
     return _card_row(row)
 
 
+@dataclass(frozen=True, slots=True)
+class PublishRateCardVersionInput:
+    org_id: UUID
+    card_id: UUID
+    body: RateCardVersionPublish
+
+
 async def publish_rate_card_version(
     session: AsyncSession,
-    org_id: UUID,
-    card_id: UUID,
-    body: RateCardVersionPublish,
+    inp: PublishRateCardVersionInput,
     *,
     deps: WriteDeps,
 ) -> RateCardVersionResponse:
-    await _lock_rate_card(session, org_id, card_id)
-    version = await _next_rate_card_version(session, card_id)
-    row = await _insert_rate_card_version(session, org_id, card_id, version, body)
+    await _lock_rate_card(session, inp.org_id, inp.card_id)
+    version = await _next_rate_card_version(session, inp.card_id)
+    row = await _insert_rate_card_version(session, inp.org_id, inp.card_id, version, inp.body)
+    await _mark_rate_card_published(session, inp.org_id, inp.card_id)
+    await session.commit()
+    await _publish(deps, inp.org_id)
+    return _version_row(row)
+
+
+async def _mark_rate_card_published(
+    session: AsyncSession, org_id: UUID, card_id: UUID
+) -> None:
     await session.execute(
         text(
             """
@@ -146,8 +160,9 @@ async def publish_rate_card_version(
         ),
         {"card_id": str(card_id), "org_id": str(org_id)},
     )
-    await session.commit()
-    await _publish(deps, org_id)
+
+
+def _version_row(row) -> RateCardVersionResponse:
     prices = row.prices if isinstance(row.prices, list) else json.loads(row.prices)
     return RateCardVersionResponse(
         id=UUID(str(row.id)),

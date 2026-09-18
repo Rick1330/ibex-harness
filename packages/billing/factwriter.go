@@ -284,13 +284,31 @@ func validateUsageFact(f UsageFact) error {
 }
 
 func validateFactIDs(f UsageFact) error {
+	if err := requireFactIdentity(f); err != nil {
+		return err
+	}
+	if err := requireRequestIDLen(f.RequestID); err != nil {
+		return err
+	}
+	return requireOccurredAt(f.OccurredAt)
+}
+
+func requireFactIdentity(f UsageFact) error {
 	if f.RequestID == "" || f.OrgID == uuid.Nil || f.AgentID == uuid.Nil {
 		return fmt.Errorf("billing: usage fact missing required ids")
 	}
-	if len(f.RequestID) > maxRequestIDLen {
+	return nil
+}
+
+func requireRequestIDLen(requestID string) error {
+	if len(requestID) > maxRequestIDLen {
 		return fmt.Errorf("billing: request_id too long")
 	}
-	if f.OccurredAt.IsZero() {
+	return nil
+}
+
+func requireOccurredAt(at time.Time) error {
+	if at.IsZero() {
 		return fmt.Errorf("billing: usage fact missing occurred_at")
 	}
 	return nil

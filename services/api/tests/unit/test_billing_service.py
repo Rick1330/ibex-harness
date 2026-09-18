@@ -122,7 +122,9 @@ async def test_publish_rate_card_version_for_update() -> None:
         prices=[PriceRow(provider="openai", model_pattern="*", input_cents_per_1k=1, output_cents_per_1k=2)]
     )
     out = await svc.publish_rate_card_version(
-        session, org_id, card_id, body, deps=svc.WriteDeps(publisher=pub)
+        session,
+        svc.PublishRateCardVersionInput(org_id=org_id, card_id=card_id, body=body),
+        deps=svc.WriteDeps(publisher=pub),
     )
     assert out.version == 2
     assert pub.published == [str(org_id)]
@@ -139,7 +141,11 @@ async def test_publish_rate_card_version_not_found() -> None:
     )
     deps = svc.WriteDeps()
     with pytest.raises(ApiError):
-        await svc.publish_rate_card_version(session, uuid4(), uuid4(), body, deps=deps)
+        await svc.publish_rate_card_version(
+            session,
+            svc.PublishRateCardVersionInput(org_id=uuid4(), card_id=uuid4(), body=body),
+            deps=deps,
+        )
 
 
 @pytest.mark.asyncio
@@ -276,5 +282,7 @@ async def test_publish_insert_returns_none() -> None:
     )
     with pytest.raises(ApiError):
         await svc.publish_rate_card_version(
-            session, org_id, card_id, body, deps=svc.WriteDeps()
+            session,
+            svc.PublishRateCardVersionInput(org_id=org_id, card_id=card_id, body=body),
+            deps=svc.WriteDeps(),
         )

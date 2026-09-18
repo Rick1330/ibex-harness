@@ -8,6 +8,20 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestValidate_RejectsLimitAboveMax(t *testing.T) {
+	t.Parallel()
+	err := Validate(Query{
+		Shape: ShapeOrgTimeAggregate,
+		OrgID: uuid.New(),
+		Start: time.Now().Add(-time.Hour),
+		End:   time.Now(),
+		Limit: 20_000,
+	}, BudgetLimits{MaxRows: 10_000})
+	if err == nil || !strings.Contains(err.Error(), "max_rows") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestValidate_RequiresOrgID(t *testing.T) {
 	t.Parallel()
 	err := Validate(Query{

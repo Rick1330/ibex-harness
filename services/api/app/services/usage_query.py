@@ -148,12 +148,28 @@ def _redis_client(redis_url: str) -> Redis:
 
 
 def validate_query(org_id: UUID, body: UsageQueryRequest) -> int:
+    _require_org_id(org_id)
+    _require_time_range(body)
+    _require_shape_fields(body)
+    return _validated_limit(body)
+
+
+def _require_org_id(org_id: UUID) -> None:
     if org_id is None:
         raise ApiError(code=VALIDATION_ERROR, message="org_id is required")
+
+
+def _require_time_range(body: UsageQueryRequest) -> None:
     if body.end - body.start > _MAX_RANGE:
         raise ApiError(code=VALIDATION_ERROR, message="time range exceeds maximum")
+
+
+def _require_shape_fields(body: UsageQueryRequest) -> None:
     if body.shape == "request_point_lookup" and not body.request_id:
         raise ApiError(code=VALIDATION_ERROR, message="request_id is required")
+
+
+def _validated_limit(body: UsageQueryRequest) -> int:
     limit = body.limit or _MAX_ROWS
     if limit > _MAX_ROWS:
         raise ApiError(code=VALIDATION_ERROR, message="limit exceeds max_rows")

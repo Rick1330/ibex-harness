@@ -43,13 +43,28 @@ func withAuthOrg(r *http.Request, orgID uuid.UUID) *http.Request {
 	return r.WithContext(ctx)
 }
 
-func TestBudgetMiddleware_nilCacheFailClosed402(t *testing.T) {
-	t.Parallel()
-	h := budgetTestHandler(t, nil)
+func newBudgetCache(t *testing.T, loader billing.BudgetLoader) *billing.Cache {
+	t.Helper()
+	cache, err := billing.NewCache(loader, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cache
+}
+
+func serveBudget(t *testing.T, cache *billing.Cache, orgID uuid.UUID) *httptest.ResponseRecorder {
+	t.Helper()
+	h := budgetTestHandler(t, cache)
 	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
-	req = withAuthOrg(req, uuid.New())
+	req = withAuthOrg(req, orgID)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestBudgetMiddleware_nilCacheFailClosed402(t *testing.T) {
+	t.Parallel()
+	rr := serveBudget(t, nil, uuid.New())
 	if rr.Code != http.StatusPaymentRequired {
 		t.Fatalf("code=%d", rr.Code)
 	}
@@ -58,19 +73,12 @@ func TestBudgetMiddleware_nilCacheFailClosed402(t *testing.T) {
 func TestBudgetMiddleware_exhaustedReturns402(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
-	cache, err := billing.NewCache(stubBudgetLoader{
+	cache := newBudgetCache(t, stubBudgetLoader{
 		snap: billing.BudgetSnapshot{
 			HasHardCap: true, CapCents: 10, SpentCents: 10, EnforcementMode: billing.EnforcementHardCap,
 		},
-	}, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := budgetTestHandler(t, cache)
-	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
-	req = withAuthOrg(req, org)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	})
+	rr := serveBudget(t, cache, org)
 	if rr.Code != http.StatusPaymentRequired {
 		t.Fatalf("code=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -81,16 +89,8 @@ func TestBudgetMiddleware_exhaustedReturns402(t *testing.T) {
 
 func TestBudgetMiddleware_loaderErrorFailClosed402(t *testing.T) {
 	t.Parallel()
-	cache, err := billing.NewCache(stubBudgetLoader{err: errors.New("db down")},
-		billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := budgetTestHandler(t, cache)
-	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
-	req = withAuthOrg(req, uuid.New())
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	cache := newBudgetCache(t, stubBudgetLoader{err: errors.New("db down")})
+	rr := serveBudget(t, cache, uuid.New())
 	if rr.Code != http.StatusPaymentRequired {
 		t.Fatalf("code=%d", rr.Code)
 	}
@@ -99,19 +99,12 @@ func TestBudgetMiddleware_loaderErrorFailClosed402(t *testing.T) {
 func TestBudgetMiddleware_allowed(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
-	cache, err := billing.NewCache(stubBudgetLoader{
+	cache := newBudgetCache(t, stubBudgetLoader{
 		snap: billing.BudgetSnapshot{
 			HasHardCap: true, CapCents: 1000, SpentCents: 10, EnforcementMode: billing.EnforcementHardCap,
 		},
-	}, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := budgetTestHandler(t, cache)
-	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
-	req = withAuthOrg(req, org)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	})
+	rr := serveBudget(t, cache, org)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("code=%d", rr.Code)
 	}

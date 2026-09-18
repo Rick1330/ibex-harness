@@ -34,6 +34,31 @@ func (f *fakeBudgetLoader) callCount() int {
 	return f.calls
 }
 
+func newTestCache(t *testing.T, loader BudgetLoader, lruSize int) *Cache {
+	t.Helper()
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: lruSize}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cache
+}
+
+func hardCapSnap(capCents, spentCents int64) BudgetSnapshot {
+	return BudgetSnapshot{
+		HasHardCap: true, CapCents: capCents, SpentCents: spentCents, EnforcementMode: EnforcementHardCap,
+	}
+}
+
+func priceCard(version string, inCents, outCents int64) CardVersion {
+	return CardVersion{
+		Version: version,
+		Prices: []PriceRow{{
+			Provider: "openai", ModelPattern: "*",
+			InputCentsPer1k: inCents, OutputCentsPer1k: outCents,
+		}},
+	}
+}
+
 func TestEstimateCost_RoundsUp(t *testing.T) {
 	t.Parallel()
 	card := CardVersion{
@@ -70,12 +95,9 @@ func TestCache_CheckHardCapDeny(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
 	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
-		org: {HasHardCap: true, CapCents: 100, SpentCents: 100, EnforcementMode: EnforcementHardCap},
+		org: hardCapSnap(100, 100),
 	}}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t, loader, 8)
 	allowed, rem, err := cache.Check(context.Background(), org)
 	if err != nil {
 		t.Fatal(err)
@@ -89,10 +111,7 @@ func TestCache_CheckNoHardCapAllow(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
 	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{org: {}}}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 4}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t, loader, 4)
 	allowed, _, err := cache.Check(context.Background(), org)
 	if err != nil || !allowed {
 		t.Fatalf("allowed=%v err=%v", allowed, err)
@@ -102,11 +121,8 @@ func TestCache_CheckNoHardCapAllow(t *testing.T) {
 func TestCache_LoaderErrorFailClosed(t *testing.T) {
 	t.Parallel()
 	loader := &fakeBudgetLoader{err: errors.New("db down")}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 4}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = cache.Check(context.Background(), uuid.New())
+	cache := newTestCache(t, loader, 4)
+	_, _, err := cache.Check(context.Background(), uuid.New())
 	if !errors.Is(err, ErrBudgetUnavailable) {
 		t.Fatalf("err=%v", err)
 	}
@@ -116,12 +132,9 @@ func TestCache_LRUHitAndInvalidate(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
 	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
-		org: {HasHardCap: true, CapCents: 1000, SpentCents: 10, EnforcementMode: EnforcementHardCap},
+		org: hardCapSnap(1000, 10),
 	}}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 16}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t, loader, 16)
 	if _, _, err := cache.Check(context.Background(), org); err != nil {
 		t.Fatal(err)
 	}
@@ -142,14 +155,7 @@ func TestCache_LRUHitAndInvalidate(t *testing.T) {
 
 func TestEstimateCost_RejectsNegative(t *testing.T) {
 	t.Parallel()
-	card := CardVersion{
-		Version: "1",
-		Prices: []PriceRow{{
-			Provider: "openai", ModelPattern: "*",
-			InputCentsPer1k: 100, OutputCentsPer1k: 100,
-		}},
-	}
-	_, _, err := EstimateCost(card, TokenUsage{
+	_, _, err := EstimateCost(priceCard("1", 100, 100), TokenUsage{
 		Provider: "openai", Model: "x", InputTokens: -1, OutputTokens: 0,
 	})
 	if err == nil {
@@ -159,14 +165,7 @@ func TestEstimateCost_RejectsNegative(t *testing.T) {
 
 func TestEstimateCost_Overflow(t *testing.T) {
 	t.Parallel()
-	card := CardVersion{
-		Version: "1",
-		Prices: []PriceRow{{
-			Provider: "openai", ModelPattern: "*",
-			InputCentsPer1k: math.MaxInt64, OutputCentsPer1k: 1,
-		}},
-	}
-	_, _, err := EstimateCost(card, TokenUsage{
+	_, _, err := EstimateCost(priceCard("1", math.MaxInt64, 1), TokenUsage{
 		Provider: "openai", Model: "x", InputTokens: 2, OutputTokens: 0,
 	})
 	if err == nil {
@@ -183,19 +182,16 @@ func TestCache_EvictionKeepsGeneration(t *testing.T) {
 	release := make(chan struct{})
 	loader := &blockingBudgetLoader{
 		snaps: map[uuid.UUID]BudgetSnapshot{
-			orgA: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap},
-			orgB: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap},
-			orgC: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap},
+			orgA: hardCapSnap(100, 0),
+			orgB: hardCapSnap(100, 0),
+			orgC: hardCapSnap(100, 0),
 		},
 		blockOn:    orgA,
 		block:      block,
 		release:    release,
 		callsByOrg: make(map[uuid.UUID]int),
 	}
-	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 2}, NoopMetrics{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t, loader, 2)
 	if _, err := cache.SnapshotForOrg(context.Background(), orgB); err != nil {
 		t.Fatal(err)
 	}
@@ -287,4 +283,36 @@ func (f *blockingBudgetLoader) LoadOrg(_ context.Context, orgID uuid.UUID) (Budg
 		<-f.release
 	}
 	return f.snaps[orgID], nil
+}
+
+func TestCache_PublishedCard(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	card := CardVersion{Version: "3", Prices: []PriceRow{{Provider: "openai", ModelPattern: "*", InputCentsPer1k: 1, OutputCentsPer1k: 2}}}
+	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
+		org: {HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: EnforcementHardCap, PublishedCard: card},
+	}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 8}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := cache.PublishedCard(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != "3" || len(got.Prices) != 1 {
+		t.Fatalf("got=%+v", got)
+	}
+}
+
+func TestCache_NilOrgCheck(t *testing.T) {
+	t.Parallel()
+	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 2}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := cache.Check(context.Background(), uuid.Nil); err == nil {
+		t.Fatal("expected error for nil org")
+	}
 }

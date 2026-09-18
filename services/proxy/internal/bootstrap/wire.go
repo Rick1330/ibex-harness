@@ -155,32 +155,48 @@ func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput)
 
 func stopSubscribersOnFailure(s startedSubscribers) {
 	stopRevocationOnFailure(s.revSub, s.revCancel)
-	if s.dirCancel != nil {
-		s.dirCancel()
+	stopDirectiveOnFailure(s.dirSub, s.dirCancel)
+	stopRateLimitOnFailure(s.rlSub, s.rlCancel)
+	stopModelPolicyOnFailure(s.mpSub, s.mpCancel, s.mpPollCancel)
+	stopBudgetOnFailure(s.budgetSub, s.budgetCancel)
+}
+
+func stopDirectiveOnFailure(sub *directive.Subscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
 	}
-	if s.dirSub != nil {
-		s.dirSub.Stop()
+	if sub != nil {
+		sub.Stop()
 	}
-	if s.rlCancel != nil {
-		s.rlCancel()
+}
+
+func stopRateLimitOnFailure(sub *ratelimit.ConfigSubscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
 	}
-	if s.rlSub != nil {
-		s.rlSub.Stop()
+	if sub != nil {
+		sub.Stop()
 	}
-	if s.mpPollCancel != nil {
-		s.mpPollCancel()
+}
+
+func stopModelPolicyOnFailure(sub *modelpolicy.Subscriber, cancel, pollCancel context.CancelFunc) {
+	if pollCancel != nil {
+		pollCancel()
 	}
-	if s.mpCancel != nil {
-		s.mpCancel()
+	if cancel != nil {
+		cancel()
 	}
-	if s.mpSub != nil {
-		s.mpSub.Stop()
+	if sub != nil {
+		sub.Stop()
 	}
-	if s.budgetCancel != nil {
-		s.budgetCancel()
+}
+
+func stopBudgetOnFailure(sub *redissub.OrgSubscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
 	}
-	if s.budgetSub != nil {
-		s.budgetSub.Stop()
+	if sub != nil {
+		sub.Stop()
 	}
 }
 

@@ -102,9 +102,9 @@ async def publish_rate_card_version(
 ) -> RateCardVersionResponse:
     return await billing_service.publish_rate_card_version(
         ctx.session,
-        ctx.org_id,
-        card_id,
-        body,
+        billing_service.PublishRateCardVersionInput(
+            org_id=ctx.org_id, card_id=card_id, body=body
+        ),
         deps=billing_service.WriteDeps(publisher=ctx.publisher),
     )
 

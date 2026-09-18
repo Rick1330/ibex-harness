@@ -10,15 +10,20 @@ import (
 	"time"
 )
 
-func TestBilling_SchemaAndRLSCrossTenant(t *testing.T) {
+func setupBillingDB(t *testing.T) (context.Context, *sql.DB) {
+	t.Helper()
 	dsn := testDSN()
 	db := openTestDB(t)
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 	resetSchema(t, db)
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	ctx := context.Background()
+	return context.Background(), db
+}
+
+func TestBilling_SchemaAndRLSCrossTenant(t *testing.T) {
+	ctx, db := setupBillingDB(t)
 
 	orgA, orgB := seedBillingOrgs(t, ctx, db)
 	cardID := insertRateCard(t, ctx, db, orgA, "default")
@@ -95,30 +100,48 @@ func insertBudgetPeriod(t *testing.T, ctx context.Context, db *sql.DB, orgID str
 	return id
 }
 
+func insertEnforcementDecision(t *testing.T, ctx context.Context, db *sql.DB, orgID, periodID string) string {
+	t.Helper()
+	var id string
+	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			INSERT INTO ibex_billing.enforcement_decisions
+				(org_id, budget_period_id, decision, reason)
+			VALUES ($1::uuid, $2::uuid, 'deny', 'cap')
+			RETURNING id::text`, orgID, periodID).Scan(&id)
+	})
+	if err != nil {
+		t.Fatalf("insert decision: %v", err)
+	}
+	return id
+}
+
+func countInOrgTx(tx *sql.Tx, ctx context.Context, query string, arg string) (int, error) {
+	var n int
+	err := tx.QueryRowContext(ctx, query, arg).Scan(&n)
+	return n, err
+}
+
 func assertBillingVisibleToOrg(t *testing.T, ctx context.Context, db *sql.DB, orgID, cardID, periodID string) {
 	t.Helper()
+	checks := []struct {
+		query string
+		arg   string
+		label string
+	}{
+		{`SELECT COUNT(*) FROM ibex_billing.rate_cards WHERE id = $1::uuid`, cardID, "rate_cards"},
+		{`SELECT COUNT(*) FROM ibex_billing.rate_card_versions WHERE rate_card_id = $1::uuid`, cardID, "rate_card_versions"},
+		{`SELECT COUNT(*) FROM ibex_billing.budget_periods WHERE id = $1::uuid`, periodID, "budget_periods"},
+	}
 	err := withOrgContext(ctx, db, orgID, func(tx *sql.Tx) error {
-		var n int
-		if e := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_billing.rate_cards WHERE id = $1::uuid`, cardID).Scan(&n); e != nil {
-			return e
-		}
-		if n != 1 {
-			return fmt.Errorf("rate_cards count=%d", n)
-		}
-		if e := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_billing.rate_card_versions WHERE rate_card_id = $1::uuid`, cardID).Scan(&n); e != nil {
-			return e
-		}
-		if n != 1 {
-			return fmt.Errorf("rate_card_versions count=%d", n)
-		}
-		if e := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_billing.budget_periods WHERE id = $1::uuid`, periodID).Scan(&n); e != nil {
-			return e
-		}
-		if n != 1 {
-			return fmt.Errorf("budget_periods count=%d", n)
+		for _, c := range checks {
+			n, e := countInOrgTx(tx, ctx, c.query, c.arg)
+			if e != nil {
+				return e
+			}
+			if n != 1 {
+				return fmt.Errorf("%s count=%d", c.label, n)
+			}
 		}
 		return nil
 	})
@@ -129,28 +152,21 @@ func assertBillingVisibleToOrg(t *testing.T, ctx context.Context, db *sql.DB, or
 
 func assertBillingHiddenFromOrg(t *testing.T, ctx context.Context, db *sql.DB, viewerOrg, ownerOrg string) {
 	t.Helper()
+	tables := []string{
+		"ibex_billing.rate_cards",
+		"ibex_billing.budget_periods",
+		"ibex_billing.rate_card_versions",
+	}
 	err := withOrgContext(ctx, db, viewerOrg, func(tx *sql.Tx) error {
-		var n int
-		if e := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_billing.rate_cards WHERE org_id = $1::uuid`, ownerOrg).Scan(&n); e != nil {
-			return e
-		}
-		if n != 0 {
-			return fmt.Errorf("viewer saw %d rate_cards for owner", n)
-		}
-		if e := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_billing.budget_periods WHERE org_id = $1::uuid`, ownerOrg).Scan(&n); e != nil {
-			return e
-		}
-		if n != 0 {
-			return fmt.Errorf("viewer saw %d budget_periods for owner", n)
-		}
-		if e := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM ibex_billing.rate_card_versions WHERE org_id = $1::uuid`, ownerOrg).Scan(&n); e != nil {
-			return e
-		}
-		if n != 0 {
-			return fmt.Errorf("viewer saw %d rate_card_versions for owner", n)
+		for _, table := range tables {
+			n, e := countInOrgTx(tx, ctx,
+				fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE org_id = $1::uuid`, table), ownerOrg)
+			if e != nil {
+				return e
+			}
+			if n != 0 {
+				return fmt.Errorf("viewer saw %d rows in %s for owner", n, table)
+			}
 		}
 		return nil
 	})
@@ -173,14 +189,7 @@ func assertVersionsImmutable(t *testing.T, ctx context.Context, db *sql.DB, orgI
 }
 
 func TestBilling_CompositeFKRejectsCrossOrgParents(t *testing.T) {
-	dsn := testDSN()
-	db := openTestDB(t)
-	defer db.Close()
-	resetSchema(t, db)
-	if err := Up(dsn); err != nil {
-		t.Fatalf("up: %v", err)
-	}
-	ctx := context.Background()
+	ctx, db := setupBillingDB(t)
 	orgA, orgB := seedBillingOrgs(t, ctx, db)
 	cardA := insertRateCard(t, ctx, db, orgA, "card-a")
 	periodA := insertBudgetPeriod(t, ctx, db, orgA, 5000)
@@ -208,28 +217,12 @@ func TestBilling_CompositeFKRejectsCrossOrgParents(t *testing.T) {
 }
 
 func TestBilling_PeriodDeleteClearsDecisionPeriodIDOnly(t *testing.T) {
-	dsn := testDSN()
-	db := openTestDB(t)
-	defer db.Close()
-	resetSchema(t, db)
-	if err := Up(dsn); err != nil {
-		t.Fatalf("up: %v", err)
-	}
-	ctx := context.Background()
+	ctx, db := setupBillingDB(t)
 	orgA, _ := seedBillingOrgs(t, ctx, db)
 	periodID := insertBudgetPeriod(t, ctx, db, orgA, 5000)
-	var decisionID string
+	decisionID := insertEnforcementDecision(t, ctx, db, orgA, periodID)
+
 	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_billing.enforcement_decisions
-				(org_id, budget_period_id, decision, reason)
-			VALUES ($1::uuid, $2::uuid, 'deny', 'cap')
-			RETURNING id::text`, orgA, periodID).Scan(&decisionID)
-	})
-	if err != nil {
-		t.Fatalf("insert decision: %v", err)
-	}
-	err = withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `DELETE FROM ibex_billing.budget_periods WHERE id = $1::uuid`, periodID)
 		return e
 	})
@@ -259,28 +252,12 @@ func TestBilling_PeriodDeleteClearsDecisionPeriodIDOnly(t *testing.T) {
 }
 
 func TestBilling_AppCannotDirectUpdateEnforcementPeriodID(t *testing.T) {
-	dsn := testDSN()
-	db := openTestDB(t)
-	defer db.Close()
-	resetSchema(t, db)
-	if err := Up(dsn); err != nil {
-		t.Fatalf("up: %v", err)
-	}
-	ctx := context.Background()
+	ctx, db := setupBillingDB(t)
 	orgA, _ := seedBillingOrgs(t, ctx, db)
 	periodID := insertBudgetPeriod(t, ctx, db, orgA, 5000)
-	var decisionID string
+	decisionID := insertEnforcementDecision(t, ctx, db, orgA, periodID)
+
 	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_billing.enforcement_decisions
-				(org_id, budget_period_id, decision, reason)
-			VALUES ($1::uuid, $2::uuid, 'deny', 'cap')
-			RETURNING id::text`, orgA, periodID).Scan(&decisionID)
-	})
-	if err != nil {
-		t.Fatalf("insert decision: %v", err)
-	}
-	err = withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `
 			UPDATE ibex_billing.enforcement_decisions
 			SET budget_period_id = NULL
