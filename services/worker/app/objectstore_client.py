@@ -297,7 +297,7 @@ def _parse_list_xml(text: str) -> tuple[list[str], str]:
         return keys, ""
     token = _extract_continuation(text)
     if not token:
-        raise RuntimeError("s3 list truncated without NextContinuationToken")
+        raise RuntimeError("s3 list truncated without NextContinuationToken/NextMarker")
     return keys, token
 
 
@@ -317,13 +317,16 @@ def _extract_xml_keys(text: str) -> list[str]:
 
 
 def _extract_continuation(text: str) -> str:
-    ti = text.find("<NextContinuationToken>")
-    if ti < 0:
-        return ""
-    tj = text.find("</NextContinuationToken>", ti)
-    if tj < 0:
-        return ""
-    return unescape(text[ti + len("<NextContinuationToken>") : tj])
+    for tag in ("NextContinuationToken", "NextMarker"):
+        open_tag = f"<{tag}>"
+        close_tag = f"</{tag}>"
+        ti = text.find(open_tag)
+        if ti < 0:
+            continue
+        tj = text.find(close_tag, ti)
+        if tj >= 0:
+            return unescape(text[ti + len(open_tag) : tj])
+    return ""
 
 
 def _delete_key(cfg: _S3Cfg, key: str) -> None:

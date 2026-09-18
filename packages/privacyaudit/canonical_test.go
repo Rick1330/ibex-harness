@@ -167,6 +167,18 @@ func TestCanonicalPayload_ExponentNumberDecimal(t *testing.T) {
 	assertCanonicalPayload(t, `{"n":1e-1}`, `{"n": 0.1}`)
 }
 
+func TestCanonicalPayload_RejectsHugeExponent(t *testing.T) {
+	t.Parallel()
+	_, err := CanonicalPayload(json.RawMessage(`{"n":1e99999}`))
+	if err == nil || !strings.Contains(err.Error(), "expansion exceeds") {
+		t.Fatalf("want expansion bound error, got %v", err)
+	}
+	_, err = CanonicalPayload(json.RawMessage(`{"n":1e-99999}`))
+	if err == nil || !strings.Contains(err.Error(), "expansion exceeds") {
+		t.Fatalf("want expansion bound error, got %v", err)
+	}
+}
+
 func TestCanonicalString_KnownVector(t *testing.T) {
 	t.Parallel()
 	e := baseEntry(baseEntryOpts{})

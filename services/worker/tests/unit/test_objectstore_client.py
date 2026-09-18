@@ -188,6 +188,16 @@ def test_parse_list_xml_truncated_with_continuation() -> None:
     assert cont == "tok-99"
 
 
+def test_parse_list_xml_truncated_with_next_marker() -> None:
+    xml = (
+        "<ListBucketResult><Key>k1</Key><IsTruncated>true</IsTruncated>"
+        "<NextMarker>marker-1</NextMarker></ListBucketResult>"
+    )
+    keys, cont = osc._parse_list_xml(xml)
+    assert keys == ["k1"]
+    assert cont == "marker-1"
+
+
 def test_parse_list_xml_truncated_missing_token() -> None:
     xml = "<ListBucketResult><Key>k</Key><IsTruncated>true</IsTruncated></ListBucketResult>"
     with pytest.raises(RuntimeError, match="NextContinuationToken"):

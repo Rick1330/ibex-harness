@@ -229,9 +229,27 @@ func expandScientificDecimal(significand string, exp int) (string, error) {
 	}
 	power := exp - fracDigits
 	if power >= 0 {
+		if err := checkExpandedNumberLen(len(sign)+len(digits), power); err != nil {
+			return "", err
+		}
 		return sign + digits + strings.Repeat("0", power), nil
 	}
-	return sign + placeDecimal(digits, -power), nil
+	scale := -power
+	if err := checkExpandedNumberLen(len(sign)+len(digits)+1, scale); err != nil {
+		return "", err
+	}
+	return sign + placeDecimal(digits, scale), nil
+}
+
+// maxExpandedJSONNumberLen caps E-notation expansion so untrusted exponents
+// cannot OOM the verifier (PostgreSQL jsonb payloads are far smaller in practice).
+const maxExpandedJSONNumberLen = 4096
+
+func checkExpandedNumberLen(base, pad int) error {
+	if pad < 0 || base < 0 || base > maxExpandedJSONNumberLen || pad > maxExpandedJSONNumberLen-base {
+		return fmt.Errorf("privacyaudit: json number expansion exceeds %d digits", maxExpandedJSONNumberLen)
+	}
+	return nil
 }
 
 func splitSignificand(significand string) (sign, digits string, fracDigits int, err error) {
@@ -271,8 +289,13 @@ func placeDecimal(digits string, scale int) string {
 	if scale <= 0 {
 		return digits
 	}
-	for len(digits) <= scale {
-		digits = "0" + digits
+	if len(digits) <= scale {
+		padded := make([]byte, scale+1)
+		for i := range padded {
+			padded[i] = '0'
+		}
+		copy(padded[len(padded)-len(digits):], digits)
+		digits = string(padded)
 	}
 	i := len(digits) - scale
 	intPart := strings.TrimLeft(digits[:i], "0")
