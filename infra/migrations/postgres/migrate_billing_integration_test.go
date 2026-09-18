@@ -31,7 +31,9 @@ func TestBilling_SchemaAndRLSCrossTenant(t *testing.T) {
 	insA.rateCardVersion(cardID, 1)
 	periodID := insA.budgetPeriod(10_000)
 
-	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.visible(cardID, periodID)
+	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.visible(billingVisibilityIDs{
+		cardID: cardID, periodID: periodID,
+	})
 	billingAssert{t: t, ctx: ctx, db: db, orgID: orgB}.hiddenFrom(orgA)
 	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.versionsImmutable(cardID)
 }
@@ -120,9 +122,14 @@ func (b billingInsert) enforcementDecision(periodID string) string {
 		RETURNING id::text`, b.orgID, periodID)
 }
 
-func countInOrgTx(tx *sql.Tx, ctx context.Context, query string, arg string) (int, error) {
+type orgCountQuery struct {
+	sql string
+	arg string
+}
+
+func countInOrgTx(tx *sql.Tx, ctx context.Context, q orgCountQuery) (int, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, query, arg).Scan(&n)
+	err := tx.QueryRowContext(ctx, q.sql, q.arg).Scan(&n)
 	return n, err
 }
 
@@ -133,25 +140,26 @@ type billingAssert struct {
 	orgID string
 }
 
-func (a billingAssert) visible(cardID, periodID string) {
+type billingVisibilityIDs struct {
+	cardID   string
+	periodID string
+}
+
+func (a billingAssert) visible(ids billingVisibilityIDs) {
 	a.t.Helper()
-	checks := []struct {
-		query string
-		arg   string
-		label string
-	}{
-		{`SELECT COUNT(*) FROM ibex_billing.rate_cards WHERE id = $1::uuid`, cardID, "rate_cards"},
-		{`SELECT COUNT(*) FROM ibex_billing.rate_card_versions WHERE rate_card_id = $1::uuid`, cardID, "rate_card_versions"},
-		{`SELECT COUNT(*) FROM ibex_billing.budget_periods WHERE id = $1::uuid`, periodID, "budget_periods"},
+	checks := []orgCountQuery{
+		{`SELECT COUNT(*) FROM ibex_billing.rate_cards WHERE id = $1::uuid`, ids.cardID},
+		{`SELECT COUNT(*) FROM ibex_billing.rate_card_versions WHERE rate_card_id = $1::uuid`, ids.cardID},
+		{`SELECT COUNT(*) FROM ibex_billing.budget_periods WHERE id = $1::uuid`, ids.periodID},
 	}
 	err := withOrgContext(a.ctx, a.db, a.orgID, func(tx *sql.Tx) error {
 		for _, c := range checks {
-			n, e := countInOrgTx(tx, a.ctx, c.query, c.arg)
+			n, e := countInOrgTx(tx, a.ctx, c)
 			if e != nil {
 				return e
 			}
 			if n != 1 {
-				return fmt.Errorf("%s count=%d", c.label, n)
+				return fmt.Errorf("expected 1 row, got %d for %q", n, c.sql)
 			}
 		}
 		return nil
@@ -170,8 +178,10 @@ func (a billingAssert) hiddenFrom(ownerOrg string) {
 	}
 	err := withOrgContext(a.ctx, a.db, a.orgID, func(tx *sql.Tx) error {
 		for _, table := range tables {
-			n, e := countInOrgTx(tx, a.ctx,
-				fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE org_id = $1::uuid`, table), ownerOrg)
+			n, e := countInOrgTx(tx, a.ctx, orgCountQuery{
+				sql: fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE org_id = $1::uuid`, table),
+				arg: ownerOrg,
+			})
 			if e != nil {
 				return e
 			}
