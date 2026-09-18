@@ -15,46 +15,47 @@ const goldenOrgTimePath = "testdata/org_time_aggregate.sql"
 
 func TestGoldenSQL_OrgTimeAggregate(t *testing.T) {
 	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	end := start.Add(24 * time.Hour)
-	r, err := RenderSQL(Query{
-		Shape: ShapeOrgTimeAggregate, OrgID: org, Start: start, End: end, Limit: 100,
-	}, BudgetLimits{MaxRows: 10000})
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := mustRender(t, Query{
+		Shape: ShapeOrgTimeAggregate,
+		OrgID: uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		Start: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		Limit: 100,
+	})
 	assertGoldenEqual(t, r.SQL)
 }
 
-func TestRenderAgentSession_CompletenessAllRows(t *testing.T) {
+func TestRenderCompletenessAllRows(t *testing.T) {
 	t.Parallel()
 	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	agent := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
-	r, err := RenderSQL(Query{
-		Shape: ShapeAgentSessionBreakdown, OrgID: org, AgentID: &agent,
-		Start: start, End: end, Limit: 50,
-	}, BudgetLimits{MaxRows: 10000})
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		q    Query
+	}{
+		{
+			name: "agent_session",
+			q: Query{
+				Shape: ShapeAgentSessionBreakdown, OrgID: org, AgentID: &agent,
+				Start: start, End: end, Limit: 50,
+			},
+		},
+		{
+			name: "fallback",
+			q: Query{
+				Shape: ShapeFallbackAttribution, OrgID: org,
+				Start: start, End: end, Limit: 50,
+			},
+		},
 	}
-	assertCompletenessAllRowsExpr(t, r.SQL)
-}
-
-func TestRenderFallback_CompletenessAllRows(t *testing.T) {
-	t.Parallel()
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	end := start.Add(24 * time.Hour)
-	r, err := RenderSQL(Query{
-		Shape: ShapeFallbackAttribution, OrgID: org, Start: start, End: end, Limit: 50,
-	}, BudgetLimits{MaxRows: 10000})
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertCompletenessAllRowsExpr(t, mustRender(t, tc.q).SQL)
+		})
 	}
-	assertCompletenessAllRowsExpr(t, r.SQL)
 }
 
 func TestGoldenSQL_OrgTimeHasOrgPredicate(t *testing.T) {
@@ -66,6 +67,15 @@ func TestGoldenSQL_OrgTimeHasOrgPredicate(t *testing.T) {
 	if !strings.Contains(string(b), "org_id") {
 		t.Fatalf("%s missing org_id", filepath.Base(goldenOrgTimePath))
 	}
+}
+
+func mustRender(t *testing.T, q Query) Rendered {
+	t.Helper()
+	r, err := RenderSQL(q, BudgetLimits{MaxRows: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 func assertCompletenessAllRowsExpr(t *testing.T, sql string) {

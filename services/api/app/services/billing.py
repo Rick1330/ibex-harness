@@ -202,21 +202,25 @@ async def publish_rate_card_version(
     )
 
 
+def _parse_budget_period_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        payload = decode_cursor(cursor) or {}
+        raw_start = str(payload["period_start"]).replace("Z", "+00:00")
+        cursor_start = datetime.fromisoformat(raw_start)
+        if cursor_start.tzinfo is None:
+            raise ValueError("period_start must be timezone-aware")
+        return cursor_start, str(UUID(str(payload["id"])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ApiError(code=VALIDATION_ERROR, message="invalid cursor") from exc
+
+
 async def list_budget_periods(
     session: AsyncSession, org_id: UUID, *, cursor: str | None = None, limit: int = 50
 ) -> CursorPage[BudgetPeriodResponse]:
     cursor_start: datetime | None = None
     cursor_id: str | None = None
     if cursor:
-        try:
-            payload = decode_cursor(cursor) or {}
-            raw_start = str(payload["period_start"]).replace("Z", "+00:00")
-            cursor_start = datetime.fromisoformat(raw_start)
-            if cursor_start.tzinfo is None:
-                raise ValueError("period_start must be timezone-aware")
-            cursor_id = str(UUID(str(payload["id"])))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ApiError(code=VALIDATION_ERROR, message="invalid cursor") from exc
+        cursor_start, cursor_id = _parse_budget_period_cursor(cursor)
     result = await session.execute(
         text(
             """

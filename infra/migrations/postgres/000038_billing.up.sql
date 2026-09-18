@@ -97,8 +97,7 @@ CREATE INDEX idx_enforcement_decisions_org_created
     ON ibex_billing.enforcement_decisions (org_id, created_at DESC);
 
 -- Preserve org_id on enforcement_decisions when a budget period is deleted.
--- SECURITY DEFINER (owned by ibex_service): clear path without granting app roles
--- direct UPDATE on enforcement_decisions (append-mostly audit table).
+-- SECURITY DEFINER owned by ibex_service (BYPASSRLS): clear without app UPDATE grants.
 CREATE OR REPLACE FUNCTION ibex_billing.clear_enforcement_budget_period_id()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -156,6 +155,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_billing.budget_periods TO ibex_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_billing.budget_periods TO ibex_service;
 GRANT SELECT, INSERT ON ibex_billing.enforcement_decisions TO ibex_app;
 GRANT SELECT, INSERT ON ibex_billing.enforcement_decisions TO ibex_service;
+-- Column UPDATE only for DEFINER owner (ibex_service); ibex_app cannot clear period IDs.
+GRANT UPDATE (budget_period_id) ON ibex_billing.enforcement_decisions TO ibex_service;
 
 CREATE TRIGGER rate_cards_updated_at
     BEFORE UPDATE ON ibex_billing.rate_cards

@@ -38,6 +38,22 @@ func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) (BudgetSnapshot, e
 		return BudgetSnapshot{}, fmt.Errorf("billing: set service account: %w", err)
 	}
 
+	snap, err := loadActiveHardCap(ctx, tx, orgID)
+	if err != nil {
+		return BudgetSnapshot{}, err
+	}
+	card, err := loadPublishedCard(ctx, tx, orgID)
+	if err != nil {
+		return BudgetSnapshot{}, err
+	}
+	snap.PublishedCard = card
+	if err := tx.Commit(); err != nil {
+		return BudgetSnapshot{}, err
+	}
+	return snap, nil
+}
+
+func loadActiveHardCap(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (BudgetSnapshot, error) {
 	snap := BudgetSnapshot{}
 	now := time.Now().UTC()
 	row := tx.QueryRowContext(ctx, `
@@ -50,26 +66,17 @@ func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) (BudgetSnapshot, e
 		ORDER BY period_start DESC
 		LIMIT 1`, orgID, now)
 	var mode string
-	err = row.Scan(&snap.PeriodID, &snap.CapCents, &snap.SpentCents, &mode, &snap.PeriodStart, &snap.PeriodEnd)
+	err := row.Scan(&snap.PeriodID, &snap.CapCents, &snap.SpentCents, &mode, &snap.PeriodStart, &snap.PeriodEnd)
 	switch {
 	case err == sql.ErrNoRows:
-		// No active hard_cap period: allow (no spend gate configured).
+		return snap, nil
 	case err != nil:
 		return BudgetSnapshot{}, fmt.Errorf("billing: load budget: %w", err)
 	default:
 		snap.EnforcementMode = EnforcementMode(mode)
 		snap.HasHardCap = true
+		return snap, nil
 	}
-
-	card, err := loadPublishedCard(ctx, tx, orgID)
-	if err != nil {
-		return BudgetSnapshot{}, err
-	}
-	snap.PublishedCard = card
-	if err := tx.Commit(); err != nil {
-		return BudgetSnapshot{}, err
-	}
-	return snap, nil
 }
 
 func loadPublishedCard(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (CardVersion, error) {

@@ -42,18 +42,24 @@ def _budget_publisher_from_request(request: Request) -> BudgetPublisher:
     return NoopBudgetPublisher()
 
 
+def _billing_ctx(
+    request: Request, org_id: UUID, token_org_id: UUID, session: AsyncSession
+) -> BillingRouteCtx:
+    assert_path_org(token_org_id, org_id)
+    return BillingRouteCtx(
+        org_id=org_id,
+        session=session,
+        publisher=_budget_publisher_from_request(request),
+    )
+
+
 def _billing_read_ctx(
     request: Request,
     org_id: UUID,
     token: Annotated[ValidateResult, Depends(require_token)],
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> BillingRouteCtx:
-    assert_path_org(token.org_id, org_id)
-    return BillingRouteCtx(
-        org_id=org_id,
-        session=session,
-        publisher=_budget_publisher_from_request(request),
-    )
+    return _billing_ctx(request, org_id, token.org_id, session)
 
 
 def _billing_write_ctx(
@@ -62,12 +68,7 @@ def _billing_write_ctx(
     token: RequireOrgSettings,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> BillingRouteCtx:
-    assert_path_org(token.org_id, org_id)
-    return BillingRouteCtx(
-        org_id=org_id,
-        session=session,
-        publisher=_budget_publisher_from_request(request),
-    )
+    return _billing_ctx(request, org_id, token.org_id, session)
 
 
 @router.get("/{org_id}/rate-cards")

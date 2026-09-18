@@ -306,14 +306,21 @@ func validateFactModels(f UsageFact) error {
 	if len(f.FallbackReason) > maxFallbackReasonLen {
 		return fmt.Errorf("billing: fallback_reason too long")
 	}
-	if f.OriginalModel != nil && len(*f.OriginalModel) > maxModelLen {
-		return fmt.Errorf("billing: original_model too long")
+	if err := validateOptionalModelLen(f.OriginalModel, "original_model"); err != nil {
+		return err
 	}
-	if f.FallbackModel != nil && len(*f.FallbackModel) > maxModelLen {
-		return fmt.Errorf("billing: fallback_model too long")
+	if err := validateOptionalModelLen(f.FallbackModel, "fallback_model"); err != nil {
+		return err
 	}
 	if f.RateCardVersion == "" || len(f.RateCardVersion) > maxRateCardVerLen {
 		return fmt.Errorf("billing: usage fact missing or invalid rate_card_version")
+	}
+	return nil
+}
+
+func validateOptionalModelLen(model *string, field string) error {
+	if model != nil && len(*model) > maxModelLen {
+		return fmt.Errorf("billing: %s too long", field)
 	}
 	return nil
 }
