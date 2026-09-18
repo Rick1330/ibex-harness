@@ -149,7 +149,11 @@ type freezeUsageFactInput struct {
 func buildFrozenUsageFact(p freezeUsageFactInput) *billing.UsageFact {
 	card := resolvePublishedCard(p.ctx, p.budgetCache, p.meta.OrgID)
 	inTok, outTok := tokenCounts(p.in)
-	cents, ver := estimateOrZero(card, p.in.Provider, p.in.Model, inTok, outTok)
+	cents, ver, ok := estimateCostChecked(card, p.in.Provider, p.in.Model, inTok, outTok)
+	if !ok {
+		// Do not persist EstimatedCostCents=0 for failed estimates (would corrupt spend).
+		return nil
+	}
 	completeness := "partial"
 	if p.in.Usage != nil && p.in.IsComplete {
 		completeness = "complete"
@@ -195,18 +199,14 @@ func tokenCounts(in checkpointInput) (inTok, outTok int64) {
 	return int64(in.Usage.InputTokens), int64(in.Usage.OutputTokens)
 }
 
-func estimateOrZero(card billing.CardVersion, provider, model string, inTok, outTok int64) (int64, string) {
+func estimateCostChecked(card billing.CardVersion, provider, model string, inTok, outTok int64) (int64, string, bool) {
 	cents, ver, err := billing.EstimateCost(card, billing.TokenUsage{
 		Provider: provider, Model: model, InputTokens: inTok, OutputTokens: outTok,
 	})
 	if err != nil {
-		ver = card.Version
-		if ver == "" {
-			ver = "0"
-		}
-		return 0, ver
+		return 0, "", false
 	}
-	return cents, ver
+	return cents, ver, true
 }
 
 func optionalStringPtr(s string) *string {

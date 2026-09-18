@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from apierror_py import VALIDATION_ERROR
 from sqlalchemy.exc import IntegrityError
 
 from app.budget_publish import RecordingBudgetPublisher
@@ -58,9 +59,10 @@ async def test_list_rate_cards_maps_rows() -> None:
         return_value=SimpleNamespace(fetchall=lambda: [row])
     )
     out = await svc.list_rate_cards(session, org_id)
-    assert len(out) == 1
-    assert out[0].name == "default"
-    assert out[0].org_id == org_id
+    assert len(out.data) == 1
+    assert out.data[0].name == "default"
+    assert out.data[0].org_id == org_id
+    assert out.pagination.has_more is False
 
 
 @pytest.mark.asyncio
@@ -88,7 +90,8 @@ async def test_create_rate_card_duplicate_name() -> None:
         await svc.create_rate_card(
             session, org_id, RateCardCreate(name="default"), deps=svc.WriteDeps()
         )
-    assert ei.value.code == "VALIDATION_ERROR" or "already" in ei.value.message.lower()
+    assert ei.value.code == VALIDATION_ERROR
+    assert "already" in ei.value.message.lower()
 
 
 @pytest.mark.asyncio
@@ -156,7 +159,7 @@ async def test_list_and_create_budget_periods() -> None:
     )
     session.commit = AsyncMock()
     listed = await svc.list_budget_periods(session, org_id)
-    assert listed[0].cap_cents == 1000
+    assert listed.data[0].cap_cents == 1000
     start = datetime.now(UTC)
     created = await svc.create_budget_period(
         session,

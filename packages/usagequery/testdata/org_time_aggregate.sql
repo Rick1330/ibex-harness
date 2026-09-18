@@ -4,7 +4,7 @@ SELECT
   sum(output_tokens) AS output_tokens,
   sum(estimated_cost_cents) AS estimated_cost_cents,
   count() AS requests,
-  any(completeness) AS completeness
+  if(countIf(completeness != 'complete') = 0, 'complete', 'partial') AS completeness
 FROM ibex.usage_facts
 WHERE org_id = ?
   AND occurred_at >= ?

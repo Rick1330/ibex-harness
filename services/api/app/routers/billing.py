@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.client import ValidateResult
 from app.authz import RequireOrgSettings, assert_path_org
 from app.budget_publish import BudgetPublisher, NoopBudgetPublisher
 from app.deps import org_session, require_token
+from app.pagination import CursorPage, ListQuery
 from app.schemas.billing import (
     BudgetPeriodCreate,
     BudgetPeriodResponse,
@@ -72,8 +73,11 @@ def _write_ctx(
 @router.get("/{org_id}/rate-cards")
 async def list_rate_cards(
     ctx: Annotated[_Ctx, Depends(_read_ctx)],
-) -> list[RateCardResponse]:
-    return await billing_service.list_rate_cards(ctx.session, ctx.org_id)
+    query: Annotated[ListQuery, Query()],
+) -> CursorPage[RateCardResponse]:
+    return await billing_service.list_rate_cards(
+        ctx.session, ctx.org_id, cursor=query.cursor, limit=query.limit
+    )
 
 
 @router.post("/{org_id}/rate-cards", status_code=status.HTTP_201_CREATED)
@@ -107,8 +111,11 @@ async def publish_rate_card_version(
 @router.get("/{org_id}/budget-periods")
 async def list_budget_periods(
     ctx: Annotated[_Ctx, Depends(_read_ctx)],
-) -> list[BudgetPeriodResponse]:
-    return await billing_service.list_budget_periods(ctx.session, ctx.org_id)
+    query: Annotated[ListQuery, Query()],
+) -> CursorPage[BudgetPeriodResponse]:
+    return await billing_service.list_budget_periods(
+        ctx.session, ctx.org_id, cursor=query.cursor, limit=query.limit
+    )
 
 
 @router.post("/{org_id}/budget-periods", status_code=status.HTTP_201_CREATED)

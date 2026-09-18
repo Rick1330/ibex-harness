@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from app.budget_publish import RecordingBudgetPublisher
+from app.pagination import CursorPage, PaginationMeta
 from app.schemas.billing import BudgetPeriodResponse, RateCardResponse
 from tests.unit.org_user_test_support import (
     ManagedClientOpts,
@@ -26,15 +27,19 @@ def test_list_rate_cards_ok() -> None:
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
+    page = CursorPage(
+        data=[card],
+        pagination=PaginationMeta(has_more=False, next_cursor=None, total_count=1),
+    )
     with (
         managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch("app.services.billing.list_rate_cards", new=AsyncMock(return_value=[card])),
+        patch("app.services.billing.list_rate_cards", new=AsyncMock(return_value=page)),
     ):
         resp = client.get(
             f"/v1/organizations/{org_id}/rate-cards", headers=bearer_headers()
         )
     assert resp.status_code == 200
-    assert resp.json()[0]["name"] == "default"
+    assert resp.json()["data"][0]["name"] == "default"
 
 
 def test_create_budget_period_owner_ok() -> None:

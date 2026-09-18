@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +26,6 @@ const (
 	maxRequestIDLen      = 128
 	maxRateCardVerLen    = 64
 	flushTimeout         = 5 * time.Second
-	maxTransientRetries  = 2
 )
 
 var allowedCompleteness = map[string]struct{}{
@@ -217,7 +215,10 @@ func (w *UsageFactWriter) flushOnce() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		_ = w.flushWithTransientRetry(ctx)
+		// No automatic retry after uncertain Send outcomes: usage_facts has no
+		// idempotency key, so retrying could double-count spend. Failed rows are
+		// restored to the buffer and retried on the next tick / flush signal.
+		_ = w.Flush(ctx)
 	}()
 	select {
 	case <-done:
@@ -227,45 +228,6 @@ func (w *UsageFactWriter) flushOnce() {
 	case <-ctx.Done():
 		<-done
 	}
-}
-
-func (w *UsageFactWriter) flushWithTransientRetry(ctx context.Context) error {
-	err := w.Flush(ctx)
-	if err == nil || !isTransientInsertErr(err) {
-		return err
-	}
-	for attempt := 0; attempt < maxTransientRetries; attempt++ {
-		select {
-		case <-w.stopCh:
-			return err
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 50 * time.Millisecond):
-		}
-		err = w.Flush(ctx)
-		if err == nil || !isTransientInsertErr(err) {
-			return err
-		}
-	}
-	return err
-}
-
-func isTransientInsertErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return true
-	}
-	var ne net.Error
-	if errors.As(err, &ne) && ne.Timeout() {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "connection reset") ||
-		strings.Contains(msg, "broken pipe") ||
-		strings.Contains(msg, "i/o timeout") ||
-		strings.Contains(msg, "temporary")
 }
 
 func (w *UsageFactWriter) takeBuffer() []UsageFact {
@@ -285,12 +247,13 @@ func (w *UsageFactWriter) requeueFront(rows []UsageFact) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// Prefer keeping restored (older) rows; drop newer concurrent writes first.
 	combined := make([]UsageFact, 0, len(rows)+len(w.buf))
 	combined = append(combined, rows...)
 	combined = append(combined, w.buf...)
 	if len(combined) > w.cfg.MaxBufferSize {
 		drop := len(combined) - w.cfg.MaxBufferSize
-		combined = combined[drop:]
+		combined = combined[:len(combined)-drop]
 		if w.onDrop != nil {
 			w.onDrop(drop)
 		}

@@ -40,9 +40,8 @@ func EstimateCost(card CardVersion, usage TokenUsage) (cents int64, version stri
 	if !ok {
 		return 0, card.Version, fmt.Errorf("billing: no rate for provider=%q model=%q", usage.Provider, usage.Model)
 	}
-	if usage.InputTokens < 0 || usage.OutputTokens < 0 ||
-		row.InputCentsPer1k < 0 || row.OutputCentsPer1k < 0 {
-		return 0, "", fmt.Errorf("billing: negative token or price operand")
+	if err := rejectNegativeOperands(usage, row); err != nil {
+		return 0, "", err
 	}
 	in, err := ceilMulDiv1k(usage.InputTokens, row.InputCentsPer1k)
 	if err != nil {
@@ -52,10 +51,26 @@ func EstimateCost(card CardVersion, usage TokenUsage) (cents int64, version stri
 	if err != nil {
 		return 0, "", err
 	}
-	if in > math.MaxInt64-out {
-		return 0, "", fmt.Errorf("billing: cost overflow")
+	total, err := addCostChecked(in, out)
+	if err != nil {
+		return 0, "", err
 	}
-	return in + out, card.Version, nil
+	return total, card.Version, nil
+}
+
+func rejectNegativeOperands(usage TokenUsage, row PriceRow) error {
+	if usage.InputTokens < 0 || usage.OutputTokens < 0 ||
+		row.InputCentsPer1k < 0 || row.OutputCentsPer1k < 0 {
+		return fmt.Errorf("billing: negative token or price operand")
+	}
+	return nil
+}
+
+func addCostChecked(in, out int64) (int64, error) {
+	if in > math.MaxInt64-out {
+		return 0, fmt.Errorf("billing: cost overflow")
+	}
+	return in + out, nil
 }
 
 // ceilMulDiv1k computes ceil(tokens * centsPer1k / 1000) with overflow checks.

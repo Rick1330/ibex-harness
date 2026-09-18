@@ -206,3 +206,54 @@ func TestBilling_CompositeFKRejectsCrossOrgParents(t *testing.T) {
 		t.Fatal("expected cross-org enforcement_decisions insert to fail composite FK")
 	}
 }
+
+func TestBilling_PeriodDeleteClearsDecisionPeriodIDOnly(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	ctx := context.Background()
+	orgA, _ := seedBillingOrgs(t, ctx, db)
+	periodID := insertBudgetPeriod(t, ctx, db, orgA, 5000)
+	var decisionID string
+	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			INSERT INTO ibex_billing.enforcement_decisions
+				(org_id, budget_period_id, decision, reason)
+			VALUES ($1::uuid, $2::uuid, 'deny', 'cap')
+			RETURNING id::text`, orgA, periodID).Scan(&decisionID)
+	})
+	if err != nil {
+		t.Fatalf("insert decision: %v", err)
+	}
+	err = withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, `DELETE FROM ibex_billing.budget_periods WHERE id = $1::uuid`, periodID)
+		return e
+	})
+	if err != nil {
+		t.Fatalf("delete period: %v", err)
+	}
+	err = withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
+		var orgID string
+		var period sql.NullString
+		if e := tx.QueryRowContext(ctx, `
+			SELECT org_id::text, budget_period_id::text
+			FROM ibex_billing.enforcement_decisions WHERE id = $1::uuid`, decisionID,
+		).Scan(&orgID, &period); e != nil {
+			return e
+		}
+		if orgID != orgA {
+			return fmt.Errorf("org_id cleared: %s", orgID)
+		}
+		if period.Valid {
+			return fmt.Errorf("budget_period_id still set: %s", period.String)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("decision after period delete: %v", err)
+	}
+}

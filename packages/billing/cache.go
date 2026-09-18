@@ -106,24 +106,20 @@ func (c *Cache) PublishedCard(ctx context.Context, orgID uuid.UUID) (CardVersion
 
 func (c *Cache) lookupFresh(key string) (BudgetSnapshot, bool) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	entry, ok := c.lru.Get(key)
 	if !ok || entry == nil {
-		c.mu.Unlock()
 		return BudgetSnapshot{}, false
 	}
 	if entry.gen != c.gens[key] {
-		c.mu.Unlock()
 		c.lru.Remove(key)
 		return BudgetSnapshot{}, false
 	}
 	if !c.now().Before(entry.expiresAt) {
-		c.mu.Unlock()
 		c.lru.Remove(key)
 		return BudgetSnapshot{}, false
 	}
-	out := entry.snap
-	c.mu.Unlock()
-	return out, true
+	return entry.snap, true
 }
 
 func (c *Cache) loadAndStore(ctx context.Context, orgID uuid.UUID, key string) (BudgetSnapshot, error) {
@@ -159,8 +155,8 @@ func (c *Cache) loadOnce(ctx context.Context, orgID uuid.UUID, key string) (Budg
 
 func (c *Cache) installSnapshot(key string, gen uint64, snap BudgetSnapshot) (BudgetSnapshot, bool, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.gens[key] != gen {
-		c.mu.Unlock()
 		return BudgetSnapshot{}, false, nil
 	}
 	entry := &cachedBudget{
@@ -168,29 +164,13 @@ func (c *Cache) installSnapshot(key string, gen uint64, snap BudgetSnapshot) (Bu
 		expiresAt: c.now().Add(c.cfg.CacheTTL),
 		gen:       gen,
 	}
-	c.mu.Unlock()
-
 	c.lru.Add(key, entry)
-
-	c.mu.Lock()
-	stale := c.gens[key] != gen
-	size := c.lru.Len()
-	c.mu.Unlock()
-	if stale {
-		c.removeIfSame(key, entry)
+	if c.gens[key] != gen {
+		c.lru.Remove(key)
 		return BudgetSnapshot{}, false, nil
 	}
-	c.metrics.SetLRUSize(float64(size))
+	c.metrics.SetLRUSize(float64(c.lru.Len()))
 	return snap, true, nil
-}
-
-func (c *Cache) removeIfSame(key string, want *cachedBudget) {
-	if want == nil {
-		return
-	}
-	if got, ok := c.lru.Peek(key); ok && got == want {
-		c.lru.Remove(key)
-	}
 }
 
 // Invalidate drops the LRU entry for orgID and advances its generation.
@@ -201,9 +181,7 @@ func (c *Cache) Invalidate(orgID uuid.UUID) {
 	key := orgID.String()
 	c.mu.Lock()
 	c.gens[key]++
-	c.mu.Unlock()
 	c.lru.Remove(key)
-	c.mu.Lock()
 	size := c.lru.Len()
 	c.mu.Unlock()
 	c.metrics.IncInvalidate()

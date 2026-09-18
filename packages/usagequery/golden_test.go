@@ -10,7 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
-const goldenOrgTimeAggregate = "org_time_aggregate.sql"
+// Hardcoded relative path — never construct from a variable (Codacy path traversal).
+const goldenOrgTimePath = "testdata/org_time_aggregate.sql"
 
 func TestGoldenSQL_OrgTimeAggregate(t *testing.T) {
 	t.Parallel()
@@ -23,30 +24,23 @@ func TestGoldenSQL_OrgTimeAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertGoldenEqual(t, goldenOrgTimeAggregate, r.SQL)
+	assertGoldenEqual(t, r.SQL)
 }
 
-func TestGoldenSQL_AllShapesHaveOrgPredicate(t *testing.T) {
+func TestGoldenSQL_OrgTimeHasOrgPredicate(t *testing.T) {
 	t.Parallel()
-	// Fixed allowlist — no user-controlled path segments (Codacy).
-	names := []string{goldenOrgTimeAggregate}
-	for _, name := range names {
-		b, err := os.ReadFile(filepath.Join("testdata", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(b), "org_id") {
-			t.Fatalf("%s missing org_id", name)
-		}
+	b, err := os.ReadFile(goldenOrgTimePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "org_id") {
+		t.Fatalf("%s missing org_id", filepath.Base(goldenOrgTimePath))
 	}
 }
 
-func assertGoldenEqual(t *testing.T, name, sql string) {
+func assertGoldenEqual(t *testing.T, sql string) {
 	t.Helper()
-	if name != goldenOrgTimeAggregate {
-		t.Fatalf("unexpected golden basename %q", name)
-	}
-	want, err := os.ReadFile(filepath.Join("testdata", name))
+	want, err := os.ReadFile(goldenOrgTimePath)
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
@@ -54,7 +48,7 @@ func assertGoldenEqual(t *testing.T, name, sql string) {
 		t.Fatalf("rendered SQL missing org_id predicate:\n%s", sql)
 	}
 	if normalizeWS(sql) != normalizeWS(string(want)) {
-		t.Fatalf("golden mismatch for %s\ngot:\n%s\nwant:\n%s", name, sql, want)
+		t.Fatalf("golden mismatch\ngot:\n%s\nwant:\n%s", sql, want)
 	}
 }
 

@@ -79,21 +79,35 @@ def test_bind_literals_tool_join() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_usage_query_truncated_limit_plus_one() -> None:
+@pytest.mark.parametrize(
+    ("rows", "expect_truncated", "expect_completeness"),
+    [
+        (
+            [
+                {"completeness": "complete"},
+                {"completeness": "complete"},
+                {"completeness": "partial"},
+            ],
+            True,
+            "complete",
+        ),
+        (
+            [{"completeness": "partial"}, {"completeness": "partial"}],
+            False,
+            "partial",
+        ),
+    ],
+)
+async def test_execute_usage_query_truncation(
+    rows: list[dict], expect_truncated: bool, expect_completeness: str
+) -> None:
     org = uuid4()
-    start = datetime.now(UTC) - timedelta(hours=1)
-    end = datetime.now(UTC)
     body = UsageQueryRequest(
         shape="org_time_aggregate",
-        start=start,
-        end=end,
+        start=datetime.now(UTC) - timedelta(hours=1),
+        end=datetime.now(UTC),
         limit=2,
     )
-    rows = [
-        {"completeness": "complete"},
-        {"completeness": "complete"},
-        {"completeness": "partial"},
-    ]
     with (
         patch("app.services.usage_query._acquire_inflight", new=AsyncMock()),
         patch("app.services.usage_query._release_inflight", new=AsyncMock()),
@@ -102,33 +116,9 @@ async def test_execute_usage_query_truncated_limit_plus_one() -> None:
         out = await uq.execute_usage_query(
             org_id=org, body=body, redis_url=None, clickhouse_url=None
         )
-    assert out.truncated is True
+    assert out.truncated is expect_truncated
     assert len(out.rows) == 2
-    assert out.completeness == "complete"
-
-
-@pytest.mark.asyncio
-async def test_execute_usage_query_exact_limit_not_truncated() -> None:
-    org = uuid4()
-    start = datetime.now(UTC) - timedelta(hours=1)
-    end = datetime.now(UTC)
-    body = UsageQueryRequest(
-        shape="org_time_aggregate",
-        start=start,
-        end=end,
-        limit=2,
-    )
-    rows = [{"completeness": "partial"}, {"completeness": "partial"}]
-    with (
-        patch("app.services.usage_query._acquire_inflight", new=AsyncMock()),
-        patch("app.services.usage_query._release_inflight", new=AsyncMock()),
-        patch("app.services.usage_query._run_clickhouse", new=AsyncMock(return_value=rows)),
-    ):
-        out = await uq.execute_usage_query(
-            org_id=org, body=body, redis_url=None, clickhouse_url=None
-        )
-    assert out.truncated is False
-    assert len(out.rows) == 2
+    assert out.completeness == expect_completeness
 
 
 @pytest.mark.asyncio
@@ -139,7 +129,11 @@ async def test_run_clickhouse_empty_without_dsn() -> None:
         end=datetime.now(UTC),
         limit=10,
     )
-    with patch.dict("os.environ", {}, clear=False):
+    with patch.dict(
+        "os.environ",
+        {"CLICKHOUSE_HTTP_URL": "", "IBEX_CLICKHOUSE_HTTP_URL": ""},
+        clear=False,
+    ):
         rows = await uq._run_clickhouse(uuid4(), body, 10, None)
     assert rows == []
 
@@ -147,9 +141,7 @@ async def test_run_clickhouse_empty_without_dsn() -> None:
 @pytest.mark.asyncio
 async def test_acquire_inflight_too_many() -> None:
     client = MagicMock()
-    client.incr = AsyncMock(return_value=5)
-    client.expire = AsyncMock()
-    client.decr = AsyncMock()
+    client.eval = AsyncMock(return_value=-1)
     client.aclose = AsyncMock()
     with (
         patch("app.services.usage_query._redis_client", return_value=client),

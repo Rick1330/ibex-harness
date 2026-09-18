@@ -1,9 +1,12 @@
-"""Billing reconciliation (4.P.4) — spent rollup from CH estimates; actuals wait on #859."""
+"""Billing reconciliation (4.P.4) — period-scoped spent rollup; actuals wait on #859."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 import httpx
@@ -18,23 +21,25 @@ from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
 
-_ROLLUP_SQL = """
-SELECT
-  toString(org_id) AS org_id,
-  sum(estimated_cost_cents) AS spent_cents
-FROM ibex.usage_facts
-WHERE occurred_at >= now() - INTERVAL 40 DAY
-GROUP BY org_id
-FORMAT JSONEachRow
-""".strip()
+
+@dataclass(frozen=True, slots=True)
+class BudgetPeriodWindow:
+    period_id: str
+    org_id: str
+    period_start: datetime
+    period_end: datetime
 
 
 class ClickHouseQuerier(Protocol):
-    def query_rows(self, sql: str) -> list[dict[str, Any]]: ...
+    def sum_spent(
+        self, *, org_id: str, period_start: datetime, period_end: datetime
+    ) -> int: ...
 
 
-class PostgresSpendUpdater(Protocol):
-    async def update_spent(self, org_id: str, spent_cents: int) -> int: ...
+class PostgresSpendStore(Protocol):
+    async def list_active_periods(self) -> list[BudgetPeriodWindow]: ...
+
+    async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None: ...
 
 
 class HttpClickHouseQuerier:
@@ -42,7 +47,20 @@ class HttpClickHouseQuerier:
         self._dsn = dsn
         self._client = client or shared_clickhouse_client()
 
-    def query_rows(self, sql: str) -> list[dict[str, Any]]:
+    def sum_spent(
+        self, *, org_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        # Explicit org_id required (ClickHouse has no RLS).
+        start = _fmt_ts(period_start)
+        end = _fmt_ts(period_end)
+        sql = (
+            "SELECT coalesce(sum(estimated_cost_cents), 0) AS spent_cents "
+            "FROM ibex.usage_facts "
+            f"WHERE org_id = toUUID('{org_id}') "
+            f"AND occurred_at >= toDateTime64('{start}', 3, 'UTC') "
+            f"AND occurred_at < toDateTime64('{end}', 3, 'UTC') "
+            "FORMAT JSONEachRow"
+        )
         url, auth = _http_endpoint(self._dsn)
         resp = self._client.post(
             url,
@@ -53,64 +71,89 @@ class HttpClickHouseQuerier:
         )
         if resp.status_code >= 400:
             raise RuntimeError(f"clickhouse rollup query failed: {resp.status_code}")
-        import json
-
-        rows: list[dict[str, Any]] = []
+        spent = 0
         for line in resp.text.splitlines():
             line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-        return rows
+            if not line:
+                continue
+            row = json.loads(line)
+            spent = int(row.get("spent_cents") or 0)
+        return max(spent, 0)
 
 
-class SqlAlchemySpendUpdater:
+class SqlAlchemySpendStore:
     def __init__(self, database_url: str) -> None:
-        settings = get_settings()
-        # Prefer explicit URL when provided by tests / callers.
-        if database_url:
-            from types import SimpleNamespace
+        from types import SimpleNamespace
 
-            settings = SimpleNamespace(database_url=database_url)
+        settings = SimpleNamespace(database_url=database_url) if database_url else get_settings()
         self._engine = create_engine(settings)  # type: ignore[arg-type]
         self._factory = create_session_factory(self._engine)
 
-    async def update_spent(self, org_id: str, spent_cents: int) -> int:
+    async def list_active_periods(self) -> list[BudgetPeriodWindow]:
         async with session_as_service_account(self._factory) as session:
             result = await session.execute(
                 text(
                     """
+                    SELECT id::text AS period_id, org_id::text AS org_id,
+                           period_start, period_end
+                    FROM ibex_billing.budget_periods
+                    WHERE period_start <= now() AND period_end > now()
+                    """
+                )
+            )
+            rows = result.fetchall()
+        return [
+            BudgetPeriodWindow(
+                period_id=str(r.period_id),
+                org_id=str(r.org_id),
+                period_start=r.period_start,
+                period_end=r.period_end,
+            )
+            for r in rows
+        ]
+
+    async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+        async with session_as_service_account(self._factory) as session:
+            await session.execute(
+                text(
+                    """
                     UPDATE ibex_billing.budget_periods
-                    SET spent_cents_cached = :spent,
-                        updated_at = now()
-                    WHERE org_id = CAST(:org_id AS uuid)
-                      AND period_start <= now()
-                      AND period_end > now()
+                    SET spent_cents_cached = :spent, updated_at = now()
+                    WHERE id = CAST(:period_id AS uuid)
+                      AND org_id = CAST(:org_id AS uuid)
                     """
                 ),
-                {"org_id": org_id, "spent": int(spent_cents)},
+                {"period_id": period_id, "org_id": org_id, "spent": int(spent_cents)},
             )
-            return int(result.rowcount or 0)
 
     async def aclose(self) -> None:
         await self._engine.dispose()
 
 
+def _fmt_ts(ts: datetime) -> str:
+    from datetime import UTC
+
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
 async def run_budget_spent_rollup(
     *,
     querier: ClickHouseQuerier,
-    updater: PostgresSpendUpdater,
+    store: PostgresSpendStore,
 ) -> dict[str, Any]:
-    rows = querier.query_rows(_ROLLUP_SQL)
+    periods = await store.list_active_periods()
     updated = 0
-    for row in rows:
-        org_id = str(row.get("org_id") or "")
-        if not org_id:
-            continue
-        spent = int(row.get("spent_cents") or 0)
-        if spent < 0:
-            continue
-        updated += await updater.update_spent(org_id, spent)
-    return {"status": "ok", "orgs": len(rows), "periods_updated": updated}
+    for period in periods:
+        spent = querier.sum_spent(
+            org_id=period.org_id,
+            period_start=period.period_start,
+            period_end=period.period_end,
+        )
+        await store.update_period_spent(period.period_id, period.org_id, spent)
+        updated += 1
+    return {"status": "ok", "periods_updated": updated}
 
 
 @celery_app.task(
@@ -135,7 +178,7 @@ def reconcile_usage_actuals(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     queue="maintenance",
 )
 def budget_spent_rollup(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
-    """Refresh budget_periods.spent_cents_cached from CH estimated_cost_cents sums."""
+    """Refresh each active budget_periods.spent_cents_cached from CH period window."""
     del self, kwargs
     settings = get_settings()
     dsn = getattr(settings, "clickhouse_dsn", None)
@@ -144,8 +187,8 @@ def budget_spent_rollup(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
         logger.info("budget_spent_rollup skipped: missing clickhouse or postgres dsn")
         return {"status": "skipped", "reason": "missing_dsn"}
     querier = HttpClickHouseQuerier(dsn)
-    updater = SqlAlchemySpendUpdater(db_url)
+    store = SqlAlchemySpendStore(db_url)
     try:
-        return asyncio.run(run_budget_spent_rollup(querier=querier, updater=updater))
+        return asyncio.run(run_budget_spent_rollup(querier=querier, store=store))
     finally:
-        asyncio.run(updater.aclose())
+        asyncio.run(store.aclose())

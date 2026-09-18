@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.budget_publish import BudgetPublisher, NoopBudgetPublisher
 from app.errors import ApiError
+from app.pagination import CursorPage, decode_cursor, encode_cursor, page_from_rows
 from app.schemas.billing import (
     BudgetPeriodCreate,
     BudgetPeriodResponse,
@@ -68,19 +69,34 @@ def _period_row(row) -> BudgetPeriodResponse:
     )
 
 
-async def list_rate_cards(session: AsyncSession, org_id: UUID) -> list[RateCardResponse]:
+async def list_rate_cards(
+    session: AsyncSession, org_id: UUID, *, cursor: str | None = None, limit: int = 50
+) -> CursorPage[RateCardResponse]:
+    cursor_name: str | None = None
+    if cursor:
+        try:
+            payload = decode_cursor(cursor) or {}
+            cursor_name = str(payload["name"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ApiError(code=VALIDATION_ERROR, message="invalid cursor") from exc
     result = await session.execute(
         text(
             """
             SELECT id, org_id, name, currency, status, created_at, updated_at
             FROM ibex_billing.rate_cards
             WHERE org_id = CAST(:org_id AS uuid)
+              AND (CAST(:cursor_name AS text) IS NULL OR name > CAST(:cursor_name AS text))
             ORDER BY name ASC
+            LIMIT :limit
             """
         ),
-        {"org_id": str(org_id)},
+        {"org_id": str(org_id), "cursor_name": cursor_name, "limit": limit + 1},
     )
-    return [_card_row(r) for r in result.fetchall()]
+    rows = [_card_row(r) for r in result.fetchall()]
+    next_cursor = None
+    if len(rows) > limit:
+        next_cursor = encode_cursor({"name": rows[limit - 1].name})
+    return page_from_rows(rows, limit=limit, next_cursor=next_cursor)
 
 
 async def create_rate_card(
@@ -185,7 +201,18 @@ async def publish_rate_card_version(
     )
 
 
-async def list_budget_periods(session: AsyncSession, org_id: UUID) -> list[BudgetPeriodResponse]:
+async def list_budget_periods(
+    session: AsyncSession, org_id: UUID, *, cursor: str | None = None, limit: int = 50
+) -> CursorPage[BudgetPeriodResponse]:
+    cursor_start = None
+    cursor_id = None
+    if cursor:
+        try:
+            payload = decode_cursor(cursor) or {}
+            cursor_start = payload["period_start"]
+            cursor_id = str(payload["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ApiError(code=VALIDATION_ERROR, message="invalid cursor") from exc
     result = await session.execute(
         text(
             """
@@ -193,12 +220,33 @@ async def list_budget_periods(session: AsyncSession, org_id: UUID) -> list[Budge
                    enforcement_mode, created_at, updated_at
             FROM ibex_billing.budget_periods
             WHERE org_id = CAST(:org_id AS uuid)
-            ORDER BY period_start DESC
+              AND (
+                CAST(:cursor_start AS timestamptz) IS NULL
+                OR period_start < CAST(:cursor_start AS timestamptz)
+                OR (
+                  period_start = CAST(:cursor_start AS timestamptz)
+                  AND id::text > CAST(:cursor_id AS text)
+                )
+              )
+            ORDER BY period_start DESC, id ASC
+            LIMIT :limit
             """
         ),
-        {"org_id": str(org_id)},
+        {
+            "org_id": str(org_id),
+            "cursor_start": cursor_start,
+            "cursor_id": cursor_id,
+            "limit": limit + 1,
+        },
     )
-    return [_period_row(r) for r in result.fetchall()]
+    rows = [_period_row(r) for r in result.fetchall()]
+    next_cursor = None
+    if len(rows) > limit:
+        last = rows[limit - 1]
+        next_cursor = encode_cursor(
+            {"period_start": last.period_start.isoformat(), "id": str(last.id)}
+        )
+    return page_from_rows(rows, limit=limit, next_cursor=next_cursor)
 
 
 async def create_budget_period(

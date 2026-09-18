@@ -36,7 +36,7 @@ SELECT
   sum(output_tokens) AS output_tokens,
   sum(estimated_cost_cents) AS estimated_cost_cents,
   count() AS requests,
-  any(completeness) AS completeness
+  if(countIf(completeness != 'complete') = 0, 'complete', 'partial') AS completeness
 FROM ibex.usage_facts
 WHERE org_id = {org_id:UUID}
   AND occurred_at >= {start:DateTime64(3)}
@@ -54,7 +54,7 @@ SELECT
   sum(output_tokens) AS output_tokens,
   sum(estimated_cost_cents) AS estimated_cost_cents,
   count() AS requests,
-  any(completeness) AS completeness
+  if(countIf(completeness != 'complete') = 0, 'complete', 'partial') AS completeness
 FROM ibex.usage_facts
 WHERE org_id = {org_id:UUID}
   AND occurred_at >= {start:DateTime64(3)}
@@ -89,7 +89,7 @@ SELECT
   fallback_reason,
   count() AS requests,
   sum(estimated_cost_cents) AS estimated_cost_cents,
-  any(completeness) AS completeness
+  if(countIf(completeness != 'complete') = 0, 'complete', 'partial') AS completeness
 FROM ibex.usage_facts
 WHERE org_id = {org_id:UUID}
   AND occurred_at >= {start:DateTime64(3)}
@@ -194,16 +194,32 @@ async def execute_usage_query(
     )
 
 
+_INFLIGHT_LUA = """
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+if n > tonumber(ARGV[2]) then
+  redis.call('DECR', KEYS[1])
+  return -1
+end
+if redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return n
+"""
+
+
 async def _acquire_inflight(redis_url: str | None, org_id: UUID) -> None:
     if not redis_url:
         return
     client = _redis_client(redis_url)
     try:
         key = inflight_key(org_id)
-        n = await client.incr(key)
-        await client.expire(key, _INFLIGHT_TTL_SECONDS)
-        if n > _MAX_CONCURRENT:
-            await client.decr(key)
+        n = await client.eval(
+            _INFLIGHT_LUA, 1, key, str(_INFLIGHT_TTL_SECONDS), str(_MAX_CONCURRENT)
+        )
+        if int(n) < 0:
             raise ApiError(
                 code=SERVICE_DEGRADED,
                 message="Too many concurrent usage queries for this organization",
@@ -243,12 +259,16 @@ async def _run_clickhouse(
 
     sql = TEMPLATES[body.shape]
     safe_sql = _bind_literals(sql, org_id, body, limit)
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            dsn.rstrip("/") + "/",
-            content=safe_sql + "\nFORMAT JSONEachRow\n",
-            headers={"Content-Type": "text/plain"},
-        )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                dsn.rstrip("/") + "/",
+                content=safe_sql + "\nFORMAT JSONEachRow\n",
+                headers={"Content-Type": "text/plain"},
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("clickhouse usage query transport failed: %s", exc)
+        raise ApiError(code=SERVICE_DEGRADED, message="Usage query failed") from exc
     if resp.status_code >= 400:
         logger.warning("clickhouse usage query failed status=%s", resp.status_code)
         raise ApiError(code=SERVICE_DEGRADED, message="Usage query failed")
@@ -257,7 +277,10 @@ async def _run_clickhouse(
         line = line.strip()
         if not line:
             continue
-        rows.append(json.loads(line))
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            raise ApiError(code=SERVICE_DEGRADED, message="Usage query failed") from exc
     return rows
 
 

@@ -89,11 +89,33 @@ CREATE TABLE ibex_billing.enforcement_decisions (
     CONSTRAINT enforcement_decisions_period_org_fk
         FOREIGN KEY (budget_period_id, org_id)
         REFERENCES ibex_billing.budget_periods (id, org_id)
-        ON DELETE SET NULL
+        -- MATCH SIMPLE: NULL budget_period_id skips the FK. Composite ON DELETE SET NULL
+        -- would also null org_id (NOT NULL), so period clears run via trigger below.
 );
 
 CREATE INDEX idx_enforcement_decisions_org_created
     ON ibex_billing.enforcement_decisions (org_id, created_at DESC);
+
+-- Preserve org_id on enforcement_decisions when a budget period is deleted.
+CREATE OR REPLACE FUNCTION ibex_billing.clear_enforcement_budget_period_id()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ibex_billing, pg_temp
+AS $$
+BEGIN
+    UPDATE ibex_billing.enforcement_decisions
+    SET budget_period_id = NULL
+    WHERE org_id = OLD.org_id
+      AND budget_period_id = OLD.id;
+    RETURN OLD;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION ibex_billing.clear_enforcement_budget_period_id() FROM PUBLIC;
+
+CREATE TRIGGER budget_periods_clear_enforcement_period_id
+    BEFORE DELETE ON ibex_billing.budget_periods
+    FOR EACH ROW EXECUTE FUNCTION ibex_billing.clear_enforcement_budget_period_id();
 
 -- ================================================================
 -- RLS
