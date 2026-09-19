@@ -42,6 +42,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.worker.enqueue.secretName | quote }}
                   key: {{ .Values.worker.enqueue.redisUrlKey | quote }}
+            {{- if .Values.worker.enqueue.enabled }}
             - name: IBEX_WORKER_ENQUEUE_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -51,6 +52,7 @@ spec:
               value: "0.0.0.0"
             - name: IBEX_WORKER_ENQUEUE_PORT
               value: {{ .Values.service.worker.port | quote }}
+            {{- end }}
           {{- if .Values.worker.enqueue.enabled }}
           livenessProbe:
             httpGet:

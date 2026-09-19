@@ -22,26 +22,55 @@ resolve_conf() {
   exit 1
 }
 
-# Resolve docker-compose named volume so restore can mount the same data dir
-# the postgres service uses (not a bare host /var/lib/postgresql/data).
+# Resolve docker-compose named volume from Compose metadata only (fail closed).
+# Never pick an arbitrary docker volume ls suffix match.
 resolve_compose_volume() {
   local compose_file="$1"
-  local preferred="${PGBACKREST_COMPOSE_VOLUME:-ibex_postgres_data}"
   local vol=""
-  local candidate
-  for candidate in \
-    "$preferred" \
-    "dev_${preferred}" \
-    "ibex_${preferred}" \
-    "$(basename "$(dirname "$compose_file")")_${preferred}"; do
-    if docker volume inspect "$candidate" >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
+
+  if [[ -n "${PGBACKREST_COMPOSE_VOLUME:-}" ]]; then
+    if ! docker volume inspect "$PGBACKREST_COMPOSE_VOLUME" >/dev/null 2>&1; then
+      echo "[restore] PGBACKREST_COMPOSE_VOLUME set but volume missing: $PGBACKREST_COMPOSE_VOLUME" >&2
+      return 1
     fi
-  done
-  vol="$(docker volume ls -q | grep -E "(^|/)${preferred}$|_${preferred}$" | head -n1 || true)"
+    printf '%s\n' "$PGBACKREST_COMPOSE_VOLUME"
+    return 0
+  fi
+
+  vol="$(
+    docker compose -f "$compose_file" config --format json 2>/dev/null | python3 -c '
+import json, sys
+cfg = json.load(sys.stdin)
+vols = cfg.get("volumes") or {}
+svc = (cfg.get("services") or {}).get("postgres") or {}
+
+def emit(key: str) -> None:
+    meta = vols.get(key) or {}
+    name = meta.get("name") if isinstance(meta, dict) else None
+    print(name or key)
+    raise SystemExit(0)
+
+for m in svc.get("volumes") or []:
+    if isinstance(m, dict):
+        target = (m.get("target") or "").rstrip("/")
+        source = m.get("source") or ""
+        if target.endswith("postgresql/data") and source:
+            emit(source)
+    elif isinstance(m, str) and ":/var/lib/postgresql/data" in m:
+        emit(m.split(":", 1)[0])
+
+if "ibex_postgres_data" in vols:
+    emit("ibex_postgres_data")
+raise SystemExit(1)
+'
+  )" || true
+
   if [[ -z "$vol" ]]; then
-    echo "[restore] could not resolve compose volume for $preferred" >&2
+    echo "[restore] could not resolve postgres volume from Compose metadata; set PGBACKREST_COMPOSE_VOLUME" >&2
+    return 1
+  fi
+  if ! docker volume inspect "$vol" >/dev/null 2>&1; then
+    echo "[restore] Compose volume name $vol does not exist locally; set PGBACKREST_COMPOSE_VOLUME" >&2
     return 1
   fi
   printf '%s\n' "$vol"
@@ -51,6 +80,7 @@ resolve_compose_volume() {
 resolve_compose_network() {
   local compose_file="$1"
   local cid
+  local net
   cid="$(docker compose -f "$compose_file" ps -q minio 2>/dev/null || true)"
   if [[ -z "$cid" ]]; then
     cid="$(docker compose -f "$compose_file" ps -aq 2>/dev/null | head -n1 || true)"
@@ -59,7 +89,13 @@ resolve_compose_network() {
     echo "[restore] could not resolve compose network (no containers)" >&2
     return 1
   fi
-  docker inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{$k}}{{end}}' "$cid" | awk '{print $1}'
+  # One network name per line; take the first only (avoid concatenated names).
+  net="$(docker inspect -f '{{range $k, $_ := .NetworkSettings.Networks}}{{println $k}}{{end}}' "$cid" | head -n1 | tr -d '\r')"
+  if [[ -z "$net" ]]; then
+    echo "[restore] container $cid has no networks" >&2
+    return 1
+  fi
+  printf '%s\n' "$net"
 }
 
 CONF="$(resolve_conf)"

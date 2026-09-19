@@ -178,6 +178,9 @@ func TestUnit_PersistRun_TxnSetupFails(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected txn setup error")
 			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
