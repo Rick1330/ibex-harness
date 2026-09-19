@@ -58,6 +58,7 @@ def test_http_status_for_known_codes() -> None:
     assert http_status_for_code("INVALID_REQUEST") == 400
     assert http_status_for_code("INVALID_CREDENTIAL") == 422
     assert http_status_for_code("RATE_LIMITED") == 429
+    assert http_status_for_code("BUDGET_EXCEEDED") == 402
     assert http_status_for_code("PROVIDER_TIMEOUT") == 504
     assert http_status_for_code("PROVIDER_NOT_CONFIGURED") == 501
     assert http_status_for_code("MODEL_NOT_ALLOWED") == 403

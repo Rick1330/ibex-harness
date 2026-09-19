@@ -15,7 +15,7 @@ dependencies = [
   "redis>=5.0.0",
   "numpy>=2.0.0",
   "grpcio>=1.62.0",
-  "protobuf>=5.0.0",
+  "protobuf>=7.36.2",
 ]
 
 [project.optional-dependencies]

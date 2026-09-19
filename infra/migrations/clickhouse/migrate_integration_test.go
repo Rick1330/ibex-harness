@@ -56,6 +56,7 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	drops := []string{
+		`DROP TABLE IF EXISTS ibex.usage_facts`,
 		`DROP TABLE IF EXISTS ibex.evidence_assembly_metrics`,
 		`DROP TABLE IF EXISTS ibex.evidence_spans`,
 		`DROP TABLE IF EXISTS ibex.mcp_tool_calls`,
@@ -87,8 +88,8 @@ func TestIntegration_Migrate_UpIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if dirty || v != 4 {
-		t.Fatalf("version=%d dirty=%v want 4/clean", v, dirty)
+	if dirty || v != 5 {
+		t.Fatalf("version=%d dirty=%v want 5/clean", v, dirty)
 	}
 }
 
@@ -336,6 +337,7 @@ func assertTableCount(t *testing.T, db *sql.DB, name string, want uint64) {
 		"llm_traces":                {},
 		"evidence_spans":            {},
 		"evidence_assembly_metrics": {},
+		"usage_facts":               {},
 	}
 	if _, ok := allowed[name]; !ok {
 		t.Fatalf("unknown table %s", name)
@@ -477,16 +479,18 @@ func TestIntegration_Migrate_DownUpRoundTrip(t *testing.T) {
 	if err := Up(conn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
+	assertTableCount(t, db, "usage_facts", 1)
 	if err := Down(conn); err != nil {
-		t.Fatalf("down mcp_tool_calls: %v", err)
+		t.Fatalf("down usage_facts: %v", err)
 	}
-	assertTableCount(t, db, "mcp_tool_calls", 0)
+	assertTableCount(t, db, "usage_facts", 0)
 	assertTableCount(t, db, "llm_traces", 1)
 	if err := Down(conn); err != nil {
-		t.Fatalf("down llm_traces: %v", err)
+		t.Fatalf("down evidence_plane: %v", err)
 	}
-	assertTableCount(t, db, "llm_traces", 0)
+	assertTableCount(t, db, "evidence_spans", 0)
 	if err := Up(conn); err != nil {
 		t.Fatalf("up after down: %v", err)
 	}
+	assertTableCount(t, db, "usage_facts", 1)
 }

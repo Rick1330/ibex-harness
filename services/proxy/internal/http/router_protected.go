@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -30,6 +31,8 @@ type protectedRouteDeps struct {
 	validator                TokenValidator
 	agentVerifier            AgentVerifier
 	limiter                  ratelimit.Limiter
+	budgetCache              *billing.Cache
+	usageFactWriter          *billing.UsageFactWriter
 	directiveResolver        directive.Resolver
 	sessionStore             session.Store
 	sessionCache             *sessioncache.Cache
@@ -55,9 +58,9 @@ type protectedRouteDeps struct {
 type routeMiddleware = func(http.Handler) http.Handler
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
-	rateLimit, agentVerify := protectedAuthWrappers(deps)
+	rateLimit, agentVerify, budget := protectedAuthWrappers(deps)
 	registerAuthProbeRoutes(deps, rateLimit, agentVerify)
-	registerChatCompletionsRoute(deps, rateLimit, agentVerify)
+	registerChatCompletionsRoute(deps, rateLimit, agentVerify, budget)
 	registerSessionTerminateRoute(deps, rateLimit, agentVerify)
 }
 
@@ -79,14 +82,17 @@ func registerSessionTerminateRoute(deps protectedRouteDeps, rateLimit, agentVeri
 	deps.mux.Handle("/v1/sessions/{session_id}/terminate", termChain(h))
 }
 
-func protectedAuthWrappers(deps protectedRouteDeps) (rateLimit, agentVerify routeMiddleware) {
+func protectedAuthWrappers(deps protectedRouteDeps) (rateLimit, agentVerify, budget routeMiddleware) {
 	if deps.limiter != nil {
 		rateLimit = RateLimitMiddleware(deps.limiter, deps.logger, deps.reg)
+	}
+	if deps.budgetCache != nil {
+		budget = BudgetMiddleware(deps.budgetCache, deps.logger, deps.reg)
 	}
 	if deps.agentVerifier != nil {
 		agentVerify = AgentVerificationMiddleware(deps.agentVerifier, deps.logger)
 	}
-	return rateLimit, agentVerify
+	return rateLimit, agentVerify, budget
 }
 
 func registerAuthProbeRoutes(deps protectedRouteDeps, rateLimit, agentVerify routeMiddleware) {
@@ -118,7 +124,7 @@ func orgAuthProbeHandler(
 	}
 }
 
-func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerify routeMiddleware) {
+func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerify, budget routeMiddleware) {
 	chatChain := chain(
 		BodySizeLimitMiddleware(deps.cfg.MaxRequestBodyBytes, deps.docsBase),
 		ContentTypeMiddleware(deps.docsBase),
@@ -128,6 +134,7 @@ func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerif
 		}),
 		agentVerify,
 		rateLimit,
+		budget,
 		DirectiveResolveMiddleware(deps.directiveResolver, deps.logger),
 		ChatParseMiddleware(chatParseOpts{docsBase: deps.docsBase}),
 		ProviderRoutingMiddleware(providerRoutingOpts{
@@ -162,6 +169,8 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		getOrCreateTimeout:       deps.getOrCreateTimeout,
 		evidenceStore:            deps.evidenceStore,
 		traceWriter:              deps.traceWriter,
+		usageFactWriter:          deps.usageFactWriter,
+		budgetCache:              deps.budgetCache,
 		idempotencyStore:         deps.idempotencyStore,
 		idempotencyTimeout:       deps.idempotencyTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.idempotencyTimeout),

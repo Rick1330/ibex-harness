@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
@@ -41,13 +42,17 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config             config.Config
-	Logger             *logger.Logger
-	Metrics            *metrics.ProxyRegistry
-	Tracer             trace.Tracer
-	Validator          TokenValidator
-	AgentVerifier      AgentVerifier
-	Limiter            ratelimit.Limiter
+	Config        config.Config
+	Logger        *logger.Logger
+	Metrics       *metrics.ProxyRegistry
+	Tracer        trace.Tracer
+	Validator     TokenValidator
+	AgentVerifier AgentVerifier
+	Limiter       ratelimit.Limiter
+	// BudgetCache enforces spend hard-caps after RPM (nil disables).
+	BudgetCache *billing.Cache
+	// UsageFactWriter batches usage_facts inserts (nil disables).
+	UsageFactWriter    *billing.UsageFactWriter
 	DirectiveResolver  directive.Resolver
 	SessionStore       session.Store
 	SessionCache       *sessioncache.Cache
@@ -129,6 +134,8 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		validator:                deps.Validator,
 		agentVerifier:            deps.AgentVerifier,
 		limiter:                  deps.Limiter,
+		budgetCache:              deps.BudgetCache,
+		usageFactWriter:          deps.UsageFactWriter,
 		directiveResolver:        deps.DirectiveResolver,
 		sessionStore:             deps.SessionStore,
 		sessionCache:             deps.SessionCache,
@@ -221,6 +228,8 @@ type chatCompletionHandler struct {
 	getOrCreateTimeout       time.Duration
 	evidenceStore            httpsession.EvidencePersister
 	traceWriter              TraceWriter
+	usageFactWriter          *billing.UsageFactWriter
+	budgetCache              *billing.Cache
 	idempotencyStore         idempotency.Store
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration

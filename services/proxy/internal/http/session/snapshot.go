@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
@@ -149,15 +150,18 @@ func runDeferredPostResponse(job PostResponseJob) {
 		run()
 		return
 	}
-	if evidenceOnlyJob(job) {
+	if evidenceOrUsageFactOnlyJob(job) {
 		submitEvidenceFailOpen(job, run)
 		return
 	}
 	job.Deps.Pool.Submit(run)
 }
 
-func evidenceOnlyJob(job PostResponseJob) bool {
-	return job.DoEvidence && !job.DoCheckpoint && !job.DoTrace
+func evidenceOrUsageFactOnlyJob(job PostResponseJob) bool {
+	if job.DoCheckpoint || job.DoTrace {
+		return false
+	}
+	return job.DoEvidence || job.DoUsageFact
 }
 
 func submitEvidenceFailOpen(job PostResponseJob, run func()) {
@@ -182,7 +186,7 @@ func logEvidencePoolDrop(job PostResponseJob) {
 }
 
 func deferredPostResponseNeeded(job PostResponseJob) bool {
-	return job.DoCheckpoint || job.DoTrace || job.DoEvidence
+	return job.DoCheckpoint || job.DoTrace || job.DoEvidence || job.DoUsageFact
 }
 
 func executeDeferredPostResponse(job PostResponseJob) {
@@ -195,8 +199,24 @@ func executeDeferredPostResponse(job PostResponseJob) {
 	if job.DoTrace {
 		EmitTrace(job.TraceWriter, job.Log, job.Snap)
 	}
+	if job.DoUsageFact {
+		EmitUsageFact(job.UsageFactWriter, job.Log, job.UsageFact)
+	}
 	if job.DoEvidence {
 		persistDeferredEvidence(job)
+	}
+}
+
+// EmitUsageFact writes a usage fact; write errors (including buffer-full rejects) are logged.
+func EmitUsageFact(w UsageFactWriter, log *logger.Logger, fact billing.UsageFact) {
+	if w == nil {
+		return
+	}
+	if err := w.Write(fact); err != nil && log != nil {
+		log.WarnCtx(context.Background(), "usage fact write failed",
+			"request_id", fact.RequestID,
+			"error", err,
+		)
 	}
 }
 
@@ -215,13 +235,15 @@ func persistDeferredEvidence(job PostResponseJob) {
 
 // PreparePostResponseInput groups deps and turn data for PreparePostResponse.
 type PreparePostResponseInput struct {
-	Deps     LifecycleDeps
-	Writer   httptrace.TraceWriter
-	Log      *logger.Logger
-	Resolved Resolved
-	Meta     SnapshotMeta
-	In       CheckpointInput
-	Outcome  httptrace.RequestOutcome
+	Deps            LifecycleDeps
+	Writer          httptrace.TraceWriter
+	UsageFactWriter UsageFactWriter
+	UsageFact       *billing.UsageFact
+	Log             *logger.Logger
+	Resolved        Resolved
+	Meta            SnapshotMeta
+	In              CheckpointInput
+	Outcome         httptrace.RequestOutcome
 }
 
 // PreparePostResponse decides checkpoint/trace/buffer work and builds a submit job.
@@ -233,10 +255,16 @@ func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
 	doEvidence := snapOK && EffectiveEvidence(in.Deps.Evidence) != nil && firstNonEmpty(snap.TraceID, in.Meta.TraceID) != ""
 	doBuffer := wantExtractionBuffer(in)
+	doUsageFact := in.UsageFact != nil && in.UsageFactWriter != nil
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,
 		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoEvidence: doEvidence, DoBuffer: doBuffer,
-		TraceWriter: in.Writer, Log: in.Log, EvidenceExtras: in.Meta.EvidenceExtras,
+		DoUsageFact: doUsageFact,
+		TraceWriter: in.Writer, UsageFactWriter: in.UsageFactWriter, Log: in.Log,
+		EvidenceExtras: in.Meta.EvidenceExtras,
+	}
+	if doUsageFact {
+		job.UsageFact = *in.UsageFact
 	}
 	if doCheckpoint {
 		job.Params = BuildCheckpointParams(in.Resolved, in.In, in.Meta.RequestID)
