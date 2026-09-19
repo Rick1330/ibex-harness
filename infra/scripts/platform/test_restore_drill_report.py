@@ -31,7 +31,7 @@ def _base_env(**overrides: str) -> dict[str, str]:
         "PG_MECHANISM": "pg_dump_fallback",
         "PG_BACKUP_OK": "true",
         "PG_RESTORE_OK": "true",
-        "PG_RPO_MEASURED": "2",
+        "PG_RPO_MEASURED": "",
         "PG_RTO_MEASURED": "3",
         "OUTBOX_SEQ": "0",
         "OUTBOX_PENDING": "0",
@@ -95,7 +95,7 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report["postgres"]["mechanism"], "pg_dump_fallback")
         self.assertFalse(report["postgres"]["rpo_pass"])
         self.assertTrue(report["postgres"]["rto_pass"])
-        self.assertEqual(report["postgres"]["rpo_measured_sec"], 2)
+        self.assertIsNone(report["postgres"]["rpo_measured_sec"])
         self.assertEqual(report["postgres_rpo_residual"], "not_pitr_pg_dump_fallback_#869")
 
     def test_allow_no_db_not_evidence(self) -> None:

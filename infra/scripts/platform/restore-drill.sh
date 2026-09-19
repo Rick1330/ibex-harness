@@ -183,14 +183,22 @@ PG_RPO_MEASURED=""
 
 PG_BACKUP_START=$(date +%s)
 echo "[drill] postgres backup start"
-if command -v pgbackrest >/dev/null 2>&1 && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+# pgBackRest scripts target compose Postgres volumes — unsupported when the drill
+# is bound to POSTGRES_CONTAINER (podman/docker exec). Use pg_dump for that path.
+if [[ -z "$PG_RUNTIME" ]] \
+  && command -v pgbackrest >/dev/null 2>&1 \
+  && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
   if bash infra/scripts/platform/pgbackrest-backup.sh full; then
     PG_BACKUP_OK=true
   else
     echo "[drill] WARN pgbackrest backup failed"
   fi
 else
-  echo "[drill] pgbackrest not installed — using pg_dump fallback for local evidence"
+  if [[ -n "$PG_RUNTIME" ]] && command -v pgbackrest >/dev/null 2>&1 \
+    && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+    echo "[drill] NOTE: skipping pgBackRest — POSTGRES_CONTAINER=$PG_CONTAINER is not the compose volume target"
+  fi
+  echo "[drill] using pg_dump fallback for local evidence"
   mkdir -p "$REPORT_DIR/pg"
   if pg_dump_cmd "$REPORT_DIR/pg/ibex.dump"; then
     PG_BACKUP_OK=true
@@ -222,12 +230,24 @@ fi
 
 PG_RESTORE_START=$(date +%s)
 PG_USED_PGBACKREST=false
-if command -v pgbackrest >/dev/null 2>&1 && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+if [[ -z "$PG_RUNTIME" ]] \
+  && command -v pgbackrest >/dev/null 2>&1 \
+  && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
   if bash infra/scripts/platform/pgbackrest-restore.sh; then
     PG_RESTORE_OK=true
     PG_USED_PGBACKREST=true
   else
     echo "[drill] WARN pgbackrest restore failed"
+  fi
+elif [[ -n "$PG_RUNTIME" ]] \
+  && command -v pgbackrest >/dev/null 2>&1 \
+  && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+  echo "[drill] ERROR: pgBackRest restore targets compose volumes, not POSTGRES_CONTAINER=$PG_CONTAINER" >&2
+  echo "[drill] using pg_dump restore for the container data plane instead"
+  if [[ -f "$REPORT_DIR/pg/ibex.dump" ]] && pg_restore_cmd "$REPORT_DIR/pg/ibex.dump"; then
+    PG_RESTORE_OK=true
+  else
+    echo "[drill] WARN pg_restore failed — not claiming restore success"
   fi
 elif [[ -f "$REPORT_DIR/pg/ibex.dump" ]]; then
   echo "[drill] pg_restore from dump (no re-seed shortcut)"
@@ -239,7 +259,12 @@ elif [[ -f "$REPORT_DIR/pg/ibex.dump" ]]; then
 fi
 
 # pgBackRest leaves Postgres stopped — restart before post-restore checks.
+# Only for compose/pg_ctl paths; POSTGRES_CONTAINER was never stopped by pgBackRest.
 if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
+  if [[ -n "$PG_RUNTIME" ]]; then
+    echo "[drill] ERROR: unexpected pgBackRest path with POSTGRES_CONTAINER set" >&2
+    exit 1
+  fi
   echo "[drill] restarting Postgres after pgBackRest restore"
   if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
     docker compose -f "$COMPOSE_FILE" start postgres 2>/dev/null \
@@ -266,10 +291,14 @@ PG_RESTORE_END=$(date +%s)
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
   PG_RTO_MEASURED="$(floor_sec $((PG_RESTORE_END - PG_RESTORE_START)))"
 fi
-# RPO wall-clock is only meaningful after a successful backup AND successful recovery.
-if [[ "$PG_BACKUP_OK" == "true" && "$PG_RESTORE_OK" == "true" && -n "$PG_BACKUP_SEC" ]]; then
-  PG_RPO_MEASURED=$PG_BACKUP_SEC
+# RPO is the age of the latest recoverable WAL/recovery point — NOT backup duration.
+# pg_dump cannot measure RPO; pgBackRest also leaves RPO unmeasured until archive
+# freshness + PITR are verified (residual #869). Keep PG_BACKUP_SEC for logs only.
+PG_RPO_MEASURED=""
+if [[ -n "$PG_BACKUP_SEC" ]]; then
+  echo "[drill] backup_wall_clock_sec=$PG_BACKUP_SEC (not exported as RPO)"
 fi
+echo "[drill] postgres RPO left unmeasured — requires WAL archive freshness + PITR (#869)"
 
 # Tenant isolation under RLS: requires POSTGRES_RLS_DSN or container RLS user.
 ISO_OK=false
@@ -346,7 +375,7 @@ fi
 
 PG_MECHANISM="unmeasured"
 if [[ "$PG_BACKUP_OK" == "true" ]]; then
-  if command -v pgbackrest >/dev/null 2>&1 && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
+  if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
     PG_MECHANISM="pgbackrest_wal"
   else
     PG_MECHANISM="pg_dump_fallback"

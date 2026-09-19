@@ -7,7 +7,6 @@ restore → RLS isolation run against Postgres (not `ALLOW_NO_DB=1`).
 |---|---|
 | `restore-drill-report.json` | Machine-readable pass/fail + measured timings |
 | `transcript.txt` | Full stdout transcript of the drill |
-| `POST_PROCESS.md` | Documents absolute→relative transcript path + `evidence_note` (not silent) |
 
 ## How to reproduce
 
@@ -27,5 +26,24 @@ bash infra/scripts/platform/restore-drill.sh
 ## Honesty notes
 
 - `postgres.rpo_pass` is **false** for `pg_dump_fallback` (not PITR). Residual: #869.
+- `postgres.rpo_measured_sec` is **null** — backup wall-clock is not RPO; WAL archive
+  freshness + PITR are required before exporting a measured RPO (#869).
 - `kyverno_policy_applied` is **false** until staging/kind soak: #869.
 - Never attach reports produced with `ALLOW_NO_DB=1` (script prints `NOT_EVIDENCE`).
+
+## Post-run transform record
+
+The committed `restore-drill-report.json` is **not** a byte-identical copy of the
+raw `restore_drill_report.py` stdout from the drill run. After a successful
+evidence-grade run, the following normalizations were applied before commit:
+
+1. **`transcript` path** — absolute host path rewritten to the repo-relative
+   `infra/scripts/platform/evidence/4p5-restore-drill/transcript.txt`.
+2. **`evidence_note`** — added to record environment (podman `ibex-test-pg`,
+   database `ibex_drill`, role `ibex_rls` → `SET LOCAL ROLE ibex_app`), mechanism
+   honesty, and Kyverno deferral (#869).
+3. **`rpo_measured_sec`** — set to `null` when the generator had incorrectly
+   exported backup wall-clock as RPO (corrected to match drill honesty: RPO
+   remains unmeasured without WAL/PITR).
+
+`transcript.txt` remains the verbatim tee of the drill stdout.
