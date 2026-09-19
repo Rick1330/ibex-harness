@@ -37,7 +37,7 @@ spec:
             runAsNonRoot: true
           ports:
             - name: http
-              containerPort: 8001
+              containerPort: {{ .Values.service.memory.port }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ include "ibex.imageDigest" .Values.images.memory | quote }}
@@ -51,7 +51,7 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /ready
+              path: {{ .Values.probes.readinessPath }}
               port: http
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
@@ -74,5 +74,5 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
-      port: 8001
+      port: {{ .Values.service.memory.port }}
       targetPort: http

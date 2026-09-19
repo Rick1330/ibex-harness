@@ -349,3 +349,88 @@ async def test_platform_health_redis_degraded() -> None:
         out = await platform_health(req)
     assert out.dependency_health["redis"] == "unavailable"
     assert out.degraded_mode is True
+
+
+@pytest.mark.asyncio
+async def test_auth_status_none_and_false() -> None:
+    assert await platform_mod._auth_status(None) == "unavailable"
+    bare = MagicMock(spec=[])  # no ready attr
+    assert await platform_mod._auth_status(bare) == "unavailable"
+    validator = MagicMock()
+    validator.ready = AsyncMock(return_value=False)
+    assert await platform_mod._auth_status(validator) == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_redis_status_false_pong() -> None:
+    client = MagicMock()
+    client.ping = AsyncMock(return_value=False)
+    client.aclose = AsyncMock()
+    with patch("redis.asyncio.Redis.from_url", return_value=client):
+        assert await platform_mod._redis_status("redis://localhost:6379/0") == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_redis_status_ok() -> None:
+    client = MagicMock()
+    client.ping = AsyncMock(return_value=True)
+    client.aclose = AsyncMock()
+    with patch("redis.asyncio.Redis.from_url", return_value=client):
+        assert await platform_mod._redis_status("redis://localhost:6379/0") == "ok"
+
+
+@pytest.mark.asyncio
+async def test_redis_status_import_error() -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def boom(name: str, *args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        if name.startswith("redis"):
+            raise ImportError("no redis")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=boom):
+        assert await platform_mod._redis_status("redis://localhost:6379/0") == "unavailable"
+
+
+def test_parse_backup_stamp_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stamp = tmp_path / "empty.txt"
+    stamp.write_text("   \n", encoding="utf-8")
+    monkeypatch.setattr(platform_mod, "_BACKUP_STAMP", stamp)
+    assert _parse_backup_stamp() is None
+
+
+def test_load_drill_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    report = tmp_path / "gone.json"
+    report.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(platform_mod, "_DRILL_REPORT", report)
+
+    def boom(*_a: object, **_k: object) -> str:
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    assert _load_drill() is None
+
+
+@pytest.mark.asyncio
+async def test_outbox_watermark_bad_scalar() -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(scalar_one=lambda: "not-int"))
+    assert await platform_mod._outbox_watermark(session, uuid4()) is None
+
+
+@pytest.mark.asyncio
+async def test_postgres_status_ok_and_error() -> None:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=None)
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=session)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    factory = MagicMock(return_value=cm)
+    assert await platform_mod._postgres_status(factory) == "ok"
+
+    cm_err = AsyncMock()
+    cm_err.__aenter__ = AsyncMock(side_effect=OSError("db"))
+    cm_err.__aexit__ = AsyncMock(return_value=None)
+    assert await platform_mod._postgres_status(MagicMock(return_value=cm_err)) == "unavailable"

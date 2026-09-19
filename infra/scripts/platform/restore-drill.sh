@@ -127,9 +127,11 @@ echo "[drill] inducing data loss (delete org B marker)"
 psql_cmd -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" || true
 
 PG_RESTORE_START=$(date +%s)
+PG_USED_PGBACKREST=false
 if command -v pgbackrest >/dev/null 2>&1 && [[ -f infra/backup/pgbackrest/pgbackrest.conf ]]; then
   if bash infra/scripts/platform/pgbackrest-restore.sh; then
     PG_RESTORE_OK=true
+    PG_USED_PGBACKREST=true
   else
     echo "[drill] WARN pgbackrest restore failed"
   fi
@@ -141,6 +143,31 @@ elif [[ -f "$REPORT_DIR/pg/ibex.dump" ]]; then
     echo "[drill] WARN pg_restore failed — not claiming restore success"
   fi
 fi
+
+# pgBackRest leaves Postgres stopped — restart before post-restore checks.
+if [[ "$PG_USED_PGBACKREST" == "true" ]]; then
+  echo "[drill] restarting Postgres after pgBackRest restore"
+  if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
+    docker compose -f "$COMPOSE_FILE" start postgres 2>/dev/null \
+      || docker compose -f "$COMPOSE_FILE" up -d postgres 2>/dev/null \
+      || true
+  fi
+  if command -v pg_ctl >/dev/null 2>&1 && [[ -d "${PGBACKREST_PGDATA:-}" ]]; then
+    pg_ctl -D "$PGBACKREST_PGDATA" start 2>/dev/null || true
+  fi
+  ready=false
+  for _ in $(seq 1 60); do
+    if psql_cmd -v ON_ERROR_STOP=1 -Atc "SELECT 1" >/dev/null 2>&1; then
+      ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$ready" != "true" ]]; then
+    echo "[drill] WARN Postgres did not accept connections after restore restart"
+  fi
+fi
+
 PG_RESTORE_END=$(date +%s)
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
   PG_RTO_MEASURED=$((PG_RESTORE_END - PG_RESTORE_START))

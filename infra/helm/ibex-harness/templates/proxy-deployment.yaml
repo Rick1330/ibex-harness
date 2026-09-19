@@ -37,7 +37,7 @@ spec:
             runAsNonRoot: true
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: {{ .Values.service.proxy.port }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ include "ibex.imageDigest" .Values.images.proxy | quote }}
@@ -53,7 +53,7 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /ready
+              path: {{ .Values.probes.readinessPath }}
               port: http
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
@@ -76,5 +76,5 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
-      port: 8080
+      port: {{ .Values.service.proxy.port }}
       targetPort: http
