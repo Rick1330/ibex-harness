@@ -67,38 +67,58 @@ def _page(item: Any) -> CursorPage:
     )
 
 
-def test_list_rate_cards_ok() -> None:
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "patch": "app.services.billing.list_rate_cards",
+            "method": "get",
+            "suffix": "/rate-cards",
+            "json": None,
+            "status": 200,
+            "key": "name",
+            "val": "default",
+            "mock": lambda org_id: _page(_card(org_id)),
+        },
+        {
+            "patch": "app.services.billing.create_rate_card",
+            "method": "post",
+            "suffix": "/rate-cards",
+            "json": {"name": "default", "currency": "USD"},
+            "status": 201,
+            "key": "name",
+            "val": "default",
+            "mock": lambda org_id: _card(org_id),
+        },
+        {
+            "patch": "app.services.billing.list_budget_periods",
+            "method": "get",
+            "suffix": "/budget-periods",
+            "json": None,
+            "status": 200,
+            "key": "cap_cents",
+            "val": 1000,
+            "mock": lambda org_id: _page(_period(org_id)),
+        },
+    ],
+)
+def test_billing_list_create_happy_paths(case: dict[str, Any]) -> None:
     org_id = uuid4()
     with (
         managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch(
-            "app.services.billing.list_rate_cards",
-            new=AsyncMock(return_value=_page(_card(org_id))),
-        ),
+        patch(case["patch"], new=AsyncMock(return_value=case["mock"](org_id))),
     ):
-        resp = client.get(
-            f"/v1/organizations/{org_id}/rate-cards", headers=bearer_headers()
-        )
-    assert resp.status_code == 200
-    assert resp.json()["data"][0]["name"] == "default"
-
-
-def test_create_rate_card_ok() -> None:
-    org_id = uuid4()
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch(
-            "app.services.billing.create_rate_card",
-            new=AsyncMock(return_value=_card(org_id)),
-        ),
-    ):
-        resp = client.post(
-            f"/v1/organizations/{org_id}/rate-cards",
-            headers=bearer_headers(),
-            json={"name": "default", "currency": "USD"},
-        )
-    assert resp.status_code == 201
-    assert resp.json()["name"] == "default"
+        path = f"/v1/organizations/{org_id}{case['suffix']}"
+        call = getattr(client, case["method"])
+        headers = bearer_headers()
+        if case["json"] is None:
+            resp = call(path, headers=headers)
+        else:
+            resp = call(path, headers=headers, json=case["json"])
+    assert resp.status_code == case["status"]
+    payload = resp.json()
+    row = payload["data"][0] if "data" in payload else payload
+    assert row[case["key"]] == case["val"]
 
 
 def test_publish_rate_card_version_ok() -> None:
@@ -142,22 +162,6 @@ def test_publish_rate_card_version_ok() -> None:
         )
     assert resp.status_code == 201
     assert resp.json()["version"] == 1
-
-
-def test_list_budget_periods_ok() -> None:
-    org_id = uuid4()
-    with (
-        managed_org_client(ManagedClientOpts(org_id=org_id)) as (client, _, _),
-        patch(
-            "app.services.billing.list_budget_periods",
-            new=AsyncMock(return_value=_page(_period(org_id))),
-        ),
-    ):
-        resp = client.get(
-            f"/v1/organizations/{org_id}/budget-periods", headers=bearer_headers()
-        )
-    assert resp.status_code == 200
-    assert resp.json()["data"][0]["cap_cents"] == 1000
 
 
 def test_create_budget_period_owner_ok() -> None:
