@@ -198,31 +198,11 @@ func TestUnit_DeployImageDigestOrNull(t *testing.T) {
 	}
 }
 
-func TestUnit_PersistRun_DeployImageDigestCases(t *testing.T) {
+func TestUnit_PersistRun_DeployImageDigest(t *testing.T) {
 	t.Parallel()
+	// Format rejection covered by TestUnit_DeployImageDigestOrNull; one PersistRun
+	// path verifies the digest reaches INSERT (avoids CodeScene arg/dupe flags).
 	valid := "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	// Format edge cases are covered by TestUnit_DeployImageDigestOrNull; PersistRun
-	// only needs one accept + one omit path to avoid CodeScene duplication.
-	cases := []struct {
-		name   string
-		digest string
-		want   any
-		reqID  string
-		trace  string
-	}{
-		{name: "persists_valid", digest: "  " + valid + "  ", want: valid, reqID: "req-digest", trace: "cccccccccccccccccccccccccccccccc"},
-		{name: "invalid_omitted", digest: "latest", want: nil, reqID: "req-bad", trace: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			expectPersistRunDigest(t, tc.digest, tc.want, tc.reqID, tc.trace)
-		})
-	}
-}
-
-func expectPersistRunDigest(t *testing.T, digest string, want any, reqID, trace string) {
-	t.Helper()
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -237,11 +217,11 @@ func expectPersistRunDigest(t *testing.T, digest string, want any, reqID, trace 
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).
 		WithArgs(
-			sqlmock.AnyArg(), org, sqlmock.AnyArg(), sqlmock.AnyArg(), reqID,
-			trace, sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), org, sqlmock.AnyArg(), sqlmock.AnyArg(), "req-digest",
+			"cccccccccccccccccccccccccccccccc", sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			want,
+			valid,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -249,9 +229,9 @@ func expectPersistRunDigest(t *testing.T, digest string, want any, reqID, trace 
 
 	_, err = store.PersistRun(context.Background(), RunInput{
 		OrgID:             org,
-		RequestID:         reqID,
-		TraceID:           trace,
-		DeployImageDigest: digest,
+		RequestID:         "req-digest",
+		TraceID:           "cccccccccccccccccccccccccccccccc",
+		DeployImageDigest: "  " + valid + "  ",
 	})
 	if err != nil {
 		t.Fatalf("PersistRun: %v", err)

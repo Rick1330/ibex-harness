@@ -29,3 +29,21 @@ Returns empty string when the image is not digest-pinned.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/* Omit replicas when HPA owns the count (avoids Helm reset on upgrade). */}}
+{{- define "ibex.replicas" -}}
+{{- if not .Values.hpa.enabled }}
+replicas: {{ .Values.hpa.minReplicas }}
+{{- end }}
+{{- end -}}
+
+{{/* rollingUpdate fields are only valid with RollingUpdate strategy. */}}
+{{- define "ibex.strategy" -}}
+strategy:
+  type: {{ .Values.rollout.strategy }}
+  {{- if eq .Values.rollout.strategy "RollingUpdate" }}
+  rollingUpdate:
+    maxUnavailable: {{ .Values.rollout.maxUnavailable }}
+    maxSurge: {{ .Values.rollout.maxSurge }}
+  {{- end }}
+{{- end -}}

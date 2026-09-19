@@ -7,13 +7,9 @@ metadata:
     {{- include "ibex.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
-  replicas: {{ .Values.hpa.minReplicas }}
+  {{- include "ibex.replicas" . | nindent 2 }}
   progressDeadlineSeconds: {{ .Values.rollout.progressDeadlineSeconds }}
-  strategy:
-    type: {{ .Values.rollout.strategy }}
-    rollingUpdate:
-      maxUnavailable: {{ .Values.rollout.maxUnavailable }}
-      maxSurge: {{ .Values.rollout.maxSurge }}
+  {{- include "ibex.strategy" . | nindent 2 }}
   selector:
     matchLabels:
       app.kubernetes.io/component: api
