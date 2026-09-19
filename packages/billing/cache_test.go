@@ -470,3 +470,28 @@ func (l *invalidateDuringLoadLoader) LoadOrg(_ context.Context, orgID uuid.UUID)
 	}
 	return l.snap, nil
 }
+
+func TestCache_LookupFresh_ExpiredEntryReloads(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	loader := &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
+		org: {HasHardCap: true, CapCents: 100, SpentCents: 10, EnforcementMode: EnforcementHardCap},
+	}}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Second, LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.now = func() time.Time { return now }
+	if _, _, err := cache.Check(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	loads := loader.callCount()
+	cache.now = func() time.Time { return now.Add(2 * time.Second) }
+	if _, _, err := cache.Check(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	if loader.callCount() <= loads {
+		t.Fatalf("expected reload after TTL expiry, loads=%d", loader.callCount())
+	}
+}

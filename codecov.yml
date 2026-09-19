@@ -10,7 +10,8 @@ coverage:
   ignore:
     - "packages/proto/gen/go/**"
     # Playwright/E2E harness binaries (not production code).
-    - "services/**/cmd/**/*-fixture/**"
+    - "services/proxy/cmd/hardcap-deny-fixture/**"
+    - "services/**/cmd/**-fixture/**"
   flags:
     go:
       paths:

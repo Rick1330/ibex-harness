@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -28,14 +30,8 @@ func TestUnit_StopSubscribersOnFailure_InvokesAllCleanups(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	log := logger.Discard("wire-subs")
 
-	dirSub, dirCancel, err := startDirectiveSubscriber(client, mustCachedDirective(t, client, log), log, nil)
-	if err != nil || dirSub == nil || dirCancel == nil {
-		t.Fatalf("directive: sub=%v cancel=%v err=%v", dirSub, dirCancel, err)
-	}
-	budgetSub, budgetCancel, err := startBudgetSubscriber(client, mustBudgetCache(t), log, nil)
-	if err != nil || budgetSub == nil || budgetCancel == nil {
-		t.Fatalf("budget: sub=%v cancel=%v err=%v", budgetSub, budgetCancel, err)
-	}
+	dirSub, dirCancel := mustStartDirectiveSub(t, client, log)
+	budgetSub, budgetCancel := mustStartBudgetSub(t, client, log)
 
 	stopSubscribersOnFailure(startedSubscribers{
 		revCancel: func() { revCancelN.Add(1) },
@@ -203,4 +199,34 @@ func mustCachedDirective(t *testing.T, client redis.UniversalClient, log *logger
 		t.Fatal(err)
 	}
 	return resolver
+}
+
+func mustStartDirectiveSub(t *testing.T, client *redis.Client, log *logger.Logger) (*directive.Subscriber, context.CancelFunc) {
+	t.Helper()
+	sub, cancel, err := startDirectiveSubscriber(client, mustCachedDirective(t, client, log), log, nil)
+	if err != nil {
+		t.Fatalf("directive start: %v", err)
+	}
+	if sub == nil {
+		t.Fatal("directive subscriber nil")
+	}
+	if cancel == nil {
+		t.Fatal("directive cancel nil")
+	}
+	return sub, cancel
+}
+
+func mustStartBudgetSub(t *testing.T, client *redis.Client, log *logger.Logger) (*redissub.OrgSubscriber, context.CancelFunc) {
+	t.Helper()
+	sub, cancel, err := startBudgetSubscriber(client, mustBudgetCache(t), log, nil)
+	if err != nil {
+		t.Fatalf("budget start: %v", err)
+	}
+	if sub == nil {
+		t.Fatal("budget subscriber nil")
+	}
+	if cancel == nil {
+		t.Fatal("budget cancel nil")
+	}
+	return sub, cancel
 }
