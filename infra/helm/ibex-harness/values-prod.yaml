@@ -1,0 +1,10 @@
+# Production overrides — require real digests and off-cluster S3.
+namespace: ibex-prod
+hpa:
+  minReplicas: 3
+  maxReplicas: 12
+backup:
+  s3Endpoint: "https://s3.amazonaws.com"  # production object storage
+  s3Bucket: "ibex-pgbackrest-prod"
+kyverno:
+  verifyImages: true

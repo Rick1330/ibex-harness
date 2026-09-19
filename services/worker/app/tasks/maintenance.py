@@ -18,6 +18,8 @@ class ForcedFailureError(RuntimeError):
     base=IbexTask,
     name=TASK_MAINTENANCE_NOOP_SWEEP,
     queue="maintenance",
+    soft_time_limit=300,
+    time_limit=600,
 )
 def noop_sweep(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     """Scheduled maintenance placeholder — attach real sweep logic in later milestones."""
@@ -29,6 +31,8 @@ def noop_sweep(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     base=IbexTask,
     name=TASK_MAINTENANCE_ALWAYS_FAIL,
     queue="maintenance",
+    soft_time_limit=300,
+    time_limit=600,
     autoretry_for=(ForcedFailureError,),
     max_retries=3,
     retry_backoff=False,

@@ -1,0 +1,33 @@
+# Kyverno ClusterPolicy — reject unsigned / wrong-digest images (4.P.5).
+# Requires Kyverno installed on kind/k3d. Cosign signatures must exist for GHCR images.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ibex-verify-images
+  annotations:
+    policies.kyverno.io/title: Verify IBEX image signatures
+    policies.kyverno.io/category: Supply Chain
+    policies.kyverno.io/severity: high
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: verify-ibex-ghcr-images
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["ibex", "ibex-staging", "ibex-prod"]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/*/ibex-harness/*"
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/Rick1330/ibex-harness/*"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev
+          mutateDigest: true
+          verifyDigest: true
+          required: true

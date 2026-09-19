@@ -1,0 +1,9 @@
+# Staging overrides — digests filled by CI after docker-publish.
+namespace: ibex-staging
+hpa:
+  minReplicas: 2
+  maxReplicas: 6
+rollout:
+  progressDeadlineSeconds: 300
+backup:
+  s3Endpoint: "https://minio.staging.example"  # swap to real object storage

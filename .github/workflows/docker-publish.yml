@@ -1056,6 +1056,24 @@ jobs:
           subject-digest: ${{ needs.push-api.outputs.digest }}
           push-to-registry: true
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # 4.P.5: extend keyless Cosign from SBOM blobs (release.yml) to image digests
+      # so Kyverno verifyImages can admit signed GHCR images.
+      - name: Cosign sign image digests (keyless)
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          REPO="ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}"
+          cosign sign --yes "${REPO}/auth@${{ needs.push-auth.outputs.digest }}"
+          cosign sign --yes "${REPO}/proxy@${{ needs.push-proxy.outputs.digest }}"
+          cosign sign --yes "${REPO}/embedder@${{ needs.push-embedder.outputs.digest }}"
+          cosign sign --yes "${REPO}/mcp-memory@${{ needs.push-mcp-memory.outputs.digest }}"
+          cosign sign --yes "${REPO}/memory@${{ needs.push-memory.outputs.digest }}"
+          cosign sign --yes "${REPO}/api@${{ needs.push-api.outputs.digest }}"
+
 
   notify:
     name: notify

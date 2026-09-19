@@ -436,14 +436,14 @@ func insertRun(ctx context.Context, tx *sql.Tx, in RunInput) (uuid.UUID, error) 
 INSERT INTO ibex_core.evidence_runs (
 	id, org_id, agent_id, session_id, request_id, trace_id, checkpoint_id, turn_id,
 	schema_version, completeness, status, error_code, capture_mode, sample_decision,
-	started_at, ended_at
+	started_at, ended_at, deploy_image_digest
 ) VALUES (
 	$1, $2, $3, $4, $5, $6, $7, $8,
 	$9, $10, $11, $12, $13, $14,
-	$15, $16
+	$15, $16, $17
 )`, id, in.OrgID, in.AgentID, in.SessionID, in.RequestID, in.TraceID, in.CheckpointID, in.TurnID,
 		SchemaVersion, defaultCompleteness(in.Completeness), status, nullEmpty(in.ErrorCode),
-		capture, sample, started.UTC(), ended)
+		capture, sample, started.UTC(), ended, nullEmpty(in.DeployImageDigest))
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: insert run: %w", err)
 	}

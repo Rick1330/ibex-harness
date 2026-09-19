@@ -1,0 +1,100 @@
+# Default values — local kind/k3d drill. Digests filled by CI (see values-staging.yaml).
+namespace: ibex
+
+# Image references MUST be digest-pinned for admission (Kyverno verifyImages).
+# Placeholder digests are replaced by docker-publish / restore-drill scripts.
+images:
+  proxy: "ghcr.io/rick1330/ibex-harness/proxy:main@sha256:0000000000000000000000000000000000000000000000000000000000000001"
+  auth: "ghcr.io/rick1330/ibex-harness/auth:main@sha256:0000000000000000000000000000000000000000000000000000000000000002"
+  api: "ghcr.io/rick1330/ibex-harness/api:main@sha256:0000000000000000000000000000000000000000000000000000000000000003"
+  worker: "ghcr.io/rick1330/ibex-harness/worker:main@sha256:0000000000000000000000000000000000000000000000000000000000000004"
+  memory: "ghcr.io/rick1330/ibex-harness/memory:main@sha256:0000000000000000000000000000000000000000000000000000000000000005"
+  embedder: "ghcr.io/rick1330/ibex-harness/embedder:main@sha256:0000000000000000000000000000000000000000000000000000000000000006"
+  mcpMemory: "ghcr.io/rick1330/ibex-harness/mcp-memory:main@sha256:0000000000000000000000000000000000000000000000000000000000000007"
+  # Data-plane images for kind drill (digest-pinned like observability chart).
+  postgres: "pgvector/pgvector@sha256:ccc6e83d0e8e4e3b5d8f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+  # Override with real digests from CI compose pins before drill.
+  redis: "redis:7.4.2@sha256:56ef1316d11619a2113471db94288e21a1446c6a6b1a3e5e5e5e5e5e5e5e5e5e"
+  clickhouse: "clickhouse/clickhouse-server:24.8@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  minio: "minio/minio@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  pgbackrest: "pgbackrest/pgbackrest:2.53@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+rollout:
+  strategy: RollingUpdate
+  maxUnavailable: 0
+  maxSurge: 1
+  # Canary abort: readiness probe failure stops rollout (maxUnavailable=0).
+  progressDeadlineSeconds: 600
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+migrate:
+  enabled: true
+  # Reuses infra/scripts/db-migrate.sh via ConfigMap-mounted script (no fork).
+  backoffLimit: 1
+
+backup:
+  enabled: true
+  # Simulated off-cluster: MinIO S3-compatible repo (values swap for real S3).
+  repoType: s3
+  s3Endpoint: "http://minio.ibex.svc:9000"
+  s3Bucket: "ibex-pgbackrest"
+  s3Region: "us-east-1"
+  # RPO targets documented in milestone MDX (Postgres ≤5m).
+  stanza: "ibex-main"
+
+kyverno:
+  # Policy manifests under policies/; apply with restore drill.
+  verifyImages: true
+
+resources:
+  proxy:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  auth:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+  api:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  worker:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  memory:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  embedder:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  mcpMemory:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 256Mi }
+
+# ADR-0022: /health = liveness, /ready = readiness (critical deps).
+probes:
+  livenessPath: /health
+  readinessPath: /ready
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+service:
+  proxy: { port: 8080 }
+  auth: { http: 8081, grpc: 50051 }
+  api: { port: 8010 }
+  worker: { port: 8088 }
+  memory: { port: 8001 }
+  embedder: { port: 8002 }
+  mcpMemory: { port: 8003 }
+
+# Recorded into evidence_runs.deploy_image_digest at deploy time (env).
+deployDigest: ""

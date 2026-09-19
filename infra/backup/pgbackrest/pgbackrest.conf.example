@@ -1,0 +1,23 @@
+# pgBackRest stanza for IBEX (4.P.5).
+# Repo is MinIO (S3-compatible) — simulated off-cluster for kind/compose drills.
+# Swap [global] repo1-s3-* values for real object storage in production.
+
+[global]
+repo1-type=s3
+repo1-path=/pgbackrest
+repo1-s3-bucket=ibex-pgbackrest
+repo1-s3-endpoint=minio:9000
+repo1-s3-region=us-east-1
+repo1-s3-uri-style=path
+repo1-s3-key=minioadmin
+repo1-s3-key-secret=minioadmin
+repo1-cipher-type=aes-256-cbc
+# Provide cipher pass via PGBACKREST_REPO1_CIPHER_PASS env (never commit secrets).
+compress-type=lz4
+process-max=2
+start-fast=y
+
+[ibex-main]
+pg1-path=/var/lib/postgresql/data
+pg1-port=5432
+pg1-user=ibex
