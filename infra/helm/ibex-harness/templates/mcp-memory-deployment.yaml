@@ -37,10 +37,12 @@ spec:
             runAsNonRoot: true
           ports:
             - name: http
-              containerPort: 8003
+              containerPort: {{ .Values.service.mcpMemory.port }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
-              value: {{ .Values.deployDigest | quote }}
+              value: {{ include "ibex.imageDigest" .Values.images.mcpMemory | quote }}
+            - name: IBEX_MCP_PORT
+              value: {{ .Values.service.mcpMemory.port | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}
@@ -51,7 +53,7 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /ready
+              path: {{ .Values.probes.readinessPath }}
               port: http
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
@@ -74,5 +76,5 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
-      port: 8003
+      port: {{ .Values.service.mcpMemory.port }}
       targetPort: http

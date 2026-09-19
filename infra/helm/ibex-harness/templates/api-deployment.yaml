@@ -40,7 +40,7 @@ spec:
               containerPort: 8010
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
-              value: {{ .Values.deployDigest | quote }}
+              value: {{ include "ibex.imageDigest" .Values.images.api | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}

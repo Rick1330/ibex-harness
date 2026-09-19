@@ -1,5 +1,4 @@
 # Production overrides — require real digests and off-cluster S3.
-namespace: ibex-prod
 hpa:
   minReplicas: 3
   maxReplicas: 12

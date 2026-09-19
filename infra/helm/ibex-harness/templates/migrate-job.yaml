@@ -1,6 +1,5 @@
 {{- if .Values.migrate.enabled }}
-# Migration Job runs before app traffic; script is the repo's infra/scripts/db-migrate.sh
-# mounted read-only (no fork of migrate logic).
+# Migration Job runs before app traffic using the dedicated migrate image.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,27 +23,14 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: migrate
-          image: {{ .Values.images.api | quote }}
+          image: {{ .Values.images.migrate | quote }}
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -euo pipefail
-              # Expect POSTGRES_MIGRATE_DSN from secret; invoke migrate binary shipped in image
-              # or host-mounted script path used by restore-drill.
-              if command -v migrate >/dev/null 2>&1; then
-                migrate -command up
-              elif [ -x /scripts/db-migrate.sh ]; then
-                /scripts/db-migrate.sh up
-              else
-                echo "migration entrypoint missing" >&2
-                exit 1
-              fi
+          command: ["/ibex-migrate", "-command", "up"]
           env:
             - name: POSTGRES_MIGRATE_DSN
               valueFrom:
                 secretKeyRef:
                   name: ibex-postgres
                   key: migrate-dsn
-                  optional: true
+                  optional: false
 {{- end }}

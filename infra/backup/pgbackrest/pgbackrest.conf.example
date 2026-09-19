@@ -11,8 +11,10 @@ repo1-s3-region=us-east-1
 repo1-s3-uri-style=path
 repo1-s3-key=minioadmin
 repo1-s3-key-secret=minioadmin
+# pgBackRest only supports repo cipher none|aes-256-cbc (not AES-GCM).
+# Approved exception vs AGENTS.md app-crypto AES-256-GCM: tool enumeration limit.
+# Passphrase via PGBACKREST_REPO1_CIPHER_PASS env (never commit secrets).
 repo1-cipher-type=aes-256-cbc
-# Provide cipher pass via PGBACKREST_REPO1_CIPHER_PASS env (never commit secrets).
 compress-type=lz4
 process-max=2
 start-fast=y

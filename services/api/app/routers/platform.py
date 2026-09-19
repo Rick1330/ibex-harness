@@ -4,11 +4,12 @@ Exposes dependency health, last backup, last restore-drill result, retention
 horizon, ingestion lag, DLQ depth, and degraded-mode state — matching the
 operator-platform research contract consumed by 4.D.1 Overview.
 
-Auth: provisional dashboard session cookie (same gate as operator SSE).
+Auth: provisional dashboard session cookie + OPERATOR_METADATA_READ.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -17,12 +18,14 @@ from pathlib import Path
 from typing import Any
 
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
+from authclient.permissions import OPERATOR_METADATA_READ
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.authz import assert_operator_permission
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_ACCESS,
@@ -37,11 +40,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/operator/platform", tags=["operator-platform"])
 
 _DEFAULT_RETENTION_DAYS = 90
+_DEP_TIMEOUT_SEC = 2.0
+# Bandit B108: prefer durable operator state dir over world-writable /tmp.
 _BACKUP_STAMP = Path(
-    os.environ.get("IBEX_LAST_BACKUP_STAMP", "/tmp/ibex-last-backup.txt")
+    os.environ.get("IBEX_LAST_BACKUP_STAMP", "/var/lib/ibex/backup/last-backup.txt")
 )
 _DRILL_REPORT = Path(
-    os.environ.get("RESTORE_DRILL_REPORT", "/tmp/ibex-restore-drill/restore-drill-report.json")
+    os.environ.get(
+        "RESTORE_DRILL_REPORT",
+        "/var/lib/ibex/restore-drill/restore-drill-report.json",
+    )
 )
 
 
@@ -64,18 +72,23 @@ def _settings(request: Request) -> Any:
     return request.app.state.settings
 
 
-def _require_operator_session(request: Request) -> SessionClaims:
-    """Fail closed: feature flag + provisional access cookie (org-scoped)."""
-    settings = _settings(request)
+def _assert_feature_and_secret(settings: Any) -> None:
     if not getattr(settings, "operator_feature_enabled", False):
         raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
     if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
         raise ApiError(code=SERVICE_DEGRADED, message="session signing secret not configured")
+
+
+def _access_cookie(request: Request, settings: Any) -> str:
     raw = request.cookies.get(settings.dashboard_session_cookie_name)
     if not raw:
         raise ApiError(code=INVALID_TOKEN, message="missing session cookie")
+    return raw
+
+
+def _verify_access_cookie(raw: str, settings: Any) -> SessionClaims:
     try:
-        claims = verify_token_opts(
+        return verify_token_opts(
             raw,
             TokenVerifyOpts(
                 secret=settings.jwt_hmac_secret,
@@ -87,34 +100,82 @@ def _require_operator_session(request: Request) -> SessionClaims:
         )
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
+
+
+def _require_operator_session(request: Request) -> SessionClaims:
+    """Fail closed: feature flag + access cookie + OPERATOR_METADATA_READ."""
+    settings = _settings(request)
+    _assert_feature_and_secret(settings)
+    claims = _verify_access_cookie(_access_cookie(request, settings), settings)
+    assert_operator_permission(settings, claims.permissions, OPERATOR_METADATA_READ)
     return claims
+
+
+async def _postgres_status(session_factory: Any) -> str:
+    if session_factory is None:
+        return "unavailable"
+    try:
+        async with session_factory() as session:  # type: ignore[misc]
+            await session.execute(text("SELECT 1"))
+        return "ok"
+    except (SQLAlchemyError, OSError, RuntimeError):
+        return "unavailable"
+
+
+async def _auth_status(validator: Any) -> str:
+    if validator is None:
+        return "unavailable"
+    ready = getattr(validator, "ready", None)
+    if ready is None:
+        return "unavailable"
+    try:
+        ok = await asyncio.wait_for(ready(), timeout=_DEP_TIMEOUT_SEC)
+        return "ok" if ok else "unavailable"
+    except (TimeoutError, OSError, RuntimeError):
+        return "unavailable"
+
+
+async def _redis_status(redis_url: str | None) -> str:
+    if not redis_url:
+        return "unavailable"
+    try:
+        from redis.asyncio import Redis
+
+        client = Redis.from_url(
+            redis_url,
+            socket_connect_timeout=_DEP_TIMEOUT_SEC,
+            socket_timeout=_DEP_TIMEOUT_SEC,
+        )
+        try:
+            pong = await asyncio.wait_for(client.ping(), timeout=_DEP_TIMEOUT_SEC)
+            return "ok" if pong else "unavailable"
+        finally:
+            await client.aclose()
+    except (TimeoutError, OSError, RuntimeError):
+        return "unavailable"
 
 
 async def _dep_health(request: Request) -> dict[str, str]:
     state = request.app.state.api
-    out: dict[str, str] = {"api": "ok" if getattr(state, "ready", False) else "unavailable"}
-    session_factory = getattr(state, "session_factory", None)
-    if session_factory is None:
-        out["postgres"] = "unavailable"
-    else:
-        try:
-            async with session_factory() as session:  # type: ignore[misc]
-                await session.execute(text("SELECT 1"))
-            out["postgres"] = "ok"
-        except (SQLAlchemyError, OSError, RuntimeError):
-            out["postgres"] = "unavailable"
-    out["auth"] = "ok" if getattr(state, "validator", None) is not None else "unavailable"
-    out["redis"] = "ok" if getattr(_settings(request), "redis_url", None) else "unavailable"
+    settings = _settings(request)
+    out: dict[str, str] = {
+        "api": "ok" if getattr(state, "ready", False) else "unavailable",
+        "postgres": await _postgres_status(getattr(state, "session_factory", None)),
+        "auth": await _auth_status(getattr(state, "validator", None)),
+        "redis": await _redis_status(getattr(settings, "redis_url", None)),
+    }
     return out
 
 
 def _parse_backup_stamp() -> datetime | None:
-    if not _BACKUP_STAMP.exists():
+    try:
+        if not _BACKUP_STAMP.exists():
+            return None
+        raw = _BACKUP_STAMP.read_text(encoding="utf-8").strip()
+    except OSError:
         return None
-    raw = _BACKUP_STAMP.read_text(encoding="utf-8").strip()
     if not raw:
         return None
-    # "[backup] ok 2026-09-19T07:00:00Z" or bare ISO timestamp
     parts = raw.rsplit(" ", 1)
     candidate = parts[-1] if parts else raw
     try:
@@ -124,9 +185,9 @@ def _parse_backup_stamp() -> datetime | None:
 
 
 def _load_drill() -> dict[str, Any] | None:
-    if not _DRILL_REPORT.exists():
-        return None
     try:
+        if not _DRILL_REPORT.exists():
+            return None
         return json.loads(_DRILL_REPORT.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
@@ -174,10 +235,15 @@ async def platform_health(request: Request) -> PlatformHealthResponse:
         except (SQLAlchemyError, OSError, RuntimeError):
             outbox_seq = None
 
+    last_backup, last_drill = await asyncio.gather(
+        asyncio.to_thread(_parse_backup_stamp),
+        asyncio.to_thread(_load_drill),
+    )
+
     return PlatformHealthResponse(
         dependency_health=deps,
-        last_backup_at=_parse_backup_stamp(),
-        last_restore_drill=_load_drill(),
+        last_backup_at=last_backup,
+        last_restore_drill=last_drill,
         retention_horizon_days=int(
             getattr(_settings(request), "platform_retention_horizon_days", _DEFAULT_RETENTION_DAYS)
         ),

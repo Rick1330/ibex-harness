@@ -42,7 +42,7 @@ spec:
               containerPort: {{ .Values.service.auth.grpc }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
-              value: {{ .Values.deployDigest | quote }}
+              value: {{ include "ibex.imageDigest" .Values.images.auth | quote }}
             - name: IBEX_PORT
               value: {{ .Values.service.auth.http | quote }}
             - name: IBEX_GRPC_PORT

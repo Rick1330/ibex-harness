@@ -17,9 +17,9 @@
    helm upgrade ibex infra/helm/ibex-harness \
      -n ibex \
      -f infra/helm/ibex-harness/values-staging.yaml \
-     --set images.proxy="ghcr.io/.../proxy@sha256:<known-good>" \
-     --set images.api="ghcr.io/.../api@sha256:<known-good>" \
-     --set deployDigest="sha256:<known-good>"
+     --set-string images.proxy="ghcr.io/<org>/ibex-harness/proxy@sha256:<known-good>" \
+     --set-string images.api="ghcr.io/<org>/ibex-harness/api@sha256:<known-good>"
+     # (repeat for auth/worker/memory/embedder/mcpMemory as needed)
    ```
 
 3. Confirm rollout:
@@ -35,8 +35,11 @@
 
 5. Attach rollback transcript + digests to the incident / evidence bundle.
 
-## Automatic abort
+## Failure detection (not automatic rollback)
 
-Chart `rollout.maxUnavailable=0` and readiness probes abort progress when
-pods stay unready past `progressDeadlineSeconds` (Kubernetes marks the
-Deployment progress as failed). Operators then pin digests as above.
+Chart `rollout.maxUnavailable=0` and readiness probes can leave a Deployment
+stuck when pods stay unready past `progressDeadlineSeconds`. Kubernetes then
+records `ProgressDeadlineExceeded` on the Deployment condition — it does **not**
+abort or roll back the Deployment by itself. Operators must follow the digest
+pin procedure above (or rely on separate deployment automation that watches
+that condition and rolls back).

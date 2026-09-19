@@ -40,9 +40,22 @@ spec:
               containerPort: {{ .Values.service.worker.port }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
-              value: {{ .Values.deployDigest | quote }}
+              value: {{ include "ibex.imageDigest" .Values.images.worker | quote }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.enqueue.secretName | quote }}
+                  key: {{ .Values.worker.enqueue.redisUrlKey | quote }}
+            - name: IBEX_WORKER_ENQUEUE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.enqueue.secretName | quote }}
+                  key: {{ .Values.worker.enqueue.enqueueTokenKey | quote }}
+            - name: IBEX_WORKER_ENQUEUE_HOST
+              value: "0.0.0.0"
             - name: IBEX_WORKER_ENQUEUE_PORT
               value: {{ .Values.service.worker.port | quote }}
+          {{- if .Values.worker.enqueue.enabled }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}
@@ -60,6 +73,7 @@ spec:
             periodSeconds: {{ .Values.probes.periodSeconds }}
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
+          {{- end }}
           resources:
             {{- toYaml .Values.resources.worker | nindent 12 }}
 ---

@@ -1,5 +1,4 @@
 # Staging overrides — digests filled by CI after docker-publish.
-namespace: ibex-staging
 hpa:
   minReplicas: 2
   maxReplicas: 6

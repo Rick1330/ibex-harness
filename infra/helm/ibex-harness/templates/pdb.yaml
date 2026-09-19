@@ -4,7 +4,7 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ $name }}
+  name: {{ include "ibex.name" $ }}-{{ $name }}
   namespace: {{ $.Release.Namespace }}
 spec:
   minAvailable: {{ $.Values.pdb.minAvailable }}

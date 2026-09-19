@@ -17,14 +17,16 @@ spec:
         any:
           - resources:
               kinds: ["Pod"]
-              namespaces: ["ibex", "ibex-staging", "ibex-prod"]
       verifyImages:
         - imageReferences:
             - "ghcr.io/*/ibex-harness/*"
           attestors:
             - entries:
+                # Workflow-scoped to docker-publish.yml on main only.
+                # workflow_dispatch / workflow_call / workflow_run on main share
+                # this subject; tag refs are intentionally excluded.
                 - keyless:
-                    subject: "https://github.com/Rick1330/ibex-harness/*"
+                    subject: "https://github.com/Rick1330/ibex-harness/.github/workflows/docker-publish.yml@refs/heads/main"
                     issuer: "https://token.actions.githubusercontent.com"
                     rekor:
                       url: https://rekor.sigstore.dev

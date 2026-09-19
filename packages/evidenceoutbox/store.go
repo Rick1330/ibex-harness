@@ -433,7 +433,7 @@ func insertRun(ctx context.Context, tx *sql.Tx, in RunInput) (uuid.UUID, error) 
 	if status == "" {
 		status = "ok"
 	}
-	digest := nullEmpty(strings.TrimSpace(in.DeployImageDigest))
+	digest := deployImageDigestOrNull(in.DeployImageDigest)
 	_, err := tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_runs (
 	id, org_id, agent_id, session_id, request_id, trace_id, checkpoint_id, turn_id,
@@ -450,6 +450,32 @@ INSERT INTO ibex_core.evidence_runs (
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: insert run: %w", err)
 	}
 	return id, nil
+}
+
+// deployImageDigestOrNull trims whitespace, allows empty (pre-4.P.5), and
+// omits non-empty values that are not sha256:<64 lowercase hex>.
+func deployImageDigestOrNull(raw string) any {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return nil
+	}
+	const prefix = "sha256:"
+	if !strings.HasPrefix(s, prefix) {
+		return nil
+	}
+	hexPart := s[len(prefix):]
+	if len(hexPart) != 64 {
+		return nil
+	}
+	for i := 0; i < len(hexPart); i++ {
+		c := hexPart[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f':
+		default:
+			return nil
+		}
+	}
+	return s
 }
 
 func insertSpan(ctx context.Context, w *runWriter, sp SpanInput) error {
