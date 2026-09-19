@@ -55,6 +55,36 @@ def test_validate_query_ok_defaults() -> None:
     assert uq.validate_query(uuid4(), _body()) == uq._MAX_ROWS
 
 
+def test_require_org_id_rejects_none() -> None:
+    with pytest.raises(ApiError) as ei:
+        uq._require_org_id(None)  # type: ignore[arg-type]
+    assert "org_id" in ei.value.message.lower()
+
+
+def test_validated_limit_rejects_over_max() -> None:
+    start, end = _window()
+    body = UsageQueryRequest.model_construct(
+        shape="org_time_aggregate",
+        start=start,
+        end=end,
+        limit=uq._MAX_ROWS + 1,
+    )
+    with pytest.raises(ApiError) as ei:
+        uq._validated_limit(body)
+    assert "limit" in ei.value.message.lower()
+
+
+def test_redis_client_configures_timeouts() -> None:
+    with patch("redis.asyncio.Redis.from_url") as from_url:
+        from_url.return_value = MagicMock()
+        client = uq._redis_client("redis://localhost:6379/0")
+    assert client is from_url.return_value
+    kwargs = from_url.call_args.kwargs
+    assert kwargs["decode_responses"] is True
+    assert kwargs["socket_timeout"] == uq._REDIS_SOCKET_TIMEOUT_SECONDS
+    assert kwargs["socket_connect_timeout"] == uq._REDIS_SOCKET_TIMEOUT_SECONDS
+
+
 def test_derive_completeness() -> None:
     assert uq._derive_completeness([]) == "partial"
     assert uq._derive_completeness([{"completeness": "complete"}]) == "complete"
@@ -201,6 +231,15 @@ def test_bind_literals_always_scopes_org() -> None:
     sql = uq._bind_literals(uq._SQL_ORG_TIME, org, body, 10)
     assert f"toUUID('{org}')" in sql
     assert "WHERE org_id =" in sql or "org_id =" in sql
+
+
+@pytest.mark.asyncio
+async def test_acquire_inflight_ok() -> None:
+    client = _mock_redis_client(eval=AsyncMock(return_value=1))
+    with patch("app.services.usage_query._redis_client", return_value=client):
+        await uq._acquire_inflight("redis://localhost", uuid4())
+    client.eval.assert_awaited_once()
+    client.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -60,3 +60,23 @@ async def test_redis_budget_publisher_lazy_client(monkeypatch: Any) -> None:
     assert client.publish.await_count == 2
     await pub.aclose()
     client.aclose.assert_awaited_once()
+
+
+def test_redis_from_url_sets_socket_timeouts(monkeypatch: Any) -> None:
+    from app.budget_publish import _REDIS_SOCKET_TIMEOUT_SECONDS, _redis_from_url
+
+    captured: dict[str, Any] = {}
+
+    class _FakeRedis:
+        @classmethod
+        def from_url(cls, url: str, **kwargs: Any) -> str:
+            captured["url"] = url
+            captured.update(kwargs)
+            return "client"
+
+    monkeypatch.setattr("redis.asyncio.Redis", _FakeRedis)
+    assert _redis_from_url("redis://localhost:6379/0") == "client"
+    assert captured["url"] == "redis://localhost:6379/0"
+    assert captured["decode_responses"] is True
+    assert captured["socket_timeout"] == _REDIS_SOCKET_TIMEOUT_SECONDS
+    assert captured["socket_connect_timeout"] == _REDIS_SOCKET_TIMEOUT_SECONDS

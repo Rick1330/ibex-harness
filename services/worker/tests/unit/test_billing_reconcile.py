@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from redis.exceptions import RedisError
@@ -14,6 +15,7 @@ from app.tasks.billing_reconcile import (
     BudgetPeriodWindow,
     ClickHouseQueryError,
     HttpClickHouseQuerier,
+    SqlAlchemySpendStore,
     budget_spent_rollup,
     reconcile_usage_actuals,
     run_budget_spent_rollup,
@@ -486,3 +488,67 @@ def test_budget_spent_rollup_without_redis_uses_noop(monkeypatch: Any) -> None:
     out = budget_spent_rollup.run()
     assert out["status"] == "ok"
     assert out["periods_updated"] == 1
+
+
+def _patch_spend_store_engine(monkeypatch: Any) -> MagicMock:
+    engine = MagicMock()
+    engine.dispose = AsyncMock()
+    monkeypatch.setattr("app.tasks.billing_reconcile.create_engine", lambda _s: engine)
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.create_session_factory", lambda _e: MagicMock()
+    )
+    return engine
+
+
+def test_sqlalchemy_spend_store_init_falls_back_to_settings(monkeypatch: Any) -> None:
+    engine = _patch_spend_store_engine(monkeypatch)
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.get_settings",
+        lambda: SimpleNamespace(database_url="postgresql+asyncpg://from-settings/db"),
+    )
+    store = SqlAlchemySpendStore("")
+    assert store._engine is engine
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_spend_store_list_update_aclose(monkeypatch: Any) -> None:
+    engine = _patch_spend_store_engine(monkeypatch)
+    start = datetime(2026, 3, 1, tzinfo=UTC)
+    end = start + timedelta(days=30)
+    row = SimpleNamespace(
+        period_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        org_id="11111111-1111-1111-1111-111111111111",
+        period_start=start,
+        period_end=end,
+    )
+    session = MagicMock()
+    session.execute = AsyncMock(
+        side_effect=[
+            SimpleNamespace(fetchall=lambda: [row]),
+            MagicMock(),
+        ]
+    )
+    store = SqlAlchemySpendStore("postgresql+asyncpg://u:p@localhost/db")
+    with patch("app.tasks.billing_reconcile.session_as_service_account") as ctx:
+        ctx.return_value.__aenter__.return_value = session
+        ctx.return_value.__aexit__.return_value = None
+        periods = await store.list_active_periods()
+        assert periods == [
+            BudgetPeriodWindow(
+                period_id=row.period_id,
+                org_id=row.org_id,
+                period_start=start,
+                period_end=end,
+            )
+        ]
+        await store.update_period_spent(row.period_id, row.org_id, 2500)
+        update_params = session.execute.await_args_list[1].args[1]
+        assert update_params == {
+            "period_id": row.period_id,
+            "org_id": row.org_id,
+            "spent": 2500,
+        }
+        assert "budget_periods" in str(session.execute.await_args_list[0].args[0])
+        assert "spent_cents_cached" in str(session.execute.await_args_list[1].args[0])
+    await store.aclose()
+    engine.dispose.assert_awaited_once()

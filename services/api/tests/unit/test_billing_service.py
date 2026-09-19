@@ -66,6 +66,32 @@ async def test_list_rate_cards_maps_rows() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_rate_cards_invalid_cursor() -> None:
+    session = AsyncMock()
+    with pytest.raises(ApiError) as ei:
+        await svc.list_rate_cards(session, uuid4(), cursor="not-a-cursor")
+    assert ei.value.code == VALIDATION_ERROR
+    assert "cursor" in ei.value.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_rate_cards_paginates_with_next_cursor() -> None:
+    from app.pagination import encode_cursor
+
+    org_id = uuid4()
+    rows = [_card_ns(org_id=org_id, name=f"card-{i}") for i in range(3)]
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=SimpleNamespace(fetchall=lambda: rows))
+    cursor = encode_cursor({"name": "card-0"})
+    out = await svc.list_rate_cards(session, org_id, cursor=cursor, limit=2)
+    assert len(out.data) == 2
+    assert out.pagination.has_more is True
+    assert out.pagination.next_cursor is not None
+    bind = session.execute.await_args.args[1]
+    assert bind["cursor_name"] == "card-0"
+
+
+@pytest.mark.asyncio
 async def test_create_rate_card_publishes() -> None:
     org_id = uuid4()
     row = _card_ns(org_id=org_id)

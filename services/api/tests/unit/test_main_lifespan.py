@@ -103,3 +103,21 @@ def test_create_app_postgres_unreachable_not_ready() -> None:
             assert app.state.api.ready is False
             assert app.state.api.ready_error == "database not reachable"
             assert client.get("/ready").status_code == 503
+
+
+def test_wire_publishers_budget_redis_and_preset() -> None:
+    from app.budget_publish import NoopBudgetPublisher, RedisBudgetPublisher
+    from app.main import ApiAppState, _wire_publishers
+
+    with_redis = ApiAppState()
+    _wire_publishers(with_redis, Settings(redis_url="redis://localhost:6379/0"))
+    assert isinstance(with_redis.budget_publisher, RedisBudgetPublisher)
+
+    preset = NoopBudgetPublisher()
+    already = ApiAppState(budget_publisher=preset)
+    _wire_publishers(already, Settings(redis_url="redis://localhost:6379/0"))
+    assert already.budget_publisher is preset
+
+    no_redis = ApiAppState()
+    _wire_publishers(no_redis, Settings(redis_url=None))
+    assert isinstance(no_redis.budget_publisher, NoopBudgetPublisher)
