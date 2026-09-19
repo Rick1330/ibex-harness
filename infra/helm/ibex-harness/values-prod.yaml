@@ -1,7 +1,7 @@
 # Production overrides — require real digests and off-cluster S3.
-# Every images.* entry MUST override chart defaults so merged renders never
-# inherit sha256:000… stubs (see check-helm-digest-placeholders.sh).
-# Replace these CI stubs with docker-publish digests before any prod deploy.
+# Until CI injects real mixed-hex digests, `check-helm-digest-placeholders.sh`
+# MUST fail on this overlay (sentinel alphabet is intentional).
+# Do not deploy production with these stubs.
 images:
   proxy: "ghcr.io/rick1330/ibex-harness/proxy:main@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   auth: "ghcr.io/rick1330/ibex-harness/auth:main@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

@@ -7,6 +7,7 @@ restore → RLS isolation run against Postgres (not `ALLOW_NO_DB=1`).
 |---|---|
 | `restore-drill-report.json` | Machine-readable pass/fail + measured timings |
 | `transcript.txt` | Full stdout transcript of the drill |
+| `POST_PROCESS.md` | Documents absolute→relative transcript path + `evidence_note` (not silent) |
 
 ## How to reproduce
 

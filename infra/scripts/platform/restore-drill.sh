@@ -26,6 +26,12 @@ BANNER
 fi
 if [[ "${SKIP_COMPOSE:-0}" == "1" ]]; then
   echo "[drill] NOTE: SKIP_COMPOSE=1 — script did not start compose; POSTGRES_DSN/CONTAINER must already point at a dedicated data plane."
+  # Fail closed unless a target is explicit (do not fall through to the default DSN
+  # and mutate an unrelated Postgres). Smoke mode (ALLOW_NO_DB=1) may omit both.
+  if [[ "${ALLOW_NO_DB:-0}" != "1" && -z "${POSTGRES_CONTAINER:-}" && -z "${POSTGRES_DSN:-}" ]]; then
+    echo "[drill] ERROR: SKIP_COMPOSE=1 requires POSTGRES_CONTAINER or POSTGRES_DSN" >&2
+    exit 1
+  fi
 fi
 
 # Locked targets (decision 4) — do not invent different numbers.
@@ -198,16 +204,20 @@ if [[ "$PG_BACKUP_OK" == "true" ]]; then
 fi
 
 echo "[drill] inducing data loss (delete org B marker)"
-if ! psql_cmd -v ON_ERROR_STOP=1 -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid"; then
-  echo "[drill] ERROR: failed to induce data loss" >&2
-  exit 1
-fi
-# Confirm deletion before restore (superuser / bypass path).
-GONE="$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" 2>/dev/null || true)"
-echo "[drill] org_b rows after delete=$GONE"
-if [[ "$GONE" != "0" ]]; then
-  echo "[drill] ERROR: data-loss marker was not deleted" >&2
-  exit 1
+if [[ "${ALLOW_NO_DB:-0}" == "1" ]]; then
+  echo "[drill] SKIP destructive delete (ALLOW_NO_DB=1 smoke — NOT_EVIDENCE)"
+else
+  if ! psql_cmd -v ON_ERROR_STOP=1 -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid"; then
+    echo "[drill] ERROR: failed to induce data loss" >&2
+    exit 1
+  fi
+  # Confirm deletion before restore (superuser / bypass path).
+  GONE="$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" 2>/dev/null || true)"
+  echo "[drill] org_b rows after delete=$GONE"
+  if [[ "$GONE" != "0" ]]; then
+    echo "[drill] ERROR: data-loss marker was not deleted" >&2
+    exit 1
+  fi
 fi
 
 PG_RESTORE_START=$(date +%s)

@@ -1,6 +1,7 @@
 # Staging overrides — digests filled by CI after docker-publish.
-# Every images.* entry MUST override chart defaults so merged renders never
-# inherit sha256:000… stubs (see check-helm-digest-placeholders.sh).
+# Until CI injects real mixed-hex digests, `check-helm-digest-placeholders.sh`
+# MUST fail on this overlay (sentinel alphabet aaaa…/bbbb… is intentional).
+# Do not deploy staging with these stubs.
 images:
   proxy: "ghcr.io/rick1330/ibex-harness/proxy:main@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   auth: "ghcr.io/rick1330/ibex-harness/auth:main@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
