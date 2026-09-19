@@ -43,3 +43,19 @@ records `ProgressDeadlineExceeded` on the Deployment condition — it does **not
 abort or roll back the Deployment by itself. Operators must follow the digest
 pin procedure above (or rely on separate deployment automation that watches
 that condition and rolls back).
+
+## Backup schedule (operator / external)
+
+`infra/scripts/platform/pgbackrest-backup.sh` is **not** scheduled by an in-chart
+CronJob in 4.P.5. Operators must wire an external scheduler (platform CronJob,
+systemd timer, or cloud scheduler) that:
+
+1. Runs `pgbackrest-backup.sh full` (and incremental/WAL archive per site policy).
+2. Exposes `ibex_postgres_last_backup_unixtime` for
+   `infra/monitoring/prometheus/rules/ibex-platform-backup.yml`.
+
+Placeholder digests (`sha256:000…`) in `values.yaml` are local stubs only.
+Before staging/prod deploy, override every image with publish digests
+(`helm upgrade … --set-string images.*@sha256:…` or CI-filled values). Guard:
+`infra/scripts/platform/check-helm-digest-placeholders.sh` fails if
+`values-staging.yaml` / `values-prod.yaml` still contain `sha256:000…`.

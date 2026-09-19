@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Clean-environment restore drill: compose data plane + optional kind (4.P.5).
-# Measured RPO/RTO vs locked targets — reports honestly on miss.
+# Clean-environment restore drill: compose/podman data plane + optional kind (4.P.5).
+# Measured RPO/RTO vs locked targets — reports honestly on miss / non-PITR.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT"
@@ -8,11 +8,25 @@ REPORT_DIR="${RESTORE_DRILL_REPORT_DIR:-/var/lib/ibex/restore-drill}"
 mkdir -p "$REPORT_DIR"
 REPORT="$REPORT_DIR/restore-drill-report.json"
 TRANSCRIPT="$REPORT_DIR/transcript.txt"
+# Fresh transcript per run (do not append prior smoke runs into evidence).
+: >"$TRANSCRIPT"
 exec > >(tee -a "$TRANSCRIPT") 2>&1
 
 echo "=== IBEX 4.P.5 restore drill ==="
 echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "root=$ROOT"
+
+if [[ "${ALLOW_NO_DB:-0}" == "1" ]]; then
+  cat <<'BANNER'
+************************************************************************
+*** NOT_EVIDENCE: ALLOW_NO_DB=1 — local/CI smoke only.               ***
+*** Do NOT attach this report to Gate G5 / F4-011 / F4-032 PRs.      ***
+************************************************************************
+BANNER
+fi
+if [[ "${SKIP_COMPOSE:-0}" == "1" ]]; then
+  echo "[drill] NOTE: SKIP_COMPOSE=1 — script did not start compose; POSTGRES_DSN/CONTAINER must already point at a dedicated data plane."
+fi
 
 # Locked targets (decision 4) — do not invent different numbers.
 PG_RPO_SEC=$((5 * 60))
@@ -23,7 +37,21 @@ OBJ_RPO_SEC=$((24 * 3600))
 OBJ_RTO_SEC=$((60 * 60))
 
 COMPOSE_FILE="${COMPOSE_FILE:-infra/compose/dev/docker-compose.yml}"
-if [[ "${SKIP_COMPOSE:-0}" != "1" ]]; then
+PG_CONTAINER="${POSTGRES_CONTAINER:-}"
+PG_RUNTIME=""
+if [[ -n "$PG_CONTAINER" ]]; then
+  if command -v podman >/dev/null 2>&1 && podman inspect "$PG_CONTAINER" >/dev/null 2>&1; then
+    PG_RUNTIME=podman
+  elif command -v docker >/dev/null 2>&1 && docker inspect "$PG_CONTAINER" >/dev/null 2>&1; then
+    PG_RUNTIME=docker
+  else
+    echo "[drill] ERROR: POSTGRES_CONTAINER=$PG_CONTAINER not found via podman/docker" >&2
+    exit 1
+  fi
+  echo "[drill] using container runtime=$PG_RUNTIME name=$PG_CONTAINER"
+fi
+
+if [[ "${SKIP_COMPOSE:-0}" != "1" && -z "$PG_CONTAINER" ]]; then
   echo "[drill] bringing up compose data plane"
   docker compose -f "$COMPOSE_FILE" up -d postgres redis clickhouse minio 2>/dev/null \
     || docker compose -f "$COMPOSE_FILE" up -d || true
@@ -33,9 +61,15 @@ fi
 PGURL="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}"
 # Require a non-superuser RLS DSN for isolation proof (do not fall back to PGURL).
 PG_RLS_URL="${POSTGRES_RLS_DSN:-}"
+PG_USER="${POSTGRES_USER:-ibex}"
+PG_DB="${POSTGRES_DB:-ibex}"
+PG_RLS_USER="${POSTGRES_RLS_USER:-ibex_rls}"
+PG_RLS_PASSWORD="${POSTGRES_RLS_PASSWORD:-ibex_rls}"
 
 psql_cmd() {
-  if command -v psql >/dev/null 2>&1; then
+  if [[ -n "$PG_RUNTIME" ]]; then
+    "$PG_RUNTIME" exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" "$@"
+  elif command -v psql >/dev/null 2>&1; then
     psql "$PGURL" "$@"
   elif docker compose -f "$COMPOSE_FILE" ps postgres 2>/dev/null | grep -q Up; then
     docker compose -f "$COMPOSE_FILE" exec -T postgres \
@@ -46,19 +80,30 @@ psql_cmd() {
 }
 
 psql_rls() {
-  if [[ -z "$PG_RLS_URL" ]]; then
-    return 127
-  fi
-  if command -v psql >/dev/null 2>&1; then
-    psql "$PG_RLS_URL" "$@"
+  if [[ -n "$PG_RUNTIME" ]]; then
+    if [[ -z "$PG_RLS_URL" && -z "${POSTGRES_RLS_USER:-}" ]]; then
+      return 127
+    fi
+    "$PG_RUNTIME" exec -e "PGPASSWORD=$PG_RLS_PASSWORD" -i "$PG_CONTAINER" \
+      psql -U "$PG_RLS_USER" -d "$PG_DB" "$@"
   else
-    return 127
+    if [[ -z "$PG_RLS_URL" ]]; then
+      return 127
+    fi
+    if command -v psql >/dev/null 2>&1; then
+      psql "$PG_RLS_URL" "$@"
+    else
+      return 127
+    fi
   fi
 }
 
 pg_dump_cmd() {
   local out="$1"
-  if command -v pg_dump >/dev/null 2>&1; then
+  if [[ -n "$PG_RUNTIME" ]]; then
+    "$PG_RUNTIME" exec -i "$PG_CONTAINER" \
+      pg_dump -U "$PG_USER" -d "$PG_DB" -Fc >"$out"
+  elif command -v pg_dump >/dev/null 2>&1; then
     pg_dump "$PGURL" -Fc -f "$out"
   elif docker compose -f "$COMPOSE_FILE" ps postgres 2>/dev/null | grep -q Up; then
     docker compose -f "$COMPOSE_FILE" exec -T postgres \
@@ -70,7 +115,10 @@ pg_dump_cmd() {
 
 pg_restore_cmd() {
   local dump="$1"
-  if command -v pg_restore >/dev/null 2>&1; then
+  if [[ -n "$PG_RUNTIME" ]]; then
+    "$PG_RUNTIME" exec -i "$PG_CONTAINER" \
+      pg_restore --clean --if-exists -U "$PG_USER" -d "$PG_DB" <"$dump"
+  elif command -v pg_restore >/dev/null 2>&1; then
     pg_restore --clean --if-exists -d "$PGURL" "$dump"
   elif docker compose -f "$COMPOSE_FILE" ps postgres 2>/dev/null | grep -q Up; then
     docker compose -f "$COMPOSE_FILE" exec -T postgres \
@@ -81,19 +129,39 @@ pg_restore_cmd() {
   fi
 }
 
+# Floor sub-second successful timings to 1s so measured fields are non-zero.
+floor_sec() {
+  local v="$1"
+  if [[ -z "$v" ]]; then
+    echo ""
+    return
+  fi
+  if [[ "$v" -le 0 ]]; then
+    echo 1
+  else
+    echo "$v"
+  fi
+}
+
 # Per-run fixture UUIDs — never reuse fixed tenant IDs that could collide with real data.
 ORG_A="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 ORG_B="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 ORG_A_SLUG="drill-a-${ORG_A%%-*}"
 ORG_B_SLUG="drill-b-${ORG_B%%-*}"
 echo "[drill] seeding org markers org_a=$ORG_A org_b=$ORG_B"
-psql_cmd -v ON_ERROR_STOP=1 <<SQL || true
+if ! psql_cmd -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO ibex_core.organizations (id, name, slug, status)
 VALUES
   ('$ORG_A'::uuid, 'Drill Org A', '$ORG_A_SLUG', 'active'),
   ('$ORG_B'::uuid, 'Drill Org B', '$ORG_B_SLUG', 'active')
 ON CONFLICT (id) DO NOTHING;
 SQL
+then
+  echo "[drill] ERROR: seed insert failed — is the schema migrated?"
+  if [[ "${ALLOW_NO_DB:-0}" != "1" ]]; then
+    exit 1
+  fi
+fi
 
 PG_BACKUP_OK=false
 PG_RESTORE_OK=false
@@ -120,11 +188,14 @@ else
 fi
 PG_BACKUP_END=$(date +%s)
 if [[ "$PG_BACKUP_OK" == "true" ]]; then
-  PG_BACKUP_SEC=$((PG_BACKUP_END - PG_BACKUP_START))
+  PG_BACKUP_SEC="$(floor_sec $((PG_BACKUP_END - PG_BACKUP_START)))"
 fi
 
 echo "[drill] inducing data loss (delete org B marker)"
 psql_cmd -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" || true
+# Confirm deletion before restore (superuser / bypass path).
+GONE="$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" 2>/dev/null || echo err)"
+echo "[drill] org_b rows after delete=$GONE"
 
 PG_RESTORE_START=$(date +%s)
 PG_USED_PGBACKREST=false
@@ -170,47 +241,40 @@ fi
 
 PG_RESTORE_END=$(date +%s)
 if [[ "$PG_RESTORE_OK" == "true" ]]; then
-  PG_RTO_MEASURED=$((PG_RESTORE_END - PG_RESTORE_START))
+  PG_RTO_MEASURED="$(floor_sec $((PG_RESTORE_END - PG_RESTORE_START)))"
 fi
-# RPO is only meaningful after a successful backup AND successful recovery.
+# RPO wall-clock is only meaningful after a successful backup AND successful recovery.
 if [[ "$PG_BACKUP_OK" == "true" && "$PG_RESTORE_OK" == "true" && -n "$PG_BACKUP_SEC" ]]; then
   PG_RPO_MEASURED=$PG_BACKUP_SEC
 fi
 
-# Tenant isolation under RLS: requires POSTGRES_RLS_DSN (non-superuser).
+# Tenant isolation under RLS: requires POSTGRES_RLS_DSN or container RLS user.
 ISO_OK=false
-if [[ -z "$PG_RLS_URL" ]]; then
+if [[ -z "$PG_RLS_URL" && -z "$PG_RUNTIME" ]]; then
   echo "[drill] POSTGRES_RLS_DSN unset — tenant isolation unproven (do not use superuser PGURL)"
-else
-  ISO_A_OWN="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
+elif [[ -n "$PG_RUNTIME" ]] || [[ -n "$PG_RLS_URL" ]]; then
+  # Mark RLS intent for container path even when DSN string unused.
+  if [[ -z "$PG_RLS_URL" && -n "$PG_RUNTIME" ]]; then
+    PG_RLS_URL="container://${PG_RLS_USER}@${PG_CONTAINER}/${PG_DB}"
+  fi
+  # Multi-statement -Atc prints SET/COMMIT lines; keep only integer COUNT rows.
+  rls_count() {
+    local org_guc="$1" target_id="$2"
+    psql_rls -v ON_ERROR_STOP=1 -Atc "
 BEGIN;
 SET LOCAL ROLE ibex_app;
-SELECT set_config('app.current_org_id', '$ORG_A', true);
-SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_A'::uuid;
+SELECT set_config('app.current_org_id', '$org_guc', true);
+SELECT COUNT(*)::text FROM ibex_core.organizations WHERE id='$target_id'::uuid;
 COMMIT;
-" 2>/dev/null | tail -n1 || true)"
-  ISO_A_CROSS="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
-BEGIN;
-SET LOCAL ROLE ibex_app;
-SELECT set_config('app.current_org_id', '$ORG_A', true);
-SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid;
-COMMIT;
-" 2>/dev/null | tail -n1 || true)"
-  ISO_B_OWN="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
-BEGIN;
-SET LOCAL ROLE ibex_app;
-SELECT set_config('app.current_org_id', '$ORG_B', true);
-SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid;
-COMMIT;
-" 2>/dev/null | tail -n1 || true)"
-  ISO_B_CROSS="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
-BEGIN;
-SET LOCAL ROLE ibex_app;
-SELECT set_config('app.current_org_id', '$ORG_B', true);
-SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_A'::uuid;
-COMMIT;
-" 2>/dev/null | tail -n1 || true)"
-  if [[ "$ISO_A_OWN" == "1" && "$ISO_B_OWN" == "1" && "$ISO_A_CROSS" == "0" && "$ISO_B_CROSS" == "0" ]]; then
+" 2>/dev/null | grep -E '^[0-9]+$' | tail -n1 || true
+  }
+  ISO_A_OWN="$(rls_count "$ORG_A" "$ORG_A")"
+  ISO_A_CROSS="$(rls_count "$ORG_A" "$ORG_B")"
+  ISO_B_OWN="$(rls_count "$ORG_B" "$ORG_B")"
+  ISO_B_CROSS="$(rls_count "$ORG_B" "$ORG_A")"
+  RESTORED_B="$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" 2>/dev/null || true)"
+  echo "[drill] post-restore org_b rows (superuser)=$RESTORED_B"
+  if [[ "$RESTORED_B" == "1" && "$ISO_A_OWN" == "1" && "$ISO_B_OWN" == "1" && "$ISO_A_CROSS" == "0" && "$ISO_B_CROSS" == "0" ]]; then
     ISO_OK=true
   fi
   echo "[drill] tenant isolation A_own=$ISO_A_OWN A_cross=$ISO_A_CROSS B_own=$ISO_B_OWN B_cross=$ISO_B_CROSS ok=$ISO_OK"
@@ -247,6 +311,8 @@ if [[ "${RUN_KIND:-0}" == "1" ]] && command -v kind >/dev/null 2>&1; then
     kubectl apply -f infra/helm/ibex-harness/policies/verify-images.yaml && KYVERNO_OK=true \
       || echo "[drill] WARN Kyverno policy apply failed (install Kyverno first; residual #869)"
   fi
+else
+  echo "[drill] Kyverno cluster admit deferred to #869 (RUN_KIND!=1 or kind unavailable)"
 fi
 
 PG_MECHANISM="unmeasured"
@@ -262,95 +328,8 @@ export REPORT PG_RPO_SEC PG_RTO_SEC PG_RPO_MEASURED PG_RTO_MEASURED
 export CH_RPO_SEC CH_RTO_SEC CH_RPO_MEASURED CH_RTO_MEASURED CH_REACHABLE
 export OBJ_RPO_SEC OBJ_RTO_SEC OBJ_RPO_MEASURED OBJ_RTO_MEASURED
 export OUTBOX_SEQ OUTBOX_PENDING ISO_OK KIND_OK KYVERNO_OK TRANSCRIPT PG_MECHANISM
-export PG_BACKUP_OK PG_RESTORE_OK
-python3 <<'PY'
-import json, os
-from pathlib import Path
-
-def parse_int_or_none(raw: str):
-    raw = (raw or "").strip()
-    if raw == "":
-        return None
-    return int(raw)
-
-def le_pass(measured, target):
-    if measured is None:
-        return False
-    return measured <= target
-
-mechanism = os.environ.get("PG_MECHANISM", "unmeasured")
-pg_rpo = parse_int_or_none(os.environ.get("PG_RPO_MEASURED", ""))
-pg_rto = parse_int_or_none(os.environ.get("PG_RTO_MEASURED", ""))
-ch_rpo = parse_int_or_none(os.environ.get("CH_RPO_MEASURED", ""))
-ch_rto = parse_int_or_none(os.environ.get("CH_RTO_MEASURED", ""))
-obj_rpo = parse_int_or_none(os.environ.get("OBJ_RPO_MEASURED", ""))
-obj_rto = parse_int_or_none(os.environ.get("OBJ_RTO_MEASURED", ""))
-backup_ok = os.environ.get("PG_BACKUP_OK") == "true"
-restore_ok = os.environ.get("PG_RESTORE_OK") == "true"
-
-report = {
-  "milestone": "4.P.5",
-  "transcript": os.environ.get("TRANSCRIPT"),
-  "postgres": {
-    "rpo_target_sec": int(os.environ["PG_RPO_SEC"]),
-    "rto_target_sec": int(os.environ["PG_RTO_SEC"]),
-    "rpo_measured_sec": pg_rpo,
-    "rto_measured_sec": pg_rto,
-    "backup_ok": backup_ok,
-    "restore_ok": restore_ok,
-    "rpo_pass": backup_ok and restore_ok and le_pass(pg_rpo, int(os.environ["PG_RPO_SEC"])),
-    "rto_pass": restore_ok and le_pass(pg_rto, int(os.environ["PG_RTO_SEC"])),
-    "mechanism": mechanism,
-    "note": (
-      "pg_dump fallback is not PITR; RPO measured as backup wall-clock only. "
-      "Real ≤5m RPO requires pgBackRest+WAL (#869)."
-      if mechanism == "pg_dump_fallback"
-      else ("pgBackRest+WAL path" if mechanism == "pgbackrest_wal" else "backup/restore not completed")
-    ),
-  },
-  "clickhouse": {
-    "rpo_target_sec": int(os.environ["CH_RPO_SEC"]),
-    "rto_target_sec": int(os.environ["CH_RTO_SEC"]),
-    "rpo_measured_sec": ch_rpo,
-    "rto_measured_sec": ch_rto,
-    "reachable": os.environ.get("CH_REACHABLE") == "true",
-    "note": "reachability timing only when measured; unmeasured fields are null",
-  },
-  "redis": {
-    "backup": False,
-    "note": "intentional — cache/ephemeral (locked decision)",
-  },
-  "object_minio": {
-    "rpo_target_sec": int(os.environ["OBJ_RPO_SEC"]),
-    "rto_target_sec": int(os.environ["OBJ_RTO_SEC"]),
-    "rpo_measured_sec": obj_rpo,
-    "rto_measured_sec": obj_rto,
-  },
-  "outbox": {
-    "rpo_target": 0,
-    "max_aggregate_seq": parse_int_or_none(os.environ.get("OUTBOX_SEQ", "")),
-    "pending": parse_int_or_none(os.environ.get("OUTBOX_PENDING", "")),
-    "rpo_pass": True,
-  },
-  "tenant_isolation_post_restore": os.environ.get("ISO_OK") == "true",
-  "helm_lint_template": os.environ.get("KIND_OK") == "true",
-  "kyverno_policy_applied": os.environ.get("KYVERNO_OK") == "true",
-}
-Path(os.environ["REPORT"]).write_text(json.dumps(report, indent=2) + "\n")
-print(json.dumps(report, indent=2))
-allow_no_db = os.environ.get("ALLOW_NO_DB") == "1"
-if not report["tenant_isolation_post_restore"]:
-    if allow_no_db:
-        print("WARNING: tenant isolation not proven (ALLOW_NO_DB=1; no Postgres)", flush=True)
-        report["residual"] = "tenant_isolation_unproven_no_postgres"
-        Path(os.environ["REPORT"]).write_text(json.dumps(report, indent=2) + "\n")
-    else:
-        raise SystemExit("tenant isolation check failed")
-if report["postgres"]["rpo_measured_sec"] is not None and not report["postgres"]["rpo_pass"]:
-    print("WARNING: postgres RPO miss vs targets — investigate residual", flush=True)
-if report["postgres"]["rto_measured_sec"] is not None and not report["postgres"]["rto_pass"]:
-    print("WARNING: postgres RTO miss vs targets — investigate residual", flush=True)
-PY
+export PG_BACKUP_OK PG_RESTORE_OK ALLOW_NO_DB
+python3 "$ROOT/infra/scripts/platform/restore_drill_report.py"
 
 echo "report=$REPORT"
 echo "ended_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"

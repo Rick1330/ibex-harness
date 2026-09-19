@@ -1,0 +1,48 @@
+{
+  "milestone": "4.P.5",
+  "transcript": "infra/scripts/platform/evidence/4p5-restore-drill/transcript.txt",
+  "evidence_eligible": true,
+  "allow_no_db": false,
+  "postgres": {
+    "rpo_target_sec": 300,
+    "rto_target_sec": 1800,
+    "rpo_measured_sec": 1,
+    "rto_measured_sec": 1,
+    "backup_ok": true,
+    "restore_ok": true,
+    "rpo_pass": false,
+    "rto_pass": true,
+    "mechanism": "pg_dump_fallback",
+    "note": "pg_dump fallback is not PITR; wall-clock backup duration is recorded but rpo_pass stays false. Real \u22645m RPO requires pgBackRest+WAL (#869)."
+  },
+  "clickhouse": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null,
+    "reachable": false,
+    "note": "reachability timing only when measured; unmeasured fields are null"
+  },
+  "redis": {
+    "backup": false,
+    "note": "intentional \u2014 cache/ephemeral (locked decision)"
+  },
+  "object_minio": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null
+  },
+  "outbox": {
+    "rpo_target": 0,
+    "max_aggregate_seq": 0,
+    "pending": 0,
+    "rpo_pass": true
+  },
+  "tenant_isolation_post_restore": true,
+  "helm_lint_template": true,
+  "kyverno_policy_applied": false,
+  "kyverno_residual": "#869",
+  "postgres_rpo_residual": "not_pitr_pg_dump_fallback_#869",
+  "evidence_note": "Produced 2026-09-19 against podman container ibex-test-pg database ibex_drill with non-superuser role ibex_rls (SET LOCAL ROLE ibex_app). Mechanism pg_dump_fallback: rpo_pass intentionally false (#869 PITR). Kyverno cluster admit deferred (#869)."
+}

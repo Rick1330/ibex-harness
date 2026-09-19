@@ -15,12 +15,12 @@ fullTitle: "Milestone 4.P.5 — Production Platform, Recovery & Supply Chain"
 
 # Milestone 4.P.5 — Production Platform, Recovery & Supply Chain
 
-**Status:** In progress (Helm overlays + restore drill + supply-chain admission on PR tip)  
+**Status:** In progress (Helm + compose restore-drill evidence on tip; staging Kyverno/PITR soak open)  
 **Outcome:** The operator system is deployable, recoverable, observable, and promotable with measured RPO/RTO and supply-chain verification.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
 **Dependencies:** 4.P.0; 4.P.2 (outbox/data plane awareness)  
 **Estimated effort:** 3 weeks  
-**Gate:** G5 platform
+**Gate:** G5 platform (Partial — see exit checklist residuals #869)
 
 <Callout type="note" title="Completion contract">
   Architecture prose is not a deployment. Executable overlays and a clean-environment restore drill are required (F4-011, F4-032).
@@ -58,11 +58,12 @@ Overview surfaces platform health/freshness inputs consumed by 4.D.1.
 
 ## Non-functional requirements
 
-Load and chaos: peak+headroom, Redis/ClickHouse/Postgres degradation, provider failure, slow consumers, queue saturation, rollback. SLOs: latency percentiles, availability, error rate, throughput, queue lag, cost budgets.
+SLOs: latency percentiles, availability, error rate, throughput, queue lag, cost budgets.  
+**Load/chaos execution is out of scope for 4.P.5** — peak+headroom, Redis/ClickHouse/Postgres degradation, provider failure, slow consumers, queue saturation, and rollback chaos scenarios are executed and evidenced under **4.E.2** (reliability/resilience gate), not claimed as verified by this milestone.
 
 ## Verification gates
 
-Clean-environment restore meets RPO/RTO and preserves tenant isolation. Admission rejects unsigned/wrong-digest images in staging.
+Clean-environment restore preserves tenant isolation under RLS (compose/podman evidence attached). Postgres ≤5m RPO via pgBackRest+WAL and staging Kyverno unsigned-image rejection remain **#869**. Chaos/load gates: **4.E.2**.
 
 ## Rollout and rollback
 
@@ -81,10 +82,11 @@ Further audit context (provenance only — roadmap and engineering pages are aut
 ## Exit checklist
 
 - [x] Overlays committed and documented (`infra/helm/ibex-harness/`).
-- [x] Restore drill script + report path (`infra/scripts/platform/restore-drill.sh`; transcript attached to PR).
-- [x] Supply-chain/admission evidence (Cosign image digests incl. worker + Kyverno `policies/verify-images.yaml`).
+- [x] Restore drill script + **real** transcript/report attached (`infra/scripts/platform/evidence/4p5-restore-drill/`; `tenant_isolation_post_restore: true`; `ALLOW_NO_DB` not used).
+- [x] Supply-chain **CI** evidence (Cosign image digests incl. worker + Kyverno `policies/verify-images.yaml` Enforce text). Cluster admit soak: [#869](https://github.com/Rick1330/ibex-harness/issues/869).
 - [x] Probe/drain/rollback runbook linked (`RUNBOOK-4p5-rollback-by-digest.md`).
 - [x] Worker soft/hard time limits (rollup 60/120; reconcile/maintenance 300/600) + breach tests.
 - [x] `GET /v1/operator/platform/health` (session-gated) + `evidence_runs.deploy_image_digest` wired from `IBEX_DEPLOY_IMAGE_DIGEST`.
+- [x] Restore-drill tenant-isolation proven on live Postgres under non-superuser RLS ([#867](https://github.com/Rick1330/ibex-harness/issues/867) — closed by evidence artifact).
 - [ ] Production staging cluster soak with live Kyverno admit + real pgBackRest PITR ([#869](https://github.com/Rick1330/ibex-harness/issues/869)).
-- [ ] Restore-drill tenant-isolation proven on a host with live Postgres ([#867](https://github.com/Rick1330/ibex-harness/issues/867)).
+- [ ] Chaos/load verification gates ([4.E.2](/roadmap/phase-4-multi-provider/milestones/4.e.2-reliability-resilience-recovery-gate)).

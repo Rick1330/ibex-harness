@@ -80,6 +80,8 @@ resources:
     limits: { memory: 256Mi, ephemeral-storage: 512Mi }
 
 # ADR-0022: /health = liveness, /ready = readiness (critical deps).
+# startupProbe uses the same /ready path with a longer failure budget so slow
+# cold starts do not trip liveness before dependencies are up.
 probes:
   livenessPath: /health
   readinessPath: /ready
@@ -87,6 +89,8 @@ probes:
   periodSeconds: 10
   timeoutSeconds: 2
   failureThreshold: 3
+  startupPeriodSeconds: 5
+  startupFailureThreshold: 30
 
 service:
   proxy: { port: 8080 }

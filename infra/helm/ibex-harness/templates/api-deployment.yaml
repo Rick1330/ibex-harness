@@ -44,6 +44,13 @@ spec:
                   key: {{ .Values.secrets.postgres.dsnKey | quote }}
             - name: IBEX_AUTH_GRPC_ADDR
               value: "auth:{{ .Values.service.auth.grpc }}"
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.readinessPath }}
+              port: http
+            periodSeconds: {{ .Values.probes.startupPeriodSeconds }}
+            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.startupFailureThreshold }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}

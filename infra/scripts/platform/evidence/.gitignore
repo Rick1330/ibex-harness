@@ -1,0 +1,4 @@
+# Ignore binary dumps / rendered manifests under evidence trees
+**/pg/
+**/*.dump
+**/ibex-render.yaml
