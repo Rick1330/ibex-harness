@@ -20,7 +20,6 @@ from app.tasks.billing_reconcile import (
 )
 
 
-
 def _one_period() -> BudgetPeriodWindow:
     return BudgetPeriodWindow(
         period_id="cccccccc-cccc-cccc-cccc-cccccccccccc",

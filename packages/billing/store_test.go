@@ -114,15 +114,88 @@ func assertHappySnapshot(t *testing.T, snap BudgetSnapshot, periodID uuid.UUID) 
 	}
 }
 
+func expectNoActiveBudget(mock sqlmock.Sqlmock, org uuid.UUID) {
+	mock.ExpectQuery(`budget_periods`).
+		WithArgs(org, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+}
+
+func expectRateCardPrices(mock sqlmock.Sqlmock, org uuid.UUID, prices any) {
+	q := mock.ExpectQuery(`rate_cards`).WithArgs(org)
+	if prices == nil {
+		q.WillReturnError(sql.ErrNoRows)
+		return
+	}
+	q.WillReturnRows(sqlmock.NewRows([]string{"version", "prices"}).AddRow(int64(2), prices))
+}
+
+func runNoHardCapVariant(t *testing.T, prices any, wantVer string) {
+	t.Helper()
+	store, mock := newMockStore(t)
+	org := uuid.New()
+	expectOrgTxBegin(mock)
+	expectNoActiveBudget(mock, org)
+	expectRateCardPrices(mock, org, prices)
+	mock.ExpectCommit()
+	snap, err := store.LoadOrg(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.HasHardCap {
+		t.Fatal("expected no hard cap")
+	}
+	if snap.PublishedCard.Version != wantVer || len(snap.PublishedCard.Prices) != 0 {
+		t.Fatalf("card=%+v", snap.PublishedCard)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadOrg_NoHardCapVariants(t *testing.T) {
 	t.Parallel()
+	t.Run("no card row", func(t *testing.T) {
+		t.Parallel()
+		runNoHardCapVariant(t, nil, "")
+	})
+	t.Run("empty prices json", func(t *testing.T) {
+		t.Parallel()
+		runNoHardCapVariant(t, []byte(`[]`), "2")
+	})
+}
+
+func TestLoadOrg_RollbackFailures(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
-		name    string
-		prices  any // nil => ErrNoRows on rate_cards; []byte => row
-		wantVer string
+		name  string
+		setup func(sqlmock.Sqlmock, uuid.UUID)
 	}{
-		{name: "no card row", prices: nil, wantVer: ""},
-		{name: "empty prices json", prices: []byte(`[]`), wantVer: "2"},
+		{
+			name: "bad prices json",
+			setup: func(mock sqlmock.Sqlmock, org uuid.UUID) {
+				expectNoActiveBudget(mock, org)
+				mock.ExpectQuery(`rate_cards`).
+					WithArgs(org).
+					WillReturnRows(sqlmock.NewRows([]string{"version", "prices"}).AddRow(int64(1), []byte(`{not-json`)))
+			},
+		},
+		{
+			name: "budget query",
+			setup: func(mock sqlmock.Sqlmock, org uuid.UUID) {
+				mock.ExpectQuery(`budget_periods`).
+					WithArgs(org, sqlmock.AnyArg()).
+					WillReturnError(sql.ErrConnDone)
+			},
+		},
+		{
+			name: "rate card query",
+			setup: func(mock sqlmock.Sqlmock, org uuid.UUID) {
+				expectNoActiveBudget(mock, org)
+				mock.ExpectQuery(`rate_cards`).
+					WithArgs(org).
+					WillReturnError(sql.ErrConnDone)
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,55 +203,16 @@ func TestLoadOrg_NoHardCapVariants(t *testing.T) {
 			store, mock := newMockStore(t)
 			org := uuid.New()
 			expectOrgTxBegin(mock)
-			mock.ExpectQuery(`budget_periods`).
-				WithArgs(org, sqlmock.AnyArg()).
-				WillReturnError(sql.ErrNoRows)
-			if tc.prices == nil {
-				mock.ExpectQuery(`rate_cards`).
-					WithArgs(org).
-					WillReturnError(sql.ErrNoRows)
-			} else {
-				mock.ExpectQuery(`rate_cards`).
-					WithArgs(org).
-					WillReturnRows(sqlmock.NewRows([]string{"version", "prices"}).AddRow(int64(2), tc.prices))
-			}
-			mock.ExpectCommit()
-			snap, err := store.LoadOrg(context.Background(), org)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if snap.HasHardCap {
-				t.Fatal("expected no hard cap")
-			}
-			if snap.PublishedCard.Version != tc.wantVer || len(snap.PublishedCard.Prices) != 0 {
-				t.Fatalf("card=%+v", snap.PublishedCard)
+			tc.setup(mock, org)
+			mock.ExpectRollback()
+			_, err := store.LoadOrg(context.Background(), org)
+			if err == nil {
+				t.Fatal("expected error")
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
 			}
 		})
-	}
-}
-
-func TestLoadOrg_BadPricesJSON(t *testing.T) {
-	t.Parallel()
-	store, mock := newMockStore(t)
-	org := uuid.New()
-	expectOrgTxBegin(mock)
-	mock.ExpectQuery(`budget_periods`).
-		WithArgs(org, sqlmock.AnyArg()).
-		WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery(`rate_cards`).
-		WithArgs(org).
-		WillReturnRows(sqlmock.NewRows([]string{"version", "prices"}).AddRow(int64(1), []byte(`{not-json`)))
-	mock.ExpectRollback()
-
-	_, err := store.LoadOrg(context.Background(), org)
-	if err == nil {
-		t.Fatal("expected decode prices error")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -210,24 +244,6 @@ func TestLoadOrg_SetConfigError(t *testing.T) {
 	}
 }
 
-func TestLoadOrg_BudgetQueryError(t *testing.T) {
-	t.Parallel()
-	store, mock := newMockStore(t)
-	org := uuid.New()
-	expectOrgTxBegin(mock)
-	mock.ExpectQuery(`budget_periods`).
-		WithArgs(org, sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-	mock.ExpectRollback()
-	_, err := store.LoadOrg(context.Background(), org)
-	if err == nil {
-		t.Fatal("expected budget query error")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestLoadOrg_CommitError(t *testing.T) {
 	t.Parallel()
 	store, mock := newMockStore(t)
@@ -247,27 +263,6 @@ func TestLoadOrg_CommitError(t *testing.T) {
 	_, err := store.LoadOrg(context.Background(), org)
 	if err == nil {
 		t.Fatal("expected commit error")
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestLoadOrg_RateCardQueryError(t *testing.T) {
-	t.Parallel()
-	store, mock := newMockStore(t)
-	org := uuid.New()
-	expectOrgTxBegin(mock)
-	mock.ExpectQuery(`budget_periods`).
-		WithArgs(org, sqlmock.AnyArg()).
-		WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery(`rate_cards`).
-		WithArgs(org).
-		WillReturnError(sql.ErrConnDone)
-	mock.ExpectRollback()
-	_, err := store.LoadOrg(context.Background(), org)
-	if err == nil {
-		t.Fatal("expected rate card query error")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
