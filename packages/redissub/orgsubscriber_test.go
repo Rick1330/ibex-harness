@@ -275,3 +275,28 @@ func waitPubSubPatterns(t *testing.T, client redis.UniversalClient) {
 	}
 	t.Fatal("pubsub pattern not registered within 2s")
 }
+
+func TestUnit_OrgSubscriber_invalidEventOrgUUID(t *testing.T) {
+	t.Parallel()
+	channelOrg := uuid.New()
+	runIgnoreThenSentinel(t, ignoreThenSentinelCase{
+		badChannelOrg: channelOrg,
+		badPayload:    `{"v":1,"org_id":"not-a-uuid","epoch":1}`,
+	})
+}
+
+func TestUnit_OrgSubscriber_badChannelFormat(t *testing.T) {
+	t.Parallel()
+	rec := &recordingInvalidator{seen: make(chan uuid.UUID, 4)}
+	client := newMiniRedis(t)
+	startOrgSubscriber(t, client, rec, parseOrgID)
+	waitPubSubPatterns(t, client)
+
+	// Publish on a channel that does not match prefix+uuid; subscriber still receives via pattern.
+	mustPublish(t, client, "ibex:test:invalidate:not-uuid", `{"v":1,"org_id":"`+uuid.New().String()+`","epoch":1}`)
+
+	sentinel := uuid.New()
+	mustPublish(t, client, "ibex:test:invalidate:"+sentinel.String(),
+		`{"v":1,"org_id":"`+sentinel.String()+`","epoch":1}`)
+	waitInvalidated(t, rec, sentinel)
+}

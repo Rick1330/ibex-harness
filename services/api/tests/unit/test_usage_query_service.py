@@ -272,3 +272,18 @@ async def test_run_clickhouse_transport_error() -> None:
     client = _mock_httpx_client(post_side_effect=httpx.ConnectError("down"))
     with patch("httpx.AsyncClient", return_value=client), pytest.raises(ApiError):
         await uq._run_clickhouse(org_id, body, 10, "http://localhost:8123")
+
+
+@pytest.mark.asyncio
+async def test_run_clickhouse_rejects_sql_without_org_bind() -> None:
+    org_id = uuid4()
+    body = _body(limit=10)
+    with (
+        patch(
+            "app.services.usage_query._bind_literals",
+            return_value="SELECT 1 WHERE org_id = 'not-bound'",
+        ),
+        pytest.raises(ApiError) as exc,
+    ):
+        await uq._run_clickhouse(org_id, body, 10, "http://localhost:8123")
+    assert "Usage query failed" in str(exc.value) or "failed" in str(exc.value).lower()

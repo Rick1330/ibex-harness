@@ -164,3 +164,17 @@ func TestMatchPrice_SkipsInvalidOrEmptyGlob(t *testing.T) {
 		t.Fatalf("matched wrong row: %+v", row)
 	}
 }
+
+func TestCeilMulDiv1k_NearOverflowCeiling(t *testing.T) {
+	t.Parallel()
+	// tokens*cents fits multiply but (prod+999) would overflow without guard.
+	tokens := int64(math.MaxInt64 / 1000)
+	_, err := ceilMulDiv1k(tokens, 1000)
+	if err == nil {
+		// Exact MaxInt64/1000 * 1000 may or may not hit the +999 guard; force the branch.
+		_, err = ceilMulDiv1k(tokens, 1001)
+	}
+	if err == nil || !strings.Contains(err.Error(), "overflow") {
+		t.Fatalf("got %v", err)
+	}
+}
