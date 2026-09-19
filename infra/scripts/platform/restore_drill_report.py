@@ -146,29 +146,38 @@ def build_report(env: dict[str, str] | None = None) -> dict[str, Any]:
     return report
 
 
-def _emit_warnings(report: dict[str, Any], *, allow_no_db: bool, path: Path) -> None:
-    if not report["tenant_isolation_post_restore"]:
-        if allow_no_db:
-            print(
-                "WARNING: tenant isolation not proven (ALLOW_NO_DB=1; no Postgres)",
-                flush=True,
-            )
-            report["residual"] = "tenant_isolation_unproven_no_postgres"
-            path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-            return
-        raise SystemExit("tenant isolation check failed")
-    if report["postgres"]["rpo_measured_sec"] is not None and not report["postgres"]["rpo_pass"]:
+def _require_tenant_isolation(report: dict[str, Any], *, allow_no_db: bool, path: Path) -> None:
+    if report["tenant_isolation_post_restore"]:
+        return
+    if allow_no_db:
         print(
+            "WARNING: tenant isolation not proven (ALLOW_NO_DB=1; no Postgres)",
+            flush=True,
+        )
+        report["residual"] = "tenant_isolation_unproven_no_postgres"
+        path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        return
+    raise SystemExit("tenant isolation check failed")
+
+
+def _warn_if_false(ok: bool, message: str) -> None:
+    if not ok:
+        print(message, flush=True)
+
+
+def _emit_metric_warnings(report: dict[str, Any]) -> None:
+    pg = report["postgres"]
+    if pg["rpo_measured_sec"] is not None:
+        _warn_if_false(
+            pg["rpo_pass"],
             "WARNING: postgres RPO not claimed (mechanism/target) — see residuals",
-            flush=True,
         )
-    if report["postgres"]["rto_measured_sec"] is not None and not report["postgres"]["rto_pass"]:
-        print("WARNING: postgres RTO miss vs targets — investigate residual", flush=True)
-    if not report["outbox"]["rpo_pass"]:
-        print(
-            "WARNING: outbox rpo_pass false (pending!=0 or outbox unreadable)",
-            flush=True,
-        )
+    if pg["rto_measured_sec"] is not None:
+        _warn_if_false(pg["rto_pass"], "WARNING: postgres RTO miss vs targets — investigate residual")
+    _warn_if_false(
+        report["outbox"]["rpo_pass"],
+        "WARNING: outbox rpo_pass false (pending!=0 or outbox unreadable)",
+    )
 
 
 def main() -> None:
@@ -176,7 +185,10 @@ def main() -> None:
     path = Path(os.environ["REPORT"])
     path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
-    _emit_warnings(report, allow_no_db=os.environ.get("ALLOW_NO_DB") == "1", path=path)
+    allow_no_db = os.environ.get("ALLOW_NO_DB") == "1"
+    _require_tenant_isolation(report, allow_no_db=allow_no_db, path=path)
+    if report["tenant_isolation_post_restore"] or allow_no_db:
+        _emit_metric_warnings(report)
 
 
 if __name__ == "__main__":

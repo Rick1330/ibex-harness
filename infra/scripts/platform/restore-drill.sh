@@ -81,7 +81,8 @@ psql_cmd() {
 
 psql_rls() {
   if [[ -n "$PG_RUNTIME" ]]; then
-    if [[ -z "$PG_RLS_URL" && -z "${POSTGRES_RLS_USER:-}" ]]; then
+    # Use resolved PG_RLS_USER (defaults to ibex_rls), not raw POSTGRES_RLS_USER.
+    if [[ -z "$PG_RLS_URL" && -z "$PG_RLS_USER" ]]; then
       return 127
     fi
     "$PG_RUNTIME" exec -e "PGPASSWORD=$PG_RLS_PASSWORD" -i "$PG_CONTAINER" \
@@ -192,10 +193,17 @@ if [[ "$PG_BACKUP_OK" == "true" ]]; then
 fi
 
 echo "[drill] inducing data loss (delete org B marker)"
-psql_cmd -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" || true
+if ! psql_cmd -v ON_ERROR_STOP=1 -c "DELETE FROM ibex_core.organizations WHERE id='$ORG_B'::uuid"; then
+  echo "[drill] ERROR: failed to induce data loss" >&2
+  exit 1
+fi
 # Confirm deletion before restore (superuser / bypass path).
-GONE="$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" 2>/dev/null || echo err)"
+GONE="$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid" 2>/dev/null || true)"
 echo "[drill] org_b rows after delete=$GONE"
+if [[ "$GONE" != "0" ]]; then
+  echo "[drill] ERROR: data-loss marker was not deleted" >&2
+  exit 1
+fi
 
 PG_RESTORE_START=$(date +%s)
 PG_USED_PGBACKREST=false

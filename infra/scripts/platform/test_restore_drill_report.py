@@ -46,53 +46,40 @@ def _base_env(**overrides: str) -> dict[str, str]:
 
 
 class OutboxRpoPassTests(unittest.TestCase):
-    def test_pass_when_pending_zero_and_seq_known(self) -> None:
-        self.assertTrue(
-            _mod.outbox_rpo_pass(pending=0, max_aggregate_seq=0, target=0)
+    def test_outbox_rpo_matrix(self) -> None:
+        cases = (
+            (0, 0, True),
+            (0, 12, True),
+            (1, 0, False),
+            (3, 9, False),
+            (None, 0, False),
+            (0, None, False),
         )
-        self.assertTrue(
-            _mod.outbox_rpo_pass(pending=0, max_aggregate_seq=12, target=0)
-        )
-
-    def test_fail_when_pending_nonzero(self) -> None:
-        self.assertFalse(
-            _mod.outbox_rpo_pass(pending=1, max_aggregate_seq=0, target=0)
-        )
-        self.assertFalse(
-            _mod.outbox_rpo_pass(pending=3, max_aggregate_seq=9, target=0)
-        )
-
-    def test_fail_when_unmeasured(self) -> None:
-        self.assertFalse(
-            _mod.outbox_rpo_pass(pending=None, max_aggregate_seq=0, target=0)
-        )
-        self.assertFalse(
-            _mod.outbox_rpo_pass(pending=0, max_aggregate_seq=None, target=0)
-        )
+        for pending, seq, expect in cases:
+            with self.subTest(pending=pending, seq=seq):
+                got = _mod.outbox_rpo_pass(
+                    pending=pending, max_aggregate_seq=seq, target=0
+                )
+                self.assertEqual(got, expect)
 
 
 class PostgresRpoHonestyTests(unittest.TestCase):
-    def test_pg_dump_fallback_never_passes_rpo(self) -> None:
-        self.assertFalse(
-            _mod.postgres_rpo_pass(
-                backup_ok=True,
-                restore_ok=True,
-                measured=1,
-                target=300,
-                mechanism="pg_dump_fallback",
-            )
+    def test_rpo_pass_by_mechanism(self) -> None:
+        cases = (
+            ("pg_dump_fallback", False),
+            ("pgbackrest_wal", True),
+            ("unmeasured", False),
         )
-
-    def test_pgbackrest_wal_can_pass(self) -> None:
-        self.assertTrue(
-            _mod.postgres_rpo_pass(
-                backup_ok=True,
-                restore_ok=True,
-                measured=12,
-                target=300,
-                mechanism="pgbackrest_wal",
-            )
-        )
+        for mechanism, expect in cases:
+            with self.subTest(mechanism=mechanism):
+                got = _mod.postgres_rpo_pass(
+                    backup_ok=True,
+                    restore_ok=True,
+                    measured=12,
+                    target=300,
+                    mechanism=mechanism,
+                )
+                self.assertEqual(got, expect)
 
 
 class BuildReportTests(unittest.TestCase):
