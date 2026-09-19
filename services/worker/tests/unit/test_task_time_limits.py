@@ -44,3 +44,27 @@ def test_hard_time_limit_exceeded_is_not_swallowed() -> None:
 
     with pytest.raises(TimeLimitExceeded):
         forced_limit()
+
+
+def test_soft_time_limit_exceeded_is_not_swallowed() -> None:
+    """SoftTimeLimitExceeded must also propagate (not in autoretry_for)."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    assert SoftTimeLimitExceeded not in IbexTask.autoretry_for
+    assert TimeLimitExceeded not in IbexTask.autoretry_for
+    assert SoftTimeLimitExceeded not in (budget_spent_rollup.autoretry_for or ())
+    assert TimeLimitExceeded not in (budget_spent_rollup.autoretry_for or ())
+
+    @celery_app.task(
+        bind=True,
+        base=IbexTask,
+        name="tests.unit.forced_soft_time_limit",
+        soft_time_limit=1,
+        time_limit=2,
+    )
+    def forced_soft(self: IbexTask) -> None:
+        del self
+        raise SoftTimeLimitExceeded()
+
+    with pytest.raises(SoftTimeLimitExceeded):
+        forced_soft()

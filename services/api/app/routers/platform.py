@@ -3,6 +3,8 @@
 Exposes dependency health, last backup, last restore-drill result, retention
 horizon, ingestion lag, DLQ depth, and degraded-mode state — matching the
 operator-platform research contract consumed by 4.D.1 Overview.
+
+Auth: provisional dashboard session cookie (same gate as operator SSE).
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from apierror_py import SERVICE_DEGRADED
+from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -22,13 +24,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
+from app.session_stub import (
+    SESSION_KIND_ACCESS,
+    SessionClaims,
+    SessionStubError,
+    TokenVerifyOpts,
+    verify_token_opts,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/operator/platform", tags=["operator-platform"])
 
 _DEFAULT_RETENTION_DAYS = 90
-_BACKUP_STAMP = Path("/tmp/ibex-last-backup.txt")
+_BACKUP_STAMP = Path(
+    os.environ.get("IBEX_LAST_BACKUP_STAMP", "/tmp/ibex-last-backup.txt")
+)
 _DRILL_REPORT = Path(
     os.environ.get("RESTORE_DRILL_REPORT", "/tmp/ibex-restore-drill/restore-drill-report.json")
 )
@@ -53,6 +64,32 @@ def _settings(request: Request) -> Any:
     return request.app.state.settings
 
 
+def _require_operator_session(request: Request) -> SessionClaims:
+    """Fail closed: feature flag + provisional access cookie (org-scoped)."""
+    settings = _settings(request)
+    if not getattr(settings, "operator_feature_enabled", False):
+        raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
+    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
+        raise ApiError(code=SERVICE_DEGRADED, message="session signing secret not configured")
+    raw = request.cookies.get(settings.dashboard_session_cookie_name)
+    if not raw:
+        raise ApiError(code=INVALID_TOKEN, message="missing session cookie")
+    try:
+        claims = verify_token_opts(
+            raw,
+            TokenVerifyOpts(
+                secret=settings.jwt_hmac_secret,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=settings.jwt_public_keys_pem,
+            ),
+        )
+    except SessionStubError as exc:
+        raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
+    return claims
+
+
 async def _dep_health(request: Request) -> dict[str, str]:
     state = request.app.state.api
     out: dict[str, str] = {"api": "ok" if getattr(state, "ready", False) else "unavailable"}
@@ -75,12 +112,13 @@ def _parse_backup_stamp() -> datetime | None:
     if not _BACKUP_STAMP.exists():
         return None
     raw = _BACKUP_STAMP.read_text(encoding="utf-8").strip()
-    # "[backup] ok 2026-09-19T07:00:00Z"
-    parts = raw.rsplit(" ", 1)
-    if len(parts) != 2:
+    if not raw:
         return None
+    # "[backup] ok 2026-09-19T07:00:00Z" or bare ISO timestamp
+    parts = raw.rsplit(" ", 1)
+    candidate = parts[-1] if parts else raw
     try:
-        return datetime.fromisoformat(parts[1])
+        return datetime.fromisoformat(candidate)
     except ValueError:
         return None
 
@@ -107,12 +145,20 @@ async def _outbox_watermark(session: AsyncSession | None) -> int | None:
         return None
 
 
+def _parse_dlq_depth() -> int | None:
+    raw = os.environ.get("IBEX_DLQ_DEPTH")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 @router.get("/health", response_model=PlatformHealthResponse)
 async def platform_health(request: Request) -> PlatformHealthResponse:
     """Read-only platform freshness for operator Overview (4.D.1 consumer)."""
-    settings = _settings(request)
-    if not getattr(settings, "operator_feature_enabled", False):
-        raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
+    _require_operator_session(request)
 
     deps = await _dep_health(request)
     drain = getattr(request.app.state.api, "drain", None)
@@ -128,23 +174,15 @@ async def platform_health(request: Request) -> PlatformHealthResponse:
         except (SQLAlchemyError, OSError, RuntimeError):
             outbox_seq = None
 
-    dlq: int | None = None
-    raw_dlq = os.environ.get("IBEX_DLQ_DEPTH")
-    if raw_dlq is not None:
-        try:
-            dlq = int(raw_dlq)
-        except ValueError:
-            dlq = None
-
     return PlatformHealthResponse(
         dependency_health=deps,
         last_backup_at=_parse_backup_stamp(),
         last_restore_drill=_load_drill(),
         retention_horizon_days=int(
-            getattr(settings, "platform_retention_horizon_days", _DEFAULT_RETENTION_DAYS)
+            getattr(_settings(request), "platform_retention_horizon_days", _DEFAULT_RETENTION_DAYS)
         ),
-        ingestion_lag_seconds=None,
-        dlq_depth=dlq,
+        ingestion_lag_seconds=None,  # residual: wire CH ingestion lag in 4.D.1
+        dlq_depth=_parse_dlq_depth(),
         degraded_mode=degraded,
         outbox_max_aggregate_seq=outbox_seq,
         deploy_image_digest=os.environ.get("IBEX_DEPLOY_IMAGE_DIGEST") or None,

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -432,6 +433,7 @@ func insertRun(ctx context.Context, tx *sql.Tx, in RunInput) (uuid.UUID, error) 
 	if status == "" {
 		status = "ok"
 	}
+	digest := nullEmpty(strings.TrimSpace(in.DeployImageDigest))
 	_, err := tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_runs (
 	id, org_id, agent_id, session_id, request_id, trace_id, checkpoint_id, turn_id,
@@ -443,7 +445,7 @@ INSERT INTO ibex_core.evidence_runs (
 	$15, $16, $17
 )`, id, in.OrgID, in.AgentID, in.SessionID, in.RequestID, in.TraceID, in.CheckpointID, in.TurnID,
 		SchemaVersion, defaultCompleteness(in.Completeness), status, nullEmpty(in.ErrorCode),
-		capture, sample, started.UTC(), ended, nullEmpty(in.DeployImageDigest))
+		capture, sample, started.UTC(), ended, digest)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: insert run: %w", err)
 	}

@@ -118,6 +118,7 @@ OUTBOX_SEQ=$(psql_cmd -Atc "SELECT COALESCE(MAX(aggregate_seq),0) FROM ibex_core
 OUTBOX_PENDING=$(psql_cmd -Atc "SELECT COUNT(*) FROM ibex_core.evidence_outbox WHERE delivery_status='pending'" 2>/dev/null || echo 0)
 
 KIND_OK=false
+KYVERNO_OK=false
 if command -v helm >/dev/null 2>&1; then
   echo "[drill] helm lint + template"
   helm lint infra/helm/ibex-harness
@@ -126,12 +127,33 @@ if command -v helm >/dev/null 2>&1; then
 fi
 if [[ "${RUN_KIND:-0}" == "1" ]] && command -v kind >/dev/null 2>&1; then
   kind create cluster --name ibex-4p5-drill || true
+  if command -v kubectl >/dev/null 2>&1; then
+    echo "[drill] applying Kyverno verifyImages policy (requires Kyverno installed)"
+    kubectl apply -f infra/helm/ibex-harness/policies/verify-images.yaml && KYVERNO_OK=true \
+      || echo "[drill] WARN Kyverno policy apply failed (install Kyverno first; residual #869)"
+  fi
+fi
+
+# Honest mechanism flag for report
+PG_MECHANISM="pg_dump_fallback"
+if command -v pgbackrest >/dev/null 2>&1 && { [[ -f infra/backup/pgbackrest/pgbackrest.conf ]] || [[ -f infra/backup/pgbackrest/pgbackrest.conf.example ]]; }; then
+  if [[ -f "$REPORT_DIR/pg/ibex.dump" ]] && ! command -v pgbackrest >/dev/null 2>&1; then
+    PG_MECHANISM="pg_dump_fallback"
+  elif command -v pgbackrest >/dev/null 2>&1 && [[ "${PG_USED_PGBACKREST:-0}" == "1" ]]; then
+    PG_MECHANISM="pgbackrest_wal"
+  fi
+fi
+# Detect whether the backup path actually used pgbackrest
+if grep -q 'pgbackrest backup' "$TRANSCRIPT" 2>/dev/null; then
+  PG_MECHANISM="pgbackrest_wal"
+elif grep -q 'pg_dump fallback' "$TRANSCRIPT" 2>/dev/null; then
+  PG_MECHANISM="pg_dump_fallback"
 fi
 
 export REPORT PG_RPO_SEC PG_RTO_SEC PG_RPO_MEASURED PG_RTO_MEASURED
 export CH_RPO_SEC CH_RTO_SEC CH_RPO_MEASURED CH_RTO_MEASURED
 export OBJ_RPO_SEC OBJ_RTO_SEC OBJ_RPO_MEASURED OBJ_RTO_MEASURED
-export OUTBOX_SEQ OUTBOX_PENDING ISO_OK KIND_OK TRANSCRIPT
+export OUTBOX_SEQ OUTBOX_PENDING ISO_OK KIND_OK KYVERNO_OK TRANSCRIPT PG_MECHANISM
 python3 <<'PY'
 import json, os
 from pathlib import Path
@@ -139,6 +161,7 @@ from pathlib import Path
 def le(a, b):
     return int(a) <= int(b)
 
+mechanism = os.environ.get("PG_MECHANISM", "pg_dump_fallback")
 report = {
   "milestone": "4.P.5",
   "transcript": os.environ.get("TRANSCRIPT"),
@@ -149,7 +172,13 @@ report = {
     "rto_measured_sec": int(os.environ["PG_RTO_MEASURED"]),
     "rpo_pass": le(os.environ["PG_RPO_MEASURED"], os.environ["PG_RPO_SEC"]),
     "rto_pass": le(os.environ["PG_RTO_MEASURED"], os.environ["PG_RTO_SEC"]),
-    "mechanism": "pgBackRest+WAL when installed; else pg_dump fallback (documented)",
+    "mechanism": mechanism,
+    "note": (
+      "pg_dump fallback is not PITR; RPO measured as backup wall-clock only. "
+      "Real ≤5m RPO requires pgBackRest+WAL (#869)."
+      if mechanism == "pg_dump_fallback"
+      else "pgBackRest+WAL path"
+    ),
   },
   "clickhouse": {
     "rpo_target_sec": int(os.environ["CH_RPO_SEC"]),
@@ -176,6 +205,7 @@ report = {
   },
   "tenant_isolation_post_restore": os.environ.get("ISO_OK") == "true",
   "helm_lint_template": os.environ.get("KIND_OK") == "true",
+  "kyverno_policy_applied": os.environ.get("KYVERNO_OK") == "true",
 }
 Path(os.environ["REPORT"]).write_text(json.dumps(report, indent=2) + "\n")
 print(json.dumps(report, indent=2))

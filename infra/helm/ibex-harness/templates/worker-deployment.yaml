@@ -37,10 +37,12 @@ spec:
             runAsNonRoot: true
           ports:
             - name: http
-              containerPort: 8088
+              containerPort: {{ .Values.service.worker.port }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ .Values.deployDigest | quote }}
+            - name: IBEX_WORKER_ENQUEUE_PORT
+              value: {{ .Values.service.worker.port | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}
@@ -50,8 +52,9 @@ spec:
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
+            # Worker enqueue HTTP exposes /health only (no /ready yet; ADR-0022 residual).
             httpGet:
-              path: /health
+              path: {{ .Values.probes.livenessPath }}
               port: http
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
@@ -74,5 +77,5 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
-      port: 8088
+      port: {{ .Values.service.worker.port }}
       targetPort: http

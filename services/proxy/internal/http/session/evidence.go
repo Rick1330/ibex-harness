@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"strings"
 	"time"
@@ -99,21 +100,28 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 	}
 	status, completeness := evidenceStatusFromOutcome(snap)
 	return evidenceoutbox.RunInput{
-		OrgID:        snap.OrgID,
-		AgentID:      &agent,
-		SessionID:    snap.SessionID,
-		RequestID:    snap.RequestID,
-		TraceID:      firstNonEmpty(snap.TraceID, meta.TraceID),
-		RootSpanID:   firstNonEmpty(snap.RootSpanID, meta.RootSpanID),
-		CheckpointID: snap.CheckpointID,
-		Completeness: completeness,
-		Status:       status,
-		ErrorCode:    snap.Outcome.ErrorCode,
-		StartedAt:    started,
-		EndedAt:      ended,
-		Metrics:      extras.Metrics,
-		Candidates:   extras.Candidates,
+		OrgID:             snap.OrgID,
+		AgentID:           &agent,
+		SessionID:         snap.SessionID,
+		RequestID:         snap.RequestID,
+		TraceID:           firstNonEmpty(snap.TraceID, meta.TraceID),
+		RootSpanID:        firstNonEmpty(snap.RootSpanID, meta.RootSpanID),
+		CheckpointID:      snap.CheckpointID,
+		Completeness:      completeness,
+		Status:            status,
+		ErrorCode:         snap.Outcome.ErrorCode,
+		StartedAt:         started,
+		EndedAt:           ended,
+		Metrics:           extras.Metrics,
+		Candidates:        extras.Candidates,
+		DeployImageDigest: deployImageDigestFromEnv(),
 	}
+}
+
+// deployImageDigestFromEnv reads the OCI digest injected by Helm/CI
+// (IBEX_DEPLOY_IMAGE_DIGEST). Empty when unset (local/dev).
+func deployImageDigestFromEnv() string {
+	return strings.TrimSpace(os.Getenv("IBEX_DEPLOY_IMAGE_DIGEST"))
 }
 
 func evidenceStatusFromOutcome(snap httptrace.AssembleInput) (status, completeness string) {

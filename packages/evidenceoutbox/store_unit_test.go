@@ -169,3 +169,84 @@ func TestUnit_PersistRun_BeginFails(t *testing.T) {
 		t.Fatal("expected begin error")
 	}
 }
+
+func TestUnit_PersistRun_DeployImageDigest(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	org := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	digest := "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).
+		WithArgs(
+			sqlmock.AnyArg(), org, sqlmock.AnyArg(), sqlmock.AnyArg(), "req-digest",
+			"cccccccccccccccccccccccccccccccc", sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			digest,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	_, err = store.PersistRun(context.Background(), RunInput{
+		OrgID:             org,
+		RequestID:         "req-digest",
+		TraceID:           "cccccccccccccccccccccccccccccccc",
+		DeployImageDigest: "  " + digest + "  ",
+	})
+	if err != nil {
+		t.Fatalf("PersistRun: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnit_PersistRun_EmptyDeployImageDigestIsNULL(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	org := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).
+		WithArgs(
+			sqlmock.AnyArg(), org, sqlmock.AnyArg(), sqlmock.AnyArg(), "req-empty",
+			"dddddddddddddddddddddddddddddddd", sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			nil,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	_, err = store.PersistRun(context.Background(), RunInput{
+		OrgID: org, RequestID: "req-empty", TraceID: "dddddddddddddddddddddddddddddddd",
+		DeployImageDigest: "   ",
+	})
+	if err != nil {
+		t.Fatalf("PersistRun: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

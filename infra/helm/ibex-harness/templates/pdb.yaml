@@ -1,5 +1,5 @@
 {{- if .Values.pdb.enabled }}
-{{- range $name := list "proxy" "auth" "api" "worker" "memory" }}
+{{- range $name := list "proxy" "auth" "api" "worker" "memory" "embedder" "mcp-memory" }}
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

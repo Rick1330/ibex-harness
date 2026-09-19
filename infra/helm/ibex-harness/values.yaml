@@ -89,9 +89,9 @@ probes:
 
 service:
   proxy: { port: 8080 }
-  auth: { http: 8081, grpc: 50051 }
+  auth: { http: 8081, grpc: 9091 }
   api: { port: 8010 }
-  worker: { port: 8088 }
+  worker: { port: 8007 }
   memory: { port: 8001 }
   embedder: { port: 8002 }
   mcpMemory: { port: 8003 }

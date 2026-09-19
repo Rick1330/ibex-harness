@@ -82,8 +82,9 @@ Further audit context (provenance only — roadmap and engineering pages are aut
 
 - [x] Overlays committed and documented (`infra/helm/ibex-harness/`).
 - [x] Restore drill script + report path (`infra/scripts/platform/restore-drill.sh`; transcript attached to PR).
-- [x] Supply-chain/admission evidence (Cosign image digests + Kyverno `policies/verify-images.yaml`).
+- [x] Supply-chain/admission evidence (Cosign image digests incl. worker + Kyverno `policies/verify-images.yaml`).
 - [x] Probe/drain/rollback runbook linked (`RUNBOOK-4p5-rollback-by-digest.md`).
+- [x] Worker soft/hard time limits (rollup 60/120; reconcile/maintenance 300/600) + breach tests.
+- [x] `GET /v1/operator/platform/health` (session-gated) + `evidence_runs.deploy_image_digest` wired from `IBEX_DEPLOY_IMAGE_DIGEST`.
 - [ ] Production staging cluster soak with live Kyverno admit + real pgBackRest PITR ([#869](https://github.com/Rick1330/ibex-harness/issues/869)).
-- [ ] Worker image published to GHCR + Cosign-signed ([#868](https://github.com/Rick1330/ibex-harness/issues/868)).
 - [ ] Restore-drill tenant-isolation proven on a host with live Postgres ([#867](https://github.com/Rick1330/ibex-harness/issues/867)).

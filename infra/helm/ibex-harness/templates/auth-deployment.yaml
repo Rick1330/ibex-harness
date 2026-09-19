@@ -37,10 +37,16 @@ spec:
             runAsNonRoot: true
           ports:
             - name: http
-              containerPort: 8081
+              containerPort: {{ .Values.service.auth.http }}
+            - name: grpc
+              containerPort: {{ .Values.service.auth.grpc }}
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ .Values.deployDigest | quote }}
+            - name: IBEX_PORT
+              value: {{ .Values.service.auth.http | quote }}
+            - name: IBEX_GRPC_PORT
+              value: {{ .Values.service.auth.grpc | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}
@@ -51,7 +57,7 @@ spec:
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
             httpGet:
-              path: /ready
+              path: {{ .Values.probes.readinessPath }}
               port: http
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}
@@ -74,5 +80,8 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http
-      port: 8081
+      port: {{ .Values.service.auth.http }}
       targetPort: http
+    - name: grpc
+      port: {{ .Values.service.auth.grpc }}
+      targetPort: grpc
