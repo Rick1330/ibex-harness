@@ -20,6 +20,45 @@ from app.tasks.billing_reconcile import (
 )
 
 
+
+def _one_period() -> BudgetPeriodWindow:
+    return BudgetPeriodWindow(
+        period_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+        org_id="33333333-3333-3333-3333-333333333333",
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC) + timedelta(days=1),
+    )
+
+
+class _OKCH:
+    def __init__(self, spent: int = 1) -> None:
+        self._spent = spent
+
+    def sum_spent(self, **kwargs: Any) -> int:
+        return self._spent
+
+
+class _OKPG:
+    def __init__(self, periods: list[BudgetPeriodWindow] | None = None) -> None:
+        self._periods = periods or [_one_period()]
+
+    async def list_active_periods(self) -> list[BudgetPeriodWindow]:
+        return self._periods
+
+    async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+        return None
+
+
+def _run_rollup_expecting(exc_type: type[BaseException], *, store: Any, invalidator: Any, spent: int = 1) -> None:
+    try:
+        asyncio.run(
+            run_budget_spent_rollup(querier=_OKCH(spent), store=store, invalidator=invalidator)
+        )
+        raise AssertionError(f"expected {exc_type.__name__}")
+    except exc_type:
+        pass
+
+
 def test_reconcile_usage_actuals_deferred_to_859() -> None:
     out = reconcile_usage_actuals.run()
     assert out["status"] == "deferred"
@@ -116,21 +155,7 @@ def test_run_budget_spent_rollup_zero_spend_period() -> None:
 
 
 def test_run_budget_spent_rollup_skips_invalidate_on_update_failure() -> None:
-    period = BudgetPeriodWindow(
-        period_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
-        org_id="33333333-3333-3333-3333-333333333333",
-        period_start=datetime.now(UTC),
-        period_end=datetime.now(UTC) + timedelta(days=1),
-    )
-
-    class FakeCH:
-        def sum_spent(self, **kwargs: Any) -> int:
-            return 1
-
-    class BoomPG:
-        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
-            return [period]
-
+    class BoomPG(_OKPG):
         async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
             raise RuntimeError("db down")
 
@@ -142,12 +167,9 @@ def test_run_budget_spent_rollup_skips_invalidate_on_update_failure() -> None:
             self.published.append(org_id)
 
     inv = FakeInv()
-    try:
-        asyncio.run(run_budget_spent_rollup(querier=FakeCH(), store=BoomPG(), invalidator=inv))
-        raise AssertionError("expected RuntimeError")
-    except RuntimeError:
-        pass
+    _run_rollup_expecting(RuntimeError, store=BoomPG(), invalidator=inv)
     assert inv.published == []
+
 
 
 def test_http_clickhouse_querier_parses_spent() -> None:
@@ -170,35 +192,12 @@ def test_http_clickhouse_querier_parses_spent() -> None:
 
 
 def test_run_budget_spent_rollup_reraises_invalidate_failure() -> None:
-    period = BudgetPeriodWindow(
-        period_id="dddddddd-dddd-dddd-dddd-dddddddddddd",
-        org_id="44444444-4444-4444-4444-444444444444",
-        period_start=datetime.now(UTC),
-        period_end=datetime.now(UTC) + timedelta(days=1),
-    )
-
-    class FakeCH:
-        def sum_spent(self, **kwargs: Any) -> int:
-            return 10
-
-    class FakePG:
-        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
-            return [period]
-
-        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
-            return None
-
     class BoomInv:
         async def publish_budget_update(self, org_id: str) -> None:
             raise RedisError("pubsub down")
 
-    try:
-        asyncio.run(
-            run_budget_spent_rollup(querier=FakeCH(), store=FakePG(), invalidator=BoomInv())
-        )
-        raise AssertionError("expected RedisError")
-    except RedisError:
-        pass
+    _run_rollup_expecting(RedisError, store=_OKPG(), invalidator=BoomInv(), spent=10)
+
 
 
 def test_http_clickhouse_querier_error_status() -> None:
@@ -432,35 +431,12 @@ def test_run_budget_spent_rollup_no_active_periods() -> None:
 
 
 def test_run_budget_spent_rollup_invalidate_oserror_reraises() -> None:
-    period = BudgetPeriodWindow(
-        period_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
-        org_id="33333333-3333-3333-3333-333333333333",
-        period_start=datetime.now(UTC),
-        period_end=datetime.now(UTC) + timedelta(days=1),
-    )
-
-    class FakeCH:
-        def sum_spent(self, **kwargs: Any) -> int:
-            return 1
-
-    class FakePG:
-        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
-            return [period]
-
-        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
-            return None
-
     class BoomInv:
         async def publish_budget_update(self, org_id: str) -> None:
             raise OSError("pubsub down")
 
-    try:
-        asyncio.run(
-            run_budget_spent_rollup(querier=FakeCH(), store=FakePG(), invalidator=BoomInv())
-        )
-        raise AssertionError("expected OSError")
-    except OSError:
-        pass
+    _run_rollup_expecting(OSError, store=_OKPG(), invalidator=BoomInv())
+
 
 
 def test_budget_spent_rollup_skips_missing_postgres_only(monkeypatch: Any) -> None:

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -204,29 +205,26 @@ func mustCachedDirective(t *testing.T, client redis.UniversalClient, log *logger
 func mustStartDirectiveSub(t *testing.T, client *redis.Client, log *logger.Logger) (*directive.Subscriber, context.CancelFunc) {
 	t.Helper()
 	sub, cancel, err := startDirectiveSubscriber(client, mustCachedDirective(t, client, log), log, nil)
-	if err != nil {
-		t.Fatalf("directive start: %v", err)
-	}
-	if sub == nil {
-		t.Fatal("directive subscriber nil")
-	}
-	if cancel == nil {
-		t.Fatal("directive cancel nil")
-	}
-	return sub, cancel
+	return requireStarted(t, "directive", sub, cancel, err)
 }
 
 func mustStartBudgetSub(t *testing.T, client *redis.Client, log *logger.Logger) (*redissub.OrgSubscriber, context.CancelFunc) {
 	t.Helper()
 	sub, cancel, err := startBudgetSubscriber(client, mustBudgetCache(t), log, nil)
+	return requireStarted(t, "budget", sub, cancel, err)
+}
+
+func requireStarted[T any](t *testing.T, name string, sub T, cancel context.CancelFunc, err error) (T, context.CancelFunc) {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("budget start: %v", err)
+		t.Fatalf("%s start: %v", name, err)
 	}
-	if sub == nil {
-		t.Fatal("budget subscriber nil")
+	v := reflect.ValueOf(sub)
+	if !v.IsValid() || ((v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) && v.IsNil()) {
+		t.Fatalf("%s subscriber nil", name)
 	}
 	if cancel == nil {
-		t.Fatal("budget cancel nil")
+		t.Fatalf("%s cancel nil", name)
 	}
 	return sub, cancel
 }

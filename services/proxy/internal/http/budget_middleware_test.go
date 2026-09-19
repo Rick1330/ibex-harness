@@ -114,31 +114,30 @@ func containsCode(body, code string) bool {
 	return strings.Contains(body, code)
 }
 
-func TestBudgetMiddleware_missingAuthFailClosed(t *testing.T) {
+func TestBudgetMiddleware_authContextFailClosed(t *testing.T) {
 	t.Parallel()
 	cache := newBudgetCache(t, stubBudgetLoader{
 		snap: billing.BudgetSnapshot{HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: billing.EnforcementHardCap},
 	})
 	h := budgetTestHandler(t, cache)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status=%d", rec.Code)
+	cases := []struct {
+		name string
+		ctx  func(*http.Request) *http.Request
+	}{
+		{name: "missing auth", ctx: func(r *http.Request) *http.Request { return r }},
+		{name: "nil org", ctx: func(r *http.Request) *http.Request {
+			return r.WithContext(auth.WithContext(r.Context(), &auth.ValidateResult{OrgID: uuid.Nil}))
+		}},
 	}
-}
-
-func TestBudgetMiddleware_nilOrgFailClosed(t *testing.T) {
-	t.Parallel()
-	cache := newBudgetCache(t, stubBudgetLoader{
-		snap: billing.BudgetSnapshot{HasHardCap: true, CapCents: 100, SpentCents: 0, EnforcementMode: billing.EnforcementHardCap},
-	})
-	h := budgetTestHandler(t, cache)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: uuid.Nil}))
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status=%d", rec.Code)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := httptest.NewRecorder()
+			req := tc.ctx(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status=%d", rec.Code)
+			}
+		})
 	}
 }

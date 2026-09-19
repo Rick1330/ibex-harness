@@ -30,26 +30,6 @@ func TestEstimateCost_FirstMatchWins(t *testing.T) {
 	}
 }
 
-func TestEstimateCost_CaseInsensitiveProvider(t *testing.T) {
-	t.Parallel()
-	card := CardVersion{
-		Version: "1",
-		Prices: []PriceRow{{
-			Provider: "OpenAI", ModelPattern: "gpt-*",
-			InputCentsPer1k: 1000, OutputCentsPer1k: 0,
-		}},
-	}
-	cents, _, err := EstimateCost(card, TokenUsage{
-		Provider: "openai", Model: "gpt-4", InputTokens: 1000, OutputTokens: 0,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cents != 1000 {
-		t.Fatalf("cents=%d", cents)
-	}
-}
-
 func TestEstimateCost_EmptyVersion(t *testing.T) {
 	t.Parallel()
 	_, _, err := EstimateCost(CardVersion{
@@ -60,26 +40,43 @@ func TestEstimateCost_EmptyVersion(t *testing.T) {
 	}
 }
 
-func TestEstimateCost_ZeroTokens(t *testing.T) {
+func TestEstimateCost_MatchVariants(t *testing.T) {
 	t.Parallel()
-	card := CardVersion{
-		Version: "9",
-		Prices: []PriceRow{{
-			Provider: "anthropic", ModelPattern: "claude-*",
-			InputCentsPer1k: 500, OutputCentsPer1k: 1500,
-		}},
+	cases := []struct {
+		name  string
+		card  CardVersion
+		usage TokenUsage
+		cents int64
+		ver   string
+	}{
+		{
+			name: "case insensitive provider",
+			card: CardVersion{Version: "1", Prices: []PriceRow{{
+				Provider: "OpenAI", ModelPattern: "gpt-*", InputCentsPer1k: 1000, OutputCentsPer1k: 0,
+			}}},
+			usage: TokenUsage{Provider: "openai", Model: "gpt-4", InputTokens: 1000, OutputTokens: 0},
+			cents: 1000, ver: "1",
+		},
+		{
+			name: "zero tokens",
+			card: CardVersion{Version: "9", Prices: []PriceRow{{
+				Provider: "anthropic", ModelPattern: "claude-*", InputCentsPer1k: 500, OutputCentsPer1k: 1500,
+			}}},
+			usage: TokenUsage{Provider: "anthropic", Model: "claude-3", InputTokens: 0, OutputTokens: 0},
+			cents: 0, ver: "9",
+		},
 	}
-	cents, ver, err := EstimateCost(card, TokenUsage{
-		Provider: "anthropic", Model: "claude-3", InputTokens: 0, OutputTokens: 0,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ver != "9" {
-		t.Fatalf("version=%s", ver)
-	}
-	if cents != 0 {
-		t.Fatalf("cents=%d want 0", cents)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cents, ver, err := EstimateCost(tc.card, tc.usage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ver != tc.ver || cents != tc.cents {
+				t.Fatalf("ver=%s cents=%d want %s/%d", ver, cents, tc.ver, tc.cents)
+			}
+		})
 	}
 }
 
