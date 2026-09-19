@@ -342,7 +342,7 @@ func assertMemoriesForceRLS(t *testing.T, ctx context.Context, db *sql.DB) {
 }
 
 type memorySeed struct {
-	db                       *sql.DB
+	db                        *sql.DB
 	orgID, agentSlug, content string
 }
 

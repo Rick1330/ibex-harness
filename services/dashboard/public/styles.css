@@ -1,0 +1,147 @@
+:root {
+  --bg0: #0f1419;
+  --bg1: #1a222c;
+  --ink: #e8eef4;
+  --muted: #9aa8b5;
+  --accent: #3d9a7a;
+  --warn: #c9a227;
+  --bad: #c45c5c;
+  --ok: #3d9a7a;
+  --font: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font);
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #1e3a32 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #243044 0%, transparent 50%),
+    var(--bg0);
+}
+
+.shell {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 3rem 1.25rem 4rem;
+}
+
+.brand .product {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.brand .tagline {
+  margin: 0.35rem 0 2rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.state-panel h1 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.state {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+.state.connected,
+.state.live {
+  color: var(--ok);
+}
+.state.reconnecting {
+  color: var(--warn);
+}
+.state.degraded,
+.state.drained,
+.state.historical {
+  color: var(--warn);
+}
+.state.error,
+.state.unauthenticated {
+  color: var(--bad);
+}
+.state.unknown {
+  color: var(--muted);
+}
+
+.detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.event-log {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  background: var(--bg1);
+  border-radius: 4px;
+}
+
+.event-log li {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #2a3440;
+}
+
+.actions {
+  margin-top: 2rem;
+  display: grid;
+  gap: 0.85rem;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input {
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg1);
+  border: 1px solid #33404d;
+  border-radius: 4px;
+  padding: 0.55rem 0.65rem;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  color: var(--bg0);
+  background: var(--accent);
+  border: 0;
+  border-radius: 4px;
+  padding: 0.55rem 0.9rem;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}

@@ -55,8 +55,24 @@ INSERT INTO ibex_core.tokens (
     '$argon2id$v=19$m=65536,t=3,p=4$v7OU5izBPGnx4P47/nOoGQ$Ozd/9sqIqvtVBwk5fdfTGnXGkmflQej0xtooVgaAxh8',
     'ibex_pat_00000000-0000-0000-0000-000000000004',
     'Dev Seed Token',
-    270633733891,
+    -- permissions.Admin | permissions.SecretUse (4.P.1 chat GetProviderCredential)
+    35455005822723,
     false
 ) ON CONFLICT (id) DO NOTHING;
+
+-- Deny-by-default model policy: seed org needs an allow rule for local/e2e chat.
+INSERT INTO ibex_core.org_model_policies (org_id, model_pattern, allowed, priority)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    '*',
+    true,
+    1000
+) ON CONFLICT (org_id, model_pattern) DO NOTHING;
+
+INSERT INTO ibex_core.org_model_policy_meta (org_id, epoch)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    1
+) ON CONFLICT (org_id) DO NOTHING;
 
 COMMIT;

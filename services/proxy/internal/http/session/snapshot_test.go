@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
@@ -131,6 +132,103 @@ func testBufferedLogger(t *testing.T) *logger.Logger {
 		t.Fatal(err)
 	}
 	return log
+}
+
+func TestUnit_PreparePostResponse_EvidenceWhenConfigured(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	meta.RootSpanID = "aabbccddeeff0011"
+	rs := Resolved{SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	ev := &fakeEvidenceStore{}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:     LifecycleDeps{Store: newMemSessionStore(), Evidence: ev},
+		Log:      logger.Discard("t"),
+		Resolved: rs, Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if !job.DoEvidence {
+		t.Fatal("expected DoEvidence when store + trace present")
+	}
+}
+
+func TestUnit_PreparePostResponse_TypedNilEvidenceOff(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	var typedNil *fakeEvidenceStore
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps: LifecycleDeps{Store: newMemSessionStore(), Evidence: typedNil},
+		Log:  logger.Discard("t"),
+		Resolved: Resolved{
+			SessionID: uuid.New(), ExternalID: "ext", OrgID: meta.OrgID, AgentID: meta.AgentID,
+		},
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if job.DoEvidence {
+		t.Fatal("typed-nil Evidence must keep DoEvidence off")
+	}
+}
+
+func TestUnit_EnqueuePostResponse_EvidenceOnlyTrySubmitDrops(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	meta.RootSpanID = "aabbccddeeff0011"
+	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	require.True(t, ok)
+
+	// workers=1, queue=1: fill both so TrySubmit fails without blocking.
+	gate := make(chan struct{})
+	pool, err := asyncpool.New(1, 1, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		close(gate)
+		_ = pool.Shutdown(context.Background())
+	})
+	started := make(chan struct{})
+	require.True(t, pool.Submit(func() { close(started); <-gate }))
+	<-started
+	require.True(t, pool.Submit(func() {}))
+
+	ev := &fakeEvidenceStore{}
+	EnqueuePostResponse(PostResponseJob{
+		Deps: LifecycleDeps{Evidence: ev, Pool: pool},
+		Log:  logger.Discard("t"),
+		Snap: snap, SnapOK: true, DoEvidence: true,
+	})
+	if ev.calls != 0 {
+		t.Fatalf("evidence must be dropped on full pool, calls=%d", ev.calls)
+	}
+}
+
+func TestUnit_EnqueuePostResponse_EvidenceRuns(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.TraceID = "aabbccddeeff00112233445566778899"
+	meta.RootSpanID = "aabbccddeeff0011"
+	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
+		Meta: meta, In: testCheckpointInput(),
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	require.True(t, ok)
+	ev := &fakeEvidenceStore{}
+	EnqueuePostResponse(PostResponseJob{
+		Deps: LifecycleDeps{Evidence: ev},
+		Log:  logger.Discard("t"),
+		Snap: snap, SnapOK: true, DoEvidence: true,
+		EvidenceExtras: EvidenceExtras{AssembleSpanID: "1122334455667788"},
+	})
+	if ev.calls != 1 {
+		t.Fatalf("calls=%d", ev.calls)
+	}
+	if ev.last.MetricsSpanID != "1122334455667788" {
+		t.Fatalf("metrics_span=%q", ev.last.MetricsSpanID)
+	}
 }
 
 func TestUnit_EnqueuePostResponse(t *testing.T) {
@@ -351,5 +449,104 @@ func assertPrepareFlags(t *testing.T, job PostResponseJob, want prepareFlags) {
 	}
 	if want.streaming && !job.Snap.Streaming {
 		t.Fatal("stream flag preserved in snap")
+	}
+}
+
+type recordingUsageFactWriter struct {
+	facts []billing.UsageFact
+	err   error
+}
+
+func (r *recordingUsageFactWriter) Write(fact billing.UsageFact) error {
+	r.facts = append(r.facts, fact)
+	return r.err
+}
+
+func TestUnit_EmitUsageFact_NilWriterNoop(t *testing.T) {
+	t.Parallel()
+	EmitUsageFact(nil, logger.Discard("t"), billing.UsageFact{RequestID: "r1"})
+}
+
+func TestUnit_EmitUsageFact_WriteSuccess(t *testing.T) {
+	t.Parallel()
+	rec := &recordingUsageFactWriter{}
+	fact := billing.UsageFact{RequestID: "req-ok", EstimatedCostCents: 3}
+	EmitUsageFact(rec, logger.Discard("t"), fact)
+	if len(rec.facts) != 1 || rec.facts[0].RequestID != "req-ok" {
+		t.Fatalf("facts=%v", rec.facts)
+	}
+}
+
+func TestUnit_EmitUsageFact_WriteErrorLogs(t *testing.T) {
+	t.Parallel()
+	rec := &recordingUsageFactWriter{err: errors.New("buffer full")}
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{Service: "proxy", Writer: &buf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	EmitUsageFact(rec, log, billing.UsageFact{RequestID: "req-fail"})
+	if !bytes.Contains(buf.Bytes(), []byte("usage fact write failed")) {
+		t.Fatalf("log=%q", buf.String())
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("req-fail")) {
+		t.Fatalf("missing request_id in log=%q", buf.String())
+	}
+}
+
+func TestUnit_PreparePostResponse_SetsDoUsageFact(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	fact := billing.UsageFact{RequestID: meta.RequestID, OrgID: meta.OrgID, AgentID: meta.AgentID}
+	writer := &recordingUsageFactWriter{}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Meta: meta, In: CheckpointInput{Provider: "openai", Model: "gpt-4o"},
+		Outcome:   httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+		UsageFact: &fact, UsageFactWriter: writer, Log: logger.Discard("t"),
+	})
+	if !job.DoUsageFact {
+		t.Fatal("expected DoUsageFact")
+	}
+	if job.UsageFact.RequestID != meta.RequestID {
+		t.Fatalf("copied fact=%+v", job.UsageFact)
+	}
+}
+
+func TestUnit_CaptureTraceSnapshot_RequestedAtZeroUsesCompleted(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.RequestedAt = time.Time{}
+	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
+		Meta:    meta,
+		In:      CheckpointInput{Provider: "openai", Model: "m"},
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if !ok {
+		t.Fatal("expected snapshot")
+	}
+	if snap.Timings.RequestedAt.IsZero() || !snap.Timings.RequestedAt.Equal(snap.Timings.CompletedAt) {
+		t.Fatalf("requested=%v completed=%v", snap.Timings.RequestedAt, snap.Timings.CompletedAt)
+	}
+}
+
+func TestUnit_PreparePostResponse_BufferOnStreamingIncomplete(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	rs := Resolved{ExternalID: "sticky-1", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	buf := newTestTurnBuffer(t)
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:     LifecycleDeps{TurnBuffer: buf, Log: logger.Discard("t")},
+		Meta:     meta,
+		Resolved: rs,
+		In: CheckpointInput{
+			Provider: "openai", Model: "gpt-4o",
+			IsStreaming: true, IsComplete: false,
+			Messages: []llm.Message{{Role: "user", Content: "hi"}},
+		},
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: false},
+		Log:     logger.Discard("t"),
+	})
+	if !job.DoBuffer {
+		t.Fatal("expected extraction buffer for incomplete streaming turn")
 	}
 }

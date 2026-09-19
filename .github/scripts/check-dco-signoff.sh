@@ -3,8 +3,8 @@
 # See CONTRIBUTING.md § Developer Certificate of Origin.
 set -euo pipefail
 
-BASE_SHA="${1:-${GITHUB_EVENT_PULL_REQUEST_BASE_SHA:-}}"
-HEAD_SHA="${2:-${GITHUB_EVENT_PULL_REQUEST_HEAD_SHA:-}}"
+BASE_SHA="${GITHUB_EVENT_PULL_REQUEST_BASE_SHA:-}"
+HEAD_SHA="${GITHUB_EVENT_PULL_REQUEST_HEAD_SHA:-}"
 
 if [[ -z "$BASE_SHA" || -z "$HEAD_SHA" ]]; then
   echo "DCO check skipped (missing base/head SHA)"

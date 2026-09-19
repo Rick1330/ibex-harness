@@ -546,8 +546,8 @@ type stubSessionStore struct{}
 func (stubSessionStore) GetOrCreate(context.Context, session.GetOrCreateParams) (*session.Session, error) {
 	return nil, errors.New("unused")
 }
-func (stubSessionStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
-	return errors.New("unused")
+func (stubSessionStore) AppendCheckpoint(context.Context, session.CheckpointParams) (uuid.UUID, error) {
+	return uuid.Nil, errors.New("unused")
 }
 func (stubSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
 	return session.CompleteOK, errors.New("unused")

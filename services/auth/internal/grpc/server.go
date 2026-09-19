@@ -42,24 +42,29 @@ type validateForOrger interface {
 // Validator, TokenService, AgentService, Metrics, and Log are required;
 // NewServer rejects nil interfaces and typed-nil service pointers.
 // CredService is optional; when nil, provider-credential RPCs return FailedPrecondition.
+// TotpService / SessionIssuer are optional; when nil, related RPCs return FailedPrecondition.
 type ServerDeps struct {
-	Validator    tokenValidator
-	TokenService tokenAPI
-	AgentService validateForOrger
-	CredService  providerCredentialAPI
-	Metrics      *metrics.AuthRegistry
-	Log          *logger.Logger
+	Validator     tokenValidator
+	TokenService  tokenAPI
+	AgentService  validateForOrger
+	CredService   providerCredentialAPI
+	TotpService   totpPort
+	SessionIssuer sessionIssuerPort
+	Metrics       *metrics.AuthRegistry
+	Log           *logger.Logger
 }
 
 // Server implements ibex.auth.v1.AuthService.
 type Server struct {
 	authv1.UnimplementedAuthServiceServer
-	validator    tokenValidator
-	tokenService tokenAPI
-	metrics      *metrics.AuthRegistry
-	agentService validateForOrger
-	credService  providerCredentialAPI
-	log          *logger.Logger
+	validator     tokenValidator
+	tokenService  tokenAPI
+	metrics       *metrics.AuthRegistry
+	agentService  validateForOrger
+	credService   providerCredentialAPI
+	totpService   totpPort
+	sessionIssuer sessionIssuerPort
+	log           *logger.Logger
 }
 
 var errInvalidOrgID = errors.New("invalid org_id")
@@ -84,12 +89,14 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		return nil, fmt.Errorf("grpcserver: nil log")
 	}
 	return &Server{
-		validator:    deps.Validator,
-		tokenService: deps.TokenService,
-		metrics:      deps.Metrics,
-		agentService: deps.AgentService,
-		credService:  deps.CredService,
-		log:          deps.Log,
+		validator:     deps.Validator,
+		tokenService:  deps.TokenService,
+		metrics:       deps.Metrics,
+		agentService:  deps.AgentService,
+		credService:   deps.CredService,
+		totpService:   deps.TotpService,
+		sessionIssuer: deps.SessionIssuer,
+		log:           deps.Log,
 	}, nil
 }
 

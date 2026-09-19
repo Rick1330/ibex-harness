@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
@@ -25,14 +26,20 @@ func CaptureTraceSnapshot(args CaptureTraceArgs) (httptrace.AssembleInput, bool)
 	}
 	completed := time.Now().UTC()
 	return httptrace.AssembleInput{
-		RequestID: args.Meta.RequestID,
-		OrgID:     args.Meta.OrgID,
-		AgentID:   args.Meta.AgentID,
-		SessionID: args.Meta.SessionID,
-		Model:     args.In.Model,
-		Provider:  args.In.Provider,
-		Streaming: resolveStreaming(args.In, args.Outcome),
-		Usage:     args.In.Usage,
+		RequestID:          args.Meta.RequestID,
+		TraceID:            args.Meta.TraceID,
+		RootSpanID:         args.Meta.RootSpanID,
+		OrgID:              args.Meta.OrgID,
+		AgentID:            args.Meta.AgentID,
+		SessionID:          args.Meta.SessionID,
+		Model:              args.In.Model,
+		Provider:           args.In.Provider,
+		Streaming:          resolveStreaming(args.In, args.Outcome),
+		Usage:              args.In.Usage,
+		DirectiveVersionID: args.Meta.DirectiveVersionID,
+		ContextAssemblyMs:  args.Meta.ContextAssemblyMs,
+		ScoreSchema:        args.Meta.ScoreSchema,
+		Completeness:       completenessFromOutcome(args.Outcome),
 		Timings: httptrace.RequestTimings{
 			AuthMs:       args.Meta.AuthMs,
 			DirectiveMs:  args.Meta.DirectiveMs,
@@ -85,6 +92,20 @@ func resolveStreaming(in CheckpointInput, outcome httptrace.RequestOutcome) bool
 	return in.IsStreaming
 }
 
+func completenessFromOutcome(outcome httptrace.RequestOutcome) string {
+	if outcomeCompleteOK(outcome) {
+		return "complete"
+	}
+	return "partial"
+}
+
+func outcomeCompleteOK(outcome httptrace.RequestOutcome) bool {
+	if !outcome.IsComplete || outcome.ErrorCode != "" {
+		return false
+	}
+	return outcome.StatusCode == 0 || outcome.StatusCode < 400
+}
+
 // EmitTrace writes an assembled row; failures are logged and never surface to clients.
 func EmitTrace(w httptrace.TraceWriter, log *logger.Logger, snap httptrace.AssembleInput) {
 	if w == nil {
@@ -121,33 +142,108 @@ func flushBuffer(job PostResponseJob) {
 }
 
 func runDeferredPostResponse(job PostResponseJob) {
-	if !job.DoCheckpoint && !job.DoTrace {
+	if !deferredPostResponseNeeded(job) {
 		return
 	}
-	run := func() {
-		if job.DoCheckpoint {
-			job.Deps.RunCheckpoint(job.Params, job.ExternalID)
-		}
-		if job.DoTrace {
-			EmitTrace(job.TraceWriter, job.Log, job.Snap)
-		}
-	}
-	if job.Deps.Pool != nil {
-		job.Deps.Pool.Submit(run)
+	run := func() { executeDeferredPostResponse(job) }
+	if job.Deps.Pool == nil {
+		run()
 		return
 	}
-	run()
+	if evidenceOrUsageFactOnlyJob(job) {
+		submitEvidenceFailOpen(job, run)
+		return
+	}
+	job.Deps.Pool.Submit(run)
+}
+
+func evidenceOrUsageFactOnlyJob(job PostResponseJob) bool {
+	if job.DoCheckpoint || job.DoTrace {
+		return false
+	}
+	return job.DoEvidence || job.DoUsageFact
+}
+
+func submitEvidenceFailOpen(job PostResponseJob, run func()) {
+	if job.Deps.Pool.TrySubmit(run) {
+		return
+	}
+	logEvidencePoolDrop(job)
+}
+
+func logEvidencePoolDrop(job PostResponseJob) {
+	if job.Log == nil {
+		return
+	}
+	ctx := context.Background()
+	if job.Snap.RequestID != "" {
+		ctx = reqid.WithRequestID(ctx, job.Snap.RequestID)
+	}
+	job.Log.WarnCtx(ctx, "evidence persist dropped: pool full",
+		"request_id", job.Snap.RequestID,
+		"org_id", job.Snap.OrgID.String(),
+	)
+}
+
+func deferredPostResponseNeeded(job PostResponseJob) bool {
+	return job.DoCheckpoint || job.DoTrace || job.DoEvidence || job.DoUsageFact
+}
+
+func executeDeferredPostResponse(job PostResponseJob) {
+	if job.DoCheckpoint {
+		ckID := job.Deps.RunCheckpoint(job.Params, job.ExternalID)
+		if ckID != uuid.Nil {
+			job.Snap.CheckpointID = &ckID
+		}
+	}
+	if job.DoTrace {
+		EmitTrace(job.TraceWriter, job.Log, job.Snap)
+	}
+	if job.DoUsageFact {
+		EmitUsageFact(job.UsageFactWriter, job.Log, job.UsageFact)
+	}
+	if job.DoEvidence {
+		persistDeferredEvidence(job)
+	}
+}
+
+// EmitUsageFact writes a usage fact; write errors (including buffer-full rejects) are logged.
+func EmitUsageFact(w UsageFactWriter, log *logger.Logger, fact billing.UsageFact) {
+	if w == nil {
+		return
+	}
+	if err := w.Write(fact); err != nil && log != nil {
+		log.WarnCtx(context.Background(), "usage fact write failed",
+			"request_id", fact.RequestID,
+			"error", err,
+		)
+	}
+}
+
+func persistDeferredEvidence(job PostResponseJob) {
+	meta := SnapshotMeta{
+		RequestID:          job.Snap.RequestID,
+		TraceID:            job.Snap.TraceID,
+		RootSpanID:         job.Snap.RootSpanID,
+		DirectiveVersionID: job.Snap.DirectiveVersionID,
+		ContextAssemblyMs:  job.Snap.ContextAssemblyMs,
+		ScoreSchema:        job.Snap.ScoreSchema,
+		EvidenceExtras:     job.EvidenceExtras,
+	}
+	PersistEvidence(job.Deps.Evidence, job.Log, BuildEvidenceRun(job.Snap, meta, job.EvidenceExtras))
 }
 
 // PreparePostResponseInput groups deps and turn data for PreparePostResponse.
 type PreparePostResponseInput struct {
-	Deps     LifecycleDeps
-	Writer   httptrace.TraceWriter
-	Log      *logger.Logger
-	Resolved Resolved
-	Meta     SnapshotMeta
-	In       CheckpointInput
-	Outcome  httptrace.RequestOutcome
+	Deps            LifecycleDeps
+	Writer          httptrace.TraceWriter
+	UsageFactWriter UsageFactWriter
+	UsageFact       *billing.UsageFact
+	Log             *logger.Logger
+	Resolved        Resolved
+	Meta            SnapshotMeta
+	In              CheckpointInput
+	Outcome         httptrace.RequestOutcome
 }
 
 // PreparePostResponse decides checkpoint/trace/buffer work and builds a submit job.
@@ -157,11 +253,18 @@ func PreparePostResponse(in PreparePostResponseInput) PostResponseJob {
 	})
 	doCheckpoint := WantCheckpoint(in.Deps, in.Resolved, in.In, in.Outcome)
 	doTrace := snapOK && httptrace.EffectiveWriter(in.Writer) != nil
+	doEvidence := snapOK && EffectiveEvidence(in.Deps.Evidence) != nil && firstNonEmpty(snap.TraceID, in.Meta.TraceID) != ""
 	doBuffer := wantExtractionBuffer(in)
+	doUsageFact := in.UsageFact != nil && in.UsageFactWriter != nil
 	job := PostResponseJob{
 		Deps: in.Deps, In: in.In, Snap: snap, SnapOK: snapOK,
-		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoBuffer: doBuffer,
-		TraceWriter: in.Writer, Log: in.Log,
+		DoCheckpoint: doCheckpoint, DoTrace: doTrace, DoEvidence: doEvidence, DoBuffer: doBuffer,
+		DoUsageFact: doUsageFact,
+		TraceWriter: in.Writer, UsageFactWriter: in.UsageFactWriter, Log: in.Log,
+		EvidenceExtras: in.Meta.EvidenceExtras,
+	}
+	if doUsageFact {
+		job.UsageFact = *in.UsageFact
 	}
 	if doCheckpoint {
 		job.Params = BuildCheckpointParams(in.Resolved, in.In, in.Meta.RequestID)

@@ -370,8 +370,33 @@ def _request_from_proto(request: object) -> AssembleRequest:
         query=query,
         model=model,
         recent_messages=_messages_from_proto(raw_messages),
+        session_id=_optional_uuid(
+            getattr(request, "session_id", ""),
+            label="session_id",
+        ),
+        directive_version_id=_optional_uuid(
+            getattr(request, "directive_version_id", ""),
+            label="directive_version_id",
+        ),
+        request_id=_optional_uuid(
+            getattr(request, "request_id", ""),
+            label="request_id",
+        ),
+        trace_id=_optional_w3c_trace_id(getattr(request, "trace_id", "")),
+        span_id=_optional_w3c_span_id(getattr(request, "span_id", "")),
+        available_tokens=_available_tokens_from_proto(request),
         options=_options_from_proto(getattr(request, "options", None)),
     )
+
+
+def _available_tokens_from_proto(request: object) -> int:
+    raw = int(getattr(request, "available_tokens", 0) or 0)
+    if raw < 0:
+        raise ValueError(f"available_tokens must be >= 0, got {raw}")
+    # Bound to a sane upper ceiling (model windows are << this).
+    if raw > 10_000_000:
+        raise ValueError(f"available_tokens exceeds 10000000, got {raw}")
+    return raw
 
 
 def _bounded_text(
@@ -435,6 +460,10 @@ def _response_to_proto(pb2: object, result: AssemblyResult) -> object:
             usefulness_score=m.usefulness_score,
             rank=m.rank,
             category=m.category,
+            exclusion=m.exclusion,
+            similarity=m.similarity,
+            confidence=m.confidence,
+            token_estimate=m.token_estimate,
         )
         for m in result.memories_used
     ]
@@ -457,6 +486,10 @@ def _response_to_proto(pb2: object, result: AssemblyResult) -> object:
             total_ms=metrics.total_ms,
             candidates_evaluated=metrics.candidates_evaluated,
         ),
+        request_id=result.request_id,
+        trace_id=result.trace_id,
+        span_id=result.span_id,
+        score_schema=result.score_schema,
     )
 
 
@@ -468,6 +501,44 @@ def _parse_uuid(raw: str, label: str) -> UUID:
         return UUID(text)
     except ValueError as exc:
         raise ValueError(f"{label} must be a UUID") from exc
+
+
+def _optional_uuid(raw: object, *, label: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(UUID(text))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be a UUID") from exc
+
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _is_w3c_hex(text: str, length: int) -> bool:
+    return len(text) == length and all(c in _HEX for c in text)
+
+
+def _optional_w3c_trace_id(raw: object) -> str:
+    return _optional_w3c_hex_id(raw, label="trace_id", length=32)
+
+
+def _optional_w3c_span_id(raw: object) -> str:
+    return _optional_w3c_hex_id(raw, label="span_id", length=16)
+
+
+def _optional_w3c_hex_id(raw: object, *, label: str, length: int) -> str:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    if not _is_w3c_hex(text, length):
+        raise ValueError(
+            f"{label} must be a {length}-character hexadecimal W3C {label}"
+        )
+    if text == "0" * length:
+        raise ValueError(f"{label} must be nonzero")
+    return text
 
 
 def main() -> None:

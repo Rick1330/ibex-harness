@@ -10,11 +10,17 @@ func toProto(req AssembleParams) *contextv1.AssembleContextRequest {
 		msgs = append(msgs, &contextv1.Message{Role: m.Role, Content: m.Content})
 	}
 	out := &contextv1.AssembleContextRequest{
-		OrgId:          req.OrgID,
-		AgentId:        req.AgentID,
-		Model:          req.Model,
-		Query:          req.Query,
-		RecentMessages: msgs,
+		OrgId:              req.OrgID,
+		AgentId:            req.AgentID,
+		SessionId:          req.SessionID,
+		Model:              req.Model,
+		Query:              req.Query,
+		DirectiveVersionId: req.DirectiveVersionID,
+		AvailableTokens:    req.AvailableTokens,
+		RequestId:          req.RequestID,
+		TraceId:            req.TraceID,
+		SpanId:             req.SpanID,
+		RecentMessages:     msgs,
 		Options: &contextv1.AssemblyOptions{
 			SkipColdMemories: req.Options.SkipColdMemories,
 			SkipHotMemories:  req.Options.SkipHotMemories,
@@ -35,6 +41,52 @@ func fromProto(resp *contextv1.AssembleContextResponse) AssembleResult {
 		DirectiveTokens:  resp.GetDirectiveTokens(),
 		HistoryTokens:    resp.GetHistoryTokens(),
 		MemoryTokens:     resp.GetMemoryTokens(),
+		MemoriesUsed:     memoriesFromProto(resp.GetMemoriesUsed()),
+		Metrics:          metricsFromProto(resp.GetMetrics()),
+		RequestID:        resp.GetRequestId(),
+		TraceID:          resp.GetTraceId(),
+		SpanID:           resp.GetSpanId(),
+		ScoreSchema:      resp.GetScoreSchema(),
 		Fallback:         false,
+	}
+}
+
+func memoriesFromProto(in []*contextv1.MemoryUsed) []MemoryUsed {
+	memories := make([]MemoryUsed, 0, len(in))
+	for _, m := range in {
+		if m == nil {
+			continue
+		}
+		memories = append(memories, MemoryUsed{
+			MemoryID:        m.GetMemoryId(),
+			CompositeScore:  m.GetCompositeScore(),
+			RelevanceScore:  m.GetRelevanceScore(),
+			RecencyScore:    m.GetRecencyScore(),
+			UsefulnessScore: m.GetUsefulnessScore(),
+			Rank:            m.GetRank(),
+			Category:        m.GetCategory(),
+			Exclusion:       m.GetExclusion(),
+			Similarity:      m.GetSimilarity(),
+			Confidence:      m.GetConfidence(),
+			TokenEstimate:   m.GetTokenEstimate(),
+		})
+	}
+	return memories
+}
+
+func metricsFromProto(m *contextv1.AssemblyMetrics) *AssemblyMetrics {
+	if m == nil {
+		return nil
+	}
+	return &AssemblyMetrics{
+		BudgetCalculationMs:   m.GetBudgetCalculationMs(),
+		DirectiveLoadMs:       m.GetDirectiveLoadMs(),
+		HotMemoryRetrievalMs:  m.GetHotMemoryRetrievalMs(),
+		ColdMemoryRetrievalMs: m.GetColdMemoryRetrievalMs(),
+		RankingMs:             m.GetRankingMs(),
+		PackingMs:             m.GetPackingMs(),
+		FormattingMs:          m.GetFormattingMs(),
+		TotalMs:               m.GetTotalMs(),
+		CandidatesEvaluated:   m.GetCandidatesEvaluated(),
 	}
 }

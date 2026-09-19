@@ -74,20 +74,20 @@ func (m *memSessionStore) GetOrCreate(_ context.Context, p session.GetOrCreatePa
 	return &cp, nil
 }
 
-func (m *memSessionStore) AppendCheckpoint(_ context.Context, p session.CheckpointParams) error {
+func (m *memSessionStore) AppendCheckpoint(_ context.Context, p session.CheckpointParams) (uuid.UUID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appendCalls++
 	if m.appendFailOnce != nil {
 		err := m.appendFailOnce
 		m.appendFailOnce = nil
-		return err
+		return uuid.Nil, err
 	}
 	if m.appendErr != nil {
-		return m.appendErr
+		return uuid.Nil, m.appendErr
 	}
 	m.checkpoints = append(m.checkpoints, p)
-	return nil
+	return uuid.New(), nil
 }
 
 func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {

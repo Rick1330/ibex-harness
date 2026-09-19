@@ -87,14 +87,14 @@ func TestEvaluatePolicies_DenyStarMissesSlashyModel(t *testing.T) {
 	}
 }
 
-func TestEvaluatePolicies_NoMatchAllows(t *testing.T) {
+func TestEvaluatePolicies_NoMatchDenies(t *testing.T) {
 	t.Parallel()
 	dec, err := EvaluatePolicies([]Policy{{Pattern: "gpt-*", Allowed: false, Priority: 1}}, "claude-sonnet-4-5")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dec.Matched || !dec.Allowed {
-		t.Fatalf("want platform allow, got %+v", dec)
+	if dec.Matched || dec.Allowed {
+		t.Fatalf("want deny-by-default on unmatched, got %+v", dec)
 	}
 }
 

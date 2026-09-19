@@ -234,14 +234,17 @@ func mustOpenAIRegistry(t *testing.T) *provider.Registry {
 
 type staticPolicyLoader struct{ policies []modelpolicy.Policy }
 
-func (s *staticPolicyLoader) LoadOrg(context.Context, uuid.UUID) ([]modelpolicy.Policy, error) {
-	return append([]modelpolicy.Policy(nil), s.policies...), nil
+func (s *staticPolicyLoader) LoadOrg(context.Context, uuid.UUID) (modelpolicy.OrgPolicies, error) {
+	return modelpolicy.OrgPolicies{
+		Epoch:    1,
+		Policies: append([]modelpolicy.Policy(nil), s.policies...),
+	}, nil
 }
 
 type errPolicyLoader struct{}
 
-func (errPolicyLoader) LoadOrg(context.Context, uuid.UUID) ([]modelpolicy.Policy, error) {
-	return nil, errors.New("db down")
+func (errPolicyLoader) LoadOrg(context.Context, uuid.UUID) (modelpolicy.OrgPolicies, error) {
+	return modelpolicy.OrgPolicies{}, errors.New("db down")
 }
 
 type staticAgentDefaults struct{ defaults modelpolicy.AgentDefaults }

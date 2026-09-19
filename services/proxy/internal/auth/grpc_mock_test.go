@@ -66,6 +66,30 @@ func (m *mockAuthServiceClient) ListProviderCredentials(
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthServiceClient) BeginTotpEnrollment(
+	context.Context, *authv1.BeginTotpEnrollmentRequest, ...grpc.CallOption,
+) (*authv1.BeginTotpEnrollmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) ConfirmTotpEnrollment(
+	context.Context, *authv1.ConfirmTotpEnrollmentRequest, ...grpc.CallOption,
+) (*authv1.ConfirmTotpEnrollmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) CreateStepUpToken(
+	context.Context, *authv1.CreateStepUpTokenRequest, ...grpc.CallOption,
+) (*authv1.CreateStepUpTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) IssueOperatorSession(
+	context.Context, *authv1.IssueOperatorSessionRequest, ...grpc.CallOption,
+) (*authv1.IssueOperatorSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
 func assertWantError(t *testing.T, err, want error) {
 	t.Helper()
 	if !errors.Is(err, want) {

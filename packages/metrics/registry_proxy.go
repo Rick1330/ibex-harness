@@ -41,6 +41,11 @@ type ProxyRegistry struct {
 	modelPolicyInvalidate         prometheus.Counter
 	modelPolicyLRUSize            prometheus.Gauge
 	modelPolicyEnabled            prometheus.Gauge
+	budgetCacheHits               *prometheus.CounterVec
+	budgetCacheMisses             *prometheus.CounterVec
+	budgetDeny                    prometheus.Counter
+	budgetInvalidate              prometheus.Counter
+	budgetLRUSize                 prometheus.Gauge
 	sessionGetOrCreate            *prometheus.CounterVec
 	sessionGetOrCreateSec         prometheus.Histogram
 	sessionCheckpoint             *prometheus.CounterVec
@@ -50,6 +55,7 @@ type ProxyRegistry struct {
 	clickhouseFlushTotal          *prometheus.CounterVec
 	clickhouseFlushRows           prometheus.Counter
 	clickhouseDroppedRows         prometheus.Counter
+	usageFactRejected             prometheus.Counter
 	clickhouseFlushSec            prometheus.Histogram
 	idempotencyTotal              *prometheus.CounterVec
 	idempotencyDuration           prometheus.Histogram

@@ -1,0 +1,39 @@
+---
+title: "ADR-0079: Operator session RS256 dual-verify and TOTP step-up"
+description: "Architecture decision record 0079."
+adrId: "0079"
+status: "Accepted"
+date: "2026-09-15"
+authors: "IBEX Harness team"
+---
+
+# ADR-0079: Operator session RS256 dual-verify and TOTP step-up
+
+- **Status:** Accepted
+- **Date:** 2026-09-15
+- **Authors:** IBEX Harness team
+
+## Context
+
+4.P.0 shipped provisional HS256 session cookies in `services/api`. Gate G1 (4.P.1) requires Auth-owned session issuance, step-up for high-impact operator actions, and a migration path that does not break local/dev HS256 smoke.
+
+## Decision
+
+1. **RS256 issuer in Auth** — `JWT_PRIVATE_KEY_PEM` signs operator access/refresh/step-up JWTs via stdlib RSA + JSON (`services/auth/internal/sessionjwt`). Claims align with `SessionClaims` (`sub`, `org_id`, `permissions`, `session_kind`, `iss`, `aud`, `jti`).
+2. **API dual-verify** — Prefer RS256 using `DASHBOARD_JWT_PUBLIC_KEYS_PEM`; on HS256 success log `provisional_hs256_verify=1`. Do not remove HS256 in this milestone.
+3. **Bespoke TOTP** — Auth RPCs `BeginTotpEnrollment` / `ConfirmTotpEnrollment` / `CreateStepUpToken` behind `IBEX_AUTH_TOTP_ENABLED` (default false). Library: `github.com/pquerna/otp`. Secrets sealed with the credentials master key envelope.
+4. **Step-up transport** — High-impact API routes accept `X-IBEX-Step-Up`; missing/expired/wrong-org → typed deny without existence leak.
+5. **Non-goals** — OIDC/ACR federation, org switching, dual-approval UI, and preview-token issuer remain out of scope.
+
+## Consequences
+
+### Positive
+
+- Auth owns signing keys; API never sees `JWT_PRIVATE_KEY_PEM`.
+- Operators can migrate gradually while HS256 remains for local smoke.
+- Step-up is enforceable in `authz.py` via `RequiresStepUp` bits (ADR-0009 amendment).
+
+### Negative / residual
+
+- Dual-verify window keeps HS256 attack surface until cutover.
+- Dual-approval and preview issuance are hooks/schema only until later milestones.

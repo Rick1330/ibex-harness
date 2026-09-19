@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/google/uuid"
 )
 
@@ -110,6 +111,39 @@ func TestUnit_CompletionTextFromJSON(t *testing.T) {
 			got := CompletionTextFromJSON([]byte(tc.body))
 			if got != tc.want {
 				t.Fatalf("got=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnit_UsageFromJSON(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		body string
+		want *provider.Usage
+	}{
+		{
+			name: "extracts usage",
+			body: `{"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`,
+			want: &provider.Usage{InputTokens: 3, OutputTokens: 5, TotalTokens: 8},
+		},
+		{name: "missing usage", body: `{"choices":[]}`, want: nil},
+		{name: "bad json", body: `{`, want: nil},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := UsageFromJSON([]byte(tc.body))
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("got=%+v want nil", got)
+				}
+				return
+			}
+			if got == nil || *got != *tc.want {
+				t.Fatalf("got=%+v want=%+v", got, tc.want)
 			}
 		})
 	}

@@ -60,6 +60,30 @@ func (m *mockAuthClient) ListProviderCredentials(
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthClient) BeginTotpEnrollment(
+	context.Context, *authv1.BeginTotpEnrollmentRequest, ...grpc.CallOption,
+) (*authv1.BeginTotpEnrollmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) ConfirmTotpEnrollment(
+	context.Context, *authv1.ConfirmTotpEnrollmentRequest, ...grpc.CallOption,
+) (*authv1.ConfirmTotpEnrollmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) CreateStepUpToken(
+	context.Context, *authv1.CreateStepUpTokenRequest, ...grpc.CallOption,
+) (*authv1.CreateStepUpTokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) IssueOperatorSession(
+	context.Context, *authv1.IssueOperatorSessionRequest, ...grpc.CallOption,
+) (*authv1.IssueOperatorSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
 func TestAuthGRPC_UnauthenticatedIsHealthy(t *testing.T) {
 	t.Parallel()
 	client := &mockAuthClient{err: status.Error(codes.Unauthenticated, "invalid token")}

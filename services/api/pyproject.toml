@@ -28,6 +28,10 @@ dependencies = [
   # stack; httpx already in dev deps and matches FastAPI TestClient ecosystem).
   # Security: timeouts + follow_redirects=False in call sites; size impact small.
   "httpx>=0.27.0",
+  # RS256 dual-verify for operator session cookies (4.P.1). Stdlib has no RSA PKCS1v15
+  # verify; Auth issues with Go crypto/rsa. Alternatives rejected: PyJWT (extra JWT stack),
+  # hand-rolled RSA (unsafe). Size impact: cryptography is already common in the venv.
+  "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]

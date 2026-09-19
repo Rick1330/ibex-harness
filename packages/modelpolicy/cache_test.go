@@ -19,14 +19,14 @@ type fakeLoader struct {
 	mu       sync.Mutex
 }
 
-func (f *fakeLoader) LoadOrg(_ context.Context, orgID uuid.UUID) ([]Policy, error) {
+func (f *fakeLoader) LoadOrg(_ context.Context, orgID uuid.UUID) (OrgPolicies, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	if f.err != nil {
-		return nil, f.err
+		return OrgPolicies{}, f.err
 	}
-	return append([]Policy(nil), f.policies[orgID]...), nil
+	return OrgPolicies{Epoch: 1, Policies: append([]Policy(nil), f.policies[orgID]...)}, nil
 }
 
 func (f *fakeLoader) callCount() int {
@@ -136,8 +136,8 @@ func TestOrgAwareRegistry_DenyAndAllow(t *testing.T) {
 		t.Fatalf("allow: %v", err)
 	}
 	other := uuid.New()
-	if _, err := reg.ForOrg(context.Background(), other, model); err != nil {
-		t.Fatalf("no policy rows: %v", err)
+	if _, err := reg.ForOrg(context.Background(), other, model); !errors.Is(err, ErrModelNotAllowedForOrg) {
+		t.Fatalf("no policy rows: want deny, err=%v", err)
 	}
 }
 
@@ -240,7 +240,7 @@ func mustOrgAwareWithChain(t *testing.T, org uuid.UUID, model string, chain []st
 func TestEventRoundTrip(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()
-	ev := InvalidateEvent{Version: CurrentEventVersion, OrgID: org.String()}
+	ev := InvalidateEvent{Version: CurrentEventVersion, OrgID: org.String(), Epoch: 1}
 	b, err := ev.Marshal()
 	if err != nil {
 		t.Fatal(err)
@@ -390,14 +390,14 @@ type seqBlockingLoader struct {
 	calls            int
 }
 
-func (s *seqBlockingLoader) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, error) {
+func (s *seqBlockingLoader) LoadOrg(_ context.Context, _ uuid.UUID) (OrgPolicies, error) {
 	s.calls++
 	if s.calls == 1 {
 		close(s.started)
 		<-s.release
-		return append([]Policy(nil), s.first...), nil
+		return OrgPolicies{Epoch: 1, Policies: append([]Policy(nil), s.first...)}, nil
 	}
-	return append([]Policy(nil), s.second...), nil
+	return OrgPolicies{Epoch: 1, Policies: append([]Policy(nil), s.second...)}, nil
 }
 
 type hookLoader struct {
@@ -406,13 +406,13 @@ type hookLoader struct {
 	calls     int
 }
 
-func (h *hookLoader) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, error) {
+func (h *hookLoader) LoadOrg(_ context.Context, _ uuid.UUID) (OrgPolicies, error) {
 	h.calls++
 	out := append([]Policy(nil), h.policies...)
 	if h.afterLoad != nil {
 		h.afterLoad()
 	}
-	return out, nil
+	return OrgPolicies{Epoch: 1, Policies: out}, nil
 }
 
 type invalidateOnLoad struct {
@@ -421,10 +421,10 @@ type invalidateOnLoad struct {
 	calls int
 }
 
-func (i *invalidateOnLoad) LoadOrg(_ context.Context, _ uuid.UUID) ([]Policy, error) {
+func (i *invalidateOnLoad) LoadOrg(_ context.Context, _ uuid.UUID) (OrgPolicies, error) {
 	i.calls++
 	i.cache.Invalidate(i.org)
-	return []Policy{{Pattern: "x*", Allowed: false, Priority: 1}}, nil
+	return OrgPolicies{Epoch: 1, Policies: []Policy{{Pattern: "x*", Allowed: false, Priority: 1}}}, nil
 }
 
 func TestCache_GensPrunedOnCapacityEviction(t *testing.T) {
@@ -555,9 +555,9 @@ type orderedPolicyLoader struct {
 	started []chan struct{}
 }
 
-func (o *orderedPolicyLoader) LoadOrg(_ context.Context, orgID uuid.UUID) ([]Policy, error) {
+func (o *orderedPolicyLoader) LoadOrg(_ context.Context, orgID uuid.UUID) (OrgPolicies, error) {
 	if orgID != o.org {
-		return nil, fmt.Errorf("unexpected org")
+		return OrgPolicies{}, fmt.Errorf("unexpected org")
 	}
 	o.mu.Lock()
 	i := o.idx
@@ -565,16 +565,16 @@ func (o *orderedPolicyLoader) LoadOrg(_ context.Context, orgID uuid.UUID) ([]Pol
 	if i >= len(o.steps) {
 		last := o.steps[len(o.steps)-1]
 		o.mu.Unlock()
-		return append([]Policy(nil), last.policies...), nil
+		return OrgPolicies{Epoch: 1, Policies: append([]Policy(nil), last.policies...)}, nil
 	}
 	if i >= len(o.started) {
 		o.mu.Unlock()
-		return nil, fmt.Errorf("missing started channel for step %d", i)
+		return OrgPolicies{}, fmt.Errorf("missing started channel for step %d", i)
 	}
 	started := o.started[i]
 	step := o.steps[i]
 	o.mu.Unlock()
 	close(started)
 	<-step.wait
-	return append([]Policy(nil), step.policies...), nil
+	return OrgPolicies{Epoch: 1, Policies: append([]Policy(nil), step.policies...)}, nil
 }

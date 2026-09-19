@@ -8,6 +8,8 @@ TASK_MAINTENANCE_NOOP_SWEEP = "ibex.worker.maintenance.noop_sweep"
 TASK_MAINTENANCE_ALWAYS_FAIL = "ibex.worker.maintenance.always_fail"
 TASK_RESULT_PROBE = "ibex.worker.maintenance.result_probe"
 TASK_ORG_DELETE_ORGANIZATION = "ibex.worker.org.delete_organization"
+TASK_RECONCILE_USAGE_ACTUALS = "ibex.worker.billing.reconcile_usage_actuals"
+TASK_BUDGET_SPENT_ROLLUP = "ibex.worker.billing.budget_spent_rollup"
 
 ALL_TASK_NAMES: tuple[str, ...] = (
     TASK_EXTRACTION_NOOP,
@@ -18,4 +20,6 @@ ALL_TASK_NAMES: tuple[str, ...] = (
     TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_RESULT_PROBE,
     TASK_ORG_DELETE_ORGANIZATION,
+    TASK_RECONCILE_USAGE_ACTUALS,
+    TASK_BUDGET_SPENT_ROLLUP,
 )

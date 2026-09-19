@@ -16,6 +16,7 @@ type upstreamCall struct {
 	Stream         bool
 	Model          string
 	APIKeyOverride string
+	TLSServerName  string
 }
 
 func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call upstreamCall) (provider.Response, error) {

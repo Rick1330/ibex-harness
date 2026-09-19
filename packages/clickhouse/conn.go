@@ -17,7 +17,8 @@ const insertSQL = `INSERT INTO ibex.llm_traces (
 	auth_latency_ms, directive_latency_ms, provider_ttfb_ms, total_latency_ms,
 	status_code, is_complete, error_code,
 	requested_at, completed_at,
-	original_model, fallback_model, fallback_reason
+	original_model, fallback_model, fallback_reason,
+	trace_id, root_span_id, directive_version_id, context_assembly_ms, score_schema, completeness
 )`
 
 // pingTimeout bounds startup connectivity checks so proxy boot cannot hang.
@@ -83,6 +84,10 @@ func (c *chInserter) InsertTraces(ctx context.Context, rows []TraceRecord) error
 }
 
 func appendTrace(batch driver.Batch, r TraceRecord) error {
+	completeness := r.Completeness
+	if completeness == "" {
+		completeness = "partial"
+	}
 	err := batch.Append(
 		r.RequestID,
 		r.OrgID,
@@ -107,6 +112,12 @@ func appendTrace(batch driver.Batch, r TraceRecord) error {
 		nullableString(r.OriginalModel),
 		nullableString(r.FallbackModel),
 		r.FallbackReason,
+		r.TraceID,
+		r.RootSpanID,
+		nullableUUID(r.DirectiveVersionID),
+		r.ContextAssemblyMs,
+		r.ScoreSchema,
+		completeness,
 	)
 	if err != nil {
 		return fmt.Errorf("append row: %w", err)

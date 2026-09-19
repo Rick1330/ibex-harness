@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
@@ -24,6 +25,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionenqueue"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
@@ -40,21 +42,27 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config             config.Config
-	Logger             *logger.Logger
-	Metrics            *metrics.ProxyRegistry
-	Tracer             trace.Tracer
-	Validator          TokenValidator
-	AgentVerifier      AgentVerifier
-	Limiter            ratelimit.Limiter
+	Config        config.Config
+	Logger        *logger.Logger
+	Metrics       *metrics.ProxyRegistry
+	Tracer        trace.Tracer
+	Validator     TokenValidator
+	AgentVerifier AgentVerifier
+	Limiter       ratelimit.Limiter
+	// BudgetCache enforces spend hard-caps after RPM (nil disables).
+	BudgetCache *billing.Cache
+	// UsageFactWriter batches usage_facts inserts (nil disables).
+	UsageFactWriter    *billing.UsageFactWriter
 	DirectiveResolver  directive.Resolver
 	SessionStore       session.Store
 	SessionCache       *sessioncache.Cache
 	CheckpointPool     *asyncpool.Pool
 	GetOrCreateTimeout time.Duration
-	Health             *healthcheck.Server
-	ProviderRegistry   *provider.Registry
-	// ModelRouter org-gates provider selection (nil → PassthroughRegistry over ProviderRegistry).
+	// EvidenceStore persists nested evidence + outbox rows (nil disables; 4.P.2).
+	EvidenceStore    httpsession.EvidencePersister
+	Health           *healthcheck.Server
+	ProviderRegistry *provider.Registry
+	// ModelRouter org-gates provider selection (nil → DenyAllRegistry).
 	ModelRouter ProviderResolver
 	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
 	AgentDefaults    modelpolicy.AgentDefaultLoader
@@ -82,7 +90,7 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	}
 	modelRouter := deps.ModelRouter
 	if modelRouter == nil {
-		modelRouter = modelpolicy.PassthroughRegistry{Base: providerReg}
+		modelRouter = modelpolicy.DenyAllRegistry{}
 	}
 	mountPublicRoutes(mux, deps)
 	if deps.Validator != nil {
@@ -126,11 +134,14 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		validator:                deps.Validator,
 		agentVerifier:            deps.AgentVerifier,
 		limiter:                  deps.Limiter,
+		budgetCache:              deps.BudgetCache,
+		usageFactWriter:          deps.UsageFactWriter,
 		directiveResolver:        deps.DirectiveResolver,
 		sessionStore:             deps.SessionStore,
 		sessionCache:             deps.SessionCache,
 		checkpointPool:           deps.CheckpointPool,
 		getOrCreateTimeout:       deps.GetOrCreateTimeout,
+		evidenceStore:            deps.EvidenceStore,
 		docsBase:                 deps.Config.ErrorDocsBase,
 		providerRegistry:         providerReg,
 		modelRouter:              modelRouter,
@@ -215,7 +226,10 @@ type chatCompletionHandler struct {
 	sessionCache             *sessioncache.Cache
 	checkpointPool           *asyncpool.Pool
 	getOrCreateTimeout       time.Duration
+	evidenceStore            httpsession.EvidencePersister
 	traceWriter              TraceWriter
+	usageFactWriter          *billing.UsageFactWriter
+	budgetCache              *billing.Cache
 	idempotencyStore         idempotency.Store
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration

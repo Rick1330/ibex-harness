@@ -14,7 +14,7 @@ import (
 // semantics with RLS applied on every write transaction.
 type Store interface {
 	GetOrCreate(ctx context.Context, p GetOrCreateParams) (*Session, error)
-	AppendCheckpoint(ctx context.Context, p CheckpointParams) error
+	AppendCheckpoint(ctx context.Context, p CheckpointParams) (uuid.UUID, error)
 	Complete(ctx context.Context, sessionID, orgID uuid.UUID) (CompleteResult, error)
 	CompleteByExternalID(ctx context.Context, orgID, agentID uuid.UUID, externalID string) (CompleteResult, uuid.UUID, error)
 	AbandonIdle(ctx context.Context, p AbandonIdleParams) (AbandonIdleResult, error)

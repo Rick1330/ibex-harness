@@ -74,6 +74,13 @@ func settingsWriteCtx(orgID string) context.Context {
 	})
 }
 
+func secretUseCtx(orgID string) context.Context {
+	return ContextWithCaller(context.Background(), CallerContext{
+		OrgID: orgID, TokenID: uuid.NewString(), UserID: uuid.NewString(),
+		Permissions: permissions.SecretUse,
+	})
+}
+
 func TestUnit_ProviderCredentialRPCs_NilService(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, &fakeTokenValidator{fn: func(context.Context, string) (*authv1.ValidateTokenResponse, error) {
@@ -107,7 +114,7 @@ func TestUnit_CreateProviderCredential_HappyPath(t *testing.T) {
 	validated := time.Now().UTC().Truncate(time.Second)
 	fake := &fakeCredAPI{createFn: happyCreateFn(t, org, validated)}
 	resp, err := newCredServer(t, fake).CreateProviderCredential(settingsWriteCtx(org), &authv1.CreateProviderCredentialRequest{
-		OrgId: org, ProviderName: "openai", ApiKey: "sk-live", BaseUrl: "https://example.com",
+		OrgId: org, ProviderName: "openai", ApiKey: "sk-live", BaseUrl: "https://1.1.1.1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +154,7 @@ func assertCreateCredResponse(t *testing.T, resp *authv1.CreateProviderCredentia
 	if resp.GetKeyHint() != "live" {
 		t.Fatalf("hint=%q", resp.GetKeyHint())
 	}
-	if resp.GetBaseUrl() != "https://example.com" {
+	if resp.GetBaseUrl() != "https://1.1.1.1" {
 		t.Fatalf("base=%q", resp.GetBaseUrl())
 	}
 	if resp.GetLastValidatedAt() == nil {
@@ -244,7 +251,7 @@ func TestUnit_GetProviderCredential_Paths(t *testing.T) {
 				t.Fatalf("ref=%+v", ref)
 			}
 			return service.GetProviderCredentialResult{
-				APIKey: "sk-ant", BaseURL: "https://byo.example",
+				APIKey: "sk-ant", BaseURL: "https://1.1.1.1",
 			}, nil
 		},
 	}
@@ -255,12 +262,17 @@ func TestUnit_GetProviderCredential_Paths(t *testing.T) {
 	})
 	assertGRPCCode(t, err, codes.Unauthenticated)
 
-	_, err = srv.GetProviderCredential(settingsWriteCtx(uuid.NewString()), &authv1.GetProviderCredentialRequest{
+	_, err = srv.GetProviderCredential(settingsWriteCtx(org), &authv1.GetProviderCredentialRequest{
 		OrgId: org, ProviderName: "anthropic",
 	})
 	assertGRPCCode(t, err, codes.PermissionDenied)
 
-	resp, err := srv.GetProviderCredential(settingsWriteCtx(org), &authv1.GetProviderCredentialRequest{
+	_, err = srv.GetProviderCredential(secretUseCtx(uuid.NewString()), &authv1.GetProviderCredentialRequest{
+		OrgId: org, ProviderName: "anthropic",
+	})
+	assertGRPCCode(t, err, codes.PermissionDenied)
+
+	resp, err := srv.GetProviderCredential(secretUseCtx(org), &authv1.GetProviderCredentialRequest{
 		OrgId: org, ProviderName: "anthropic",
 	})
 	if err != nil {
@@ -271,7 +283,7 @@ func TestUnit_GetProviderCredential_Paths(t *testing.T) {
 	fake.getFn = func(context.Context, service.OrgProviderRef) (service.GetProviderCredentialResult, error) {
 		return service.GetProviderCredentialResult{}, service.ErrProviderCredentialNotFound
 	}
-	_, err = srv.GetProviderCredential(settingsWriteCtx(org), &authv1.GetProviderCredentialRequest{
+	_, err = srv.GetProviderCredential(secretUseCtx(org), &authv1.GetProviderCredentialRequest{
 		OrgId: org, ProviderName: "openai",
 	})
 	assertGRPCCode(t, err, codes.NotFound)
@@ -282,7 +294,7 @@ func assertGetCredResponse(t *testing.T, resp *authv1.GetProviderCredentialRespo
 	if resp.GetApiKey() != "sk-ant" {
 		t.Fatalf("api_key=%q", resp.GetApiKey())
 	}
-	if resp.GetBaseUrl() != "https://byo.example" {
+	if resp.GetBaseUrl() != "https://1.1.1.1" {
 		t.Fatalf("base=%q", resp.GetBaseUrl())
 	}
 	if resp.GetIsPlatformDefault() {

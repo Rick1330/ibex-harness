@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 )
 
@@ -53,6 +54,26 @@ func CompletionTextFromJSON(body []byte) string {
 		return ""
 	}
 	return wire.Choices[0].Message.Content
+}
+
+// UsageFromJSON extracts OpenAI-compatible usage from a non-streaming chat JSON body.
+// Returns nil when usage is absent or the body is not valid JSON.
+func UsageFromJSON(body []byte) *provider.Usage {
+	var wire struct {
+		Usage *struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil || wire.Usage == nil {
+		return nil
+	}
+	return &provider.Usage{
+		InputTokens:  wire.Usage.PromptTokens,
+		OutputTokens: wire.Usage.CompletionTokens,
+		TotalTokens:  wire.Usage.TotalTokens,
+	}
 }
 
 // SetResponseHeader echoes X-IBEX-Session-ID when a sticky external id is present.

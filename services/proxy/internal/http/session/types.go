@@ -3,6 +3,7 @@ package session
 import (
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
@@ -47,6 +48,8 @@ type LifecycleDeps struct {
 	GetOrCreateTO time.Duration
 	Log           *logger.Logger
 	TurnBuffer    *extractionbuffer.Buffer
+	// Evidence is optional; nil skips Postgres evidence-plane writes (4.P.2).
+	Evidence EvidencePersister
 }
 
 func (d LifecycleDeps) getOrCreateTimeout() time.Duration {
@@ -93,28 +96,44 @@ type CheckpointInput struct {
 
 // SnapshotMeta is request-scoped identity the parent extracts from context.
 type SnapshotMeta struct {
-	RequestID   string
-	OrgID       uuid.UUID
-	AgentID     uuid.UUID
-	SessionID   *uuid.UUID
-	AuthMs      uint16
-	DirectiveMs uint16
-	RequestedAt time.Time
+	RequestID          string
+	TraceID            string
+	RootSpanID         string
+	OrgID              uuid.UUID
+	AgentID            uuid.UUID
+	SessionID          *uuid.UUID
+	DirectiveVersionID *uuid.UUID
+	AuthMs             uint16
+	DirectiveMs        uint16
+	ContextAssemblyMs  uint32
+	ScoreSchema        string
+	RequestedAt        time.Time
+	EvidenceExtras     EvidenceExtras
+}
+
+// UsageFactWriter enqueues a frozen usage_facts row (buffer-full rejects loudly).
+type UsageFactWriter interface {
+	Write(fact billing.UsageFact) error
 }
 
 // PostResponseJob bundles checkpoint/trace/buffer work for the bounded pool Submit.
 type PostResponseJob struct {
-	Deps         LifecycleDeps
-	In           CheckpointInput
-	Snap         httptrace.AssembleInput
-	SnapOK       bool
-	DoCheckpoint bool
-	DoTrace      bool
-	DoBuffer     bool
-	BufferTurns  []extractionbuffer.Turn
-	BufferKey    extractionbuffer.LookupKey
-	TraceWriter  httptrace.TraceWriter
-	Log          *logger.Logger
-	ExternalID   string
-	Params       pkgsession.CheckpointParams
+	Deps            LifecycleDeps
+	In              CheckpointInput
+	Snap            httptrace.AssembleInput
+	SnapOK          bool
+	DoCheckpoint    bool
+	DoTrace         bool
+	DoEvidence      bool
+	DoBuffer        bool
+	DoUsageFact     bool
+	BufferTurns     []extractionbuffer.Turn
+	BufferKey       extractionbuffer.LookupKey
+	TraceWriter     httptrace.TraceWriter
+	UsageFactWriter UsageFactWriter
+	UsageFact       billing.UsageFact
+	Log             *logger.Logger
+	ExternalID      string
+	Params          pkgsession.CheckpointParams
+	EvidenceExtras  EvidenceExtras
 }

@@ -14,7 +14,7 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def require_https_or_loopback(url: str | None) -> str | None:
-    """Remote extraction URLs must be HTTPS; HTTP is allowed only on loopback."""
+    """Remote URLs must be HTTPS; HTTP is allowed only on loopback."""
     if url is None:
         return None
     trimmed = url.strip()
@@ -22,8 +22,7 @@ def require_https_or_loopback(url: str | None) -> str | None:
     host = parsed.hostname
     if host is None:
         raise ValueError(
-            "extraction base URL must include a hostname "
-            "(https:// or http:// on loopback)"
+            "URL must include a hostname (https:// or http:// on loopback)"
         )
     host = host.lower()
     if parsed.scheme == "https":
@@ -31,9 +30,14 @@ def require_https_or_loopback(url: str | None) -> str | None:
     if parsed.scheme == "http" and host in _LOOPBACK_HOSTS:
         return trimmed
     raise ValueError(
-        "extraction base URL must use https:// or http:// on loopback "
-        "(127.0.0.1, localhost, ::1)"
+        "URL must use https:// or http:// on loopback "
+        "(127.0.0.1, localhost, ::1); set S3_ALLOW_INSECURE_HTTP=1 for other HTTP S3"
     )
+
+
+def _s3_insecure_http_allowed() -> bool:
+    raw = os.environ.get("S3_ALLOW_INSECURE_HTTP", "")
+    return raw == "1" or raw.lower() == "true"
 
 
 def redis_url_with_db(base_url: str, db_index: int) -> str:
@@ -240,6 +244,59 @@ class Settings(BaseSettings):
         ),
         description="ClickHouse HTTP DSN for llm_traces; empty skips insert",
     )
+    s3_endpoint: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_ENDPOINT", "IBEX_WORKER_S3_ENDPOINT"),
+        description="S3-compatible endpoint for session archives / org deletion",
+    )
+    s3_access_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_ACCESS_KEY", "IBEX_WORKER_S3_ACCESS_KEY"),
+    )
+    s3_secret_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_SECRET_KEY", "IBEX_WORKER_S3_SECRET_KEY"),
+    )
+    s3_bucket_sessions: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_BUCKET_SESSIONS", "IBEX_WORKER_S3_BUCKET_SESSIONS"),
+    )
+    s3_region: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("S3_REGION", "IBEX_WORKER_S3_REGION"),
+    )
+    s3_master_key_b64: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "S3_MASTER_KEY_B64",
+            "OBJECTSTORE_MASTER_KEY_B64",
+            "IBEX_WORKER_S3_MASTER_KEY_B64",
+        ),
+        description="32-byte base64 KEK for AES-256-GCM envelope (matches Go objectstore)",
+    )
+    s3_encryption_key_id: str = Field(
+        default="v1",
+        validation_alias=AliasChoices(
+            "S3_ENCRYPTION_KEY_ID",
+            "IBEX_WORKER_S3_ENCRYPTION_KEY_ID",
+        ),
+    )
+    # Comma-separated store names expected in this deployment's topology.
+    # Optional stores listed here but missing runtime config fail the job
+    # (store_unreachable). Stores omitted here get receipt status not_applicable.
+    # Default: all four stores deployed (fail-closed if misconfigured).
+    org_deletion_deployed_stores: str = Field(
+        default="postgres,clickhouse,redis,objectstore",
+        validation_alias=AliasChoices(
+            "IBEX_ORG_DELETION_DEPLOYED_STORES",
+            "ORG_DELETION_DEPLOYED_STORES",
+            "IBEX_WORKER_ORG_DELETION_DEPLOYED_STORES",
+        ),
+        description=(
+            "Comma-separated deletion stores deployed in this environment "
+            "(postgres,clickhouse,redis,objectstore). Distinct from empty env vars."
+        ),
+    )
 
     @field_validator(
         "broker_url",
@@ -249,6 +306,10 @@ class Settings(BaseSettings):
         "extraction_vllm_base_url",
         "memory_base_url",
         "clickhouse_dsn",
+        "s3_endpoint",
+        "s3_access_key",
+        "s3_bucket_sessions",
+        "s3_region",
         mode="before",
     )
     @classmethod
@@ -271,6 +332,15 @@ class Settings(BaseSettings):
     @field_validator("extraction_openai_base_url", "extraction_vllm_base_url")
     @classmethod
     def _https_or_loopback_extraction_url(cls, value: str | None) -> str | None:
+        return require_https_or_loopback(value)
+
+    @field_validator("s3_endpoint")
+    @classmethod
+    def _s3_endpoint_https(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if _s3_insecure_http_allowed():
+            return value.strip() if isinstance(value, str) else value
         return require_https_or_loopback(value)
 
     @property

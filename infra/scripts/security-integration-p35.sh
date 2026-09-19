@@ -194,7 +194,7 @@ INSERT INTO ibex_core.tokens (
   '${TOKEN_B_HASH}',
   '${TOKEN_B_PREFIX}',
   'ISO Org B Seed Token',
-  270633733891,
+  35455005822723,
   false
 ) ON CONFLICT (id) DO NOTHING;
 
@@ -222,7 +222,7 @@ INSERT INTO ibex_core.tokens (
   '${TOKEN_ORG_HASH}',
   '${TOKEN_ORG_PREFIX}',
   'ISO Org A Org-Scoped Token',
-  270633733891,
+  35455005822723,
   false
 ) ON CONFLICT (id) DO NOTHING;
 
@@ -245,7 +245,7 @@ INSERT INTO ibex_core.tokens (
   '${TOKEN_SUSPENDED_HASH}',
   '${TOKEN_SUSPENDED_PREFIX}',
   'ISO Suspended Agent Token',
-  270633733891,
+  35455005822723,
   false
 ) ON CONFLICT (id) DO NOTHING;
 SQL

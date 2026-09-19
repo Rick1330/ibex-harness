@@ -14,9 +14,10 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from app.budget import BudgetCalculator, Message, TokenBudget
-from app.capability_catalog import CapabilityCatalog, default_catalog
+from app.budget import MIN_VIABLE_MEMORY_BUDGET, BudgetCalculator, Message, TokenBudget
+from app.capability_catalog import CapabilityCatalog, TokenizerFamilyPolicy, default_catalog
 from app.config import ContextSettings
+from app.estimate import estimate_tokens
 from app.formatter import ContextFormatter, FormatRequest, FormattedContext
 from app.packer import BUCKET_SIZE, ContextPacker, PackedMemories, ScoredMemory
 from app.pipeline import _dedupe_hits
@@ -63,6 +64,10 @@ class MemoryUsedRecord:
     usefulness_score: float
     rank: int
     category: str
+    exclusion: str = "included"
+    similarity: float = 0.0
+    confidence: float = 0.0
+    token_estimate: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +82,10 @@ class AssemblyResult:
     degradation_level: DegradationLevel
     memories_used: tuple[MemoryUsedRecord, ...]
     tokens_used: int
+    request_id: str = ""
+    trace_id: str = ""
+    span_id: str = ""
+    score_schema: str = "interim_v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +97,13 @@ class AssembleRequest:
     query: str
     model: str
     recent_messages: Sequence[Message]
+    session_id: str = ""
+    directive_version_id: str = ""
+    request_id: str = ""
+    trace_id: str = ""
+    span_id: str = ""
+    # When > 0, caps TokenBudget.usable_budget (proto available_tokens).
+    available_tokens: int = 0
     options: AssemblyOptions = AssemblyOptions()
     tool_schemas: Sequence[str] = ()
 
@@ -99,6 +115,32 @@ class _AssemblerDeps:
     formatter: ContextFormatter | None = None
     budget: BudgetCalculator | None = None
     catalog: CapabilityCatalog | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PackFormatInput:
+    """Inputs for post-retrieval budget → pack → format."""
+
+    request: AssembleRequest
+    messages: list[Message]
+    retrieval: RetrievalResult
+    level: DegradationLevel
+    started: float
+
+
+@dataclass(frozen=True, slots=True)
+class _AssemblyBuildInput:
+    """Bundled fields for ``_build_assembly_result`` (CodeScene arity)."""
+
+    request: AssembleRequest
+    retrieval: RetrievalResult
+    level: DegradationLevel
+    budget: TokenBudget
+    scored: list[ScoredMemory]
+    packed: PackedMemories
+    formatted: FormattedContext
+    stages: _StageTimings
+    policy: TokenizerFamilyPolicy
 
 
 class ContextAssembler:
@@ -127,65 +169,63 @@ class ContextAssembler:
         retrieval = await self._retrieve(request, messages)
         level, intentional_skip = _classify_degradation(retrieval, request.options)
         _log_degradation(level, intentional_skip, request, retrieval)
+        return self._pack_and_format(
+            _PackFormatInput(
+                request=request,
+                messages=messages,
+                retrieval=retrieval,
+                level=level,
+                started=started,
+            )
+        )
 
+    def _pack_and_format(self, inp: _PackFormatInput) -> AssemblyResult:
+        """Budget → score → pack → format after retrieval / degradation classify."""
+        request = inp.request
+        retrieval = inp.retrieval
         directive_text = (
             retrieval.directive.content if retrieval.directive is not None else ""
         )
         t_budget = time.perf_counter()
-        budget = self._budget.calculate(request.model, messages, directive_text)
+        budget = self._budget.calculate(request.model, inp.messages, directive_text)
+        budget = _apply_available_tokens(budget, request.available_tokens)
         budget_ms = _elapsed_ms(t_budget)
 
-        packer = self._make_packer(request.model)
-        scored, ranking_ms = _score_candidates(retrieval, request.options, level)
+        scored, ranking_ms = _score_candidates(retrieval, request.options, inp.level)
         t_pack = time.perf_counter()
-        packed = packer.pack(scored, budget.usable_budget)
+        packed = self._make_packer(request.model).pack(scored, budget.usable_budget)
         packing_ms = _elapsed_ms(t_pack)
 
         t_fmt = time.perf_counter()
         formatted = self._formatter.format(
             FormatRequest(
                 directive=retrieval.directive,
-                recent_messages=messages,
+                recent_messages=inp.messages,
                 packed=packed,
                 tool_schemas=request.tool_schemas,
             )
         )
-        formatting_ms = _elapsed_ms(t_fmt)
-
         stages = _StageTimings(
             budget_ms=budget_ms,
             ranking_ms=ranking_ms,
             packing_ms=packing_ms,
-            formatting_ms=formatting_ms,
-            total_ms=_elapsed_ms(started),
+            formatting_ms=_elapsed_ms(t_fmt),
+            total_ms=_elapsed_ms(inp.started),
         )
-        metrics = _build_metrics(
-            retrieval,
-            stages,
-            candidates_evaluated=packed.candidates_evaluated,
-        )
-        logger.debug(
-            "context_assembly_timings level=%s budget_ms=%s ranking_ms=%s "
-            "packing_ms=%s formatting_ms=%s total_ms=%s candidates=%s",
-            level,
-            metrics.budget_calculation_ms,
-            metrics.ranking_ms,
-            metrics.packing_ms,
-            metrics.formatting_ms,
-            metrics.total_ms,
-            metrics.candidates_evaluated,
-        )
-        return AssemblyResult(
-            formatted=formatted,
-            packed=packed,
-            budget=budget,
-            retrieval=retrieval,
-            metrics=metrics,
-            degradation_level=level,
-            memories_used=tuple(_memory_used(item) for item in packed.memories),
-            tokens_used=(
-                budget.directive_tokens + budget.messages_tokens + packed.total_tokens
-            ),
+        return _build_assembly_result(
+            _AssemblyBuildInput(
+                request=request,
+                retrieval=retrieval,
+                level=inp.level,
+                budget=budget,
+                scored=scored,
+                packed=packed,
+                formatted=formatted,
+                stages=stages,
+                policy=self._catalog.family_policy(
+                    self._catalog.for_model(request.model).tokenizer_family,
+                ),
+            )
         )
 
     async def _retrieve(
@@ -238,6 +278,43 @@ class _StageTimings:
     packing_ms: int
     formatting_ms: int
     total_ms: int
+
+
+def _build_assembly_result(inp: _AssemblyBuildInput) -> AssemblyResult:
+    metrics = _build_metrics(
+        inp.retrieval,
+        inp.stages,
+        candidates_evaluated=inp.packed.candidates_evaluated,
+    )
+    logger.debug(
+        "context_assembly_timings level=%s budget_ms=%s ranking_ms=%s "
+        "packing_ms=%s formatting_ms=%s total_ms=%s candidates=%s",
+        inp.level,
+        metrics.budget_calculation_ms,
+        metrics.ranking_ms,
+        metrics.packing_ms,
+        metrics.formatting_ms,
+        metrics.total_ms,
+        metrics.candidates_evaluated,
+    )
+    budget = inp.budget
+    packed = inp.packed
+    request = inp.request
+    return AssemblyResult(
+        formatted=inp.formatted,
+        packed=packed,
+        budget=budget,
+        retrieval=inp.retrieval,
+        metrics=metrics,
+        degradation_level=inp.level,
+        memories_used=_memories_used(inp.scored, packed, inp.policy),
+        tokens_used=(
+            budget.directive_tokens + budget.messages_tokens + packed.total_tokens
+        ),
+        request_id=request.request_id,
+        trace_id=request.trace_id,
+        span_id=request.span_id,
+    )
 
 
 def _build_metrics(
@@ -332,7 +409,56 @@ def _classify_degradation(
     return "L1", intentional
 
 
-def _memory_used(item: ScoredMemory) -> MemoryUsedRecord:
+def _memories_used(
+    scored: list[ScoredMemory],
+    packed: PackedMemories,
+    policy: TokenizerFamilyPolicy,
+) -> tuple[MemoryUsedRecord, ...]:
+    """Emit every scored candidate with pack inclusion / budget / unexamined exclusion."""
+    included = {item.memory_id for item in packed.memories}
+    budget_excluded = packed.budget_excluded_ids
+    estimates = packed.token_estimates
+    records: list[MemoryUsedRecord] = []
+    for item in scored:
+        if item.memory_id in included:
+            exclusion = "included"
+        elif item.memory_id in budget_excluded:
+            exclusion = "budget"
+        else:
+            # Proto MemoryUsed.exclusion: included|budget|filter|truncated|failed|unknown
+            exclusion = "filter"
+        # Reuse packer estimates on the assemble hot path; avoid a second
+        # estimate_tokens pass when the packer already counted this candidate.
+        if item.memory_id in estimates:
+            token_estimate = estimates[item.memory_id]
+        else:
+            token_estimate, _ = estimate_tokens(item.content, policy)
+        records.append(_memory_used(item, exclusion=exclusion, token_estimate=token_estimate))
+    return tuple(records)
+
+
+def _apply_available_tokens(budget: TokenBudget, available_tokens: int) -> TokenBudget:
+    """When available_tokens > 0, cap usable_budget to the caller-requested ceiling."""
+    if available_tokens <= 0 or available_tokens >= budget.usable_budget:
+        return budget
+    return TokenBudget(
+        context_window=budget.context_window,
+        response_reserve=budget.response_reserve,
+        safety_buffer=budget.safety_buffer,
+        usable_budget=available_tokens,
+        directive_tokens=budget.directive_tokens,
+        messages_tokens=budget.messages_tokens,
+        is_constrained=available_tokens < MIN_VIABLE_MEMORY_BUDGET,
+        estimate_kind=budget.estimate_kind,
+    )
+
+
+def _memory_used(
+    item: ScoredMemory,
+    *,
+    exclusion: str,
+    token_estimate: int,
+) -> MemoryUsedRecord:
     # Interim packer score only; wire does not yet expose recency/usefulness.
     return MemoryUsedRecord(
         memory_id=item.memory_id,
@@ -342,6 +468,10 @@ def _memory_used(item: ScoredMemory) -> MemoryUsedRecord:
         usefulness_score=0.0,
         rank=int(item.hit.rank),
         category=item.category,
+        exclusion=exclusion,
+        similarity=float(item.hit.similarity),
+        confidence=float(item.hit.confidence),
+        token_estimate=token_estimate,
     )
 
 

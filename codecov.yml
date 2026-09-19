@@ -6,9 +6,12 @@ coverage:
         threshold: 1%
     patch:
       default:
-        target: 80%
+        target: 95%
   ignore:
     - "packages/proto/gen/go/**"
+    # Playwright/E2E harness binaries (not production code).
+    - "services/proxy/cmd/hardcap-deny-fixture/**"
+    - "services/**/cmd/**-fixture/**"
   flags:
     go:
       paths:

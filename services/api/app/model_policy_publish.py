@@ -1,4 +1,4 @@
-"""Best-effort Redis publish for model-policy invalidation (m4.C.2)."""
+"""Best-effort Redis publish for model-policy invalidation (m4.C.2 / 4.P.1 epoch)."""
 
 from __future__ import annotations
 
@@ -15,22 +15,22 @@ _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
 
 
 class ModelPolicyPublisher(Protocol):
-    async def publish_policy_update(self, org_id: str) -> None: ...
+    async def publish_policy_update(self, org_id: str, epoch: int) -> None: ...
 
 
 class NoopModelPolicyPublisher:
-    async def publish_policy_update(self, org_id: str) -> None:
-        del org_id
+    async def publish_policy_update(self, org_id: str, epoch: int) -> None:
+        del org_id, epoch
         await asyncio.sleep(0)
 
 
 class RecordingModelPolicyPublisher:
     def __init__(self) -> None:
-        self.published: list[str] = []
+        self.published: list[tuple[str, int]] = []
 
-    async def publish_policy_update(self, org_id: str) -> None:
+    async def publish_policy_update(self, org_id: str, epoch: int) -> None:
         await asyncio.sleep(0)
-        self.published.append(org_id)
+        self.published.append((org_id, epoch))
 
 
 def _redis_from_url(redis_url: str):
@@ -45,7 +45,7 @@ def _redis_from_url(redis_url: str):
 
 
 class RedisModelPolicyPublisher:
-    """PUBLISH {v, org_id} to model_policy_updates:{org_id}."""
+    """PUBLISH {v, org_id, epoch} to model_policy_updates:{org_id}."""
 
     def __init__(self, redis_url: str) -> None:
         self._redis_url = redis_url
@@ -56,10 +56,10 @@ class RedisModelPolicyPublisher:
             self._client = _redis_from_url(self._redis_url)
         return self._client
 
-    async def publish_policy_update(self, org_id: str) -> None:
+    async def publish_policy_update(self, org_id: str, epoch: int) -> None:
         client = self._get_client()
         channel = f"{_CHANNEL_PREFIX}{org_id}"
-        payload = json.dumps({"v": _EVENT_VERSION, "org_id": org_id})
+        payload = json.dumps({"v": _EVENT_VERSION, "org_id": org_id, "epoch": int(epoch)})
         await client.publish(channel, payload)
 
     async def aclose(self) -> None:

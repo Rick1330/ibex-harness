@@ -95,8 +95,18 @@ These apply across services, or are read by most services.
 | `IBEX_LOG_FORMAT` | No | `json` | `json` only in production | Human-readable may be okay locally |
 | `IBEX_PORT` | Yes | service-specific | Service listen port | Not secret |
 | `IBEX_PUBLIC_BASE_URL` | No | (none) | Public URL for links in emails/webhooks | Ensure correct in prod |
-| `IBEX_ALLOWED_ORIGINS` | No | `http://localhost:3000` | CORS allowed origins (comma-separated) | Must be strict in prod |
-| `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful drain window on SIGTERM (Go duration, e.g. `30s`, `60s`) | SIGINT triggers immediate shutdown; see [ADR-0018](adr/ADR-0018-graceful-shutdown.md) |
+| `IBEX_ALLOWED_ORIGINS` | No | `http://localhost:3100` | CORS allow-list for operator UI origins (comma-separated). Used by **`services/api`** (4.P.0). Never `*`. | Must be exact origins in prod; see [ADR-0078](/docs/adr/0078-operator-runtime-topology) |
+| `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` (Go) / `30` (API) | Graceful drain on SIGTERM. Go services: duration string. **`services/api`**: integer seconds (also accepts `30s`). | SIGINT immediate in Go; API drains operator SSE within this budget ([ADR-0018](/docs/adr/0018-graceful-shutdown), [ADR-0078](/docs/adr/0078-operator-runtime-topology)) |
+| `IBEX_OPERATOR_FEATURE_ENABLED` | No | `false` | Kill switch for operator session/SSE routes on `services/api` (default off until 4.P.1) | Set `true` only for local smoke / after RS256 readiness |
+| `IBEX_OPERATOR_ALLOW_RAW_READ` | No | `false` | Per-action kill switch for operator raw-read | Default deny |
+| `IBEX_OPERATOR_ALLOW_EXPORT` | No | `false` | Per-action kill switch for operator export | Default deny |
+| `IBEX_OPERATOR_ALLOW_DELETE` | No | `false` | Per-action kill switch for operator delete | Default deny |
+| `IBEX_OPERATOR_ALLOW_REPLAY` | No | `false` | Per-action kill switch for operator replay | Default deny |
+| `IBEX_OPERATOR_ALLOW_SECRET_USE` | No | `false` | Per-action kill switch for secret-use | Default deny |
+| `IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH` | No | `false` | Proxy escape hatch: allow PassthroughRegistry when policy DB unavailable | Residual risk; prefer DenyAll |
+| `IBEX_AUTH_TOTP_ENABLED` | No | `false` | Auth: enable TOTP enroll/confirm/step-up RPCs | Default off |
+| `IBEX_SSE_WRITE_DEADLINE_SECONDS` | No | `15` | Finite operator-event SSE write deadline (stricter than provider SSE) | F4-033 |
+| `IBEX_OPERATOR_EVENTS_CHANNEL` | No | `ibex:operator:events` | Redis pub/sub channel for operator-event fan-in | Not a secret |
 
 ### Tracing/Correlation
 
@@ -643,29 +653,54 @@ Used by: **all services**
 
 ---
 
-## 15) Dashboard Variables (Next.js)
+## 15) Operator UI / Dashboard Variables (4.P.0+)
 
-Used by: **dashboard** (Phase **4** operator UI — server + client; be careful)
+Used by: **`services/dashboard`** (static SPA on Cloudflare Pages) talking to **`services/api`**.
 
-### Public (safe in browser)
+Topology and hostnames: [ADR-0078](/docs/adr/0078-operator-runtime-topology).
 
-These MUST be prefixed with `NEXT_PUBLIC_`:
+### Environment matrix (origins)
+
+| Environment | Operator UI | API / SSE | Cookie SameSite |
+|-------------|-------------|-----------|-----------------|
+| local | `http://localhost:3100` | `http://localhost:8010` | `Lax` |
+| preview | `https://*.ibex-harness-operator.pages.dev` | not provisioned (use local/staging API) | `None`+`Secure` if cross-site |
+| staging | `https://operator.staging.ibexharness.com` (planned) | `https://api.staging.ibexharness.com` (planned; **no Ingress yet**) | `Strict` when same eTLD+1 |
+| production | `https://operator.ibexharness.com` (planned) | `https://api.ibexharness.com` (planned; **no Ingress yet**) | `Strict` + `Secure` + `Domain=.ibexharness.com` |
+
+### Public (safe in browser / Pages build inject)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NEXT_PUBLIC_API_BASE_URL` | Yes | `http://localhost:8000` | API server base |
-| `NEXT_PUBLIC_PROXY_BASE_URL` | No | `http://localhost:8080` | Proxy base for UI tools |
+| `NEXT_PUBLIC_API_BASE_URL` / `window.IBEX_API_BASE_URL` | Yes | `http://localhost:8010` | API/SSE origin for the operator shell (use `localhost`, not `127.0.0.1`, with UI on `localhost:3100`) |
 | `NEXT_PUBLIC_SENTRY_DSN` | No | (none) | Public Sentry DSN (safe) |
 
-### Server-only (must NOT be exposed to browser)
+### Cookie / CSRF / provisional JWT (set on **`services/api`**, not in the browser bundle)
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `DASHBOARD_JWT_PUBLIC_KEYS_PEM` | Yes | (none) | Verify session JWTs | Keep server-only |
-| `DASHBOARD_SESSION_COOKIE_NAME` | No | `ibex_session` | Cookie name | |
-| `DASHBOARD_CSRF_SECRET` | Yes (prod) | (none) | CSRF secret | Secret |
+| `DASHBOARD_SESSION_COOKIE_NAME` | No | `ibex_session` | HttpOnly access-token cookie | Issued by API stub in 4.P.0; auth in 4.P.1 |
+| `DASHBOARD_REFRESH_COOKIE_NAME` | No | `ibex_refresh` | HttpOnly refresh cookie | Provisional |
+| `DASHBOARD_CSRF_COOKIE_NAME` | No | `ibex_csrf` | Readable CSRF double-submit cookie | TTL = refresh TTL |
+| `DASHBOARD_CSRF_SECRET` | Yes (prod) | (none) | HMAC material for CSRF tokens | Secret |
+| `DASHBOARD_COOKIE_SECURE` | No | `false` | Set `true` in staging/prod | |
+| `DASHBOARD_COOKIE_SAMESITE` | No | `lax` | `lax` \| `strict` \| `none` | Invalid values rejected at config load |
+| `DASHBOARD_COOKIE_DOMAIN` | No | (none) | e.g. `.ibexharness.com` when UI+API share eTLD+1 | |
+| `JWT_ISSUER` | Yes | `ibex-harness` | Issuer claim | |
+| `JWT_AUDIENCE` | Yes | `ibex-dashboard` | Audience claim | |
+| `JWT_ACCESS_TOKEN_TTL_SECONDS` | No | `3600` | Access TTL | Short-lived |
+| `JWT_REFRESH_TOKEN_TTL_SECONDS` | No | `2592000` | Refresh TTL | |
+| `JWT_HMAC_SECRET` | Yes when feature on (HS256 path) | (none) | Provisional HS256 secret (≥32 bytes) | **No** `JWT_PRIVATE_KEY_PEM` alias; dual-verify logs `provisional_hs256_verify=1` |
+| `JWT_PRIVATE_KEY_PEM` | Yes (auth RS256) | (none) | Auth-only RS256 signing key | Never load on API/dashboard |
+| `DASHBOARD_JWT_PUBLIC_KEYS_PEM` | Yes when verifying RS256 | (none) | API verifies Auth-issued RS256 session/step-up JWTs | Keep server-only |
+| `IBEX_OPERATOR_FEATURE_ENABLED` | No | `false` | Enables provisional `/v1/operator/session` + SSE | Default off until 4.P.1 |
+| `IBEX_OPERATOR_ALLOW_RAW_READ` | No | `false` | API per-action kill switch | See global table |
+| `IBEX_OPERATOR_ALLOW_EXPORT` | No | `false` | API per-action kill switch | |
+| `IBEX_OPERATOR_ALLOW_DELETE` | No | `false` | API per-action kill switch | |
+| `IBEX_OPERATOR_ALLOW_REPLAY` | No | `false` | API per-action kill switch | |
+| `IBEX_OPERATOR_ALLOW_SECRET_USE` | No | `false` | API per-action kill switch | |
 
-**Rule:** never put secrets in `NEXT_PUBLIC_*`.
+**Rule:** never put secrets in `NEXT_PUBLIC_*` or operator deep links. Never persist a PAT in `localStorage`/URL.
 
 ---
 

@@ -15,7 +15,13 @@ import (
 
 // PolicyLoader loads org model policies from Postgres (or a test fake).
 type PolicyLoader interface {
-	LoadOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error)
+	LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgPolicies, error)
+}
+
+// OrgPolicies is a durable epoch + policy snapshot for one org.
+type OrgPolicies struct {
+	Epoch    uint64
+	Policies []Policy
 }
 
 // Store loads org_model_policies with RLS org context.
@@ -32,8 +38,8 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return &Store{db: db, tracer: otel.Tracer("ibex-modelpolicy")}, nil
 }
 
-// LoadOrg returns policies for one org under app.current_org_id RLS, ordered by priority.
-func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) {
+// LoadOrg returns policies + durable epoch for one org under app.current_org_id RLS.
+func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) (OrgPolicies, error) {
 	ctx, span := s.tracer.Start(ctx, "Store.LoadOrg",
 		trace.WithAttributes(
 			attribute.String("db.system", "postgresql"),
@@ -43,13 +49,38 @@ func (s *Store) LoadOrg(ctx context.Context, orgID uuid.UUID) ([]Policy, error) 
 	)
 	defer span.End()
 
-	policies, err := withOrgReadTx(ctx, s.db, orgID, func(tx *sql.Tx) ([]Policy, error) {
-		return scanOrgPolicies(ctx, tx, orgID)
+	out, err := withOrgReadTx(ctx, s.db, orgID, func(tx *sql.Tx) (OrgPolicies, error) {
+		epoch, err := scanOrgEpoch(ctx, tx, orgID)
+		if err != nil {
+			return OrgPolicies{}, err
+		}
+		policies, err := scanOrgPolicies(ctx, tx, orgID)
+		if err != nil {
+			return OrgPolicies{}, err
+		}
+		return OrgPolicies{Epoch: epoch, Policies: policies}, nil
 	})
 	if err != nil {
-		return nil, recordStoreErr(span, err)
+		return OrgPolicies{}, recordStoreErr(span, err)
 	}
-	return policies, nil
+	return out, nil
+}
+
+func scanOrgEpoch(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) (uint64, error) {
+	var epoch int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT epoch FROM ibex_core.org_model_policy_meta WHERE org_id = $1`, orgID).Scan(&epoch)
+	if err == sql.ErrNoRows {
+		// No meta row yet: treat as epoch 1 with empty/loaded policies (deny-by-default).
+		return 1, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("modelpolicy: epoch: %w", err)
+	}
+	if epoch < 1 {
+		return 0, fmt.Errorf("modelpolicy: invalid epoch %d", epoch)
+	}
+	return uint64(epoch), nil
 }
 
 func withOrgReadTx[T any](

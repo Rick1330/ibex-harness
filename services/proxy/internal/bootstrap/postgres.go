@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
@@ -114,6 +115,7 @@ type sessionStackSetup struct {
 
 type sessionStack struct {
 	store      session.Store
+	evidence   *evidenceoutbox.Store
 	cache      *sessioncache.Cache
 	pool       *asyncpool.Pool
 	turnBuffer *extractionbuffer.Buffer
@@ -124,6 +126,10 @@ func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
 	store, err := newSessionStore(in.DB, in.Reg, in.Tracer)
 	if err != nil {
 		return sessionStack{}, fmt.Errorf("session store: %w", err)
+	}
+	evidence, err := newEvidenceStore(in.DB)
+	if err != nil {
+		return sessionStack{}, fmt.Errorf("evidence store: %w", err)
 	}
 	parts, err := setupSessionHotPath(in.Redis, in.Config, in.Reg)
 	if err != nil {
@@ -136,9 +142,16 @@ func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
 		return sessionStack{}, err
 	}
 	return sessionStack{
-		store: store, cache: parts.cache, pool: parts.pool,
+		store: store, evidence: evidence, cache: parts.cache, pool: parts.pool,
 		turnBuffer: parts.turnBuffer, sweeper: sweeper,
 	}, nil
+}
+
+func newEvidenceStore(db *sql.DB) (*evidenceoutbox.Store, error) {
+	if db == nil {
+		return nil, nil
+	}
+	return evidenceoutbox.NewStore(db)
 }
 
 func setupSessionHotPath(
@@ -338,36 +351,68 @@ func modelPolicyMetrics(reg *ibexmetrics.ProxyRegistry) modelpolicy.Metrics {
 	return modelpolicy.NoopMetrics{}
 }
 
-func buildModelPolicyRuntime(
-	pgDB *sql.DB,
-	base *provider.Registry,
-	log *logger.Logger,
-	metrics *ibexmetrics.ProxyRegistry,
-) (*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error) {
-	if pgDB == nil || base == nil {
-		reason := "POSTGRES_DSN unset or db handle nil"
-		if base == nil {
-			reason = "provider registry nil"
-		}
-		warnModelPolicyPassthrough(log, metrics, reason)
-		return nil, modelpolicy.PassthroughRegistry{Base: base}, modelpolicy.NoopAgentDefaults{}, nil
+type modelPolicyRuntimeInput struct {
+	PGDB             *sql.DB
+	Base             *provider.Registry
+	Log              *logger.Logger
+	Metrics          *ibexmetrics.ProxyRegistry
+	AllowPassthrough bool
+}
+
+func buildModelPolicyRuntime(in modelPolicyRuntimeInput) (
+	*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error,
+) {
+	if in.PGDB == nil || in.Base == nil {
+		return modelPolicyUnavailable(in)
 	}
-	m := modelPolicyMetrics(metrics)
-	cache, reg, err := newOrgPolicyStack(pgDB, base, m)
+	m := modelPolicyMetrics(in.Metrics)
+	cache, reg, err := newOrgPolicyStack(in.PGDB, in.Base, m)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	agentDefaults, err := newCachedAgentDefaults(pgDB)
+	agentDefaults, err := newCachedAgentDefaults(in.PGDB)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	markModelPolicyEnabled(in.Log, in.Metrics)
+	return cache, reg, agentDefaults, nil
+}
+
+func modelPolicyUnavailable(in modelPolicyRuntimeInput) (
+	*modelpolicy.Cache, proxyhttp.ProviderResolver, modelpolicy.AgentDefaultLoader, error,
+) {
+	reason := "POSTGRES_DSN unset or db handle nil"
+	if in.Base == nil {
+		reason = "provider registry nil"
+	}
+	if in.AllowPassthrough {
+		warnModelPolicyPassthrough(in.Log, in.Metrics, reason)
+		return nil, modelpolicy.PassthroughRegistry{Base: in.Base}, modelpolicy.NoopAgentDefaults{}, nil
+	}
+	warnModelPolicyDenyAll(in.Log, in.Metrics, reason)
+	return nil, modelpolicy.DenyAllRegistry{}, modelpolicy.NoopAgentDefaults{}, nil
+}
+
+func markModelPolicyEnabled(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry) {
 	if metrics != nil {
 		metrics.SetModelPolicyEnabled(true)
 	}
 	if log != nil {
 		log.InfoCtx(context.Background(), "model policy org-aware registry enabled")
 	}
-	return cache, reg, agentDefaults, nil
+}
+
+func warnModelPolicyDenyAll(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
+	if metrics != nil {
+		metrics.SetModelPolicyEnabled(false)
+	}
+	if log == nil {
+		return
+	}
+	log.WarnCtx(context.Background(),
+		"model policy deny-all: org model policies unavailable; every model denied",
+		"reason", reason,
+	)
 }
 
 func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
@@ -380,6 +425,7 @@ func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRe
 	log.WarnCtx(context.Background(),
 		"model policy passthrough: org model policies disabled; every model allowed for every org",
 		"reason", reason,
+		"escape_hatch", "IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH",
 	)
 }
 
@@ -430,6 +476,19 @@ func startModelPolicySubscriber(
 		log.InfoCtx(context.Background(), "model-policy subscriber started", "pattern", modelpolicy.ChannelPattern)
 	}
 	return sub, cancel, nil
+}
+
+func startModelPolicyEpochPoller(cache *modelpolicy.Cache, log *logger.Logger) context.CancelFunc {
+	if cache == nil || cache.Loader() == nil {
+		return nil
+	}
+	poller := modelpolicy.NewEpochPoller(cache.Loader(), cache, log, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	go poller.Run(ctx)
+	if log != nil {
+		log.InfoCtx(context.Background(), "model-policy epoch poller started")
+	}
+	return cancel
 }
 
 func rateLimitWatcherSkipReason(

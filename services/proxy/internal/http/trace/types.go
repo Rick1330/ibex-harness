@@ -33,18 +33,26 @@ type RequestOutcome struct {
 // RequestID, OrgID, and AgentID are required identity; SessionID/Usage are optional.
 // Prompt and completion content are intentionally omitted for privacy.
 type AssembleInput struct {
-	RequestID string
-	OrgID     uuid.UUID
-	AgentID   uuid.UUID
-	SessionID *uuid.UUID
-	Model     string
-	Provider  string
-	Streaming bool
-	Usage     *provider.Usage
-	Timings   RequestTimings
-	Outcome   RequestOutcome
+	RequestID    string
+	OrgID        uuid.UUID
+	AgentID      uuid.UUID
+	SessionID    *uuid.UUID
+	CheckpointID *uuid.UUID
+	TraceID      string
+	RootSpanID   string
+	Model        string
+	Provider     string
+	Streaming    bool
+	Usage        *provider.Usage
+	Timings      RequestTimings
+	Outcome      RequestOutcome
 	// Fallback audit (ADR-0077). Leave empty/nil when no substitution occurred.
 	OriginalModel  string
 	FallbackModel  string
 	FallbackReason string
+	// 4.P.2 dual-write enrichment (optional; empty keeps legacy CH row shape usable).
+	DirectiveVersionID *uuid.UUID
+	ContextAssemblyMs  uint32
+	ScoreSchema        string
+	Completeness       string
 }

@@ -25,8 +25,8 @@ const insertRelationshipSQL = `
 	) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5)`
 
 type relationshipsDB struct {
-	t   *testing.T
-	db  *sql.DB
+	t  *testing.T
+	db *sql.DB
 }
 
 type relationshipWrite struct {

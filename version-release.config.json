@@ -8,6 +8,7 @@
   "pull-request-title-pattern": "chore(release): prepare v${version}",
   "pull-request-header": "## IBEX version release\n\nThis pull request was opened by the **Version Release** workflow on `main`. Review `CHANGELOG.md` and the proposed semver before merge.",
   "pull-request-footer": "---\n\nMerging creates tag `v${version}` and triggers the Tagged Release workflow (GitHub Release, SBOM, cosign signature).",
+  "signoff": "Elshaday Mengesha <133630952+Rick1330@users.noreply.github.com>",
   "label": "version-release: pending",
   "release-label": "version-release: tagged",
   "packages": {
