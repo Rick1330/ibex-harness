@@ -44,8 +44,9 @@ migrate:
 backup:
   enabled: true
   # Simulated off-cluster: MinIO S3-compatible repo (values swap for real S3).
+  # Use TLS endpoint by default (Sonar clear-text); kind drills may override.
   repoType: s3
-  s3Endpoint: "http://minio.ibex.svc:9000"
+  s3Endpoint: "https://minio.ibex.svc:9000"
   s3Bucket: "ibex-pgbackrest"
   s3Region: "us-east-1"
   # RPO targets documented in milestone MDX (Postgres ≤5m).
@@ -57,26 +58,26 @@ kyverno:
 
 resources:
   proxy:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 512Mi }
+    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: 256Mi }
+    limits: { memory: 512Mi, ephemeral-storage: 1Gi }
   auth:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 256Mi }
+    requests: { cpu: 50m, memory: 128Mi, ephemeral-storage: 128Mi }
+    limits: { memory: 256Mi, ephemeral-storage: 512Mi }
   api:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 512Mi }
+    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: 256Mi }
+    limits: { memory: 512Mi, ephemeral-storage: 1Gi }
   worker:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 512Mi }
+    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: 256Mi }
+    limits: { memory: 512Mi, ephemeral-storage: 1Gi }
   memory:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 512Mi }
+    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: 256Mi }
+    limits: { memory: 512Mi, ephemeral-storage: 1Gi }
   embedder:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: 256Mi }
+    limits: { memory: 1Gi, ephemeral-storage: 1Gi }
   mcpMemory:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 256Mi }
+    requests: { cpu: 50m, memory: 128Mi, ephemeral-storage: 128Mi }
+    limits: { memory: 256Mi, ephemeral-storage: 512Mi }
 
 # ADR-0022: /health = liveness, /ready = readiness (critical deps).
 probes:
@@ -103,3 +104,12 @@ worker:
     secretName: ibex-worker
     redisUrlKey: redis-url
     enqueueTokenKey: enqueue-api-token
+
+# Shared Secret refs for deployability (create Secrets out-of-band / sealed-secrets).
+secrets:
+  postgres:
+    name: ibex-postgres
+    dsnKey: postgres-dsn
+  embedder:
+    name: ibex-embedder
+    apiTokenKey: api-token

@@ -41,6 +41,8 @@ spec:
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ include "ibex.imageDigest" .Values.images.proxy | quote }}
+            - name: IBEX_AUTH_GRPC_ADDR
+              value: "auth:{{ .Values.service.auth.grpc }}"
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}

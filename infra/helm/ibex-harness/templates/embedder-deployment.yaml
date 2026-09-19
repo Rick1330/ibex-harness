@@ -41,6 +41,11 @@ spec:
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ include "ibex.imageDigest" .Values.images.embedder | quote }}
+            - name: IBEX_EMBEDDING_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.embedder.name | quote }}
+                  key: {{ .Values.secrets.embedder.apiTokenKey | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}

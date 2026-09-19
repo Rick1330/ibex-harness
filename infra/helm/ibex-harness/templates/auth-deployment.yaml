@@ -47,6 +47,11 @@ spec:
               value: {{ .Values.service.auth.http | quote }}
             - name: IBEX_GRPC_PORT
               value: {{ .Values.service.auth.grpc | quote }}
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.postgres.name | quote }}
+                  key: {{ .Values.secrets.postgres.dsnKey | quote }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.livenessPath }}

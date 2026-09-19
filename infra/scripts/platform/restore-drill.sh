@@ -31,8 +31,8 @@ if [[ "${SKIP_COMPOSE:-0}" != "1" ]]; then
 fi
 
 PGURL="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}"
-# App role subject to RLS (override when drill uses a dedicated RLS user).
-PG_RLS_URL="${POSTGRES_RLS_DSN:-$PGURL}"
+# Require a non-superuser RLS DSN for isolation proof (do not fall back to PGURL).
+PG_RLS_URL="${POSTGRES_RLS_DSN:-}"
 
 psql_cmd() {
   if command -v psql >/dev/null 2>&1; then
@@ -46,10 +46,13 @@ psql_cmd() {
 }
 
 psql_rls() {
+  if [[ -z "$PG_RLS_URL" ]]; then
+    return 127
+  fi
   if command -v psql >/dev/null 2>&1; then
     psql "$PG_RLS_URL" "$@"
   else
-    psql_cmd "$@"
+    return 127
   fi
 }
 
@@ -65,14 +68,30 @@ pg_dump_cmd() {
   fi
 }
 
-ORG_A="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-ORG_B="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-echo "[drill] seeding org markers"
+pg_restore_cmd() {
+  local dump="$1"
+  if command -v pg_restore >/dev/null 2>&1; then
+    pg_restore --clean --if-exists -d "$PGURL" "$dump"
+  elif docker compose -f "$COMPOSE_FILE" ps postgres 2>/dev/null | grep -q Up; then
+    docker compose -f "$COMPOSE_FILE" exec -T postgres \
+      pg_restore --clean --if-exists -U "${POSTGRES_USER:-ibex}" -d "${POSTGRES_DB:-ibex}" \
+      <"$dump"
+  else
+    return 127
+  fi
+}
+
+# Per-run fixture UUIDs — never reuse fixed tenant IDs that could collide with real data.
+ORG_A="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+ORG_B="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+ORG_A_SLUG="drill-a-${ORG_A%%-*}"
+ORG_B_SLUG="drill-b-${ORG_B%%-*}"
+echo "[drill] seeding org markers org_a=$ORG_A org_b=$ORG_B"
 psql_cmd -v ON_ERROR_STOP=1 <<SQL || true
 INSERT INTO ibex_core.organizations (id, name, slug, status)
 VALUES
-  ('$ORG_A'::uuid, 'Drill Org A', 'drill-a', 'active'),
-  ('$ORG_B'::uuid, 'Drill Org B', 'drill-b', 'active')
+  ('$ORG_A'::uuid, 'Drill Org A', '$ORG_A_SLUG', 'active'),
+  ('$ORG_B'::uuid, 'Drill Org B', '$ORG_B_SLUG', 'active')
 ON CONFLICT (id) DO NOTHING;
 SQL
 
@@ -115,14 +134,11 @@ if command -v pgbackrest >/dev/null 2>&1 && [[ -f infra/backup/pgbackrest/pgback
     echo "[drill] WARN pgbackrest restore failed"
   fi
 elif [[ -f "$REPORT_DIR/pg/ibex.dump" ]]; then
-  echo "[drill] restoring org B via re-seed (pg_dump fallback; full PITR needs pgBackRest+WAL)"
-  if psql_cmd -v ON_ERROR_STOP=1 <<SQL
-INSERT INTO ibex_core.organizations (id, name, slug, status)
-VALUES ('$ORG_B'::uuid, 'Drill Org B', 'drill-b', 'active')
-ON CONFLICT (id) DO NOTHING;
-SQL
-  then
+  echo "[drill] pg_restore from dump (no re-seed shortcut)"
+  if pg_restore_cmd "$REPORT_DIR/pg/ibex.dump"; then
     PG_RESTORE_OK=true
+  else
+    echo "[drill] WARN pg_restore failed — not claiming restore success"
   fi
 fi
 PG_RESTORE_END=$(date +%s)
@@ -134,36 +150,44 @@ if [[ "$PG_BACKUP_OK" == "true" && "$PG_RESTORE_OK" == "true" && -n "$PG_BACKUP_
   PG_RPO_MEASURED=$PG_BACKUP_SEC
 fi
 
-# Tenant isolation under RLS: two sessions with SET LOCAL app.current_org_id.
+# Tenant isolation under RLS: requires POSTGRES_RLS_DSN (non-superuser).
 ISO_OK=false
-ISO_A_OWN="$(psql_rls -Atc "
+if [[ -z "$PG_RLS_URL" ]]; then
+  echo "[drill] POSTGRES_RLS_DSN unset — tenant isolation unproven (do not use superuser PGURL)"
+else
+  ISO_A_OWN="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
 BEGIN;
-SET LOCAL app.current_org_id = '$ORG_A';
+SET LOCAL ROLE ibex_app;
+SELECT set_config('app.current_org_id', '$ORG_A', true);
 SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_A'::uuid;
 COMMIT;
 " 2>/dev/null | tail -n1 || true)"
-ISO_A_CROSS="$(psql_rls -Atc "
+  ISO_A_CROSS="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
 BEGIN;
-SET LOCAL app.current_org_id = '$ORG_A';
+SET LOCAL ROLE ibex_app;
+SELECT set_config('app.current_org_id', '$ORG_A', true);
 SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid;
 COMMIT;
 " 2>/dev/null | tail -n1 || true)"
-ISO_B_OWN="$(psql_rls -Atc "
+  ISO_B_OWN="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
 BEGIN;
-SET LOCAL app.current_org_id = '$ORG_B';
+SET LOCAL ROLE ibex_app;
+SELECT set_config('app.current_org_id', '$ORG_B', true);
 SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_B'::uuid;
 COMMIT;
 " 2>/dev/null | tail -n1 || true)"
-ISO_B_CROSS="$(psql_rls -Atc "
+  ISO_B_CROSS="$(psql_rls -v ON_ERROR_STOP=1 -Atc "
 BEGIN;
-SET LOCAL app.current_org_id = '$ORG_B';
+SET LOCAL ROLE ibex_app;
+SELECT set_config('app.current_org_id', '$ORG_B', true);
 SELECT COUNT(*) FROM ibex_core.organizations WHERE id='$ORG_A'::uuid;
 COMMIT;
 " 2>/dev/null | tail -n1 || true)"
-if [[ "$ISO_A_OWN" == "1" && "$ISO_B_OWN" == "1" && "$ISO_A_CROSS" == "0" && "$ISO_B_CROSS" == "0" ]]; then
-  ISO_OK=true
+  if [[ "$ISO_A_OWN" == "1" && "$ISO_B_OWN" == "1" && "$ISO_A_CROSS" == "0" && "$ISO_B_CROSS" == "0" ]]; then
+    ISO_OK=true
+  fi
+  echo "[drill] tenant isolation A_own=$ISO_A_OWN A_cross=$ISO_A_CROSS B_own=$ISO_B_OWN B_cross=$ISO_B_CROSS ok=$ISO_OK"
 fi
-echo "[drill] tenant isolation A_own=$ISO_A_OWN A_cross=$ISO_A_CROSS B_own=$ISO_B_OWN B_cross=$ISO_B_CROSS ok=$ISO_OK"
 
 CH_RTO_MEASURED=""
 CH_RPO_MEASURED=""

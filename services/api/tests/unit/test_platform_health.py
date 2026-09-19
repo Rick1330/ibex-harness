@@ -110,6 +110,30 @@ def test_load_drill_bad_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert _load_drill() is None
 
 
+def test_load_drill_non_object_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    report = tmp_path / "array.json"
+    report.write_text(json.dumps([{"milestone": "4.P.5"}]), encoding="utf-8")
+    monkeypatch.setattr(platform_mod, "_DRILL_REPORT", report)
+    assert _load_drill() is None
+
+
+@pytest.mark.asyncio
+async def test_platform_health_non_object_drill_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Array drill JSON must not raise response validation errors."""
+    report = tmp_path / "array.json"
+    report.write_text("[1, 2, 3]", encoding="utf-8")
+    monkeypatch.setattr(platform_mod, "_DRILL_REPORT", report)
+    req = _authed_request()
+    with (
+        patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
+        patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
+    ):
+        out = await platform_health(req)
+    assert out.last_restore_drill is None
+
+
 def test_parse_dlq_depth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("IBEX_DLQ_DEPTH", raising=False)
     assert _parse_dlq_depth() is None
@@ -169,22 +193,28 @@ async def test_platform_health_draining() -> None:
 @pytest.mark.asyncio
 async def test_platform_health_postgres_ok() -> None:
     req = _authed_request()
+    claims = _claims()
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[None, MagicMock(scalar_one=lambda: 42)],
-    )
+    session.execute = AsyncMock(return_value=MagicMock(scalar_one=lambda: 42))
     cm = AsyncMock()
     cm.__aenter__ = AsyncMock(return_value=session)
     cm.__aexit__ = AsyncMock(return_value=None)
-    req.app.state.api.session_factory = MagicMock(return_value=cm)
+    req.app.state.api.session_factory = MagicMock()
     with (
-        patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
+        patch.object(platform_mod, "_require_operator_session", return_value=claims),
+        patch.object(platform_mod, "_postgres_status", AsyncMock(return_value="ok")),
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
+        patch.object(platform_mod, "session_with_org", return_value=cm),
     ):
         out = await platform_health(req)
     assert out.dependency_health["postgres"] == "ok"
     assert out.outbox_max_aggregate_seq == 42
     assert out.degraded_mode is False
+    # org-scoped watermark bind
+    args, kwargs = session.execute.await_args
+    assert "org_id" in str(args[0]) or (kwargs.get("org_id") is None and len(args) >= 2)
+    bind = args[1] if len(args) > 1 else kwargs
+    assert bind["org_id"] == str(claims.org_id)
 
 
 @pytest.mark.asyncio
@@ -253,26 +283,28 @@ def test_require_session_verify_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_outbox_watermark_none_session() -> None:
-    assert await platform_mod._outbox_watermark(None) is None
+    assert await platform_mod._outbox_watermark(None, uuid4()) is None
 
 
 @pytest.mark.asyncio
 async def test_outbox_watermark_query_error() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=RuntimeError("boom"))
-    assert await platform_mod._outbox_watermark(session) is None
+    assert await platform_mod._outbox_watermark(session, uuid4()) is None
 
 
 @pytest.mark.asyncio
 async def test_platform_health_outbox_factory_raises() -> None:
     req = _authed_request()
     cm = AsyncMock()
-    cm.__aenter__ = AsyncMock(side_effect=[RuntimeError("db"), RuntimeError("db2")])
+    cm.__aenter__ = AsyncMock(side_effect=RuntimeError("db"))
     cm.__aexit__ = AsyncMock(return_value=None)
-    req.app.state.api.session_factory = MagicMock(return_value=cm)
+    req.app.state.api.session_factory = MagicMock()
     with (
         patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
+        patch.object(platform_mod, "_postgres_status", AsyncMock(return_value="unavailable")),
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
+        patch.object(platform_mod, "session_with_org", return_value=cm),
     ):
         out = await platform_health(req)
     assert out.outbox_max_aggregate_seq is None
@@ -289,3 +321,31 @@ async def test_auth_status_timeout() -> None:
 @pytest.mark.asyncio
 async def test_redis_status_no_url() -> None:
     assert await platform_mod._redis_status(None) == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_redis_status_connection_error() -> None:
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    client = MagicMock()
+    client.ping = AsyncMock(side_effect=RedisConnectionError("down"))
+    client.aclose = AsyncMock()
+    with patch("redis.asyncio.Redis.from_url", return_value=client):
+        assert await platform_mod._redis_status("redis://localhost:6379/0") == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_platform_health_redis_degraded() -> None:
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    req = _authed_request()
+    client = MagicMock()
+    client.ping = AsyncMock(side_effect=RedisConnectionError("down"))
+    client.aclose = AsyncMock()
+    with (
+        patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
+        patch("redis.asyncio.Redis.from_url", return_value=client),
+    ):
+        out = await platform_health(req)
+    assert out.dependency_health["redis"] == "unavailable"
+    assert out.degraded_mode is True

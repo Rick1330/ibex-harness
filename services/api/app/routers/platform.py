@@ -16,6 +16,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from authclient.permissions import OPERATOR_METADATA_READ
@@ -26,6 +27,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.authz import assert_operator_permission
+from app.db import session_with_org
 from app.errors import ApiError
 from app.session_stub import (
     SESSION_KIND_ACCESS,
@@ -131,7 +133,8 @@ async def _auth_status(validator: Any) -> str:
     try:
         ok = await asyncio.wait_for(ready(), timeout=_DEP_TIMEOUT_SEC)
         return "ok" if ok else "unavailable"
-    except (TimeoutError, OSError, RuntimeError):
+    except (OSError, RuntimeError):
+        # TimeoutError is an OSError subclass on CPython 3.x (Sonar redundant catch).
         return "unavailable"
 
 
@@ -140,7 +143,10 @@ async def _redis_status(redis_url: str | None) -> str:
         return "unavailable"
     try:
         from redis.asyncio import Redis
-
+        from redis.exceptions import RedisError
+    except ImportError:
+        return "unavailable"
+    try:
         client = Redis.from_url(
             redis_url,
             socket_connect_timeout=_DEP_TIMEOUT_SEC,
@@ -151,7 +157,7 @@ async def _redis_status(redis_url: str | None) -> str:
             return "ok" if pong else "unavailable"
         finally:
             await client.aclose()
-    except (TimeoutError, OSError, RuntimeError):
+    except (OSError, RuntimeError, RedisError):
         return "unavailable"
 
 
@@ -188,17 +194,22 @@ def _load_drill() -> dict[str, Any] | None:
     try:
         if not _DRILL_REPORT.exists():
             return None
-        return json.loads(_DRILL_REPORT.read_text(encoding="utf-8"))
+        parsed = json.loads(_DRILL_REPORT.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    return parsed if isinstance(parsed, dict) else None
 
 
-async def _outbox_watermark(session: AsyncSession | None) -> int | None:
+async def _outbox_watermark(session: AsyncSession | None, org_id: UUID) -> int | None:
     if session is None:
         return None
     try:
         row = await session.execute(
-            text("SELECT COALESCE(MAX(aggregate_seq), 0) FROM ibex_core.evidence_outbox")
+            text(
+                "SELECT COALESCE(MAX(aggregate_seq), 0) FROM ibex_core.evidence_outbox "
+                "WHERE org_id = CAST(:org_id AS uuid)"
+            ),
+            {"org_id": str(org_id)},
         )
         return int(row.scalar_one())
     except (SQLAlchemyError, OSError, RuntimeError, TypeError, ValueError):
@@ -216,10 +227,10 @@ def _parse_dlq_depth() -> int | None:
         return None
 
 
-@router.get("/health", response_model=PlatformHealthResponse)
+@router.get("/health")
 async def platform_health(request: Request) -> PlatformHealthResponse:
     """Read-only platform freshness for operator Overview (4.D.1 consumer)."""
-    _require_operator_session(request)
+    claims = _require_operator_session(request)
 
     deps = await _dep_health(request)
     drain = getattr(request.app.state.api, "drain", None)
@@ -230,8 +241,8 @@ async def platform_health(request: Request) -> PlatformHealthResponse:
     outbox_seq: int | None = None
     if session_factory is not None:
         try:
-            async with session_factory() as session:  # type: ignore[misc]
-                outbox_seq = await _outbox_watermark(session)
+            async with session_with_org(session_factory, str(claims.org_id)) as session:
+                outbox_seq = await _outbox_watermark(session, claims.org_id)
         except (SQLAlchemyError, OSError, RuntimeError):
             outbox_seq = None
 

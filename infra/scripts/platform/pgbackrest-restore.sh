@@ -28,13 +28,20 @@ TARGET="${PGBACKREST_PGDATA:-/var/lib/postgresql/data}"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/infra/compose/dev/docker-compose.yml}"
 
 echo "[restore] stopping Postgres before restore"
+stopped=false
 if command -v docker >/dev/null 2>&1 && [[ -f "$COMPOSE_FILE" ]]; then
-  docker compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null \
-    || docker compose -f "$COMPOSE_FILE" stop 2>/dev/null \
-    || true
+  if docker compose -f "$COMPOSE_FILE" stop postgres 2>/dev/null; then
+    stopped=true
+  fi
 fi
 if command -v pg_ctl >/dev/null 2>&1 && [[ -d "$TARGET" ]]; then
-  pg_ctl -D "$TARGET" stop -m fast 2>/dev/null || true
+  if pg_ctl -D "$TARGET" stop -m fast 2>/dev/null; then
+    stopped=true
+  fi
+fi
+if [[ "$stopped" != "true" && "${PGBACKREST_ALLOW_UNSAFE_RESTORE:-0}" != "1" ]]; then
+  echo "[restore] refused: could not stop Postgres (set PGBACKREST_ALLOW_UNSAFE_RESTORE=1 only for dry-run labs)" >&2
+  exit 1
 fi
 
 echo "[restore] stanza=$STANZA target=$TARGET conf=$CONF"

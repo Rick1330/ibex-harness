@@ -5,10 +5,10 @@ set -euo pipefail
 PGURL="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}"
 OUT="${1:-/tmp/ibex-evidence-recovery.json}"
 
-OUTBOX_MAX="$(psql "$PGURL" -Atc "SELECT COALESCE(MAX(aggregate_seq),0) FROM ibex_core.evidence_outbox")"
-OUTBOX_PENDING="$(psql "$PGURL" -Atc "SELECT COUNT(*) FROM ibex_core.evidence_outbox WHERE delivery_status='pending'")"
+OUTBOX_MAX="$(psql "$PGURL" -v ON_ERROR_STOP=1 -Atc "SELECT COALESCE(MAX(aggregate_seq),0) FROM ibex_core.evidence_outbox")"
+OUTBOX_PENDING="$(psql "$PGURL" -v ON_ERROR_STOP=1 -Atc "SELECT COUNT(*) FROM ibex_core.evidence_outbox WHERE delivery_status='pending'")"
 # Latest non-null digest by started_at (not MAX lexicographic).
-DEPLOY_DIGEST="$(psql "$PGURL" -Atc \
+DEPLOY_DIGEST="$(psql "$PGURL" -v ON_ERROR_STOP=1 -Atc \
   "SELECT deploy_image_digest FROM ibex_core.evidence_runs WHERE deploy_image_digest IS NOT NULL AND deploy_image_digest <> '' ORDER BY started_at DESC NULLS LAST LIMIT 1")"
 
 export OUTBOX_MAX OUTBOX_PENDING DEPLOY_DIGEST OUT
