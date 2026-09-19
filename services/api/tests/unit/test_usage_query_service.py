@@ -176,13 +176,15 @@ async def _expect_acquire_error(*, eval_return: Any = None, eval_error: Exceptio
 
 @pytest.mark.asyncio
 async def test_run_clickhouse_fails_without_dsn() -> None:
-    with patch.dict(
-        "os.environ",
-        {"CLICKHOUSE_HTTP_URL": "", "IBEX_CLICKHOUSE_HTTP_URL": ""},
-        clear=False,
+    with (
+        patch.dict(
+            "os.environ",
+            {"CLICKHOUSE_HTTP_URL": "", "IBEX_CLICKHOUSE_HTTP_URL": ""},
+            clear=False,
+        ),
+        pytest.raises(ApiError) as exc,
     ):
-        with pytest.raises(ApiError) as exc:
-            await uq._run_clickhouse(uuid4(), _body(limit=10), 10, None)
+        await uq._run_clickhouse(uuid4(), _body(limit=10), 10, None)
     assert "ClickHouse" in str(exc.value)
 
 

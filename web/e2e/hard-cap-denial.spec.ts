@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
 
@@ -13,7 +13,7 @@ const repoRoot = path.resolve(process.cwd(), "..");
 
 async function startHardCapFixture(): Promise<{
   baseURL: string;
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcess;
 }> {
   const child = spawn(
     "go",
@@ -21,19 +21,21 @@ async function startHardCapFixture(): Promise<{
     { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
   const addr = await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("fixture startup timeout")), 60_000);
+    const timer = setTimeout(() => {
+      reject(new Error("fixture startup timeout"));
+    }, 60_000);
     let buf = "";
     const onData = (chunk: Buffer) => {
       buf += chunk.toString("utf8");
       const line = buf.split("\n").find((l) => l.includes("127.0.0.1:"));
       if (line) {
         clearTimeout(timer);
-        child.stdout.off("data", onData);
+        child.stdout?.off("data", onData);
         resolve(line.trim());
       }
     };
-    child.stdout.on("data", onData);
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", (chunk: Buffer) => {
       process.stderr.write(chunk);
     });
     child.on("exit", (code) => {

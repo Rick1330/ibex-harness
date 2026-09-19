@@ -273,26 +273,26 @@ def _clickhouse_dsn(clickhouse_url: str | None) -> str | None:
     )
 
 
-async def _run_clickhouse(
-    org_id: UUID,
-    body: UsageQueryRequest,
-    limit: int,
-    clickhouse_url: str | None,
-) -> list[dict[str, Any]]:
+def _require_clickhouse_dsn(clickhouse_url: str | None) -> str:
     dsn = _clickhouse_dsn(clickhouse_url)
     if not dsn:
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="Usage query unavailable: ClickHouse is not configured",
         )
+    return dsn
+
+
+def _import_httpx() -> Any:
     try:
         import httpx
     except ImportError as exc:  # pragma: no cover
         raise ApiError(code=SERVICE_DEGRADED, message="ClickHouse client unavailable") from exc
+    return httpx
 
-    safe_sql = _bind_literals(TEMPLATES[body.shape], org_id, body, limit)
-    if f"toUUID('{org_id}')" not in safe_sql:
-        raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED)
+
+async def _post_clickhouse_sql(dsn: str, safe_sql: str) -> tuple[int, str]:
+    httpx = _import_httpx()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -303,7 +303,21 @@ async def _run_clickhouse(
     except httpx.HTTPError as exc:
         logger.warning("clickhouse usage query transport failed: %s", exc)
         raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED) from exc
-    return _parse_clickhouse_rows(resp.status_code, resp.text)
+    return resp.status_code, resp.text
+
+
+async def _run_clickhouse(
+    org_id: UUID,
+    body: UsageQueryRequest,
+    limit: int,
+    clickhouse_url: str | None,
+) -> list[dict[str, Any]]:
+    dsn = _require_clickhouse_dsn(clickhouse_url)
+    safe_sql = _bind_literals(TEMPLATES[body.shape], org_id, body, limit)
+    if f"toUUID('{org_id}')" not in safe_sql:
+        raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED)
+    status, text = await _post_clickhouse_sql(dsn, safe_sql)
+    return _parse_clickhouse_rows(status, text)
 
 
 def _parse_clickhouse_rows(status_code: int, body: str) -> list[dict[str, Any]]:

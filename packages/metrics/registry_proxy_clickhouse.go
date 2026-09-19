@@ -55,10 +55,9 @@ func (r *ProxyRegistry) AddClickHouseDroppedRows(n int) {
 // AddUsageFactRejected records usage facts rejected when the billing buffer is full.
 // Non-positive n is ignored.
 func (r *ProxyRegistry) AddUsageFactRejected(n int) {
-	if r == nil || r.usageFactRejected == nil || n <= 0 {
-		return
+	if n > 0 {
+		r.usageFactRejected.Add(float64(n))
 	}
-	r.usageFactRejected.Add(float64(n))
 }
 
 // ObserveClickHouseFlushSeconds records flush wall time in elapsed seconds.
