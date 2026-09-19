@@ -10,10 +10,14 @@ from pathlib import Path
 
 _REPORT_PY = Path(__file__).resolve().parent / "restore_drill_report.py"
 _spec = importlib.util.spec_from_file_location("restore_drill_report", _REPORT_PY)
-assert _spec and _spec.loader
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"cannot load restore_drill_report from {_REPORT_PY}")
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["restore_drill_report"] = _mod
 _spec.loader.exec_module(_mod)
+
+# Fixture path only — never opens or writes this file (avoids Bandit B108).
+_TRANSCRIPT_FIXTURE = "infra/scripts/platform/evidence/4p5-restore-drill/transcript.txt"
 
 
 def _base_env(**overrides: str) -> dict[str, str]:
@@ -34,7 +38,7 @@ def _base_env(**overrides: str) -> dict[str, str]:
         "ISO_OK": "true",
         "KIND_OK": "true",
         "KYVERNO_OK": "false",
-        "TRANSCRIPT": "/tmp/t.txt",
+        "TRANSCRIPT": _TRANSCRIPT_FIXTURE,
         "CH_REACHABLE": "false",
     }
     env.update(overrides)

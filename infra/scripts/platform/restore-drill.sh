@@ -157,7 +157,7 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 SQL
 then
-  echo "[drill] ERROR: seed insert failed — is the schema migrated?"
+  echo "[drill] ERROR: seed insert failed — is the schema migrated?" >&2
   if [[ "${ALLOW_NO_DB:-0}" != "1" ]]; then
     exit 1
   fi
@@ -305,11 +305,17 @@ if command -v helm >/dev/null 2>&1; then
   KIND_OK=true
 fi
 if [[ "${RUN_KIND:-0}" == "1" ]] && command -v kind >/dev/null 2>&1; then
-  kind create cluster --name ibex-4p5-drill || true
+  KIND_CTX="kind-ibex-4p5-drill"
+  # Do not ignore create failure — a failed create + bare kubectl would apply
+  # verify-images to whatever the current context is (unsafe).
+  if ! kind get clusters 2>/dev/null | grep -qx 'ibex-4p5-drill'; then
+    kind create cluster --name ibex-4p5-drill
+  fi
   if command -v kubectl >/dev/null 2>&1; then
-    echo "[drill] applying Kyverno verifyImages policy (requires Kyverno installed)"
-    kubectl apply -f infra/helm/ibex-harness/policies/verify-images.yaml && KYVERNO_OK=true \
-      || echo "[drill] WARN Kyverno policy apply failed (install Kyverno first; residual #869)"
+    echo "[drill] applying Kyverno verifyImages policy on context=$KIND_CTX"
+    kubectl --context "$KIND_CTX" apply -f infra/helm/ibex-harness/policies/verify-images.yaml \
+      && KYVERNO_OK=true \
+      || echo "[drill] WARN Kyverno policy apply failed (install Kyverno first; residual #869)" >&2
   fi
 else
   echo "[drill] Kyverno cluster admit deferred to #869 (RUN_KIND!=1 or kind unavailable)"

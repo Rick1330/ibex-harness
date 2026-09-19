@@ -1,4 +1,16 @@
 # Production overrides — require real digests and off-cluster S3.
+# Every images.* entry MUST override chart defaults so merged renders never
+# inherit sha256:000… stubs (see check-helm-digest-placeholders.sh).
+# Replace these CI stubs with docker-publish digests before any prod deploy.
+images:
+  proxy: "ghcr.io/rick1330/ibex-harness/proxy:main@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  auth: "ghcr.io/rick1330/ibex-harness/auth:main@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  api: "ghcr.io/rick1330/ibex-harness/api:main@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  worker: "ghcr.io/rick1330/ibex-harness/worker:main@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  memory: "ghcr.io/rick1330/ibex-harness/memory:main@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  embedder: "ghcr.io/rick1330/ibex-harness/embedder:main@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  mcpMemory: "ghcr.io/rick1330/ibex-harness/mcp-memory:main@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  migrate: "ghcr.io/rick1330/ibex-harness/migrate:main@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 hpa:
   minReplicas: 3
   maxReplicas: 12
