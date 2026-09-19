@@ -15,6 +15,10 @@ func (r *ProxyRegistry) initClickHouseMetrics() {
 		Name: "ibex_clickhouse_dropped_rows_total",
 		Help: "Trace rows dropped because the writer buffer was full.",
 	})
+	r.usageFactRejected = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_usage_fact_rejected_total",
+		Help: "Usage facts rejected because the billing writer buffer was full (fail-loud).",
+	})
 	r.clickhouseFlushSec = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "ibex_clickhouse_flush_duration_seconds",
 		Help:    "ClickHouse batch flush duration.",
@@ -46,6 +50,15 @@ func (r *ProxyRegistry) AddClickHouseDroppedRows(n int) {
 	if n > 0 {
 		r.clickhouseDroppedRows.Add(float64(n))
 	}
+}
+
+// AddUsageFactRejected records usage facts rejected when the billing buffer is full.
+// Non-positive n is ignored.
+func (r *ProxyRegistry) AddUsageFactRejected(n int) {
+	if r == nil || r.usageFactRejected == nil || n <= 0 {
+		return
+	}
+	r.usageFactRejected.Add(float64(n))
 }
 
 // ObserveClickHouseFlushSeconds records flush wall time in elapsed seconds.

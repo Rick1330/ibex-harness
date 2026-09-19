@@ -111,7 +111,7 @@ type SnapshotMeta struct {
 	EvidenceExtras     EvidenceExtras
 }
 
-// UsageFactWriter enqueues a frozen usage_facts row (fail-open on write errors).
+// UsageFactWriter enqueues a frozen usage_facts row (buffer-full rejects loudly).
 type UsageFactWriter interface {
 	Write(fact billing.UsageFact) error
 }

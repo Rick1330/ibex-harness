@@ -30,10 +30,12 @@ func TestBilling_SchemaAndRLSCrossTenant(t *testing.T) {
 	cardID := insA.rateCard("default")
 	insA.rateCardVersion(cardID, 1)
 	periodID := insA.budgetPeriod(10_000)
+	_ = insA.enforcementDecision(periodID)
 
 	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.visible(billingVisibilityIDs{
 		cardID: cardID, periodID: periodID,
 	})
+	// Org B as ibex_app with its own GUC must see zero of Org A's billing rows.
 	billingAssert{t: t, ctx: ctx, db: db, orgID: orgB}.hiddenFrom(orgA)
 	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.versionsImmutable(cardID)
 }
@@ -171,10 +173,13 @@ func (a billingAssert) visible(ids billingVisibilityIDs) {
 
 func (a billingAssert) hiddenFrom(ownerOrg string) {
 	a.t.Helper()
+	// withOrgContext uses SET LOCAL ROLE ibex_app + app.current_org_id = viewer.
+	// Assert zero rows for the owner's org_id under the viewer's GUC (not merely no error).
 	tables := []string{
 		"ibex_billing.rate_cards",
 		"ibex_billing.budget_periods",
 		"ibex_billing.rate_card_versions",
+		"ibex_billing.enforcement_decisions",
 	}
 	err := withOrgContext(a.ctx, a.db, a.orgID, func(tx *sql.Tx) error {
 		for _, table := range tables {

@@ -55,6 +55,7 @@ type ProxyRegistry struct {
 	clickhouseFlushTotal          *prometheus.CounterVec
 	clickhouseFlushRows           prometheus.Counter
 	clickhouseDroppedRows         prometheus.Counter
+	usageFactRejected             prometheus.Counter
 	clickhouseFlushSec            prometheus.Histogram
 	idempotencyTotal              *prometheus.CounterVec
 	idempotencyDuration           prometheus.Histogram

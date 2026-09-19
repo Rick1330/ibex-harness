@@ -20,10 +20,11 @@ from app.tasks.billing_reconcile import (
 )
 
 
-def test_reconcile_usage_actuals_skips() -> None:
+def test_reconcile_usage_actuals_deferred_to_859() -> None:
     out = reconcile_usage_actuals.run()
-    assert out["status"] == "skipped"
+    assert out["status"] == "deferred"
     assert out["reason"] == "no_invoice_source"
+    assert "859" in out["tracking_issue"]
 
 
 def test_budget_spent_rollup_skips_without_dsn(monkeypatch: Any) -> None:

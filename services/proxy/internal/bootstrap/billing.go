@@ -75,6 +75,7 @@ func startBudgetSubscriber(
 func optionalUsageFactWriter(
 	cfgDSN string,
 	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
 ) *billing.UsageFactWriter {
 	if cfgDSN == "" {
 		return nil
@@ -86,6 +87,14 @@ func optionalUsageFactWriter(
 		}
 		return nil
 	}
+	w.SetOnDrop(func(n int) {
+		if reg != nil {
+			reg.AddUsageFactRejected(n)
+		}
+		if log != nil {
+			log.WarnCtx(context.Background(), "usage fact rejected: buffer full", "count", n)
+		}
+	})
 	return w
 }
 

@@ -51,7 +51,7 @@ type RouterDeps struct {
 	Limiter       ratelimit.Limiter
 	// BudgetCache enforces spend hard-caps after RPM (nil disables).
 	BudgetCache *billing.Cache
-	// UsageFactWriter batches usage_facts inserts (nil disables; fail-open).
+	// UsageFactWriter batches usage_facts inserts (nil disables).
 	UsageFactWriter    *billing.UsageFactWriter
 	DirectiveResolver  directive.Resolver
 	SessionStore       session.Store

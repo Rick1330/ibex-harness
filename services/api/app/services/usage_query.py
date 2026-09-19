@@ -208,6 +208,8 @@ async def execute_usage_query(
         rows=rows,
         completeness=_derive_completeness(rows),
         truncated=truncated,
+        matched_count=len(fetched) if not truncated else limit + 1,
+        returned_count=len(rows),
     )
 
 
@@ -263,6 +265,14 @@ async def _release_inflight(redis_url: str | None, org_id: UUID) -> None:
         await client.aclose()
 
 
+def _clickhouse_dsn(clickhouse_url: str | None) -> str | None:
+    return (
+        clickhouse_url
+        or os.environ.get("CLICKHOUSE_HTTP_URL")
+        or os.environ.get("IBEX_CLICKHOUSE_HTTP_URL")
+    )
+
+
 async def _run_clickhouse(
     org_id: UUID,
     body: UsageQueryRequest,
@@ -271,14 +281,18 @@ async def _run_clickhouse(
 ) -> list[dict[str, Any]]:
     dsn = _clickhouse_dsn(clickhouse_url)
     if not dsn:
-        logger.info("usage query skipped: clickhouse not configured")
-        return []
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="Usage query unavailable: ClickHouse is not configured",
+        )
     try:
         import httpx
     except ImportError as exc:  # pragma: no cover
         raise ApiError(code=SERVICE_DEGRADED, message="ClickHouse client unavailable") from exc
 
     safe_sql = _bind_literals(TEMPLATES[body.shape], org_id, body, limit)
+    if f"toUUID('{org_id}')" not in safe_sql:
+        raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED)
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -290,14 +304,6 @@ async def _run_clickhouse(
         logger.warning("clickhouse usage query transport failed: %s", exc)
         raise ApiError(code=SERVICE_DEGRADED, message=_USAGE_QUERY_FAILED) from exc
     return _parse_clickhouse_rows(resp.status_code, resp.text)
-
-
-def _clickhouse_dsn(clickhouse_url: str | None) -> str | None:
-    return (
-        clickhouse_url
-        or os.environ.get("CLICKHOUSE_HTTP_URL")
-        or os.environ.get("IBEX_CLICKHOUSE_HTTP_URL")
-    )
 
 
 def _parse_clickhouse_rows(status_code: int, body: str) -> list[dict[str, Any]]:

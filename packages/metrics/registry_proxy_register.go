@@ -104,6 +104,7 @@ func (r *ProxyRegistry) storageAndTokenizerCollectors() []prometheus.Collector {
 		r.clickhouseFlushTotal,
 		r.clickhouseFlushRows,
 		r.clickhouseDroppedRows,
+		r.usageFactRejected,
 		r.clickhouseFlushSec,
 		r.idempotencyTotal,
 		r.idempotencyDuration,

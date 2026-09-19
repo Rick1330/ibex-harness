@@ -120,10 +120,10 @@ func TestUnit_StartBudgetSubscriber_StartsAndStops(t *testing.T) {
 func TestUnit_OptionalUsageFactWriter(t *testing.T) {
 	t.Parallel()
 
-	if optionalUsageFactWriter("", nil) != nil {
+	if optionalUsageFactWriter("", nil, nil) != nil {
 		t.Fatal("empty DSN: expected nil")
 	}
-	if optionalUsageFactWriter("not-a-clickhouse-dsn", logger.Discard("billing")) != nil {
+	if optionalUsageFactWriter("not-a-clickhouse-dsn", logger.Discard("billing"), nil) != nil {
 		t.Fatal("bad DSN: expected nil")
 	}
 }

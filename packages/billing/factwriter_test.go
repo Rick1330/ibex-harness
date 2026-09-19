@@ -277,7 +277,7 @@ func usageFactValidateCases() []usageFactValidateCase {
 	}
 }
 
-func TestUsageFactWriter_BufferDrop(t *testing.T) {
+func TestUsageFactWriter_BufferFullRejectsLoudly(t *testing.T) {
 	t.Parallel()
 	ins := &fakeUsageFactInserter{}
 	w := NewUsageFactWriterWithInserter(ins, UsageFactConfig{
@@ -287,15 +287,22 @@ func TestUsageFactWriter_BufferDrop(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = w.Shutdown(context.Background()) })
 
+	dropped := 0
+	w.SetOnDrop(func(n int) { dropped += n })
+
 	first := validUsageFact()
-	first.RequestID = "drop-me"
+	first.RequestID = "keep-me"
 	second := validUsageFact()
-	second.RequestID = "keep-me"
+	second.RequestID = "reject-me"
 	if err := w.Write(first); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Write(second); err != nil {
-		t.Fatal(err)
+	err := w.Write(second)
+	if err == nil || !strings.Contains(err.Error(), "buffer full") {
+		t.Fatalf("second write err=%v want buffer full", err)
+	}
+	if dropped != 1 {
+		t.Fatalf("onDrop calls=%d want 1", dropped)
 	}
 	if err := w.Flush(context.Background()); err != nil {
 		t.Fatal(err)

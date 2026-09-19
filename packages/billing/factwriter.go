@@ -82,7 +82,9 @@ type UsageFactInserter interface {
 	Close() error
 }
 
-// UsageFactWriter batches UsageFact inserts and flushes to ClickHouse (fail-open).
+// UsageFactWriter batches UsageFact inserts and flushes to ClickHouse.
+// Buffer overflow rejects the new Write (fail-loud); flush insert failures
+// requeue older rows for the next tick and surface the error to Flush callers.
 type UsageFactWriter struct {
 	ins     UsageFactInserter
 	cfg     UsageFactConfig
@@ -126,7 +128,16 @@ func newUsageFactWriter(ins UsageFactInserter, cfg UsageFactConfig) *UsageFactWr
 	return w
 }
 
+// SetOnDrop registers a hook invoked when facts are rejected (buffer full) or
+// discarded during requeue overflow. Used for metrics/alerts — not silent loss.
+func (w *UsageFactWriter) SetOnDrop(fn func(n int)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.onDrop = fn
+}
+
 // Write enqueues a fact for the next batch flush (non-blocking).
+// Returns an error when the buffer is full so billing facts are never dropped silently.
 func (w *UsageFactWriter) Write(fact UsageFact) error {
 	if err := validateUsageFact(fact); err != nil {
 		return err
@@ -137,10 +148,10 @@ func (w *UsageFactWriter) Write(fact UsageFact) error {
 		return fmt.Errorf("billing: usage fact writer closed")
 	}
 	if len(w.buf) >= w.cfg.MaxBufferSize {
-		w.buf = w.buf[1:]
 		if w.onDrop != nil {
 			w.onDrop(1)
 		}
+		return fmt.Errorf("billing: usage fact buffer full")
 	}
 	w.buf = append(w.buf, fact)
 	if len(w.buf) >= w.cfg.MaxBatchSize {
@@ -253,7 +264,8 @@ func (w *UsageFactWriter) requeueFront(rows []UsageFact) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	// Prefer keeping restored (older) rows; drop newer concurrent writes first.
+	// Prefer keeping restored (older) rows; discard newer concurrent writes first.
+	// Callers of Flush still observe the insert error; onDrop alerts on overflow.
 	combined := make([]UsageFact, 0, len(rows)+len(w.buf))
 	combined = append(combined, rows...)
 	combined = append(combined, w.buf...)

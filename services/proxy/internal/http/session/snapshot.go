@@ -207,7 +207,7 @@ func executeDeferredPostResponse(job PostResponseJob) {
 	}
 }
 
-// EmitUsageFact writes a usage fact fail-open (log + continue on error).
+// EmitUsageFact writes a usage fact; write errors (including buffer-full rejects) are logged.
 func EmitUsageFact(w UsageFactWriter, log *logger.Logger, fact billing.UsageFact) {
 	if w == nil {
 		return

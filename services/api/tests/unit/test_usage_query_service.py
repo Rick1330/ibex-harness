@@ -138,6 +138,8 @@ async def test_execute_usage_query_truncation(
         )
     assert out.truncated is expect_truncated
     assert len(out.rows) == 2
+    assert out.returned_count == 2
+    assert out.matched_count >= 2
     assert out.completeness == expect_completeness
 
 
@@ -173,14 +175,26 @@ async def _expect_acquire_error(*, eval_return: Any = None, eval_error: Exceptio
 
 
 @pytest.mark.asyncio
-async def test_run_clickhouse_empty_without_dsn() -> None:
+async def test_run_clickhouse_fails_without_dsn() -> None:
     with patch.dict(
         "os.environ",
         {"CLICKHOUSE_HTTP_URL": "", "IBEX_CLICKHOUSE_HTTP_URL": ""},
         clear=False,
     ):
-        rows = await uq._run_clickhouse(uuid4(), _body(limit=10), 10, None)
-    assert rows == []
+        with pytest.raises(ApiError) as exc:
+            await uq._run_clickhouse(uuid4(), _body(limit=10), 10, None)
+    assert "ClickHouse" in str(exc.value)
+
+
+def test_bind_literals_always_scopes_org() -> None:
+    org = uuid4()
+    start, end = _fixed_window()
+    body = UsageQueryRequest(
+        shape="org_time_aggregate", start=start, end=end, limit=10
+    )
+    sql = uq._bind_literals(uq._SQL_ORG_TIME, org, body, 10)
+    assert f"toUUID('{org}')" in sql
+    assert "WHERE org_id =" in sql or "org_id =" in sql
 
 
 @pytest.mark.asyncio

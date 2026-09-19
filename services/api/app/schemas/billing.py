@@ -105,3 +105,5 @@ class UsageQueryResponse(BaseModel):
     rows: list[dict[str, Any]]
     completeness: str = "partial"
     truncated: bool = False
+    matched_count: int = Field(ge=0, default=0)
+    returned_count: int = Field(ge=0, default=0)

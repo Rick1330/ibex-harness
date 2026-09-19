@@ -233,12 +233,20 @@ async def run_budget_spent_rollup(
     queue="maintenance",
 )
 def reconcile_usage_actuals(self: IbexTask, **kwargs: Any) -> dict[str, str]:
-    """Select facts with null actual_cost_cents; no-op until invoice source exists (#859)."""
+    """Fill actual_cost_cents from provider invoices — deferred until #859.
+
+    Tracked: https://github.com/Rick1330/ibex-harness/issues/859
+    Spent rollup (TASK_BUDGET_SPENT_ROLLUP) remains the active CH→PG path.
+    """
     del self, kwargs
     logger.info(
-        "reconcile_usage_actuals skipped: no provider invoice source configured yet"
+        "reconcile_usage_actuals deferred: waiting on provider invoice source (#859)"
     )
-    return {"status": "skipped", "reason": "no_invoice_source"}
+    return {
+        "status": "deferred",
+        "reason": "no_invoice_source",
+        "tracking_issue": "https://github.com/Rick1330/ibex-harness/issues/859",
+    }
 
 
 @celery_app.task(
