@@ -73,11 +73,13 @@ class PostgresRpoHonestyTests(unittest.TestCase):
         for mechanism, expect in cases:
             with self.subTest(mechanism=mechanism):
                 got = _mod.postgres_rpo_pass(
-                    backup_ok=True,
-                    restore_ok=True,
-                    measured=12,
-                    target=300,
-                    mechanism=mechanism,
+                    {
+                        "backup_ok": True,
+                        "restore_ok": True,
+                        "measured": 12,
+                        "target": 300,
+                        "mechanism": mechanism,
+                    }
                 )
                 self.assertEqual(got, expect)
 

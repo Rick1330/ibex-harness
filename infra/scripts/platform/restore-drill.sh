@@ -53,8 +53,13 @@ fi
 
 if [[ "${SKIP_COMPOSE:-0}" != "1" && -z "$PG_CONTAINER" ]]; then
   echo "[drill] bringing up compose data plane"
-  docker compose -f "$COMPOSE_FILE" up -d postgres redis clickhouse minio 2>/dev/null \
-    || docker compose -f "$COMPOSE_FILE" up -d || true
+  # Do not swallow startup failure — proceeding would risk mutating an unrelated
+  # Postgres reached via default/supplied POSTGRES_DSN.
+  if ! docker compose -f "$COMPOSE_FILE" up -d postgres redis clickhouse minio 2>/dev/null \
+    && ! docker compose -f "$COMPOSE_FILE" up -d; then
+    echo "[drill] ERROR: compose data-plane startup failed" >&2
+    exit 1
+  fi
   sleep 5
 fi
 

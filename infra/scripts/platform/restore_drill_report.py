@@ -33,18 +33,20 @@ def outbox_rpo_pass(*, pending: int | None, max_aggregate_seq: int | None, targe
     return pending == target
 
 
-def postgres_rpo_pass(
-    *,
-    backup_ok: bool,
-    restore_ok: bool,
-    measured: int | None,
-    target: int,
-    mechanism: str,
-) -> bool:
-    """pg_dump_fallback is not PITR — never claim RPO pass for that mechanism."""
-    if mechanism != "pgbackrest_wal":
+def postgres_rpo_pass(ctx: dict[str, Any]) -> bool:
+    """pg_dump_fallback is not PITR — never claim RPO pass for that mechanism.
+
+    Expected keys: mechanism, backup_ok, restore_ok, measured, target.
+    """
+    if ctx.get("mechanism") != "pgbackrest_wal":
         return False
-    return backup_ok and restore_ok and le_pass(measured, target)
+    measured = ctx.get("measured")
+    measured_sec = measured if isinstance(measured, int) else None
+    return (
+        bool(ctx.get("backup_ok"))
+        and bool(ctx.get("restore_ok"))
+        and le_pass(measured_sec, int(ctx["target"]))
+    )
 
 
 def mechanism_note(mechanism: str) -> str:
@@ -71,11 +73,13 @@ def _postgres_block(e: dict[str, str], *, mechanism: str, note: str) -> dict[str
         "backup_ok": backup_ok,
         "restore_ok": restore_ok,
         "rpo_pass": postgres_rpo_pass(
-            backup_ok=backup_ok,
-            restore_ok=restore_ok,
-            measured=pg_rpo,
-            target=int(e["PG_RPO_SEC"]),
-            mechanism=mechanism,
+            {
+                "backup_ok": backup_ok,
+                "restore_ok": restore_ok,
+                "measured": pg_rpo,
+                "target": int(e["PG_RPO_SEC"]),
+                "mechanism": mechanism,
+            }
         ),
         "rto_pass": restore_ok and le_pass(pg_rto, int(e["PG_RTO_SEC"])),
         "mechanism": mechanism,
