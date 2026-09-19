@@ -231,6 +231,8 @@ async def run_budget_spent_rollup(
     base=IbexTask,
     name=TASK_RECONCILE_USAGE_ACTUALS,
     queue="maintenance",
+    soft_time_limit=300,
+    time_limit=600,
 )
 def reconcile_usage_actuals(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     """Fill actual_cost_cents from provider invoices — deferred until #859.
@@ -254,6 +256,8 @@ def reconcile_usage_actuals(self: IbexTask, **kwargs: Any) -> dict[str, str]:
     base=IbexTask,
     name=TASK_BUDGET_SPENT_ROLLUP,
     queue="maintenance",
+    soft_time_limit=60,
+    time_limit=120,
     autoretry_for=(OSError, ClickHouseQueryError, RedisError),
     retry_backoff=True,
     retry_jitter=True,

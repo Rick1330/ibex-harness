@@ -1,0 +1,30 @@
+groups:
+  - name: ibex.platform.backup
+    rules:
+      - alert: IBEXPostgresBackupStale
+        # Textfile or pushgateway metric written by pgbackrest-backup.sh / drill.
+        # Age > 240s with for: 1m ⇒ page by ≤5m RPO; absent still pages.
+        expr: |
+          (time() - ibex_postgres_last_backup_unixtime) > 240
+          or
+          absent(ibex_postgres_last_backup_unixtime) == 1
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "Postgres backup freshness exceeded 5m RPO budget"
+          description: >-
+            Last successful pgBackRest/MinIO backup is older than ~4 minutes
+            (or metric missing) and stayed that way for 1m, so paging fires
+            within the ≤5 minute RPO budget (4.P.5). Check
+            infra/scripts/platform/pgbackrest-backup.sh and MinIO repo.
+      - alert: IBEXRestoreDrillMissing
+        expr: absent(ibex_restore_drill_last_success_unixtime) == 1
+        for: 24h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "No restore-drill success metric observed"
+          description: >-
+            Restore drill evidence missing. Run infra/scripts/platform/restore-drill.sh
+            and ensure the report is scraped or the metric is pushed.

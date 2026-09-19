@@ -1,0 +1,20 @@
+# Staging overrides — digests filled by CI after docker-publish.
+# Until CI injects real mixed-hex digests, `check-helm-digest-placeholders.sh`
+# MUST fail on this overlay (sentinel alphabet aaaa…/bbbb… is intentional).
+# Do not deploy staging with these stubs.
+images:
+  proxy: "ghcr.io/rick1330/ibex-harness/proxy:main@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  auth: "ghcr.io/rick1330/ibex-harness/auth:main@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  api: "ghcr.io/rick1330/ibex-harness/api:main@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  worker: "ghcr.io/rick1330/ibex-harness/worker:main@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  memory: "ghcr.io/rick1330/ibex-harness/memory:main@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  embedder: "ghcr.io/rick1330/ibex-harness/embedder:main@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  mcpMemory: "ghcr.io/rick1330/ibex-harness/mcp-memory:main@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  migrate: "ghcr.io/rick1330/ibex-harness/migrate:main@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+hpa:
+  minReplicas: 2
+  maxReplicas: 6
+rollout:
+  progressDeadlineSeconds: 300
+backup:
+  s3Endpoint: "https://minio.staging.example"  # swap to real object storage
