@@ -163,3 +163,101 @@ func TestLoadOrg_BadPricesJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLoadOrg_BeginTxError(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	mock.ExpectBegin().WillReturnError(sql.ErrConnDone)
+	_, err := store.LoadOrg(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("expected begin error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadOrg_SetConfigError(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
+	_, err := store.LoadOrg(context.Background(), uuid.New())
+	if err == nil || err.Error() == "" {
+		t.Fatalf("expected set_config error, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadOrg_BudgetQueryError(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	org := uuid.New()
+	expectOrgTxBegin(mock)
+	mock.ExpectQuery(`budget_periods`).
+		WithArgs(org, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
+	_, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatal("expected budget query error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadOrg_CommitError(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	org, periodID, prices := happyLoadFixtures(t)
+	expectOrgTxBegin(mock)
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	mock.ExpectQuery(`budget_periods`).
+		WithArgs(org, sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "cap_cents", "spent_cents_cached", "enforcement_mode", "period_start", "period_end",
+		}).AddRow(periodID, int64(1000), int64(100), "hard_cap", start, end))
+	mock.ExpectQuery(`rate_cards`).
+		WithArgs(org).
+		WillReturnRows(sqlmock.NewRows([]string{"version", "prices"}).AddRow(int64(3), prices))
+	mock.ExpectCommit().WillReturnError(sql.ErrTxDone)
+	_, err := store.LoadOrg(context.Background(), org)
+	if err == nil {
+		t.Fatal("expected commit error")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadOrg_EmptyPricesJSON(t *testing.T) {
+	t.Parallel()
+	store, mock := newMockStore(t)
+	org := uuid.New()
+	expectOrgTxBegin(mock)
+	mock.ExpectQuery(`budget_periods`).
+		WithArgs(org, sqlmock.AnyArg()).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(`rate_cards`).
+		WithArgs(org).
+		WillReturnRows(sqlmock.NewRows([]string{"version", "prices"}).AddRow(int64(2), []byte(`[]`)))
+	mock.ExpectCommit()
+	snap, err := store.LoadOrg(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.PublishedCard.Version != "2" {
+		t.Fatalf("version=%s", snap.PublishedCard.Version)
+	}
+	if len(snap.PublishedCard.Prices) != 0 {
+		t.Fatalf("prices=%v", snap.PublishedCard.Prices)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

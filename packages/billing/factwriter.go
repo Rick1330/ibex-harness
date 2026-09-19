@@ -400,8 +400,20 @@ func addUint32Checked(a, b uint32) (uint32, bool) {
 	return uint32(sum), true
 }
 
+// usageFactConn is the narrow ClickHouse surface used by the inserter (testable).
+type usageFactConn interface {
+	PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error)
+	Ping(ctx context.Context) error
+	Close() error
+}
+
 type chUsageFactInserter struct {
-	conn driver.Conn
+	conn usageFactConn
+}
+
+// openCHConn dials ClickHouse; overridden in unit tests.
+var openCHConn = func(opts *clickhouse.Options) (usageFactConn, error) {
+	return clickhouse.Open(opts)
 }
 
 func openUsageFactInserter(dsn string) (UsageFactInserter, error) {
@@ -409,7 +421,7 @@ func openUsageFactInserter(dsn string) (UsageFactInserter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("billing: parse dsn: %w", err)
 	}
-	conn, err := clickhouse.Open(opts)
+	conn, err := openCHConn(opts)
 	if err != nil {
 		return nil, fmt.Errorf("billing: open: %w", err)
 	}

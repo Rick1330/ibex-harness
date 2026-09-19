@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -338,4 +339,134 @@ func TestCache_NilOrgCheck(t *testing.T) {
 	if _, _, err := cache.Check(context.Background(), uuid.Nil); err == nil {
 		t.Fatal("expected error for nil org")
 	}
+}
+
+func TestNewCache_NilLoader(t *testing.T) {
+	t.Parallel()
+	_, err := NewCache(nil, Config{CacheTTL: time.Minute, LRUSize: 4}, NoopMetrics{})
+	if err == nil || !strings.Contains(err.Error(), "loader is required") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestCache_CheckAllowsWhenRemainingPositive(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	cache := newTestCache(t, &fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
+		org: hardCapSnap(1000, 250),
+	}}, 8)
+	allowed, rem, err := cache.Check(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Fatal("expected allow when remaining positive")
+	}
+	if rem != 750 {
+		t.Fatalf("rem=%d want 750", rem)
+	}
+}
+
+func TestCache_IncDenyOnExhausted(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	m := &countingMetrics{}
+	cache, err := NewCache(&fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
+		org: hardCapSnap(100, 100),
+	}}, Config{CacheTTL: time.Minute, LRUSize: 4}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, rem, err := cache.Check(context.Background(), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed || rem != 0 {
+		t.Fatalf("allowed=%v rem=%d", allowed, rem)
+	}
+	if m.denies != 1 {
+		t.Fatalf("IncDeny calls=%d want 1", m.denies)
+	}
+}
+
+func TestCache_InvalidateNilOrgNoop(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	m := &countingMetrics{}
+	cache, err := NewCache(&fakeBudgetLoader{snaps: map[uuid.UUID]BudgetSnapshot{
+		org: hardCapSnap(1000, 0),
+	}}, Config{CacheTTL: time.Minute, LRUSize: 4}, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.SnapshotForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+	cache.Invalidate(uuid.Nil)
+	if m.invalidates != 0 {
+		t.Fatalf("Invalidate(nil) must be noop; invalidates=%d", m.invalidates)
+	}
+	if _, err := cache.SnapshotForOrg(context.Background(), org); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCache_PublishedCardPropagatesLoaderError(t *testing.T) {
+	t.Parallel()
+	cache := newTestCache(t, &fakeBudgetLoader{err: errors.New("db down")}, 4)
+	_, err := cache.PublishedCard(context.Background(), uuid.New())
+	if !errors.Is(err, ErrBudgetUnavailable) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestCache_LoadInvalidatedDuringLoad(t *testing.T) {
+	t.Parallel()
+	org := uuid.New()
+	loader := &invalidateDuringLoadLoader{org: org, snap: hardCapSnap(100, 0)}
+	cache, err := NewCache(loader, Config{CacheTTL: time.Minute, LRUSize: 4}, NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader.cache = cache
+
+	_, err = cache.SnapshotForOrg(context.Background(), org)
+	if !errors.Is(err, ErrBudgetUnavailable) {
+		t.Fatalf("err=%v want ErrBudgetUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "invalidated during load") {
+		t.Fatalf("err=%v", err)
+	}
+	if loader.calls < maxBudgetLoadAttempts {
+		t.Fatalf("calls=%d want >= %d", loader.calls, maxBudgetLoadAttempts)
+	}
+}
+
+type countingMetrics struct {
+	denies      int
+	invalidates int
+}
+
+func (m *countingMetrics) IncCacheHit(string)  {}
+func (m *countingMetrics) IncCacheMiss(string) {}
+func (m *countingMetrics) IncDeny()            { m.denies++ }
+func (m *countingMetrics) IncInvalidate()      { m.invalidates++ }
+func (m *countingMetrics) SetLRUSize(float64)  {}
+
+type invalidateDuringLoadLoader struct {
+	org   uuid.UUID
+	snap  BudgetSnapshot
+	cache *Cache
+	mu    sync.Mutex
+	calls int
+}
+
+func (l *invalidateDuringLoadLoader) LoadOrg(_ context.Context, orgID uuid.UUID) (BudgetSnapshot, error) {
+	l.mu.Lock()
+	l.calls++
+	l.mu.Unlock()
+	if l.cache != nil {
+		l.cache.Invalidate(orgID)
+	}
+	return l.snap, nil
 }

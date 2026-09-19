@@ -446,3 +446,96 @@ func assertFrozenFact(t *testing.T, fact *billing.UsageFact, want frozenFactWant
 		t.Fatalf("occurred=%v want %v", fact.OccurredAt, want.occurred)
 	}
 }
+
+func TestUnit_MetaHasTenantIDs(t *testing.T) {
+	t.Parallel()
+	org, agent := uuid.New(), uuid.New()
+	cases := []struct {
+		name string
+		meta httpsession.SnapshotMeta
+		want bool
+	}{
+		{name: "both valid", meta: httpsession.SnapshotMeta{OrgID: org, AgentID: agent}, want: true},
+		{name: "nil org", meta: httpsession.SnapshotMeta{AgentID: agent}, want: false},
+		{name: "nil agent", meta: httpsession.SnapshotMeta{OrgID: org}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := metaHasTenantIDs(tc.meta); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnit_CanFreezeUsageFact_NilWriter(t *testing.T) {
+	t.Parallel()
+	meta := httpsession.SnapshotMeta{OrgID: uuid.New(), AgentID: uuid.New()}
+	if canFreezeUsageFact(nil, meta) {
+		t.Fatal("nil writer must not freeze")
+	}
+}
+
+func TestUnit_ResolvePublishedCard_CacheErrorDefaults(t *testing.T) {
+	t.Parallel()
+	cache, err := billing.NewCache(stubBudgetLoader{
+		err: context.DeadlineExceeded,
+	}, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resolvePublishedCard(context.Background(), cache, uuid.New())
+	if got.Version != "0" {
+		t.Fatalf("version=%s", got.Version)
+	}
+}
+
+func TestUnit_ResolvePublishedCard_EmptyVersionDefaults(t *testing.T) {
+	t.Parallel()
+	cache, err := billing.NewCache(stubBudgetLoader{
+		snap: billing.BudgetSnapshot{PublishedCard: billing.CardVersion{Version: ""}},
+	}, billing.Config{CacheTTL: time.Minute, LRUSize: 4}, billing.NoopMetrics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resolvePublishedCard(context.Background(), cache, uuid.New())
+	if got.Version != "0" {
+		t.Fatalf("version=%s", got.Version)
+	}
+}
+
+func TestUnit_TokenCounts_NilUsage(t *testing.T) {
+	t.Parallel()
+	in, out := tokenCounts(checkpointInput{})
+	if in != 0 || out != 0 {
+		t.Fatalf("got %d/%d", in, out)
+	}
+}
+
+func TestUnit_SafeAddInt64_OverflowClamps(t *testing.T) {
+	t.Parallel()
+	got := safeAddInt64(1<<62, 1<<62)
+	if got != 1<<63-1 {
+		t.Fatalf("got %d", got)
+	}
+}
+
+func TestUnit_SetSessionResponseHeader_SetsWhenResolved(t *testing.T) {
+	t.Parallel()
+	ctx := withResolvedSession(context.Background(), httpsession.Resolved{ExternalID: "ext-1"})
+	rec := httptest.NewRecorder()
+	setSessionResponseHeader(rec, ctx)
+	if got := rec.Header().Get(httpsession.HeaderSessionID); got != "ext-1" {
+		t.Fatalf("header=%q", got)
+	}
+}
+
+func TestUnit_SetSessionResponseHeader_NoopWithoutResolved(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	setSessionResponseHeader(rec, context.Background())
+	if got := rec.Header().Get(httpsession.HeaderSessionID); got != "" {
+		t.Fatalf("unexpected header %q", got)
+	}
+}

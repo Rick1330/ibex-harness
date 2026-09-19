@@ -80,7 +80,8 @@ def test_create_budget_period_owner_ok() -> None:
     assert resp.json()["cap_cents"] == 1000
 
 
-def test_usage_query_validates_without_clickhouse() -> None:
+def test_usage_query_fails_closed_without_clickhouse() -> None:
+    """Unset ClickHouse must not return empty success (fail-loud ledger contract)."""
     org_id = uuid4()
     start = datetime.now(UTC) - timedelta(hours=1)
     end = datetime.now(UTC)
@@ -95,7 +96,8 @@ def test_usage_query_validates_without_clickhouse() -> None:
                 "limit": 100,
             },
         )
-    assert resp.status_code == 200
+    assert resp.status_code == 503
     body = resp.json()
-    assert body["org_id"] == str(org_id)
-    assert body["rows"] == []
+    assert "ClickHouse" in body.get("error", {}).get("message", "") or "ClickHouse" in str(
+        body
+    )

@@ -394,7 +394,7 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
 		idempStore: idempStore, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
 		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
-		budgetCache: budgetCache, usageFactWriter: optionalUsageFactWriter(in.cfg.ClickHouseDSN, in.log, in.reg),
+		budgetCache: budgetCache, usageFactWriter: optionalUsageFactWriter(in.cfg.ClickHouseDSN, in.log, in.reg, nil),
 	}, nil
 }
 

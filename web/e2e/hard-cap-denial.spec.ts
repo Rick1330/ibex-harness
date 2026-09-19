@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import path from "node:path";
 import { test, expect } from "@playwright/test";
 
@@ -13,7 +14,7 @@ const repoRoot = path.resolve(process.cwd(), "..");
 
 async function startHardCapFixture(): Promise<{
   baseURL: string;
-  child: ChildProcess;
+  child: ChildProcessByStdio<null, Readable, Readable>;
 }> {
   const child = spawn(
     "go",
@@ -30,12 +31,12 @@ async function startHardCapFixture(): Promise<{
       const line = buf.split("\n").find((l) => l.includes("127.0.0.1:"));
       if (line) {
         clearTimeout(timer);
-        child.stdout?.off("data", onData);
+        child.stdout.off("data", onData);
         resolve(line.trim());
       }
     };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", (chunk: Buffer) => {
+    child.stdout.on("data", onData);
+    child.stderr.on("data", (chunk: Buffer) => {
       process.stderr.write(chunk);
     });
     child.on("exit", (code) => {

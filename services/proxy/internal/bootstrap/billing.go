@@ -72,15 +72,21 @@ func startBudgetSubscriber(
 	return sub, cancel, nil
 }
 
+type usageFactWriterFactory func(billing.UsageFactConfig) (*billing.UsageFactWriter, error)
+
 func optionalUsageFactWriter(
 	cfgDSN string,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
+	newWriter usageFactWriterFactory,
 ) *billing.UsageFactWriter {
 	if cfgDSN == "" {
 		return nil
 	}
-	w, err := billing.NewUsageFactWriter(billing.UsageFactConfig{DSN: cfgDSN})
+	if newWriter == nil {
+		newWriter = billing.NewUsageFactWriter
+	}
+	w, err := newWriter(billing.UsageFactConfig{DSN: cfgDSN})
 	if err != nil {
 		if log != nil {
 			log.WarnCtx(context.Background(), "usage fact writer disabled", "error", err)

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
@@ -448,5 +449,104 @@ func assertPrepareFlags(t *testing.T, job PostResponseJob, want prepareFlags) {
 	}
 	if want.streaming && !job.Snap.Streaming {
 		t.Fatal("stream flag preserved in snap")
+	}
+}
+
+type recordingUsageFactWriter struct {
+	facts []billing.UsageFact
+	err   error
+}
+
+func (r *recordingUsageFactWriter) Write(fact billing.UsageFact) error {
+	r.facts = append(r.facts, fact)
+	return r.err
+}
+
+func TestUnit_EmitUsageFact_NilWriterNoop(t *testing.T) {
+	t.Parallel()
+	EmitUsageFact(nil, logger.Discard("t"), billing.UsageFact{RequestID: "r1"})
+}
+
+func TestUnit_EmitUsageFact_WriteSuccess(t *testing.T) {
+	t.Parallel()
+	rec := &recordingUsageFactWriter{}
+	fact := billing.UsageFact{RequestID: "req-ok", EstimatedCostCents: 3}
+	EmitUsageFact(rec, logger.Discard("t"), fact)
+	if len(rec.facts) != 1 || rec.facts[0].RequestID != "req-ok" {
+		t.Fatalf("facts=%v", rec.facts)
+	}
+}
+
+func TestUnit_EmitUsageFact_WriteErrorLogs(t *testing.T) {
+	t.Parallel()
+	rec := &recordingUsageFactWriter{err: errors.New("buffer full")}
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{Service: "proxy", Writer: &buf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	EmitUsageFact(rec, log, billing.UsageFact{RequestID: "req-fail"})
+	if !bytes.Contains(buf.Bytes(), []byte("usage fact write failed")) {
+		t.Fatalf("log=%q", buf.String())
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("req-fail")) {
+		t.Fatalf("missing request_id in log=%q", buf.String())
+	}
+}
+
+func TestUnit_PreparePostResponse_SetsDoUsageFact(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	fact := billing.UsageFact{RequestID: meta.RequestID, OrgID: meta.OrgID, AgentID: meta.AgentID}
+	writer := &recordingUsageFactWriter{}
+	job := PreparePostResponse(PreparePostResponseInput{
+		Meta: meta, In: CheckpointInput{Provider: "openai", Model: "gpt-4o"},
+		Outcome:   httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+		UsageFact: &fact, UsageFactWriter: writer, Log: logger.Discard("t"),
+	})
+	if !job.DoUsageFact {
+		t.Fatal("expected DoUsageFact")
+	}
+	if job.UsageFact.RequestID != meta.RequestID {
+		t.Fatalf("copied fact=%+v", job.UsageFact)
+	}
+}
+
+func TestUnit_CaptureTraceSnapshot_RequestedAtZeroUsesCompleted(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	meta.RequestedAt = time.Time{}
+	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{
+		Meta:    meta,
+		In:      CheckpointInput{Provider: "openai", Model: "m"},
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	})
+	if !ok {
+		t.Fatal("expected snapshot")
+	}
+	if snap.Timings.RequestedAt.IsZero() || !snap.Timings.RequestedAt.Equal(snap.Timings.CompletedAt) {
+		t.Fatalf("requested=%v completed=%v", snap.Timings.RequestedAt, snap.Timings.CompletedAt)
+	}
+}
+
+func TestUnit_PreparePostResponse_BufferOnStreamingIncomplete(t *testing.T) {
+	t.Parallel()
+	meta := testSnapshotMeta()
+	rs := Resolved{ExternalID: "sticky-1", OrgID: meta.OrgID, AgentID: meta.AgentID}
+	buf := newTestTurnBuffer(t)
+	job := PreparePostResponse(PreparePostResponseInput{
+		Deps:     LifecycleDeps{TurnBuffer: buf, Log: logger.Discard("t")},
+		Meta:     meta,
+		Resolved: rs,
+		In: CheckpointInput{
+			Provider: "openai", Model: "gpt-4o",
+			IsStreaming: true, IsComplete: false,
+			Messages: []llm.Message{{Role: "user", Content: "hi"}},
+		},
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: false},
+		Log:     logger.Discard("t"),
+	})
+	if !job.DoBuffer {
+		t.Fatal("expected extraction buffer for incomplete streaming turn")
 	}
 }

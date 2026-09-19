@@ -341,3 +341,173 @@ def test_budget_spent_rollup_task_autoretry_configured() -> None:
     assert RuntimeError not in budget_spent_rollup.autoretry_for
     assert budget_spent_rollup.retry_backoff is True
     assert budget_spent_rollup.retry_jitter is True
+
+
+def test_http_clickhouse_querier_transport_error() -> None:
+    import httpx
+
+    client = MagicMock()
+    client.post.side_effect = httpx.ConnectError("down")
+    q = HttpClickHouseQuerier("http://localhost:8123", client=client)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    try:
+        q.sum_spent(
+            org_id="11111111-1111-1111-1111-111111111111",
+            period_start=start,
+            period_end=start + timedelta(days=1),
+        )
+        raise AssertionError("expected ClickHouseQueryError")
+    except ClickHouseQueryError as exc:
+        assert "transport failed" in str(exc)
+
+
+def test_run_budget_spent_rollup_multiple_periods() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=30)
+    periods = [
+        BudgetPeriodWindow(
+            period_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            org_id="11111111-1111-1111-1111-111111111111",
+            period_start=start,
+            period_end=end,
+        ),
+        BudgetPeriodWindow(
+            period_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            org_id="22222222-2222-2222-2222-222222222222",
+            period_start=start,
+            period_end=end,
+        ),
+    ]
+
+    class FakeCH:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def sum_spent(self, **kwargs: Any) -> int:
+            self.calls += 1
+            return 100 * self.calls
+
+    class FakePG:
+        def __init__(self) -> None:
+            self.updates: list[tuple[str, str, int]] = []
+
+        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
+            return periods
+
+        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+            self.updates.append((period_id, org_id, spent_cents))
+
+    class FakeInv:
+        def __init__(self) -> None:
+            self.published: list[str] = []
+
+        async def publish_budget_update(self, org_id: str) -> None:
+            self.published.append(org_id)
+
+    ch, pg, inv = FakeCH(), FakePG(), FakeInv()
+    out = asyncio.run(run_budget_spent_rollup(querier=ch, store=pg, invalidator=inv))
+    assert out == {"status": "ok", "periods_updated": 2}
+    assert ch.calls == 2
+    assert len(pg.updates) == 2
+    assert inv.published == [
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+    ]
+
+
+def test_run_budget_spent_rollup_no_active_periods() -> None:
+    class FakeCH:
+        def sum_spent(self, **kwargs: Any) -> int:
+            raise AssertionError("should not query ClickHouse")
+
+    class FakePG:
+        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
+            return []
+
+        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+            raise AssertionError("should not update")
+
+    out = asyncio.run(run_budget_spent_rollup(querier=FakeCH(), store=FakePG()))
+    assert out == {"status": "ok", "periods_updated": 0}
+
+
+def test_run_budget_spent_rollup_invalidate_oserror_reraises() -> None:
+    period = BudgetPeriodWindow(
+        period_id="cccccccc-cccc-cccc-cccc-cccccccccccc",
+        org_id="33333333-3333-3333-3333-333333333333",
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC) + timedelta(days=1),
+    )
+
+    class FakeCH:
+        def sum_spent(self, **kwargs: Any) -> int:
+            return 1
+
+    class FakePG:
+        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
+            return [period]
+
+        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+            return None
+
+    class BoomInv:
+        async def publish_budget_update(self, org_id: str) -> None:
+            raise OSError("pubsub down")
+
+    try:
+        asyncio.run(
+            run_budget_spent_rollup(querier=FakeCH(), store=FakePG(), invalidator=BoomInv())
+        )
+        raise AssertionError("expected OSError")
+    except OSError:
+        pass
+
+
+def test_budget_spent_rollup_skips_missing_postgres_only(monkeypatch: Any) -> None:
+    class _Settings:
+        clickhouse_dsn = "http://localhost:8123"
+        database_url = None
+
+    monkeypatch.setattr("app.tasks.billing_reconcile.get_settings", lambda: _Settings())
+    out = budget_spent_rollup.run()
+    assert out["status"] == "skipped"
+    assert out["reason"] == "missing_dsn"
+
+
+def test_budget_spent_rollup_without_redis_uses_noop(monkeypatch: Any) -> None:
+    period = BudgetPeriodWindow(
+        period_id="dddddddd-dddd-dddd-dddd-dddddddddddd",
+        org_id="44444444-4444-4444-4444-444444444444",
+        period_start=datetime.now(UTC),
+        period_end=datetime.now(UTC) + timedelta(days=1),
+    )
+
+    class FakeCH:
+        def sum_spent(self, **kwargs: Any) -> int:
+            return 9
+
+    class FakeStore:
+        async def list_active_periods(self) -> list[BudgetPeriodWindow]:
+            return [period]
+
+        async def update_period_spent(self, period_id: str, org_id: str, spent_cents: int) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            return None
+
+    class _Settings:
+        clickhouse_dsn = "http://localhost:8123"
+        database_url = "postgresql+asyncpg://u:p@localhost/db"
+        redis_url = None
+
+    monkeypatch.setattr("app.tasks.billing_reconcile.get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.HttpClickHouseQuerier", lambda dsn: FakeCH()
+    )
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.SqlAlchemySpendStore", lambda url: FakeStore()
+    )
+    out = budget_spent_rollup.run()
+    assert out["status"] == "ok"
+    assert out["periods_updated"] == 1

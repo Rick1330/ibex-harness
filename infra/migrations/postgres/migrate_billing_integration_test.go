@@ -26,18 +26,18 @@ func TestBilling_SchemaAndRLSCrossTenant(t *testing.T) {
 	ctx, db := setupBillingDB(t)
 	orgA, orgB := seedBillingOrgs(t, ctx, db)
 
-	insA := billingInsert{t: t, ctx: ctx, db: db, orgID: orgA}
-	cardID := insA.rateCard("default")
-	insA.rateCardVersion(cardID, 1)
-	periodID := insA.budgetPeriod(10_000)
-	_ = insA.enforcementDecision(periodID)
+	insA := billingInsert{t: t, db: db, orgID: orgA}
+	cardID := insA.rateCard(ctx, "default")
+	insA.rateCardVersion(ctx, cardID, 1)
+	periodID := insA.budgetPeriod(ctx, 10_000)
+	_ = insA.enforcementDecision(ctx, periodID)
 
-	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.visible(billingVisibilityIDs{
+	billingAssert{t: t, db: db, orgID: orgA}.visible(ctx, billingVisibilityIDs{
 		cardID: cardID, periodID: periodID,
 	})
 	// Org B as ibex_app with its own GUC must see zero of Org A's billing rows.
-	billingAssert{t: t, ctx: ctx, db: db, orgID: orgB}.hiddenFrom(orgA)
-	billingAssert{t: t, ctx: ctx, db: db, orgID: orgA}.versionsImmutable(cardID)
+	billingAssert{t: t, db: db, orgID: orgB}.hiddenFrom(ctx, orgA)
+	billingAssert{t: t, db: db, orgID: orgA}.versionsImmutable(ctx, cardID)
 }
 
 func seedBillingOrgs(t *testing.T, ctx context.Context, db *sql.DB) (orgA, orgB string) {
@@ -59,16 +59,15 @@ func seedBillingOrgs(t *testing.T, ctx context.Context, db *sql.DB) (orgA, orgB 
 
 type billingInsert struct {
 	t     *testing.T
-	ctx   context.Context
 	db    *sql.DB
 	orgID string
 }
 
-func (b billingInsert) returningID(query string, args ...any) string {
+func (b billingInsert) returningID(ctx context.Context, query string, args ...any) string {
 	b.t.Helper()
 	var id string
-	err := withOrgContext(b.ctx, b.db, b.orgID, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(b.ctx, query, args...).Scan(&id)
+	err := withOrgContext(ctx, b.db, b.orgID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, query, args...).Scan(&id)
 	})
 	if err != nil {
 		b.t.Fatalf("insert returning id: %v", err)
@@ -76,10 +75,10 @@ func (b billingInsert) returningID(query string, args ...any) string {
 	return id
 }
 
-func (b billingInsert) exec(query string, args ...any) {
+func (b billingInsert) exec(ctx context.Context, query string, args ...any) {
 	b.t.Helper()
-	err := withOrgContext(b.ctx, b.db, b.orgID, func(tx *sql.Tx) error {
-		_, e := tx.ExecContext(b.ctx, query, args...)
+	err := withOrgContext(ctx, b.db, b.orgID, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, query, args...)
 		return e
 	})
 	if err != nil {
@@ -87,37 +86,37 @@ func (b billingInsert) exec(query string, args ...any) {
 	}
 }
 
-func (b billingInsert) rateCard(name string) string {
+func (b billingInsert) rateCard(ctx context.Context, name string) string {
 	b.t.Helper()
-	return b.returningID(`
+	return b.returningID(ctx, `
 		INSERT INTO ibex_billing.rate_cards (org_id, name, currency, status)
 		VALUES ($1::uuid, $2, 'USD', 'published')
 		RETURNING id::text`, b.orgID, name)
 }
 
-func (b billingInsert) rateCardVersion(cardID string, version int64) {
+func (b billingInsert) rateCardVersion(ctx context.Context, cardID string, version int64) {
 	b.t.Helper()
-	b.exec(`
+	b.exec(ctx, `
 		INSERT INTO ibex_billing.rate_card_versions (rate_card_id, org_id, version, prices)
 		VALUES ($1::uuid, $2::uuid, $3, $4::jsonb)`,
 		cardID, b.orgID, version,
 		`[{"provider":"openai","model_pattern":"gpt-4o*","input_cents_per_1k":250,"output_cents_per_1k":1000}]`)
 }
 
-func (b billingInsert) budgetPeriod(capCents int64) string {
+func (b billingInsert) budgetPeriod(ctx context.Context, capCents int64) string {
 	b.t.Helper()
 	start := time.Now().UTC().Truncate(time.Hour)
 	end := start.Add(24 * time.Hour)
-	return b.returningID(`
+	return b.returningID(ctx, `
 		INSERT INTO ibex_billing.budget_periods
 			(org_id, period_start, period_end, cap_cents, spent_cents_cached, enforcement_mode)
 		VALUES ($1::uuid, $2, $3, $4, 0, 'hard_cap')
 		RETURNING id::text`, b.orgID, start, end, capCents)
 }
 
-func (b billingInsert) enforcementDecision(periodID string) string {
+func (b billingInsert) enforcementDecision(ctx context.Context, periodID string) string {
 	b.t.Helper()
-	return b.returningID(`
+	return b.returningID(ctx, `
 		INSERT INTO ibex_billing.enforcement_decisions
 			(org_id, budget_period_id, decision, reason)
 		VALUES ($1::uuid, $2::uuid, 'deny', 'cap')
@@ -137,7 +136,6 @@ func countInOrgTx(tx *sql.Tx, ctx context.Context, q orgCountQuery) (int, error)
 
 type billingAssert struct {
 	t     *testing.T
-	ctx   context.Context
 	db    *sql.DB
 	orgID string
 }
@@ -147,16 +145,16 @@ type billingVisibilityIDs struct {
 	periodID string
 }
 
-func (a billingAssert) visible(ids billingVisibilityIDs) {
+func (a billingAssert) visible(ctx context.Context, ids billingVisibilityIDs) {
 	a.t.Helper()
 	checks := []orgCountQuery{
 		{`SELECT COUNT(*) FROM ibex_billing.rate_cards WHERE id = $1::uuid`, ids.cardID},
 		{`SELECT COUNT(*) FROM ibex_billing.rate_card_versions WHERE rate_card_id = $1::uuid`, ids.cardID},
 		{`SELECT COUNT(*) FROM ibex_billing.budget_periods WHERE id = $1::uuid`, ids.periodID},
 	}
-	err := withOrgContext(a.ctx, a.db, a.orgID, func(tx *sql.Tx) error {
+	err := withOrgContext(ctx, a.db, a.orgID, func(tx *sql.Tx) error {
 		for _, c := range checks {
-			n, e := countInOrgTx(tx, a.ctx, c)
+			n, e := countInOrgTx(tx, ctx, c)
 			if e != nil {
 				return e
 			}
@@ -171,7 +169,7 @@ func (a billingAssert) visible(ids billingVisibilityIDs) {
 	}
 }
 
-func (a billingAssert) hiddenFrom(ownerOrg string) {
+func (a billingAssert) hiddenFrom(ctx context.Context, ownerOrg string) {
 	a.t.Helper()
 	// withOrgContext uses SET LOCAL ROLE ibex_app + app.current_org_id = viewer.
 	// Assert zero rows for the owner's org_id under the viewer's GUC (not merely no error).
@@ -181,9 +179,9 @@ func (a billingAssert) hiddenFrom(ownerOrg string) {
 		"ibex_billing.rate_card_versions",
 		"ibex_billing.enforcement_decisions",
 	}
-	err := withOrgContext(a.ctx, a.db, a.orgID, func(tx *sql.Tx) error {
+	err := withOrgContext(ctx, a.db, a.orgID, func(tx *sql.Tx) error {
 		for _, table := range tables {
-			n, e := countInOrgTx(tx, a.ctx, orgCountQuery{
+			n, e := countInOrgTx(tx, ctx, orgCountQuery{
 				sql: fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE org_id = $1::uuid`, table),
 				arg: ownerOrg,
 			})
@@ -201,10 +199,10 @@ func (a billingAssert) hiddenFrom(ownerOrg string) {
 	}
 }
 
-func (a billingAssert) versionsImmutable(cardID string) {
+func (a billingAssert) versionsImmutable(ctx context.Context, cardID string) {
 	a.t.Helper()
-	err := withOrgContext(a.ctx, a.db, a.orgID, func(tx *sql.Tx) error {
-		_, e := tx.ExecContext(a.ctx, `
+	err := withOrgContext(ctx, a.db, a.orgID, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, `
 			UPDATE ibex_billing.rate_card_versions SET prices = '[]'::jsonb
 			WHERE rate_card_id = $1::uuid`, cardID)
 		return e
@@ -217,9 +215,9 @@ func (a billingAssert) versionsImmutable(cardID string) {
 func TestBilling_CompositeFKRejectsCrossOrgParents(t *testing.T) {
 	ctx, db := setupBillingDB(t)
 	orgA, orgB := seedBillingOrgs(t, ctx, db)
-	insA := billingInsert{t: t, ctx: ctx, db: db, orgID: orgA}
-	cardA := insA.rateCard("card-a")
-	periodA := insA.budgetPeriod(5000)
+	insA := billingInsert{t: t, db: db, orgID: orgA}
+	cardA := insA.rateCard(ctx, "card-a")
+	periodA := insA.budgetPeriod(ctx, 5000)
 
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `
@@ -246,9 +244,9 @@ func TestBilling_CompositeFKRejectsCrossOrgParents(t *testing.T) {
 func TestBilling_PeriodDeleteClearsDecisionPeriodIDOnly(t *testing.T) {
 	ctx, db := setupBillingDB(t)
 	orgA, _ := seedBillingOrgs(t, ctx, db)
-	ins := billingInsert{t: t, ctx: ctx, db: db, orgID: orgA}
-	periodID := ins.budgetPeriod(5000)
-	decisionID := ins.enforcementDecision(periodID)
+	ins := billingInsert{t: t, db: db, orgID: orgA}
+	periodID := ins.budgetPeriod(ctx, 5000)
+	decisionID := ins.enforcementDecision(ctx, periodID)
 
 	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `DELETE FROM ibex_billing.budget_periods WHERE id = $1::uuid`, periodID)
@@ -282,9 +280,9 @@ func TestBilling_PeriodDeleteClearsDecisionPeriodIDOnly(t *testing.T) {
 func TestBilling_AppCannotDirectUpdateEnforcementPeriodID(t *testing.T) {
 	ctx, db := setupBillingDB(t)
 	orgA, _ := seedBillingOrgs(t, ctx, db)
-	ins := billingInsert{t: t, ctx: ctx, db: db, orgID: orgA}
-	periodID := ins.budgetPeriod(5000)
-	decisionID := ins.enforcementDecision(periodID)
+	ins := billingInsert{t: t, db: db, orgID: orgA}
+	periodID := ins.budgetPeriod(ctx, 5000)
+	decisionID := ins.enforcementDecision(ctx, periodID)
 
 	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
 		_, e := tx.ExecContext(ctx, `

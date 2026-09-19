@@ -1,6 +1,8 @@
 package billing
 
 import (
+	"math"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +80,87 @@ func TestEstimateCost_ZeroTokens(t *testing.T) {
 	}
 	if cents != 0 {
 		t.Fatalf("cents=%d want 0", cents)
+	}
+}
+
+func TestEstimateCost_RejectsNegativeOutputTokens(t *testing.T) {
+	t.Parallel()
+	_, _, err := EstimateCost(priceCard("1", 100, 100), TokenUsage{
+		Provider: "openai", Model: "x", InputTokens: 0, OutputTokens: -1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "negative") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestEstimateCost_RejectsNegativePriceOperands(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		card CardVersion
+	}{
+		{
+			name: "negative input price",
+			card: priceCard("1", -1, 100),
+		},
+		{
+			name: "negative output price",
+			card: priceCard("1", 100, -1),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := EstimateCost(tc.card, TokenUsage{
+				Provider: "openai", Model: "x", InputTokens: 1, OutputTokens: 1,
+			})
+			if err == nil || !strings.Contains(err.Error(), "negative") {
+				t.Fatalf("got %v", err)
+			}
+		})
+	}
+}
+
+func TestEstimateCost_CostSumOverflow(t *testing.T) {
+	t.Parallel()
+	// tokens=halfPlus with 1000¢/1k yields halfPlus each side; final add overflows.
+	halfPlus := int64(math.MaxInt64/2 + 1)
+	card := CardVersion{
+		Version: "1",
+		Prices: []PriceRow{{
+			Provider: "openai", ModelPattern: "*",
+			InputCentsPer1k: 1000, OutputCentsPer1k: 1000,
+		}},
+	}
+	_, _, err := EstimateCost(card, TokenUsage{
+		Provider: "openai", Model: "x", InputTokens: halfPlus, OutputTokens: halfPlus,
+	})
+	if err == nil || !strings.Contains(err.Error(), "overflow") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestAddCostChecked_Overflow(t *testing.T) {
+	t.Parallel()
+	halfPlus := int64(math.MaxInt64/2 + 1)
+	_, err := addCostChecked(halfPlus, halfPlus)
+	if err == nil || !strings.Contains(err.Error(), "overflow") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMatchPrice_SkipsInvalidOrEmptyGlob(t *testing.T) {
+	t.Parallel()
+	prices := []PriceRow{
+		{Provider: "openai", ModelPattern: "", InputCentsPer1k: 1, OutputCentsPer1k: 1},
+		{Provider: "openai", ModelPattern: "[", InputCentsPer1k: 2, OutputCentsPer1k: 2},
+		{Provider: "openai", ModelPattern: "gpt-*", InputCentsPer1k: 100, OutputCentsPer1k: 200},
+	}
+	row, ok := matchPrice(prices, "openai", "gpt-4o")
+	if !ok {
+		t.Fatal("expected match on valid glob")
+	}
+	if row.InputCentsPer1k != 100 || row.OutputCentsPer1k != 200 {
+		t.Fatalf("matched wrong row: %+v", row)
 	}
 }

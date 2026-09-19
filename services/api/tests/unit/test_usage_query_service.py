@@ -45,8 +45,10 @@ def test_validate_query_rejects_wide_range() -> None:
 
 
 def test_validate_query_requires_request_id() -> None:
+    org_id = uuid4()
+    body = _body("request_point_lookup")
     with pytest.raises(ApiError):
-        uq.validate_query(uuid4(), _body("request_point_lookup"))
+        uq.validate_query(org_id, body)
 
 
 def test_validate_query_ok_defaults() -> None:
@@ -176,6 +178,8 @@ async def _expect_acquire_error(*, eval_return: Any = None, eval_error: Exceptio
 
 @pytest.mark.asyncio
 async def test_run_clickhouse_fails_without_dsn() -> None:
+    org_id = uuid4()
+    body = _body(limit=10)
     with (
         patch.dict(
             "os.environ",
@@ -184,7 +188,7 @@ async def test_run_clickhouse_fails_without_dsn() -> None:
         ),
         pytest.raises(ApiError) as exc,
     ):
-        await uq._run_clickhouse(uuid4(), _body(limit=10), 10, None)
+        await uq._run_clickhouse(org_id, body, 10, None)
     assert "ClickHouse" in str(exc.value)
 
 
@@ -263,6 +267,8 @@ def test_parse_clickhouse_rows_errors(status: int, body: str) -> None:
 async def test_run_clickhouse_transport_error() -> None:
     import httpx
 
+    org_id = uuid4()
+    body = _body(limit=10)
     client = _mock_httpx_client(post_side_effect=httpx.ConnectError("down"))
     with patch("httpx.AsyncClient", return_value=client), pytest.raises(ApiError):
-        await uq._run_clickhouse(uuid4(), _body(limit=10), 10, "http://localhost:8123")
+        await uq._run_clickhouse(org_id, body, 10, "http://localhost:8123")
