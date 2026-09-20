@@ -53,9 +53,9 @@ The original Phase 4 plan was a minimal feature list. It described screens and e
 | F4-025 | Score contract mismatches UX: interim similarity/confidence mix must not be labeled as five-component composite; real weights and exclusion reasons are missing. | P1 | **Partial in 4.P.2:** versioned `interim_v1` score payload + exclusion field persisted; full five-component weights remain deferred. |
 | F4-026 | Per-request directive snapshot (immutable version/hash) is not persisted with the inference. | P1 | **Mitigated in 4.P.2:** `evidence_directive_snapshots` + CH `directive_version_id` dual-write. |
 | F4-027 | Tool-call audit lacks sanitized args, idempotency key, and session/trace join fields. | P1 | **Partial in 4.P.2:** `evidence_tool_audits` schema + PersistRun support; MCP hot-path population deferred with degraded label. |
-| F4-028 | Context budgeting omits tool schemas / formatter payload from available-token accounting. | P1 | Fix assembly correctness before 4.D.2/4.D.3 claim packing honesty (proxy/context; evidence in 4.P.6). |
-| F4-029 | Configured rank weights are validated but ignored at scoring time. | P1 | Wire weights into scorer; golden fixtures in 4.P.6 / 4.D.2. |
-| F4-030 | Multi-label half-life uses primary label only; packer repair can return lower-value sets. | P1 | Correct before Trace Inspector claims exclusion/rank honesty (4.D.2 prerequisites). |
+| F4-028 | Context budgeting omits tool schemas / formatter wrap from available-token accounting (usable budget must leave room for tools + per-memory wrap before format). | P1 | **Mitigated in [#873](https://github.com/Rick1330/ibex-harness/pull/873) (pending merge):** `BudgetCalculator` subtracts tool-schema tokens and fixed formatter overhead; assemble packs with wrap-aware per-memory costs (`cost_by_id`) then post-trims for separators. Flip to Closed after #873 merges. |
+| F4-029 | Configured rank weights are validated but ignored at scoring time. | P1 | **Mitigated in [#873](https://github.com/Rick1330/ibex-harness/pull/873) (pending merge):** `Settings.rank_weights()` threaded into `rank_hydrated_hits` and `compute_hot_cache_score` (Settings env→field mapping + wiring regression test). Residual: existing Redis hot-cache ZSET members keep write-time order until rewrite/eviction. Flip to Closed after #873 merges. |
+| F4-030 | Multi-label half-life uses primary label only; packer repair can return lower-value sets. | P1 | **Mitigated in [#873](https://github.com/Rick1330/ibex-harness/pull/873) (pending merge):** hydrate `categories` from `memory_labels`; packer repair local-improve recovers documented counterexample; multi-label half-life tests on read + hot-cache paths. Flip to Closed after #873 merges. |
 | F4-031 | Embedding profile/version persistence and pre-score truncation ordering defects undermine retrieval provenance. | P1 | Fix memory/retrieval contracts referenced by 4.P.2 and 4.D.3. |
 | F4-032 | No executable K8s/Helm/Kustomize overlays or proven backup/restore drill for operator topology. | P0 | **Partial in 4.P.5:** `infra/helm/ibex-harness/` executable; restore-drill proven on live Postgres with RLS isolation evidence attached. Production/staging cluster restore + Kyverno admit remain [#869](https://github.com/Rick1330/ibex-harness/issues/869) / 4.E.2. |
 | F4-033 | SSE write deadlines, queue shedding, and provider connection caps remain incomplete for operator-grade realtime. | P1 | Close under 4.C.5 release-evidence soak + 4.P.0 / 4.E.2 (retain 4.C.5 implementation; evidence still required). |
@@ -64,6 +64,8 @@ The original Phase 4 plan was a minimal feature list. It described screens and e
 ## Closure rule
 
 A finding is closed only when the referenced milestone has a merged implementation **or** an accepted residual-risk record, a reproducible verification artifact, an owner, and an operational rollback or residual-risk decision. A roadmap page alone is evidence of intent, not closure. **Zero open P0 findings** is mandatory for Phase 4 exit (4.E.4).
+
+**Follow-up (F4-028/029/030):** After [#873](https://github.com/Rick1330/ibex-harness/pull/873) merges, flip those three disposition cells from “Mitigated … (pending merge)” to “Closed in #873” in the same PR or an immediate docs follow-up so the register does not stay stale.
 
 ## Related pages
 
