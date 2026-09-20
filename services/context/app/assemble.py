@@ -212,27 +212,8 @@ class ContextAssembler:
         policy = self._catalog.family_policy(
             self._catalog.for_model(request.model).tokenizer_family,
         )
-        # Pack against per-memory raw+wrap costs so a high-score singleton that
-        # exceeds the wrapped budget cannot crowd out a fitting lower-score set.
-        # Post-pass only accounts for inter-memory "\n" separators (F4-028).
-        nonce = representative_nonce(self._settings.formatter_nonce_bytes)
-        cost_by_id = _wrap_aware_costs(scored, policy, nonce=nonce)
         t_pack = time.perf_counter()
-        packed = self._make_packer(request.model).pack(
-            scored,
-            budget.usable_budget,
-            cost_by_id=cost_by_id,
-        )
-        packed = _trim_packed_for_wrap(
-            _WrapTrimInput(
-                packed=packed,
-                scored=scored,
-                usable_budget=budget.usable_budget,
-                policy=policy,
-                nonce=nonce,
-                cost_by_id=cost_by_id,
-            )
-        )
+        packed = self._pack_scored(scored, budget.usable_budget, request.model, policy)
         packing_ms = _elapsed_ms(t_pack)
 
         t_fmt = time.perf_counter()
@@ -262,6 +243,30 @@ class ContextAssembler:
                 formatted=formatted,
                 stages=stages,
                 policy=policy,
+            )
+        )
+
+    def _pack_scored(
+        self,
+        scored: Sequence[ScoredMemory],
+        usable_budget: int,
+        model: str,
+        policy: TokenizerFamilyPolicy,
+    ) -> PackedMemories:
+        """Pack with raw+wrap costs, then trim for inter-memory separators (F4-028)."""
+        nonce = representative_nonce(self._settings.formatter_nonce_bytes)
+        cost_by_id = _wrap_aware_costs(scored, policy, nonce=nonce)
+        packed = self._make_packer(model).pack(
+            scored, usable_budget, cost_by_id=cost_by_id
+        )
+        return _trim_packed_for_wrap(
+            _WrapTrimInput(
+                packed=packed,
+                scored=scored,
+                usable_budget=usable_budget,
+                policy=policy,
+                nonce=nonce,
+                cost_by_id=cost_by_id,
             )
         )
 
@@ -562,6 +567,7 @@ class _WrapTrimRebuild:
     dropped_ids: set[str]
     estimates: Mapping[str, int]
     policy: TokenizerFamilyPolicy
+    cost_by_id: Mapping[str, int]
 
 
 def _item_wrap_tokens(item: ScoredMemory, raw: int, ctx: _WrapCostContext) -> int:
@@ -658,15 +664,31 @@ def _dropped_after_refill(
     return dropped
 
 
+def _wrapped_total_tokens(
+    remaining: Sequence[ScoredMemory],
+    estimates: Mapping[str, int],
+    policy: TokenizerFamilyPolicy,
+    cost_by_id: Mapping[str, int],
+) -> int:
+    """Sum wrap-aware packing costs for retained memories (matches packer totals)."""
+    total = 0
+    for item in remaining:
+        if item.memory_id in cost_by_id:
+            total += max(0, int(cost_by_id[item.memory_id]))
+        else:
+            total += max(0, _raw_token_estimate(item, estimates, policy))
+    return total
+
+
 def _rebuild_after_wrap_trim(args: _WrapTrimRebuild) -> PackedMemories:
-    total_tokens = sum(
-        _raw_token_estimate(m, args.estimates, args.policy) for m in args.remaining
-    )
+    newly_dropped = args.dropped_ids - args.packed.budget_excluded_ids
     return PackedMemories(
         memories=tuple(args.remaining),
-        total_tokens=total_tokens,
+        total_tokens=_wrapped_total_tokens(
+            args.remaining, args.estimates, args.policy, args.cost_by_id
+        ),
         total_score=sum(m.composite_score for m in args.remaining),
-        skipped_count=args.packed.skipped_count + len(args.dropped_ids),
+        skipped_count=args.packed.skipped_count + len(newly_dropped),
         was_budget_reached=True,
         path=args.packed.path,
         candidates_evaluated=args.packed.candidates_evaluated,
@@ -708,6 +730,7 @@ def _trim_packed_for_wrap(inp: _WrapTrimInput) -> PackedMemories:
             dropped_ids=dropped_ids,
             estimates=estimates,
             policy=inp.policy,
+            cost_by_id=inp.cost_by_id,
         )
     )
 
