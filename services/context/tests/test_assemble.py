@@ -476,14 +476,17 @@ def test_memory_wrap_reserve_and_trim_edges() -> None:
         token_estimates={keep.memory_id: 10},
     )
     # Usable fits one wrapped memory (raw+wrap≈32) but not two (+separator).
-    trimmed = _trim_packed_for_wrap(
-        packed,
-        scored_pair,
-        40,
-        policy,
+    from app.assemble import _WrapTrimInput
+
+    trim_inp = _WrapTrimInput(
+        packed=packed,
+        scored=scored_pair,
+        usable_budget=40,
+        policy=policy,
         nonce=short_nonce,
         cost_by_id=costs,
     )
+    trimmed = _trim_packed_for_wrap(trim_inp)
     assert len(trimmed.memories) == 1
     assert trimmed.memories[0].memory_id == keep.memory_id
     assert drop.memory_id in trimmed.budget_excluded_ids
@@ -491,23 +494,40 @@ def test_memory_wrap_reserve_and_trim_edges() -> None:
     # No-op when budget already covers wrap.
     assert (
         _trim_packed_for_wrap(
-            packed,
-            scored_pair,
-            10_000,
-            policy,
-            nonce=short_nonce,
-            cost_by_id=costs,
+            _WrapTrimInput(
+                packed=packed,
+                scored=scored_pair,
+                usable_budget=10_000,
+                policy=policy,
+                nonce=short_nonce,
+                cost_by_id=costs,
+            )
         )
         is packed
     )
-    assert _trim_packed_for_wrap(
-        packed, scored_pair, 0, policy, nonce=short_nonce, cost_by_id=costs
-    ) is packed
+    assert (
+        _trim_packed_for_wrap(
+            _WrapTrimInput(
+                packed=packed,
+                scored=scored_pair,
+                usable_budget=0,
+                policy=policy,
+                nonce=short_nonce,
+                cost_by_id=costs,
+            )
+        )
+        is packed
+    )
     # Separator-aware path without precomputed costs still counts wrap.
-    from app.assemble import _selection_raw_and_wrap
+    from app.assemble import _WrapCostContext, _selection_raw_and_wrap
 
     raw_total, wrap_total = _selection_raw_and_wrap(
-        [keep], {keep.memory_id: 10}, policy, nonce=short_nonce
+        [keep],
+        _WrapCostContext(
+            policy=policy,
+            nonce=short_nonce,
+            estimates={keep.memory_id: 10},
+        ),
     )
     assert raw_total == 10
     assert wrap_total > 0
@@ -535,10 +555,17 @@ def test_wrap_aware_pack_prefers_two_small_over_oversized_high_score() -> None:
     assert costs[a.memory_id] + costs[b.memory_id] <= budget
     packer = ContextPacker(policy, bucket_size=16, dp_cell_ceiling=70 * 6251)
     packed = packer.pack(scored, budget, cost_by_id=costs)
-    from app.assemble import _trim_packed_for_wrap
+    from app.assemble import _WrapTrimInput, _trim_packed_for_wrap
 
     fitted = _trim_packed_for_wrap(
-        packed, scored, budget, policy, nonce=nonce, cost_by_id=costs
+        _WrapTrimInput(
+            packed=packed,
+            scored=scored,
+            usable_budget=budget,
+            policy=policy,
+            nonce=nonce,
+            cost_by_id=costs,
+        )
     )
     ids = {m.memory_id for m in fitted.memories}
     assert ids == {"a", "b"}
