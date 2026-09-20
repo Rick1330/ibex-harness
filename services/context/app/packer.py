@@ -96,6 +96,7 @@ class _FinalizeArgs:
     token_budget: int
     path: PackPath
     examined: frozenset[int] | None = None
+    raw_tokens: list[int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,8 +177,14 @@ class ContextPacker:
         self,
         scored: Sequence[ScoredMemory],
         token_budget: int,
+        *,
+        cost_by_id: Mapping[str, int] | None = None,
     ) -> PackedMemories:
         """Select memories under ``token_budget`` using DP or greedy fallback.
+
+        When ``cost_by_id`` is set, packing charges those per-memory costs
+        (e.g. raw+wrap) while ``token_estimates`` still record raw content
+        estimates for metrics.
 
         Semantics for ``was_budget_reached``:
 
@@ -198,18 +205,26 @@ class ContextPacker:
             scored,
             key=lambda item: (-item.composite_score, item.memory_id),
         )
-        early = self._pack_empty_or_zero_budget(candidates, token_budget, path="dp")
+        early = self._pack_empty_or_zero_budget(
+            candidates, token_budget, path="dp", cost_by_id=cost_by_id
+        )
         if early is not None:
             return early
 
-        tokens = [self._tokens(item) for item in candidates]
+        raw_tokens = [self._tokens(item) for item in candidates]
+        pack_tokens = [
+            int(cost_by_id[item.memory_id])
+            if cost_by_id is not None and item.memory_id in cost_by_id
+            else raw_tokens[i]
+            for i, item in enumerate(candidates)
+        ]
         buckets = max(1, token_budget // self._bucket_size)
-        weights = [_bucket_weight(t, self._bucket_size) for t in tokens]
+        weights = [_bucket_weight(t, self._bucket_size) for t in pack_tokens]
         values = [float(item.composite_score) for item in candidates]
         selected, path, examined = self._select_under_budget(
             _SelectArgs(
                 candidates=candidates,
-                tokens=tokens,
+                tokens=pack_tokens,
                 weights=weights,
                 values=values,
                 buckets=buckets,
@@ -220,10 +235,11 @@ class ContextPacker:
             _FinalizeArgs(
                 candidates=candidates,
                 selected=selected,
-                tokens=tokens,
+                tokens=pack_tokens,
                 token_budget=token_budget,
                 path=path,
                 examined=examined,
+                raw_tokens=raw_tokens,
             )
         )
 
@@ -233,7 +249,9 @@ class ContextPacker:
         token_budget: int,
         *,
         path: PackPath,
+        cost_by_id: Mapping[str, int] | None = None,
     ) -> PackedMemories | None:
+        del cost_by_id  # raw estimates only on the empty/zero-budget path
         n = len(candidates)
         if n == 0:
             return _empty_pack(_EmptyPackArgs(path=path, skipped=0, evaluated=0))
@@ -341,7 +359,12 @@ class ContextPacker:
         return selected, frozenset(examined)
 
     def _repair_exact_budget(self, args: _RepairArgs) -> list[int]:
-        """Drop over-budget picks, refill, then locally improve (F4-030b)."""
+        """Drop over-budget picks, refill, then locally improve when needed (F4-030b).
+
+        Local improve runs after an over-budget drop, and also when residual
+        capacity plus the largest chosen item could admit an unused candidate
+        (bucket-floor stranding with no drop, e.g. 16@10 vs two 9@6 under 18).
+        """
         chosen, dropped = _drop_over_budget(args)
         chosen = _greedy_refill(
             _RefillArgs(
@@ -352,9 +375,9 @@ class ContextPacker:
                 token_budget=args.token_budget,
             )
         )
-        if not dropped:
-            return chosen
-        return _local_improve_selection(args, chosen)
+        if dropped or _should_local_improve(args, chosen):
+            return _local_improve_selection(args, chosen)
+        return chosen
 
     def _finalize(self, args: _FinalizeArgs) -> PackedMemories:
         packed = [args.candidates[i] for i in args.selected]
@@ -370,9 +393,9 @@ class ContextPacker:
             raise RuntimeError(msg)
         selected_set = set(args.selected)
         budget_excluded = _budget_excluded_ids(args.candidates, selected_set, args.examined)
+        raw = args.raw_tokens if args.raw_tokens is not None else args.tokens
         estimates = {
-            args.candidates[i].memory_id: args.tokens[i]
-            for i in range(len(args.candidates))
+            args.candidates[i].memory_id: raw[i] for i in range(len(args.candidates))
         }
         return PackedMemories(
             memories=tuple(packed),
@@ -402,6 +425,23 @@ def _drop_over_budget(args: _RepairArgs) -> tuple[list[int], bool]:
         chosen.pop(drop_at)
         dropped = True
     return chosen, dropped
+
+
+def _should_local_improve(args: _RepairArgs, chosen: list[int]) -> bool:
+    """True when drop+refill of some chosen item might admit unused candidates."""
+    if not chosen:
+        return False
+    used = sum(args.tokens[i] for i in chosen)
+    residual = args.token_budget - used
+    max_chosen = max(args.tokens[i] for i in chosen)
+    room = residual + max_chosen
+    if room <= 0:
+        return False
+    chosen_set = set(chosen)
+    return any(
+        i not in chosen_set and 0 < args.tokens[i] <= room
+        for i in range(len(args.candidates))
+    )
 
 
 def _local_improve_selection(args: _RepairArgs, chosen: list[int]) -> list[int]:

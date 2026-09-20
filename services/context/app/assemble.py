@@ -212,18 +212,24 @@ class ContextAssembler:
         policy = self._catalog.family_policy(
             self._catalog.for_model(request.model).tokenizer_family,
         )
-        # Pack on raw content first, then drop lowest-value picks until wrap
-        # overhead for the *selected* subset fits usable_budget (F4-028).
-        # Pre-subtracting a candidate-wide wrap reserve can zero pack_budget and
-        # discard memories that would fit after formatting.
+        # Pack against per-memory raw+wrap costs so a high-score singleton that
+        # exceeds the wrapped budget cannot crowd out a fitting lower-score set.
+        # Post-pass only accounts for inter-memory "\n" separators (F4-028).
         nonce = representative_nonce(self._settings.formatter_nonce_bytes)
+        cost_by_id = _wrap_aware_costs(scored, policy, nonce=nonce)
         t_pack = time.perf_counter()
-        packed = self._make_packer(request.model).pack(scored, budget.usable_budget)
+        packed = self._make_packer(request.model).pack(
+            scored,
+            budget.usable_budget,
+            cost_by_id=cost_by_id,
+        )
         packed = _trim_packed_for_wrap(
             packed,
+            scored,
             budget.usable_budget,
             policy,
             nonce=nonce,
+            cost_by_id=cost_by_id,
         )
         packing_ms = _elapsed_ms(t_pack)
 
@@ -466,6 +472,21 @@ def _memories_used(
     return tuple(records)
 
 
+def _wrap_aware_costs(
+    scored: Sequence[ScoredMemory],
+    policy: TokenizerFamilyPolicy,
+    *,
+    nonce: str,
+) -> dict[str, int]:
+    """Per-memory packing cost = raw content tokens + formatter wrap delta."""
+    costs: dict[str, int] = {}
+    for item in scored:
+        raw = int(estimate_tokens(item.content, policy)[0])
+        wrap = _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=raw)
+        costs[item.memory_id] = max(0, raw) + wrap
+    return costs
+
+
 def _memory_wrap_delta(
     item: ScoredMemory,
     policy: TokenizerFamilyPolicy,
@@ -504,19 +525,32 @@ def _raw_token_estimate(
     return int(estimate_tokens(item.content, policy)[0])
 
 
+def _memory_separator_tokens(count: int, policy: TokenizerFamilyPolicy) -> int:
+    """``ContextFormatter._format_memories`` joins blocks with ``N-1`` newlines."""
+    if count <= 1:
+        return 0
+    sep, _ = estimate_tokens("\n", policy)
+    return (count - 1) * int(sep)
+
+
 def _selection_raw_and_wrap(
     remaining: Sequence[ScoredMemory],
     estimates: Mapping[str, int],
     policy: TokenizerFamilyPolicy,
     *,
     nonce: str,
+    cost_by_id: Mapping[str, int] | None = None,
 ) -> tuple[int, int]:
     raw_total = 0
     wrap_total = 0
     for item in remaining:
         raw = _raw_token_estimate(item, estimates, policy)
         raw_total += max(0, raw)
-        wrap_total += _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=raw)
+        if cost_by_id is not None and item.memory_id in cost_by_id:
+            wrap_total += max(0, int(cost_by_id[item.memory_id]) - max(0, raw))
+        else:
+            wrap_total += _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=raw)
+    wrap_total += _memory_separator_tokens(len(remaining), policy)
     return raw_total, wrap_total
 
 
@@ -526,6 +560,32 @@ def _drop_lowest_score(remaining: list[ScoredMemory]) -> str:
         key=lambda j: (remaining[j].composite_score, remaining[j].memory_id),
     )
     return remaining.pop(drop_at).memory_id
+
+
+def _greedy_wrap_refill(
+    chosen: list[ScoredMemory],
+    scored: Sequence[ScoredMemory],
+    usable_budget: int,
+    policy: TokenizerFamilyPolicy,
+    *,
+    nonce: str,
+    estimates: Mapping[str, int],
+    cost_by_id: Mapping[str, int],
+) -> list[ScoredMemory]:
+    """Add highest-score unused candidates that still fit with wrap+separators."""
+    chosen_ids = {m.memory_id for m in chosen}
+    out = list(chosen)
+    for item in sorted(scored, key=lambda m: (-m.composite_score, m.memory_id)):
+        if item.memory_id in chosen_ids:
+            continue
+        trial = [*out, item]
+        raw_total, wrap_total = _selection_raw_and_wrap(
+            trial, estimates, policy, nonce=nonce, cost_by_id=cost_by_id
+        )
+        if raw_total + wrap_total <= usable_budget:
+            out = trial
+            chosen_ids.add(item.memory_id)
+    return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,30 +616,54 @@ def _rebuild_after_wrap_trim(args: _WrapTrimRebuild) -> PackedMemories:
 
 def _trim_packed_for_wrap(
     packed: PackedMemories,
+    scored: Sequence[ScoredMemory],
     usable_budget: int,
     policy: TokenizerFamilyPolicy,
     *,
     nonce: str,
+    cost_by_id: Mapping[str, int],
 ) -> PackedMemories:
-    """Drop lowest-score selected memories until raw+wrap fits ``usable_budget``."""
-    if usable_budget <= 0 or not packed.memories:
+    """Fit selection under usable_budget including wrap and memory separators.
+
+    Drops lowest-score packed items when over budget, then greedily refills
+    from the full scored set so a wrap-oversized high-score singleton cannot
+    leave a feasible lower-score subset on the table.
+    """
+    if usable_budget <= 0:
         return packed
     estimates = dict(packed.token_estimates)
     remaining = list(packed.memories)
     dropped_ids: set[str] = set()
     while remaining:
         raw_total, wrap_total = _selection_raw_and_wrap(
-            remaining, estimates, policy, nonce=nonce
+            remaining, estimates, policy, nonce=nonce, cost_by_id=cost_by_id
         )
         if raw_total + wrap_total <= usable_budget:
             break
         dropped_ids.add(_drop_lowest_score(remaining))
-    if not dropped_ids:
+    refilled = _greedy_wrap_refill(
+        remaining,
+        scored,
+        usable_budget,
+        policy,
+        nonce=nonce,
+        estimates=estimates,
+        cost_by_id=cost_by_id,
+    )
+    refilled_ids = {m.memory_id for m in refilled}
+    for item in remaining:
+        if item.memory_id not in refilled_ids:
+            dropped_ids.add(item.memory_id)
+    # Candidates examined by packer but not in the final wrap-fit set stay budget-excluded.
+    for mid in packed.budget_excluded_ids:
+        if mid not in refilled_ids:
+            dropped_ids.add(mid)
+    if not dropped_ids and len(refilled) == len(packed.memories):
         return packed
     return _rebuild_after_wrap_trim(
         _WrapTrimRebuild(
             packed=packed,
-            remaining=remaining,
+            remaining=refilled,
             dropped_ids=dropped_ids,
             estimates=estimates,
             policy=policy,

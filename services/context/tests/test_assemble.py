@@ -459,6 +459,11 @@ def test_memory_wrap_reserve_and_trim_edges() -> None:
     # Post-pack trim drops the lowest-score memory when wrap overflow remains.
     keep = _scored_memory("keep", "k" * 40, 0.95)
     drop = _scored_memory("drop", "d" * 40, 0.10)
+    scored_pair = [keep, drop]
+    costs = {
+        keep.memory_id: 10 + 22,
+        drop.memory_id: 10 + 22,
+    }
     packed = PackedMemories(
         memories=(keep, drop),
         total_tokens=20,
@@ -470,11 +475,71 @@ def test_memory_wrap_reserve_and_trim_edges() -> None:
         # Omit drop's estimate so _raw_token_estimate recomputes via estimate_tokens.
         token_estimates={keep.memory_id: 10},
     )
-    # Usable fits one wrapped memory (raw+wrap≈32) but not two.
-    trimmed = _trim_packed_for_wrap(packed, 40, policy, nonce=short_nonce)
+    # Usable fits one wrapped memory (raw+wrap≈32) but not two (+separator).
+    trimmed = _trim_packed_for_wrap(
+        packed,
+        scored_pair,
+        40,
+        policy,
+        nonce=short_nonce,
+        cost_by_id=costs,
+    )
     assert len(trimmed.memories) == 1
     assert trimmed.memories[0].memory_id == keep.memory_id
     assert drop.memory_id in trimmed.budget_excluded_ids
     assert trimmed.was_budget_reached is True
     # No-op when budget already covers wrap.
-    assert _trim_packed_for_wrap(packed, 10_000, policy, nonce=short_nonce) is packed
+    assert (
+        _trim_packed_for_wrap(
+            packed,
+            scored_pair,
+            10_000,
+            policy,
+            nonce=short_nonce,
+            cost_by_id=costs,
+        )
+        is packed
+    )
+    assert _trim_packed_for_wrap(
+        packed, scored_pair, 0, policy, nonce=short_nonce, cost_by_id=costs
+    ) is packed
+    # Separator-aware path without precomputed costs still counts wrap.
+    from app.assemble import _selection_raw_and_wrap
+
+    raw_total, wrap_total = _selection_raw_and_wrap(
+        [keep], {keep.memory_id: 10}, policy, nonce=short_nonce
+    )
+    assert raw_total == 10
+    assert wrap_total > 0
+
+
+def test_wrap_aware_pack_prefers_two_small_over_oversized_high_score() -> None:
+    """High-score singleton that exceeds wrapped budget must not block two small fits."""
+    from app.assemble import _wrap_aware_costs
+    from app.budget import representative_nonce
+    from app.capability_catalog import default_catalog
+    from app.packer import ContextPacker
+
+    policy = default_catalog().family_policy("o200k_base")
+    nonce = representative_nonce(16)
+    # Raw sizes chosen so wrap makes the high-score item exceed budget alone,
+    # while two lower-score items still fit together (including separator).
+    high = _scored_memory("high", "H" * 200, 0.99)
+    a = _scored_memory("a", "a" * 16, 0.40)
+    b = _scored_memory("b", "b" * 16, 0.40)
+    scored = [high, a, b]
+    costs = _wrap_aware_costs(scored, policy, nonce=nonce)
+    # Budget fits a+b with wraps+sep, but not high alone.
+    budget = costs[a.memory_id] + costs[b.memory_id] + 2
+    assert costs[high.memory_id] > budget
+    assert costs[a.memory_id] + costs[b.memory_id] <= budget
+    packer = ContextPacker(policy, bucket_size=16, dp_cell_ceiling=70 * 6251)
+    packed = packer.pack(scored, budget, cost_by_id=costs)
+    from app.assemble import _trim_packed_for_wrap
+
+    fitted = _trim_packed_for_wrap(
+        packed, scored, budget, policy, nonce=nonce, cost_by_id=costs
+    )
+    ids = {m.memory_id for m in fitted.memories}
+    assert ids == {"a", "b"}
+    assert "high" not in ids

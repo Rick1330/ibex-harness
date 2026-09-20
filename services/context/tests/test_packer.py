@@ -454,6 +454,20 @@ class PackerDeterminismAndRepairTests(unittest.TestCase):
         self.assertEqual(packed.total_tokens, 32)
         self.assertAlmostEqual(packed.total_score, 1.20)
 
+    def test_repair_local_improve_without_drop_prefers_two_nines_over_sixteen(self) -> None:
+        """Bucket-floor DP can keep 16@10 under budget 18; improve must pick two 9s."""
+        singleton = _scored(_content_for_tokens(16), 10.0, memory_id="sixteen")
+        a = _scored(_content_for_tokens(9), 6.0, memory_id="nine-a")
+        b = _scored(_content_for_tokens(9), 6.0, memory_id="nine-b")
+        packed = _packer().pack([singleton, a, b], 18)
+        self.assertEqual(packed.path, "dp")
+        self.assertEqual(
+            {m.memory_id for m in packed.memories},
+            {"nine-a", "nine-b"},
+        )
+        self.assertEqual(packed.total_tokens, 18)
+        self.assertAlmostEqual(packed.total_score, 12.0)
+
 
 class PackerTokenHelperTests(unittest.TestCase):
     def test_estimate_matches_content_helper(self) -> None:
