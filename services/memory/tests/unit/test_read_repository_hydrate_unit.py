@@ -90,7 +90,17 @@ async def test_hydrate_hits_maps_rows_to_search_results() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hydrate_hits_maps_multi_label_categories() -> None:
+@pytest.mark.parametrize(
+    ("categories", "expected"),
+    [
+        (("factual", "episodic"), ("factual", "episodic")),
+        ("preference", ("preference",)),
+    ],
+)
+async def test_hydrate_hits_maps_categories(
+    categories: tuple[str, ...] | str,
+    expected: tuple[str, ...],
+) -> None:
     org_id = uuid4()
     agent_id = uuid4()
     memory_id = uuid4()
@@ -104,7 +114,7 @@ async def test_hydrate_hits_maps_multi_label_categories() -> None:
                         org_id=org_id,
                         agent_id=agent_id,
                         now=now,
-                        categories=("factual", "episodic"),
+                        categories=categories,
                     )
                 )
             ]
@@ -117,39 +127,7 @@ async def test_hydrate_hits_maps_multi_label_categories() -> None:
         candidates=[RankedCandidate(memory_id=memory_id, score=0.88, source="vector")],
         min_confidence=0.5,
     )
-    assert hydrated[memory_id].result.categories == ("factual", "episodic")
-
-
-@pytest.mark.asyncio
-async def test_hydrate_hits_maps_scalar_string_categories() -> None:
-    """Defensive: a scalar categories string must not be iterated char-by-char."""
-    org_id = uuid4()
-    agent_id = uuid4()
-    memory_id = uuid4()
-    now = datetime.now(UTC)
-    repo = MemoryReadRepository(
-        _session_factory_with_rows(
-            [
-                _row(
-                    _RowSeed(
-                        memory_id=memory_id,
-                        org_id=org_id,
-                        agent_id=agent_id,
-                        now=now,
-                        categories="preference",
-                    )
-                )
-            ]
-        ),
-        MagicMock(),
-        Settings(database_url="postgresql+asyncpg://x"),
-    )
-    hydrated = await repo._hydrate_hits(
-        org_id=org_id,
-        candidates=[RankedCandidate(memory_id=memory_id, score=0.88, source="vector")],
-        min_confidence=0.5,
-    )
-    assert hydrated[memory_id].result.categories == ("preference",)
+    assert hydrated[memory_id].result.categories == expected
 
 
 @pytest.mark.asyncio

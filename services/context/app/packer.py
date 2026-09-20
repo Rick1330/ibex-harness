@@ -408,7 +408,7 @@ def _local_improve_selection(args: _RepairArgs, chosen: list[int]) -> list[int]:
     """Try dropping each remaining item once and refilling without it (F4-030b)."""
     best = list(chosen)
     best_value = sum(args.values[i] for i in best)
-    for drop_idx in list(best):
+    for drop_idx in best:
         trial = [i for i in best if i != drop_idx]
         trial = _greedy_refill(
             _RefillArgs(

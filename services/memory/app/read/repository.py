@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy import text
@@ -225,14 +226,13 @@ class MemoryReadRepository:
         return out
 
 
-def _categories_from_row(row: object) -> tuple[str, ...]:
-    mapping = row  # Mapping-like hydrate row
-    raw = mapping.get("categories") if hasattr(mapping, "get") else None  # type: ignore[union-attr]
+def _categories_from_row(row: Mapping[str, object]) -> tuple[str, ...]:
+    raw = row.get("categories")
     if raw is None:
-        return (str(mapping["category"]),)  # type: ignore[index]
+        return (str(row["category"]),)
     if isinstance(raw, str):
         return (raw,)
-    return tuple(str(label) for label in raw)
+    return tuple(str(label) for label in raw)  # type: ignore[union-attr]
 
 
 def _vector_candidates(hits: list[SearchHit]) -> list[RankedCandidate]:

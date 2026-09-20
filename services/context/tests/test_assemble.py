@@ -440,9 +440,9 @@ def test_memory_wrap_reserve_and_trim_edges() -> None:
     assert _memory_wrap_reserve(alone, 0, policy, nonce=short_nonce) == 0
     from app.assemble import _memory_wrap_delta
 
-    assert (
-        _memory_wrap_delta(alone[0], policy, nonce=short_nonce, raw_tokens=0) == 0
-    )
+    # Empty / zero-raw content still pays formatter wrapper tokens.
+    empty = _scored_memory("empty-only", "", 1.0)
+    assert _memory_wrap_delta(empty, policy, nonce=short_nonce, raw_tokens=0) > 0
 
     scored = [
         _scored_memory("empty", "", 1.0),
@@ -467,7 +467,8 @@ def test_memory_wrap_reserve_and_trim_edges() -> None:
         was_budget_reached=False,
         path="dp",
         candidates_evaluated=2,
-        token_estimates={keep.memory_id: 10, drop.memory_id: 10},
+        # Omit drop's estimate so _raw_token_estimate recomputes via estimate_tokens.
+        token_estimates={keep.memory_id: 10},
     )
     # Usable fits one wrapped memory (raw+wrap≈32) but not two.
     trimmed = _trim_packed_for_wrap(packed, 40, policy, nonce=short_nonce)

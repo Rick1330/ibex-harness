@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
@@ -473,14 +473,15 @@ def _memory_wrap_delta(
     nonce: str,
     raw_tokens: int | None = None,
 ) -> int:
-    """Extra tokens from formatter wrap/escape beyond raw content estimate."""
+    """Extra tokens from formatter wrap/escape beyond raw content estimate.
+
+    Empty content still emits tags/nonce, so wrapper cost is never skipped.
+    """
     raw = (
         int(raw_tokens)
         if raw_tokens is not None
         else int(estimate_tokens(item.content, policy)[0])
     )
-    if raw <= 0:
-        return 0
     wrapped, _ = estimate_wrapped_memory_tokens(
         WrappedMemoryEstimate(
             content=item.content,
@@ -490,7 +491,67 @@ def _memory_wrap_delta(
             nonce=nonce,
         )
     )
-    return max(0, int(wrapped) - raw)
+    return max(0, int(wrapped) - max(0, raw))
+
+
+def _raw_token_estimate(
+    item: ScoredMemory,
+    estimates: Mapping[str, int],
+    policy: TokenizerFamilyPolicy,
+) -> int:
+    if item.memory_id in estimates:
+        return int(estimates[item.memory_id])
+    return int(estimate_tokens(item.content, policy)[0])
+
+
+def _selection_raw_and_wrap(
+    remaining: Sequence[ScoredMemory],
+    estimates: Mapping[str, int],
+    policy: TokenizerFamilyPolicy,
+    *,
+    nonce: str,
+) -> tuple[int, int]:
+    raw_total = 0
+    wrap_total = 0
+    for item in remaining:
+        raw = _raw_token_estimate(item, estimates, policy)
+        raw_total += max(0, raw)
+        wrap_total += _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=raw)
+    return raw_total, wrap_total
+
+
+def _drop_lowest_score(remaining: list[ScoredMemory]) -> str:
+    drop_at = min(
+        range(len(remaining)),
+        key=lambda j: (remaining[j].composite_score, remaining[j].memory_id),
+    )
+    return remaining.pop(drop_at).memory_id
+
+
+@dataclass(frozen=True, slots=True)
+class _WrapTrimRebuild:
+    packed: PackedMemories
+    remaining: list[ScoredMemory]
+    dropped_ids: set[str]
+    estimates: Mapping[str, int]
+    policy: TokenizerFamilyPolicy
+
+
+def _rebuild_after_wrap_trim(args: _WrapTrimRebuild) -> PackedMemories:
+    total_tokens = sum(
+        _raw_token_estimate(m, args.estimates, args.policy) for m in args.remaining
+    )
+    return PackedMemories(
+        memories=tuple(args.remaining),
+        total_tokens=total_tokens,
+        total_score=sum(m.composite_score for m in args.remaining),
+        skipped_count=args.packed.skipped_count + len(args.dropped_ids),
+        was_budget_reached=True,
+        path=args.packed.path,
+        candidates_evaluated=args.packed.candidates_evaluated,
+        budget_excluded_ids=args.packed.budget_excluded_ids | frozenset(args.dropped_ids),
+        token_estimates=dict(args.estimates),
+    )
 
 
 def _trim_packed_for_wrap(
@@ -507,37 +568,22 @@ def _trim_packed_for_wrap(
     remaining = list(packed.memories)
     dropped_ids: set[str] = set()
     while remaining:
-        raw_total = 0
-        wrap_total = 0
-        for item in remaining:
-            raw = int(estimates.get(item.memory_id, estimate_tokens(item.content, policy)[0]))
-            raw_total += raw
-            wrap_total += _memory_wrap_delta(
-                item, policy, nonce=nonce, raw_tokens=raw
-            )
+        raw_total, wrap_total = _selection_raw_and_wrap(
+            remaining, estimates, policy, nonce=nonce
+        )
         if raw_total + wrap_total <= usable_budget:
             break
-        drop_at = min(
-            range(len(remaining)),
-            key=lambda j: (remaining[j].composite_score, remaining[j].memory_id),
-        )
-        dropped_ids.add(remaining.pop(drop_at).memory_id)
+        dropped_ids.add(_drop_lowest_score(remaining))
     if not dropped_ids:
         return packed
-    total_tokens = sum(
-        int(estimates.get(m.memory_id, estimate_tokens(m.content, policy)[0]))
-        for m in remaining
-    )
-    return PackedMemories(
-        memories=tuple(remaining),
-        total_tokens=total_tokens,
-        total_score=sum(m.composite_score for m in remaining),
-        skipped_count=packed.skipped_count + len(dropped_ids),
-        was_budget_reached=True,
-        path=packed.path,
-        candidates_evaluated=packed.candidates_evaluated,
-        budget_excluded_ids=packed.budget_excluded_ids | frozenset(dropped_ids),
-        token_estimates=estimates,
+    return _rebuild_after_wrap_trim(
+        _WrapTrimRebuild(
+            packed=packed,
+            remaining=remaining,
+            dropped_ids=dropped_ids,
+            estimates=estimates,
+            policy=policy,
+        )
     )
 
 
@@ -548,20 +594,20 @@ def _memory_wrap_reserve(
     *,
     nonce: str,
 ) -> int:
-    """Sum wrap deltas for a greedy content fit under ``usable_budget`` (tests/helpers)."""
+    """Sum wrap deltas for a greedy content+wrap fit under ``usable_budget``."""
     if usable_budget <= 0 or not scored:
         return 0
     order = sorted(scored, key=lambda m: (-m.composite_score, m.memory_id))
-    used_raw = 0
+    used = 0
     reserve = 0
     for item in order:
-        raw, _ = estimate_tokens(item.content, policy)
-        if raw <= 0:
+        raw = int(estimate_tokens(item.content, policy)[0])
+        wrap = _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=raw)
+        cost = max(0, raw) + wrap
+        if cost <= 0 or cost > usable_budget - used:
             continue
-        if raw > usable_budget - used_raw:
-            continue
-        reserve += _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=int(raw))
-        used_raw += int(raw)
+        reserve += wrap
+        used += cost
     return reserve
 
 
