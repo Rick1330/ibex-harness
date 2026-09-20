@@ -220,3 +220,26 @@ func TestUnit_PersistEvidence_FailOpen(t *testing.T) {
 		OrgID: uuid.New(), RequestID: "r", TraceID: "t",
 	})
 }
+
+func TestUnit_BuildEvidenceRun_DeployImageDigestFromEnv(t *testing.T) {
+	t.Setenv("IBEX_DEPLOY_IMAGE_DIGEST", "  sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd  ")
+	in := BuildEvidenceRun(httptrace.AssembleInput{
+		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
+		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "aabbccddeeff0011",
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
+	}, SnapshotMeta{}, EvidenceExtras{})
+	want := "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	if in.DeployImageDigest != want {
+		t.Fatalf("digest=%q want %q", in.DeployImageDigest, want)
+	}
+}
+
+func TestUnit_BuildEvidenceRun_DeployImageDigestUnset(t *testing.T) {
+	t.Setenv("IBEX_DEPLOY_IMAGE_DIGEST", "")
+	in := BuildEvidenceRun(httptrace.AssembleInput{
+		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
+	}, SnapshotMeta{}, EvidenceExtras{})
+	if in.DeployImageDigest != "" {
+		t.Fatalf("digest=%q want empty", in.DeployImageDigest)
+	}
+}

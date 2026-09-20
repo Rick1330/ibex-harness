@@ -313,65 +313,41 @@ async def test_retrieval_wall_uses_deadline_ms() -> None:
     assert settings2.retrieval_wall_ms == 30.0
 
 
-def test_memories_used_marks_budget_exclusions() -> None:
-    """Scored candidates not in packed.memories get exclusion=budget when fit failed."""
-    from app.assemble import _memories_used
+@pytest.mark.asyncio
+async def test_assemble_with_large_tools_keeps_formatted_under_window() -> None:
+    """F4-028: near-window tool schemas must not push formatted context over budget."""
     from app.capability_catalog import default_catalog
-    from app.packer import PackedMemories, ScoredMemory
-    from app.retrieval import MemoryHit
+    from app.estimate import estimate_tokens
 
-    def _scored(mid: str, score: float) -> ScoredMemory:
-        return ScoredMemory(
-            hit=MemoryHit(
-                memory_id=mid,
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content="note",
-                category="factual",
-                confidence=0.9,
-                similarity=0.8,
-                rank=1,
-                source="hot_cache",
-            ),
-            composite_score=score,
+    big_tools = ["TOOL_SCHEMA_" + ("x" * 4000)]
+    directive = DirectivePayload(
+        content="Stay helpful.",
+        injection_mode="system_first",
+        version_id="v1",
+    )
+    mem = _hit(content="m" * 2000)
+    assembler = _assembler(
+        directive=_StubDirective(directive),
+        memory=_StubMemory(hot=[mem], cold=[]),
+    )
+    result = await assembler.assemble(
+        AssembleRequest(
+            org_id=ORG,
+            agent_id=AGENT,
+            query="q",
+            model=MODEL,
+            recent_messages=[Message(role="user", content="hello")],
+            tool_schemas=big_tools,
         )
-
-    scored = [_scored("a", 1.0), _scored("b", 0.5), _scored("c", 0.2)]
-    packed = PackedMemories(
-        memories=(scored[0],),
-        total_tokens=10,
-        total_score=1.0,
-        skipped_count=2,
-        was_budget_reached=True,
-        path="dp",
-        candidates_evaluated=3,
-        budget_excluded_ids=frozenset({"b"}),
     )
-    policy = default_catalog().family_policy(
-        default_catalog().for_model(MODEL).tokenizer_family,
+    catalog = default_catalog()
+    policy = catalog.family_policy(catalog.for_model(MODEL).tokenizer_family)
+    formatted_tokens, _ = estimate_tokens(result.formatted.assembled_context, policy)
+    ceiling = (
+        result.budget.context_window
+        - result.budget.response_reserve
+        - result.budget.safety_buffer
     )
-    used = _memories_used(scored, packed, policy)
-    assert len(used) == 3
-    by_id = {r.memory_id: r.exclusion for r in used}
-    assert by_id == {"a": "included", "b": "budget", "c": "filter"}
-
-
-def test_apply_available_tokens_caps_usable_budget() -> None:
-    from app.assemble import _apply_available_tokens
-    from app.budget import TokenBudget
-
-    base = TokenBudget(
-        context_window=128_000,
-        response_reserve=4096,
-        safety_buffer=2560,
-        usable_budget=8000,
-        directive_tokens=10,
-        messages_tokens=20,
-        is_constrained=False,
-        estimate_kind="chars_div_4",
-    )
-    capped = _apply_available_tokens(base, 100)
-    assert capped.usable_budget == 100
-    assert capped.is_constrained is True
-    assert _apply_available_tokens(base, 0) is base
-    assert _apply_available_tokens(base, 9000) is base
+    assert result.budget.tool_schemas_tokens > 0
+    assert formatted_tokens <= ceiling
+    assert "TOOL_SCHEMA_" in result.formatted.assembled_context

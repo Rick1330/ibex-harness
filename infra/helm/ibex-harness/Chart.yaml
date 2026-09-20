@@ -1,0 +1,8 @@
+# IBEX application umbrella chart (Milestone 4.P.5 / F4-032).
+# Conventions mirror infra/helm/observability (digest-pinned images, namespace, resources).
+apiVersion: v2
+name: ibex-harness
+description: IBEX proxy/auth/api/worker/memory platform chart for kind/k3d and staging
+type: application
+version: 0.1.0
+appVersion: "4.p.5"

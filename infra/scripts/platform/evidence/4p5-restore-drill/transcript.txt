@@ -1,0 +1,71 @@
+=== IBEX 4.P.5 restore drill ===
+started_utc=2026-09-19T12:18:30Z
+root=/home/rick/dev/ibex-harness
+[drill] NOTE: SKIP_COMPOSE=1 — script did not start compose; POSTGRES_DSN/CONTAINER must already point at a dedicated data plane.
+[drill] using container runtime=podman name=ibex-test-pg
+[drill] seeding org markers org_a=96ec1adb-d524-404f-8a7d-05d7af30bd29 org_b=45f45584-4f13-40de-b328-4a1d17119685
+INSERT 0 2
+[drill] postgres backup start
+[drill] pgbackrest not installed — using pg_dump fallback for local evidence
+[drill] inducing data loss (delete org B marker)
+DELETE 1
+[drill] org_b rows after delete=0
+[drill] pg_restore from dump (no re-seed shortcut)
+[drill] post-restore org_b rows (superuser)=1
+[drill] tenant isolation A_own=1 A_cross=0 B_own=1 B_cross=0 ok=true
+[drill] helm lint + template
+==> Linting infra/helm/ibex-harness
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+[drill] Kyverno cluster admit deferred to #869 (RUN_KIND!=1 or kind unavailable)
+{
+  "milestone": "4.P.5",
+  "transcript": "/home/rick/dev/ibex-harness/infra/scripts/platform/evidence/4p5-restore-drill/transcript.txt",
+  "evidence_eligible": true,
+  "allow_no_db": false,
+  "postgres": {
+    "rpo_target_sec": 300,
+    "rto_target_sec": 1800,
+    "rpo_measured_sec": 1,
+    "rto_measured_sec": 1,
+    "backup_ok": true,
+    "restore_ok": true,
+    "rpo_pass": false,
+    "rto_pass": true,
+    "mechanism": "pg_dump_fallback",
+    "note": "pg_dump fallback is not PITR; wall-clock backup duration is recorded but rpo_pass stays false. Real \u22645m RPO requires pgBackRest+WAL (#869)."
+  },
+  "clickhouse": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null,
+    "reachable": false,
+    "note": "reachability timing only when measured; unmeasured fields are null"
+  },
+  "redis": {
+    "backup": false,
+    "note": "intentional \u2014 cache/ephemeral (locked decision)"
+  },
+  "object_minio": {
+    "rpo_target_sec": 86400,
+    "rto_target_sec": 3600,
+    "rpo_measured_sec": null,
+    "rto_measured_sec": null
+  },
+  "outbox": {
+    "rpo_target": 0,
+    "max_aggregate_seq": 0,
+    "pending": 0,
+    "rpo_pass": true
+  },
+  "tenant_isolation_post_restore": true,
+  "helm_lint_template": true,
+  "kyverno_policy_applied": false,
+  "kyverno_residual": "#869",
+  "postgres_rpo_residual": "not_pitr_pg_dump_fallback_#869"
+}
+WARNING: postgres RPO not claimed (mechanism/target) — see residuals
+report=/home/rick/dev/ibex-harness/infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json
+ended_utc=2026-09-19T12:18:34Z

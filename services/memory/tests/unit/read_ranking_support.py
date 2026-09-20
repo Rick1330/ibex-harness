@@ -8,7 +8,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from app.read.models import MemorySearchResult
-from app.read.ranking import HydratedHit, RankedCandidate, rank_hydrated_hits
+from app.read.ranking import HydratedHit, RankedCandidate, RankOptions, rank_hydrated_hits
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +24,7 @@ class MemoryResultSeed:
 class HydratedHitSeed:
     memory_id: UUID
     category: str = "factual"
+    categories: tuple[str, ...] = ()
     similarity: float = 0.9
     source: str = "vector"
     age_days: float = 1.0
@@ -36,6 +37,7 @@ def memory_search_result(
     seed: MemoryResultSeed,
     *,
     now: datetime | None = None,
+    categories: tuple[str, ...] = (),
 ) -> MemorySearchResult:
     reference = now or datetime.now(UTC)
     return MemorySearchResult(
@@ -50,6 +52,7 @@ def memory_search_result(
         source=seed.source,  # type: ignore[arg-type]
         created_at=reference,
         updated_at=reference,
+        categories=categories,
     )
 
 
@@ -75,6 +78,7 @@ def hydrated_hit(
                 source=seed.source,
             ),
             now=reference,
+            categories=seed.categories,
         ),
         valid_from=reference - timedelta(days=seed.age_days),
         usefulness_score=seed.usefulness,
@@ -96,7 +100,7 @@ def assert_first_ranked(scenario: RankScenario) -> None:
     ranked = rank_hydrated_hits(
         list(scenario.candidates),
         scenario.hydrated,
-        now=scenario.fixed_now,
+        RankOptions(now=scenario.fixed_now),
     )
     assert ranked[0].id == scenario.expected_first
     if scenario.expect_first_similarity_higher:

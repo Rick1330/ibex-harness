@@ -436,6 +436,38 @@ class PackerDeterminismAndRepairTests(unittest.TestCase):
         self.assertEqual([m.memory_id for m in packed.memories], ["exact-fit"])
         self.assertEqual(packed.total_tokens, 16)
 
+    def test_repair_local_improve_prefers_two_sixteens_over_thirty_one(self) -> None:
+        """F4-030b: budget 32; 31@0.90 vs two 16@0.60 → select the two 16s.
+
+        Floor-bucket DP alone can keep the 0.90 singleton; local repair
+        improvement must recover the 1.20 optimum.
+        """
+        oversized = _scored(_content_for_tokens(31), 0.90, memory_id="big-31")
+        a = _scored(_content_for_tokens(16), 0.60, memory_id="a-16")
+        b = _scored(_content_for_tokens(16), 0.60, memory_id="b-16")
+        packed = _packer().pack([oversized, a, b], 32)
+        self.assertEqual(packed.path, "dp")
+        self.assertEqual(
+            {m.memory_id for m in packed.memories},
+            {"a-16", "b-16"},
+        )
+        self.assertEqual(packed.total_tokens, 32)
+        self.assertAlmostEqual(packed.total_score, 1.20)
+
+    def test_repair_local_improve_without_drop_prefers_two_nines_over_sixteen(self) -> None:
+        """Bucket-floor DP can keep 16@10 under budget 18; improve must pick two 9s."""
+        singleton = _scored(_content_for_tokens(16), 10.0, memory_id="sixteen")
+        a = _scored(_content_for_tokens(9), 6.0, memory_id="nine-a")
+        b = _scored(_content_for_tokens(9), 6.0, memory_id="nine-b")
+        packed = _packer().pack([singleton, a, b], 18)
+        self.assertEqual(packed.path, "dp")
+        self.assertEqual(
+            {m.memory_id for m in packed.memories},
+            {"nine-a", "nine-b"},
+        )
+        self.assertEqual(packed.total_tokens, 18)
+        self.assertAlmostEqual(packed.total_score, 12.0)
+
 
 class PackerTokenHelperTests(unittest.TestCase):
     def test_estimate_matches_content_helper(self) -> None:

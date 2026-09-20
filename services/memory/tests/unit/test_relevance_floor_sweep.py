@@ -18,7 +18,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.read.ranking import FTS_COMPOSITE_RELEVANCE, RankedCandidate, rank_hydrated_hits
+from app.read.ranking import (
+    FTS_COMPOSITE_RELEVANCE,
+    RankedCandidate,
+    RankOptions,
+    rank_hydrated_hits,
+)
 from app.scoring.relevance_gate import passes_relevance_floor
 from tests.unit.read_ranking_support import HydratedHitSeed, hydrated_hit
 
@@ -58,13 +63,13 @@ def test_floor_sweep_neutral_on_gold_set_like_candidate_set() -> None:
         for i, (mid, rel) in enumerate(zip(ids, relevances, strict=True))
     }
     baseline = [item.id for item in rank_hydrated_hits(
-        candidates, hydrated, now=now, relevance_floor=0.0
+        candidates, hydrated, RankOptions(now=now, relevance_floor=0.0)
     )]
     for floor in _FLOOR_CANDIDATES:
         ranked = [
             item.id
             for item in rank_hydrated_hits(
-                candidates, hydrated, now=now, relevance_floor=floor
+                candidates, hydrated, RankOptions(now=now, relevance_floor=floor)
             )
         ]
         assert ranked == baseline
@@ -95,13 +100,13 @@ def test_chosen_floor_excludes_noise_when_retrieval_opened() -> None:
     ungated = [
         item.id
         for item in rank_hydrated_hits(
-            candidates, hydrated, now=now, relevance_floor=0.0
+            candidates, hydrated, RankOptions(now=now, relevance_floor=0.0)
         )
     ]
     gated = [
         item.id
         for item in rank_hydrated_hits(
-            candidates, hydrated, now=now, relevance_floor=_CHOSEN_FLOOR
+            candidates, hydrated, RankOptions(now=now, relevance_floor=_CHOSEN_FLOOR)
         )
     ]
     assert set(ungated) == {noise, keep}
