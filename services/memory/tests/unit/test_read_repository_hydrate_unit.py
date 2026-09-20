@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -28,27 +29,35 @@ def _session_factory_with_rows(rows: list[dict]) -> MagicMock:
     return factory
 
 
-def _row(
-    *,
-    memory_id,
-    org_id,
-    agent_id,
-    now: datetime,
-) -> dict:
-    return {
-        "id": str(memory_id),
-        "org_id": str(org_id),
-        "agent_id": str(agent_id),
+@dataclass(frozen=True, slots=True)
+class _RowSeed:
+    memory_id: UUID
+    org_id: UUID
+    agent_id: UUID
+    now: datetime
+    categories: tuple[str, ...] | str | None = None
+
+
+def _row(seed: _RowSeed) -> dict:
+    row: dict[str, object] = {
+        "id": str(seed.memory_id),
+        "org_id": str(seed.org_id),
+        "agent_id": str(seed.agent_id),
         "content": "dark mode",
         "category": "factual",
         "confidence": 0.9,
         "status": "active",
-        "created_at": now,
-        "updated_at": now,
-        "valid_from": now,
+        "created_at": seed.now,
+        "updated_at": seed.now,
+        "valid_from": seed.now,
         "usefulness_score": 0.5,
         "retrieval_count": 0,
     }
+    if seed.categories is not None:
+        row["categories"] = (
+            list(seed.categories) if isinstance(seed.categories, tuple) else seed.categories
+        )
+    return row
 
 
 @pytest.mark.asyncio
@@ -58,7 +67,9 @@ async def test_hydrate_hits_maps_rows_to_search_results() -> None:
     memory_id = uuid4()
     now = datetime.now(UTC)
     repo = MemoryReadRepository(
-        _session_factory_with_rows([_row(memory_id=memory_id, org_id=org_id, agent_id=agent_id, now=now)]),
+        _session_factory_with_rows(
+            [_row(_RowSeed(memory_id=memory_id, org_id=org_id, agent_id=agent_id, now=now))]
+        ),
         MagicMock(),
         Settings(database_url="postgresql+asyncpg://x"),
     )
@@ -74,6 +85,49 @@ async def test_hydrate_hits_maps_rows_to_search_results() -> None:
     assert hydrated[memory_id].result.similarity == pytest.approx(0.88)
     assert hydrated[memory_id].result.source == "vector"
     assert hydrated[memory_id].usefulness_score == pytest.approx(0.5)
+    # Rows without a labels array fall back to primary category (F4-030a).
+    assert hydrated[memory_id].result.categories == ("factual",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("categories", "expected"),
+    [
+        (("factual", "episodic"), ("factual", "episodic")),
+        ("preference", ("preference",)),
+    ],
+)
+async def test_hydrate_hits_maps_categories(
+    categories: tuple[str, ...] | str,
+    expected: tuple[str, ...],
+) -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    memory_id = uuid4()
+    now = datetime.now(UTC)
+    repo = MemoryReadRepository(
+        _session_factory_with_rows(
+            [
+                _row(
+                    _RowSeed(
+                        memory_id=memory_id,
+                        org_id=org_id,
+                        agent_id=agent_id,
+                        now=now,
+                        categories=categories,
+                    )
+                )
+            ]
+        ),
+        MagicMock(),
+        Settings(database_url="postgresql+asyncpg://x"),
+    )
+    hydrated = await repo._hydrate_hits(
+        org_id=org_id,
+        candidates=[RankedCandidate(memory_id=memory_id, score=0.88, source="vector")],
+        min_confidence=0.5,
+    )
+    assert hydrated[memory_id].result.categories == expected
 
 
 @pytest.mark.asyncio
@@ -99,7 +153,16 @@ async def test_hydrate_hits_skips_rows_without_matching_candidate() -> None:
     now = datetime.now(UTC)
     repo = MemoryReadRepository(
         _session_factory_with_rows(
-            [_row(memory_id=row_memory_id, org_id=org_id, agent_id=uuid4(), now=now)]
+            [
+                _row(
+                    _RowSeed(
+                        memory_id=row_memory_id,
+                        org_id=org_id,
+                        agent_id=uuid4(),
+                        now=now,
+                    )
+                )
+            ]
         ),
         MagicMock(),
         Settings(database_url="postgresql+asyncpg://x"),

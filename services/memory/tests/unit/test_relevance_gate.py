@@ -11,6 +11,7 @@ from app.read.ranking import (
     DEFAULT_COMPOSITE_RELEVANCE_FLOOR,
     FTS_COMPOSITE_RELEVANCE,
     RankedCandidate,
+    RankOptions,
     rank_hydrated_hits,
 )
 from app.scoring.relevance_gate import passes_relevance_floor
@@ -38,7 +39,7 @@ def _rank(
     return [
         item.id
         for item in rank_hydrated_hits(
-            candidates, hydrated, now=_FIXED_NOW, relevance_floor=floor
+            candidates, hydrated, RankOptions(now=_FIXED_NOW, relevance_floor=floor)
         )
     ]
 
@@ -74,7 +75,7 @@ def test_rank_includes_exact_floor() -> None:
 
 
 def test_rank_empty_candidates() -> None:
-    assert rank_hydrated_hits([], {}, relevance_floor=0.15) == []
+    assert rank_hydrated_hits([], {}, RankOptions(relevance_floor=0.15)) == []
 
 
 def test_rank_all_below_floor_returns_empty() -> None:
@@ -98,8 +99,7 @@ def test_fts_sentinel_passes_default_floor() -> None:
     ranked = rank_hydrated_hits(
         candidates,
         hydrated,
-        now=_FIXED_NOW,
-        relevance_floor=DEFAULT_COMPOSITE_RELEVANCE_FLOOR,
+        RankOptions(now=_FIXED_NOW, relevance_floor=DEFAULT_COMPOSITE_RELEVANCE_FLOOR),
     )
     assert [item.id for item in ranked] == [fts_id]
 
@@ -140,13 +140,13 @@ def test_gate_blocks_stale_frequent_low_relevance_from_outranking() -> None:
     ungated = [
         item.id
         for item in rank_hydrated_hits(
-            candidates, hydrated, now=_FIXED_NOW, relevance_floor=0.0
+            candidates, hydrated, RankOptions(now=_FIXED_NOW, relevance_floor=0.0)
         )
     ]
     gated = [
         item.id
         for item in rank_hydrated_hits(
-            candidates, hydrated, now=_FIXED_NOW, relevance_floor=0.15
+            candidates, hydrated, RankOptions(now=_FIXED_NOW, relevance_floor=0.15)
         )
     ]
     assert ungated == [noise_id, relevant_id]

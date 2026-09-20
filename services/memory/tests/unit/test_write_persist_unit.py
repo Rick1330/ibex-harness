@@ -52,7 +52,31 @@ async def test_insert_memory_session_maps_row() -> None:
     memory, session = await _insert_memory(row=row, command=command, ctx=ctx)
     assert memory.org_id == org_id
     assert memory.metadata == {"k": "v"}
+    # CreateMemoryCommand synthesizes labels from category when omitted (F4-030a).
+    assert memory.categories == ("factual",)
     assert session.execute.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_insert_memory_session_applies_explicit_multi_labels() -> None:
+    from app.write.labels import MemoryLabelInput
+
+    org_id = uuid4()
+    agent_id = uuid4()
+    row = mapping_row(org_id=org_id, agent_id=agent_id, metadata="{}")
+    command = CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="hello",
+        category="factual",
+        labels=(
+            MemoryLabelInput(label="factual", confidence=0.9),
+            MemoryLabelInput(label="episodic", confidence=0.8),
+        ),
+    )
+    ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="hello", status="active")
+    memory, _session = await _insert_memory(row=row, command=command, ctx=ctx)
+    assert memory.categories == ("factual", "episodic")
 
 
 @pytest.mark.asyncio
