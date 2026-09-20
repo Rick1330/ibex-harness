@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
-from app.budget import BudgetCalculator, Message
+from app.budget import BudgetCalculator, BudgetRequest, Message
 from app.clients.directive import (
     DirectiveLookup,
     DirectiveLookupError,
@@ -139,9 +139,7 @@ class ParallelRetriever:
         messages = list(request.recent_messages)
         # Count history before I/O so a total outer timeout still yields tokens.
         history_tokens = self._budget.calculate(
-            request.model,
-            messages,
-            directive="",
+            BudgetRequest(model=request.model, messages=messages, directive=""),
         ).messages_tokens
 
         branch_results = await self._gather_branches(request)

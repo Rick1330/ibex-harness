@@ -63,6 +63,17 @@ class WrappedMemoryEstimate:
     nonce: str
 
 
+@dataclass(frozen=True, slots=True)
+class BudgetRequest:
+    """Inputs for ``BudgetCalculator.calculate`` (keeps public arity ≤ 2)."""
+
+    model: str
+    messages: Sequence[Message]
+    directive: str
+    tool_schemas: Sequence[str] = ()
+    nonce_bytes: int = 16
+
+
 def representative_nonce(nonce_bytes: int) -> str:
     """Placeholder matching ``secrets.token_urlsafe(nonce_bytes)`` length.
 
@@ -142,29 +153,21 @@ class BudgetCalculator:
     def __init__(self, catalog: CapabilityCatalog | None = None) -> None:
         self._catalog = catalog if catalog is not None else default_catalog()
 
-    def calculate(
-        self,
-        model: str,
-        messages: Sequence[Message],
-        directive: str,
-        *,
-        tool_schemas: Sequence[str] = (),
-        nonce_bytes: int = 16,
-    ) -> TokenBudget:
-        cap = self._catalog.for_model(model)
+    def calculate(self, request: BudgetRequest) -> TokenBudget:
+        cap = self._catalog.for_model(request.model)
         policy = self._catalog.family_policy(cap.tokenizer_family)
-        nonce = representative_nonce(nonce_bytes)
-        directive_tokens, kind = estimate_tokens(directive, policy)
-        messages_tokens, kind2 = estimate_tokens(_concat_messages(messages), policy)
+        nonce = representative_nonce(request.nonce_bytes)
+        directive_tokens, kind = estimate_tokens(request.directive, policy)
+        messages_tokens, kind2 = estimate_tokens(_concat_messages(request.messages), policy)
         _require_same_estimate_kind(kind, kind2, "directive and messages")
 
-        tools_text = _format_tools_text(tool_schemas)
+        tools_text = _format_tools_text(request.tool_schemas)
         tool_schemas_tokens, kind3 = estimate_tokens(tools_text, policy)
         _require_same_estimate_kind(kind, kind3, "tool_schemas")
 
         overhead_text = _formatter_fixed_overhead_text(
-            has_directive=bool(directive.strip()),
-            has_messages=bool(messages),
+            has_directive=bool(request.directive.strip()),
+            has_messages=bool(request.messages),
             has_tools=bool(tools_text),
             nonce=nonce,
         )

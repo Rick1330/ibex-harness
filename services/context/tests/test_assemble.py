@@ -317,26 +317,13 @@ def test_memories_used_marks_budget_exclusions() -> None:
     """Scored candidates not in packed.memories get exclusion=budget when fit failed."""
     from app.assemble import _memories_used
     from app.capability_catalog import default_catalog
-    from app.packer import PackedMemories, ScoredMemory
-    from app.retrieval import MemoryHit
+    from app.packer import PackedMemories
 
-    def _scored(mid: str, score: float) -> ScoredMemory:
-        return ScoredMemory(
-            hit=MemoryHit(
-                memory_id=mid,
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content="note",
-                category="factual",
-                confidence=0.9,
-                similarity=0.8,
-                rank=1,
-                source="hot_cache",
-            ),
-            composite_score=score,
-        )
-
-    scored = [_scored("a", 1.0), _scored("b", 0.5), _scored("c", 0.2)]
+    scored = [
+        _scored_memory("a", "note", 1.0),
+        _scored_memory("b", "note", 0.5),
+        _scored_memory("c", "note", 0.2),
+    ]
     packed = PackedMemories(
         memories=(scored[0],),
         total_tokens=10,
@@ -417,70 +404,76 @@ async def test_assemble_with_large_tools_keeps_formatted_under_window() -> None:
     assert "TOOL_SCHEMA_" in result.formatted.assembled_context
 
 
-def test_memory_wrap_reserve_empty_or_zero_budget() -> None:
-    from app.assemble import _memory_wrap_reserve
-    from app.capability_catalog import default_catalog
+def _scored_memory(mid: str, content: str, score: float):
     from app.packer import ScoredMemory
     from app.retrieval import MemoryHit
 
-    policy = default_catalog().family_policy("o200k_base")
-
-    def _scored(mid: str, content: str, score: float) -> ScoredMemory:
-        return ScoredMemory(
-            hit=MemoryHit(
-                memory_id=mid,
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content=content,
-                category="factual",
-                confidence=0.9,
-                similarity=0.9,
-                rank=1,
-                source="vector",
-            ),
-            composite_score=score,
-        )
-
-    scored = [_scored("m1", "hello", 0.9)]
-    assert _memory_wrap_reserve([], 100, policy, nonce="A" * 22) == 0
-    assert _memory_wrap_reserve(scored, 0, policy, nonce="A" * 22) == 0
+    return ScoredMemory(
+        hit=MemoryHit(
+            memory_id=mid,
+            org_id=str(ORG),
+            agent_id=str(AGENT),
+            content=content,
+            category="factual",
+            confidence=0.9,
+            similarity=0.9,
+            rank=1,
+            source="vector",
+        ),
+        composite_score=score,
+    )
 
 
-def test_memory_wrap_reserve_skips_zero_raw_and_grows_with_nonce() -> None:
-    from app.assemble import _memory_wrap_reserve
+def test_memory_wrap_reserve_and_trim_edges() -> None:
+    """F4-028: wrap helpers skip empty/oversize and trim selected wrap overflow."""
+    from app.assemble import _memory_wrap_reserve, _trim_packed_for_wrap
     from app.budget import representative_nonce
     from app.capability_catalog import default_catalog
-    from app.packer import ScoredMemory
-    from app.retrieval import MemoryHit
+    from app.packer import PackedMemories
 
     policy = default_catalog().family_policy("o200k_base")
+    short_nonce = representative_nonce(16)
+    long_nonce = representative_nonce(64)
 
-    def _scored(mid: str, content: str, score: float) -> ScoredMemory:
-        return ScoredMemory(
-            hit=MemoryHit(
-                memory_id=mid,
-                org_id=str(ORG),
-                agent_id=str(AGENT),
-                content=content,
-                category="factual",
-                confidence=0.9,
-                similarity=0.9,
-                rank=1,
-                source="vector",
-            ),
-            composite_score=score,
-        )
+    assert _memory_wrap_reserve([], 100, policy, nonce=short_nonce) == 0
+    alone = [_scored_memory("m1", "hello", 0.9)]
+    assert _memory_wrap_reserve(alone, 0, policy, nonce=short_nonce) == 0
+    from app.assemble import _memory_wrap_delta
+
+    assert (
+        _memory_wrap_delta(alone[0], policy, nonce=short_nonce, raw_tokens=0) == 0
+    )
 
     scored = [
-        _scored("empty", "", 1.0),
-        _scored("body", "x" * 80, 0.8),
-        _scored("too-big", "y" * 400, 0.5),
+        _scored_memory("empty", "", 1.0),
+        _scored_memory("body", "x" * 80, 0.8),
+        _scored_memory("too-big", "y" * 400, 0.5),
     ]
-    short = _memory_wrap_reserve(scored, 30, policy, nonce=representative_nonce(16))
-    long = _memory_wrap_reserve(scored, 10_000, policy, nonce=representative_nonce(64))
+    short = _memory_wrap_reserve(scored, 30, policy, nonce=short_nonce)
+    long = _memory_wrap_reserve(scored, 10_000, policy, nonce=long_nonce)
     assert short > 0
     assert long > short
-    # Tiny usable budget skips the oversized candidate (line: raw > remaining).
-    tiny = _memory_wrap_reserve(scored, 5, policy, nonce=representative_nonce(16))
-    assert tiny >= 0
-    assert tiny <= short
+    tiny = _memory_wrap_reserve(scored, 5, policy, nonce=short_nonce)
+    assert 0 <= tiny <= short
+
+    # Post-pack trim drops the lowest-score memory when wrap overflow remains.
+    keep = _scored_memory("keep", "k" * 40, 0.95)
+    drop = _scored_memory("drop", "d" * 40, 0.10)
+    packed = PackedMemories(
+        memories=(keep, drop),
+        total_tokens=20,
+        total_score=1.05,
+        skipped_count=0,
+        was_budget_reached=False,
+        path="dp",
+        candidates_evaluated=2,
+        token_estimates={keep.memory_id: 10, drop.memory_id: 10},
+    )
+    # Usable fits one wrapped memory (raw+wrap≈32) but not two.
+    trimmed = _trim_packed_for_wrap(packed, 40, policy, nonce=short_nonce)
+    assert len(trimmed.memories) == 1
+    assert trimmed.memories[0].memory_id == keep.memory_id
+    assert drop.memory_id in trimmed.budget_excluded_ids
+    assert trimmed.was_budget_reached is True
+    # No-op when budget already covers wrap.
+    assert _trim_packed_for_wrap(packed, 10_000, policy, nonce=short_nonce) is packed

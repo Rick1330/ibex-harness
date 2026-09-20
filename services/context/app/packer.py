@@ -421,24 +421,36 @@ def _local_improve_selection(args: _RepairArgs, chosen: list[int]) -> list[int]:
             )
         )
         trial_value = sum(args.values[i] for i in trial)
-        if _is_better_selection(trial, trial_value, best, best_value, args.candidates):
+        if _is_better_selection(
+            _SelectionScore(indices=trial, value=trial_value),
+            _SelectionScore(indices=best, value=best_value),
+            args.candidates,
+        ):
             best = trial
             best_value = trial_value
     return best
 
 
+@dataclass(frozen=True, slots=True)
+class _SelectionScore:
+    """Indices + total value for comparing packer repair trials."""
+
+    indices: list[int]
+    value: float
+
+
 def _is_better_selection(
-    trial: list[int],
-    trial_value: float,
-    best: list[int],
-    best_value: float,
+    trial: _SelectionScore,
+    best: _SelectionScore,
     candidates: list[ScoredMemory],
 ) -> bool:
-    if trial_value > best_value:
+    if trial.value > best.value:
         return True
-    if trial_value < best_value:
+    if trial.value < best.value:
         return False
-    return _selection_tie_key(trial, candidates) < _selection_tie_key(best, candidates)
+    return _selection_tie_key(trial.indices, candidates) < _selection_tie_key(
+        best.indices, candidates
+    )
 
 
 def _greedy_refill(args: _RefillArgs) -> list[int]:

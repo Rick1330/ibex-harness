@@ -17,6 +17,7 @@ from uuid import UUID
 from app.budget import (
     MIN_VIABLE_MEMORY_BUDGET,
     BudgetCalculator,
+    BudgetRequest,
     Message,
     TokenBudget,
     WrappedMemoryEstimate,
@@ -196,11 +197,13 @@ class ContextAssembler:
         )
         t_budget = time.perf_counter()
         budget = self._budget.calculate(
-            request.model,
-            inp.messages,
-            directive_text,
-            tool_schemas=request.tool_schemas,
-            nonce_bytes=self._settings.formatter_nonce_bytes,
+            BudgetRequest(
+                model=request.model,
+                messages=inp.messages,
+                directive=directive_text,
+                tool_schemas=request.tool_schemas,
+                nonce_bytes=self._settings.formatter_nonce_bytes,
+            )
         )
         budget = _apply_available_tokens(budget, request.available_tokens)
         budget_ms = _elapsed_ms(t_budget)
@@ -209,17 +212,19 @@ class ContextAssembler:
         policy = self._catalog.family_policy(
             self._catalog.for_model(request.model).tokenizer_family,
         )
-        # Packer estimates raw content; reserve wrap/escape delta so post-format
-        # prompt stays within the same usable ceiling (F4-028).
-        wrap_reserve = _memory_wrap_reserve(
-            scored,
+        # Pack on raw content first, then drop lowest-value picks until wrap
+        # overhead for the *selected* subset fits usable_budget (F4-028).
+        # Pre-subtracting a candidate-wide wrap reserve can zero pack_budget and
+        # discard memories that would fit after formatting.
+        nonce = representative_nonce(self._settings.formatter_nonce_bytes)
+        t_pack = time.perf_counter()
+        packed = self._make_packer(request.model).pack(scored, budget.usable_budget)
+        packed = _trim_packed_for_wrap(
+            packed,
             budget.usable_budget,
             policy,
-            nonce=representative_nonce(self._settings.formatter_nonce_bytes),
+            nonce=nonce,
         )
-        pack_budget = max(0, budget.usable_budget - wrap_reserve)
-        t_pack = time.perf_counter()
-        packed = self._make_packer(request.model).pack(scored, pack_budget)
         packing_ms = _elapsed_ms(t_pack)
 
         t_fmt = time.perf_counter()
@@ -461,6 +466,81 @@ def _memories_used(
     return tuple(records)
 
 
+def _memory_wrap_delta(
+    item: ScoredMemory,
+    policy: TokenizerFamilyPolicy,
+    *,
+    nonce: str,
+    raw_tokens: int | None = None,
+) -> int:
+    """Extra tokens from formatter wrap/escape beyond raw content estimate."""
+    raw = (
+        int(raw_tokens)
+        if raw_tokens is not None
+        else int(estimate_tokens(item.content, policy)[0])
+    )
+    if raw <= 0:
+        return 0
+    wrapped, _ = estimate_wrapped_memory_tokens(
+        WrappedMemoryEstimate(
+            content=item.content,
+            memory_id=item.memory_id,
+            category=item.category,
+            policy=policy,
+            nonce=nonce,
+        )
+    )
+    return max(0, int(wrapped) - raw)
+
+
+def _trim_packed_for_wrap(
+    packed: PackedMemories,
+    usable_budget: int,
+    policy: TokenizerFamilyPolicy,
+    *,
+    nonce: str,
+) -> PackedMemories:
+    """Drop lowest-score selected memories until raw+wrap fits ``usable_budget``."""
+    if usable_budget <= 0 or not packed.memories:
+        return packed
+    estimates = dict(packed.token_estimates)
+    remaining = list(packed.memories)
+    dropped_ids: set[str] = set()
+    while remaining:
+        raw_total = 0
+        wrap_total = 0
+        for item in remaining:
+            raw = int(estimates.get(item.memory_id, estimate_tokens(item.content, policy)[0]))
+            raw_total += raw
+            wrap_total += _memory_wrap_delta(
+                item, policy, nonce=nonce, raw_tokens=raw
+            )
+        if raw_total + wrap_total <= usable_budget:
+            break
+        drop_at = min(
+            range(len(remaining)),
+            key=lambda j: (remaining[j].composite_score, remaining[j].memory_id),
+        )
+        dropped_ids.add(remaining.pop(drop_at).memory_id)
+    if not dropped_ids:
+        return packed
+    total_tokens = sum(
+        int(estimates.get(m.memory_id, estimate_tokens(m.content, policy)[0]))
+        for m in remaining
+    )
+    return PackedMemories(
+        memories=tuple(remaining),
+        total_tokens=total_tokens,
+        total_score=sum(m.composite_score for m in remaining),
+        skipped_count=packed.skipped_count + len(dropped_ids),
+        was_budget_reached=True,
+        path=packed.path,
+        candidates_evaluated=packed.candidates_evaluated,
+        budget_excluded_ids=packed.budget_excluded_ids | frozenset(dropped_ids),
+        token_estimates=estimates,
+    )
+
+
 def _memory_wrap_reserve(
     scored: Sequence[ScoredMemory],
     usable_budget: int,
@@ -468,13 +548,7 @@ def _memory_wrap_reserve(
     *,
     nonce: str,
 ) -> int:
-    """Sum (wrapped - raw) deltas for a greedy content fit under ``usable_budget``.
-
-    Packer charges raw content only; formatter adds tags/escaping. Reserving the
-    wrap delta for memories that would fit on content alone keeps post-format
-    size within the pre-tool usable ceiling without changing knapsack math.
-    ``nonce`` must match the configured formatter nonce length (F4-028).
-    """
+    """Sum wrap deltas for a greedy content fit under ``usable_budget`` (tests/helpers)."""
     if usable_budget <= 0 or not scored:
         return 0
     order = sorted(scored, key=lambda m: (-m.composite_score, m.memory_id))
@@ -486,16 +560,7 @@ def _memory_wrap_reserve(
             continue
         if raw > usable_budget - used_raw:
             continue
-        wrapped, _ = estimate_wrapped_memory_tokens(
-            WrappedMemoryEstimate(
-                content=item.content,
-                memory_id=item.memory_id,
-                category=item.category,
-                policy=policy,
-                nonce=nonce,
-            )
-        )
-        reserve += max(0, int(wrapped) - int(raw))
+        reserve += _memory_wrap_delta(item, policy, nonce=nonce, raw_tokens=int(raw))
         used_raw += int(raw)
     return reserve
 

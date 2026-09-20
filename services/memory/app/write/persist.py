@@ -138,9 +138,7 @@ async def insert_memory_session(
     ).one()
     mapped = memory_row_from_mapping(row)
     categories = tuple(item.label for item in command.labels)
-    if categories:
-        return replace(mapped, categories=categories)
-    return mapped
+    return replace(mapped, categories=categories)
 
 
 async def insert_labels_session(

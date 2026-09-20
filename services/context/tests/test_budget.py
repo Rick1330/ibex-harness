@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import secrets
 import unittest
+from collections.abc import Sequence
 from unittest.mock import patch
 
 from app.budget import (
     MAX_NONCE_BYTES,
     MIN_VIABLE_MEMORY_BUDGET,
     BudgetCalculator,
+    BudgetRequest,
     Message,
     WrappedMemoryEstimate,
     estimate_wrapped_memory_tokens,
@@ -47,21 +49,36 @@ def _tiny_catalog(*, context_window: int, max_output: int) -> CapabilityCatalog:
     )
 
 
+def _req(
+    model: str = "gpt-4o",
+    messages: Sequence[Message] | None = None,
+    directive: str = "",
+    *,
+    tool_schemas: Sequence[str] = (),
+    nonce_bytes: int = 16,
+) -> BudgetRequest:
+    return BudgetRequest(
+        model=model,
+        messages=() if messages is None else messages,
+        directive=directive,
+        tool_schemas=tool_schemas,
+        nonce_bytes=nonce_bytes,
+    )
+
+
 class BudgetCalculatorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.calc = BudgetCalculator(default_catalog())
 
     def test_default_catalog_constructor(self) -> None:
         calc = BudgetCalculator()
-        budget = calc.calculate("gpt-4o", [], "")
+        budget = calc.calculate(_req())
         self.assertEqual(budget.context_window, 128_000)
         self.assertEqual(budget.estimate_kind, ESTIMATE_CHARS_DIV_4)
 
     def test_calculate_gpt4o_happy_path(self) -> None:
         budget = self.calc.calculate(
-            "gpt-4o",
-            [Message(role="user", content="hello world")],
-            directive="be helpful",
+            _req(messages=[Message(role="user", content="hello world")], directive="be helpful")
         )
         self.assertEqual(budget.context_window, 128_000)
         self.assertEqual(budget.response_reserve, 4096)  # min(0.15*128k, 16384, 4096)
@@ -72,11 +89,11 @@ class BudgetCalculatorTests(unittest.TestCase):
 
     def test_unknown_model_raises(self) -> None:
         with self.assertRaises(UnknownModelError):
-            self.calc.calculate("not-a-real-model", [], "")
+            self.calc.calculate(_req(model="not-a-real-model"))
 
     def test_family_buffers_differ(self) -> None:
-        gpt = self.calc.calculate("gpt-4o", [], "")
-        claude = self.calc.calculate("claude-sonnet-4-5", [], "")
+        gpt = self.calc.calculate(_req())
+        claude = self.calc.calculate(_req(model="claude-sonnet-4-5"))
         self.assertEqual(gpt.safety_buffer, int(128_000 * 0.02))
         self.assertEqual(claude.safety_buffer, int(200_000 * 0.05))
         self.assertNotEqual(gpt.safety_buffer, claude.safety_buffer)
@@ -86,9 +103,7 @@ class BudgetCalculatorTests(unittest.TestCase):
     def test_is_constrained_when_prompt_huge(self) -> None:
         huge = "x" * 600_000  # chars_div_4 → 150_000 tokens > gpt-4o usable
         budget = self.calc.calculate(
-            "gpt-4o",
-            [Message(role="user", content=huge)],
-            directive="",
+            _req(messages=[Message(role="user", content=huge)])
         )
         self.assertEqual(budget.usable_budget, 0)
         self.assertTrue(budget.is_constrained)
@@ -96,7 +111,7 @@ class BudgetCalculatorTests(unittest.TestCase):
     def test_response_reserve_floor_on_small_window(self) -> None:
         # 0.15 * 1000 = 150 < floor 500 → reserve clamps to 500
         calc = BudgetCalculator(_tiny_catalog(context_window=1000, max_output=8000))
-        budget = calc.calculate("tiny-model", [], "")
+        budget = calc.calculate(_req(model="tiny-model"))
         self.assertEqual(budget.response_reserve, 500)
         self.assertEqual(budget.safety_buffer, int(1000 * 0.02))
         # usable = 1000 - 500 - 20 - 0 - 0 = 480 >= 256
@@ -105,72 +120,72 @@ class BudgetCalculatorTests(unittest.TestCase):
 
     def test_multi_message_concat_counts(self) -> None:
         budget = self.calc.calculate(
-            "gpt-4o",
-            [
-                Message(role="system", content="a"),
-                Message(role="user", content="bcde"),
-            ],
-            directive="",
+            _req(
+                messages=[
+                    Message(role="system", content="a"),
+                    Message(role="user", content="bcde"),
+                ]
+            )
         )
         # "system: a\nuser: bcde" = 20 chars → ceil(20/4)=5
         self.assertEqual(budget.messages_tokens, 5)
         self.assertEqual(budget.directive_tokens, 0)
 
     def test_estimate_kind_mismatch_fails_closed(self) -> None:
-        """Defensive: directive/messages must share one labeled estimate_kind."""
+        """Defensive: every estimate_tokens stage must share one labeled kind."""
         messages = [Message(role="user", content="x")]
-        patcher = patch(
-            "app.budget.estimate_tokens",
-            side_effect=[(1, ESTIMATE_CHARS_DIV_4), (1, ESTIMATE_RUNES_DIV_3_5)],
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        with self.assertRaises(RuntimeError):
-            self.calc.calculate("gpt-4o", messages, "y")
-
-    def test_estimate_kind_mismatch_on_tool_schemas_fails_closed(self) -> None:
-        messages = [Message(role="user", content="x")]
-        patcher = patch(
-            "app.budget.estimate_tokens",
-            side_effect=[
-                (1, ESTIMATE_CHARS_DIV_4),  # directive
-                (1, ESTIMATE_CHARS_DIV_4),  # messages
-                (1, ESTIMATE_RUNES_DIV_3_5),  # tools
-            ],
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        with self.assertRaises(RuntimeError) as ctx:
-            self.calc.calculate("gpt-4o", messages, "y", tool_schemas=['{"n":1}'])
-        self.assertIn("tool_schemas", str(ctx.exception))
-
-    def test_estimate_kind_mismatch_on_formatter_overhead_fails_closed(self) -> None:
-        messages = [Message(role="user", content="x")]
-        patcher = patch(
-            "app.budget.estimate_tokens",
-            side_effect=[
-                (1, ESTIMATE_CHARS_DIV_4),  # directive
-                (1, ESTIMATE_CHARS_DIV_4),  # messages
-                (0, ESTIMATE_CHARS_DIV_4),  # tools (empty)
-                (1, ESTIMATE_RUNES_DIV_3_5),  # formatter overhead
-            ],
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        with self.assertRaises(RuntimeError) as ctx:
-            self.calc.calculate("gpt-4o", messages, "y")
-        self.assertIn("formatter overhead", str(ctx.exception))
+        cases: list[tuple[list[tuple[int, str]], Sequence[str], str]] = [
+            (
+                [(1, ESTIMATE_CHARS_DIV_4), (1, ESTIMATE_RUNES_DIV_3_5)],
+                (),
+                "directive and messages",
+            ),
+            (
+                [
+                    (1, ESTIMATE_CHARS_DIV_4),
+                    (1, ESTIMATE_CHARS_DIV_4),
+                    (1, ESTIMATE_RUNES_DIV_3_5),
+                ],
+                ['{"n":1}'],
+                "tool_schemas",
+            ),
+            (
+                [
+                    (1, ESTIMATE_CHARS_DIV_4),
+                    (1, ESTIMATE_CHARS_DIV_4),
+                    (0, ESTIMATE_CHARS_DIV_4),
+                    (1, ESTIMATE_RUNES_DIV_3_5),
+                ],
+                (),
+                "formatter overhead",
+            ),
+        ]
+        for side_effect, tools, needle in cases:
+            with self.subTest(needle=needle):
+                patcher = patch("app.budget.estimate_tokens", side_effect=side_effect)
+                patcher.start()
+                try:
+                    with self.assertRaises(RuntimeError) as ctx:
+                        self.calc.calculate(
+                            _req(messages=messages, directive="y", tool_schemas=tools)
+                        )
+                    self.assertIn(needle, str(ctx.exception))
+                finally:
+                    patcher.stop()
 
     def test_representative_nonce_matches_token_urlsafe_length(self) -> None:
         for nbytes in (1, 16, 32, MAX_NONCE_BYTES):
             placeholder = representative_nonce(nbytes)
             actual = secrets.token_urlsafe(nbytes)
             self.assertEqual(len(placeholder), len(actual), msg=f"nbytes={nbytes}")
-        self.assertEqual(len(representative_nonce(MAX_NONCE_BYTES + 10)), len(secrets.token_urlsafe(MAX_NONCE_BYTES)))
+        self.assertEqual(
+            len(representative_nonce(MAX_NONCE_BYTES + 10)),
+            len(secrets.token_urlsafe(MAX_NONCE_BYTES)),
+        )
 
     def test_larger_nonce_bytes_increases_formatter_overhead(self) -> None:
-        small = self.calc.calculate("gpt-4o", [], "be helpful", nonce_bytes=16)
-        large = self.calc.calculate("gpt-4o", [], "be helpful", nonce_bytes=64)
+        small = self.calc.calculate(_req(directive="be helpful", nonce_bytes=16))
+        large = self.calc.calculate(_req(directive="be helpful", nonce_bytes=64))
         self.assertGreater(large.formatter_overhead_tokens, small.formatter_overhead_tokens)
 
     def test_estimate_wrapped_memory_tokens_uses_nonce(self) -> None:
@@ -198,13 +213,10 @@ class BudgetCalculatorTests(unittest.TestCase):
 
     def test_tool_schemas_reduce_usable_budget(self) -> None:
         """F4-028: tool schemas are subtracted before usable_budget."""
-        without = self.calc.calculate("gpt-4o", [], "be helpful")
+        without = self.calc.calculate(_req(directive="be helpful"))
         tools = ['{"name":"search","parameters":{"type":"object"}}' * 40]
         with_tools = self.calc.calculate(
-            "gpt-4o",
-            [],
-            "be helpful",
-            tool_schemas=tools,
+            _req(directive="be helpful", tool_schemas=tools)
         )
         self.assertGreater(with_tools.tool_schemas_tokens, 0)
         self.assertGreater(with_tools.formatter_overhead_tokens, 0)
@@ -220,10 +232,12 @@ class BudgetCalculatorTests(unittest.TestCase):
         calc = BudgetCalculator(_tiny_catalog(context_window=2000, max_output=500))
         tools = ["x" * 800]  # ~200 tokens under chars_div_4
         budget = calc.calculate(
-            "tiny-model",
-            [Message(role="user", content="hi")],
-            directive="be careful",
-            tool_schemas=tools,
+            _req(
+                model="tiny-model",
+                messages=[Message(role="user", content="hi")],
+                directive="be careful",
+                tool_schemas=tools,
+            )
         )
         accounted = (
             budget.response_reserve
