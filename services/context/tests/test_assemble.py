@@ -375,3 +375,43 @@ def test_apply_available_tokens_caps_usable_budget() -> None:
     assert capped.is_constrained is True
     assert _apply_available_tokens(base, 0) is base
     assert _apply_available_tokens(base, 9000) is base
+
+
+@pytest.mark.asyncio
+async def test_assemble_with_large_tools_keeps_formatted_under_window() -> None:
+    """F4-028: near-window tool schemas must not push formatted context over budget."""
+    from app.capability_catalog import default_catalog
+    from app.estimate import estimate_tokens
+
+    big_tools = ["TOOL_SCHEMA_" + ("x" * 4000)]
+    directive = DirectivePayload(
+        content="Stay helpful.",
+        injection_mode="system_first",
+        version_id="v1",
+    )
+    mem = _hit(content="m" * 2000)
+    assembler = _assembler(
+        directive=_StubDirective(directive),
+        memory=_StubMemory(hot=[mem], cold=[]),
+    )
+    result = await assembler.assemble(
+        AssembleRequest(
+            org_id=ORG,
+            agent_id=AGENT,
+            query="q",
+            model=MODEL,
+            recent_messages=[Message(role="user", content="hello")],
+            tool_schemas=big_tools,
+        )
+    )
+    catalog = default_catalog()
+    policy = catalog.family_policy(catalog.for_model(MODEL).tokenizer_family)
+    formatted_tokens, _ = estimate_tokens(result.formatted.assembled_context, policy)
+    ceiling = (
+        result.budget.context_window
+        - result.budget.response_reserve
+        - result.budget.safety_buffer
+    )
+    assert result.budget.tool_schemas_tokens > 0
+    assert formatted_tokens <= ceiling
+    assert "TOOL_SCHEMA_" in result.formatted.assembled_context

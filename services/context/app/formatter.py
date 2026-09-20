@@ -153,6 +153,22 @@ def _memory_open_tag(
     return "".join(parts)
 
 
+def serialize_memory_element_for_estimate(
+    *,
+    nonce: str,
+    memory_id: str,
+    category: str,
+    content: str,
+) -> str:
+    """Public alias of memory-block serialization for budget/packer estimates (F4-028)."""
+    return _serialize_memory_element(
+        nonce=nonce,
+        memory_id=memory_id,
+        category=category,
+        content=content,
+    )
+
+
 def _serialize_memory_element(
     *,
     nonce: str,

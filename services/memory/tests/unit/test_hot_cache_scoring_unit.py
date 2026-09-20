@@ -32,6 +32,30 @@ def test_fresh_factual_outranks_stale_episodic_at_write_time() -> None:
     assert factual_score > episodic_score
 
 
+def test_multi_label_shortest_half_life_on_hot_cache_path() -> None:
+    """F4-030a: hot-cache score uses full categories for half-life."""
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+    factual_only = sample_memory_row(
+        category="factual",
+        categories=("factual",),
+        valid_from=now - timedelta(days=60),
+        usefulness_score=0.5,
+        confidence=0.8,
+        retrieval_count=0,
+    )
+    multi = sample_memory_row(
+        category="factual",
+        categories=("factual", "episodic"),
+        valid_from=now - timedelta(days=60),
+        usefulness_score=0.5,
+        confidence=0.8,
+        retrieval_count=0,
+    )
+    assert compute_hot_cache_score(multi, now=now) < compute_hot_cache_score(
+        factual_only, now=now
+    )
+
+
 def test_score_orders_same_as_standalone_composite() -> None:
     now = datetime(2026, 8, 29, tzinfo=UTC)
     high = sample_memory_row(
@@ -51,11 +75,12 @@ def test_score_orders_same_as_standalone_composite() -> None:
 
     def expected(row):
         age = max(0.0, (now - row.valid_from).total_seconds() / 86400.0)
+        cats = row.categories if row.categories else (row.category,)
         return composite_score(
             CompositeInputs(
                 relevance=1.0,
                 age_days=age,
-                categories=(row.category,),
+                categories=cats,
                 usefulness=float(row.usefulness_score),
                 confidence=float(row.confidence),
                 access_frequency=min(1.0, row.retrieval_count / 10.0),

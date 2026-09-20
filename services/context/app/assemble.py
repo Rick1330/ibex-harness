@@ -14,7 +14,13 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import UUID
 
-from app.budget import MIN_VIABLE_MEMORY_BUDGET, BudgetCalculator, Message, TokenBudget
+from app.budget import (
+    MIN_VIABLE_MEMORY_BUDGET,
+    BudgetCalculator,
+    Message,
+    TokenBudget,
+    estimate_wrapped_memory_tokens,
+)
 from app.capability_catalog import CapabilityCatalog, TokenizerFamilyPolicy, default_catalog
 from app.config import ContextSettings
 from app.estimate import estimate_tokens
@@ -187,13 +193,25 @@ class ContextAssembler:
             retrieval.directive.content if retrieval.directive is not None else ""
         )
         t_budget = time.perf_counter()
-        budget = self._budget.calculate(request.model, inp.messages, directive_text)
+        budget = self._budget.calculate(
+            request.model,
+            inp.messages,
+            directive_text,
+            tool_schemas=request.tool_schemas,
+        )
         budget = _apply_available_tokens(budget, request.available_tokens)
         budget_ms = _elapsed_ms(t_budget)
 
         scored, ranking_ms = _score_candidates(retrieval, request.options, inp.level)
+        policy = self._catalog.family_policy(
+            self._catalog.for_model(request.model).tokenizer_family,
+        )
+        # Packer estimates raw content; reserve wrap/escape delta so post-format
+        # prompt stays within the same usable ceiling (F4-028).
+        wrap_reserve = _memory_wrap_reserve(scored, budget.usable_budget, policy)
+        pack_budget = max(0, budget.usable_budget - wrap_reserve)
         t_pack = time.perf_counter()
-        packed = self._make_packer(request.model).pack(scored, budget.usable_budget)
+        packed = self._make_packer(request.model).pack(scored, pack_budget)
         packing_ms = _elapsed_ms(t_pack)
 
         t_fmt = time.perf_counter()
@@ -222,9 +240,7 @@ class ContextAssembler:
                 packed=packed,
                 formatted=formatted,
                 stages=stages,
-                policy=self._catalog.family_policy(
-                    self._catalog.for_model(request.model).tokenizer_family,
-                ),
+                policy=policy,
             )
         )
 
@@ -437,6 +453,39 @@ def _memories_used(
     return tuple(records)
 
 
+def _memory_wrap_reserve(
+    scored: Sequence[ScoredMemory],
+    usable_budget: int,
+    policy: TokenizerFamilyPolicy,
+) -> int:
+    """Sum (wrapped - raw) deltas for a greedy content fit under ``usable_budget``.
+
+    Packer charges raw content only; formatter adds tags/escaping. Reserving the
+    wrap delta for memories that would fit on content alone keeps post-format
+    size within the pre-tool usable ceiling without changing knapsack math.
+    """
+    if usable_budget <= 0 or not scored:
+        return 0
+    order = sorted(scored, key=lambda m: (-m.composite_score, m.memory_id))
+    used_raw = 0
+    reserve = 0
+    for item in order:
+        raw, _ = estimate_tokens(item.content, policy)
+        if raw <= 0:
+            continue
+        if raw > usable_budget - used_raw:
+            continue
+        wrapped, _ = estimate_wrapped_memory_tokens(
+            content=item.content,
+            memory_id=item.memory_id,
+            category=item.category,
+            policy=policy,
+        )
+        reserve += max(0, int(wrapped) - int(raw))
+        used_raw += int(raw)
+    return reserve
+
+
 def _apply_available_tokens(budget: TokenBudget, available_tokens: int) -> TokenBudget:
     """When available_tokens > 0, cap usable_budget to the caller-requested ceiling."""
     if available_tokens <= 0 or available_tokens >= budget.usable_budget:
@@ -450,6 +499,8 @@ def _apply_available_tokens(budget: TokenBudget, available_tokens: int) -> Token
         messages_tokens=budget.messages_tokens,
         is_constrained=available_tokens < MIN_VIABLE_MEMORY_BUDGET,
         estimate_kind=budget.estimate_kind,
+        tool_schemas_tokens=budget.tool_schemas_tokens,
+        formatter_overhead_tokens=budget.formatter_overhead_tokens,
     )
 
 

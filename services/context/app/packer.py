@@ -131,7 +131,10 @@ class ContextPacker:
     """Select a score-maximizing memory subset under a token budget (ADR-0069).
 
     Default path: numpy-vectorized bucketed 0/1 knapsack (bucket size 16) with
-    exact-token repair after DP. When ``n * (buckets+1)`` exceeds
+    exact-token repair after DP. Repair drops over-budget picks, greedily
+    refills, then locally improves by trying single-item drops + refill so
+    floor-bucket stranding cannot lock in a lower-value feasible set (F4-030b).
+    When ``n * (buckets+1)`` exceeds
     ``dp_cell_ceiling``, falls back to score-descending greedy with a
     consecutive-skip limit so pathological table sizes cannot blow latency.
     """
@@ -328,33 +331,54 @@ class ContextPacker:
         return selected, frozenset(examined)
 
     def _repair_exact_budget(self, args: _RepairArgs) -> list[int]:
-        """Drop over-budget picks, then refill freed capacity from rejects."""
+        """Drop over-budget picks, refill, then locally improve (F4-030b).
+
+        Floor bucket DP can select a high-value oversize item that crowds out
+        a higher-total exact set (e.g. 31@0.90 vs two 16@0.60 under budget 32).
+        After the standard drop/refill pass, try dropping each remaining item
+        once and greedily refilling — keep the best feasible value.
+        """
         chosen = list(args.selected)
         tokens = args.tokens
         values = args.values
         candidates = args.candidates
         token_budget = args.token_budget
+        dropped = False
         while chosen and sum(tokens[i] for i in chosen) > token_budget:
             drop_at = min(
                 range(len(chosen)),
                 key=lambda j: (values[chosen[j]], candidates[chosen[j]].memory_id),
             )
             chosen.pop(drop_at)
+            dropped = True
 
-        used = sum(tokens[i] for i in chosen)
-        chosen_set = set(chosen)
-        for idx in sorted(
-            range(len(candidates)),
-            key=lambda i: (-values[i], candidates[i].memory_id),
-        ):
-            if idx in chosen_set:
-                continue
-            cost = tokens[idx]
-            if cost <= token_budget - used:
-                chosen.append(idx)
-                chosen_set.add(idx)
-                used += cost
-        return chosen
+        chosen = _greedy_refill(chosen, candidates, tokens, values, token_budget)
+        if not dropped:
+            return chosen
+
+        best = list(chosen)
+        best_value = sum(values[i] for i in best)
+        for drop_idx in list(best):
+            trial = [i for i in best if i != drop_idx]
+            # Exclude the dropped item so refill explores alternate feasible sets
+            # (otherwise a high-value oversize singleton is re-selected immediately).
+            trial = _greedy_refill(
+                trial,
+                candidates,
+                tokens,
+                values,
+                token_budget,
+                exclude={drop_idx},
+            )
+            trial_value = sum(values[i] for i in trial)
+            if trial_value > best_value or (
+                trial_value == best_value
+                and _selection_tie_key(trial, candidates)
+                < _selection_tie_key(best, candidates)
+            ):
+                best = trial
+                best_value = trial_value
+        return best
 
     def _finalize(self, args: _FinalizeArgs) -> PackedMemories:
         packed = [args.candidates[i] for i in args.selected]
@@ -385,6 +409,41 @@ class ContextPacker:
             budget_excluded_ids=budget_excluded,
             token_estimates=estimates,
         )
+
+
+def _greedy_refill(
+    chosen: list[int],
+    candidates: list[ScoredMemory],
+    tokens: list[int],
+    values: list[float],
+    token_budget: int,
+    *,
+    exclude: set[int] | None = None,
+) -> list[int]:
+    blocked = exclude or set()
+    used = sum(tokens[i] for i in chosen)
+    chosen_set = set(chosen)
+    out = list(chosen)
+    for idx in sorted(
+        range(len(candidates)),
+        key=lambda i: (-values[i], candidates[i].memory_id),
+    ):
+        if idx in chosen_set or idx in blocked:
+            continue
+        cost = tokens[idx]
+        if cost <= token_budget - used:
+            out.append(idx)
+            chosen_set.add(idx)
+            used += cost
+    return out
+
+
+def _selection_tie_key(
+    selected: list[int],
+    candidates: list[ScoredMemory],
+) -> tuple[str, ...]:
+    """Deterministic tie-break: sorted memory_ids of the selection."""
+    return tuple(sorted(candidates[i].memory_id for i in selected))
 
 
 def _budget_excluded_ids(

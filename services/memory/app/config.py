@@ -7,6 +7,8 @@ from functools import lru_cache
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.scoring.composite import RankWeights
+
 _WEIGHT_EPS = 1e-9
 
 # Bundled CNN models in services/memory (uv.lock). Transformers / arbitrary names rejected.
@@ -238,6 +240,16 @@ class Settings(BaseSettings):
             msg = f"rank weights must sum to 1.0, got {total}"
             raise ValueError(msg)
         return self
+
+    def rank_weights(self) -> RankWeights:
+        """Configured composite weights for production scoring (F4-029)."""
+        return RankWeights(
+            relevance=self.rank_weight_relevance,
+            recency=self.rank_weight_recency,
+            usefulness=self.rank_weight_usefulness,
+            confidence=self.rank_weight_confidence,
+            frequency=self.rank_weight_frequency,
+        )
 
 
 @lru_cache

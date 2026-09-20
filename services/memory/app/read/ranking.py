@@ -20,7 +20,7 @@ from typing import Final
 from uuid import UUID
 
 from app.read.models import MemorySearchResult, SearchSource
-from app.scoring import CompositeInputs, composite_score, passes_relevance_floor
+from app.scoring import CompositeInputs, RankWeights, composite_score, passes_relevance_floor
 
 FTS_COMPOSITE_RELEVANCE: Final[float] = 0.5
 
@@ -58,10 +58,15 @@ class HydratedHit:
         if valid_from.tzinfo is None:
             valid_from = valid_from.replace(tzinfo=UTC)
         age_days = max(0.0, (reference - valid_from).total_seconds() / 86400.0)
+        categories = (
+            self.result.categories
+            if self.result.categories
+            else (self.result.category,)
+        )
         return CompositeInputs(
             relevance=relevance,
             age_days=age_days,
-            categories=(self.result.category,),
+            categories=categories,
             usefulness=float(self.usefulness_score),
             confidence=float(self.result.confidence),
             access_frequency=min(1.0, self.retrieval_count / _ACCESS_FREQUENCY_CAP),
@@ -91,6 +96,7 @@ def rank_hydrated_hits(
     *,
     now: datetime | None = None,
     relevance_floor: float = DEFAULT_COMPOSITE_RELEVANCE_FLOOR,
+    weights: RankWeights | None = None,
 ) -> list[MemorySearchResult]:
     """Sort by composite score descending; stable tie-break on memory_id.
 
@@ -108,7 +114,8 @@ def rank_hydrated_hits(
         if not passes_relevance_floor(relevance, relevance_floor):
             continue
         composite = composite_score(
-            hit.composite_inputs(relevance, now=reference)
+            hit.composite_inputs(relevance, now=reference),
+            weights,
         )
         scored.append((composite, memory_id, hit.result))
     scored.sort(key=lambda item: (-item[0], str(item[1])))

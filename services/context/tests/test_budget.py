@@ -120,5 +120,46 @@ class BudgetCalculatorTests(unittest.TestCase):
             self.calc.calculate("gpt-4o", messages, "y")
 
 
+    def test_tool_schemas_reduce_usable_budget(self) -> None:
+        """F4-028: tool schemas are subtracted before usable_budget."""
+        without = self.calc.calculate("gpt-4o", [], "be helpful")
+        tools = ['{"name":"search","parameters":{"type":"object"}}' * 40]
+        with_tools = self.calc.calculate(
+            "gpt-4o",
+            [],
+            "be helpful",
+            tool_schemas=tools,
+        )
+        self.assertGreater(with_tools.tool_schemas_tokens, 0)
+        self.assertGreater(with_tools.formatter_overhead_tokens, 0)
+        self.assertEqual(
+            without.usable_budget - with_tools.usable_budget,
+            with_tools.tool_schemas_tokens
+            + with_tools.formatter_overhead_tokens
+            - without.formatter_overhead_tokens,
+        )
+
+    def test_near_window_tools_do_not_overflow_post_format_ceiling(self) -> None:
+        """F4-028: usable_budget + tools + overhead stay inside the window."""
+        calc = BudgetCalculator(_tiny_catalog(context_window=2000, max_output=500))
+        tools = ["x" * 800]  # ~200 tokens under chars_div_4
+        budget = calc.calculate(
+            "tiny-model",
+            [Message(role="user", content="hi")],
+            directive="be careful",
+            tool_schemas=tools,
+        )
+        accounted = (
+            budget.response_reserve
+            + budget.safety_buffer
+            + budget.directive_tokens
+            + budget.messages_tokens
+            + budget.tool_schemas_tokens
+            + budget.formatter_overhead_tokens
+            + budget.usable_budget
+        )
+        self.assertLessEqual(accounted, budget.context_window)
+
+
 if __name__ == "__main__":
     unittest.main()
