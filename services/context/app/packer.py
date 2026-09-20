@@ -108,6 +108,16 @@ class _RepairArgs:
 
 
 @dataclass(frozen=True, slots=True)
+class _RefillArgs:
+    chosen: list[int]
+    candidates: list[ScoredMemory]
+    tokens: list[int]
+    values: list[float]
+    token_budget: int
+    exclude: frozenset[int] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
 class _EmptyPackArgs:
     path: PackPath
     skipped: int
@@ -131,7 +141,10 @@ class ContextPacker:
     """Select a score-maximizing memory subset under a token budget (ADR-0069).
 
     Default path: numpy-vectorized bucketed 0/1 knapsack (bucket size 16) with
-    exact-token repair after DP. When ``n * (buckets+1)`` exceeds
+    exact-token repair after DP. Repair drops over-budget picks, greedily
+    refills, then locally improves by trying single-item drops + refill so
+    floor-bucket stranding cannot lock in a lower-value feasible set (F4-030b).
+    When ``n * (buckets+1)`` exceeds
     ``dp_cell_ceiling``, falls back to score-descending greedy with a
     consecutive-skip limit so pathological table sizes cannot blow latency.
     """
@@ -328,33 +341,20 @@ class ContextPacker:
         return selected, frozenset(examined)
 
     def _repair_exact_budget(self, args: _RepairArgs) -> list[int]:
-        """Drop over-budget picks, then refill freed capacity from rejects."""
-        chosen = list(args.selected)
-        tokens = args.tokens
-        values = args.values
-        candidates = args.candidates
-        token_budget = args.token_budget
-        while chosen and sum(tokens[i] for i in chosen) > token_budget:
-            drop_at = min(
-                range(len(chosen)),
-                key=lambda j: (values[chosen[j]], candidates[chosen[j]].memory_id),
+        """Drop over-budget picks, refill, then locally improve (F4-030b)."""
+        chosen, dropped = _drop_over_budget(args)
+        chosen = _greedy_refill(
+            _RefillArgs(
+                chosen=chosen,
+                candidates=args.candidates,
+                tokens=args.tokens,
+                values=args.values,
+                token_budget=args.token_budget,
             )
-            chosen.pop(drop_at)
-
-        used = sum(tokens[i] for i in chosen)
-        chosen_set = set(chosen)
-        for idx in sorted(
-            range(len(candidates)),
-            key=lambda i: (-values[i], candidates[i].memory_id),
-        ):
-            if idx in chosen_set:
-                continue
-            cost = tokens[idx]
-            if cost <= token_budget - used:
-                chosen.append(idx)
-                chosen_set.add(idx)
-                used += cost
-        return chosen
+        )
+        if not dropped:
+            return chosen
+        return _local_improve_selection(args, chosen)
 
     def _finalize(self, args: _FinalizeArgs) -> PackedMemories:
         packed = [args.candidates[i] for i in args.selected]
@@ -385,6 +385,86 @@ class ContextPacker:
             budget_excluded_ids=budget_excluded,
             token_estimates=estimates,
         )
+
+
+def _drop_over_budget(args: _RepairArgs) -> tuple[list[int], bool]:
+    """Drop lowest-value items until the selection fits ``token_budget``."""
+    chosen = list(args.selected)
+    dropped = False
+    while chosen and sum(args.tokens[i] for i in chosen) > args.token_budget:
+        drop_at = min(
+            range(len(chosen)),
+            key=lambda j: (
+                args.values[chosen[j]],
+                args.candidates[chosen[j]].memory_id,
+            ),
+        )
+        chosen.pop(drop_at)
+        dropped = True
+    return chosen, dropped
+
+
+def _local_improve_selection(args: _RepairArgs, chosen: list[int]) -> list[int]:
+    """Try dropping each remaining item once and refilling without it (F4-030b)."""
+    best = list(chosen)
+    best_value = sum(args.values[i] for i in best)
+    for drop_idx in list(best):
+        trial = [i for i in best if i != drop_idx]
+        trial = _greedy_refill(
+            _RefillArgs(
+                chosen=trial,
+                candidates=args.candidates,
+                tokens=args.tokens,
+                values=args.values,
+                token_budget=args.token_budget,
+                exclude=frozenset({drop_idx}),
+            )
+        )
+        trial_value = sum(args.values[i] for i in trial)
+        if _is_better_selection(trial, trial_value, best, best_value, args.candidates):
+            best = trial
+            best_value = trial_value
+    return best
+
+
+def _is_better_selection(
+    trial: list[int],
+    trial_value: float,
+    best: list[int],
+    best_value: float,
+    candidates: list[ScoredMemory],
+) -> bool:
+    if trial_value > best_value:
+        return True
+    if trial_value < best_value:
+        return False
+    return _selection_tie_key(trial, candidates) < _selection_tie_key(best, candidates)
+
+
+def _greedy_refill(args: _RefillArgs) -> list[int]:
+    used = sum(args.tokens[i] for i in args.chosen)
+    chosen_set = set(args.chosen)
+    out = list(args.chosen)
+    for idx in sorted(
+        range(len(args.candidates)),
+        key=lambda i: (-args.values[i], args.candidates[i].memory_id),
+    ):
+        if idx in chosen_set or idx in args.exclude:
+            continue
+        cost = args.tokens[idx]
+        if cost <= args.token_budget - used:
+            out.append(idx)
+            chosen_set.add(idx)
+            used += cost
+    return out
+
+
+def _selection_tie_key(
+    selected: list[int],
+    candidates: list[ScoredMemory],
+) -> tuple[str, ...]:
+    """Deterministic tie-break: sorted memory_ids of the selection."""
+    return tuple(sorted(candidates[i].memory_id for i in selected))
 
 
 def _budget_excluded_ids(

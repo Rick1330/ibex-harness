@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import secrets
 import unittest
 from unittest.mock import patch
 
-from app.budget import MIN_VIABLE_MEMORY_BUDGET, BudgetCalculator, Message
+from app.budget import (
+    MAX_NONCE_BYTES,
+    MIN_VIABLE_MEMORY_BUDGET,
+    BudgetCalculator,
+    Message,
+    WrappedMemoryEstimate,
+    estimate_wrapped_memory_tokens,
+    representative_nonce,
+)
 from app.capability_catalog import (
     CapabilityCatalog,
     ModelCapability,
@@ -118,6 +127,114 @@ class BudgetCalculatorTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         with self.assertRaises(RuntimeError):
             self.calc.calculate("gpt-4o", messages, "y")
+
+    def test_estimate_kind_mismatch_on_tool_schemas_fails_closed(self) -> None:
+        messages = [Message(role="user", content="x")]
+        patcher = patch(
+            "app.budget.estimate_tokens",
+            side_effect=[
+                (1, ESTIMATE_CHARS_DIV_4),  # directive
+                (1, ESTIMATE_CHARS_DIV_4),  # messages
+                (1, ESTIMATE_RUNES_DIV_3_5),  # tools
+            ],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.calc.calculate("gpt-4o", messages, "y", tool_schemas=['{"n":1}'])
+        self.assertIn("tool_schemas", str(ctx.exception))
+
+    def test_estimate_kind_mismatch_on_formatter_overhead_fails_closed(self) -> None:
+        messages = [Message(role="user", content="x")]
+        patcher = patch(
+            "app.budget.estimate_tokens",
+            side_effect=[
+                (1, ESTIMATE_CHARS_DIV_4),  # directive
+                (1, ESTIMATE_CHARS_DIV_4),  # messages
+                (0, ESTIMATE_CHARS_DIV_4),  # tools (empty)
+                (1, ESTIMATE_RUNES_DIV_3_5),  # formatter overhead
+            ],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.assertRaises(RuntimeError) as ctx:
+            self.calc.calculate("gpt-4o", messages, "y")
+        self.assertIn("formatter overhead", str(ctx.exception))
+
+    def test_representative_nonce_matches_token_urlsafe_length(self) -> None:
+        for nbytes in (1, 16, 32, MAX_NONCE_BYTES):
+            placeholder = representative_nonce(nbytes)
+            actual = secrets.token_urlsafe(nbytes)
+            self.assertEqual(len(placeholder), len(actual), msg=f"nbytes={nbytes}")
+        self.assertEqual(len(representative_nonce(MAX_NONCE_BYTES + 10)), len(secrets.token_urlsafe(MAX_NONCE_BYTES)))
+
+    def test_larger_nonce_bytes_increases_formatter_overhead(self) -> None:
+        small = self.calc.calculate("gpt-4o", [], "be helpful", nonce_bytes=16)
+        large = self.calc.calculate("gpt-4o", [], "be helpful", nonce_bytes=64)
+        self.assertGreater(large.formatter_overhead_tokens, small.formatter_overhead_tokens)
+
+    def test_estimate_wrapped_memory_tokens_uses_nonce(self) -> None:
+        policy = default_catalog().family_policy("o200k_base")
+        short = estimate_wrapped_memory_tokens(
+            WrappedMemoryEstimate(
+                content="hello",
+                memory_id="m1",
+                category="factual",
+                policy=policy,
+                nonce=representative_nonce(16),
+            )
+        )
+        long = estimate_wrapped_memory_tokens(
+            WrappedMemoryEstimate(
+                content="hello",
+                memory_id="m1",
+                category="factual",
+                policy=policy,
+                nonce=representative_nonce(64),
+            )
+        )
+        self.assertGreater(long[0], short[0])
+        self.assertEqual(short[1], long[1])
+
+    def test_tool_schemas_reduce_usable_budget(self) -> None:
+        """F4-028: tool schemas are subtracted before usable_budget."""
+        without = self.calc.calculate("gpt-4o", [], "be helpful")
+        tools = ['{"name":"search","parameters":{"type":"object"}}' * 40]
+        with_tools = self.calc.calculate(
+            "gpt-4o",
+            [],
+            "be helpful",
+            tool_schemas=tools,
+        )
+        self.assertGreater(with_tools.tool_schemas_tokens, 0)
+        self.assertGreater(with_tools.formatter_overhead_tokens, 0)
+        self.assertEqual(
+            without.usable_budget - with_tools.usable_budget,
+            with_tools.tool_schemas_tokens
+            + with_tools.formatter_overhead_tokens
+            - without.formatter_overhead_tokens,
+        )
+
+    def test_near_window_tools_do_not_overflow_post_format_ceiling(self) -> None:
+        """F4-028: usable_budget + tools + overhead stay inside the window."""
+        calc = BudgetCalculator(_tiny_catalog(context_window=2000, max_output=500))
+        tools = ["x" * 800]  # ~200 tokens under chars_div_4
+        budget = calc.calculate(
+            "tiny-model",
+            [Message(role="user", content="hi")],
+            directive="be careful",
+            tool_schemas=tools,
+        )
+        accounted = (
+            budget.response_reserve
+            + budget.safety_buffer
+            + budget.directive_tokens
+            + budget.messages_tokens
+            + budget.tool_schemas_tokens
+            + budget.formatter_overhead_tokens
+            + budget.usable_budget
+        )
+        self.assertLessEqual(accounted, budget.context_window)
 
 
 if __name__ == "__main__":

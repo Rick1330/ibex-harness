@@ -375,3 +375,112 @@ def test_apply_available_tokens_caps_usable_budget() -> None:
     assert capped.is_constrained is True
     assert _apply_available_tokens(base, 0) is base
     assert _apply_available_tokens(base, 9000) is base
+
+
+@pytest.mark.asyncio
+async def test_assemble_with_large_tools_keeps_formatted_under_window() -> None:
+    """F4-028: near-window tool schemas must not push formatted context over budget."""
+    from app.capability_catalog import default_catalog
+    from app.estimate import estimate_tokens
+
+    big_tools = ["TOOL_SCHEMA_" + ("x" * 4000)]
+    directive = DirectivePayload(
+        content="Stay helpful.",
+        injection_mode="system_first",
+        version_id="v1",
+    )
+    mem = _hit(content="m" * 2000)
+    assembler = _assembler(
+        directive=_StubDirective(directive),
+        memory=_StubMemory(hot=[mem], cold=[]),
+    )
+    result = await assembler.assemble(
+        AssembleRequest(
+            org_id=ORG,
+            agent_id=AGENT,
+            query="q",
+            model=MODEL,
+            recent_messages=[Message(role="user", content="hello")],
+            tool_schemas=big_tools,
+        )
+    )
+    catalog = default_catalog()
+    policy = catalog.family_policy(catalog.for_model(MODEL).tokenizer_family)
+    formatted_tokens, _ = estimate_tokens(result.formatted.assembled_context, policy)
+    ceiling = (
+        result.budget.context_window
+        - result.budget.response_reserve
+        - result.budget.safety_buffer
+    )
+    assert result.budget.tool_schemas_tokens > 0
+    assert formatted_tokens <= ceiling
+    assert "TOOL_SCHEMA_" in result.formatted.assembled_context
+
+
+def test_memory_wrap_reserve_empty_or_zero_budget() -> None:
+    from app.assemble import _memory_wrap_reserve
+    from app.capability_catalog import default_catalog
+    from app.packer import ScoredMemory
+    from app.retrieval import MemoryHit
+
+    policy = default_catalog().family_policy("o200k_base")
+
+    def _scored(mid: str, content: str, score: float) -> ScoredMemory:
+        return ScoredMemory(
+            hit=MemoryHit(
+                memory_id=mid,
+                org_id=str(ORG),
+                agent_id=str(AGENT),
+                content=content,
+                category="factual",
+                confidence=0.9,
+                similarity=0.9,
+                rank=1,
+                source="vector",
+            ),
+            composite_score=score,
+        )
+
+    scored = [_scored("m1", "hello", 0.9)]
+    assert _memory_wrap_reserve([], 100, policy, nonce="A" * 22) == 0
+    assert _memory_wrap_reserve(scored, 0, policy, nonce="A" * 22) == 0
+
+
+def test_memory_wrap_reserve_skips_zero_raw_and_grows_with_nonce() -> None:
+    from app.assemble import _memory_wrap_reserve
+    from app.budget import representative_nonce
+    from app.capability_catalog import default_catalog
+    from app.packer import ScoredMemory
+    from app.retrieval import MemoryHit
+
+    policy = default_catalog().family_policy("o200k_base")
+
+    def _scored(mid: str, content: str, score: float) -> ScoredMemory:
+        return ScoredMemory(
+            hit=MemoryHit(
+                memory_id=mid,
+                org_id=str(ORG),
+                agent_id=str(AGENT),
+                content=content,
+                category="factual",
+                confidence=0.9,
+                similarity=0.9,
+                rank=1,
+                source="vector",
+            ),
+            composite_score=score,
+        )
+
+    scored = [
+        _scored("empty", "", 1.0),
+        _scored("body", "x" * 80, 0.8),
+        _scored("too-big", "y" * 400, 0.5),
+    ]
+    short = _memory_wrap_reserve(scored, 30, policy, nonce=representative_nonce(16))
+    long = _memory_wrap_reserve(scored, 10_000, policy, nonce=representative_nonce(64))
+    assert short > 0
+    assert long > short
+    # Tiny usable budget skips the oversized candidate (line: raw > remaining).
+    tiny = _memory_wrap_reserve(scored, 5, policy, nonce=representative_nonce(16))
+    assert tiny >= 0
+    assert tiny <= short

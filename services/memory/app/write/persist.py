@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -136,7 +136,11 @@ async def insert_memory_session(
             params,
         )
     ).one()
-    return memory_row_from_mapping(row)
+    mapped = memory_row_from_mapping(row)
+    categories = tuple(item.label for item in command.labels)
+    if categories:
+        return replace(mapped, categories=categories)
+    return mapped
 
 
 async def insert_labels_session(

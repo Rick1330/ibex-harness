@@ -34,8 +34,9 @@ def _row(
     org_id,
     agent_id,
     now: datetime,
+    categories: tuple[str, ...] | None = None,
 ) -> dict:
-    return {
+    row = {
         "id": str(memory_id),
         "org_id": str(org_id),
         "agent_id": str(agent_id),
@@ -49,6 +50,9 @@ def _row(
         "usefulness_score": 0.5,
         "retrieval_count": 0,
     }
+    if categories is not None:
+        row["categories"] = list(categories)
+    return row
 
 
 @pytest.mark.asyncio
@@ -74,6 +78,37 @@ async def test_hydrate_hits_maps_rows_to_search_results() -> None:
     assert hydrated[memory_id].result.similarity == pytest.approx(0.88)
     assert hydrated[memory_id].result.source == "vector"
     assert hydrated[memory_id].usefulness_score == pytest.approx(0.5)
+    # Rows without a labels array fall back to primary category (F4-030a).
+    assert hydrated[memory_id].result.categories == ("factual",)
+
+
+@pytest.mark.asyncio
+async def test_hydrate_hits_maps_multi_label_categories() -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    memory_id = uuid4()
+    now = datetime.now(UTC)
+    repo = MemoryReadRepository(
+        _session_factory_with_rows(
+            [
+                _row(
+                    memory_id=memory_id,
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    now=now,
+                    categories=("factual", "episodic"),
+                )
+            ]
+        ),
+        MagicMock(),
+        Settings(database_url="postgresql+asyncpg://x"),
+    )
+    hydrated = await repo._hydrate_hits(
+        org_id=org_id,
+        candidates=[RankedCandidate(memory_id=memory_id, score=0.88, source="vector")],
+        min_confidence=0.5,
+    )
+    assert hydrated[memory_id].result.categories == ("factual", "episodic")
 
 
 @pytest.mark.asyncio
