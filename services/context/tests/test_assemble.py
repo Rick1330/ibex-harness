@@ -503,21 +503,22 @@ def test_trim_packed_for_wrap_drops_overflow() -> None:
 
 
 def test_trim_packed_for_wrap_skipped_count_no_double() -> None:
-    """Already-excluded IDs must not inflate skipped_count on rebuild."""
+    """Packer-excluded IDs that stay excluded must not inflate skipped_count."""
     from app.assemble import _trim_packed_for_wrap, _WrapTrimInput
     from app.packer import PackedMemories
 
     policy, nonce, keep, drop, costs, _packed = _wrap_trim_pair_fixture()
+    # Valid packer shape: keep selected, drop already budget-excluded.
     pre_excluded = PackedMemories(
-        memories=(keep, drop),
-        total_tokens=20,
-        total_score=1.05,
+        memories=(keep,),
+        total_tokens=costs[keep.memory_id],
+        total_score=keep.composite_score,
         skipped_count=1,
         was_budget_reached=True,
         path="dp",
         candidates_evaluated=2,
         budget_excluded_ids=frozenset({drop.memory_id}),
-        token_estimates={keep.memory_id: 10},
+        token_estimates={keep.memory_id: 10, drop.memory_id: 10},
     )
     re_trimmed = _trim_packed_for_wrap(
         _WrapTrimInput(
@@ -529,8 +530,93 @@ def test_trim_packed_for_wrap_skipped_count_no_double() -> None:
             cost_by_id=costs,
         )
     )
+    assert {m.memory_id for m in re_trimmed.memories} == {keep.memory_id}
     assert re_trimmed.skipped_count == 1
+    assert re_trimmed.budget_excluded_ids == frozenset({drop.memory_id})
+    assert re_trimmed.was_budget_reached is True
     assert re_trimmed.total_tokens == costs[keep.memory_id]
+
+
+def test_trim_packed_for_wrap_refill_clears_restored_ids() -> None:
+    """IDs dropped then restored by refill must leave exclusion metadata."""
+    from app.assemble import _trim_packed_for_wrap, _WrapTrimInput
+    from app.packer import PackedMemories
+
+    policy, nonce, _keep, _drop, _costs, _packed = _wrap_trim_pair_fixture()
+    # A+B over budget, A alone over, so both drop; refill restores A+C (not B).
+    # C was dropped first (lowest score) then restored — must not stay excluded.
+    a = _scored_memory("a", "a" * 40, 0.90)
+    b = _scored_memory("b", "b" * 40, 0.50)
+    c = _scored_memory("c", "c" * 40, 0.10)
+    costs = {"a": 30, "b": 30, "c": 8}
+    packed = PackedMemories(
+        memories=(a, b, c),
+        total_tokens=70,
+        total_score=1.5,
+        skipped_count=0,
+        was_budget_reached=False,
+        path="dp",
+        candidates_evaluated=3,
+        token_estimates={"a": 10, "b": 10, "c": 10},
+    )
+    # Budget fits A alone and A+C (with sep), but not A+B; C is dropped then restored.
+    trimmed = _trim_packed_for_wrap(
+        _WrapTrimInput(
+            packed=packed,
+            scored=[a, b, c],
+            usable_budget=41,
+            policy=policy,
+            nonce=nonce,
+            cost_by_id=costs,
+        )
+    )
+    ids = {m.memory_id for m in trimmed.memories}
+    assert ids == {"a", "c"}
+    assert "c" not in trimmed.budget_excluded_ids
+    assert trimmed.budget_excluded_ids == frozenset({"b"})
+    assert trimmed.skipped_count == 1
+    assert trimmed.was_budget_reached is True
+    assert trimmed.total_tokens == costs["a"] + costs["c"]
+    assert trimmed.token_estimates == {"a": 10, "b": 10, "c": 10}
+
+
+def test_trim_packed_for_wrap_refill_recovers_packer_exclusions() -> None:
+    """Refilling a packer-excluded ID removes it from budget_excluded_ids."""
+    from app.assemble import _trim_packed_for_wrap, _WrapTrimInput
+    from app.packer import PackedMemories
+
+    policy, nonce, _k, _d, _c, _p = _wrap_trim_pair_fixture()
+    high = _scored_memory("high", "H" * 40, 0.99)
+    a = _scored_memory("a", "a" * 40, 0.40)
+    b = _scored_memory("b", "b" * 40, 0.40)
+    costs = {"high": 50, "a": 15, "b": 15}
+    packed = PackedMemories(
+        memories=(high,),
+        total_tokens=50,
+        total_score=0.99,
+        skipped_count=2,
+        was_budget_reached=True,
+        path="dp",
+        candidates_evaluated=3,
+        budget_excluded_ids=frozenset({"a", "b"}),
+        token_estimates={"high": 20, "a": 5, "b": 5},
+    )
+    fitted = _trim_packed_for_wrap(
+        _WrapTrimInput(
+            packed=packed,
+            scored=[high, a, b],
+            usable_budget=40,
+            policy=policy,
+            nonce=nonce,
+            cost_by_id=costs,
+        )
+    )
+    ids = {m.memory_id for m in fitted.memories}
+    assert ids == {"a", "b"}
+    assert fitted.budget_excluded_ids == frozenset({"high"})
+    assert fitted.skipped_count == 1
+    assert fitted.was_budget_reached is True
+    assert fitted.total_tokens == costs["a"] + costs["b"]
 
 
 def test_trim_packed_for_wrap_noop_and_selection_wrap() -> None:

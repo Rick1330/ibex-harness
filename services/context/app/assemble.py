@@ -657,7 +657,8 @@ def _dropped_after_refill(
     already_dropped: set[str],
 ) -> set[str]:
     final_ids = {m.memory_id for m in refilled}
-    dropped = set(already_dropped)
+    # Refill may restore an ID that drop-until-fit removed; exclude those.
+    dropped = set(already_dropped) - final_ids
     dropped.update(m.memory_id for m in remaining if m.memory_id not in final_ids)
     # Packer-examined candidates not in the final wrap-fit set stay budget-excluded.
     dropped.update(mid for mid in prior_excluded if mid not in final_ids)
@@ -681,18 +682,23 @@ def _wrapped_total_tokens(
 
 
 def _rebuild_after_wrap_trim(args: _WrapTrimRebuild) -> PackedMemories:
-    newly_dropped = args.dropped_ids - args.packed.budget_excluded_ids
+    prior_ids = {m.memory_id for m in args.packed.memories}
+    final_ids = {m.memory_id for m in args.remaining}
+    refilled = final_ids - prior_ids
+    dropped_from_selection = prior_ids - final_ids
     return PackedMemories(
         memories=tuple(args.remaining),
         total_tokens=_wrapped_total_tokens(
             args.remaining, args.estimates, args.policy, args.cost_by_id
         ),
         total_score=sum(m.composite_score for m in args.remaining),
-        skipped_count=args.packed.skipped_count + len(newly_dropped),
-        was_budget_reached=True,
+        skipped_count=(
+            args.packed.skipped_count + len(dropped_from_selection) - len(refilled)
+        ),
+        was_budget_reached=bool(args.dropped_ids),
         path=args.packed.path,
         candidates_evaluated=args.packed.candidates_evaluated,
-        budget_excluded_ids=args.packed.budget_excluded_ids | frozenset(args.dropped_ids),
+        budget_excluded_ids=frozenset(args.dropped_ids),
         token_estimates=dict(args.estimates),
     )
 
