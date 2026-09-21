@@ -3,6 +3,7 @@ package modelpolicy
 import (
 	"fmt"
 
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/google/uuid"
 )
 
@@ -15,15 +16,20 @@ const ChannelPattern = ChannelPrefix + "*"
 // CurrentEventVersion is the InvalidateEvent.Version for this release.
 const CurrentEventVersion = 1
 
+var eventPolicy = redissub.EventPolicy{
+	ErrPrefix: "modelpolicy", CurrentVersion: CurrentEventVersion, RequireEpoch: true,
+}
+
 // ChannelForOrg returns the pub/sub channel for one organization.
 func ChannelForOrg(orgID uuid.UUID) string {
-	return ChannelPrefix + orgID.String()
+	return redissub.ChannelForOrg(ChannelPrefix, orgID)
 }
 
 // OrgIDFromChannel extracts the org UUID from model_policy_updates:{org_id}.
 func OrgIDFromChannel(channel string) (uuid.UUID, error) {
-	if len(channel) <= len(ChannelPrefix) || channel[:len(ChannelPrefix)] != ChannelPrefix {
+	id, err := redissub.OrgIDFromChannel(ChannelPrefix, channel)
+	if err != nil {
 		return uuid.Nil, fmt.Errorf("modelpolicy: unexpected channel %q", channel)
 	}
-	return uuid.Parse(channel[len(ChannelPrefix):])
+	return id, nil
 }

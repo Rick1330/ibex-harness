@@ -37,9 +37,14 @@ class FindSimilarQuery:
 class MemorySearchResult:
     """Single memory hit.
 
-    For vector/full_text search, similarity is the retrieval metric (cosine or ts_rank_cd).
-    For hot_cache, similarity is the write-time composite ZSET score (not query relevance).
-    Search ranking uses composite_score(); hot cache order follows Redis ZSET score.
+    For vector search, similarity is cosine similarity in approximately [-1, 1]
+    (ANN cutoff usually keeps it in [0, 1]). For full_text, similarity is
+    ``ts_rank_cd`` clamped to [0, 1]. For hot_cache, similarity is the write-time
+    composite ZSET score (not query relevance). Search ranking uses
+    composite_score(); hot cache order follows Redis ZSET score.
+
+    ``categories`` is the full label set used for half-life decay (F4-030a).
+    When empty, scorers fall back to ``(category,)``.
     """
 
     id: UUID
@@ -53,3 +58,4 @@ class MemorySearchResult:
     source: SearchSource
     created_at: datetime
     updated_at: datetime
+    categories: tuple[str, ...] = ()

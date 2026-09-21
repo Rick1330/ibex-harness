@@ -68,11 +68,15 @@ async def test_zadd_hot_memory_invokes_lua_script() -> None:
 
 @pytest.mark.asyncio
 async def test_cache_writer_hot_path_uses_lua_trim() -> None:
+    from app.scoring import RankWeights
+
     redis = MagicMock()
     script = AsyncMock(return_value=1)
     redis.register_script = MagicMock(return_value=script)
     redis.set = AsyncMock()
-    writer = MemoryCacheWriter(redis, MagicMock(memory_cache_ttl_seconds=3600))
+    settings = MagicMock(memory_cache_ttl_seconds=3600)
+    settings.rank_weights.return_value = RankWeights()
+    writer = MemoryCacheWriter(redis, settings)
     row = sample_memory_row()
     await writer.write_created(WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=row))
     redis.set.assert_awaited_once()
@@ -81,7 +85,9 @@ async def test_cache_writer_hot_path_uses_lua_trim() -> None:
     call_args = script.await_args
     assert call_args is not None
     assert call_args.kwargs["keys"] == [writer.hot_key(row.org_id, row.agent_id)]
-    assert call_args.kwargs["args"][0] == pytest.approx(compute_hot_cache_score(row))
+    assert call_args.kwargs["args"][0] == pytest.approx(
+        compute_hot_cache_score(row, weights=RankWeights())
+    )
     assert call_args.kwargs["args"][1] == str(row.id)
     assert call_args.kwargs["args"][2] == 3600
 

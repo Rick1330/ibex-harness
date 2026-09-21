@@ -9,11 +9,13 @@ import (
 	"os"
 	"sync"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -44,6 +46,10 @@ type shutdownOpts struct {
 	rlConfigCancel    context.CancelFunc
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
+	mpPollCancel      context.CancelFunc
+	budgetSub         *redissub.OrgSubscriber
+	budgetCancel      context.CancelFunc
+	usageFactWriter   *billing.UsageFactWriter
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -120,6 +126,7 @@ func immediateCleanup(opts shutdownOpts) {
 	logImmediateCleanupErr(opts.logger, "checkpoint pool shutdown", shutdownCheckpointPool(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "session sweeper shutdown", shutdownSessionSweeper(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "trace writer shutdown", shutdownTraceWriter(ctx, opts))
+	logImmediateCleanupErr(opts.logger, "usage fact writer shutdown", shutdownUsageFactWriter(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "grpc conn close", closeGRPCConns(opts))
 	logImmediateCleanupErr(opts.logger, "redis client close", closeRedisClient(opts))
 	logImmediateCleanupErr(opts.logger, "postgres close", closePgDB(opts))
@@ -141,6 +148,7 @@ func stopPubSubSubscribers(opts shutdownOpts) {
 		stopDirectivePubSub(opts)
 		stopRateLimitPubSub(opts)
 		stopModelPolicyPubSub(opts)
+		stopBudgetPubSub(opts)
 	}
 	if opts.stopPubSubOnce != nil {
 		opts.stopPubSubOnce.Do(run)
@@ -177,11 +185,23 @@ func stopRateLimitPubSub(opts shutdownOpts) {
 }
 
 func stopModelPolicyPubSub(opts shutdownOpts) {
+	if opts.mpPollCancel != nil {
+		opts.mpPollCancel()
+	}
 	if opts.mpCancel != nil {
 		opts.mpCancel()
 	}
 	if opts.mpSub != nil {
 		opts.mpSub.Stop()
+	}
+}
+
+func stopBudgetPubSub(opts shutdownOpts) {
+	if opts.budgetCancel != nil {
+		opts.budgetCancel()
+	}
+	if opts.budgetSub != nil {
+		opts.budgetSub.Stop()
 	}
 }
 
@@ -203,6 +223,7 @@ func registerOptionalShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) 
 	registerCheckpointPoolShutdown(sd, opts)
 	registerSessionSweeperShutdown(sd, opts)
 	registerTraceWriterShutdown(sd, opts)
+	registerUsageFactWriterShutdown(sd, opts)
 	registerGRPCConnShutdown(sd, opts)
 	registerRedisClientShutdown(sd, opts)
 	registerPgDBShutdown(sd, opts)
@@ -240,6 +261,12 @@ func registerSessionSweeperShutdown(sd *shutdown.Coordinator, opts shutdownOpts)
 func registerTraceWriterShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
 		return shutdownTraceWriter(ctx, opts)
+	})
+}
+
+func registerUsageFactWriterShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
+	sd.Register(func(ctx context.Context) error {
+		return shutdownUsageFactWriter(ctx, opts)
 	})
 }
 
@@ -287,6 +314,16 @@ func shutdownTraceWriter(ctx context.Context, opts shutdownOpts) error {
 	}
 	if err := opts.traceWriter.Shutdown(ctx); err != nil {
 		return fmt.Errorf("shutdown trace writer: %w", err)
+	}
+	return nil
+}
+
+func shutdownUsageFactWriter(ctx context.Context, opts shutdownOpts) error {
+	if opts.usageFactWriter == nil {
+		return nil
+	}
+	if err := opts.usageFactWriter.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown usage fact writer: %w", err)
 	}
 	return nil
 }

@@ -36,6 +36,18 @@ service AuthService {
 
   // ListProviderCredentials returns non-secret metadata for an org's provider keys.
   rpc ListProviderCredentials(ListProviderCredentialsRequest) returns (ListProviderCredentialsResponse);
+
+  // BeginTotpEnrollment starts TOTP enrollment (returns otpauth URI; secret sealed at rest).
+  rpc BeginTotpEnrollment(BeginTotpEnrollmentRequest) returns (BeginTotpEnrollmentResponse);
+
+  // ConfirmTotpEnrollment confirms enrollment with a TOTP code.
+  rpc ConfirmTotpEnrollment(ConfirmTotpEnrollmentRequest) returns (ConfirmTotpEnrollmentResponse);
+
+  // CreateStepUpToken verifies TOTP and returns a short-lived step-up JWT.
+  rpc CreateStepUpToken(CreateStepUpTokenRequest) returns (CreateStepUpTokenResponse);
+
+  // IssueOperatorSession issues RS256 access/refresh JWTs for the authenticated caller.
+  rpc IssueOperatorSession(IssueOperatorSessionRequest) returns (IssueOperatorSessionResponse);
 }
 
 enum TokenType {
@@ -185,4 +197,46 @@ message ProviderCredentialMetadata {
 
 message ListProviderCredentialsResponse {
   repeated ProviderCredentialMetadata credentials = 1;
+}
+
+message BeginTotpEnrollmentRequest {
+  string org_id = 1;
+  string user_id = 2;
+}
+
+message BeginTotpEnrollmentResponse {
+  // otpauth:// URI for authenticator apps — return once; never log.
+  string otpauth_uri = 1;
+}
+
+message ConfirmTotpEnrollmentRequest {
+  string org_id = 1;
+  string user_id = 2;
+  string totp_code = 3;
+}
+
+message ConfirmTotpEnrollmentResponse {}
+
+message CreateStepUpTokenRequest {
+  string org_id = 1;
+  string user_id = 2;
+  string totp_code = 3;
+}
+
+message CreateStepUpTokenResponse {
+  string step_up_token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message IssueOperatorSessionRequest {
+  // When empty, issues for the authenticated PAT caller.
+  // When set, Auth verifies this refresh JWT and rotates access+refresh (RS256).
+  string refresh_token = 1;
+}
+
+message IssueOperatorSessionResponse {
+  string access_token = 1;
+  string refresh_token = 2;
+  google.protobuf.Timestamp access_expires_at = 3;
+  google.protobuf.Timestamp refresh_expires_at = 4;
 }

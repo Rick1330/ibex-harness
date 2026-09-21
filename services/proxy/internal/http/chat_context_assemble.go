@@ -8,10 +8,14 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 )
 
 // Header names for context-assembly outcome (3.5.D.2). Embedded ibex JSON is 3.5.D.3.
@@ -37,6 +41,8 @@ type contextAssembleMeta struct {
 	ContextTokens    int32
 	Fallback         bool
 	AssemblyMs       int64
+	ScoreSchema      string
+	EvidenceExtras   httpsession.EvidenceExtras
 }
 
 type messageInjectionOutcome struct {
@@ -56,23 +62,34 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 	if !h.shouldAssemble(r) {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
-	params, ok := assembleParamsFromRequest(ctx, model, messages)
+	assembleCtx, endSpan := ensureAssembleTraceContext(ctx)
+	defer endSpan()
+	params, ok := assembleParamsFromRequest(assembleCtx, model, messages)
 	if !ok {
 		return messageInjectionOutcome{Messages: applyDirectiveInjection(ctx, messages)}
 	}
+	return h.injectAssembledOrDirective(ctx, assembleCtx, messages, params)
+}
+
+func (h chatCompletionHandler) injectAssembledOrDirective(
+	ctx, assembleCtx context.Context,
+	messages []provider.Message,
+	params contextclient.AssembleParams,
+) messageInjectionOutcome {
 	assembleStart := time.Now()
-	result := h.contextClient.Assemble(ctx, params)
-	assemblyMs := time.Since(assembleStart).Milliseconds()
+	result := h.contextClient.Assemble(assembleCtx, params)
+	extras := evidenceExtrasFromAssemble(result)
+	extras.AssembleSpanID = spanIDFromContext(assembleCtx)
 	meta := contextAssembleMeta{
 		Attempted:        true,
 		MemoriesInjected: result.MemoriesIncluded,
 		ContextTokens:    result.TokensUsed,
 		Fallback:         result.Fallback,
-		AssemblyMs:       assemblyMs,
+		AssemblyMs:       time.Since(assembleStart).Milliseconds(),
+		ScoreSchema:      result.ScoreSchema,
+		EvidenceExtras:   extras,
 	}
 	if result.Fallback || strings.TrimSpace(result.AssembledContext) == "" {
-		// Empty assembled text is operationally a fallback: Phase 2 directive only.
-		// Promote Fallback so headers/metrics match (D.1 client only records RPC Fallback).
 		if !meta.Fallback {
 			meta.Fallback = true
 			h.recordAssembleFallback(emptyAssembleFallbackReason)
@@ -82,10 +99,110 @@ func (h chatCompletionHandler) applyContextOrDirectiveInjection(
 			Meta:     meta,
 		}
 	}
-	// AssembledContext already includes directive + memories (formatter ordering).
-	// Inject as system_first so the blob is additive; leave client history intact.
 	injected := injection.Inject(messages, result.AssembledContext, injection.ModeSystemFirst)
 	return messageInjectionOutcome{Messages: injected, Meta: meta}
+}
+
+func ensureAssembleTraceContext(ctx context.Context) (context.Context, func()) {
+	// Always start a child assemble span so evidence/join keys use a real OTel
+	// span_id (never a synthetic root+".assemble" id).
+	tracer := otel.Tracer("github.com/Rick1330/ibex-harness/services/proxy/internal/http")
+	ctx, span := tracer.Start(ctx, "chatCompletionHandler.AssembleContext")
+	return ctx, func() { span.End() }
+}
+
+func evidenceExtrasFromAssemble(result contextclient.AssembleResult) httpsession.EvidenceExtras {
+	extras := httpsession.EvidenceExtras{
+		Metrics: assemblyMetricsFromClient(result.Metrics),
+	}
+	schema := result.ScoreSchema
+	if schema == "" {
+		schema = evidenceoutbox.ScoreSchemaInterim
+	}
+	extras.Candidates = scoreCandidatesFromMemories(result.MemoriesUsed, schema)
+	return extras
+}
+
+func assemblyMetricsFromClient(m *contextclient.AssemblyMetrics) *evidenceoutbox.AssemblyMetrics {
+	if m == nil {
+		return nil
+	}
+	return &evidenceoutbox.AssemblyMetrics{
+		BudgetCalculationMs:   int(m.BudgetCalculationMs),
+		DirectiveLoadMs:       int(m.DirectiveLoadMs),
+		HotMemoryRetrievalMs:  int(m.HotMemoryRetrievalMs),
+		ColdMemoryRetrievalMs: int(m.ColdMemoryRetrievalMs),
+		RankingMs:             int(m.RankingMs),
+		PackingMs:             int(m.PackingMs),
+		FormattingMs:          int(m.FormattingMs),
+		TotalMs:               int(m.TotalMs),
+		CandidatesEvaluated:   int(m.CandidatesEvaluated),
+	}
+}
+
+func scoreCandidatesFromMemories(memories []contextclient.MemoryUsed, schema string) []evidenceoutbox.ScoreCandidate {
+	out := make([]evidenceoutbox.ScoreCandidate, 0, len(memories))
+	finalRank := 0
+	for _, m := range memories {
+		id, err := uuid.Parse(m.MemoryID)
+		if err != nil {
+			continue
+		}
+		excl := m.Exclusion
+		if excl == "" {
+			excl = "included"
+		}
+		out = append(out, scoreCandidateFromMemory(scoreCandidateInput{
+			id: id, mem: m, exclusion: excl, schema: schema, finalRank: &finalRank,
+		}))
+	}
+	return out
+}
+
+type scoreCandidateInput struct {
+	id        uuid.UUID
+	mem       contextclient.MemoryUsed
+	exclusion string
+	schema    string
+	finalRank *int
+}
+
+func scoreCandidateFromMemory(in scoreCandidateInput) evidenceoutbox.ScoreCandidate {
+	rank := int(in.mem.Rank)
+	sim := float64(in.mem.Similarity)
+	conf := float64(in.mem.Confidence)
+	comp := float64(in.mem.CompositeScore)
+	tok := int(in.mem.TokenEstimate)
+	var packedRank *int
+	if in.exclusion == "included" {
+		*in.finalRank++
+		r := *in.finalRank
+		packedRank = &r
+	}
+	return evidenceoutbox.ScoreCandidate{
+		MemoryID:       in.id,
+		RetrievalRank:  rank,
+		FinalRank:      packedRank,
+		Similarity:     &sim,
+		Confidence:     &conf,
+		CompositeScore: &comp,
+		ScoreSchema:    in.schema,
+		ScoreComponents: map[string]float64{
+			"similarity": sim,
+			"confidence": conf,
+		},
+		Exclusion:     in.exclusion,
+		TokenEstimate: &tok,
+		Category:      in.mem.Category,
+	}
+}
+
+func finalRankForExclusion(exclusion string, rank int) *int {
+	if exclusion != "" && exclusion != "included" {
+		return nil
+	}
+	r := rank
+	return &r
 }
 
 // emptyAssembleFallbackReason labels handler-side empty AssembledContext fail-open
@@ -121,12 +238,30 @@ func assembleParamsFromRequest(ctx context.Context, model string, messages []pro
 	if !ok {
 		return contextclient.AssembleParams{}, false
 	}
+	var sessionID string
+	if id, ok := durableSessionID(ctx); ok {
+		sessionID = id.String()
+	}
+	var directiveVersionID string
+	if id := directiveVersionPtr(ctx); id != nil {
+		directiveVersionID = id.String()
+	}
+	traceID := traceIDFromContext(ctx)
+	spanID := spanIDFromContext(ctx)
+	if traceID == "" || spanID == "" {
+		return contextclient.AssembleParams{}, false
+	}
 	return contextclient.AssembleParams{
-		OrgID:          orgID.String(),
-		AgentID:        agentID.String(),
-		Model:          model,
-		Query:          lastUserQuery(messages),
-		RecentMessages: toAssembleMessages(messages),
+		OrgID:              orgID.String(),
+		AgentID:            agentID.String(),
+		SessionID:          sessionID,
+		Model:              model,
+		Query:              lastUserQuery(messages),
+		DirectiveVersionID: directiveVersionID,
+		RequestID:          RequestIDFromContext(ctx),
+		TraceID:            traceID,
+		SpanID:             spanID,
+		RecentMessages:     toAssembleMessages(messages),
 	}, true
 }
 

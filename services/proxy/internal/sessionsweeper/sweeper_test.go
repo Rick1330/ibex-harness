@@ -28,8 +28,8 @@ type fakeStore struct {
 func (f *fakeStore) GetOrCreate(context.Context, session.GetOrCreateParams) (*session.Session, error) {
 	return nil, errors.New("unused")
 }
-func (f *fakeStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
-	return errors.New("unused")
+func (f *fakeStore) AppendCheckpoint(context.Context, session.CheckpointParams) (uuid.UUID, error) {
+	return uuid.Nil, errors.New("unused")
 }
 func (f *fakeStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
 	return session.CompleteOK, errors.New("unused")
@@ -239,8 +239,8 @@ type blockingStore struct {
 func (b *blockingStore) GetOrCreate(context.Context, session.GetOrCreateParams) (*session.Session, error) {
 	return nil, errors.New("unused")
 }
-func (b *blockingStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
-	return errors.New("unused")
+func (b *blockingStore) AppendCheckpoint(context.Context, session.CheckpointParams) (uuid.UUID, error) {
+	return uuid.Nil, errors.New("unused")
 }
 func (b *blockingStore) Complete(context.Context, uuid.UUID, uuid.UUID) (session.CompleteResult, error) {
 	return session.CompleteOK, errors.New("unused")

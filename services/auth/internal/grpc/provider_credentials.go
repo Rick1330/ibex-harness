@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/ssrf"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -32,6 +33,9 @@ func (s *Server) CreateProviderCredential(
 	orgID := req.GetOrgId()
 	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
 		return nil, err
+	}
+	if err := ssrf.ValidateHTTPURL(ctx, req.GetBaseUrl()); err != nil {
+		return nil, status.Error(codes.InvalidArgument, errMsgInvalidRequest)
 	}
 	meta, err := s.credService.Create(ctx, service.CreateInput{
 		OrgID:        orgID,
@@ -63,18 +67,17 @@ func (s *Server) GetProviderCredential(
 		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
-	caller, ok := CallerFromContext(ctx)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
-	}
-	if caller.OrgID != orgID {
-		return nil, status.Error(codes.PermissionDenied, errMsgForbidden)
+	if err := RequireOrgAndPermission(ctx, orgID, permissions.SecretUse); err != nil {
+		return nil, err
 	}
 	result, err := s.credService.Get(ctx, service.OrgProviderRef{
 		OrgID: orgID, ProviderName: req.GetProviderName(),
 	})
 	if err != nil {
 		return nil, mapProviderCredentialErr(err)
+	}
+	if err := ssrf.ValidateHTTPURL(ctx, result.BaseURL); err != nil {
+		return nil, status.Error(codes.FailedPrecondition, "provider base url blocked")
 	}
 	return &authv1.GetProviderCredentialResponse{
 		ApiKey:            result.APIKey,

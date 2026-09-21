@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.read.ranking import RankedCandidate, rank_hydrated_hits
+from app.read.ranking import RankedCandidate, RankOptions, rank_hydrated_hits
 from tests.unit.read_ranking_support import HydratedHitSeed, hydrated_hit
 
 _WARMUP_ITERATIONS = 20
@@ -58,12 +58,12 @@ def test_rank_hydrated_hits_latency_at_70_candidates() -> None:
     candidates, hydrated, fixed_now = _build_ranking_fixture(_CANDIDATE_COUNT)
 
     for _ in range(_WARMUP_ITERATIONS):
-        rank_hydrated_hits(candidates, hydrated, now=fixed_now)
+        rank_hydrated_hits(candidates, hydrated, RankOptions(now=fixed_now))
 
     samples_ms: list[float] = []
     for _ in range(_TIMED_ITERATIONS):
         start = time.perf_counter()
-        ranked = rank_hydrated_hits(candidates, hydrated, now=fixed_now)
+        ranked = rank_hydrated_hits(candidates, hydrated, RankOptions(now=fixed_now))
         samples_ms.append((time.perf_counter() - start) * 1000)
         assert len(ranked) == _CANDIDATE_COUNT
 

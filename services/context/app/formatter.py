@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from html import escape
 from typing import Final
 
-from app.budget import Message
+from app.budget import MAX_NONCE_BYTES, Message
 from app.packer import PackedMemories, ScoredMemory
 from app.retrieval import ResolvedDirective
 
@@ -33,8 +33,7 @@ CATEGORY_ORDER: Final[tuple[str, ...]] = (
 )
 
 DEFAULT_NONCE_BYTES: Final[int] = 16
-# secrets.token_urlsafe upper bound — keeps env misconfig from allocating huge strings.
-MAX_NONCE_BYTES: Final[int] = 64
+# MAX_NONCE_BYTES lives in app.budget (shared with wrap-reserve estimates).
 
 _MEMORY_TAG: Final[str] = "ibex_memory"
 _MEMORY_CLOSE: Final[str] = "</ibex_memory>"
@@ -151,6 +150,22 @@ def _memory_open_tag(
         parts.extend([" category=\"", _escape_attr(category), "\""])
     parts.append(">")
     return "".join(parts)
+
+
+def serialize_memory_element_for_estimate(
+    *,
+    nonce: str,
+    memory_id: str,
+    category: str,
+    content: str,
+) -> str:
+    """Public alias of memory-block serialization for budget/packer estimates (F4-028)."""
+    return _serialize_memory_element(
+        nonce=nonce,
+        memory_id=memory_id,
+        category=category,
+        content=content,
+    )
 
 
 def _serialize_memory_element(

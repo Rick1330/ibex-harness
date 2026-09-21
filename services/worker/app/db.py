@@ -50,3 +50,29 @@ async def session_as_service_account(
         except Exception:
             await session.rollback()
             raise
+
+
+@asynccontextmanager
+async def session_as_service_org(
+    factory: async_sessionmaker[AsyncSession],
+    org_id: str,
+) -> AsyncIterator[AsyncSession]:
+    """Service-account + org GUC (privacy RLS requires current_org_id)."""
+    async with factory() as session:
+        try:
+            async with session.begin():
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                        "SELECT set_config('app.is_service_account', 'true', true)"
+                    )
+                )
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                        "SELECT set_config('app.current_org_id', :org_id, true)"
+                    ),
+                    {"org_id": org_id},
+                )
+                yield session
+        except Exception:
+            await session.rollback()
+            raise

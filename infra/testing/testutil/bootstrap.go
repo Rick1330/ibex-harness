@@ -13,6 +13,8 @@ import (
 )
 
 // SeedBootstrapAdminToken inserts an admin PAT for integration bootstrap (SQL path only).
+// Permissions are Admin|SecretUse so CreateToken can mint ProxyChatCompletion tokens
+// (SecretUse is required for chat credential Get after 4.P.1; production Admin still excludes it).
 func SeedBootstrapAdminToken(t testing.TB, db *sql.DB, orgID string) (plaintext string) {
 	t.Helper()
 	rowID := uuid.New()
@@ -27,7 +29,8 @@ func SeedBootstrapAdminToken(t testing.TB, db *sql.DB, orgID string) (plaintext 
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.tokens (id, org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
 			VALUES ($1::uuid, $2::uuid, 'pat', $3, $4, 'bootstrap-admin', $5, false, NULL)`,
-			rowID.String(), orgID, hash, prefix, permissions.Admin,
+			// Admin|SecretUse so bootstrap can mint ProxyChatCompletion (includes SecretUse).
+			rowID.String(), orgID, hash, prefix, permissions.Admin|permissions.SecretUse,
 		)
 		return err
 	})

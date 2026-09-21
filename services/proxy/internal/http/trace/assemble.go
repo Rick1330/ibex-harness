@@ -11,22 +11,16 @@ import (
 // Zero timestamps default to now/completed; negative durations and token
 // counts clamp to zero and saturate at uint32 max so analytics stay bounded.
 func Assemble(in AssembleInput) ibexch.TraceRecord {
-	completed := in.Timings.CompletedAt
-	if completed.IsZero() {
-		completed = time.Now().UTC()
-	}
-	requested := in.Timings.RequestedAt
-	if requested.IsZero() {
-		requested = completed
-	}
-	totalMs := durationToUint32(completed.Sub(requested))
+	requested, completed := resolveTraceTimestamps(in.Timings)
 	inTok, outTok, totalTok := usageTokenCounts(in.Usage)
 	return ibexch.TraceRecord{
 		RequestID:          in.RequestID,
 		OrgID:              in.OrgID,
 		AgentID:            in.AgentID,
 		SessionID:          in.SessionID,
-		CheckpointID:       nil, // AppendCheckpoint does not return IDs yet
+		CheckpointID:       in.CheckpointID,
+		TraceID:            in.TraceID,
+		RootSpanID:         in.RootSpanID,
 		Model:              in.Model,
 		Provider:           in.Provider,
 		IsStreaming:        in.Streaming,
@@ -36,16 +30,39 @@ func Assemble(in AssembleInput) ibexch.TraceRecord {
 		AuthLatencyMs:      in.Timings.AuthMs,
 		DirectiveLatencyMs: in.Timings.DirectiveMs,
 		ProviderTTFBMs:     durationToUint32(in.Timings.ProviderTTFB),
-		TotalLatencyMs:     totalMs,
+		TotalLatencyMs:     durationToUint32(completed.Sub(requested)),
 		StatusCode:         in.Outcome.StatusCode,
 		IsComplete:         in.Outcome.IsComplete,
 		ErrorCode:          in.Outcome.ErrorCode,
-		RequestedAt:        requested.UTC(),
-		CompletedAt:        completed.UTC(),
+		RequestedAt:        requested,
+		CompletedAt:        completed,
 		OriginalModel:      optionalNonEmpty(in.OriginalModel),
 		FallbackModel:      optionalNonEmpty(in.FallbackModel),
 		FallbackReason:     in.FallbackReason,
+		DirectiveVersionID: in.DirectiveVersionID,
+		ContextAssemblyMs:  in.ContextAssemblyMs,
+		ScoreSchema:        in.ScoreSchema,
+		Completeness:       completenessOrDefault(in.Completeness),
 	}
+}
+
+func resolveTraceTimestamps(t RequestTimings) (requested, completed time.Time) {
+	completed = t.CompletedAt
+	if completed.IsZero() {
+		completed = time.Now().UTC()
+	}
+	requested = t.RequestedAt
+	if requested.IsZero() {
+		requested = completed
+	}
+	return requested.UTC(), completed.UTC()
+}
+
+func completenessOrDefault(v string) string {
+	if v == "" {
+		return "partial"
+	}
+	return v
 }
 
 func optionalNonEmpty(s string) *string {

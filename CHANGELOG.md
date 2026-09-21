@@ -12,6 +12,18 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.8](https://github.com/Rick1330/ibex-harness/compare/v0.1.7...v0.1.8) (2026-09-20)
+
+
+### Features
+
+* **4.P.1:** partial Gate G1 — fail-closed policy, SecretUse, SSRF (F4-015–018) ([#845](https://github.com/Rick1330/ibex-harness/issues/845)) ([3ead9de](https://github.com/Rick1330/ibex-harness/commit/3ead9decde3b3be2c1bbaa1e91fb95f94b2a386d))
+* **4.P.2:** canonical evidence plane and durable publication ([#848](https://github.com/Rick1330/ibex-harness/issues/848)) ([7ca25e6](https://github.com/Rick1330/ibex-harness/commit/7ca25e67791f266a3507af02aa4f69647f90b5c1))
+* **4.P.3:** privacy, Retention, Deletion & Audit Governance ([#852](https://github.com/Rick1330/ibex-harness/issues/852)) ([9228c91](https://github.com/Rick1330/ibex-harness/commit/9228c91bc0a4dca7a569b51bf5bbb84fd25d066c))
+* **4.P.4:** hybrid usage ledger and fail-closed spend caps ([#860](https://github.com/Rick1330/ibex-harness/issues/860)) ([9e177ac](https://github.com/Rick1330/ibex-harness/commit/9e177aca5db8e88fa8f38fd96e53667f5c20dd8e))
+* **4.p.5:** production platform, recovery and supply chain ([#870](https://github.com/Rick1330/ibex-harness/issues/870)) ([eae9cf9](https://github.com/Rick1330/ibex-harness/commit/eae9cf9603f8943112e2cc421a09e9f3f5de8445))
+* **api:** 4.P.0 operator runtime topology & environment contract ([#840](https://github.com/Rick1330/ibex-harness/issues/840)) ([f230bda](https://github.com/Rick1330/ibex-harness/commit/f230bdab077a96f96da5c7be45c99c034e217088))
+
 ## [0.1.7](https://github.com/Rick1330/ibex-harness/compare/v0.1.6...v0.1.7) (2026-09-14)
 
 

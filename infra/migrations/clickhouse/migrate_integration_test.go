@@ -25,6 +25,8 @@ var requiredLLMTraceColumns = []string{
 	"status_code", "is_complete", "error_code",
 	"requested_at", "completed_at", "event_date",
 	"original_model", "fallback_model", "fallback_reason",
+	"trace_id", "root_span_id", "directive_version_id", "context_assembly_ms",
+	"score_schema", "completeness",
 }
 
 func testMigrateConn() Conn {
@@ -54,6 +56,9 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	drops := []string{
+		`DROP TABLE IF EXISTS ibex.usage_facts`,
+		`DROP TABLE IF EXISTS ibex.evidence_assembly_metrics`,
+		`DROP TABLE IF EXISTS ibex.evidence_spans`,
 		`DROP TABLE IF EXISTS ibex.mcp_tool_calls`,
 		`DROP TABLE IF EXISTS ibex.llm_traces`,
 		`DROP TABLE IF EXISTS ibex.schema_migrations`,
@@ -83,8 +88,8 @@ func TestIntegration_Migrate_UpIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if dirty || v != 2 {
-		t.Fatalf("version=%d dirty=%v want 2/clean", v, dirty)
+	if dirty || v != 5 {
+		t.Fatalf("version=%d dirty=%v want 5/clean", v, dirty)
 	}
 }
 
@@ -100,6 +105,118 @@ func TestIntegration_Migrate_SchemaAndTTL(t *testing.T) {
 	assertNoContentColumns(t, db)
 	assertCreateTableDDL(t, db)
 	assertMCPToolCallsTable(t, db)
+	assertEvidencePlaneTables(t, db)
+}
+
+func assertEvidencePlaneTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertEvidenceSpansTable(t, db)
+	assertEvidenceAssemblyMetricsTable(t, db)
+}
+
+func assertEvidenceSpansTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertTableCount(t, db, "evidence_spans", 1)
+	got := loadTableColumns(t, db, "evidence_spans")
+	for _, col := range []string{
+		"event_id", "org_id", "request_id", "trace_id", "span_id",
+		"parent_span_id", "operation_kind", "status", "started_at", "event_date",
+	} {
+		if _, ok := got[col]; !ok {
+			t.Errorf("evidence_spans missing column %s", col)
+		}
+	}
+	assertCreateHasTTLAndOrder(t, db, "evidence_spans", "org_id", "trace_id", "span_id")
+}
+
+func assertEvidenceAssemblyMetricsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertTableCount(t, db, "evidence_assembly_metrics", 1)
+	got := loadTableColumns(t, db, "evidence_assembly_metrics")
+	for _, col := range []string{
+		"org_id", "request_id", "trace_id", "span_id",
+		"budget_calculation_ms", "ranking_ms", "total_ms",
+		"candidates_evaluated", "recorded_at", "event_date",
+	} {
+		if _, ok := got[col]; !ok {
+			t.Errorf("evidence_assembly_metrics missing column %s", col)
+		}
+	}
+	assertCreateHasTTLAndOrder(t, db, "evidence_assembly_metrics", "org_id", "request_id", "recorded_at")
+}
+
+func loadTableColumns(t *testing.T, db *sql.DB, table string) map[string]struct{} {
+	t.Helper()
+	q, ok := systemColumnsQuery(table)
+	if !ok {
+		t.Fatalf("unknown table %s", table)
+	}
+	rows, err := db.QueryContext(context.Background(), q)
+	if err != nil {
+		t.Fatalf("%s columns: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func systemColumnsQuery(table string) (string, bool) {
+	switch table {
+	case "evidence_spans":
+		return `
+		SELECT name FROM system.columns
+		WHERE database = 'ibex' AND table = 'evidence_spans'`, true
+	case "evidence_assembly_metrics":
+		return `
+		SELECT name FROM system.columns
+		WHERE database = 'ibex' AND table = 'evidence_assembly_metrics'`, true
+	default:
+		return "", false
+	}
+}
+
+func assertCreateHasTTLAndOrder(t *testing.T, db *sql.DB, table string, orderParts ...string) {
+	t.Helper()
+	createSQL := showCreateEvidenceTable(t, db, table)
+	if !strings.Contains(createSQL, "event_date + toIntervalDay(90)") &&
+		!strings.Contains(createSQL, "event_date + INTERVAL 90 DAY") {
+		t.Fatalf("%s expected 90-day TTL, got: %s", table, createSQL)
+	}
+	gotOrder := orderByKeys(createSQL)
+	if len(gotOrder) == 0 {
+		t.Fatalf("%s expected ORDER BY, got: %s", table, createSQL)
+	}
+	if !orderKeysMatch(gotOrder, orderParts) {
+		t.Fatalf("%s ORDER BY=%v want keys %v in: %s", table, gotOrder, orderParts, createSQL)
+	}
+}
+
+func showCreateEvidenceTable(t *testing.T, db *sql.DB, table string) string {
+	t.Helper()
+	var q string
+	switch table {
+	case "evidence_spans":
+		q = `SHOW CREATE TABLE ibex.evidence_spans`
+	case "evidence_assembly_metrics":
+		q = `SHOW CREATE TABLE ibex.evidence_assembly_metrics`
+	default:
+		t.Fatalf("unknown table %s", table)
+	}
+	var createSQL string
+	if err := db.QueryRowContext(context.Background(), q).Scan(&createSQL); err != nil {
+		t.Fatalf("show create %s: %v", table, err)
+	}
+	return createSQL
 }
 
 func assertMCPToolCallsTable(t *testing.T, db *sql.DB) {
@@ -216,8 +333,11 @@ func assertCreateTableDDL(t *testing.T, db *sql.DB) {
 func assertTableCount(t *testing.T, db *sql.DB, name string, want uint64) {
 	t.Helper()
 	allowed := map[string]struct{}{
-		"mcp_tool_calls": {},
-		"llm_traces":     {},
+		"mcp_tool_calls":            {},
+		"llm_traces":                {},
+		"evidence_spans":            {},
+		"evidence_assembly_metrics": {},
+		"usage_facts":               {},
 	}
 	if _, ok := allowed[name]; !ok {
 		t.Fatalf("unknown table %s", name)
@@ -359,16 +479,18 @@ func TestIntegration_Migrate_DownUpRoundTrip(t *testing.T) {
 	if err := Up(conn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
+	assertTableCount(t, db, "usage_facts", 1)
 	if err := Down(conn); err != nil {
-		t.Fatalf("down mcp_tool_calls: %v", err)
+		t.Fatalf("down usage_facts: %v", err)
 	}
-	assertTableCount(t, db, "mcp_tool_calls", 0)
+	assertTableCount(t, db, "usage_facts", 0)
 	assertTableCount(t, db, "llm_traces", 1)
 	if err := Down(conn); err != nil {
-		t.Fatalf("down llm_traces: %v", err)
+		t.Fatalf("down evidence_plane: %v", err)
 	}
-	assertTableCount(t, db, "llm_traces", 0)
+	assertTableCount(t, db, "evidence_spans", 0)
 	if err := Up(conn); err != nil {
 		t.Fatalf("up after down: %v", err)
 	}
+	assertTableCount(t, db, "usage_facts", 1)
 }

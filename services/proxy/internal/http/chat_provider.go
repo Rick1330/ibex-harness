@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	"github.com/Rick1330/ibex-harness/packages/ssrf"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/credentials"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
@@ -207,7 +208,13 @@ func (h chatCompletionHandler) applyCredentialOverride(
 	if !result.PlatformDefault {
 		provReq.APIKeyOverride = result.APIKey
 		if strings.TrimSpace(result.BaseURL) != "" {
-			provReq.BaseURLOverride = strings.TrimSpace(result.BaseURL)
+			pin, err := ssrf.ValidateAndPinHTTPURL(r.Context(), result.BaseURL)
+			if err != nil {
+				h.writeCredentialResolveFailure(w, r, prov.Name(), orgID)
+				return false
+			}
+			provReq.BaseURLOverride = pin.PinnedURL
+			provReq.TLSServerName = pin.ServerName
 		}
 	}
 	return true
@@ -300,9 +307,14 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
 	h.finishIdempotency(p.claim, p.resp.StatusCode, out)
+	usage := p.resp.Usage
+	if usage == nil {
+		// openaicompatible leaves Response.Usage nil; recover from forwarded JSON.
+		usage = httpsession.UsageFromJSON(out)
+	}
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
-		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: p.resp.Usage,
+		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
 		OriginalModel: p.audit.OriginalModel, FallbackModel: p.audit.FallbackModel, FallbackReason: p.audit.Reason,

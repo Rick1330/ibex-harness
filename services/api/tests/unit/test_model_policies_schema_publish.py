@@ -138,10 +138,10 @@ def test_patch_rejects_empty_character_class() -> None:
 
 @pytest.mark.asyncio
 async def test_publishers_noop_and_recording() -> None:
-    await NoopModelPolicyPublisher().publish_policy_update("ignored")
+    await NoopModelPolicyPublisher().publish_policy_update("ignored", 1)
     recording = RecordingModelPolicyPublisher()
-    await recording.publish_policy_update("org-1")
-    assert recording.published == ["org-1"]
+    await recording.publish_policy_update("org-1", 2)
+    assert recording.published == [("org-1", 2)]
 
 
 class _FakeRedis:
@@ -161,10 +161,11 @@ async def test_redis_publisher_channel_payload_and_aclose() -> None:
     publisher = RedisModelPolicyPublisher("redis://localhost:6379/0")
     publisher._client = fake  # type: ignore[assignment]
     org_id = "550e8400-e29b-41d4-a716-446655440001"
-    await publisher.publish_policy_update(org_id)
+    await publisher.publish_policy_update(org_id, 3)
     channel, payload = fake.published[0]
     assert channel == f"model_policy_updates:{org_id}"
     assert '"v":1' in payload.replace(" ", "")
+    assert '"epoch":3' in payload.replace(" ", "")
     assert org_id in payload
     await publisher.aclose()
     assert publisher._client is None

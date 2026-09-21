@@ -85,6 +85,7 @@ func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provid
 		Stream:         req.Stream,
 		Model:          req.Model,
 		APIKeyOverride: req.APIKeyOverride,
+		TLSServerName:  req.TLSServerName,
 	})
 }
 
@@ -98,6 +99,7 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 		provider.UpstreamCall{
 			URL: call.URL, Body: call.Body, Stream: call.Stream,
 			APIKeyOverride: call.APIKeyOverride,
+			TLSServerName:  call.TLSServerName,
 		},
 	)
 }

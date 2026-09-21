@@ -31,7 +31,7 @@ COPY services/memory/pyproject.toml services/memory/uv.lock ./
 RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
     --no-install-package authclient --no-install-package ibex-async-db \
     && uv pip install --no-cache --force-reinstall --no-index --find-links /wheels \
-    "authclient==0.1.4" "ibex-async-db==0.1.0"
+    "authclient==0.1.5" "ibex-async-db==0.1.0"
 
 FROM python@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
 

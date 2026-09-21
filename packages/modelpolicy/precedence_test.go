@@ -61,6 +61,7 @@ func TestPrecedence_NoPolicyRows(t *testing.T) {
 	runPrecedenceCase(t, precedenceCase{
 		name: "no_policy_rows", requestModel: "gpt-4o",
 		wantCandidate: "gpt-4o",
+		wantErr:       ErrModelNotAllowedForOrg,
 	})
 }
 

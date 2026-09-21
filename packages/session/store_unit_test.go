@@ -54,7 +54,7 @@ func TestUnit_ClosedDB_SurfaceBeginErrors(t *testing.T) {
 		t.Fatal("GetOrCreate: expected begin error")
 	}
 
-	if err := store.AppendCheckpoint(ctx, CheckpointParams{
+	if _, err := store.AppendCheckpoint(ctx, CheckpointParams{
 		SessionID: sessionID, OrgID: orgID, AgentID: agentID, TurnIndex: 0,
 		RequestID: "r", MessagesHash: "h", Model: "m", Provider: "p", LatencyMs: 1,
 	}); err == nil {
@@ -126,7 +126,7 @@ func TestUnit_AppendCheckpoint_RejectsNegativeStats(t *testing.T) {
 	t.Parallel()
 
 	store := mustClosedStore(t)
-	err := store.AppendCheckpoint(context.Background(), CheckpointParams{
+	_, err := store.AppendCheckpoint(context.Background(), CheckpointParams{
 		SessionID: uuid.New(), OrgID: uuid.New(), AgentID: uuid.New(), TurnIndex: 0,
 		RequestID: "r", MessagesHash: "h", Model: "m", Provider: "p",
 		InputTokens: -1, LatencyMs: 1,

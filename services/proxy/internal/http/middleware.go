@@ -102,6 +102,15 @@ func traceIDFromContext(ctx context.Context) string {
 	return sc.TraceID().String()
 }
 
+func spanIDFromContext(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	sc := span.SpanContext()
+	if !sc.IsValid() {
+		return ""
+	}
+	return sc.SpanID().String()
+}
+
 // ResponseHeadersMiddleware sets IBEX response headers on every response.
 func ResponseHeadersMiddleware(cfg config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

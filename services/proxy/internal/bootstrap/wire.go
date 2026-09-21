@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -18,6 +19,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/tokenizer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
@@ -57,6 +59,11 @@ type proxyCore struct {
 	rlConfigCancel    context.CancelFunc
 	mpSub             *modelpolicy.Subscriber
 	mpCancel          context.CancelFunc
+	mpPollCancel      context.CancelFunc
+	budgetSub         *redissub.OrgSubscriber
+	budgetCancel      context.CancelFunc
+	budgetCache       *billing.Cache
+	usageFactWriter   *billing.UsageFactWriter
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
@@ -86,19 +93,23 @@ func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
 		revSub:    subs.revSub, revCancel: subs.revCancel,
 		dirSub: subs.dirSub, dirCancel: subs.dirCancel,
 		rlConfigSub: subs.rlSub, rlConfigCancel: subs.rlCancel,
-		mpSub: subs.mpSub, mpCancel: subs.mpCancel,
+		mpSub: subs.mpSub, mpCancel: subs.mpCancel, mpPollCancel: subs.mpPollCancel,
+		budgetSub: subs.budgetSub, budgetCancel: subs.budgetCancel,
 	}), nil
 }
 
 type startedSubscribers struct {
-	revSub    *revocation.Subscriber
-	revCancel context.CancelFunc
-	dirSub    *directive.Subscriber
-	dirCancel context.CancelFunc
-	rlSub     *ratelimit.ConfigSubscriber
-	rlCancel  context.CancelFunc
-	mpSub     *modelpolicy.Subscriber
-	mpCancel  context.CancelFunc
+	revSub       *revocation.Subscriber
+	revCancel    context.CancelFunc
+	dirSub       *directive.Subscriber
+	dirCancel    context.CancelFunc
+	rlSub        *ratelimit.ConfigSubscriber
+	rlCancel     context.CancelFunc
+	mpSub        *modelpolicy.Subscriber
+	mpCancel     context.CancelFunc
+	mpPollCancel context.CancelFunc
+	budgetSub    *redissub.OrgSubscriber
+	budgetCancel context.CancelFunc
 }
 
 func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput) (startedSubscribers, error) {
@@ -131,22 +142,61 @@ func startProxySubscribers(assembled assembledProxyCore, in setupProxyCoreInput)
 		stopSubscribersOnFailure(out)
 		return out, fmt.Errorf("model-policy subscriber: %w", err)
 	}
+	out.mpPollCancel = startModelPolicyEpochPoller(assembled.modelPolicyCache, in.log)
+	out.budgetSub, out.budgetCancel, err = startBudgetSubscriber(
+		assembled.redisClient, assembled.budgetCache, in.log, in.reg,
+	)
+	if err != nil {
+		stopSubscribersOnFailure(out)
+		return out, fmt.Errorf("budget subscriber: %w", err)
+	}
 	return out, nil
 }
 
 func stopSubscribersOnFailure(s startedSubscribers) {
 	stopRevocationOnFailure(s.revSub, s.revCancel)
-	if s.dirCancel != nil {
-		s.dirCancel()
+	stopDirectiveOnFailure(s.dirSub, s.dirCancel)
+	stopRateLimitOnFailure(s.rlSub, s.rlCancel)
+	stopModelPolicyOnFailure(s.mpSub, s.mpCancel, s.mpPollCancel)
+	stopBudgetOnFailure(s.budgetSub, s.budgetCancel)
+}
+
+func stopDirectiveOnFailure(sub *directive.Subscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
 	}
-	if s.dirSub != nil {
-		s.dirSub.Stop()
+	if sub != nil {
+		sub.Stop()
 	}
-	if s.rlCancel != nil {
-		s.rlCancel()
+}
+
+func stopRateLimitOnFailure(sub *ratelimit.ConfigSubscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
 	}
-	if s.rlSub != nil {
-		s.rlSub.Stop()
+	if sub != nil {
+		sub.Stop()
+	}
+}
+
+func stopModelPolicyOnFailure(sub *modelpolicy.Subscriber, cancel, pollCancel context.CancelFunc) {
+	if pollCancel != nil {
+		pollCancel()
+	}
+	if cancel != nil {
+		cancel()
+	}
+	if sub != nil {
+		sub.Stop()
+	}
+}
+
+func stopBudgetOnFailure(sub *redissub.OrgSubscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
+	}
+	if sub != nil {
+		sub.Stop()
 	}
 }
 
@@ -169,6 +219,9 @@ type proxyCoreParts struct {
 	rlConfigCancel context.CancelFunc
 	mpSub          *modelpolicy.Subscriber
 	mpCancel       context.CancelFunc
+	mpPollCancel   context.CancelFunc
+	budgetSub      *redissub.OrgSubscriber
+	budgetCancel   context.CancelFunc
 }
 
 func finishProxyCore(parts proxyCoreParts) *proxyCore {
@@ -180,11 +233,14 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 		revSub:            parts.revSub, revCancel: parts.revCancel,
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		rlConfigSub: parts.rlConfigSub, rlConfigCancel: parts.rlConfigCancel,
-		mpSub: parts.mpSub, mpCancel: parts.mpCancel,
-		checkpointPool: parts.assembled.checkpointPool,
-		sessionSweeper: parts.assembled.sessionSweeper,
-		traceWriter:    parts.assembled.traceWriter,
-		tokenizerReg:   parts.assembled.tokenizerReg,
+		mpSub: parts.mpSub, mpCancel: parts.mpCancel, mpPollCancel: parts.mpPollCancel,
+		budgetSub: parts.budgetSub, budgetCancel: parts.budgetCancel,
+		budgetCache:     parts.assembled.budgetCache,
+		usageFactWriter: parts.assembled.usageFactWriter,
+		checkpointPool:  parts.assembled.checkpointPool,
+		sessionSweeper:  parts.assembled.sessionSweeper,
+		traceWriter:     parts.assembled.traceWriter,
+		tokenizerReg:    parts.assembled.tokenizerReg,
 	}
 }
 
@@ -204,6 +260,8 @@ type assembledProxyCore struct {
 	modelPolicyCache  *modelpolicy.Cache
 	modelRouter       proxyhttp.ProviderResolver
 	agentDefaults     modelpolicy.AgentDefaultLoader
+	budgetCache       *billing.Cache
+	usageFactWriter   *billing.UsageFactWriter
 }
 
 type proxyInfra struct {
@@ -284,29 +342,11 @@ type finishAssembledCoreInput struct {
 }
 
 func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error) {
-	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
+	parts, err := buildRouterAssembleParts(in)
 	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
+		return assembledProxyCore{}, err
 	}
-	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("tokenizer registry: %w", err)
-	}
-	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
-	}
-	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(in.infra.pgDB, providerReg, in.log, in.reg)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("model policy: %w", err)
-	}
-	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
-	deps := assembledRouterDeps(routerAssembleParts{
-		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
-		idempStore: idempStore, traceWriter: traceWriter,
-		modelRouter: modelRouter, agentDefaults: agentDefaults,
-	})
-	server, err := newHTTPServer(deps)
+	server, err := newHTTPServer(assembledRouterDeps(parts))
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
 	}
@@ -317,19 +357,58 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		validator: in.infra.auth.validator, limiter: in.infra.limiter,
 		directiveResolver: in.infra.directiveResolver,
 		checkpointPool:    in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
-		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
-		modelPolicyCache: mpCache, modelRouter: modelRouter, agentDefaults: agentDefaults,
+		traceWriter: parts.traceWriter, tokenizerReg: parts.tokenizerReg,
+		modelPolicyCache: parts.mpCache, modelRouter: parts.modelRouter, agentDefaults: parts.agentDefaults,
+		budgetCache: parts.budgetCache, usageFactWriter: parts.usageFactWriter,
+	}, nil
+}
+
+func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts, error) {
+	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("provider registry: %w", err)
+	}
+	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("tokenizer registry: %w", err)
+	}
+	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("idempotency store: %w", err)
+	}
+	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
+		PGDB:             in.infra.pgDB,
+		Base:             providerReg,
+		Log:              in.log,
+		Metrics:          in.reg,
+		AllowPassthrough: in.cfg.ModelPolicyAllowPassthrough,
+	})
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("model policy: %w", err)
+	}
+	budgetCache, err := newBudgetCache(in.infra.pgDB, in.reg)
+	if err != nil {
+		return routerAssembleParts{}, wrapBudgetCacheErr(err)
+	}
+	return routerAssembleParts{
+		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
+		idempStore: idempStore, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
+		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
+		budgetCache: budgetCache, usageFactWriter: optionalUsageFactWriter(in.cfg.ClickHouseDSN, in.log, in.reg, nil),
 	}, nil
 }
 
 type routerAssembleParts struct {
-	in            finishAssembledCoreInput
-	providerReg   *provider.Registry
-	tokenizerReg  *tokenizer.Registry
-	idempStore    idempotency.Store
-	traceWriter   *ibexch.Writer
-	modelRouter   proxyhttp.ProviderResolver
-	agentDefaults modelpolicy.AgentDefaultLoader
+	in              finishAssembledCoreInput
+	providerReg     *provider.Registry
+	tokenizerReg    *tokenizer.Registry
+	idempStore      idempotency.Store
+	traceWriter     *ibexch.Writer
+	modelRouter     proxyhttp.ProviderResolver
+	agentDefaults   modelpolicy.AgentDefaultLoader
+	mpCache         *modelpolicy.Cache
+	budgetCache     *billing.Cache
+	usageFactWriter *billing.UsageFactWriter
 }
 
 func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
@@ -337,9 +416,11 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
-		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
-		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
+		Limiter: in.infra.limiter, BudgetCache: p.budgetCache, UsageFactWriter: p.usageFactWriter,
+		DirectiveResolver: in.infra.directiveResolver,
+		SessionStore:      in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
+		EvidenceStore:    in.infra.sessionStack.evidence,
 		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
 		ProviderRegistry: p.providerReg,
 		ModelRouter:      p.modelRouter,

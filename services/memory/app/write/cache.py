@@ -89,7 +89,7 @@ class MemoryCacheWriter:
             object.__setattr__(
                 self, "_hot_zadd_trim", register_hot_zadd_trim_script(self.redis)
             )
-        score = compute_hot_cache_score(memory)
+        score = compute_hot_cache_score(memory, weights=self.settings.rank_weights())
         key = self.hot_key(memory.org_id, memory.agent_id)
         await zadd_hot_memory(
             self._hot_zadd_trim,

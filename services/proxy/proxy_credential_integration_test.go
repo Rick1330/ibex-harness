@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -111,7 +113,7 @@ func mustCreateOrgCredential(t *testing.T, authFx *integrationtest.AuthGRPCFixtu
 	)
 	defer cancel()
 	_, err := authFx.Client.CreateProviderCredential(ctx, &authv1.CreateProviderCredentialRequest{
-		OrgId: seed.orgID, ProviderName: "openai", ApiKey: seed.apiKey, BaseUrl: "https://byo.example/v1",
+		OrgId: seed.orgID, ProviderName: "openai", ApiKey: seed.apiKey, BaseUrl: "https://example.com/v1",
 	})
 	if err != nil {
 		t.Fatalf("CreateProviderCredential: %v", err)
@@ -121,8 +123,12 @@ func mustCreateOrgCredential(t *testing.T, authFx *integrationtest.AuthGRPCFixtu
 func TestProxyAuthIntegration_GetProviderCredential_BYOAndPlatformDefault(t *testing.T) {
 	fx := setupCredentialProxyFixture(t)
 	body := `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
+	assertBYOCredentialChat(t, fx, body)
+	assertPlatformDefaultCredentialChat(t, fx, body)
+}
 
-	// Credential-found: org A sealed row → chat Complete sees BYO override from real Get RPC.
+func assertBYOCredentialChat(t *testing.T, fx credProxyFixture, body string) {
+	t.Helper()
 	fx.capture.last = provider.Request{}
 	resp, respBody := chatPOST(t, chatRequestOpts{
 		srvURL: fx.srv.URL, bearer: fx.chatA, agentID: fx.agentA,
@@ -136,19 +142,42 @@ func TestProxyAuthIntegration_GetProviderCredential_BYOAndPlatformDefault(t *tes
 		t.Fatalf("BYO APIKeyOverride=%q want %q (GetProviderCredential RPC round-trip)",
 			fx.capture.last.APIKeyOverride, fx.byoAPIKey)
 	}
-	if fx.capture.last.BaseURLOverride != "https://byo.example/v1" {
-		t.Fatalf("BaseURLOverride=%q", fx.capture.last.BaseURLOverride)
+	if fx.capture.last.TLSServerName != "example.com" {
+		t.Fatalf("TLSServerName=%q", fx.capture.last.TLSServerName)
 	}
+	assertIPPinnedBaseURL(t, fx.capture.last.BaseURLOverride)
+}
 
-	// No-row / platform-default: org B has no credential → no override.
+func assertIPPinnedBaseURL(t *testing.T, raw string) {
+	t.Helper()
+	if strings.Contains(raw, "example.com") {
+		t.Fatalf("BaseURLOverride=%q still contains hostname", raw)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("BaseURLOverride parse: %v", err)
+	}
+	if parsed.Scheme != "https" {
+		t.Fatalf("BaseURLOverride scheme=%q want https", parsed.Scheme)
+	}
+	if net.ParseIP(parsed.Hostname()) == nil {
+		t.Fatalf("BaseURLOverride host=%q want literal IP", parsed.Hostname())
+	}
+	if parsed.Path != "/v1" && !strings.HasPrefix(parsed.Path, "/v1/") {
+		t.Fatalf("BaseURLOverride path=%q want /v1", parsed.Path)
+	}
+}
+
+func assertPlatformDefaultCredentialChat(t *testing.T, fx credProxyFixture, body string) {
+	t.Helper()
 	fx.capture.last = provider.Request{}
-	resp2, respBody2 := chatPOST(t, chatRequestOpts{
+	resp, respBody := chatPOST(t, chatRequestOpts{
 		srvURL: fx.srv.URL, bearer: fx.chatB, agentID: fx.agentB,
 		contentType: "application/json", body: body,
 	})
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusOK {
-		t.Fatalf("platform-default chat status=%d body=%s", resp2.StatusCode, respBody2)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("platform-default chat status=%d body=%s", resp.StatusCode, respBody)
 	}
 	if fx.capture.last.APIKeyOverride != "" {
 		t.Fatalf("platform-default APIKeyOverride=%q want empty", fx.capture.last.APIKeyOverride)

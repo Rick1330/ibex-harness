@@ -30,7 +30,7 @@ func TestOrgIDFromChannel_RejectsBad(t *testing.T) {
 
 func TestInvalidateEvent_MarshalRejectsBad(t *testing.T) {
 	t.Parallel()
-	_, err := (InvalidateEvent{Version: 99, OrgID: uuid.New().String()}).Marshal()
+	_, err := (InvalidateEvent{Version: 99, OrgID: uuid.New().String(), Epoch: 1}).Marshal()
 	if err == nil {
 		t.Fatal("expected version error")
 	}

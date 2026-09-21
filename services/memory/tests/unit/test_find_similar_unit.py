@@ -185,6 +185,25 @@ async def test_find_similar_sparse_fts_fallback(
         assert any(item.source == "full_text" for item in results)
 
 
+def test_fts_candidates_clamp_unbounded_ts_rank_to_unit_similarity() -> None:
+    """ts_rank_cd can exceed 1 (e.g. 2.0); HTTP/context similarity must stay in [0, 1]."""
+    from app.read.repository import _clamp_unit_interval, _fts_candidates
+
+    assert _clamp_unit_interval(2.0) == 1.0
+    assert _clamp_unit_interval(-0.5) == 0.0
+    assert _clamp_unit_interval(0.42) == pytest.approx(0.42)
+
+    memory_id = uuid4()
+    candidates = _fts_candidates(
+        [FullTextHit(memory_id=memory_id, rank=2.0)],
+        cap=5,
+    )
+    assert len(candidates) == 1
+    assert candidates[0].memory_id == memory_id
+    assert candidates[0].source == "full_text"
+    assert candidates[0].score == pytest.approx(1.0)
+
+
 @pytest.mark.asyncio
 async def test_find_similar_no_fallback_at_exact_limit() -> None:
     ids = [uuid4(), uuid4()]

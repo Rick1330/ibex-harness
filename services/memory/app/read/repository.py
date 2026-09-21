@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from uuid import UUID
 
 from sqlalchemy import text
@@ -21,20 +22,29 @@ from app.read.pii_guard import filter_pii_blocked_results
 from app.read.ranking import (
     HydratedHit,
     RankedCandidate,
+    RankOptions,
     merge_candidates,
     rank_hydrated_hits,
 )
 from app.vectorstore.base import SearchHit, SearchRequest, VectorStore
 
 _HYDRATE_SQL = """
-SELECT id, org_id, agent_id, content, category, confidence, status,
-       created_at, updated_at, valid_from, usefulness_score, retrieval_count
-FROM ibex_core.memories
-WHERE org_id = :org_id
-  AND id = ANY(CAST(:memory_ids AS uuid[]))
-  AND confidence >= :min_confidence
-  AND status = 'active'
-  AND deleted_at IS NULL
+SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
+       m.created_at, m.updated_at, m.valid_from, m.usefulness_score, m.retrieval_count,
+       COALESCE(
+         (
+           SELECT array_agg(ml.label ORDER BY ml.confidence DESC, ml.label ASC)
+           FROM ibex_core.memory_labels ml
+           WHERE ml.memory_id = m.id AND ml.org_id = m.org_id
+         ),
+         ARRAY[m.category]
+       ) AS categories
+FROM ibex_core.memories m
+WHERE m.org_id = :org_id
+  AND m.id = ANY(CAST(:memory_ids AS uuid[]))
+  AND m.confidence >= :min_confidence
+  AND m.status = 'active'
+  AND m.deleted_at IS NULL
 """
 
 
@@ -83,10 +93,14 @@ class MemoryReadRepository:
             min_confidence=query.min_confidence,
         )
         floor = self._settings.composite_relevance_floor
+        rank_opts = RankOptions(
+            relevance_floor=floor,
+            weights=self._settings.rank_weights(),
+        )
         vector_ranked = rank_hydrated_hits(
             vector_candidates,
             vector_hydrated,
-            relevance_floor=floor,
+            rank_opts,
         )
         if len(vector_ranked) >= query.limit:
             return filter_pii_blocked_results(vector_ranked[: query.limit])
@@ -107,7 +121,7 @@ class MemoryReadRepository:
         )
         all_hydrated = {**fts_hydrated, **vector_hydrated}
         return filter_pii_blocked_results(
-            rank_hydrated_hits(merged, all_hydrated, relevance_floor=floor)[: query.limit]
+            rank_hydrated_hits(merged, all_hydrated, rank_opts)[: query.limit]
         )
 
     async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:
@@ -203,12 +217,22 @@ class MemoryReadRepository:
                     source=ranked.source,
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
+                    categories=_categories_from_row(row),
                 ),
                 valid_from=row["valid_from"],
                 usefulness_score=float(row["usefulness_score"]),
                 retrieval_count=int(row["retrieval_count"]),
             )
         return out
+
+
+def _categories_from_row(row: Mapping[str, object]) -> tuple[str, ...]:
+    raw = row.get("categories")
+    if raw is None:
+        return (str(row["category"]),)
+    if isinstance(raw, str):
+        return (raw,)
+    return tuple(str(label) for label in raw)  # type: ignore[union-attr]
 
 
 def _vector_candidates(hits: list[SearchHit]) -> list[RankedCandidate]:
@@ -219,7 +243,20 @@ def _vector_candidates(hits: list[SearchHit]) -> list[RankedCandidate]:
 
 
 def _fts_candidates(hits: list[FullTextHit], *, cap: int) -> list[RankedCandidate]:
+    # ts_rank_cd is unbounded; HTTP/context treat ``similarity`` as a [0, 1] unit.
     return [
-        RankedCandidate(memory_id=hit.memory_id, score=hit.rank, source="full_text")
+        RankedCandidate(
+            memory_id=hit.memory_id,
+            score=_clamp_unit_interval(hit.rank),
+            source="full_text",
+        )
         for hit in hits[:cap]
     ]
+
+
+def _clamp_unit_interval(value: float) -> float:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value

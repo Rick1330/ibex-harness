@@ -2,7 +2,7 @@
 title: "Query, Usage & Cost Data Platform"
 description: "Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy."
 summary: "Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy."
-status: "planned"
+status: "in-progress"
 milestoneId: "4.P.4"
 track: "P"
 trackTitle: "Operator Readiness, Evidence & Control Plane"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 4.P.4 — Query, Usage & Cost Data Platform"
 
 # Milestone 4.P.4 — Query, Usage & Cost Data Platform
 
-**Status:** Planned  
+**Status:** In progress (backend ledger + fail-closed spend caps on PR tip; remaining items below)  
 **Outcome:** Dashboard reads are bounded and explainable, and usage/cost facts can safely drive policy.  
 **Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
 **Dependencies:** 4.P.2; 4.P.3 (capture/redaction defaults)  
@@ -24,6 +24,18 @@ fullTitle: "Milestone 4.P.4 — Query, Usage & Cost Data Platform"
 
 <Callout type="note" title="Completion contract">
   Charts over request counts are not cost governance. Every ClickHouse query shape requires an explicit `org_id` parameter and predicate.
+</Callout>
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Locked for implementation (4.P.4):
+
+  - **Hybrid ledger:** ClickHouse `ibex.usage_facts` (immutable per-call facts) + Postgres `ibex_billing` (rate cards, budget periods, enforcement decisions).
+  - **No TTL** on `usage_facts` (indefinite retention; explicit ops purge later) — matches billing retention carve-out.
+  - **Write-time freeze:** `estimated_cost_cents` + `rate_card_version` frozen at enqueue; `actual_cost_cents` only via worker reconciliation (**deferred** to [#859](https://github.com/Rick1330/ibex-harness/issues/859) until a provider invoice source exists). CH→PG **spent rollup** is active.
+  - **Spend caps fail-closed** via `packages/billing` cache (`budget_updates:{org_id}`); proxy `BudgetMiddleware` returns **402 `BUDGET_EXCEEDED`**. Usage-fact buffer overflow **rejects loudly** (metrics + error). RPM / `packages/ratelimit` fail-open is untouched.
+  - **Typed usagequery AST** in Go (`packages/usagequery`); Python Management API executes constrained SQL templates kept in sync via golden fixtures. Responses include `truncated`, `matched_count`, and `returned_count`.
+  - **Org deletion** does **not** erase CH `usage_facts` or PG billing rows (SECURITY.md billing carve-out).
+  - **Deferred to later milestones:** full dashboard query grammar (autocomplete, saved-view URL round-trip), Track D UI / 4.P.5 / 4.P.6, estimate↔actual drift alerts (blocked on #859).
 </Callout>
 
 ## Why this milestone exists
@@ -68,7 +80,9 @@ Further audit context (provenance only — roadmap and engineering pages are aut
 - [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
 ## Exit checklist
 
-- [ ] Query grammar and ClickHouse shapes documented with `org_id` requirement.
-- [ ] Usage ledger + rate-card schemas versioned.
-- [ ] Reconciliation and hard-cap negative tests attached.
-- [ ] URL-serializable saved-view round-trip proven.
+- [x] Query shapes with mandatory `org_id` (Go AST + Python templates + golden fixtures).
+- [x] Usage ledger + rate-card / budget schemas versioned (CH no-TTL + PG `ibex_billing` RLS).
+- [x] Hard-cap negative path on proxy (unit + Playwright fixture mounting real `BudgetMiddleware` → 402 `BUDGET_EXCEEDED`).
+- [x] CH→PG spent rollup active; estimate↔actual invoice reconcile **explicitly deferred** to [#859](https://github.com/Rick1330/ibex-harness/issues/859).
+- [ ] URL-serializable saved-view round-trip proven (Track D / later 4.P.4 follow-up).
+- [ ] Full operator Playwright matrix beyond journey #8 (Track E).

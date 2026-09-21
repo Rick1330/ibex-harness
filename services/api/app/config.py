@@ -99,6 +99,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("JWT_HMAC_SECRET", "IBEX_API_JWT_HMAC_SECRET"),
         description="Provisional HMAC secret for operator session JWTs (≥32 bytes when set)",
     )
+    jwt_public_keys_pem: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "DASHBOARD_JWT_PUBLIC_KEYS_PEM", "IBEX_API_JWT_PUBLIC_KEYS_PEM"
+        ),
+        description="PEM public key(s) for Auth-issued RS256 session JWTs (4.P.1 dual-verify)",
+    )
     dashboard_session_cookie_name: str = Field(
         default="ibex_session",
         validation_alias=AliasChoices(
@@ -165,6 +172,27 @@ class Settings(BaseSettings):
             "IBEX_API_OPERATOR_FEATURE_ENABLED", "IBEX_OPERATOR_FEATURE_ENABLED"
         ),
         description="Kill switch: when false, operator session/SSE routes return 503",
+    )
+    operator_allow_raw_read: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("IBEX_OPERATOR_ALLOW_RAW_READ"),
+        description="Per-action kill switch for operator raw-read (default off)",
+    )
+    operator_allow_export: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("IBEX_OPERATOR_ALLOW_EXPORT"),
+    )
+    operator_allow_delete: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("IBEX_OPERATOR_ALLOW_DELETE"),
+    )
+    operator_allow_replay: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("IBEX_OPERATOR_ALLOW_REPLAY"),
+    )
+    operator_allow_secret_use: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("IBEX_OPERATOR_ALLOW_SECRET_USE"),
     )
 
     @field_validator("database_url", mode="before")

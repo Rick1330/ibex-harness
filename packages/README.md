@@ -48,6 +48,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `chdsn/` | ClickHouse DSN flattening helpers |
 | `circuitbreaker/` | Shared provider breaker (consecutive default + opt-in rolling window; [ADR-0076](../web/content/docs/adr/0076-circuit-breaker-per-provider.mdx)); optional wrap for context Assemble deferred |
 | `contextclient/` | Fail-open Go gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../web/content/docs/adr/0071-context-grpc-degradation-deadline.mdx)): `Assemble` never returns a Go `error` (`Fallback` flag); default **45ms** `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`; dial/wire in proxy bootstrap |
+| `evidenceoutbox/` | 4.P.2 evidence-scoped transactional outbox + durable evidence writers (runs/spans/metrics/scores/directive/tool/session_events); relay with crash/replay; does **not** absorb model-policy or org-deletion publication |
 
 ---
 
