@@ -398,6 +398,7 @@ func integrationDSN() string {
 func resetSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
+	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
 	_, _ = db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_app`)

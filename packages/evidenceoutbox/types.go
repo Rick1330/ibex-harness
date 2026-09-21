@@ -116,6 +116,9 @@ type RunInput struct {
 	Directive      *DirectiveSnapshot
 	Tools          []ToolAudit
 	SessionEvents  []SessionEventInput
+	// DeployImageDigest is the OCI digest of the service binary that wrote this
+	// bundle (4.P.5). Empty means unset / pre-4.P.5 writers.
+	DeployImageDigest string
 }
 
 // PersistResult is the outcome of PersistRun (IDs for joins / tests).

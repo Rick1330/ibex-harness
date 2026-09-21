@@ -6,7 +6,11 @@ from datetime import timedelta
 
 from app.celery_app import create_celery_app
 from app.config import Settings
-from app.task_names import TASK_MAINTENANCE_NOOP_SWEEP
+from app.task_names import (
+    TASK_BUDGET_SPENT_ROLLUP,
+    TASK_MAINTENANCE_NOOP_SWEEP,
+    TASK_RECONCILE_USAGE_ACTUALS,
+)
 
 
 def test_beat_schedule_registered() -> None:
@@ -19,7 +23,11 @@ def test_beat_schedule_registered() -> None:
     app = create_celery_app(settings)
     schedule = app.conf.beat_schedule or {}
     assert "maintenance-noop-sweep" in schedule
+    assert "reconcile-usage-actuals" in schedule
+    assert "budget-spent-rollup" in schedule
     entry = schedule["maintenance-noop-sweep"]
     assert entry["task"] == TASK_MAINTENANCE_NOOP_SWEEP
     assert entry["options"]["queue"] == "maintenance"
     assert entry["schedule"].run_every == timedelta(seconds=120)
+    assert schedule["reconcile-usage-actuals"]["task"] == TASK_RECONCILE_USAGE_ACTUALS
+    assert schedule["budget-spent-rollup"]["task"] == TASK_BUDGET_SPENT_ROLLUP

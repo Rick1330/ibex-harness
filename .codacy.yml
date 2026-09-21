@@ -27,6 +27,8 @@ exclude_paths:
   # break golang-migrate, so exclude all migration SQL.
   - "infra/migrations/postgres/*.sql"
   - "infra/migrations/clickhouse/*.sql"
+  # ClickHouse query goldens (toStartOfHour / countIf / ?) are not T-SQL.
+  - "packages/usagequery/testdata/**"
 
 # Postgres migrations are not T-SQL; disable the T-SQL-only engine.
 engines:

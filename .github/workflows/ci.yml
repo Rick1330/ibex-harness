@@ -1189,6 +1189,18 @@ jobs:
       REDIS_URL: redis://127.0.0.1:6379/0
       REDIS_DB_QUEUE: "1"
       REDIS_DB_RESULTS: "3"
+      # HTTP for worker; native for golang-migrate (CH native stays on host :9000).
+      CLICKHOUSE_DSN: http://default:ibextest@127.0.0.1:8123/ibex
+      CLICKHOUSE_MIGRATE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree
+      # MinIO started in-job on :9100 (GHA services cannot set `command server /data`).
+      S3_ENDPOINT: http://127.0.0.1:9100
+      S3_ALLOW_INSECURE_HTTP: "1"
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET_SESSIONS: ibex-sessions
+      S3_REGION: us-east-1
+      IBEX_ORG_DELETION_MULTISTORE_TEST: "1"
+      IBEX_ORG_DELETION_DEPLOYED_STORES: postgres,clickhouse,redis,objectstore
     services:
       redis:
         image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
@@ -1212,6 +1224,23 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      clickhouse:
+        # Immutable pin of clickhouse/clickhouse-server:24.8.14.39 (multi-arch index).
+        image: clickhouse/clickhouse-server:24.8.14.39@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+        env:
+          CLICKHOUSE_DB: ibex
+          CLICKHOUSE_USER: default
+          # Non-empty password required for host access (empty → localhost-only).
+          CLICKHOUSE_PASSWORD: ibextest
+        ports:
+          - 8123:8123
+          - 9000:9000
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 15s
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -1221,6 +1250,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -1228,10 +1260,34 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-      - name: Worker Redis integration tests
+      - name: Start MinIO and create sessions bucket
+        env:
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          set -euo pipefail
+          # Docker Hub minio/minio tag is gone; quay.io is the current upstream.
+          docker run -d --name ibex-ci-minio \
+            -p 9100:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3 \
+            server /data
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:9100/minio/health/live >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9100/minio/health/live >/dev/null
+          aws --endpoint-url http://127.0.0.1:9100 s3 mb s3://ibex-sessions || true
+          aws --endpoint-url http://127.0.0.1:9100 s3 ls s3://ibex-sessions
+      - name: Worker Redis + multistore integration tests
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          S3_MASTER_KEY_B64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         run: bash infra/scripts/worker-integration-test-ci.sh
 
   memory-integration:

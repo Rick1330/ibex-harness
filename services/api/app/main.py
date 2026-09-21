@@ -17,6 +17,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
 from app.auth.client import GRPCTokenValidator, TokenValidator
+from app.budget_publish import (
+    BudgetPublisher,
+    NoopBudgetPublisher,
+    RedisBudgetPublisher,
+)
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
 from app.drain import DrainState
@@ -49,14 +54,19 @@ from app.revocation_publish import (
     RedisOrgSuspendPublisher,
 )
 from app.routers.agents import router as agents_router
+from app.routers.billing import router as billing_router
+from app.routers.capture_policies import router as capture_policies_router
+from app.routers.legal_holds import router as legal_holds_router
 from app.routers.model_policies import router as model_policies_router
 from app.routers.operator_events import router as operator_events_router
 from app.routers.organizations import router as organizations_router
+from app.routers.platform import router as platform_router
 from app.routers.providers import router as providers_router
 from app.routers.rate_limits import router as rate_limits_router
 from app.routers.session import router as session_router
 from app.routers.tenant import router as tenant_router
 from app.routers.tokens import router as tokens_router
+from app.routers.usage_query import router as usage_query_router
 from app.routers.users import router as users_router
 from app.sse.operator_events import OperatorSSEHub, redis_fan_in_loop
 
@@ -75,6 +85,7 @@ class ApiRuntimeOverrides:
     rate_limit_config_publisher: RateLimitConfigPublisher | None = None
     rate_limit_counter: RedisRateLimitCounter | None = None
     model_policy_publisher: ModelPolicyPublisher | None = None
+    budget_publisher: BudgetPublisher | None = None
     enqueue_org_deletion: Callable[[str, str], None] | None = None
 
 
@@ -93,6 +104,7 @@ class ApiAppState:
     rate_limit_config_publisher: RateLimitConfigPublisher | None = field(default=None, repr=False)
     rate_limit_counter: RedisRateLimitCounter | None = field(default=None, repr=False)
     model_policy_publisher: ModelPolicyPublisher | None = field(default=None, repr=False)
+    budget_publisher: BudgetPublisher | None = field(default=None, repr=False)
     enqueue_org_deletion: Callable[[str, str], None] | None = field(default=None, repr=False)
     drain: DrainState = field(default_factory=DrainState)
     operator_sse_hub: OperatorSSEHub | None = field(default=None, repr=False)
@@ -117,6 +129,7 @@ def create_app(
         rate_limit_config_publisher=hooks.rate_limit_config_publisher,
         rate_limit_counter=hooks.rate_limit_counter,
         model_policy_publisher=hooks.model_policy_publisher,
+        budget_publisher=hooks.budget_publisher,
         enqueue_org_deletion=hooks.enqueue_org_deletion,
     )
 
@@ -140,17 +153,34 @@ def create_app(
     application.add_exception_handler(RequestValidationError, request_validation_error_handler)
     application.add_exception_handler(StarletteHTTPException, http_exception_handler)
     application.add_exception_handler(Exception, unhandled_error_handler)
-    application.include_router(probe_router)
-    application.include_router(tenant_router)
-    application.include_router(organizations_router)
-    application.include_router(users_router)
-    application.include_router(agents_router)
-    application.include_router(tokens_router)
-    application.include_router(providers_router)
-    application.include_router(rate_limits_router)
-    application.include_router(model_policies_router)
-    application.include_router(session_router)
-    application.include_router(operator_events_router)
+    _mount_routers(application)
+    _mount_middleware(application, cfg)
+    return application
+
+
+def _mount_routers(application: FastAPI) -> None:
+    for router in (
+        probe_router,
+        tenant_router,
+        organizations_router,
+        users_router,
+        agents_router,
+        tokens_router,
+        providers_router,
+        rate_limits_router,
+        model_policies_router,
+        billing_router,
+        usage_query_router,
+        legal_holds_router,
+        capture_policies_router,
+        session_router,
+        operator_events_router,
+        platform_router,
+    ):
+        application.include_router(router)
+
+
+def _mount_middleware(application: FastAPI, cfg: Settings) -> None:
     # Middleware: last added = outermost. CORS must be outermost (Sonar/FastAPI).
     # CSRF is pure ASGI so RequestId contextvars remain visible to handlers.
     application.add_middleware(HTTPMetricsMiddleware)
@@ -172,7 +202,6 @@ def create_app(
         expose_headers=["X-Request-ID", "X-IBEX-Drain"],
         max_age=600,
     )
-    return application
 
 
 def _mark_not_ready(state: ApiAppState, message: str) -> None:
@@ -233,6 +262,12 @@ def _wire_publishers(state: ApiAppState, cfg: Settings) -> None:
             if cfg.redis_url
             else NoopModelPolicyPublisher()
         )
+    if state.budget_publisher is None:
+        state.budget_publisher = (
+            RedisBudgetPublisher(cfg.redis_url)
+            if cfg.redis_url
+            else NoopBudgetPublisher()
+        )
 
 
 async def _aclose_optional(obj: object | None) -> None:
@@ -270,6 +305,7 @@ async def _close_runtime(state: ApiAppState, auth: TokenValidator) -> None:
         state.rate_limit_config_publisher,
         state.rate_limit_counter,
         state.model_policy_publisher,
+        state.budget_publisher,
     ):
         await _aclose_optional(obj)
     if state.engine is not None:

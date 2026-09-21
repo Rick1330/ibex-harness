@@ -53,6 +53,7 @@ func integrationDSN() string {
 func resetSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
+	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_billing CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS ibex_core CASCADE`)
 	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
 	_, _ = db.ExecContext(ctx, `DROP ROLE IF EXISTS ibex_app`)
@@ -202,6 +203,7 @@ func fullPersistRunInput(orgID, sessionID uuid.UUID) evidenceoutbox.RunInput {
 		SessionEvents: []evidenceoutbox.SessionEventInput{
 			{SessionID: sessionID, SequenceNumber: 1, EventType: "evidence_assembly", Data: map[string]any{"ok": true}},
 		},
+		DeployImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
 	}
 }
 
@@ -209,15 +211,24 @@ func assertPersistRunMetrics(t *testing.T, db *sql.DB, runID uuid.UUID, wantTota
 	t.Helper()
 	tx := beginServiceTx(t, db)
 	var metricsTotal int
+	var digest sql.NullString
 	const q = `SELECT total_ms FROM ibex_core.evidence_assembly_metrics WHERE run_id = $1`
 	if err := tx.QueryRowContext(context.Background(), q, runID).Scan(&metricsTotal); err != nil {
 		t.Fatalf("metrics: %v", err)
+	}
+	const dq = `SELECT deploy_image_digest FROM ibex_core.evidence_runs WHERE id = $1`
+	if err := tx.QueryRowContext(context.Background(), dq, runID).Scan(&digest); err != nil {
+		t.Fatalf("deploy_image_digest: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit metrics tx: %v", err)
 	}
 	if metricsTotal != wantTotal {
 		t.Fatalf("total_ms=%d want %d", metricsTotal, wantTotal)
+	}
+	wantDigest := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	if !digest.Valid || digest.String != wantDigest {
+		t.Fatalf("deploy_image_digest=%v want %q", digest, wantDigest)
 	}
 }
 

@@ -3,7 +3,7 @@
 FTS supplemental hits have no cosine similarity. For composite scoring only we use a fixed
 conservative relevance sentinel (0.5) so FTS rows rank below strong vector matches on the
 relevance component while still competing on recency/confidence/usefulness. HTTP ``similarity``
-remains the retrieval metric (cosine or raw ts_rank_cd).
+remains the retrieval metric (cosine similarity, or FTS ``ts_rank_cd`` clamped to ``[0, 1]``).
 
 Scoring-time relevance floor (ADR-0068): candidates whose composite relevance component is
 below ``relevance_floor`` are excluded *before* ``composite_score``. This is distinct from
@@ -20,7 +20,7 @@ from typing import Final
 from uuid import UUID
 
 from app.read.models import MemorySearchResult, SearchSource
-from app.scoring import CompositeInputs, composite_score, passes_relevance_floor
+from app.scoring import CompositeInputs, RankWeights, composite_score, passes_relevance_floor
 
 FTS_COMPOSITE_RELEVANCE: Final[float] = 0.5
 
@@ -58,14 +58,28 @@ class HydratedHit:
         if valid_from.tzinfo is None:
             valid_from = valid_from.replace(tzinfo=UTC)
         age_days = max(0.0, (reference - valid_from).total_seconds() / 86400.0)
+        categories = (
+            self.result.categories
+            if self.result.categories
+            else (self.result.category,)
+        )
         return CompositeInputs(
             relevance=relevance,
             age_days=age_days,
-            categories=(self.result.category,),
+            categories=categories,
             usefulness=float(self.usefulness_score),
             confidence=float(self.result.confidence),
             access_frequency=min(1.0, self.retrieval_count / _ACCESS_FREQUENCY_CAP),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RankOptions:
+    """Optional knobs for ``rank_hydrated_hits`` (keeps public arity ≤ 3)."""
+
+    now: datetime | None = None
+    relevance_floor: float = DEFAULT_COMPOSITE_RELEVANCE_FLOOR
+    weights: RankWeights | None = None
 
 
 def merge_candidates(
@@ -88,16 +102,15 @@ def relevance_for_composite(candidate: RankedCandidate) -> float:
 def rank_hydrated_hits(
     candidates: list[RankedCandidate],
     hydrated: dict[UUID, HydratedHit],
-    *,
-    now: datetime | None = None,
-    relevance_floor: float = DEFAULT_COMPOSITE_RELEVANCE_FLOOR,
+    options: RankOptions | None = None,
 ) -> list[MemorySearchResult]:
     """Sort by composite score descending; stable tie-break on memory_id.
 
     Candidates whose composite relevance is below ``relevance_floor`` are skipped
     (never scored). Empty input or all-below-floor yields an empty list.
     """
-    reference = now or datetime.now(tz=UTC)
+    opts = options or RankOptions()
+    reference = opts.now or datetime.now(tz=UTC)
     scored: list[tuple[float, UUID, MemorySearchResult]] = []
     candidate_by_id = {item.memory_id: item for item in candidates}
     for memory_id, hit in hydrated.items():
@@ -105,10 +118,11 @@ def rank_hydrated_hits(
         if ranked is None:
             continue
         relevance = relevance_for_composite(ranked)
-        if not passes_relevance_floor(relevance, relevance_floor):
+        if not passes_relevance_floor(relevance, opts.relevance_floor):
             continue
         composite = composite_score(
-            hit.composite_inputs(relevance, now=reference)
+            hit.composite_inputs(relevance, now=reference),
+            opts.weights,
         )
         scored.append((composite, memory_id, hit.result))
     scored.sort(key=lambda item: (-item[0], str(item[1])))

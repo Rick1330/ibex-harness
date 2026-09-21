@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "ibex-harness values",
+  "type": "object",
+  "required": ["images"],
+  "properties": {
+    "images": {
+      "type": "object",
+      "required": [
+        "proxy",
+        "auth",
+        "api",
+        "worker",
+        "memory",
+        "embedder",
+        "mcpMemory"
+      ],
+      "properties": {
+        "proxy": { "$ref": "#/definitions/digestPinnedImage" },
+        "auth": { "$ref": "#/definitions/digestPinnedImage" },
+        "api": { "$ref": "#/definitions/digestPinnedImage" },
+        "worker": { "$ref": "#/definitions/digestPinnedImage" },
+        "memory": { "$ref": "#/definitions/digestPinnedImage" },
+        "embedder": { "$ref": "#/definitions/digestPinnedImage" },
+        "mcpMemory": { "$ref": "#/definitions/digestPinnedImage" },
+        "migrate": {
+          "type": "string",
+          "pattern": "^.+@sha256:[a-f0-9]{64}$",
+          "not": {
+            "pattern": "@sha256:0{64}$"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "migrate": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backoffLimit": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "properties": {
+        "enqueue": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "secretName": { "type": "string", "minLength": 1 },
+            "redisUrlKey": { "type": "string", "minLength": 1 },
+            "enqueueTokenKey": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "digestPinnedImage": {
+      "type": "string",
+      "pattern": "^.+@sha256:[a-f0-9]{64}$",
+      "not": {
+        "pattern": "@sha256:0{64}$"
+      }
+    }
+  }
+}

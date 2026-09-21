@@ -1,0 +1,36 @@
+{{- if .Values.migrate.enabled }}
+# Migration Job runs before app traffic using the dedicated migrate image.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ibex.name" . }}-migrate-{{ .Release.Revision }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ibex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "-5"
+spec:
+  backoffLimit: {{ .Values.migrate.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: migrate
+          image: {{ .Values.images.migrate | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["/ibex-migrate", "-command", "up"]
+          env:
+            - name: POSTGRES_MIGRATE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: ibex-postgres
+                  key: migrate-dsn
+                  optional: false
+{{- end }}

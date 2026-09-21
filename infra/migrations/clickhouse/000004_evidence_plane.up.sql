@@ -1,8 +1,8 @@
 -- Milestone 4.P.2: evidence-plane ClickHouse projections.
--- Dual-write window: legacy ibex.llm_traces remains the aggregate row;
+-- Dual-write window: legacy ibex.llm_traces remains the aggregate row.
 -- new columns + companion tables carry nested span / metrics identity.
 -- Write-path failure policy: FAIL-OPEN (unchanged from Phase 2) — CH down
--- must not block chat completions; drops are logged/metric'd only.
+-- must not block chat completions, drops are logged/metric'd only.
 
 ALTER TABLE ibex.llm_traces
     ADD COLUMN IF NOT EXISTS trace_id String DEFAULT '',
