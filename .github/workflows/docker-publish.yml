@@ -417,7 +417,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy auth SARIF
         if: always() && hashFiles('trivy-image-auth.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-auth.sarif
           category: trivy-image-auth
@@ -453,7 +453,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy proxy SARIF
         if: always() && hashFiles('trivy-image-proxy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-proxy.sarif
           category: trivy-image-proxy
@@ -502,7 +502,7 @@ jobs:
           fi
       - name: Upload Trivy embedder SARIF
         if: always() && hashFiles('trivy-image-embedder.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-embedder.sarif
           category: trivy-image-embedder
@@ -550,7 +550,7 @@ jobs:
           fi
       - name: Upload Trivy mcp-memory SARIF
         if: always() && hashFiles('trivy-image-mcp-memory.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-mcp-memory.sarif
           category: trivy-image-mcp-memory
@@ -599,7 +599,7 @@ jobs:
           fi
       - name: Upload Trivy memory SARIF
         if: always() && hashFiles('trivy-image-memory.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-memory.sarif
           category: trivy-image-memory
@@ -647,7 +647,7 @@ jobs:
           fi
       - name: Upload Trivy api SARIF
         if: always() && hashFiles('trivy-image-api.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-api.sarif
           category: trivy-image-api
@@ -695,7 +695,7 @@ jobs:
           fi
       - name: Upload Trivy worker SARIF
         if: always() && hashFiles('trivy-image-worker.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-worker.sarif
           category: trivy-image-worker
@@ -726,7 +726,7 @@ jobs:
           cd packages/proto
           buf generate
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -791,7 +791,7 @@ jobs:
           cd packages/proto
           buf generate
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -851,7 +851,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -911,7 +911,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -972,7 +972,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -1032,7 +1032,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -1091,7 +1091,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: linux/amd64,linux/arm64
       - name: Set up Docker Buildx
@@ -1182,7 +1182,7 @@ jobs:
           fi
       - name: Upload Trivy pushed-worker SARIF
         if: always() && hashFiles('trivy-image-worker-pushed.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy-image-worker-pushed.sarif
           category: trivy-image-worker-pushed
