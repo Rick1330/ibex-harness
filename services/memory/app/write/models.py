@@ -66,6 +66,8 @@ class MemoryRow:
     valid_until: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Full label set for half-life decay (F4-030a). Empty → scorers use (category,).
+    categories: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,10 +10,12 @@ import pytest
 from app.read.ranking import (
     FTS_COMPOSITE_RELEVANCE,
     RankedCandidate,
+    RankOptions,
     merge_candidates,
+    rank_hydrated_hits,
     relevance_for_composite,
 )
-from app.scoring import composite_score
+from app.scoring import RankWeights, composite_score
 from tests.unit.read_ranking_support import (
     HydratedHitSeed,
     assert_first_ranked,
@@ -77,3 +79,99 @@ def test_hydrated_hit_composite_inputs_matches_write_cache_shape() -> None:
     assert inputs.categories == ("factual",)
     assert inputs.access_frequency == pytest.approx(0.5)
     assert composite_score(inputs) > 0.0
+
+
+def test_rank_weights_from_settings_change_order() -> None:
+    """F4-029: configured RankWeights must change rank_hydrated_hits order."""
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+    high_rel = uuid4()
+    high_rec = uuid4()
+    candidates = [
+        RankedCandidate(memory_id=high_rel, score=0.95, source="vector"),
+        RankedCandidate(memory_id=high_rec, score=0.50, source="vector"),
+    ]
+    hydrated = {
+        high_rel: hydrated_hit(
+            HydratedHitSeed(
+                memory_id=high_rel,
+                similarity=0.95,
+                age_days=100.0,
+                usefulness=0.1,
+                confidence=0.5,
+            ),
+            now=now,
+        ),
+        high_rec: hydrated_hit(
+            HydratedHitSeed(
+                memory_id=high_rec,
+                similarity=0.50,
+                age_days=0.0,
+                usefulness=0.1,
+                confidence=0.5,
+            ),
+            now=now,
+        ),
+    }
+    relevance_heavy = RankWeights(
+        relevance=0.80,
+        recency=0.05,
+        usefulness=0.05,
+        confidence=0.05,
+        frequency=0.05,
+    )
+    recency_heavy = RankWeights(
+        relevance=0.05,
+        recency=0.80,
+        usefulness=0.05,
+        confidence=0.05,
+        frequency=0.05,
+    )
+    by_relevance = rank_hydrated_hits(
+        candidates, hydrated, RankOptions(now=now, weights=relevance_heavy)
+    )
+    by_recency = rank_hydrated_hits(
+        candidates, hydrated, RankOptions(now=now, weights=recency_heavy)
+    )
+    assert by_relevance[0].id == high_rel
+    assert by_recency[0].id == high_rec
+
+
+def test_multi_label_shortest_half_life_on_read_path() -> None:
+    """F4-030a: read ranking uses full categories, not primary alone."""
+    now = datetime(2026, 8, 29, tzinfo=UTC)
+    primary_only = uuid4()
+    multi = uuid4()
+    candidates = [
+        RankedCandidate(memory_id=primary_only, score=0.90, source="vector"),
+        RankedCandidate(memory_id=multi, score=0.90, source="vector"),
+    ]
+    hydrated = {
+        primary_only: hydrated_hit(
+            HydratedHitSeed(
+                memory_id=primary_only,
+                category="factual",
+                categories=("factual",),
+                similarity=0.90,
+                age_days=60.0,
+            ),
+            now=now,
+        ),
+        multi: hydrated_hit(
+            HydratedHitSeed(
+                memory_id=multi,
+                category="factual",
+                categories=("factual", "episodic"),
+                similarity=0.90,
+                age_days=60.0,
+            ),
+            now=now,
+        ),
+    }
+    ranked = rank_hydrated_hits(candidates, hydrated, RankOptions(now=now))
+    assert ranked[0].id == primary_only
+    assert ranked[1].id == multi
+    primary_score = composite_score(
+        hydrated[primary_only].composite_inputs(0.90, now=now)
+    )
+    multi_score = composite_score(hydrated[multi].composite_inputs(0.90, now=now))
+    assert multi_score < primary_score
