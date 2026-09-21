@@ -3,6 +3,154 @@
   "benchmark": "extraction_quality",
   "runs": [
     {
+      "sha": "ecfe91b90e8ca388f65e929892723aec103ba37b",
+      "short_sha": "ecfe91b",
+      "timestamp": "2026-09-21T08:44:59.916983+00:00",
+      "branch": "main",
+      "run_number": 78,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/35579450286",
+      "gold_set": "v1",
+      "conversation_count": 125,
+      "provider": "openai",
+      "enforcement": "ci",
+      "mode": "cassette",
+      "model": "gpt-4o-mini",
+      "metrics": {
+        "precision_macro": 1.0,
+        "recall_macro": 1.0,
+        "category_assignment_accuracy": 1.0,
+        "temporal_field_accuracy": 1.0,
+        "precision_factual": 1.0,
+        "recall_factual": 1.0,
+        "precision_preference": 1.0,
+        "recall_preference": 1.0,
+        "precision_behavioral": 1.0,
+        "recall_behavioral": 1.0,
+        "precision_episodic": 1.0,
+        "recall_episodic": 1.0,
+        "precision_procedural": 1.0,
+        "recall_procedural": 1.0
+      },
+      "status": "pass",
+      "gate_summary": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "openai.precision_factual regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.recall_factual regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.precision_preference regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.recall_preference regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.precision_behavioral regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.recall_behavioral regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.precision_episodic regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.recall_episodic regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.precision_procedural regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.recall_procedural regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.category_assignment_accuracy regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.temporal_field_accuracy regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.precision_macro regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          },
+          {
+            "name": "openai.recall_macro regression (pp)",
+            "value": 0.0,
+            "limit": 3.0,
+            "ok": true,
+            "current": 1.0,
+            "baseline": 1.0
+          }
+        ]
+      }
+    },
+    {
       "sha": "eae9cf9603f8943112e2cc421a09e9f3f5de8445",
       "short_sha": "eae9cf9",
       "timestamp": "2026-09-20T10:02:40.715840+00:00",
