@@ -1171,7 +1171,7 @@ jobs:
         run: bash infra/scripts/context-test-ci.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: services/context/coverage-context.xml
@@ -2010,7 +2010,7 @@ jobs:
         run: bash infra/scripts/coverage-gate.sh coverage-go-merged.out
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage-go-handwritten.out,coverage-go-unit.out,coverage-go-integration.out
@@ -2058,7 +2058,7 @@ jobs:
         run: bash infra/scripts/coverage-embedder-gate.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: services/embedder/coverage-embedder.xml
@@ -2106,7 +2106,7 @@ jobs:
         run: bash infra/scripts/coverage-mcp-memory-gate.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: services/mcp-memory/coverage-mcp-memory.xml
@@ -2142,7 +2142,7 @@ jobs:
         run: bash infra/scripts/coverage-memory-gate.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: services/memory/coverage-memory.xml
@@ -2178,7 +2178,7 @@ jobs:
         run: bash infra/scripts/coverage-api-gate.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: services/api/coverage-api.xml
@@ -2214,7 +2214,7 @@ jobs:
         run: bash infra/scripts/coverage-worker-gate.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: services/worker/coverage-worker.xml
