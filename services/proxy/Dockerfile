@@ -9,7 +9,7 @@ COPY services/proxy ./services/proxy
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -o /out/proxy ./services/proxy/cmd/proxy
 
-FROM alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # CVE-2026-14456: openssl 3.5.7 → 3.5.8 (alpine 3.24 image lag vs package index)
 RUN apk upgrade --no-cache libcrypto3 libssl3 \
   && adduser -D -H -u 10001 ibex
