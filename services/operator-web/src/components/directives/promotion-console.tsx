@@ -210,10 +210,11 @@ export function PromotionConsole({
 
           <div className="flex flex-wrap items-end gap-2">
             <div className="space-y-1">
-              <label className="text-[13px] text-muted-foreground">
+              <label htmlFor="rollout-strategy" className="text-[13px] text-muted-foreground">
                 Rollout strategy
               </label>
               <Select
+                name="rollout-strategy"
                 value={strategy}
                 onValueChange={(v) => setStrategy(v as RolloutStrategy)}
               >
@@ -233,9 +234,9 @@ export function PromotionConsole({
               </Select>
             </div>
             <div className="space-y-1">
-              <label className="text-[13px] text-muted-foreground">
+              <span className="text-[13px] text-muted-foreground">
                 Step-up
-              </label>
+              </span>
               <p className="max-w-[160px] text-[11px] text-muted-foreground">
                 DirectivePromote opens in-context TOTP (X-IBEX-Step-Up) — not a
                 page redirect.

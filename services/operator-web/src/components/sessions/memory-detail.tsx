@@ -24,12 +24,10 @@ export function MemoryDetailView({ memory }: { memory: MemoryDetail }) {
           Embedding version mismatch: retrieval used{" "}
           <span className="font-mono">
             {memory.embedding_model}@{memory.embedding_version}
-          </span>
-          , current config is{" "}
+          </span>,{" "}current config is{" "}
           <span className="font-mono">
             {memory.embedding_model}@{memory.current_embedding_version}
-          </span>
-          . Surfaced — not swallowed.
+          </span>.{" "}Surfaced — not swallowed.
         </p>
       )}
 

@@ -151,10 +151,12 @@ export function AuditPanel({
     )
   }
 
-  const actors = Array.from(new Set(entries.map((e) => e.actor))).sort()
+  const actors = Array.from(new Set(entries.map((e) => e.actor))).sort((a, b) =>
+    a.localeCompare(b),
+  )
   const resources = Array.from(
     new Set(entries.map((e) => e.resource_type)),
-  ).sort()
+  ).sort((a, b) => a.localeCompare(b))
 
   const filtered = entries
     .filter((e) => {

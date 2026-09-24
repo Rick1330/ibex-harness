@@ -434,7 +434,7 @@ function TopAgentsPanel() {
         {mockSummary.top_agents.map((a, i) => (
           <a
             key={a.name}
-            href="#"
+            href={`/dashboard/agents?q=${encodeURIComponent(a.name)}`}
             className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors hover:bg-muted"
           >
             <span className="w-4 text-xs text-muted-foreground tabular-nums">

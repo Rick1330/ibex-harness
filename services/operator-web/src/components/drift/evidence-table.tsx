@@ -325,14 +325,14 @@ export function MassCompare({
   return (
     <div className="w-full min-w-0 space-y-2.5">
       <div className="flex gap-3 text-[10px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1">
-          <span className="size-1.5 rounded-sm bg-muted-foreground/50" />
-          base
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="size-1.5 rounded-sm bg-foreground/70" />
-          now
-        </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="size-1.5 rounded-sm bg-muted-foreground/50" />
+            <span>base</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="size-1.5 rounded-sm bg-foreground/70" />
+            <span>now</span>
+          </span>
       </div>
       {labels.map((label) => (
         <div key={label} className="min-w-0 space-y-1">

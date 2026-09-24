@@ -257,4 +257,4 @@ export function toListItem(d: AgentDetail): AgentListItem {
 
 export const ALL_TAGS = Array.from(
   new Set(AGENT_STORE.flatMap((a) => a.tags)),
-).sort()
+).sort((a, b) => a.localeCompare(b))

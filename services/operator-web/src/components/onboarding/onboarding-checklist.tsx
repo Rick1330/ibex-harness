@@ -697,12 +697,7 @@ function StepBudget() {
   return (
     <div className="max-w-md space-y-3 text-[12px]">
       <p className="leading-relaxed text-muted-foreground">
-        Recommended before production traffic. Opens Billing → Budget periods (
-        <span className="font-mono">ibex_billing.budget_periods</span>,{" "}
-        <span className="font-mono">enforcement_mode</span>:{" "}
-        <span className="font-mono">alert_only</span> /{" "}
-        <span className="font-mono">hard_cap</span>). Add a monthly cap so a
-        runaway agent cannot overspend.
+        Recommended before production traffic. Opens Billing → Budget periods (ibex_billing.budget_periods, enforcement_mode: alert_only / hard_cap). Add a monthly cap so a runaway agent cannot overspend.
       </p>
       {done ? (
         <p className="text-muted-foreground">Budget step complete.</p>

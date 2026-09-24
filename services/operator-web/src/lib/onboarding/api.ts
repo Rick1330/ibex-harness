@@ -12,7 +12,7 @@ function delay(ms = 280) {
   return new Promise((r) => window.setTimeout(r, ms))
 }
 
-const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const SLUG_RE = /^[a-z0-9-]+$/
 
 export function slugifyAgentName(name: string): string {
   return name
@@ -25,7 +25,7 @@ export function slugifyAgentName(name: string): string {
 
 export function validateAgentSlug(slug: string): string | null {
   if (!slug) return "Slug is required"
-  if (!SLUG_RE.test(slug)) {
+  if (!SLUG_RE.test(slug) || slug.startsWith("-") || slug.endsWith("-")) {
     return "Slug must match ^[a-z0-9-]+$ (agents_slug_format)"
   }
   return null

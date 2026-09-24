@@ -14,4 +14,6 @@ paths = [
 regexes = [
   '''key: "agent_billing"''',
   '''idempotency_key: "preview-idempotency-01"''',
+  '''agent_billing''',
+  '''preview-idempotency-01''',
 ]

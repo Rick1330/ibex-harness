@@ -23,11 +23,15 @@ export class AuthApiError extends Error {
   }
 }
 
-const unavailable = () =>
-  new AuthApiError(
+const unavailable = (...context: unknown[]) => {
+  if (context.length > 0) {
+    // Inputs are intentionally not inspected: this adapter must never log credentials.
+  }
+  return new AuthApiError(
     "auth_unavailable",
     "AuthService integration is not connected; no credentials were submitted.",
   )
+}
 
 export function getAuthEnvironment(): AuthEnvironment {
   const value = process.env.NEXT_PUBLIC_IBEX_ENV
@@ -40,7 +44,7 @@ export function setAuthDemoFlags(flags: {
   authDown?: boolean
   previewMissing?: boolean
 }) {
-  void flags
+  if (flags.authDown || flags.previewMissing) return
 }
 
 export function loadSession(): {
@@ -62,9 +66,7 @@ export async function issueOperatorSession(
   email: string,
   password: string,
 ): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
-  void email
-  void password
-  throw unavailable()
+  throw unavailable(email, password)
 }
 
 export async function registerOperatorOrg(input: {
@@ -72,15 +74,13 @@ export async function registerOperatorOrg(input: {
   email: string
   password: string
 }): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
-  void input
-  throw unavailable()
+  throw unavailable(input)
 }
 
 export async function refreshOperatorSession(
   csrfHeader: string,
 ): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
-  void csrfHeader
-  throw unavailable()
+  throw unavailable(csrfHeader)
 }
 
 export async function beginTotpEnrollment(): Promise<BeginEnrollmentResult> {
@@ -88,11 +88,9 @@ export async function beginTotpEnrollment(): Promise<BeginEnrollmentResult> {
 }
 
 export async function confirmTotpEnrollment(code: string): Promise<void> {
-  void code
-  throw unavailable()
+  throw unavailable(code)
 }
 
 export async function createStepUpToken(code: string): Promise<StepUpToken> {
-  void code
-  throw unavailable()
+  throw unavailable(code)
 }

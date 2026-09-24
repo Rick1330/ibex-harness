@@ -209,7 +209,7 @@ export const USAGE_BY_SHAPE: Record<UsageQueryShape, UsageQueryResult> = {
         completeness: "complete",
       },
       {
-        key: "agent_billing",
+        key: "billing",
         label: "billing-bot · 98 sessions",
         value: 410_200,
         estimated_cost_cents: 31_240,

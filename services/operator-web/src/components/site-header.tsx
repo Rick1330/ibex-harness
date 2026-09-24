@@ -406,7 +406,7 @@ export function SiteHeader() {
             className="size-8"
             title="Help and docs"
           >
-            <a href="#" aria-label="Help and docs">
+            <a href="https://ibexharness.com/docs" aria-label="Help and docs">
               <IconHelp className="size-4" />
             </a>
           </Button>
