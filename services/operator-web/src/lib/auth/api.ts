@@ -1,19 +1,15 @@
 import type {
   AuthEnvironment,
-  BeginEnrollmentResult,
-  LoginErrorCode,
   OperatorSession,
   SessionCookies,
   StepUpToken,
-  TotpErrorCode,
 } from "./types"
 
 export class AuthApiError extends Error {
   code:
-    | LoginErrorCode
-    | TotpErrorCode
     | "INSUFFICIENT_PERMISSIONS"
     | "session_revoked"
+    | "auth_unavailable"
   status: number
   constructor(code: AuthApiError["code"], message: string, status = 503) {
     super(message)
@@ -62,33 +58,10 @@ export function logout(): void {
   return undefined
 }
 
-export async function issueOperatorSession(
-  email: string,
-  password: string,
-): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
-  throw unavailable(email, password)
-}
-
-export async function registerOperatorOrg(input: {
-  orgName: string
-  email: string
-  password: string
-}): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
-  throw unavailable(input)
-}
-
 export async function refreshOperatorSession(
   csrfHeader: string,
 ): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
   throw unavailable(csrfHeader)
-}
-
-export async function beginTotpEnrollment(): Promise<BeginEnrollmentResult> {
-  throw unavailable()
-}
-
-export async function confirmTotpEnrollment(code: string): Promise<void> {
-  throw unavailable(code)
 }
 
 export async function createStepUpToken(code: string): Promise<StepUpToken> {

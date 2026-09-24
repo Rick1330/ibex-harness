@@ -132,7 +132,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       user_id: "usr_devon",
       name: "Devon Park",
-      email: "devon@acme.com",
+      email: "operator@example.invalid",
       role: "owner",
       status: "active",
       last_login_at: "2026-02-11T14:00:00.000Z",
@@ -206,7 +206,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       token_id: "tok_91af",
       name: "Production SDK",
-      prefix: "ibex_pat_0190",
+      prefix: "token_0190",
       permissions: ["memory:read", "trace:read", "session:read"],
       created_at: "2026-01-15T10:00:00.000Z",
       owner_user_id: "usr_devon",
@@ -219,7 +219,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       token_id: "tok_agent",
       name: "support-agent-bound",
-      prefix: "ibex_pat_0bb2",
+      prefix: "token_0bb2",
       permissions: ["memory:read"],
       created_at: "2026-02-01T12:00:00.000Z",
       owner_user_id: "usr_devon",
@@ -232,7 +232,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       token_id: "tok_ci",
       name: "CI Pipeline",
-      prefix: "ibex_pat_88ab",
+      prefix: "token_88ab",
       permissions: ["session:read"],
       created_at: "2025-11-01T09:00:00.000Z",
       owner_user_id: "usr_sara",
@@ -284,7 +284,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
       hold_id: "lh_incident42",
       reason: "Incident #42 litigation hold",
       created_at: "2026-02-08T00:00:00.000Z",
-      created_by: "devon@acme.com",
+      created_by: "operator@example.invalid",
       active: true,
     },
   ],
@@ -316,7 +316,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       entry_id: "aud_01",
       at: "2026-02-11T14:05:00.000Z",
-      actor: "devon@acme.com",
+      actor: "operator@example.invalid",
       actor_kind: "user",
       service_name: null,
       action: "token.create",
@@ -400,7 +400,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
       idempotency_key: "idem_promote_dir_support_v12",
       requires_second_actor: true,
       second_actor_user_id: "usr_devon",
-      second_actor_email: "devon@acme.com",
+      second_actor_email: "operator@example.invalid",
       second_actor_at: "2026-02-11T12:03:40.000Z",
     },
     {
@@ -435,7 +435,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       entry_id: "aud_05",
       at: "2026-02-10T16:00:00.000Z",
-      actor: "ibex_pat_0190",
+      actor: "token_0190",
       actor_kind: "token",
       service_name: null,
       action: "memory.read",
@@ -464,7 +464,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
     {
       entry_id: "aud_06",
       at: "2026-02-10T09:20:00.000Z",
-      actor: "devon@acme.com",
+      actor: "operator@example.invalid",
       actor_kind: "user",
       service_name: null,
       action: "audit.export",

@@ -4,7 +4,6 @@ import * as React from "react"
 import { useRouter } from "next/navigation"
 
 import {
-  loadSession,
   logout as apiLogout,
   refreshOperatorSession,
   setAuthDemoFlags,
@@ -52,11 +51,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const successRef = React.useRef<((token: string) => void) | null>(null)
 
   React.useEffect(() => {
-    const stored = loadSession()
-    if (stored) {
-      setSessionState(stored.session)
-      setCookies(stored.cookies)
-    }
+    // AuthService is intentionally disconnected for this presentation shell.
+    // Do not load, manufacture, or persist credentials here.
     setReady(true)
     ;(
       window as unknown as { __ibexSetAuthFlags?: typeof setAuthDemoFlags }
@@ -71,18 +67,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [],
   )
 
-  const logout = React.useCallback(
-    (reason: "security" | "manual" = "manual") => {
+  const logout = React.useCallback(() => {
       apiLogout()
       setSessionState(null)
       setCookies(null)
       setPendingStepUp(null)
-      router.replace(
-        reason === "security" ? "/login?reason=security" : "/login",
-      )
-    },
-    [router],
-  )
+      router.replace("/dashboard")
+    }, [router])
 
   const tryRefresh = React.useCallback(async () => {
     if (!cookies) return false
@@ -105,7 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         return false
       }
-      logout("security")
+      logout()
       return false
     }
   }, [cookies, logout])

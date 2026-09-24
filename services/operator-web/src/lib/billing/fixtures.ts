@@ -65,7 +65,7 @@ export const RATE_CARDS: RateCard[] = [
         version_id: "rcv_12",
         version: 12,
         created_at: "2026-01-15T00:00:00.000Z",
-        created_by: "devon@acme.com",
+        created_by: "operator@example.invalid",
         prices: pricesV12,
       },
       {
@@ -91,7 +91,7 @@ export const RATE_CARDS: RateCard[] = [
         version_id: "rcv_13d",
         version: 13,
         created_at: "2026-02-10T09:00:00.000Z",
-        created_by: "devon@acme.com",
+        created_by: "operator@example.invalid",
         prices: pricesV13Draft,
       },
     ],

@@ -5,7 +5,6 @@ import * as React from "react"
 
 import { useOnboarding } from "@/components/onboarding/onboarding-provider"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -15,13 +14,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
-  buildTestCurl,
   createUserInvite,
-  issueOnboardingPat,
   onboardingCreateAgent,
-  pollFirstTrace,
-  proxyBaseUrl,
-  simulateFirstTrace,
   slugifyAgentName,
   validateAgentSlug,
 } from "@/lib/onboarding/api"
@@ -30,12 +24,10 @@ import {
   type MemberRole,
   type OnboardingStepId,
 } from "@/lib/onboarding/types"
-import { PERMISSION_PICKER } from "@/lib/settings/fixtures"
 import { cn } from "@/lib/utils"
 import {
   IconCheck,
   IconChevronDown,
-  IconCopy,
   IconX,
 } from "@tabler/icons-react"
 import { toast } from "sonner"
@@ -154,10 +146,6 @@ function StepPanel({ step }: { step: OnboardingStepId }) {
   switch (step) {
     case "create_agent":
       return <StepCreateAgent />
-    case "issue_pat":
-      return <StepIssuePat />
-    case "test_request":
-      return <StepTestRequest />
     case "invite_teammate":
       return <StepInvite />
     case "set_budget":
@@ -296,284 +284,6 @@ function StepCreateAgent() {
         {busy ? "Creating…" : "Create agent"}
       </Button>
     </form>
-  )
-}
-
-function StepIssuePat() {
-  const { progress, setProgress, isStepDone } = useOnboarding()
-  const done = isStepDone("issue_pat")
-  const [name, setName] = React.useState("onboarding-pat")
-  const [scopes, setScopes] = React.useState<string[]>([
-    "trace:read",
-    "session:read",
-    "memory:read",
-  ])
-  const [busy, setBusy] = React.useState(false)
-  const [error, setError] = React.useState<string | null>(null)
-  const [revealed, setRevealed] = React.useState(progress.pat_plaintext)
-
-  const toggle = (wire: string) => {
-    setScopes((prev) =>
-      prev.includes(wire) ? prev.filter((w) => w !== wire) : [...prev, wire],
-    )
-  }
-
-  const onIssue = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const pat = await issueOnboardingPat({
-        name,
-        scopes,
-        agent_id: progress.agent_id,
-      })
-      setProgress((p) => ({
-        ...p,
-        pat_token_id: pat.token_id,
-        pat_plaintext: pat.plaintext,
-        pat_prefix: pat.prefix,
-        pat_scopes: pat.scopes,
-      }))
-      setRevealed(pat.plaintext)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Issue failed")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (done && !revealed) {
-    return (
-      <div className="space-y-2 text-[12px]">
-        <p className="text-muted-foreground">
-          Token issued ({progress.pat_prefix}). Secret was shown once and is no
-          longer retrievable.
-        </p>
-        <p className="font-mono text-[11px] text-muted-foreground">
-          Scopes: {progress.pat_scopes.join(", ")}
-        </p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="max-w-lg space-y-3">
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
-        Every protected proxy call needs both{" "}
-        <span className="font-mono text-foreground">
-          Authorization: Bearer ibex_pat_&lt;uuid&gt;_&lt;secret&gt;
-        </span>{" "}
-        and <span className="font-mono text-foreground">X-IBEX-Agent-ID</span>.
-        Omitting either is a common integration failure.
-      </p>
-
-      {revealed ? (
-        <div className="space-y-2 rounded-md border border-amber-500/35 bg-amber-500/8 px-3 py-2.5">
-          <p className="text-[12px] font-medium">
-            Copy now — you will not see this again
-          </p>
-          <code className="block break-all font-mono text-[11px]">
-            {revealed}
-          </code>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              className="h-7"
-              onClick={async () => {
-                await navigator.clipboard.writeText(revealed)
-                toast.success("Copied")
-              }}
-            >
-              <IconCopy className="size-3.5" />
-              Copy
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7"
-              onClick={() => {
-                setProgress((p) => ({ ...p, pat_plaintext: null }))
-                setRevealed(null)
-              }}
-            >
-              I saved it
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <Field label="Token name">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="h-9"
-              disabled={busy}
-            />
-          </Field>
-          <div>
-            <div className="mb-1.5 text-[11px] font-medium text-muted-foreground">
-              Scopes (ADR-0009 bitmap constants)
-            </div>
-            <div className="grid max-h-40 gap-1 overflow-y-auto sm:grid-cols-2">
-              {PERMISSION_PICKER.map((p) => (
-                <label
-                  key={p.wire}
-                  className="flex items-center gap-2 text-[11px]"
-                >
-                  <Checkbox
-                    checked={scopes.includes(p.wire)}
-                    onCheckedChange={() => toggle(p.wire)}
-                  />
-                  <span className="font-mono">{p.name}</span>
-                  <span className="text-muted-foreground">({p.wire})</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          {error ? (
-            <p role="alert" className="text-[12px]">
-              {error}
-            </p>
-          ) : null}
-          <Button
-            type="button"
-            size="sm"
-            className="h-8"
-            disabled={busy || scopes.length === 0}
-            onClick={() => void onIssue()}
-          >
-            {busy ? "Issuing…" : "Issue token"}
-          </Button>
-        </>
-      )}
-    </div>
-  )
-}
-
-function StepTestRequest() {
-  const { progress, setProgress, isStepDone } = useOnboarding()
-  const done = isStepDone("test_request")
-  const [polling, setPolling] = React.useState(false)
-  const [waited, setWaited] = React.useState(false)
-  const [showHelp, setShowHelp] = React.useState(false)
-  const token =
-    progress.pat_plaintext ??
-    (progress.pat_prefix ? `${progress.pat_prefix}` : null)
-  const curl = buildTestCurl({
-    baseUrl: proxyBaseUrl(),
-    token: progress.pat_plaintext,
-    agentId: progress.agent_id,
-    masked: !progress.pat_plaintext && Boolean(progress.pat_token_id),
-  })
-
-  const poll = async () => {
-    setPolling(true)
-    const res = await pollFirstTrace()
-    setPolling(false)
-    if (res.found) {
-      setProgress((p) => ({ ...p, test_request_seen: true }))
-      toast.success("First trace recorded")
-    } else {
-      setWaited(true)
-      setShowHelp(true)
-    }
-  }
-
-  if (done) {
-    return (
-      <p className="text-[12px] text-muted-foreground">
-        First trace seen in Explore. Overview and sessions will populate from
-        this traffic.
-      </p>
-    )
-  }
-
-  return (
-    <div className="max-w-xl space-y-3">
-      <p className="text-[12px] leading-relaxed text-muted-foreground">
-        Pre-filled with your agent and token. Both headers are required.
-        {!progress.agent_id || !progress.pat_token_id
-          ? " Complete steps 1 and 2 first — they are independently orderable, but this step needs both."
-          : null}
-      </p>
-      <pre className="overflow-x-auto rounded-md border border-border/70 bg-background p-3 font-mono text-[10px] leading-relaxed">
-        {curl}
-      </pre>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="button"
-          size="sm"
-          className="h-8"
-          onClick={async () => {
-            await navigator.clipboard.writeText(
-              buildTestCurl({
-                baseUrl: proxyBaseUrl(),
-                token: progress.pat_plaintext,
-                agentId: progress.agent_id,
-                masked: false,
-              }),
-            )
-            toast.success("curl copied")
-          }}
-          disabled={!progress.agent_id || !token}
-        >
-          <IconCopy className="size-3.5" />
-          Copy curl
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-8"
-          disabled={polling || !progress.agent_id || !progress.pat_token_id}
-          onClick={() => void poll()}
-        >
-          {polling ? "Polling Explore…" : "Check for first trace"}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          className="h-8 text-[11px]"
-          onClick={() => {
-            simulateFirstTrace()
-            setProgress((p) => ({ ...p, test_request_seen: true }))
-            toast.message("Simulated first trace (fixture)")
-          }}
-        >
-          Simulate success
-        </Button>
-      </div>
-      {waited ? (
-        <p className="text-[11px] text-muted-foreground">
-          No row yet. Expand troubleshooting if the request returned an error.
-        </p>
-      ) : null}
-      <button
-        type="button"
-        className="text-[11px] font-medium text-foreground underline-offset-2 hover:underline"
-        onClick={() => setShowHelp((s) => !s)}
-      >
-        {showHelp ? "Hide" : "Show"} troubleshooting
-      </button>
-      {showHelp ? (
-        <ul className="list-inside list-disc space-y-1 text-[11px] leading-relaxed text-muted-foreground">
-          <li>
-            Wrong header name — must be{" "}
-            <span className="font-mono">X-IBEX-Agent-ID</span> (not Agent-Id).
-          </li>
-          <li>Revoked or expired PAT — issue a fresh token in step 2.</li>
-          <li>
-            Cross-tenant / org mismatch returns{" "}
-            <span className="font-mono">403</span>, never{" "}
-            <span className="font-mono">404</span> — check the agent belongs to
-            this org.
-          </li>
-        </ul>
-      ) : null}
-    </div>
   )
 }
 

@@ -38,15 +38,9 @@ export const SURFACE_CLASSIFICATIONS: Record<string, SurfaceClassification> = {
 export function classifyPath(pathname: string): SurfaceClassification {
   if (pathname === "/dashboard" || pathname === "/dashboard/")
     return SURFACE_CLASSIFICATIONS.overview
-  if (
-    pathname === "/login" ||
-    pathname.startsWith("/signup") ||
-    pathname.startsWith("/enroll-totp") ||
-    pathname.startsWith("/onboarding")
-  )
-    return pathname === "/login"
-      ? SURFACE_CLASSIFICATIONS.auth
-      : SURFACE_CLASSIFICATIONS.onboarding
+  if (pathname === "/login") return SURFACE_CLASSIFICATIONS.auth
+  if (pathname.startsWith("/onboarding"))
+    return SURFACE_CLASSIFICATIONS.onboarding
   if (pathname.startsWith("/dashboard")) {
     if (
       /^\/dashboard\/(explore|analytics|sessions|directives|incidents|settings|billing|agents|memories|drift)/.test(

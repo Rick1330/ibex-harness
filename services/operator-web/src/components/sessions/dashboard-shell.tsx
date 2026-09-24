@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname } from "next/navigation"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { AuthProvider, useAuth } from "@/components/auth/auth-provider"
@@ -24,20 +24,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { ready, session, banner, tryRefresh, logout } = useAuth()
-  const router = useRouter()
   const pathname = usePathname()
-  const previewMode = process.env.NEXT_PUBLIC_OPERATOR_WEB_PREVIEW === "1"
-
-  React.useEffect(() => {
-    if (!ready) return
-    if (!session && !previewMode) {
-      router.replace("/login")
-      return
-    }
-    if (session?.mfa_required && !session.totp_enrolled) {
-      router.replace("/enroll-totp")
-    }
-  }, [ready, session, router, previewMode])
 
   // Silent refresh probe — simulates 401 → refresh → retry path.
   React.useEffect(() => {
@@ -48,7 +35,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(id)
   }, [session, tryRefresh])
 
-  if (!ready || (!session && !previewMode)) {
+  if (!ready) {
     return (
       <div className="flex min-h-svh items-center justify-center p-6">
         <Skeleton className="h-8 w-48" />
@@ -104,7 +91,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
               <button
                 type="button"
                 className="ml-2 text-muted-foreground underline-offset-2 hover:underline"
-                onClick={() => logout("manual")}
+                onClick={() => logout()}
               >
                 Sign out
               </button>

@@ -196,8 +196,8 @@ function DirectivesWorkbench() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All owners</SelectItem>
-                <SelectItem value="jane@acme.com">jane@acme.com</SelectItem>
-                <SelectItem value="devon@acme.com">devon@acme.com</SelectItem>
+                <SelectItem value="reviewer@example.invalid">reviewer@example.invalid</SelectItem>
+                <SelectItem value="operator@example.invalid">operator@example.invalid</SelectItem>
                 <SelectItem value="ops@acme.com">ops@acme.com</SelectItem>
                 <SelectItem value="sara@acme.com">sara@acme.com</SelectItem>
               </SelectContent>

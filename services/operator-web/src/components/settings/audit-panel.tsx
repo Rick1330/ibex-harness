@@ -192,7 +192,7 @@ export function AuditPanel({
     const logged: AuditEntry = {
       entry_id: `aud_export_${Date.now()}`,
       at: new Date().toISOString(),
-      actor: "devon@acme.com",
+      actor: "operator@example.invalid",
       actor_kind: "user",
       service_name: null,
       action: "audit.export",

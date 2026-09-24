@@ -542,7 +542,7 @@ function OverviewSkeletons() {
 }
 
 function OverviewEmpty() {
-  return <PageEmptyState page="overview" actionLabel="Send a test request" />
+  return <PageEmptyState page="overview" />
 }
 
 function OverviewError({ onRetry }: { onRetry: () => void }) {

@@ -3,11 +3,9 @@
  * Shapes mirror completed 1.1.4 token management + org providers + webhooks.
  */
 
-import { AGENT_STORE } from "@/lib/agents/fixtures"
 import type {
   CallerAuthz,
   PatToken,
-  PermissionPickerBit,
   ProviderCredential,
   WebhookEndpoint,
 } from "./types"
@@ -29,78 +27,6 @@ export class SettingsApiError extends Error {
 /** Identical not-found for missing and cross-tenant — never leak existence. */
 export function notFoundToken(): never {
   throw new SettingsApiError(404, "NOT_FOUND", "Token not found")
-}
-
-export type CreateTokenInput = {
-  name: string
-  permissions: string[]
-  expires_at: string | null
-  agent_id: string | null
-}
-
-export type CreateTokenResult = {
-  token: PatToken
-  /** Shown exactly once — never re-fetched. */
-  plaintext: string
-}
-
-export async function createPatToken(
-  input: CreateTokenInput,
-  opts: {
-    caller: CallerAuthz
-    picker: PermissionPickerBit[]
-    ownerUserId: string
-  },
-): Promise<CreateTokenResult> {
-  await delay()
-  if (!opts.caller.bits.includes("TokenCreate")) {
-    throw new SettingsApiError(
-      403,
-      "FORBIDDEN",
-      "Missing permission: TokenCreate",
-    )
-  }
-  if (!input.name.trim()) {
-    throw new SettingsApiError(400, "INVALID", "Name required")
-  }
-  if (input.permissions.length === 0) {
-    throw new SettingsApiError(400, "INVALID", "Select at least one permission")
-  }
-  for (const wire of input.permissions) {
-    const bit = opts.picker.find((p) => p.wire === wire)
-    if (!bit || !opts.caller.bits.includes(bit.name)) {
-      throw new SettingsApiError(
-        403,
-        "PERMISSION_ELEVATION_DENIED",
-        "Cannot grant permissions you do not hold",
-      )
-    }
-  }
-  if (input.agent_id) {
-    const exists = AGENT_STORE.some((a) => a.agent_id === input.agent_id)
-    if (!exists) {
-      throw new SettingsApiError(400, "INVALID", "Unknown agent_id")
-    }
-  }
-  const uuid = crypto.randomUUID().replace(/-/g, "")
-  const secret =
-    crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")
-  const plaintext = `ibex_pat_${uuid}_${secret}`
-  const now = new Date().toISOString()
-  const token: PatToken = {
-    token_id: `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
-    name: input.name.trim(),
-    prefix: `ibex_pat_${uuid.slice(0, 4)}`,
-    permissions: input.permissions,
-    created_at: now,
-    owner_user_id: opts.ownerUserId,
-    expires_at: input.expires_at,
-    is_revoked: false,
-    revoked_at: null,
-    agent_id: input.agent_id,
-    allowed_ips_coming_soon: [],
-  }
-  return { token, plaintext }
 }
 
 export async function revokePatToken(

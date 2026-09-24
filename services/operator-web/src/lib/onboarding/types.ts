@@ -6,8 +6,6 @@
 
 export type OnboardingStepId =
   | "create_agent"
-  | "issue_pat"
-  | "test_request"
   | "invite_teammate"
   | "set_budget"
 
@@ -30,12 +28,6 @@ export type OnboardingProgress = {
   agent_id: string | null
   agent_slug: string | null
   agent_name: string | null
-  pat_token_id: string | null
-  /** Plaintext shown once — cleared after dismiss; masked in curl thereafter. */
-  pat_plaintext: string | null
-  pat_prefix: string | null
-  pat_scopes: string[]
-  test_request_seen: boolean
   invite_skipped: boolean
   invites: OnboardingInvite[]
   budget_skipped: boolean
@@ -49,16 +41,6 @@ export const ONBOARDING_STEPS: {
   optional: boolean
 }[] = [
   { id: "create_agent", label: "Create your first agent", optional: false },
-  {
-    id: "issue_pat",
-    label: "Issue a Personal Access Token (PAT)",
-    optional: false,
-  },
-  {
-    id: "test_request",
-    label: "Send a test request through the proxy",
-    optional: false,
-  },
   { id: "invite_teammate", label: "Invite a teammate", optional: true },
   {
     id: "set_budget",
@@ -74,26 +56,22 @@ export const PAGE_EMPTY: Record<
   overview: {
     title: "No traffic yet",
     description:
-      "Send a test request through the proxy to populate overview metrics.",
-    step: "test_request",
+      "Connect the authenticated proxy contract to populate overview metrics.",
   },
   explore: {
     title: "No traces recorded",
     description:
-      "Traces appear once a protected proxy call lands with a valid PAT and agent header.",
-    step: "test_request",
+      "Traces appear once the authenticated proxy contract is connected.",
   },
   sessions: {
     title: "No sessions yet",
     description:
-      "Memories populate once your agent runs. Send a test request to open the first session.",
-    step: "test_request",
+      "Memories populate once the authenticated agent contract is connected.",
   },
   memories: {
     title: "No sessions yet — memories populate once your agent runs",
     description:
-      "Extraction runs after live traffic. Complete the test-request step to seed the first session.",
-    step: "test_request",
+      "Extraction runs after the authenticated traffic contract is connected.",
   },
   directives: {
     title: "No directive versions — every agent needs at least one",
@@ -109,8 +87,7 @@ export const PAGE_EMPTY: Record<
   analytics: {
     title: "Analytics populate after your first billing period closes",
     description:
-      "Send traffic now; period rollups appear once the billing window ends. Or jump to the test-request step.",
-    step: "test_request",
+      "Period rollups appear once the authenticated traffic contract is connected.",
   },
   billing: {
     title: "No usage recorded",

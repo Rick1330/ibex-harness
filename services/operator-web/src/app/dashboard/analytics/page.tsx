@@ -260,7 +260,7 @@ function AnalyticsWorkbench() {
       ) : null}
 
       {view === "empty" ? (
-        <PageEmptyState page="analytics" actionLabel="Send a test request" />
+        <PageEmptyState page="analytics" />
       ) : null}
 
       {view === "success" && overview && latency && memory ? (

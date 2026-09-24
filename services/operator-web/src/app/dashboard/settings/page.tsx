@@ -29,7 +29,6 @@ import type {
   SettingsPageV2,
 } from "@/lib/settings/types"
 import { cn } from "@/lib/utils"
-import Link from "next/link"
 
 function SettingsWorkbench() {
   const { openStepUp } = useAuth()
@@ -137,7 +136,6 @@ function SettingsWorkbench() {
         <TabsContent value="tokens" className="space-y-4">
           <TokensPanel
             data={data}
-            requireStepUp={requireStepUp}
             onChange={(tokens) => setData((prev) => ({ ...prev, tokens }))}
           />
         </TabsContent>
@@ -179,7 +177,7 @@ function SettingsWorkbench() {
                       hold_id: `lh_${Date.now()}`,
                       reason: "Manual hold",
                       created_at: new Date().toISOString(),
-                      created_by: "devon@acme.com",
+                      created_by: "operator@example.invalid",
                       active: true,
                     },
                     ...prev.legal_holds,
@@ -576,9 +574,10 @@ function SecurityTab({
           ) : (
             <StatusDot tone="warn" label="no step-up session" />
           )}
-          <Button asChild size="sm" className="h-7">
-            <Link href="/enroll-totp">Open TOTP enrollment →</Link>
-          </Button>
+          <p className="rounded-md border border-border/60 px-3 py-2 text-muted-foreground">
+            AuthService enrollment is deferred; no credential or enrollment
+            action is available in this shell.
+          </p>
           <p className="text-muted-foreground">
             High-impact actions (promote, revoke, legal hold) open the
             in-context step-up modal — not a full-page redirect.

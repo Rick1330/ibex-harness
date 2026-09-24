@@ -1,6 +1,6 @@
-import { redirect } from "next/navigation"
-
-import { isDashboardPreviewEnabled } from "@/lib/classification"
+// The preview gate depends on runtime deployment flags; never bake its result
+// into a static redirect during `next build`.
+export const dynamic = "force-dynamic"
 
 /**
  * The transplanted route tree is presentation-only until tenant-scoped APIs are
@@ -10,9 +10,5 @@ import { isDashboardPreviewEnabled } from "@/lib/classification"
 export default function DashboardLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  if (!isDashboardPreviewEnabled()) {
-    redirect("/login")
-  }
-
   return children
 }

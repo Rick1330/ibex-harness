@@ -5,7 +5,6 @@
 
 import { createAgent } from "@/lib/agents/api"
 import type { AgentDetail } from "@/lib/agents/types"
-import { PERMISSION_PICKER } from "@/lib/settings/fixtures"
 import type { MemberRole, OnboardingInvite } from "./types"
 
 function delay(ms = 280) {
@@ -45,42 +44,6 @@ export async function onboardingCreateAgent(input: {
     tags: input.tags ?? [],
     org_id: input.orgId,
   })
-}
-
-export type IssuedPat = {
-  token_id: string
-  prefix: string
-  plaintext: string
-  scopes: string[]
-  agent_id: string | null
-}
-
-/** Issue PAT — secret shown once; mirrors Settings token create. */
-export async function issueOnboardingPat(input: {
-  name: string
-  scopes: string[]
-  agent_id: string | null
-}): Promise<IssuedPat> {
-  await delay(320)
-  if (input.scopes.length === 0) {
-    throw new Error("Select at least one permission bit")
-  }
-  for (const wire of input.scopes) {
-    if (!PERMISSION_PICKER.some((p) => p.wire === wire)) {
-      throw new Error(`Unknown permission: ${wire}`)
-    }
-  }
-  const uuid = crypto.randomUUID().replace(/-/g, "")
-  const secret =
-    crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")
-  const plaintext = `ibex_pat_${uuid}_${secret}`
-  return {
-    token_id: `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
-    prefix: plaintext.slice(0, 18) + "…",
-    plaintext,
-    scopes: input.scopes,
-    agent_id: input.agent_id,
-  }
 }
 
 export async function createUserInvite(input: {
@@ -126,31 +89,4 @@ export async function pollFirstTrace(opts?: {
     return { found: true }
   }
   return { found: false }
-}
-
-export function buildTestCurl(opts: {
-  baseUrl: string
-  token: string | null
-  agentId: string | null
-  masked?: boolean
-}): string {
-  const token = opts.token
-    ? opts.masked
-      ? `${opts.token.slice(0, 18)}…`
-      : opts.token
-    : "ibex_pat_<uuid>_<secret>"
-  const agent = opts.agentId ?? "<agent_id>"
-  return `curl -sS -X POST '${opts.baseUrl}/v1/chat/completions' \\
-  -H 'Authorization: Bearer ${token}' \\
-  -H 'X-IBEX-Agent-ID: ${agent}' \\
-  -H 'Content-Type: application/json' \\
-  -d '{"model":"gpt-4-turbo","messages":[{"role":"user","content":"ping"}]}'`
-}
-
-export function proxyBaseUrl(): string {
-  if (typeof window === "undefined") return "https://api.ibex.local"
-  return (
-    process.env.NEXT_PUBLIC_IBEX_API_BASE ??
-    `${window.location.origin.replace(/:\d+$/, ":8080")}`
-  )
 }

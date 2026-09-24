@@ -63,10 +63,6 @@ function isDone(
   switch (id) {
     case "create_agent":
       return Boolean(p.agent_id) || agentCount > 0
-    case "issue_pat":
-      return Boolean(p.pat_token_id)
-    case "test_request":
-      return p.test_request_seen
     case "invite_teammate":
       return p.invite_skipped || p.invites.length > 0
     case "set_budget":
@@ -80,7 +76,7 @@ export function OnboardingProvider({
   children: React.ReactNode
 }) {
   const { session, ready: authReady } = useAuth()
-  const orgId = session?.org_id ?? "org_acme"
+  const orgId = session?.org_id ?? "org_preview"
   const [ready, setReady] = React.useState(false)
   const [progress, setProgressState] =
     React.useState<OnboardingProgress>(emptyProgress)
@@ -100,10 +96,10 @@ export function OnboardingProvider({
   }, [orgId, demoZeroAgents])
 
   React.useEffect(() => {
-    if (!authReady || !session) return
+    if (!authReady) return
     setProgressState(loadProgress(orgId))
     void refreshAgentCount().finally(() => setReady(true))
-  }, [authReady, session, orgId, refreshAgentCount])
+  }, [authReady, orgId, refreshAgentCount])
 
   React.useEffect(() => {
     if (demoZeroAgents) setAgentCount(0)

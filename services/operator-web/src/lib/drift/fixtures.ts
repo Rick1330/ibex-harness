@@ -167,7 +167,7 @@ export const DRIFT_ALERT_MEDIUM: DriftAlertDetail = {
   drift_action_stage: "notify",
   created_at: "2026-02-10T09:00:00.000Z",
   acknowledged_at: "2026-02-10T09:40:00.000Z",
-  acknowledged_by: "devon@acme.com",
+  acknowledged_by: "operator@example.invalid",
   resolved_at: null,
   resolution_notes: null,
   evidence: [

@@ -34,9 +34,9 @@ const versionsSupport: DirectiveVersion[] = [
     content_tokens: 128,
     content: V3_CONTENT,
     created_at: "2025-09-17T10:00:00.000Z",
-    created_by: "jane@acme.com",
+    created_by: "reviewer@example.invalid",
     promoted_at: "2025-09-18T14:02:00.000Z",
-    promoted_by: "jane@acme.com",
+    promoted_by: "reviewer@example.invalid",
     revoked_reason: null,
     regression_status: "passed",
     scenarios_passed: 47,
@@ -78,7 +78,7 @@ const ledgerSupport: ActionLedgerEntry[] = [
   {
     id: "led_01",
     at: "2025-09-18T14:02:00.000Z",
-    actor: "jane@acme.com",
+    actor: "reviewer@example.invalid",
     kind: "promote",
     summary: "promote v2→v3 gradual",
     before_version: 2,
@@ -111,7 +111,7 @@ const ledgerSupport: ActionLedgerEntry[] = [
   {
     id: "led_04",
     at: "2025-09-17T10:05:00.000Z",
-    actor: "jane@acme.com",
+    actor: "reviewer@example.invalid",
     kind: "submit_review",
     summary: "submit v3 for review",
     before_version: null,
@@ -130,9 +130,9 @@ export const DIRECTIVE_SUPPORT: DirectiveDetail = {
   regression_status: "passed",
   scenarios_passed: 47,
   scenarios_total: 47,
-  last_promoted_by: "jane@acme.com",
+  last_promoted_by: "reviewer@example.invalid",
   last_promoted_at: "2025-09-18T14:02:00.000Z",
-  owner: "jane@acme.com",
+  owner: "reviewer@example.invalid",
   description:
     "Enterprise refund policy directive. Gradual rollout of v3 escalation instructions.",
   rollout: {
@@ -308,9 +308,9 @@ export const DIRECTIVE_BILLING: DirectiveDetail = {
   regression_status: "failed",
   scenarios_passed: 41,
   scenarios_total: 47,
-  last_promoted_by: "devon@acme.com",
+  last_promoted_by: "operator@example.invalid",
   last_promoted_at: "2025-08-20T12:00:00.000Z",
-  owner: "devon@acme.com",
+  owner: "operator@example.invalid",
   description:
     "Billing quote directives. v5 in review — regression not passed.",
   rollout: null,
@@ -322,7 +322,7 @@ export const DIRECTIVE_BILLING: DirectiveDetail = {
       content_tokens: 140,
       content: "v5 draft — new discount language.",
       created_at: "2025-09-19T08:00:00.000Z",
-      created_by: "devon@acme.com",
+      created_by: "operator@example.invalid",
       promoted_at: null,
       promoted_by: null,
       revoked_reason: null,
@@ -337,9 +337,9 @@ export const DIRECTIVE_BILLING: DirectiveDetail = {
       content_tokens: 110,
       content: "v4 active billing quotes.",
       created_at: "2025-08-19T08:00:00.000Z",
-      created_by: "devon@acme.com",
+      created_by: "operator@example.invalid",
       promoted_at: "2025-08-20T12:00:00.000Z",
-      promoted_by: "devon@acme.com",
+      promoted_by: "operator@example.invalid",
       revoked_reason: null,
       regression_status: "passed",
       scenarios_passed: 47,
@@ -418,7 +418,7 @@ export const DIRECTIVE_BILLING: DirectiveDetail = {
     {
       id: "led_b1",
       at: "2025-09-19T08:10:00.000Z",
-      actor: "devon@acme.com",
+      actor: "operator@example.invalid",
       kind: "submit_review",
       summary: "submit v5 for review",
       before_version: null,
@@ -508,7 +508,7 @@ export const DIRECTIVE_LIST: DirectiveListItem[] = [
     ],
     scenarios_passed: n % 4 === 1 ? 40 : 20 + (n % 10),
     scenarios_total: 47,
-    last_promoted_by: n % 3 === 0 ? null : "jane@acme.com",
+    last_promoted_by: n % 3 === 0 ? null : "reviewer@example.invalid",
     last_promoted_at:
       n % 3 === 0
         ? null
@@ -522,6 +522,6 @@ export const DIRECTIVE_LIST: DirectiveListItem[] = [
             paused: false,
           }
         : null,
-    owner: n % 2 === 0 ? "jane@acme.com" : "devon@acme.com",
+    owner: n % 2 === 0 ? "reviewer@example.invalid" : "operator@example.invalid",
   })),
 ]
