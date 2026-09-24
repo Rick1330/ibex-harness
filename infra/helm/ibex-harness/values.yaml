@@ -19,6 +19,16 @@ images:
   minio: "minio/minio@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   pgbackrest: "pgbackrest/pgbackrest:2.53@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
+# Proxy must always receive an explicit profile. Local drills may omit Redis;
+# only this explicit development profile permits the Proxy's Noop rate limiter.
+deployment:
+  profile: development
+proxy:
+  environment: development
+  redis:
+    secretName: ibex-redis
+    urlKey: redis-url
+
 rollout:
   strategy: RollingUpdate
   maxUnavailable: 0

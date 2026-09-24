@@ -75,6 +75,20 @@ jobs:
       - name: Repo layout guard
         run: bash .github/scripts/check-repo-layout.sh
 
+      - name: CI aggregate gate regression tests
+        run: bash .github/scripts/test-ci-gate.sh
+
+      - name: Required CI gate inventory guard
+        run: bash .github/scripts/check-required-ci-gates.sh
+
+      - name: Set up Helm 3 for chart regression checks
+        uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.0
+
+      - name: Proxy profile and Redis Secret chart regression
+        run: bash .github/scripts/test-proxy-helm-profile.sh
+
       - name: Landing hero assets guard
         run: bash .github/scripts/check-landing-assets.sh
 
@@ -2533,7 +2547,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate Go gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" "${{ needs.changes.result }}" \
             "${{ needs.buf-lint.result }}" \
             "${{ needs.proto-contract.result }}" \
             "${{ needs.db-migrate-smoke.result }}" \
@@ -2577,7 +2591,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate web gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" "${{ needs.changes.result }}" \
             "${{ needs.web-build.result }}"
 
   ci-gate-security:
@@ -2598,7 +2612,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate security gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_security }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_security }}" "${{ needs.changes.result }}" \
             "${{ needs.trivy.result }}" \
             "${{ needs.osv-scan.result }}" \
             "${{ needs.bandit.result }}" \
@@ -2637,7 +2651,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate Python gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" "${{ needs.changes.result }}" \
             "${{ needs.embedder-test.result }}" \
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \

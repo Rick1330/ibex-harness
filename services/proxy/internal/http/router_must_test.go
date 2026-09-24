@@ -1,13 +1,13 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
-	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -17,12 +17,10 @@ import (
 
 func mustNewRouter(tb testing.TB, deps RouterDeps) http.Handler {
 	tb.Helper()
-	// Unit tests historically assumed allow-all when ModelRouter was nil.
-	// Production NewRouter defaults to DenyAllRegistry (4.P.1); tests opt into
-	// the documented IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH escape hatch unless
-	// they set ModelRouter explicitly.
+	// Ordinary unit fixtures explicitly install this test-only resolver. The
+	// production router's nil default remains fail-closed.
 	if deps.ModelRouter == nil && deps.ProviderRegistry != nil {
-		deps.ModelRouter = modelpolicy.PassthroughRegistry{Base: deps.ProviderRegistry}
+		deps.ModelRouter = testAllowingModelResolver{base: deps.ProviderRegistry}
 	}
 	h, err := NewRouter(deps)
 	if err != nil {
@@ -31,7 +29,13 @@ func mustNewRouter(tb testing.TB, deps RouterDeps) http.Handler {
 	return h
 }
 
-func TestUnit_NewRouter_NilModelRouterDeniesProtectedModel(t *testing.T) {
+type testAllowingModelResolver struct{ base *provider.Registry }
+
+func (r testAllowingModelResolver) ForOrg(_ context.Context, _ uuid.UUID, model string) (provider.Provider, error) {
+	return r.base.For(model)
+}
+
+func TestUnit_NewRouter_NilModelRouterReturnsPolicyUnavailable(t *testing.T) {
 	t.Parallel()
 	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog())
 	if err != nil {
@@ -56,10 +60,20 @@ func TestUnit_NewRouter_NilModelRouterDeniesProtectedModel(t *testing.T) {
 	req.Header.Set("X-IBEX-Agent-ID", uuid.NewString())
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeModelNotAllowed)) {
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeServiceDegraded)) {
 		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
+func TestUnit_NewRouter_ProductionRequiresLimiterForProtectedRoutes(t *testing.T) {
+	t.Parallel()
+	deps := defaultChatRouterDeps(t)
+	deps.Config.Environment = "production"
+	deps.Limiter = nil
+	if _, err := NewRouter(deps); err == nil {
+		t.Fatal("NewRouter accepted production protected routes without a rate limiter")
 	}
 }

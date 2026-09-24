@@ -13,6 +13,8 @@ authors: "IBEX Harness team"
 - **Date:** 2026-06-06
 - **Authors:** IBEX Harness team
 
+> **Current runtime policy:** The Phase 1 failure decision below is historical and superseded for the current Proxy by [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls). Redis-backed rate-limit failure now returns 503 and does not proceed to a provider.
+
 ## Context
 
 Phase 2 will call real LLM providers; without rate limiting, runaway tests can exhaust credits. Phase 4 adds hierarchical Redis Lua limits. Milestone 1.2.4 introduces a minimal org-level limiter in the proxy pipeline **after auth** and before handlers, without blocking traffic when Redis is unavailable.
@@ -38,7 +40,7 @@ Phase 2 will call real LLM providers; without rate limiting, runaway tests can e
 | Control | Redis failure behavior |
 | --- | --- |
 | Auth | Fail closed → **503** `SERVICE_DEGRADED` |
-| Rate limit | Fail **open** → allow request + warn log |
+| Rate limit | Phase 1 historical behavior: fail **open** (superseded by [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls)) |
 
 Rationale: rate limiting is cost/quality control, not a security boundary.
 

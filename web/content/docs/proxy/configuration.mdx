@@ -20,6 +20,13 @@ Copy `services/proxy/.env.example` to `services/proxy/.env` for local developmen
 <ParamTable
   params={[
     {
+      name: "IBEX_ENV",
+      type: "enum",
+      required: true,
+      description:
+        "Explicit runtime profile: development, staging, or production. Startup rejects an unset/empty value instead of assuming development.",
+    },
+    {
       name: "IBEX_AUTH_GRPC_ADDR",
       type: "string (host:port)",
       required: true,
@@ -31,7 +38,7 @@ Copy `services/proxy/.env.example` to `services/proxy/.env` for local developmen
       type: "string (URL)",
       required: true,
       description:
-        "Redis for rate limiting, auth-cache revocation subscribe, idempotency, and /ready.",
+        "Shared Redis for rate limiting, auth-cache revocation subscribe, idempotency, and /ready; required outside development.",
     },
   ]}
 />

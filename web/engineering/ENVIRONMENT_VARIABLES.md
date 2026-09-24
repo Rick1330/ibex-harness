@@ -89,7 +89,7 @@ These apply across services, or are read by most services.
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `IBEX_ENV` | Yes | `development` | `development` \| `staging` \| `production` | Do not allow `production` defaults locally |
+| `IBEX_ENV` | Yes | Service-specific; Proxy has no loader default | `development` \| `staging` \| `production` | Proxy must explicitly set this value; an unset/empty value is rejected so a deployment cannot silently become development |
 | `IBEX_SERVICE_NAME` | Yes | (none) | Name of service (e.g., `proxy`, `auth`, `memory`) | Used for logs/metrics; not secret |
 | `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | `DEBUG` may expose sensitive details; never enable in prod broadly |
 | `IBEX_LOG_FORMAT` | No | `json` | `json` only in production | Human-readable may be okay locally |
@@ -103,7 +103,6 @@ These apply across services, or are read by most services.
 | `IBEX_OPERATOR_ALLOW_DELETE` | No | `false` | Per-action kill switch for operator delete | Default deny |
 | `IBEX_OPERATOR_ALLOW_REPLAY` | No | `false` | Per-action kill switch for operator replay | Default deny |
 | `IBEX_OPERATOR_ALLOW_SECRET_USE` | No | `false` | Per-action kill switch for secret-use | Default deny |
-| `IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH` | No | `false` | Proxy escape hatch: allow PassthroughRegistry when policy DB unavailable | Residual risk; prefer DenyAll |
 | `IBEX_AUTH_TOTP_ENABLED` | No | `false` | Auth: enable TOTP enroll/confirm/step-up RPCs | Default off |
 | `IBEX_SSE_WRITE_DEADLINE_SECONDS` | No | `15` | Finite operator-event SSE write deadline (stricter than provider SSE) | F4-033 |
 | `IBEX_OPERATOR_EVENTS_CHANNEL` | No | `ibex:operator:events` | Redis pub/sub channel for operator-event fan-in | Not a secret |
@@ -159,7 +158,7 @@ These are not env vars, but mandatory behavior:
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Conditional | (empty) | e.g. `redis://:password@host:6379/0` | Secret if password present; proxy: empty → Noop limiter |
+| `REDIS_URL` | Proxy required outside development; service-specific elsewhere | (empty in development) | e.g. `redis://:password@host:6379/0` | Secret if password present; proxy configuration rejects absence outside development; Redis operation failures return 503 before provider work |
 | `REDIS_DB_CACHE` | No | `0` | DB index for caches | Keep consistent |
 | `REDIS_DB_QUEUE` | No | `1` | DB index for queues/streams (Celery broker lists) | Keep consistent |
 | `REDIS_DB_RATE_LIMIT` | No | `2` | DB index for rate limiting | Optional separation |
@@ -216,7 +215,8 @@ Used by: **proxy** (`services/proxy`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), model-policy invalidation SUBSCRIBE (`model_policy_updates:*`), and `/ready`. Empty → Noop limiter **and** auth cache wrap is skipped even when `IBEX_AUTH_CACHE_ENABLED=true` (WARN at startup) so revoke is immediate via gRPC; model-policy cache relies on 60s TTL only. | Secret if password present |
+| `IBEX_ENV` | Yes | (none; required explicitly) | Proxy runtime profile: `development`, `staging`, or `production` | Missing/empty is rejected; do not rely on an implicit development profile in deployment |
+| `REDIS_URL` | Required outside development | (empty in development) | Proxy Redis for shared rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), model-policy invalidation SUBSCRIBE (`model_policy_updates:*`), and `/ready`. Development may use a Noop limiter when unset and start serving local requests, but Redis remains a critical readiness check, so `/ready` intentionally stays degraded until Redis is available. Outside development the Proxy rejects unset Redis. When configured Redis is unavailable, rate-limited work fails closed with 503. Auth-cache wrapping is skipped when Redis is absent/unhealthy so token revocations use direct gRPC validation; model-policy cache may rely on its bounded TTL when invalidations cannot be delivered. | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |

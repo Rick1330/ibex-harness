@@ -19,7 +19,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
-	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -300,9 +299,9 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		Limiter:          limiter,
 		Health:           &healthcheck.Server{CriticalCheckers: healthCheckers},
 		ProviderRegistry: providerReg,
-		// Integration fixtures are not testing deny-by-default; production NewRouter
-		// still DenyAlls when ModelRouter is nil.
-		ModelRouter:        modelpolicy.PassthroughRegistry{Base: providerReg},
+		// Integration fixtures explicitly opt into a test-only allow resolver;
+		// production NewRouter remains fail-closed when ModelRouter is nil.
+		ModelRouter:        integrationTestModelResolver{base: providerReg},
 		ContextClient:      opts.srvOpts.contextClient,
 		CredentialResolver: credResolver,
 	})
@@ -310,6 +309,12 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		t.Fatalf("NewRouter: %v", err)
 	}
 	return handler
+}
+
+type integrationTestModelResolver struct{ base *provider.Registry }
+
+func (r integrationTestModelResolver) ForOrg(_ context.Context, _ uuid.UUID, model string) (provider.Provider, error) {
+	return r.base.For(model)
 }
 
 func mustCredentialResolver(t *testing.T, client authv1.AuthServiceClient, timeout time.Duration) proxyhttp.CredentialResolver {

@@ -53,9 +53,9 @@ A 64-bit field on tokens encoding allowed operations (read memory, create sessio
 
 When auth or tenant isolation dependencies fail, the system denies access rather than granting cached or anonymous permissions. Phase 1 proxy returns `503 SERVICE_DEGRADED` when auth gRPC is unreachable.
 
-<h3 id="fail-open">Fail open (rate limiting)</h3>
+<h3 id="fail-open">Fail open</h3>
 
-When Redis is unavailable, the proxy rate limiter allows requests through rather than blocking all traffic — availability trade-off documented in [Rate limiting](/docs/proxy/rate-limiting).
+Continue the protected operation when a dependency cannot make a reliable decision. The current Proxy does **not** fail open on shared rate-limit or organization model-policy dependency failures; those return 503. Its explicit local-development Noop limiter is not a production fallback. See [fail-closed Proxy controls](/docs/adr/0081-fail-closed-proxy-runtime-controls).
 
 ## Proxy and API
 

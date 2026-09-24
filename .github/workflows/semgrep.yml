@@ -51,7 +51,6 @@ jobs:
     container:
       image: semgrep/semgrep:1.103.0
     if: |
-      github.actor != 'dependabot[bot]' &&
       (needs.changes.outputs.run_go == 'true' ||
        needs.changes.outputs.run_web == 'true' ||
        needs.changes.outputs.run_security == 'true')
@@ -89,7 +88,26 @@ jobs:
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
-        if: always()
+        if: always() && github.actor != 'dependabot[bot]'
         with:
           sarif_file: semgrep.sarif
           category: semgrep
+
+  ci-gate-semgrep:
+    name: ci-gate-semgrep
+    needs: [changes, semgrep]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Evaluate custom Semgrep gate
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          AREA_ACTIVE: ${{ needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_web == 'true' || needs.changes.outputs.run_security == 'true' }}
+          SEMGREP_RESULT: ${{ needs.semgrep.result }}
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh "$AREA_ACTIVE" "$CHANGES_RESULT" "$SEMGREP_RESULT"

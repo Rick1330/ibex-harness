@@ -91,7 +91,7 @@ Auth-probe routes skip body limit and Content-Type checks but still run auth, ag
 | --- | --- | --- |
 | Auth gRPC down / timeout | Fail **closed** on token validation | `503 SERVICE_DEGRADED` |
 | Auth gRPC down on agent verify | Fail **closed** | `503 AUTH_UNAVAILABLE` |
-| Redis down | Rate limit **skipped** (fail-open); auth cache not wrapped | Request proceeds; monitor `/ready` |
+| Redis down | Rate limit fails **closed**; auth cache is not wrapped | `503 SERVICE_DEGRADED`; provider handler is not called; monitor `/ready` |
 | Unknown model | No adapter for that model id | `501 PROVIDER_NOT_CONFIGURED` |
 | ClickHouse down | Traces drop | Chat still **200** |
 

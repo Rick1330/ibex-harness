@@ -352,11 +352,10 @@ func modelPolicyMetrics(reg *ibexmetrics.ProxyRegistry) modelpolicy.Metrics {
 }
 
 type modelPolicyRuntimeInput struct {
-	PGDB             *sql.DB
-	Base             *provider.Registry
-	Log              *logger.Logger
-	Metrics          *ibexmetrics.ProxyRegistry
-	AllowPassthrough bool
+	PGDB    *sql.DB
+	Base    *provider.Registry
+	Log     *logger.Logger
+	Metrics *ibexmetrics.ProxyRegistry
 }
 
 func buildModelPolicyRuntime(in modelPolicyRuntimeInput) (
@@ -385,10 +384,6 @@ func modelPolicyUnavailable(in modelPolicyRuntimeInput) (
 	if in.Base == nil {
 		reason = "provider registry nil"
 	}
-	if in.AllowPassthrough {
-		warnModelPolicyPassthrough(in.Log, in.Metrics, reason)
-		return nil, modelpolicy.PassthroughRegistry{Base: in.Base}, modelpolicy.NoopAgentDefaults{}, nil
-	}
 	warnModelPolicyDenyAll(in.Log, in.Metrics, reason)
 	return nil, modelpolicy.DenyAllRegistry{}, modelpolicy.NoopAgentDefaults{}, nil
 }
@@ -412,20 +407,6 @@ func warnModelPolicyDenyAll(log *logger.Logger, metrics *ibexmetrics.ProxyRegist
 	log.WarnCtx(context.Background(),
 		"model policy deny-all: org model policies unavailable; every model denied",
 		"reason", reason,
-	)
-}
-
-func warnModelPolicyPassthrough(log *logger.Logger, metrics *ibexmetrics.ProxyRegistry, reason string) {
-	if metrics != nil {
-		metrics.SetModelPolicyEnabled(false)
-	}
-	if log == nil {
-		return
-	}
-	log.WarnCtx(context.Background(),
-		"model policy passthrough: org model policies disabled; every model allowed for every org",
-		"reason", reason,
-		"escape_hatch", "IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH",
 	)
 }
 

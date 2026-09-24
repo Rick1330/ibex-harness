@@ -83,6 +83,9 @@ type RouterDeps struct {
 // was not fully initialized and must not be served.
 func NewRouter(deps RouterDeps) (http.Handler, error) {
 	deps.Config.ApplyDefaults()
+	if deps.Validator != nil && deps.Limiter == nil && (deps.Config.Environment == "staging" || deps.Config.Environment == "production") {
+		return nil, fmt.Errorf("proxy %s profile requires a rate limiter when protected routes are mounted", deps.Config.Environment)
+	}
 	mux := http.NewServeMux()
 	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
 	if err != nil {

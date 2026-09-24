@@ -76,17 +76,65 @@ async function fetchSearchIndex(port) {
     throw new Error(`/api/search returned HTTP ${response.status}`);
   }
   const body = await response.text();
+  const bodyBytes = Buffer.byteLength(body, "utf8");
   if (body.length < 1000 || body === "[]") {
     throw new Error(
-      `/api/search response too small (${body.length} bytes); expected prerendered Orama export`,
+      `/api/search response too small (${bodyBytes} bytes); expected prerendered Orama export`,
     );
   }
-  if (body.length > MAX_INDEX_BYTES) {
+  if (bodyBytes > MAX_INDEX_BYTES) {
     throw new Error(
-      `search index too large (${body.length} bytes); max ${MAX_INDEX_BYTES}`,
+      `search index too large (${bodyBytes} bytes); max ${MAX_INDEX_BYTES}`,
     );
   }
+  await assertSearchIndexContract(body);
   return body;
+}
+
+async function assertSearchIndexContract(body) {
+  const payload = JSON.parse(body);
+  const storedDocs = payload?.docs?.docs;
+  const docs = Array.isArray(storedDocs)
+    ? storedDocs
+    : storedDocs && typeof storedDocs === "object"
+      ? Object.values(storedDocs)
+      : [];
+  if (docs.length === 0 || docs.some((doc) => !doc || typeof doc !== "object")) {
+    throw new Error("search index does not contain the expected Orama document collection");
+  }
+
+  const byUrl = new Map(docs.map((doc) => [doc.url, doc]));
+  const requiredTokens = new Map([
+    ["/docs/adr/0081-fail-closed-proxy-runtime-controls", "SERVICE_DEGRADED"],
+    ["/roadmap/phase-4-multi-provider/findings", "F4-037"],
+    ["/roadmap/phase-4-multi-provider/risks", "Redis"],
+  ]);
+  for (const [url, token] of requiredTokens) {
+    const doc = byUrl.get(url);
+    if (!doc) throw new Error(`required search document is missing: ${url}`);
+    const searchable = `${doc.title ?? ""}\n${doc.description ?? ""}\n${doc.content ?? ""}`;
+    if (!searchable.toLowerCase().includes(token.toLowerCase())) {
+      throw new Error(`search document ${url} is missing its required token ${token}`);
+    }
+    const routeArtifact = path.join(
+      appRoot,
+      ".next",
+      "server",
+      "app",
+      `${url.slice(1)}.html`,
+    );
+    try {
+      await access(routeArtifact);
+    } catch {
+      throw new Error(`search document ${url} has no compiled route artifact`);
+    }
+  }
+
+  const excludedMilestone =
+    "/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract";
+  if (byUrl.has(excludedMilestone)) {
+    throw new Error(`dense milestone unexpectedly included in search index: ${excludedMilestone}`);
+  }
 }
 
 function spawnNextStart(port) {
@@ -117,7 +165,7 @@ async function writeIndexArtifacts(body, buildId) {
     targets.map(async (target) => {
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, body, "utf8");
-      console.log(`[search] wrote ${target} (${body.length} bytes)`);
+      console.log(`[search] wrote ${target} (${Buffer.byteLength(body, "utf8")} bytes)`);
     }),
   );
 }

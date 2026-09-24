@@ -1,3 +1,7 @@
+{{- $deploymentProfile := required "deployment.profile must be explicitly set" .Values.deployment.profile -}}
+{{- if ne $deploymentProfile .Values.proxy.environment -}}
+{{- fail (printf "deployment.profile %q must match proxy.environment %q" $deploymentProfile .Values.proxy.environment) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,6 +41,14 @@ spec:
           env:
             - name: IBEX_DEPLOY_IMAGE_DIGEST
               value: {{ include "ibex.imageDigest" .Values.images.proxy | quote }}
+            - name: IBEX_ENV
+              value: {{ required "proxy.environment must be explicitly set" .Values.proxy.environment | quote }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.proxy.redis.secretName | quote }}
+                  key: {{ .Values.proxy.redis.urlKey | quote }}
+                  optional: {{ eq .Values.proxy.environment "development" }}
             - name: IBEX_AUTH_GRPC_ADDR
               value: "auth:{{ .Values.service.auth.grpc }}"
           livenessProbe:

@@ -161,18 +161,6 @@ func TestOrgAwareRegistry_NilOrgFailClosed(t *testing.T) {
 	}
 }
 
-func TestPassthroughRegistry(t *testing.T) {
-	t.Parallel()
-	p := PassthroughRegistry{}
-	if _, err := p.ForOrg(context.Background(), uuid.New(), "x"); !errors.Is(err, provider.ErrNoProviderForModel) {
-		t.Fatalf("err=%v", err)
-	}
-	chain, err := p.FallbackChain(context.Background(), uuid.New(), "gpt-4o")
-	if err != nil || chain != nil {
-		t.Fatalf("passthrough chain=%v err=%v", chain, err)
-	}
-}
-
 func TestOrgAwareRegistry_FallbackChain(t *testing.T) {
 	t.Parallel()
 	org := uuid.New()

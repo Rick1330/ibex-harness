@@ -229,6 +229,9 @@ func (c Config) validateHTTPHeaders() error {
 }
 
 func (c Config) validateRateLimit() error {
+	if c.Environment != envDevelopment && strings.TrimSpace(c.RedisURL) == "" {
+		return fmt.Errorf("REDIS_URL is required outside development; shared rate limiting must not be disabled")
+	}
 	if c.RateLimit.DefaultRPM < 1 {
 		return fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be positive")
 	}
