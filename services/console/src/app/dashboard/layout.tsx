@@ -7,8 +7,15 @@ export const dynamic = "force-dynamic"
  * connected. Keep fixture imports out of production execution by gating the
  * entire dashboard subtree on the explicit, server-validated preview pair.
  */
+import { UnavailableDashboard } from "@/app/dashboard/unavailable-dashboard"
+import { isDashboardPreviewEnabled } from "@/lib/classification"
+
 export default function DashboardLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  if (!isDashboardPreviewEnabled()) {
+    return <UnavailableDashboard />
+  }
+
   return children
 }

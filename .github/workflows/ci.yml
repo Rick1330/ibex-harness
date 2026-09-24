@@ -113,6 +113,7 @@ jobs:
       go: ${{ steps.detect.outputs.go }}
       python: ${{ steps.detect.outputs.python }}
       web: ${{ steps.detect.outputs.web }}
+      console: ${{ steps.detect.outputs.console }}
       proto: ${{ steps.detect.outputs.proto }}
       docker: ${{ steps.detect.outputs.docker }}
       workflows: ${{ steps.detect.outputs.workflows }}
@@ -125,6 +126,7 @@ jobs:
       run_go: ${{ steps.detect.outputs.run_go }}
       run_python: ${{ steps.detect.outputs.run_python }}
       run_web: ${{ steps.detect.outputs.run_web }}
+      run_console: ${{ steps.detect.outputs.run_console }}
       run_security: ${{ steps.detect.outputs.run_security }}
       run_docker: ${{ steps.detect.outputs.run_docker }}
       run_compose: ${{ steps.detect.outputs.run_compose }}
@@ -1895,6 +1897,54 @@ jobs:
       - name: Build web app
         run: pnpm web:build:clean
 
+  console-quality:
+    name: console-quality
+    needs: [changes, repo-guards]
+    if: needs.changes.outputs.run_console == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-pnpm-web
+
+      - name: Lint Console
+        run: pnpm --filter @ibex/console lint
+
+      - name: Typecheck Console
+        run: pnpm --filter @ibex/console typecheck
+
+      - name: Test Console
+        run: pnpm --filter @ibex/console test
+
+      - name: Build Console
+        run: pnpm --filter @ibex/console build
+
+      - name: Verify production preview boundary
+        run: |
+          set -euo pipefail
+          log_file="${RUNNER_TEMP}/console.log"
+          (cd services/console && NODE_ENV=production PORT=3100 pnpm start >"${log_file}" 2>&1) &
+          server_pid=$!
+          cleanup() { kill "${server_pid}" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3100/dashboard >/tmp/console-dashboard.html; then
+              break
+            fi
+            sleep 1
+          done
+          grep -Fq "Overview unavailable" /tmp/console-dashboard.html
+          ! grep -Fq "1,284,092" /tmp/console-dashboard.html
+
   hadolint:
     name: hadolint
     needs: changes
@@ -2414,6 +2464,7 @@ jobs:
     needs:
       - changes
       - repo-guards
+      - console-quality
       - shellcheck
       - markdown
       - compose-validate
@@ -2431,7 +2482,9 @@ jobs:
       - name: Evaluate repo gate
         run: |
           bash .github/scripts/evaluate-ci-gate.sh true \
+            "${{ needs.changes.result }}" \
             "${{ needs.repo-guards.result }}" \
+            "${{ needs.console-quality.result }}" \
             "${{ needs.shellcheck.result }}" \
             "${{ needs.markdown.result }}" \
             "${{ needs.compose-validate.result }}" \

@@ -3,6 +3,7 @@ import {
   classifyPath,
   isDashboardPreviewEnabled,
   isPreviewEnabled,
+  resolveDashboardBoundary,
   resolveDataMode,
 } from "@/lib/classification"
 import { getPreviewFixture } from "@/lib/preview-fixtures"
@@ -10,9 +11,7 @@ import { getPreviewFixture } from "@/lib/preview-fixtures"
 describe("console data boundary", () => {
   it("defaults to production and never enables preview implicitly", () => {
     expect(resolveDataMode({})).toBe("production")
-    expect(resolveDataMode({ CONSOLE_DATA_MODE: "preview" })).toBe(
-      "production",
-    )
+    expect(resolveDataMode({ CONSOLE_DATA_MODE: "preview" })).toBe("production")
     expect(
       resolveDataMode({
         CONSOLE_DATA_MODE: "preview",
@@ -61,6 +60,32 @@ describe("console data boundary", () => {
         NEXT_PUBLIC_CONSOLE_PREVIEW: "0",
       }),
     ).toBe(false)
+  })
+
+  it.each([
+    [{}, "unavailable"],
+    [{ CONSOLE_DATA_MODE: "preview" }, "unavailable"],
+    [{ CONSOLE_PREVIEW: "1" }, "unavailable"],
+    [{ CONSOLE_DATA_MODE: "preview", CONSOLE_PREVIEW: "1" }, "unavailable"],
+    [
+      {
+        NEXT_PUBLIC_CONSOLE_PREVIEW: "1",
+        CONSOLE_DATA_MODE: "preview",
+        CONSOLE_PREVIEW: "1",
+      },
+      "preview",
+    ],
+    [
+      {
+        NODE_ENV: "production",
+        NEXT_PUBLIC_CONSOLE_PREVIEW: "1",
+        CONSOLE_DATA_MODE: "preview",
+        CONSOLE_PREVIEW: "1",
+      },
+      "unavailable",
+    ],
+  ] as const)("resolves %s as %s", (env, expected) => {
+    expect(resolveDashboardBoundary(env)).toBe(expected)
   })
 
   it("rejects preview fixtures in production mode", () => {

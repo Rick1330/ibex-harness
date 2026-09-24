@@ -41,6 +41,8 @@ web:
   - '.github/workflows/operator-deploy.yml'
   - '.github/actions/setup-pnpm-web/**'
   - 'services/dashboard/**'
+console:
+  - 'services/console/**'
 proto:
   - 'packages/proto/**'
 docker:

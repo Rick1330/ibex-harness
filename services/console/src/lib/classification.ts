@@ -57,10 +57,7 @@ export function resolveDataMode(
   env: Record<string, string | undefined> = process.env,
 ): DataMode {
   if (env.NODE_ENV === "production") return "production"
-  if (
-    env.CONSOLE_DATA_MODE === "preview" &&
-    env.CONSOLE_PREVIEW === "1"
-  )
+  if (env.CONSOLE_DATA_MODE === "preview" && env.CONSOLE_PREVIEW === "1")
     return "preview"
   if (env.CONSOLE_DATA_MODE === "test") return "test"
   return "production"
@@ -84,6 +81,14 @@ export function isDashboardPreviewEnabled(
     env.CONSOLE_PREVIEW === "1" &&
     mode === "preview"
   )
+}
+
+export type DashboardBoundary = "preview" | "unavailable"
+
+export function resolveDashboardBoundary(
+  env: Record<string, string | undefined> = process.env,
+): DashboardBoundary {
+  return isDashboardPreviewEnabled(env) ? "preview" : "unavailable"
 }
 
 export const PREVIEW_MODE = process.env.NEXT_PUBLIC_CONSOLE_PREVIEW === "1"
