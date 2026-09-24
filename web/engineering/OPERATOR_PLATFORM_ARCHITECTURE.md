@@ -81,4 +81,4 @@ A capability is promotable only when contract snapshots, golden fixtures, tenant
 
 ## References
 
-See [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [TESTING_STRATEGY.md](TESTING_STRATEGY.md), and [CONSOLE_DEEP_READINESS_PLAN.md](../../CONSOLE_DEEP_READINESS_PLAN.md) for the corresponding contract, runtime, test, and readiness rules.
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [TESTING_STRATEGY.md](TESTING_STRATEGY.md), and [CONSOLE_DEEP_READINESS_PLAN.md](console/CONSOLE_DEEP_READINESS_PLAN.md) for the corresponding contract, runtime, test, and readiness rules.

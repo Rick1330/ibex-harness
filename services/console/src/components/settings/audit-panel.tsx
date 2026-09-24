@@ -754,7 +754,7 @@ function StructuredDiff({
   }
   const keys = Array.from(
     new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]),
-  ).sort()
+  ).sort((a, b) => a.localeCompare(b))
 
   return (
     <div className="overflow-hidden rounded-md border border-border/70">

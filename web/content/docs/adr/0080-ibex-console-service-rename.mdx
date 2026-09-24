@@ -8,7 +8,7 @@ date: 2026-09-24
 
 ## Context
 
-The merged Track D foundation is a deployable Next.js application under `services/IBEX Console` with package name `@ibex/IBEX Console`. The implementation is a presentation and preview foundation: it does not yet provide production authentication, tenant authority, live operator API contracts, or deployment evidence. The public documentation site remains under `web/`, while `services/dashboard` is a separate compatibility shell.
+The merged Track D foundation is a deployable Next.js application under `services/console` with package name `@ibex/console`. The implementation is a presentation and preview foundation: it does not yet provide production authentication, tenant authority, live operator API contracts, or deployment evidence. The public documentation site remains under `web/`, while `services/dashboard` is a separate compatibility shell.
 
 The product name for the canonical operator application is **IBEX Console**. The application must remain a service under `services/` because it owns runtime startup, routes, server rendering, request boundaries, deployment configuration, and service-level security policy. It is not a reusable package and must not be moved into `packages/`.
 
@@ -18,7 +18,15 @@ Rename the canonical deployable application directory to `services/console` and 
 
 The Console service remains presentation-only and preview-gated after this change. This ADR does not connect live APIs, introduce a browser proxy, change authentication ownership, or retire `services/dashboard`.
 
-The internal preview variables are renamed from `the previous service-specific preview variables` and `NEXT_PUBLIC_the previous service-specific preview variables` to `CONSOLE_*` and `NEXT_PUBLIC_CONSOLE_*`. These are local/runtime configuration names rather than public compatibility identifiers. External hostnames, ingress identifiers, cookies, deployment project names, and the `services/dashboard` compatibility workflow remain unchanged.
+The internal preview variables are renamed as follows:
+
+| Legacy variable | Console variable |
+| --- | --- |
+| `OPERATOR_WEB_DATA_MODE` | `CONSOLE_DATA_MODE` |
+| `OPERATOR_WEB_PREVIEW` | `CONSOLE_PREVIEW` |
+| `NEXT_PUBLIC_OPERATOR_WEB_PREVIEW` | `NEXT_PUBLIC_CONSOLE_PREVIEW` |
+
+These are local/runtime configuration names rather than public compatibility identifiers. External hostnames, ingress identifiers, cookies, deployment project names, and the `services/dashboard` compatibility workflow remain unchanged.
 
 ## Boundary rules
 
