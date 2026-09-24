@@ -1,8 +1,8 @@
 ---
 title: "Identity, Tenancy & Authorization Assurance"
-description: "Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision."
-summary: "Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision."
-status: "planned"
+description: "Server-side identity, tenant context, permissions, and step-up controls are mounted on every privileged operator path."
+summary: "Server-side identity, tenant context, permissions, and step-up controls are mounted on every privileged operator path."
+status: "in-progress"
 milestoneId: "4.P.1"
 track: "P"
 trackTitle: "Operator Readiness, Evidence & Control Plane"
@@ -15,81 +15,47 @@ fullTitle: "Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance"
 
 # Milestone 4.P.1 — Identity, Tenancy & Authorization Assurance
 
-**Status:** Planned (partially landed — see callout)  
-**Outcome:** Every operator request, stream, export, deletion, replay, and asynchronous job has a verified tenant and policy decision.  
-**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** 4.P.0; Track A identity/API foundations  
-**Estimated effort:** 3 weeks  
+**Status:** mounted-but-provisional — hard dependency for operator E2E; not closed by scaffolding.
+**Outcome:** Every request, stream, export, deletion, replay, secret use, and asynchronous job receives a server-derived tenant and policy decision.
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)
+**Dependencies:** P0; Track A identity/API foundations. P1 must be evidenced before D0 or P6-bootstrap proceeds.
+**Estimated effort:** 3 weeks
 **Gate:** G1 identity
 
-<Callout type="warning" title="PR #845 partial Gate G1 landing (not milestone-complete)">
-  Shipped in this PR relative to Gate G1: fail-closed model policy (`DenyAllRegistry`, unmatched → deny), durable policy epochs + `EpochPoller` (F4-015/F4-016), `SecretUse` on credential Get (F4-017), shared SSRF validate/pin (F4-018), operator permission bits + kill switches + TOTP/step-up **scaffolding**, RS256 dual-verify, TOTP/ledger migrations with RLS FORCE.
-  **Not yet closed:** F4-002 / F4-006 as a single enforceable HTTP contract — `require_operator_permission` / `RequireStepUpProbe` are **not mounted** on any router; two-tenant operator authorization matrix not attached; org switching deferred. Follow-up: [#846](https://github.com/Rick1330/ibex-harness/issues/846). Do not treat Gate G1 as fully closed until those land.
+<Callout type="warning" title="Hard dependency">
+  Operator readiness cannot proceed until RS256 session verification and rotation, server-side session lifecycle and revocation, server-derived organization context, mounted permission enforcement, and mounted step-up enforcement are exercised on real routers and jobs. Constants, migrations, middleware scaffolding, client-side checks, or an unmounted `require_operator_permission`/step-up probe do not close G1.
 </Callout>
 
-<Callout type="note" title="Completion contract">
-  Permission constants alone are not sufficient. Deny-by-default policy, step-up for high-impact actions, two-tenant negative matrices, and fail-closed model-policy behavior must be evidenced.
+<Callout type="note" title="Current boundary">
+  The baseline records policy epochs, deny-by-default model policy, secret-use and SSRF foundations, and dual-verify scaffolding, but does not by itself prove a mounted HTTP contract or a two-tenant operator matrix. Do not treat G1 as closed until P6 evidence exists.
 </Callout>
 
-<Callout type="warning" title="Planning baseline (sketch deviations)">
-  Locked for G1 implementation vs earlier roadmap sketches:
-  - Unmatched model policies **deny by default** (breaking vs earlier allow-on-miss sketches).
-  - `DenyAllRegistry` replaces Passthrough when policy store is unavailable; escape hatch `IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH` only.
-  - Step-up is **bespoke TOTP in Auth**, not OIDC/ACR.
-  - Dual-approval is **ledger hooks only** (no UI / no preview issuer yet).
-  - Org switching is **deferred**.
-  - Operator action ledger is schema + deny-without-preview; full preview/approval APIs later.
-  - Session verify is **RS256-first dual-verify** with deprecated HS256 fallback logged as `provisional_hs256_verify=1`.
-</Callout>
+## Required server-side contract
 
-## Why this milestone exists
+- Verify AuthService sessions with RS256 key rotation and revocation; provisional HMAC verification must not be reachable in shared environments.
+- Derive `org_id` from the verified server session and membership, never from a client-controlled route, query, header, or browser storage value.
+- Mount authentication, permission bits, resource/action classification, and deny-by-default policy checks on every API, SSE, export, mutation, and asynchronous worker path.
+- Require fresh step-up for deletion, raw/export, production replay, secret changes, policy changes, break-glass, and other high-impact actions; expired, missing, or cross-tenant step-up must deny.
+- Preserve explicit `org_id` filters in PostgreSQL, Redis, ClickHouse, object storage, queues, and read models.
+- Keep policy epoch reconciliation fail-closed; narrow credential retrieval and block private-range or non-allowlisted provider URLs.
 
-A valid admin token is not sufficient authorization for raw evidence, deletion, secrets, or replay (F4-002, F4-006). Fail-open model policy and lossy invalidation (F4-015, F4-016) and secret/SSRF gaps (F4-017, F4-018) make tenant controls unsafe before any UI.
+## Verification gate
 
-## Scope and deliverables
-
-- Session/refresh (OIDC federation deferred), revocation, org membership, org switching, role/permission evaluation, resource classification.
-- Action taxonomy: metadata-read, redacted-read, raw-read, export, delete, replay, secret-use, policy-change, break-glass.
-- Step-up MFA / dual approval hooks for deletion, raw/export, production replay, secret changes, break-glass.
-- Remove or hard-disable `PassthroughRegistry` fail-open; enforce deny-by-default when Postgres/policy store is unavailable.
-- Replace lossy model-policy Pub/Sub invalidation with versioned durable reconciliation; fail closed on unknown policy version.
-- Narrow `GetProviderCredential` service authorization; enforce BYO BaseURL SSRF allowlist/private-range blocks.
-
-## Contract and data requirements
-
-Typed authorization errors without leaking object existence. Audit fields: actor, tenant (`org_id`), purpose, assurance, policy result. Provider secrets and bearer tokens never appear in UI or logs.
-
-## Product and UX requirements
-
-Denied actions explain the safe next step without revealing object existence. The UI exposes only allowed actions.
-
-## Non-functional requirements
-
-Normal dashboard DB roles are not superusers / `BYPASSRLS`. Authorization is deny-by-default and evaluated server-side on every request, stream, and async job.
-
-## Verification gates
-
-Two-tenant matrix across API, Postgres/RLS, Redis keys, ClickHouse `org_id` filters, object storage, queues, exports, replay, guessed IDs, org switching, revoked sessions, expired step-up, degraded IdP. Negative tests: policy store down → no models allowed; revoke → no stale allow; SSRF blocked; credential fetch without scope denied.
+P6-slice-certification must run a four-role/two-tenant matrix against the mounted runtime: viewer, operator, admin, and owner; Org B direct lookups return `404` where anti-enumeration applies and searches return empty; revoked sessions, expired step-up, policy-store outage, guessed IDs, org switching, and unscoped credential access deny. Evidence must identify the route or job, role, tenant, policy result, and artifact.
 
 ## Rollout and rollback
 
-**Trigger:** tenant leak, fail-open allow, or secret exposure. **Reversal:** kill switch disables sensitive actions; roll back policy versions, never audit history; return to read-only metadata. **Verify:** two-tenant matrix re-run green; fail-open paths return deny.
+**Trigger:** tenant leak, stale allow, fail-open policy, revoked-session acceptance, or secret exposure. **Reversal:** disable sensitive actions, return to metadata-only/read-only mode, and roll back policy versions without rewriting audit history. **Verify:** rerun the two-tenant matrix and confirm fail-closed responses.
 
 ## Findings addressed
 
 F4-002, F4-006, F4-010, F4-015, F4-016, F4-017, F4-018.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
-- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
 ## Exit checklist
 
-- [ ] Action taxonomy and step-up rules documented and enforced.
-- [x] Fail-open model policy removed or residual-risk recorded on 4.E.4.
-- [x] Durable policy invalidation evidenced.
-- [x] Secret/SSRF negative tests attached.
-- [ ] Two-tenant authorization matrix report attached.
+- [ ] RS256 session verification/rotation, lifecycle, and revocation are mounted and evidenced.
+- [ ] Server-derived org context is enforced on API, SSE, export, mutation, and job paths.
+- [ ] Permission checks are mounted server-side; client visibility is not an authorization control.
+- [ ] Step-up is mounted for every listed high-impact action and expiry denies.
+- [ ] Four-role/two-tenant negative matrix is attached through P6-slice-certification.
+- [ ] Policy-store outage, SSRF, credential-scope, and stale-revocation negative tests pass.

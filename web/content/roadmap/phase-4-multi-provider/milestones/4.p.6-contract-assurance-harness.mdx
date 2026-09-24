@@ -1,7 +1,7 @@
 ---
 title: "Contract & Assurance Harness"
-description: "Every capability produces machine-verifiable release evidence in the intended environment."
-summary: "Every capability produces machine-verifiable release evidence in the intended environment."
+description: "The operator runtime produces machine-verifiable contract, browser, security, resilience, performance, and rollback evidence."
+summary: "The operator runtime produces machine-verifiable contract, browser, security, resilience, performance, and rollback evidence."
 status: "planned"
 milestoneId: "4.P.6"
 track: "P"
@@ -15,64 +15,55 @@ fullTitle: "Milestone 4.P.6 — Contract & Assurance Harness"
 
 # Milestone 4.P.6 — Contract & Assurance Harness
 
-**Status:** Planned  
-**Outcome:** Every capability produces machine-verifiable release evidence in the intended operator environment.  
-**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** 4.P.0; 4.P.2 fixtures can start early; must mature before 4.D.1  
-**Estimated effort:** 3 weeks  
+**Status:** planned/specification — executable assurance gate, not a static smoke plan.
+**Outcome:** P6-bootstrap specifies and mounts the harness, manifest, parser, fixture, required-check, and rollback interfaces; P6-slice-certification records evidence per D slice. No global assurance completion is claimed by the harness specification alone.
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)
+**Dependencies:** P0 + P1 for P6-bootstrap. Each P6-slice-certification consumes the relevant D slice plus its own P contract; D1 consumes P6-bootstrap, while D2–D6 consume P6-slice-certification.
+**Estimated effort:** 3 weeks
 **Gate:** G6 assurance
 
-<Callout type="note" title="Completion contract">
-  A static-site smoke test is not dashboard E2E. Real PostgreSQL RLS, Redis Lua rate limiting, pgvector, and token-revocation paths must not be replaced by contract doubles.
+<Callout type="note" title="Operator E2E boundary">
+  `web/` documentation smoke and `services/dashboard/` compatibility-shell tests are separately named smoke checks. They cannot satisfy operator E2E. P6 must execute against the canonical server-capable operator topology with real PostgreSQL RLS, Redis Lua rate limiting, pgvector, revocation, and mounted authorization paths; contract doubles cannot replace those paths.
 </Callout>
 
-## Why this milestone exists
+## P6-bootstrap
 
-A test file or planned route is not an acceptance gate until CI executes it against the intended topology and data (F4-012, F4-034).
+P6-bootstrap is the harness foundation: pinned-environment conventions, schema/parser interfaces, fixture versioning, artifact-manifest shape, required-check inventory, and rollback-record shape. It is a specification/mounting gate and does not assert that runtime, browser, resilience, or security checks have passed.
 
-## Scope and deliverables
+## P6-slice-certification
 
-- Generate TypeScript SDK from OpenAPI in CI; schema snapshots; old/new compatibility; migrations-from-zero and upgrade tests.
-- Golden fixtures: trace/session/memory/cost; OTel round-trip; tenant/security matrix; Playwright (four roles, two tenants); axe; keyboard; k6; chaos; SLO gates.
-- Explicit Playwright browser install and operator environment provisioning.
-- Required-check inventory including Python gate and Semgrep security findings intended to block merges (F4-034).
-- Trace/report uploads on failure; no-check fail-closed evaluation.
+For each D slice, P6-slice-certification runs only after that slice's named P contract is available. It attaches the slice-specific runtime, browser, tenant-negative, hostile-content, performance, resilience, and rollback outputs that actually ran. Missing or unverified outputs remain planned/specification or residual-risk; they are never inferred from the harness existing.
 
-## Contract and data requirements
+## Executable assurance suite
 
-Evidence artifacts immutable and tied to commit, image digest, schema version, environment, test command, result, artifact links.
+CI must perform the following against a pinned environment and fixture version:
 
-## Product and UX requirements
+- Capture and diff an OpenAPI snapshot, generate the TypeScript client, build it, and run old/new compatibility fixtures.
+- Parse every API response at runtime through schemas tied to the generated contract before browser assertions or DTO use; reject unknown/malformed security-sensitive shapes and record parser failures.
+- Seed four roles (viewer, operator, admin, owner) across two tenants and run authenticated Playwright journeys, including org isolation, revocation, step-up, lifecycle, evidence, query, cost, and operator SSE behavior.
+- Run axe and keyboard checks, deterministic visual baselines (fixed data/time/locale, reduced motion), and hostile-content/redaction rendering checks for traces, memories, directives, incidents, exports, and errors.
+- Prove cache isolation for authenticated API/RSC/export responses across users and tenants; test `Cache-Control`/key scope and no cross-tenant replay.
+- Exercise SSE reconnect, `Last-Event-ID`, duplicate suppression, slow consumers, write deadlines, bounded buffers, provider-stream separation, and graceful drain.
+- Run performance/load budgets with p50/p95/p99 latency, error rate, throughput, query cost, SSE lag, memory, queue lag, and explicit stop conditions.
+- Upload failure traces, screenshots, videos, JUnit, axe, visual diff, performance, security, and tenant-negative reports.
 
-Fixtures cover loading, empty, error, partial, permission, stale, sampled, redacted, and expired states.
+## Artifact manifest and required checks
 
-## Non-functional requirements
+Each run writes an immutable manifest containing commit SHA, image/artifact digests, environment, fixture/schema versions, topology, test commands, timestamps, result, thresholds, and links to every artifact. The required-check inventory is generated from branch-protection rules and names the OpenAPI/client, runtime-parser, contract, Playwright, axe, visual, hostile-content, cache-isolation, SSE, performance, security, and Python/Semgrep checks. Missing or unregistered required checks fail closed.
 
-Promotion-blocking evidence must include Org B API/UI reads and searches against Org A data: direct lookups return `404` and searches return an empty set.
+## Rollback assurance
 
-## Verification gates
-
-Required CI jobs green on operator topology; cross-tenant denial reports; accessibility and performance reports uploaded.
-
-## Rollout and rollback
-
-**Trigger:** missing required check or false-green smoke. **Reversal:** failed gate blocks promotion; does not silently downgrade to public-site smoke. **Verify:** evidence bundle lists all required artifacts for a sample capability.
+The suite records the rollback command and prior digest/configuration, verifies schema compatibility, reruns runtime smoke and tenant-negative checks after rollback, and blocks promotion if rollback evidence is absent. An evidence bundle is not complete merely because a static shell loaded.
 
 ## Findings addressed
 
-F4-012, F4-028, F4-029, F4-030, F4-034.
+F4-012, F4-028, F4-029, F4-030, F4-034; F4-035 remains a D0/E4 surface-separation and sign-off finding.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
-- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
 ## Exit checklist
 
-- [ ] SDK generation + contract snapshots in CI.
-- [ ] Four-role / two-tenant Playwright against operator topology.
-- [ ] Cross-tenant 404/empty-search evidence attached.
-- [ ] Required-check inventory matches branch protection.
-- [ ] Real RLS/Lua/pgvector/revocation paths exercised (no doubles).
+- [ ] OpenAPI snapshot, generated client, compatibility fixtures, and runtime parsing are required CI checks.
+- [ ] Four-role/two-tenant Playwright evidence runs against the operator topology.
+- [ ] axe, keyboard, visual, hostile-content, redaction, and cache-isolation artifacts are uploaded.
+- [ ] SSE resilience and performance thresholds are measured with stop conditions.
+- [ ] Artifact manifest is immutable and complete; required-check inventory matches protection rules.
+- [ ] Rollback transcript and post-rollback tenant/security smoke are attached.

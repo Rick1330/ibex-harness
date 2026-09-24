@@ -1,8 +1,8 @@
 ---
 title: "Runtime Topology & Environment Contract"
-description: "A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments."
-summary: "A live topology supports the operator UI, API, and SSE behavior in local, preview, staging, and production environments."
-status: "planned"
+description: "The operator runtime has an explicit topology, environment contract, and closure evidence separate from the public documentation site."
+summary: "The operator runtime has an explicit topology, environment contract, and closure evidence separate from the public documentation site."
+status: "in-progress"
 milestoneId: "4.P.0"
 track: "P"
 trackTitle: "Operator Readiness, Evidence & Control Plane"
@@ -15,65 +15,47 @@ fullTitle: "Milestone 4.P.0 — Runtime Topology & Environment Contract"
 
 # Milestone 4.P.0 — Runtime Topology & Environment Contract
 
-**Status:** Planned  
-**Outcome:** A chosen deployment topology supports a server-capable operator UI or a static SPA with a separately deployed API/SSE origin across local, preview, staging, and production.  
-**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** Track A API foundations; Phase 3.5; 4.C.5 streaming baseline (implementation retained; soak evidence still required)  
-**Estimated effort:** 2 weeks  
-**Gate:** G0 topology
+**Status:** mounted-but-provisional — topology decision and closure evidence are required; no runtime closure is claimed here.
+**Outcome:** A server-capable canonical operator application runs against a separately owned API/SSE runtime, while `web/` remains the public documentation site and `services/dashboard/` remains a compatibility-only shell during migration.
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)
+**Dependencies:** P0 is the first node in the graph. Track A API foundations, Phase 3.5, and the 4.C.5 streaming baseline are external inputs, not evidence that P0 is closed.
+**Estimated effort:** 2 weeks
+**Gate:** G0 topology decision/closure
 
 <Callout type="note" title="Completion contract">
-  This milestone is complete only when the topology ADR, environment matrix, smoke transcript (login, API, operator SSE connect/reconnect/drain), and rollback procedure exist. Static `web/out` documentation deploy is not operator runtime evidence.
+  Closure requires an ADR naming the canonical operator runtime, an environment matrix, and a transcript from that runtime proving login, API access, operator-event SSE connect/reconnect/drain, and rollback. A `web/out` deploy or a `services/dashboard/` smoke is compatibility evidence only, not operator-runtime closure.
 </Callout>
 
-## Why this milestone exists
+## Decision and boundaries
 
-Without an explicit runtime decision, every Track D estimate assumes an authenticated realtime app that the current static docs site cannot provide (F4-001).
+The canonical production-intended application is `services/operator-web`, with a server-side data boundary and a separately managed API/SSE origin or an explicitly approved same-origin equivalent. `web/` is public documentation. `services/dashboard/` is a temporary compatibility-only shell for the existing 4.P.0 connection behavior; it is not the Track D operator product and must have a retirement condition.
 
-## Scope and deliverables
+The ADR must settle origin relationship, cookie and token audience, CSRF, CORS, TLS termination, ingress timeouts, SSE buffering and write deadlines, environment variables, and ownership for local, preview, staging, and production. It must not infer hostnames or deployment workflows from the readiness plan.
 
-- Record the topology decision in an ADR (server-capable Next.js app **or** static SPA + separate API/SSE origin).
-- Provision origins, TLS, CORS, CSRF, cookie/token audience, refresh rotation, SSE ingress timeouts, reverse-proxy buffering, and environment variables for local/preview/staging/production.
-- Expose health, readiness (dependency-aware, not startup-only — F4-020), startup, and drain endpoints.
-- Probe operator-event SSE separately from provider token streaming.
+## Scope and contracts
 
-## Contract and data requirements
+- Publish health, dependency-aware readiness, startup, and drain behavior.
+- Keep operator-event SSE framing, `Last-Event-ID` resume, reconnect, duplicate suppression, and drain semantics distinct from provider token streaming; provider streaming remains verbatim.
+- Define versioned API envelopes with tenant/session context, pagination, stable errors, freshness/completeness, and redaction metadata.
+- Keep public documentation deployment independent from authenticated operator deployment.
 
-- Versioned API envelope: tenant, session, API version, pagination, error model.
-- **Operator-event SSE:** event framing, reconnect, and `Last-Event-ID` resume semantics.
-- **Provider token streaming:** continues to forward upstream SSE verbatim without adding event IDs or re-framing (ADR-0027; F4-007).
-- Keep the public documentation site deployment separate from the operator application.
+## Verification and closure
 
-## Product and UX requirements
-
-The shell shows connection state, freshness, live/historical mode, reconnecting, degraded, and drained states. Deep links are origin-safe and do not embed secrets.
-
-## Non-functional requirements
-
-No static export for authenticated realtime behavior. Staging API p95 metadata request within declared budget; operator SSE reconnects without duplicate visible events; termination drains active streams; SSE write deadlines and shedding hooks exist or are scheduled with evidence (F4-033).
-
-## Verification gates
-
-Smoke test login, API request, operator SSE connect, reconnect with `Last-Event-ID`, and graceful drain in the chosen topology. Validate static-export guards and origin/CORS/CSRF negative tests. Document environment matrix and rollback to public docs origin.
+Closure evidence is the ADR, environment matrix, origin/security negative tests, authenticated runtime smoke transcript, operator SSE reconnect/drain transcript, and rollback to a prior evidence-backed operator-web artifact/digest or operator-origin disablement. The transcript must identify commit, image or artifact digest, environment, command, and result. The compatibility shell may retain its own unit tests, but those tests cannot satisfy operator E2E.
 
 ## Rollout and rollback
 
-**Trigger:** topology misconfiguration, cookie/CORS failure, or stream memory growth. **Reversal:** dark-deploy behind internal flag; route traffic to the public docs site and disable operator origin without changing stored data. **Verify:** public site serves; operator origin rejects unauthenticated access; smoke transcript attached.
+**Trigger:** topology mismatch, cookie/CORS failure, unsafe static export, or stream resource growth. **Reversal:** route to the prior evidence-backed operator-web artifact/digest, or disable the operator origin if no such artifact exists; do not change stored data. Public `web/` documentation remains independently available. **Verify:** unauthenticated operator access is rejected and the runtime smoke transcript is rerun.
 
 ## Findings addressed
 
 F4-001, F4-007, F4-020, F4-033.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
 ## Exit checklist
 
-- [ ] Topology ADR merged and linked from this milestone.
-- [ ] Environment matrix covers local/preview/staging/production origins.
-- [ ] Smoke transcript proves login, API, operator SSE reconnect/drain.
-- [ ] Provider SSE remains verbatim; operator SSE resume documented separately.
-- [ ] Rollback to docs-only origin demonstrated.
+- [ ] Canonical operator topology ADR and ownership are linked.
+- [ ] Environment matrix covers local/preview/staging/production.
+- [ ] Operator runtime transcript proves login, API, SSE reconnect/resume, and drain.
+- [ ] Provider streaming and operator SSE contracts are tested separately.
+- [ ] `services/dashboard/` is labeled compatibility-only with a retirement condition.
+- [ ] Rollback to a prior evidence-backed operator-web artifact/digest or operator-origin disablement is demonstrated; public docs remain independently available.

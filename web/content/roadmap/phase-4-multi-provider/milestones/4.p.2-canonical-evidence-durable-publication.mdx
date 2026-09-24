@@ -1,7 +1,7 @@
 ---
 title: "Canonical Evidence Plane & Durable Publication"
-description: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
-summary: "A multi-step run is a versioned, queryable, replay-aware evidence graph."
+description: "A versioned evidence graph exposes explicit read, freshness, completeness, and publication contracts for Track D."
+summary: "A versioned evidence graph exposes explicit read, freshness, completeness, and publication contracts for Track D."
 status: "in-progress"
 milestoneId: "4.P.2"
 track: "P"
@@ -15,77 +15,43 @@ fullTitle: "Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication"
 
 # Milestone 4.P.2 — Canonical Evidence Plane & Durable Publication
 
-**Status:** In progress  
-**Outcome:** A multi-step agent run is a versioned, queryable, replay-aware evidence graph with durable publication.  
-**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** 4.P.0; 4.P.1  
-**Estimated effort:** 4 weeks  
+**Status:** In progress — write-side foundations exist; read-model and publication residuals remain.
+**Outcome:** A multi-step run is a versioned, queryable, replay-aware evidence graph with honest freshness and completeness semantics.
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)
+**Dependencies:** 4.P.0; 4.P.1
+**Estimated effort:** 4 weeks
 **Gate:** G2 contract + G3 evidence
 
-<Callout type="note" title="Completion contract">
-  Flat `llm_traces` aggregate rows are not enough. Nested span/event identity, correlation IDs, checkpoint joins, outbox relays, and Trace Inspector prerequisites (F4-021–027) must land before 4.D.2 claims real data.
+<Callout type="note" title="Track D consumption contract">
+  D2–D4 must consume typed trace/span/event reads, not flat aggregate rows or inferred success. Every response carries `org_id` scope, source watermark, freshness, completeness, sampling, retention, and degraded-state fields. Missing publication is `unavailable` or `partial`, never silently empty or successful.
 </Callout>
 
-<Callout type="warning" title="Planning baseline (sketch deviations)">
-  Locked for the shipped 4.P.2 implementation:
-  - Durable `trace_id` is the existing OpenTelemetry `SpanContext.TraceID()`; `span_id` comes from the active span. Proxy assembly creates a span when tests or non-middleware callers arrive without one.
-  - The transactional outbox is **evidence-scoped only** via `packages/evidenceoutbox`; model-policy invalidation and org-deletion flows remain separate follow-ups.
-  - Conversation/raw linkage uses `ibex_core.session_events` plus existing `archived_to` / `ibex-sessions/{org_id}/{session_id}/...` archival references rather than a new raw table or bucket layout.
-  - `ibex.llm_traces` stays fail-open and remains the legacy aggregate during the dual-write window; nested evidence lives in Postgres + companion ClickHouse projections.
-  - `session_events` ships as an applied append-only table with evidence linkage now; monthly partitioning from the schema sketch remains a follow-up optimization.
-  - Score payloads are versioned as `interim_v1` until the full five-component `0.40/0.25/0.20/0.10/0.05` contract is computed end-to-end.
-</Callout>
+## Canonical contracts
 
-## Why this milestone exists
+The envelope includes `event_id`, source, schema version, `trace_id`, `span_id`, parent and links, `org_id`, agent/session/turn/request/checkpoint IDs, sequence, timestamps, operation/status, attributes, capture decision, and payload references. Read APIs define cursor pagination, ordering, dedupe, replay position, batch/partial failure, and compatibility for unknown attributes. Context-assembly RPCs must preserve request/trace identity, return checkpoint IDs, and persist assembly metrics, score version/exclusions, directive version/hash, and sanitized tool-audit joins.
 
-A flat request row cannot explain causality, support trace-to-resource navigation, or safely power Explore / Trace Inspector (F4-003).
+Publication uses an evidence-scoped transactional outbox with aggregate sequence and digest, idempotent relays, and explicit crash/duplicate/reorder/poison behavior. The legacy aggregate remains a compatibility projection during any dual-write window; it is not the canonical evidence source.
 
-## Scope and deliverables
+## Residuals and honest labels
 
-- OTel/W3C-compatible envelope: `event_id`, `source`, `schema_version`/`dataschema`, `trace_id`, `span_id`, `parent_span_id`, links, **`org_id`**, `agent_id`, `session_id`, `turn_id`, `request_id`, `checkpoint_id`, sequence, timestamps, operation kind, status/error, attributes, capture/sample decision, payload refs.
-- Typed provenance: model, prompt refs, tool definition/call/result, retrieval candidates/scores, memory read/write, context assembly, directive, routing, fallback, evaluation, deployment.
-- **Must-fix for Trace Inspector:** propagate canonical `request_id`/`trace_id` through context-assembly RPC; return non-null `checkpoint_id` from writes; persist `AssemblyMetrics`/stage timings; version composite score payload (weights + exclusion reasons); persist per-request directive version/hash; expand tool-audit fields (sanitized args, idempotency, joins).
-- Choose durable conversation/raw-payload source (append-only Postgres events and/or encrypted object store) with RLS and retention (F4-024).
-- Postgres transactional outbox with `aggregate_seq`, digest, delivery status; idempotent relays to ClickHouse, Redis, object storage.
+The baseline still records residual risk where full five-component score computation, MCP hot-path tool population, MinIO archive writing, monthly partitioning, and true crash-timing coverage are not evidenced. Raw/conversation retention policy remains a P3 lifecycle dependency. Track D must label these fields degraded or deferred and must not manufacture provenance from absent rows.
 
-## Contract and data requirements
+## Verification gate
 
-Require `org_id` on outbox records, relay payloads (Redis tenant prefixes), ClickHouse projections, and every evidence query. Publish Trace/Span/Event DTOs, cursor queries, SSE envelopes for operator events, batch/partial failure, dedupe, ordering, replay position, checkpoint join. Unknown attributes round-trip; old/new consumers compatible.
-
-## Product and UX requirements
-
-Trace details show parent/child hierarchy, completeness, sampling, freshness, and source links. Unknown or missing provenance is never inferred as success. Partial/degraded fields must be labeled for consumers of 4.D.2.
-
-## Non-functional requirements
-
-Crash-after-commit, crash-before-ack, duplicate, reorder, poison message, partial trace behaviors defined and measured.
-
-## Verification gates
-
-Ingest a golden nested run with retrieval, memory, tool, retry, fallback, and evaluation spans. Prove parent/child identity, duplicate safety, outbox replay, and joinability of all Trace Inspector sections by `request_id`/`trace_id`. Update golden-trace fixture contract after persistence decisions.
+Attach a golden nested run with retrieval, memory, tool, retry, fallback, and evaluation spans; prove parent/child identity, request/trace/checkpoint joins, idempotent outbox replay, and read-model watermarks. P6 consumes the resulting fixtures through runtime-parsed API responses and browser evidence.
 
 ## Rollout and rollback
 
-**Trigger:** join breakage, duplicate storms, or schema incompatibility. **Reversal:** dual-write compatibility window; roll back consumers, not committed event identity; replay from outbox; keep legacy aggregate as derived projection. **Verify:** golden run reconstructs; consumers on prior schema still read.
+**Trigger:** join breakage, duplicate publication, incompatible schema, or stale/ambiguous read state. **Reversal:** roll back consumers, preserve committed event identity, replay the outbox, and keep the prior projection available. **Verify:** the golden run reconstructs with prior and current consumers.
 
 ## Findings addressed
 
 F4-003, F4-007, F4-021, F4-022, F4-023, F4-024, F4-025, F4-026, F4-027, F4-031.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
 ## Exit checklist
 
-- [x] Envelope and outbox schemas versioned with compatibility tests.
-- [x] Correlation ID + checkpoint ID write path proven.
-- [x] AssemblyMetrics, score, directive, tool contracts persisted or explicitly deferred with degraded labels.
-  - Persisted: AssemblyMetrics, interim_v1 scores + exclusion, directive version, tool audit schema.
-  - Deferred (degraded label): full five-component score weights; MCP hot-path tool population; MinIO archive writer.
-- [ ] Raw/conversation store decision documented with RLS; **retention policy deferred** (no TTL/job yet — `session_events` + `archived_to` / `ibex-sessions/...` linkage only).
-- [x] Golden nested-run + outbox crash/replay reports attached (integration tests in `packages/evidenceoutbox`).
-  - Golden fixture spans: `proxy.chat`, `context.assemble`, `provider.complete`, `tool.search`, `retrieval.search`, `memory.read`, `provider.retry`, `provider.fallback`, `evaluation.score` (parent/child + request_id/trace_id join keys).
-  - Crash/replay test proves **stale in_flight recovery** via `claimed_at`, not process-kill / crash-before-ack; true crash-timing coverage is a follow-up.
+- [ ] Read DTOs expose freshness, completeness, source watermark, sampling, retention, and degraded state.
+- [ ] Trace/span/event and checkpoint joins are proven by golden fixtures.
+- [ ] Outbox replay and duplicate/reorder behavior are evidenced.
+- [ ] Raw/conversation source, retention, and redaction contract is linked to 4.P.3.
+- [ ] Deferred score/archive/crash residuals are labeled for D2–D4.

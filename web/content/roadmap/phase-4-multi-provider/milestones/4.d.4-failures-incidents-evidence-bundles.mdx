@@ -1,7 +1,7 @@
 ---
 title: "Failures, Incidents & Evidence Bundles"
-description: "Triage a failure, assign ownership, preserve evidence, and produce a postmortem-ready bundle."
-summary: "Triage a failure, assign ownership, preserve evidence, and produce a postmortem-ready bundle."
+description: "Triage failures read-only first, then enable incident state and signed redacted bundles only after recovery evidence exists."
+summary: "Triage failures read-only first, then enable incident state and signed redacted bundles only after recovery evidence exists."
 status: "planned"
 milestoneId: "4.D.4"
 track: "D"
@@ -15,56 +15,94 @@ fullTitle: "Milestone 4.D.4 — Failures, Incidents & Evidence Bundles"
 
 # Milestone 4.D.4 — Failures, Incidents & Evidence Bundles
 
-**Status:** Planned  
-**Outcome:** An operator triages a failure, assigns ownership, preserves evidence, and produces a postmortem-ready bundle.  
-**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** 4.D.2; 4.P.2 events; 4.P.3 audit/evidence bundle; 4.P.4 query  
-**Estimated effort:** 3 weeks
+**Status:** Planned and blocked. Until the hard prerequisites and acceptance evidence below exist, incident views are read-only and all incident state, assignment, comment, and bundle writes are disabled. The repository baseline is `8f8e130` plus pre-existing review documents; no implementation is claimed.
 
-<Callout type="note" title="Completion contract">
-  The insert-only `failed_tasks` table is ingestion/forensics data, not an incident workflow.
+**Outcome:** Operators can triage tenant-scoped failures, and—only after the gate—manage a real incident state machine and produce signed, redacted, recoverable evidence bundles.
+
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
+
+**Dependencies:** 4.D.2; 4.P.1 identity/permissions/step-up; 4.P.2 event and evidence contracts; 4.P.3 audit, redaction, retention, and bundle contract; 4.P.4 query; signing/key-rotation and recovery ownership decisions.
+
+**Estimated effort:** 3 weeks after prerequisites are accepted.
+
+<Callout type="warn" title="Write-disabled until the incident contract is real">
+  The insert-only `failed_tasks` stream is ingestion/forensics data, not an incident workflow. Do not enable mock incident writes, optimistic state, or unsigned downloads. A UI action is not evidence of a state transition.
 </Callout>
 
-## Why this milestone exists
+## Purpose
 
-Ninety-day metadata alone cannot support high-quality postmortems.
+Preserve enough trustworthy, redacted evidence to reconstruct an incident after ordinary telemetry expires, without treating raw traceback or client-rendered payloads as a safe workflow.
 
-## Scope and deliverables
+## Scope
 
-Failure projection distinct from `failed_tasks`; incident state machine; severity, owner, assignment, dedupe key, timeline; linked traces/sessions/requests; redacted evidence; comments/activity; signed bundle export. Notifications are a later integration.
+- Read-only failure projection with filters by status, severity, owner, and time, plus safe hostile-payload rendering.
+- Explicit incident state machine, severity, dedupe key, owner/assignment, comments/activity, linked traces/sessions/requests, and immutable transition history.
+- Stable evidence selection, redaction state, digest, signature, retention/legal-hold metadata, actor, request ID, and bundle manifest.
+- Recovery and failure paths for bundle creation, signing, storage, download, verification, expiry, and key rotation.
 
-## Contract and data requirements
+## Non-goals
 
-Every transition idempotent and audited. Raw traceback gated. Bundle reconstructs evidence after normal telemetry expiry without secrets or cross-tenant data.
+- No incident writes, assignment, comments, state transitions, or bundle downloads before the write gate is approved.
+- No claim that `failed_tasks` is an incident state machine, that a UI status is durable, or that an unsigned export is postmortem evidence.
+- No raw traceback, secret, provider credential, prompt, memory, or cross-tenant payload exposure by default.
+- Notifications, paging integrations, automated remediation, and a full postmortem editor are later integrations.
 
-## Product and UX requirements
+## Hard prerequisites
 
-Filters by status/severity/owner/time. Safe rendering of failure payloads (F4-008).
+1. Incident states, legal transitions, terminal/reopen semantics, dedupe identity, concurrency behavior, and idempotency are specified.
+2. The centralized backend command pipeline is available for authorization, tenant resolution, kill switch, fresh step-up, idempotency, validation, mutation/outbox, ledger, and audit.
+3. Bundle contract specifies stable evidence selection, redaction classifications, digest/signature algorithm and key ownership, retention/legal hold, download authorization, and verification behavior.
+4. Recovery owner and tested procedures exist for partial bundle creation, outbox lag, object-store failure, signing failure, key rotation, corrupt bundle, and failed restore.
+5. Cross-tenant hostile-content tests and durable audit/action-ledger storage are available.
 
-## Non-functional requirements
+## Deliverables
 
-Action ledger for assignment/state; history not deleted on rollback.
+1. Read-only failure projection and incident list/detail DTOs with completeness, freshness, retention, and source-watermark state.
+2. A server-enforced incident state machine with idempotent, audited transitions and durable action history.
+3. A redaction-first bundle builder with manifest, digest, signature, retention/legal-hold metadata, and authorized verification/download.
+4. Recovery runbook and failure-injection suite covering incomplete, expired, corrupted, unsigned, and unverifiable bundles.
+5. Feature flag/kill switch that keeps all incident writes and bundle downloads disabled until the completion rule is satisfied.
 
-## Verification gates
+## Acceptance evidence (machine-verifiable)
 
-Idempotent transitions; bundle export reconstructs golden incident; cross-tenant isolation; hostile payload render.
+- State-machine contract tests enumerate allowed/forbidden transitions, concurrent updates, retries, dedupe, terminal states, reopen policy, and immutable history.
+- Org A/Org B tests prove failure, incident, comment, assignment, audit, and bundle identifiers cannot cross tenants; missing organization context fails closed.
+- Command-pipeline tests prove every write checks permission, tenant ownership, kill switch, fresh step-up, idempotency, and approval policy before mutation/outbox and ledger append.
+- A golden incident fixture produces a manifest whose selected evidence, redaction decisions, actor, request ID, retention, digest, and signature verify from a fresh process after normal telemetry is unavailable.
+- Negative tests prove secrets, raw traceback, forbidden prompt/memory/provider fields, and cross-tenant records are absent; hostile payloads render inertly.
+- Failure-injection tests show safe retry/parking, no false success, recovery/restore, key-rotation verification, and read-only rollback. CI fails if the incident write flag is enabled without these artifacts.
+
+## Completion rule
+
+Complete only when the state machine, signed/redacted bundle contract, recovery procedures, and failure evidence are implemented and machine-verifiably tested. Until then, incident surfaces remain read-only/write-disabled. Completion also requires a demonstrated rollback to read-only that preserves existing bundle verification and immutable history.
+
+## PR sequence
+
+1. Freeze read-only failure/incident DTOs, data classification, source-watermark semantics, and the explicit disabled-write UI state.
+2. Specify and implement the state machine, durable transition history, command pipeline integration, and cross-tenant/idempotency tests.
+3. Implement redaction-first bundle manifests, digest/signature verification, retention/legal-hold metadata, and authorized download.
+4. Add object-store/signing failure injection, recovery/restore, key rotation, corruption, expiry, and safe parking evidence.
+5. Run an independent security/recovery review; enable writes only behind the gate, otherwise keep the kill switch closed.
+
+## Open questions
+
+- Which incident states and transitions are canonical, and who may reopen or close a terminal incident?
+- Which signing key service, algorithm, rotation cadence, and verification lifetime are approved?
+- What evidence fields are retained under legal hold, and how are deletion requests represented without breaking bundle verification?
+- What is the recovery objective and owner for incomplete or unavailable bundles?
+- Which notification integrations, if any, may consume incident transitions after this milestone?
 
 ## Rollout and rollback
 
-**Trigger:** incident write-path regressions or evidence-bundle integrity failures. **Reversal:** return incident workflows to read-only triage; stop mutating incident state. **Verify:** existing bundles remain readable; no new write actions succeed until rollback cleared.
+**Trigger:** invalid transition, cross-tenant result, redaction/signature failure, unrecoverable bundle, or ledger inconsistency. **Reversal:** close the incident-write and download flags; serve read-only triage and verify existing bundles offline. **Verify:** no new state mutations succeed, queued commands are parked, immutable history remains readable, and recovery evidence passes before re-enabling writes.
 
 ## Findings addressed
 
 F4-008, F4-011.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
 ## Exit checklist
 
-- [ ] Incident state machine + audit evidenced.
-- [ ] Signed evidence-bundle demo attached.
-- [ ] Read-only rollback path demonstrated.
+- [ ] Read-only mode and disabled-write behavior are evidenced.
+- [ ] State-machine, tenant, permission, idempotency, and ledger tests are attached.
+- [ ] Signed/redacted bundle verification and recovery/failure evidence are attached.
+- [ ] Rollback to read-only is demonstrated; no write enablement is claimed prematurely.

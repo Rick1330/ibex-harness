@@ -1,8 +1,8 @@
-# Security CI gates — deliverables (PR #18)
+# Security CI gates — required controls and evidence boundary
 
-Reference for the DevSecOps hardening work on branch `chore/security-ci-gates`. See [ADR-0008](adr/ADR-0008-security-ci-gates.md).
+Reference for the DevSecOps hardening work associated with PR #18 and [ADR-0008](adr/ADR-0008-security-ci-gates.md). The inventory below describes required controls; it is not, by itself, evidence that every workflow or branch-protection check is enabled in the current baseline.
 
-## Files added or materially changed
+## Referenced controls (verify before relying on them)
 
 | Area | Paths |
 |------|--------|
@@ -54,3 +54,15 @@ govulncheck ./packages/... ./services/auth/... ./services/proxy/...
 
 1. Revoke any PAT exposed in chat; CI uses `GITHUB_TOKEN` only.
 2. Disable CodeQL **Default** setup; keep `.github/workflows/codeql.yml`.
+
+## Operator-web gates
+
+The canonical product is `services/operator-web`; `web/` remains public docs and `services/dashboard/` remains a temporary compatibility shell. Before operator-web staging promotion, CI must publish evidence for:
+
+- OpenAPI snapshot diff, generated TypeScript client freshness, runtime DTO validation, and versioned SSE envelope validation;
+- four-role/two-tenant contract and authenticated browser journeys, including tenant-negative authorization;
+- CSRF, exact credentialed CORS, secure cookie settings, security headers, hostile-content sanitization, and `Cache-Control: no-store`/cache-isolation checks;
+- SSE resume/deduplication/slow-client/drain behavior and page/query/SSE performance budgets;
+- accessibility (axe plus keyboard/screen-reader states), visual baselines, immutable artifact identity, and rollback evidence.
+
+Do not mark a route, hostname, deployment workflow, operator-web workload, or shell retirement as implemented without a linked artifact or environment record.
