@@ -152,7 +152,6 @@ function SettingsWorkbench() {
         <TabsContent value="webhooks" className="space-y-4">
           <WebhooksPanel
             data={data}
-            onChange={(webhooks) => setData((prev) => ({ ...prev, webhooks }))}
           />
         </TabsContent>
 
