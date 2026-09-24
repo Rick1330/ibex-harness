@@ -2482,6 +2482,7 @@ jobs:
       - name: Evaluate repo gate
         run: |
           bash .github/scripts/evaluate-ci-gate.sh true \
+            "${{ needs.changes.result }}" \
             "${{ needs.repo-guards.result }}" \
             "${{ needs.console-quality.result }}" \
             "${{ needs.shellcheck.result }}" \

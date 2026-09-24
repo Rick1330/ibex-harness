@@ -20,8 +20,8 @@ export function UnavailableDashboard() {
           non-production preview environment.
         </p>
         <p className="mt-5 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 font-mono text-xs text-amber-900 dark:text-amber-200">
-          CONSOLE_DATA_MODE=preview and CONSOLE_PREVIEW=1 are required outside
-          production.
+          CONSOLE_DATA_MODE=preview, CONSOLE_PREVIEW=1, and
+          NEXT_PUBLIC_CONSOLE_PREVIEW=1 are required outside production.
         </p>
       </section>
     </main>

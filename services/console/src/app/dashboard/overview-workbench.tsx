@@ -134,14 +134,8 @@ type SecondaryMetric =
 
 function useCountUp(value: number, duration = 900) {
   const [display, setDisplay] = React.useState(0)
-  const hasRun = React.useRef(false)
 
   React.useEffect(() => {
-    if (hasRun.current) {
-      return
-    }
-
-    hasRun.current = true
     let frame = 0
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -172,10 +166,10 @@ function useCountUp(value: number, duration = 900) {
 function Delta({
   value,
   higherIsBetter,
-}: {
+}: Readonly<{
   value: number
   higherIsBetter: boolean
-}) {
+}>) {
   const good = higherIsBetter ? value >= 0 : value <= 0
 
   return (
@@ -197,7 +191,7 @@ function Delta({
   )
 }
 
-function HeroMetricStrip({ period }: { period: string }) {
+function HeroMetricStrip({ period }: Readonly<{ period: string }>) {
   const requests = useCountUp(mockSummary.total_requests)
   const secondary: SecondaryMetric[] = [
     {
@@ -321,7 +315,7 @@ function TrendPanel() {
     expected: d.expected,
     errors: d.errors,
   }))
-  const now = series[series.length - 1]
+  const now = series.at(-1)
 
   return (
     <Card className={`${panelClass} rise`} style={{ animationDelay: "60ms" }}>
@@ -545,7 +539,7 @@ function OverviewEmpty() {
   return <PageEmptyState page="overview" />
 }
 
-function OverviewError({ onRetry }: { onRetry: () => void }) {
+function OverviewError({ onRetry }: Readonly<{ onRetry: () => void }>) {
   return (
     <Card className={panelClass}>
       <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
@@ -567,12 +561,12 @@ function OverviewError({ onRetry }: { onRetry: () => void }) {
   )
 }
 
-type OverviewStateProps = {
+type OverviewStateProps = Readonly<{
   view: ViewState
   showChecklist: boolean
   requiredComplete: boolean
   onRetry: () => void
-}
+}>
 
 function OverviewState({
   view,
@@ -709,7 +703,9 @@ function OverviewFixtureContent() {
                   size="sm"
                   variant={view === nextView ? "default" : "ghost"}
                   className="h-7 px-2 text-[12px] capitalize"
-                  onClick={() => preview(nextView)}
+                  onClick={() =>
+                    nextView === "loading" ? retry() : preview(nextView)
+                  }
                 >
                   {nextView}
                 </Button>

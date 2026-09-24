@@ -76,7 +76,7 @@ Before adding product screens, finish a small prerequisite change set:
 Implement D1 end to end, in this order:
 
 1. Generated/typed API client and stable DTOs.
-2. Authenticated application shell in `services/dashboard` with org/role context.
+2. Authenticated application shell in `services/console` with org/role context.
 3. Overview read model with health, freshness, partial/stale/degraded/error states.
 4. URL-serializable org/time/filter state and safe deep links.
 5. Read-only navigation entries for Explore, Incidents, Settings, and resources.
