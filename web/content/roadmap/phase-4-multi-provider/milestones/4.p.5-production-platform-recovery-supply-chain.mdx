@@ -1,7 +1,7 @@
 ---
 title: "Production Platform, Recovery & Supply Chain"
-description: "The operator system is deployable, recoverable, observable, and promotable."
-summary: "The operator system is deployable, recoverable, observable, and promotable."
+description: "Deployment, recovery, and supply-chain controls are explicit, with open evidence clearly separated from present repository foundations."
+summary: "Deployment, recovery, and supply-chain controls are explicit, with open evidence clearly separated from present repository foundations."
 status: "in-progress"
 milestoneId: "4.P.5"
 track: "P"
@@ -15,78 +15,44 @@ fullTitle: "Milestone 4.P.5 — Production Platform, Recovery & Supply Chain"
 
 # Milestone 4.P.5 — Production Platform, Recovery & Supply Chain
 
-**Status:** In progress (Helm + compose restore-drill evidence on tip; staging Kyverno/PITR soak open)  
-**Outcome:** The operator system is deployable, recoverable, observable, and promotable with measured RPO/RTO and supply-chain verification.  
-**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** 4.P.0; 4.P.2 (outbox/data plane awareness)  
-**Estimated effort:** 3 weeks  
-**Gate:** G5 platform (Partial — see exit checklist residuals #869)
+**Status:** In progress / partial — repository foundations do not equal production closure.
+**Outcome:** The operator system is deployable, recoverable, observable, and promotable only after environment-specific evidence exists.
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)
+**Dependencies:** 4.P.0; 4.P.2
+**Estimated effort:** 3 weeks
+**Gate:** G5 platform (partial)
 
-<Callout type="note" title="Completion contract">
-  Architecture prose is not a deployment. Executable overlays and a clean-environment restore drill are required (F4-011, F4-032).
+<Callout type="warning" title="Open production evidence">
+  Do not claim P5 complete from chart files, compose scripts, or CI policy text. The inspected readiness baseline does not verify an `operator-web` workload, production Ingress/gateway, TLS/cookie contract, clean-cluster promotion, real pgBackRest PITR, measured RPO/RTO, or a live Kyverno admission soak. These remain required evidence, not implied implementation.
 </Callout>
 
-<Callout type="info" title="Locked decisions (4.P.5)">
-  - **Helm only** (`infra/helm/ibex-harness/`); no Kustomize.
-  - **Backup:** pgBackRest → MinIO (simulated off-cluster; values swap for real S3).
-  - **Drill:** kind/k3d + compose data plane; transcript attached to PR.
-  - **RPO/RTO:** Postgres ≤5m / ≤30m; ClickHouse ≤24h / ≤60m; Redis none (cache); MinIO ≤24h / ≤60m; outbox RPO=0 via `MAX(aggregate_seq)`.
-  - **Admission:** Kyverno `verifyImages` (not Sigstore policy-controller).
-  - **Worker limits:** rollup 60/120s; reconcile 300/600s; maintenance 300/600s.
-</Callout>
+## Scope and present boundary
 
-## Why this milestone exists
+The intended platform contract covers digest-pinned workloads, probes, PDB/HPA, migration compatibility, rollback by digest, encrypted backups, restore and evidence-bundle recovery, backup freshness, signed images, Kyverno `verifyImages`, worker time limits, and platform health. Helm is the intended deployment mechanism; no Kustomize decision is required.
 
-Without deploy/recover/admit evidence, Track D cannot be production-ready.
+The operator-web workload, service ownership, Ingress/gateway routing, TLS termination and renewal, browser promotion path, and production values must be specified and evidenced before the canonical operator runtime can be promoted. `services/dashboard/` remains compatibility-only and is not a substitute workload.
 
-## Scope and deliverables
+## Recovery and supply-chain contract
 
-- Helm overlays for proxy, auth, api, worker, memory, embedder, mcp-memory (`infra/helm/ibex-harness/`).
-- Digest-pinned images; startup/liveness/readiness probes (ADR-0022); PDBs; HPA; migration Job hook; rolling update with progress deadline abort; rollback-by-digest runbook.
-- Encrypted MinIO-backed pgBackRest; restore + evidence-bundle recover scripts; backup freshness Prometheus rules; measured RPO/RTO in restore-drill report.
-- Cosign image-digest signing (extends `docker-publish.yml`); Kyverno `verifyImages` policy; `evidence_runs.deploy_image_digest`.
-- Worker soft/hard time limits for billing reconcile + maintenance (F4-020 residual).
-- Operator platform health: `GET /v1/operator/platform/health`.
+Record target RPO/RTO per store only after a measured drill. The working planning targets are Postgres ≤5m/≤30m, ClickHouse ≤24h/≤60m, Redis as cache/no recovery target, MinIO ≤24h/≤60m, and outbox RPO 0 by sequence; these are targets, not evidence. Restore reports must include tenant-isolation queries, data classes, achieved RPO/RTO, image/schema/config digests, and rollback command. Admission reports must show unsigned-image rejection in a real staging cluster.
 
-## Contract and data requirements
+## Verification gate and residual register
 
-Operators can query dependency health, last backup, last restore drill, retention horizon, ingestion lag, DLQ depth, degraded-mode state via `/v1/operator/platform/health`.
-
-## Product and UX requirements
-
-Overview surfaces platform health/freshness inputs consumed by 4.D.1.
-
-## Non-functional requirements
-
-SLOs: latency percentiles, availability, error rate, throughput, queue lag, cost budgets.  
-**Load/chaos execution is out of scope for 4.P.5** — peak+headroom, Redis/ClickHouse/Postgres degradation, provider failure, slow consumers, queue saturation, and rollback chaos scenarios are executed and evidenced under **4.E.2** (reliability/resilience gate), not claimed as verified by this milestone.
-
-## Verification gates
-
-Clean-environment restore preserves tenant isolation under RLS (compose/podman evidence attached). Postgres ≤5m RPO via pgBackRest+WAL and staging Kyverno unsigned-image rejection remain **#869**. Chaos/load gates: **4.E.2**.
+Keep Helm/chart and any compose restore evidence linked, but leave explicit open rows for operator-web workload, Ingress, TLS, real PITR, measured RPO/RTO, and live Kyverno admission. Load/chaos verification belongs to 4.E.2. P6 consumes only artifact-backed runtime evidence.
 
 ## Rollout and rollback
 
-**Trigger:** failed restore, probe failure, or admission mismatch. **Reversal:** roll back by digest and known-good migration-compatible version; never roll back a migration without its compatibility procedure. **Verify:** restore drill report + canary abort transcript attached. Runbook: `web/engineering/runbooks/RUNBOOK-4p5-rollback-by-digest.md`.
+**Trigger:** failed restore, missing ingress/TLS, probe failure, digest mismatch, admission failure, or RPO/RTO breach. **Reversal:** roll back to a known-good digest and compatible schema/configuration, or disable the operator origin; never reverse an incompatible migration by data surgery. **Verify:** restore, tenant-isolation, admission, and runtime smoke artifacts are attached.
 
 ## Findings addressed
 
 F4-011, F4-020, F4-032.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
 ## Exit checklist
 
-- [x] Overlays committed and documented (`infra/helm/ibex-harness/`).
-- [x] Restore drill script + **real** transcript/report attached (`infra/scripts/platform/evidence/4p5-restore-drill/`; `tenant_isolation_post_restore: true`; `ALLOW_NO_DB` not used).
-- [x] Supply-chain **CI** evidence (Cosign image digests incl. worker + Kyverno `policies/verify-images.yaml` Enforce text). Cluster admit soak: [#869](https://github.com/Rick1330/ibex-harness/issues/869).
-- [x] Probe/drain/rollback runbook linked (`RUNBOOK-4p5-rollback-by-digest.md`).
-- [x] Worker soft/hard time limits (rollup 60/120; reconcile/maintenance 300/600) + breach tests.
-- [x] `GET /v1/operator/platform/health` (session-gated) + `evidence_runs.deploy_image_digest` wired from `IBEX_DEPLOY_IMAGE_DIGEST`.
-- [x] Restore-drill tenant-isolation proven on live Postgres under non-superuser RLS ([#867](https://github.com/Rick1330/ibex-harness/issues/867) — closed by evidence artifact).
-- [ ] Production staging cluster soak with live Kyverno admit + real pgBackRest PITR ([#869](https://github.com/Rick1330/ibex-harness/issues/869)).
-- [ ] Chaos/load verification gates ([4.E.2](/roadmap/phase-4-multi-provider/milestones/4.e.2-reliability-resilience-recovery-gate)).
+- [ ] Helm deployment evidence includes the canonical operator-web workload.
+- [ ] Ingress/gateway, TLS, cookie, and SSE timeout contracts are proven in staging.
+- [ ] Real pgBackRest PITR restore and measured RPO/RTO report are attached.
+- [ ] Live Kyverno unsigned-image rejection is evidenced; CI policy text alone is insufficient.
+- [ ] Digest rollback and dependency-aware health/drain are exercised.
+- [ ] Open rows are consumed by 4.E.2/4.E.3 rather than marked closed by prose.

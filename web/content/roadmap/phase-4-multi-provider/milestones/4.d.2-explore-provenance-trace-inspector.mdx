@@ -15,10 +15,10 @@ fullTitle: "Milestone 4.D.2 — Explore & Provenance Trace Inspector"
 
 # Milestone 4.D.2 — Explore & Provenance Trace Inspector
 
-**Status:** Planned  
-**Outcome:** An operator answers why an agent acted without first choosing an agent or session, using joinable evidence and an honest Trace Inspector.  
-**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** 4.D.1; 4.P.2 (canonical evidence + Trace Inspector must-fix checklist); 4.P.3 field policy; 4.P.4 query grammar; 4.C.5 release-evidence soak for streaming claims  
+**Status:** Planned
+**Outcome:** An operator answers why an agent acted without first choosing an agent or session, using joinable evidence and an honest Trace Inspector.
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
+**Dependencies:** 4.D.1; 4.P.2 (canonical evidence + Trace Inspector must-fix checklist); 4.P.3 field policy; 4.P.4 query grammar; 4.C.5 release-evidence soak for streaming claims
 **Estimated effort:** 4 weeks
 
 <Callout type="warn" title="Data prerequisites (block UI honesty)">
@@ -29,7 +29,15 @@ fullTitle: "Milestone 4.D.2 — Explore & Provenance Trace Inspector"
 
 This is the differentiated product wedge: an **auditable context-and-policy provenance debugger**, not a generic APM clone (F4-003, F4-009).
 
-## Scope and deliverables
+## Purpose
+
+Make Explore and Trace Inspector useful without overstating what the evidence plane can prove. Start with metadata and progressively disclose richer provenance only after each contract and assurance gate closes.
+
+## Dependencies
+
+4.D.1 real authenticated shell and D1 contracts; 4.P.2 canonical evidence and Trace Inspector must-fix checklist; 4.P.3 field policy; 4.P.4 query grammar; and 4.C.5 release-evidence soak for streaming claims.
+
+## Scope
 
 ### Explore
 
@@ -47,6 +55,14 @@ Also: timeline/flame view, directive+routing decision links, tools timeline, mod
 
 Surface weights, half-lives, tokenizer/packing policy versions, replay status, and directive version hash used at inference time.
 
+## Deliverables
+
+Explore query and URL grammar, metadata-first results, the three-layer Trace Inspector, provenance links, safe redacted views, and explicit completeness/freshness/retention state.
+
+## Non-goals
+
+This milestone does not create missing trace/span evidence, claim complete raw conversation availability, enable replay or controlled actions, or substitute fixtures for backend provenance. Full-detail views remain disabled or explicitly degraded when joins, authorization, redaction, retention, or freshness evidence is incomplete.
+
 ## Contract and data requirements
 
 Stable Trace/Span DTO with server-enforced `org_id` scope; copyable IDs (`trace_id`, `span_id`, `request_id`, `session_id`, `checkpoint_id`); completeness, sampling, freshness, retention, provenance links. Org B lookups against Org A IDs return `404`; searches return empty.
@@ -62,6 +78,27 @@ Golden multi-step trace; point lookup by known IDs; query and page-load budgets;
 ## Verification gates
 
 Golden-trace fixture asserts joinable summary, assembly stages, selected/excluded memories, conversation source state, tool events, and raw JSON authorization state. Cross-tenant denial. Accessibility suite. Performance budget report.
+
+## Acceptance evidence
+
+Attach the closed-or-accepted P.2 must-fix record, OpenAPI/query-contract and runtime-DTO evidence, golden multi-step trace results, cross-tenant denial results, metadata-only degraded-mode screenshots, hostile-content/a11y reports, and performance/freshness/completeness evidence. A fixture is test evidence only; it is not production data evidence.
+
+## Completion rule
+
+Complete only when the metadata-first inspector is backed by joinable, tenant-scoped contracts and all expanded fields carry provenance, freshness, completeness, retention, and authorization state. Any unresolved evidence gap must remain visibly degraded or disabled and have an owner or accepted residual risk.
+
+## Implementation sequence
+
+1. Close or explicitly accept the P.2 identity, join, field-policy, and publication gaps.
+2. Ship Explore query grammar and metadata-only results with stable URL state and cursor semantics.
+3. Add Trace Inspector summary and candidate/exclusion views, then enable provenance expansions only as evidence gates pass.
+4. Run hostile-content, accessibility, cross-tenant, performance, and rollback checks before enabling richer payloads.
+
+## Open questions
+
+- What identity/cardinality rules govern request, trace, span, run, session, checkpoint, memory, directive, and usage-fact joins?
+- Which fields may be shown in metadata-only mode, and what exact step-up policy governs redacted/raw expansion?
+- What publication watermark and retention semantics are authoritative when ClickHouse projections lag or omit rows?
 
 ## Rollout and rollback
 

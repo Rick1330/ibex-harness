@@ -1,26 +1,25 @@
-# IBEX Operator UI (`services/dashboard`)
+# IBEX Operator UI compatibility shell (`services/dashboard`)
 
-Minimal **static SPA** for Milestone **4.P.0** (runtime topology / environment contract).
+This package is the **temporary 4.P.0 static compatibility shell**. It preserves the verified connection-state, credentialed API fetch, CSRF/login-body, and operator-event SSE parser behavior while the canonical authenticated product is migrated to `services/operator-web`. It is not the Track D product and must not be expanded into a second production-intended dashboard.
 
-## Scope
+## Scope and status
 
-- Connection-state shell: `connected` / `reconnecting` / `degraded` / `drained` / `live` / `historical` / `unauthenticated`
-- Cookie session against `services/api` (`credentials: "include"`)
-- Operator-event SSE with `Last-Event-ID` resume
-- **No secrets in deep links** — PAT only in a password field, cleared after login
+- **mounted-but-provisional:** connection states (`connected`, `reconnecting`, `degraded`, `drained`, `live`, `historical`, `unauthenticated`), credentialed API fetch, and `Last-Event-ID` SSE parsing/reconnect behavior.
+- **Not implemented here:** the operator product routes, server-only DAL/BFF, authoritative context/overview/health/events composition, generated OpenAPI client, runtime DTO validation, and Track D domain surfaces.
+- **Security boundary:** do not place PATs, sessions, CSRF secrets, provider keys, or raw tenant data in local or session storage. Treat all event and content payloads as untrusted.
 
-Product dashboard content is **Track D** (out of scope). Full identity lifecycle is **4.P.1**.
+## Local verification
 
-## Local
+The package currently exposes these scripts:
 
 ```bash
 pnpm --filter dashboard build
-pnpm --filter dashboard dev   # http://localhost:3100 → serves dist/
+pnpm --filter dashboard test
+pnpm --filter dashboard dev   # serves the built dist/ on the package's local port
 ```
 
-Point the UI at the API (`http://127.0.0.1:8010` by default). Set `IBEX_ALLOWED_ORIGINS=http://localhost:3100` on the API.
+The shell's API origin and cookie/CORS/CSRF behavior must be supplied by a verified local API configuration. This README does not assert a staging or production hostname, deployment workflow, Cloudflare project, ingress, or public runtime.
 
-## Deploy
+## Migration and retirement
 
-Cloudflare Pages project **`ibex-harness-operator`** via `.github/workflows/operator-deploy.yml`.
-Independent from docs (`ibex-harness-docs`). See [ADR-0078](../../web/content/docs/adr/0078-operator-runtime-topology.mdx).
+Use this shell only as a compatibility fallback while `services/operator-web` is built and promoted. Retire it only after the canonical artifact has a parity matrix, four-role/two-tenant contract/browser/a11y/visual/hostile-content/cache/SSE/performance evidence, a rollback window, and an approved removal record for shell references.

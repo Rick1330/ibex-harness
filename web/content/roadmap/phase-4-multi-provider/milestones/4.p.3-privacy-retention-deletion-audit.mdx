@@ -1,8 +1,8 @@
 ---
 title: "Privacy, Retention, Deletion & Audit Governance"
-description: "Evidence is useful without reversing the no-prompt/no-completion security boundary; deletion is coordinated and receipted."
-summary: "Evidence is useful without reversing the no-prompt/no-completion security boundary; deletion is coordinated and receipted."
-status: "done"
+description: "Evidence lifecycle, retention, deletion, legal hold, redaction, and audit receipts are explicit contracts for operator reads and actions."
+summary: "Evidence lifecycle, retention, deletion, legal hold, redaction, and audit receipts are explicit contracts for operator reads and actions."
+status: "in-progress"
 milestoneId: "4.P.3"
 track: "P"
 trackTitle: "Operator Readiness, Evidence & Control Plane"
@@ -15,66 +15,43 @@ fullTitle: "Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance"
 
 # Milestone 4.P.3 — Privacy, Retention, Deletion & Audit Governance
 
-**Status:** Done  
-**Outcome:** Evidence is useful without reversing the repository’s no-prompt/no-completion security boundary; deletion and retention are coordinated, hold-aware, and receipted.  
-**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)  
-**Dependencies:** 4.P.1; 4.P.2  
-**Estimated effort:** 3 weeks  
+**Status:** In progress — deletion foundations are present; lifecycle and safe-rendering residuals remain.
+**Outcome:** Evidence is useful without crossing the no-prompt/no-completion boundary, and reads/actions expose retention, hold, redaction, deletion, and audit state honestly.
+**Track:** [Track P — Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane)
+**Dependencies:** 4.P.1; 4.P.2
+**Estimated effort:** 3 weeks
 **Gate:** G4 governance
 
-<Callout type="note" title="Planning baseline (live tip)">
-  Docs-only `ibex_audit` / `gdpr_delete_agent_data` shapes were **replaced** — design is fresh in `000037_privacy_governance`. Hash-chain audit is **not** Merkle/WORM (deferred). Envelope crypto reuses env-KEK (`packages/crypto` Seal/Open); Vault/KMS is deferred to 4.P.5. Org delete remains soft-delete on `organizations` plus **explicit** evidence/`session_events` DELETE (CASCADE was inert under soft-delete). MinIO writer (`packages/objectstore`) landed here to close the F4-024 remainder (async archive path).
+<Callout type="note" title="Track D lifecycle contract">
+  D2–D6 must treat lifecycle as data, not presentation: every read identifies retention status, legal-hold status, redaction/capture mode, deletion/tombstone state, freshness, and whether the source is complete. A missing or expired item is not rendered as a successful empty result. Mutations return a job/receipt state and never imply completion before every deployed store is verified.
 </Callout>
 
-<Callout type="note" title="Completion contract">
-  ClickHouse TTL is storage hygiene, not a deletion SLA (F4-004 residual under hold). Org delete that stops at Postgres is a P0 defect (F4-019) — saga requires verified receipts for every **deployed** store (Postgres, ClickHouse, Redis, object store) and `not_applicable` only for stores omitted from `IBEX_ORG_DELETION_DEPLOYED_STORES`; misconfigured deployed stores fail closed (`store_unreachable`).
-</Callout>
+## Contracts and current foundations
 
-## Why this milestone exists
+The privacy governance migration defines capture policies, metadata-only defaults, legal holds, an org-deletion saga, per-store receipts, audit append/verifier behavior, encrypted object-store writes, and asynchronous redaction. Deployed stores are configured explicitly; omitted stores may be `not_applicable`, while unreachable configured stores fail closed. Soft-deleted organizations still require explicit evidence and session-event deletion.
 
-GDPR erasure, incident reconstruction, and safe debugging require a coordinated data-lifecycle contract.
+Audit records include actor, `org_id`, purpose, assurance, policy result, action, and receipt references. Privileged raw/export/deletion access remains server-authorized and step-up protected.
 
-## What shipped
+## Residuals
 
-| Artifact | Location |
-|---|---|
-| Migration | `infra/migrations/postgres/000037_privacy_governance.{up,down}.sql` |
-| Permission | `LegalHoldManage = 1<<49` (step-up) — Go + Python mirrors |
-| Legal hold API | `POST/GET …/legal-holds`, `POST …/clear` |
-| Capture policies | `org_capture_policies` + CRUD + reader default `metadata_only` |
-| Deletion saga | `services/worker/app/tasks/org_deletion.py` (soft 300s / hard 600s) |
-| Receipts | `deletion_store_receipts` per store; job `hold_blocked` status |
-| Audit append | `ibex_core.privacy_audit_append` + `packages/privacyaudit` |
-| Verifier CLI | `infra/scripts/cmd/privacy-audit-verify` (logic in `packages/privacyaudit`) |
-| Object store | `packages/objectstore` PutEncrypted / DeletePrefix |
-| Redaction worker | `apply_capture_redaction` (async only) |
+ClickHouse TTL is storage hygiene rather than a deletion SLA and may age rows during an active hold; broker/result and backup erasure, crypto twin parity, and a retention scheduler/API remain open follow-ups. Full safe rendering, hostile-content handling, and DOM sanitization are Track D/P6 dependencies. Usage and billing ledgers are a documented non-erasable carve-out until their lifecycle contract changes.
 
-### Non-erasable allowlist (for 4.P.4)
+## Verification gate
 
-Worker constant `NON_ERASABLE_STORES` is empty today. Future usage/billing ledgers must be named here; the saga refuses those store names. Documented for Track D / 4.P.4 consumers.
+Prove cross-store deletion receipts, hold blocking, tombstone behavior, redaction labels, audit verification, and post-deletion reads across two tenants. P6 adds hostile-content and redaction browser checks; D2–D6 must display residual states rather than hide them.
 
-### ClickHouse TTL residual
+## Rollout and rollback
 
-MergeTree TTL cannot be paused per-row without table redesign. Mutations honor legal hold (hold gate before any `ALTER DELETE`). TTL may still age rows while a hold is active — honest residual tracked in [#853](https://github.com/Rick1330/ibex-harness/issues/853). Broker/result + backup erasure: [#854](https://github.com/Rick1330/ibex-harness/issues/854). Python/Go crypto twin parity: [#855](https://github.com/Rick1330/ibex-harness/issues/855).
+**Trigger:** incomplete receipt, hold bypass, unsafe rendering, or deletion/read mismatch. **Reversal:** block destructive actions, retain legal holds and audit history, and return to metadata-only reads. **Verify:** rerun store receipts, hold tests, hostile-content checks, and tenant-negative reads.
 
-### Model-policy epoch spike
+## Findings addressed
 
-After PG policy delete, the saga PUBLISHes `model_policy_updates:{org_id}` with a bumped epoch so proxy cache cannot reinstall. Residual gap (if any) is invalidate-only — no rewrite of 4.P.1 packages beyond the worker invalidate call.
-
-## Findings disposition
-
-| Finding | Disposition |
-|---|---|
-| F4-019 | **Closed**: fail-closed deployed-store config (`not_applicable` vs `verified`); worker-integration seeds PG+CH+Redis+MinIO then asserts absence after saga success. |
-| F4-004 | **Closed** for operator erasure path; **residual** CH MergeTree TTL under active hold (follow-up issue). |
-| F4-024 remainder | **Closed**: `packages/objectstore` + worker client; live MinIO in worker-integration. |
-| F4-006 / F4-008 | **Partial**: hold bit + capture modes + `metadata_only` sink tests. Full safe-rendering / DOMPurify suite remains Track D. |
-| F4-020 | **Partial**: deletion task `soft_time_limit=300` / `time_limit=600` only — retention scheduler / API readiness remain elsewhere. |
+F4-004, F4-006, F4-008, F4-019, F4-020, F4-024.
 
 ## Exit checklist
 
-- [x] Capture/redaction policy versioned (`org_capture_policies` + async redaction task).
-- [x] Cross-store deletion with receipts demonstrated (unit + worker-integration multistore absence).
-- [x] Legal hold and tombstone behavior tested (API enqueue `LEGAL_HOLD_ACTIVE` + worker hold gate → `hold_blocked`).
-- [ ] Safe-rendering / hostile-content suite attached — **deferred Track D** (F4-008 partial; milestone `done` does not claim this closed).
-- [x] Evidence-bundle / archive path: encrypted object writer for privileged payloads (async).
+- [ ] Lifecycle DTOs expose retention, hold, redaction, deletion, tombstone, and receipt state.
+- [ ] Cross-store deletion and legal-hold receipts are evidenced for deployed stores.
+- [ ] Retention scheduler/API and ClickHouse hold/TTL residuals are owned and labeled.
+- [ ] Safe-rendering and hostile-content evidence is attached through P6/Track D.
+- [ ] D2–D6 use explicit lifecycle states and never infer deletion or completeness.
