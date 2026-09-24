@@ -1,7 +1,7 @@
 ---
-title: "Canonical Operator Web Foundation & Shell Migration"
-description: "Establish services/operator-web as the canonical operator application, transplant the product shell without fixture-backed production behavior, and retire services/dashboard only after compatibility evidence."
-summary: "Establish services/operator-web as the canonical operator application, transplant the product shell without fixture-backed production behavior, and retire services/dashboard only after compatibility evidence."
+title: "Canonical IBEX Console Foundation & Shell Migration"
+description: "Establish services/console as the canonical operator application, transplant the product shell without fixture-backed production behavior, and retire services/dashboard only after compatibility evidence."
+summary: "Establish services/console as the canonical operator application, transplant the product shell without fixture-backed production behavior, and retire services/dashboard only after compatibility evidence."
 status: "in-progress"
 milestoneId: "4.D.0"
 track: "D"
@@ -10,19 +10,19 @@ trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-
 goal: "[Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)"
 estimatedEffort: "4 weeks"
 phase: "phase-4-multi-provider"
-fullTitle: "Milestone 4.D.0 — Canonical Operator Web Foundation & Shell Migration"
+fullTitle: "Milestone 4.D.0 — Canonical IBEX Console Foundation & Shell Migration"
 ---
 
-# Milestone 4.D.0 — Canonical Operator Web Foundation & Shell Migration
+# Milestone 4.D.0 — Canonical IBEX Console Foundation & Shell Migration
 
-**Status:** in-progress. The canonical `services/operator-web` foundation scaffold and deterministic preview boundary are implemented and verified; live authentication, backend contracts, deployment, and compatibility cutover remain open.
-**Outcome:** `services/operator-web` is the canonical operator application boundary, the existing product shell is transplanted with deterministic preview/test separation, and `services/dashboard` remains a compatibility-only shell with an explicit retirement gate.
+**Status:** in-progress. The canonical `services/console` foundation scaffold and deterministic preview boundary are implemented and verified; live authentication, backend contracts, deployment, and compatibility cutover remain open.
+**Outcome:** `services/console` is the canonical operator application boundary, the existing product shell is transplanted with deterministic preview/test separation, and `services/dashboard` remains a compatibility-only shell with an explicit retirement gate.
 **Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
 **Dependencies:** P0 + P1 first; then D0 may proceed in parallel with P6-bootstrap. The topology/runtime, identity boundary, ownership, environment, data-classification, and shell-retirement decisions remain specification inputs.
 **Estimated effort:** 4 weeks
 
 <Callout type="warn" title="Migration contract">
-  The current fact is that `web/` is the public documentation site, `services/dashboard/` is a small provisional 4.P.0 shell, and the broader operator mock is fixture-backed. The proposed target is one canonical `services/operator-web` application. No fixture, browser-simulated session, or local-secret path may serve production operator data.
+  The current fact is that `web/` is the public documentation site, `services/dashboard/` is a small provisional 4.P.0 shell, and the broader operator mock is fixture-backed. The proposed target is one canonical `services/console` application. No fixture, browser-simulated session, or local-secret path may serve production operator data.
 </Callout>
 
 ## Purpose
@@ -31,7 +31,7 @@ Create the application boundary and quality gates needed for real operator capab
 
 ## Scope
 
-- Add the canonical `services/operator-web` workspace package and preserve the mock's visual/product baseline while transplanting its shell and route structure.
+- Add the canonical `services/console` workspace package and preserve the mock's visual/product baseline while transplanting its shell and route structure.
 - Establish server-only API/DAL boundaries, typed response/error handling, route-level loading/error/not-found states, and explicit preview/test/production modes.
 - Make fixture adapters deterministic and confined to preview/test boundaries; label preview data and prevent preview credentials or mutations from reaching production paths.
 - Remove or isolate browser-local simulated sessions, secret-like persistence, nondeterministic rendering, and placeholder internal navigation from the transplanted foundation.
@@ -50,7 +50,7 @@ P0 + P1 are D0 entry contracts. D0 and P6-bootstrap may proceed in parallel afte
 
 ## Deliverables
 
-1. A buildable `services/operator-web` package registered in the workspace with the transplanted shell, shared styles/assets, and route boundaries. **Delivered as the first implementation slice:** the package builds, typechecks, lints, and has a passing deterministic test suite.
+1. A buildable `services/console` package registered in the workspace with the transplanted shell, shared styles/assets, and route boundaries. **Delivered as the first implementation slice:** the package builds, typechecks, lints, and has a passing deterministic test suite.
 2. A server-only transport/DAL boundary with runtime response parsing, stable error classification, request/deadline handling, and no arbitrary component-level upstream `fetch`.
 3. Separate preview/test/production data modes, deterministic browser fixtures, a visible preview-data indicator, and proof that fixture adapters cannot be selected by the production mode. **Delivered for the current shell:** preview/test gating and production fail-closed behavior are covered by unit tests; browser-level proof remains open.
 4. A visual and accessibility baseline inventory for stable shell/state surfaces, plus a lint, typecheck, build, and deterministic test baseline.
@@ -58,9 +58,9 @@ P0 + P1 are D0 entry contracts. D0 and P6-bootstrap may proceed in parallel afte
 
 ## Acceptance evidence
 
-- Workspace install, lint, typecheck, deterministic tests, visual/accessibility checks, and production build artifacts for `operator-web` are attached to the milestone record.
+- Workspace install, lint, typecheck, deterministic tests, visual/accessibility checks, and production build artifacts for `console` are attached to the milestone record.
 - A browser test demonstrates that preview fixtures are available only in preview/test mode, are visibly labeled, and cannot be reached with production session configuration.
-- A route and dependency inventory demonstrates that authenticated operator routes are in `services/operator-web`, while public documentation remains in `web/` and `services/dashboard` is compatibility-only.
+- A route and dependency inventory demonstrates that authenticated operator routes are in `services/console`, while public documentation remains in `web/` and `services/dashboard` is compatibility-only.
 - Security review evidence covers removal/isolation of local session or secret persistence, server/client boundaries, cache defaults, safe error handling, and hostile-content rendering policy.
 - The compatibility shell's tested origin/SSE behavior is recorded, and cutover/rollback steps plus the retirement gate are reproducible. No retirement is claimed by this milestone.
 
@@ -71,7 +71,7 @@ Complete only when the canonical package builds and passes its deterministic qua
 ## Implementation sequence
 
 1. Confirm the topology/origin, ownership, data-classification, environment, and shell-retirement decisions.
-2. Seed `services/operator-web` and transplant the shell/product baseline without connecting real production APIs.
+2. Seed `services/console` and transplant the shell/product baseline without connecting real production APIs.
 3. Establish deterministic preview/test boundaries, server-only transport/DAL conventions, route boundaries, and secure browser behavior.
 4. Add visual, accessibility, lint, typecheck, build, and browser compatibility evidence; fix issues without weakening checks.
 5. Publish the cutover/rollback runbook and hand the canonical foundation to 4.D.1. D1 then connects real context, Overview, health, and SSE; D2 remains metadata-first and evidence-gated.
@@ -85,11 +85,11 @@ Complete only when the canonical package builds and passes its deterministic qua
 
 ## Findings addressed
 
-F4-001, F4-002, F4-008, F4-012, F4-014, F4-035, and the operator-web migration facts recorded in the Phase 4 findings register.
+F4-001, F4-002, F4-008, F4-012, F4-014, F4-035, and the console migration facts recorded in the Phase 4 findings register.
 
 ## Exit checklist
 
-- [ ] `services/operator-web` is the canonical workspace application boundary.
+- [ ] `services/console` is the canonical workspace application boundary.
 - [ ] Preview/test fixtures are isolated, labeled, deterministic, and impossible on the production data path.
 - [ ] Shell, contract, security, accessibility, and build evidence is attached.
 - [ ] `services/dashboard` compatibility behavior and retirement gate are documented; no premature retirement is claimed.

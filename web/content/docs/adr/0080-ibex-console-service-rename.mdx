@@ -1,0 +1,45 @@
+---
+title: IBEX Console service rename and boundary
+status: accepted
+date: 2026-09-24
+---
+
+# ADR-0080: IBEX Console service rename and boundary
+
+## Context
+
+The merged Track D foundation is a deployable Next.js application under `services/console` with package name `@ibex/console`. The implementation is a presentation and preview foundation: it does not yet provide production authentication, tenant authority, live operator API contracts, or deployment evidence. The public documentation site remains under `web/`, while `services/dashboard` is a separate compatibility shell.
+
+The product name for the canonical operator application is **IBEX Console**. The application must remain a service under `services/` because it owns runtime startup, routes, server rendering, request boundaries, deployment configuration, and service-level security policy. It is not a reusable package and must not be moved into `packages/`.
+
+## Decision
+
+Rename the canonical deployable application directory to `services/console` and its JavaScript package to `@ibex/console`. Rename the operator-specific engineering documentation directory and readiness plan to the Console naming. Update workspace membership, lockfile importer paths, static-analysis exclusions, roadmap references, service instructions, tests, and internal preview environment variables accordingly.
+
+The Console service remains presentation-only and preview-gated after this change. This ADR does not connect live APIs, introduce a browser proxy, change authentication ownership, or retire `services/dashboard`.
+
+The internal preview variables are renamed as follows:
+
+| Legacy variable | Console variable |
+| --- | --- |
+| `OPERATOR_WEB_DATA_MODE` | `CONSOLE_DATA_MODE` |
+| `OPERATOR_WEB_PREVIEW` | `CONSOLE_PREVIEW` |
+| `NEXT_PUBLIC_OPERATOR_WEB_PREVIEW` | `NEXT_PUBLIC_CONSOLE_PREVIEW` |
+
+These are local/runtime configuration names rather than public compatibility identifiers. External hostnames, ingress identifiers, cookies, deployment project names, and the `services/dashboard` compatibility workflow remain unchanged.
+
+## Boundary rules
+
+The Console service owns Next.js routes and layouts, server components and route handlers, server-only DAL/BFF composition, request context resolution, presentation components, deployment configuration, health behavior, and Console-specific redaction and response shaping. AuthService and owning APIs remain authoritative for authentication, authorization, tenant scope, and evidence truth.
+
+The browser must not receive bearer credentials or raw tenant authority, fetch arbitrary upstream URLs, or make authorization decisions. Live integration is deferred to the secure runtime foundation and approved D1 read-slice milestones.
+
+## Consequences
+
+The rename removes ambiguity between the canonical Console product and the legacy compatibility shell. Package filters and service documentation now address the deployable product by its product name. Existing preview behavior and the security posture of the foundation are preserved, but developers using the old internal preview variable names must update their local environment configuration.
+
+The compatibility shell remains independently deployable under its existing identifiers until parity, promotion, rollback, and removal-reference evidence justify a separate retirement decision.
+
+## Verification
+
+The rename is verified by workspace/package metadata, lockfile consistency, repository-wide stale-reference audit, service lint/typecheck/test/build checks, diff validation, and secret scanning. No production integration or deployment claim is made by this ADR.

@@ -1,6 +1,6 @@
 # IBEX Harness - API Documentation
 
-> **Status boundary:** This page contains a mixture of verified Phase 1 service APIs and historical/specification reference material. Do not treat an endpoint section as proof that a route is mounted. The canonical authenticated UI is `services/operator-web`; `web/` is public documentation; `services/dashboard/` is a temporary compatibility shell.
+> **Status boundary:** This page contains a mixture of verified Phase 1 service APIs and historical/specification reference material. Do not treat an endpoint section as proof that a route is mounted. The canonical authenticated UI is `services/console`; `web/` is public documentation; `services/dashboard/` is a temporary compatibility shell.
 
 ## Implementation status and ownership
 
@@ -15,7 +15,7 @@
 
 ### Contract ownership and validation
 
-The owning backend service is authoritative for each REST/gRPC/SSE contract. The operator-web server-only DAL/BFF must authorize the session and organization, call the owner, validate responses at runtime, redact fields, and return minimal DTOs. CI must snapshot OpenAPI, generate the TypeScript client from the snapshot, fail on snapshot/client drift, and validate SSE envelopes including version, event ID, sequence, and `Last-Event-ID` resume semantics. Hand-maintained UI types and fixture routes are not API implementations.
+The owning backend service is authoritative for each REST/gRPC/SSE contract. The console server-only DAL/BFF must authorize the session and organization, call the owner, validate responses at runtime, redact fields, and return minimal DTOs. CI must snapshot OpenAPI, generate the TypeScript client from the snapshot, fail on snapshot/client drift, and validate SSE envelopes including version, event ID, sequence, and `Last-Event-ID` resume semantics. Hand-maintained UI types and fixture routes are not API implementations.
 
 ### Operator contract boundary
 
@@ -130,7 +130,7 @@ No production, staging, sandbox, docs, operator, or API hostname is asserted by 
 Authorization: Bearer ibex_pat_7f3k2m9x...
 ```
 
-All SDK and programmatic API calls use Bearer token authentication. Token creation ownership and availability are service-specific; this reference does not prove that an operator-web route or dashboard flow is mounted.
+All SDK and programmatic API calls use Bearer token authentication. Token creation ownership and availability are service-specific; this reference does not prove that an IBEX Console route or dashboard flow is mounted.
 
 ### Historical/specification example: session token authentication (operator UI)
 
@@ -2887,6 +2887,6 @@ X-IBEX-Test-Mode: true
 
 No sandbox hostname or live API playground is verified by the repository baseline. If either is provisioned later, document its owner, data isolation, credential policy, reset behavior, and approved origin in the environment record rather than treating this reference page as deployment evidence.
 
-## Operator-web implementation checklist
+## IBEX Console implementation checklist
 
 Before an operator route is called implemented, attach all of the following to the owning service and release record: OpenAPI snapshot and diff; generated-client freshness; runtime DTO validation tests; context/overview/health/events owner; permission and two-tenant negative tests; `no-store`/cache evidence; CSRF/CORS/cookie/security-header checks; SSE reconnect, deduplication, slow-client, and drain evidence; performance results; staged authenticated browser report; immutable artifact and rollback record.

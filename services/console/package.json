@@ -1,5 +1,5 @@
 {
-  "name": "@ibex/operator-web",
+  "name": "@ibex/console",
   "version": "0.1.0",
   "private": true,
   "type": "module",

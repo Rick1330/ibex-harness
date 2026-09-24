@@ -9,7 +9,7 @@ status: "in-progress"
 # Phase 4 — Findings Register
 
 <Callout type="note" title="How to read this register">
-Status vocabulary is limited to **planned/specification**, **mounted-but-provisional**, **implemented-with-evidence**, and **residual-risk**. These findings are roadmap constraints derived from repository inspection and product design review (see `web/engineering/research/operator-platform/` and `OPERATOR_WEB_DEEP_READINESS_PLAN.md`). They are not claims that a future contract is already implemented. Each finding is mapped to a milestone that must produce verification evidence before it can reach implemented-with-evidence or residual-risk. Engineering P0/P1 items may reach implemented-with-evidence only with implementation evidence, or residual-risk with an explicit acceptance recorded on 4.E.4.
+Status vocabulary is limited to **planned/specification**, **mounted-but-provisional**, **implemented-with-evidence**, and **residual-risk**. These findings are roadmap constraints derived from repository inspection and product design review (see `web/engineering/research/operator-platform/` and `CONSOLE_DEEP_READINESS_PLAN.md`). They are not claims that a future contract is already implemented. Each finding is mapped to a milestone that must produce verification evidence before it can reach implemented-with-evidence or residual-risk. Engineering P0/P1 items may reach implemented-with-evidence only with implementation evidence, or residual-risk with an explicit acceptance recorded on 4.E.4.
 </Callout>
 
 ## Executive finding
@@ -21,7 +21,7 @@ The original Phase 4 plan was a minimal feature list. It described screens and e
 | Area | Current fact at the review baseline | Proposed target; not implementation evidence |
 |---|---|---|
 | Public web | `web/` is the public documentation, roadmap, benchmark, and marketing site. | Keep authenticated operator routes out of the public documentation application. |
-| Dashboard surfaces | `services/dashboard/` is a small provisional 4.P.0 connection shell; the broader operator mock is a separate fixture-backed prototype. | Make `services/operator-web/` the canonical operator application and keep `services/dashboard/` compatibility-only until a retirement gate passes. |
+| Dashboard surfaces | `services/dashboard/` is a small provisional 4.P.0 connection shell; the broader operator mock is a separate fixture-backed prototype. | Make `services/console/` the canonical operator application and keep `services/dashboard/` compatibility-only until a retirement gate passes. |
 | D1 data path | The readiness review identified useful backend foundations but did not establish a completed D1 production integration. | D1 must use real context, Overview, platform-health, and SSE contracts with no fixture production path. |
 | D2 evidence | Full composed Explore/Trace read contracts and all provenance joins were not verified as complete. | D2 starts metadata-first and expands only when provenance, freshness, completeness, redaction, and tenant-negative evidence gates pass. |
 
@@ -68,7 +68,7 @@ The graph is a proposed sequencing contract, not a claim that any step is comple
 | F4-012 | Existing dashboard E2E planning did not prove four roles, two tenants, accessibility, hostile-content rendering, or static-site/runtime separation. | P1 | planned/specification in 4.P.6 and 4.E.1. |
 | F4-013 | Drift and directive management were combined without an explicit producer contract for fingerprints, baselines, evaluations, or alert lifecycle. | P1 | Keep directive/routing controls in 4.D.5; integrate drift only after Phase 4.5 producer contracts are published. |
 | F4-014 | Documentation status did not expose the redesigned Phase 4 milestone graph or active work state. | P1 | planned/specification in the Phase 4 index, current-state page, tracks, goals, risks, and this register. |
-| F4-035 | The repository has multiple operator-facing surfaces with different roles: public docs, a provisional compatibility shell, and a fixture-backed product prototype. Treating them as one production dashboard would create an unverified runtime and data path. | P0 | **in-progress in 4.D.0:** `services/operator-web` is now the canonical implementation boundary with an explicit preview-only fixture gate; live backend/auth integration, deployment evidence, compatibility cutover, and the retirement gate remain open. |
+| F4-035 | The repository has multiple operator-facing surfaces with different roles: public docs, a provisional compatibility shell, and a fixture-backed product prototype. Treating them as one production dashboard would create an unverified runtime and data path. | P0 | **in-progress in 4.D.0:** `services/console` is now the canonical implementation boundary with an explicit preview-only fixture gate; live backend/auth integration, deployment evidence, compatibility cutover, and the retirement gate remain open. |
 
 ### Engineering blockers before Track D honesty
 

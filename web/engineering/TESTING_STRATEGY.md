@@ -101,7 +101,7 @@ Examples:
 
 Examples:
 
-- operator-web authenticated shell → context/overview/health → operator events; Track D journeys are enabled only when their API contract is implemented
+- console authenticated shell → context/overview/health → operator events; Track D journeys are enabled only when their API contract is implemented
 - SDK initializes → creates session → makes proxied LLM call → memory written → memory retrievable
 - directive promotion gated by regression suite
 
@@ -153,7 +153,7 @@ session/directive (see `.github/workflows/integration-race.yml`).
 - Integration: `testcontainers-python` (Postgres, Redis, ClickHouse, MinIO)
 - Coverage: `coverage.py` (line + branch preferred)
 
-### TypeScript (operator-web, SDK)
+### TypeScript (console, SDK)
 
 - Unit tests: `vitest`
 - Component tests: React Testing Library
@@ -688,7 +688,7 @@ The `coverage` job uploads Go coverage to [Codecov](https://codecov.io/gh/Rick13
 | --- | --- | --- | --- | --- |
 | Go | Now | `go test -coverprofile` | `go` | `coverage-go-unit.out` |
 | Python | Phase 2+ (`services/memory`) | `pytest --cov --cov-report=xml` | `python` | `coverage-python.xml` |
-| TypeScript | Phase 4 (`services/operator-web`) | package-defined lint/typecheck/unit/contract/browser commands | `typescript` | package-defined artifacts |
+| TypeScript | Phase 4 (`services/console`) | package-defined lint/typecheck/unit/contract/browser commands | `typescript` | package-defined artifacts |
 
 Repo root [`codecov.yml`](../codecov.yml) ignores `packages/proto/gen/go/**`, sets patch target 80%, and project target **80%** on meaningful code. The `coverage` job runs `infra/scripts/coverage-gate.sh` on the merged profile and **fails CI** when hand-written coverage is below 80%.
 
@@ -758,19 +758,19 @@ Every feature PR must include:
 
 This testing strategy is the enforcement mechanism that makes IBEX Harness safe to build quickly with AI assistance. If you skip tests, you are not moving faster — you are borrowing time from the future at compounding interest.
 
-## 16) Operator-web assurance gates
+## 16) IBEX Console assurance gates
 
-`services/operator-web` is the only canonical operator product. `services/dashboard` tests remain compatibility-shell tests and do not satisfy operator-web product evidence. The operator-web package is not present in the baseline, so the commands below are the required command interface for that package, not a claim that they currently run:
+`services/console` is the only canonical operator product. `services/dashboard` tests remain compatibility-shell tests and do not satisfy console product evidence. The console package is not present in the baseline, so the commands below are the required command interface for that package, not a claim that they currently run:
 
 ```bash
-pnpm --filter operator-web lint
-pnpm --filter operator-web typecheck
-pnpm --filter operator-web test
-pnpm --filter operator-web test:contract
-pnpm --filter operator-web test:a11y
-pnpm --filter operator-web test:visual
-pnpm --filter operator-web test:e2e:smoke
-pnpm --filter operator-web build
+pnpm --filter console lint
+pnpm --filter console typecheck
+pnpm --filter console test
+pnpm --filter console test:contract
+pnpm --filter console test:a11y
+pnpm --filter console test:visual
+pnpm --filter console test:e2e:smoke
+pnpm --filter console build
 ```
 
 The gates must cover four roles across at least two tenants: login, refresh, revocation and re-authentication; organization switching and server-derived scope; context/overview/platform-health reads; query persistence; permission/step-up states; CSRF/CORS/cookie behavior; and cross-tenant negative cases. Contract checks snapshot OpenAPI, verify generated-client freshness, validate runtime DTOs and SSE envelopes, and exercise cursor/filter semantics without claiming routes that are not mounted.

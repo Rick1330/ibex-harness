@@ -1,6 +1,6 @@
 # IBEX Operator UI compatibility shell (`services/dashboard`)
 
-This package is the **temporary 4.P.0 static compatibility shell**. It preserves the verified connection-state, credentialed API fetch, CSRF/login-body, and operator-event SSE parser behavior while the canonical authenticated product is migrated to `services/operator-web`. It is not the Track D product and must not be expanded into a second production-intended dashboard.
+This package is the **temporary 4.P.0 static compatibility shell**. It preserves the verified connection-state, credentialed API fetch, CSRF/login-body, and operator-event SSE parser behavior while the canonical authenticated product is migrated to `services/console`. It is not the Track D product and must not be expanded into a second production-intended dashboard.
 
 ## Scope and status
 
@@ -22,4 +22,4 @@ The shell's API origin and cookie/CORS/CSRF behavior must be supplied by a verif
 
 ## Migration and retirement
 
-Use this shell only as a compatibility fallback while `services/operator-web` is built and promoted. Retire it only after the canonical artifact has a parity matrix, four-role/two-tenant contract/browser/a11y/visual/hostile-content/cache/SSE/performance evidence, a rollback window, and an approved removal record for shell references.
+Use this shell only as a compatibility fallback while `services/console` is built and promoted. Retire it only after the canonical artifact has a parity matrix, four-role/two-tenant contract/browser/a11y/visual/hostile-content/cache/SSE/performance evidence, a rollback window, and an approved removal record for shell references.

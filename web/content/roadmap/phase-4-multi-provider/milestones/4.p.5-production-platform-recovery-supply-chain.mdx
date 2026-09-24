@@ -23,14 +23,14 @@ fullTitle: "Milestone 4.P.5 — Production Platform, Recovery & Supply Chain"
 **Gate:** G5 platform (partial)
 
 <Callout type="warning" title="Open production evidence">
-  Do not claim P5 complete from chart files, compose scripts, or CI policy text. The inspected readiness baseline does not verify an `operator-web` workload, production Ingress/gateway, TLS/cookie contract, clean-cluster promotion, real pgBackRest PITR, measured RPO/RTO, or a live Kyverno admission soak. These remain required evidence, not implied implementation.
+  Do not claim P5 complete from chart files, compose scripts, or CI policy text. The inspected readiness baseline does not verify an `console` workload, production Ingress/gateway, TLS/cookie contract, clean-cluster promotion, real pgBackRest PITR, measured RPO/RTO, or a live Kyverno admission soak. These remain required evidence, not implied implementation.
 </Callout>
 
 ## Scope and present boundary
 
 The intended platform contract covers digest-pinned workloads, probes, PDB/HPA, migration compatibility, rollback by digest, encrypted backups, restore and evidence-bundle recovery, backup freshness, signed images, Kyverno `verifyImages`, worker time limits, and platform health. Helm is the intended deployment mechanism; no Kustomize decision is required.
 
-The operator-web workload, service ownership, Ingress/gateway routing, TLS termination and renewal, browser promotion path, and production values must be specified and evidenced before the canonical operator runtime can be promoted. `services/dashboard/` remains compatibility-only and is not a substitute workload.
+The console workload, service ownership, Ingress/gateway routing, TLS termination and renewal, browser promotion path, and production values must be specified and evidenced before the canonical operator runtime can be promoted. `services/dashboard/` remains compatibility-only and is not a substitute workload.
 
 ## Recovery and supply-chain contract
 
@@ -38,7 +38,7 @@ Record target RPO/RTO per store only after a measured drill. The working plannin
 
 ## Verification gate and residual register
 
-Keep Helm/chart and any compose restore evidence linked, but leave explicit open rows for operator-web workload, Ingress, TLS, real PITR, measured RPO/RTO, and live Kyverno admission. Load/chaos verification belongs to 4.E.2. P6 consumes only artifact-backed runtime evidence.
+Keep Helm/chart and any compose restore evidence linked, but leave explicit open rows for console workload, Ingress, TLS, real PITR, measured RPO/RTO, and live Kyverno admission. Load/chaos verification belongs to 4.E.2. P6 consumes only artifact-backed runtime evidence.
 
 ## Rollout and rollback
 
@@ -50,7 +50,7 @@ F4-011, F4-020, F4-032.
 
 ## Exit checklist
 
-- [ ] Helm deployment evidence includes the canonical operator-web workload.
+- [ ] Helm deployment evidence includes the canonical console workload.
 - [ ] Ingress/gateway, TLS, cookie, and SSE timeout contracts are proven in staging.
 - [ ] Real pgBackRest PITR restore and measured RPO/RTO report are attached.
 - [ ] Live Kyverno unsigned-image rejection is evidenced; CI policy text alone is insufficient.

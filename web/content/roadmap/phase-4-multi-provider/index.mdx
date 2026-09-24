@@ -14,7 +14,7 @@ fullTitle: "Phase 4 — Operator Platform & Multi-Provider"
 </Callout>
 
 <Callout type="info" title="Current status">
-  **Phase 3.5 is complete and 4.C.5 is treated as complete for planning.** The operator dashboard implementation must begin with Track P, then 4.D.0. The current fact is that `web/` is the public documentation site, `services/dashboard/` is a provisional compatibility shell, and the broader operator mock is fixture-backed. The proposed target is one canonical `services/operator-web` application; no fixture-backed production path is accepted.
+  **Phase 3.5 is complete and 4.C.5 is treated as complete for planning.** The operator dashboard implementation must begin with Track P, then 4.D.0. The current fact is that `web/` is the public documentation site, `services/dashboard/` is a provisional compatibility shell, and the broader operator mock is fixture-backed. The proposed target is one canonical `services/console` application; no fixture-backed production path is accepted.
 </Callout>
 
 ## What Phase 4 delivers
@@ -90,7 +90,7 @@ The redesign records the following findings as roadmap requirements rather than 
 | ClickHouse TTL is not coordinated deletion. | Retention, tombstones, per-store watermarks, and deletion receipts are required. |
 | Usage/cost tables assumed by the old 4.D.5 do not exist at the required scope. | Immutable usage ledger, rate-card versions, reconciliation, and enforcement are required. |
 | Deployment, restore, and Playwright gates are described but not wired as acceptance gates. | Track P.5/P6-bootstrap, P6-slice-certification, and Track E make them executable and required. |
-| F4-035 identifies public docs, the compatibility shell, and the fixture-backed prototype as distinct surfaces. | D0 owns the canonical operator-web boundary; E4 signs off its evidence and residual risk. |
+| F4-035 identifies public docs, the compatibility shell, and the fixture-backed prototype as distinct surfaces. | D0 owns the canonical console boundary; E4 signs off its evidence and residual risk. |
 
 ## Related documentation
 

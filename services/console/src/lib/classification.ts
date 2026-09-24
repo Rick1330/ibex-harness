@@ -58,11 +58,11 @@ export function resolveDataMode(
 ): DataMode {
   if (env.NODE_ENV === "production") return "production"
   if (
-    env.OPERATOR_WEB_DATA_MODE === "preview" &&
-    env.OPERATOR_WEB_PREVIEW === "1"
+    env.CONSOLE_DATA_MODE === "preview" &&
+    env.CONSOLE_PREVIEW === "1"
   )
     return "preview"
-  if (env.OPERATOR_WEB_DATA_MODE === "test") return "test"
+  if (env.CONSOLE_DATA_MODE === "test") return "test"
   return "production"
 }
 
@@ -79,11 +79,11 @@ export function isDashboardPreviewEnabled(
   const mode = resolveDataMode(env)
   return (
     env.NODE_ENV !== "production" &&
-    env.NEXT_PUBLIC_OPERATOR_WEB_PREVIEW === "1" &&
-    env.OPERATOR_WEB_DATA_MODE === "preview" &&
-    env.OPERATOR_WEB_PREVIEW === "1" &&
+    env.NEXT_PUBLIC_CONSOLE_PREVIEW === "1" &&
+    env.CONSOLE_DATA_MODE === "preview" &&
+    env.CONSOLE_PREVIEW === "1" &&
     mode === "preview"
   )
 }
 
-export const PREVIEW_MODE = process.env.NEXT_PUBLIC_OPERATOR_WEB_PREVIEW === "1"
+export const PREVIEW_MODE = process.env.NEXT_PUBLIC_CONSOLE_PREVIEW === "1"

@@ -1,4 +1,4 @@
-# IBEX Operator Web Service (`@ibex/operator-web`)
+# IBEX Console Service (`@ibex/console`)
 
 This directory contains the IBEX operator web **service**. Its JavaScript manifest (`package.json`) exists to build and run the service; the architectural boundary is the service, not a reusable library package. Its presentation layer is a **faithful transplant of the supplied dashboard mock** at `/home/ubuntu/dash-board-mock/dash-board-mock`: the same Geist/mono/serif typography, neutral surface tokens, sidebar/header chrome, responsive spacing, cards, charts, tables, dialogs, navigation, auth atmosphere, onboarding composition, and domain route structure are kept directly rather than re-created as a simplified shell.
 
@@ -7,17 +7,17 @@ This directory contains the IBEX operator web **service**. Its JavaScript manife
 From the repository root:
 
 ```bash
-pnpm --filter @ibex/operator-web dev
-pnpm --filter @ibex/operator-web typecheck
-pnpm --filter @ibex/operator-web test
-pnpm --filter @ibex/operator-web lint
-pnpm --filter @ibex/operator-web build
+pnpm --filter @ibex/console dev
+pnpm --filter @ibex/console typecheck
+pnpm --filter @ibex/console test
+pnpm --filter @ibex/console lint
+pnpm --filter @ibex/console build
 ```
 
 For the visual dashboard shell, start the service and open `/dashboard` directly:
 
 ```bash
-pnpm --filter @ibex/operator-web dev
+pnpm --filter @ibex/console dev
 ```
 
 The current shell intentionally has no login route or demo credentials. AuthService, tenant authority, session cookies, MFA, and authenticated mutations are deferred; the dashboard is directly reachable so the presentation can be inspected independently.
@@ -31,6 +31,18 @@ The current shell intentionally has no login route or demo credentials. AuthServ
 | Login, signup, and TOTP credential flows                                                                               | **Removed/deferred**          | No credential entry, demo password, token minting, or MFA enrollment is exposed in this shell. AuthService owns the future implementation.                                               |
 | Dashboard shell                                                                                                       | **Presentation-only**         | The shell is directly reachable for inspection; it has no tenant authority and authenticated mutations remain disabled.                                                             |
 | Explore, sessions, memories, directives, incidents, drift, analytics, billing, settings data                          | **Deferred/live integration** | The mock route and visual states are retained. Live reads, authorization, mutations, evidence contracts, and upstream fetches are not claimed until owning APIs are connected.            |
+
+## Preview configuration migration
+
+The internal preview flags use the Console names. Migrate local configuration as follows; these flags are not production authentication or tenant-authority controls.
+
+| Legacy variable | Console variable |
+| --- | --- |
+| `OPERATOR_WEB_DATA_MODE` | `CONSOLE_DATA_MODE` |
+| `OPERATOR_WEB_PREVIEW` | `CONSOLE_PREVIEW` |
+| `NEXT_PUBLIC_OPERATOR_WEB_PREVIEW` | `NEXT_PUBLIC_CONSOLE_PREVIEW` |
+
+Preview remains enabled only when the server-side mode and preview flags are set together with the public presentation flag, and it is always disabled when `NODE_ENV=production`.
 
 ## Security posture
 
