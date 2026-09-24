@@ -11,3 +11,7 @@ paths = [
   '''prompts/''',
   '''services/proxy/internal/auth/validator_test\.go''',
 ]
+regexes = [
+  '''key: "agent_billing"''',
+  '''idempotency_key: "preview-idempotency-01"''',
+]

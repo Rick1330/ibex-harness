@@ -1,6 +1,6 @@
-# `@ibex/operator-web`
+# IBEX Operator Web Service (`@ibex/operator-web`)
 
-This package is the IBEX operator surface. Its presentation layer is a **faithful transplant of the supplied dashboard mock** at `/home/ubuntu/dash-board-mock/dash-board-mock`: the same Geist/mono/serif typography, neutral surface tokens, sidebar/header chrome, responsive spacing, cards, charts, tables, dialogs, navigation, auth atmosphere, onboarding composition, and domain route structure are kept directly rather than re-created as a simplified shell.
+This directory contains the IBEX operator web **service**. Its JavaScript manifest (`package.json`) exists to build and run the service; the architectural boundary is the service, not a reusable library package. Its presentation layer is a **faithful transplant of the supplied dashboard mock** at `/home/ubuntu/dash-board-mock/dash-board-mock`: the same Geist/mono/serif typography, neutral surface tokens, sidebar/header chrome, responsive spacing, cards, charts, tables, dialogs, navigation, auth atmosphere, onboarding composition, and domain route structure are kept directly rather than re-created as a simplified shell.
 
 ## Local use
 
@@ -38,7 +38,7 @@ Without `NEXT_PUBLIC_OPERATOR_WEB_PREVIEW=1`, dashboard routes do not bypass the
 
 There is no browser-side arbitrary upstream fetch, bearer credential, client-supplied organization authority, fake login, fake mutation success, or browser secret. `src/lib/auth/api.ts` is a fail-closed adapter that preserves the supplied auth UI and reports an unavailable AuthService rather than manufacturing credentials or sessions. `src/lib/preview-fixtures.ts` throws for production mode, and the dashboard layout is fail-closed unless all preview flags are present outside production; this boundary is covered by tests.
 
-The copied mock demo code is intentionally classified as presentation-only. Theme/sidebar/onboarding preferences may use browser `localStorage`, the sidebar uses a non-auth layout cookie, and the drift banner uses `sessionStorage`; none is a credential or tenant-authority store. Demo APIs use in-memory fixture state, `Date.now`, `Math.random`, or simulated timers to make visual interactions convincing, including agent mutations, onboarding PAT/invite previews, and “first trace” completion. These are not real API calls and are reachable only from the explicitly gated preview subtree; they must be replaced by authenticated, tenant-scoped contracts before production integration.
+The copied mock demo code is intentionally classified as presentation-only. Theme/sidebar/onboarding preferences may use browser `localStorage`, the sidebar uses a non-auth layout cookie, and the drift banner uses `sessionStorage`; none is a credential or tenant-authority store. Demo APIs use in-memory fixture state, deterministic synthetic identifiers, and simulated timers to make visual interactions convincing, including agent mutations, onboarding PAT/invite previews, and “first trace” completion. These are not real API calls and are reachable only from the explicitly gated preview subtree; they must be replaced by authenticated, tenant-scoped contracts before production integration.
 
 ## Verification and handoff
 
