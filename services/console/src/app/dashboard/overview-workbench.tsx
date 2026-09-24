@@ -641,6 +641,7 @@ function useOverviewView(agentCount: number) {
   }, [])
 
   React.useEffect(() => {
+    locked.current = false
     later(() => {
       if (!locked.current) {
         setView(agentCount === 0 ? "empty" : "success")
