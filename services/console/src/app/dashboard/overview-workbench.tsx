@@ -567,6 +567,73 @@ function OverviewError({ onRetry }: { onRetry: () => void }) {
   )
 }
 
+type OverviewStateProps = {
+  view: ViewState
+  showChecklist: boolean
+  requiredComplete: boolean
+  onRetry: () => void
+}
+
+function OverviewState({
+  view,
+  showChecklist,
+  requiredComplete,
+  onRetry,
+}: OverviewStateProps) {
+  if (view === "loading") return <OverviewSkeletons />
+  if (view === "empty") {
+    return showChecklist ? (
+      <OverviewEmpty />
+    ) : (
+      <PageEmptyState page="overview" actionLabel="Open setup guide" />
+    )
+  }
+  if (view === "error") return <OverviewError onRetry={onRetry} />
+
+  return (
+    <>
+      {!requiredComplete ? (
+        <p className="text-[11px] text-muted-foreground">
+          Fixture metrics shown for the populated org — finish the setup guide
+          before treating these as live.
+        </p>
+      ) : null}
+      <SystemsStrip />
+      <HeroMetricStrip period="24h" />
+      <TrendPanel />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <LatencyPanel />
+        <TopAgentsPanel />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ModelDistributionPanel />
+        <RecentActivityPanel />
+      </div>
+      <div
+        className="rise flex flex-wrap gap-2"
+        style={{ animationDelay: "360ms" }}
+      >
+        <Button size="sm" variant="outline">
+          <IconPlus />
+          New Directive
+        </Button>
+        <Button size="sm" variant="outline">
+          <IconUserPlus />
+          Invite teammate
+        </Button>
+        <Button size="sm" variant="outline">
+          <IconPlugConnected />
+          Connect provider
+        </Button>
+        <Button size="sm" variant="outline">
+          <IconDownload />
+          Export
+        </Button>
+      </div>
+    </>
+  )
+}
+
 function OverviewFixtureContent() {
   const {
     showChecklist,
@@ -577,7 +644,6 @@ function OverviewFixtureContent() {
     requiredComplete,
   } = useOnboarding()
   const [view, setView] = React.useState<ViewState>("loading")
-  const period = "24h"
   const locked = React.useRef(false)
   const timers = React.useRef<number[]>([])
 
@@ -587,10 +653,7 @@ function OverviewFixtureContent() {
 
   React.useEffect(() => {
     later(() => {
-      if (!locked.current) {
-        // Zero agents → empty overview (honest first-run), else success fixtures.
-        setView(agentCount === 0 ? "empty" : "success")
-      }
+      if (!locked.current) setView(agentCount === 0 ? "empty" : "success")
     }, 600)
     const stash = timers.current
     return () => stash.forEach((t) => window.clearTimeout(t))
@@ -605,9 +668,14 @@ function OverviewFixtureContent() {
     }
   }, [showChecklist])
 
-  const preview = (v: ViewState) => {
+  const preview = (nextView: ViewState) => {
     locked.current = true
-    setView(v)
+    setView(nextView)
+  }
+  const retry = () => {
+    locked.current = true
+    setView("loading")
+    later(() => setView(agentCount === 0 ? "empty" : "success"), 1000)
   }
 
   return (
@@ -616,109 +684,45 @@ function OverviewFixtureContent() {
         <div id="onboarding">
           <OnboardingChecklist />
         </div>
-
-        {view === "loading" ? (
-          <OverviewSkeletons />
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center justify-end gap-1">
-              <Button
-                size="sm"
-                variant={demoZeroAgents ? "default" : "ghost"}
-                className="h-7 px-2 text-[11px]"
-                onClick={() => setDemoZeroAgents(!demoZeroAgents)}
-              >
-                {demoZeroAgents ? "Exit first-run" : "First-run demo"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-[11px]"
-                onClick={resetOnboarding}
-              >
-                Reset checklist
-              </Button>
-              {(["loading", "empty", "error", "success"] as ViewState[]).map(
-                (v) => (
-                  <Button
-                    key={v}
-                    size="sm"
-                    variant={view === v ? "default" : "ghost"}
-                    className="h-7 px-2 text-[12px] capitalize"
-                    onClick={() => preview(v)}
-                  >
-                    {v}
-                  </Button>
-                ),
-              )}
-            </div>
-
-            {view === "empty" ? (
-              <>
-                {!showChecklist ? (
-                  <PageEmptyState
-                    page="overview"
-                    actionLabel="Open setup guide"
-                  />
-                ) : (
-                  <OverviewEmpty />
-                )}
-              </>
-            ) : view === "error" ? (
-              <OverviewError
-                onRetry={() => {
-                  locked.current = true
-                  setView("loading")
-                  later(
-                    () => setView(agentCount === 0 ? "empty" : "success"),
-                    1000,
-                  )
-                }}
-              />
-            ) : (
-              <>
-                {!requiredComplete ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    Fixture metrics shown for the populated org — finish the
-                    setup guide before treating these as live.
-                  </p>
-                ) : null}
-                <SystemsStrip />
-                <HeroMetricStrip period={period} />
-                <TrendPanel />
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <LatencyPanel />
-                  <TopAgentsPanel />
-                </div>
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <ModelDistributionPanel />
-                  <RecentActivityPanel />
-                </div>
-                <div
-                  className="rise flex flex-wrap gap-2"
-                  style={{ animationDelay: "360ms" }}
+        {view !== "loading" ? (
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <Button
+              size="sm"
+              variant={demoZeroAgents ? "default" : "ghost"}
+              className="h-7 px-2 text-[11px]"
+              onClick={() => setDemoZeroAgents(!demoZeroAgents)}
+            >
+              {demoZeroAgents ? "Exit first-run" : "First-run demo"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[11px]"
+              onClick={resetOnboarding}
+            >
+              Reset checklist
+            </Button>
+            {(["loading", "empty", "error", "success"] as ViewState[]).map(
+              (nextView) => (
+                <Button
+                  key={nextView}
+                  size="sm"
+                  variant={view === nextView ? "default" : "ghost"}
+                  className="h-7 px-2 text-[12px] capitalize"
+                  onClick={() => preview(nextView)}
                 >
-                  <Button size="sm" variant="outline">
-                    <IconPlus />
-                    New Directive
-                  </Button>
-                  <Button size="sm" variant="outline">
-                    <IconUserPlus />
-                    Invite teammate
-                  </Button>
-                  <Button size="sm" variant="outline">
-                    <IconPlugConnected />
-                    Connect provider
-                  </Button>
-                  <Button size="sm" variant="outline">
-                    <IconDownload />
-                    Export
-                  </Button>
-                </div>
-              </>
+                  {nextView}
+                </Button>
+              ),
             )}
-          </>
-        )}
+          </div>
+        ) : null}
+        <OverviewState
+          view={view}
+          showChecklist={showChecklist}
+          requiredComplete={requiredComplete}
+          onRetry={retry}
+        />
       </div>
     </div>
   )
