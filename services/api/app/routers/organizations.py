@@ -9,9 +9,13 @@ from apierror_py import SERVICE_DEGRADED
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.client import ValidateResult
-from app.authz import RequireOrgSettings, RequireOwnerOrgSettings, assert_path_org
-from app.deps import org_session, require_token
+from app.authz import (
+    RequireOperatorMetadataRead,
+    RequireOrgSettings,
+    RequireOwnerOrgSettings,
+    assert_path_org,
+)
+from app.deps import org_session
 from app.errors import ApiError
 from app.schemas.organizations import (
     OrganizationPatch,
@@ -26,7 +30,7 @@ router = APIRouter(prefix="/v1/organizations", tags=["organizations"])
 @router.get("/{org_id}")
 async def get_org(
     org_id: UUID,
-    token: Annotated[ValidateResult, Depends(require_token)],
+    token: RequireOperatorMetadataRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> OrganizationResponse:
     assert_path_org(token.org_id, org_id)
