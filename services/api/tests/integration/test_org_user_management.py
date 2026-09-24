@@ -6,7 +6,7 @@ import os
 from uuid import uuid4
 
 import pytest
-from authclient.permissions import ADMIN
+from authclient.permissions import ADMIN, OPERATOR_METADATA_READ
 from authclient.revoke import NoopTokenRevoker
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -77,11 +77,13 @@ async def test_cross_tenant_org_get_is_404(factory: async_sessionmaker[AsyncSess
             },
         )
 
-        settings = Settings(database_url=_require_dsn())
+        settings = Settings(database_url=_require_dsn(), operator_feature_enabled=True)
         validator = StaticTokenValidator(
             {
                 "tok-a": ValidateResult(
-                    org_id=org_a, permissions=ADMIN, user_id=str(user_a)
+                    org_id=org_a,
+                    permissions=ADMIN | OPERATOR_METADATA_READ,
+                    user_id=str(user_a),
                 )
             }
         )

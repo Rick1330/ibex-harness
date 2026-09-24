@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.client import ValidateResult
-from app.authz import RequireOrgSettings
+from app.authz import RequireOperatorMetadataRead, RequireOrgSettings
 from app.deps import org_session, require_token
 from app.pagination import CursorPage
 from app.schemas.agents import (
@@ -52,6 +52,7 @@ def _agent_list_ctx(
 @router.get("")
 async def list_agents(
     ctx: Annotated[_AgentListCtx, Depends(_agent_list_ctx)],
+    _operator: RequireOperatorMetadataRead,
 ) -> CursorPage[AgentResponse]:
     return await agent_service.list_agents(
         ctx.session,
@@ -86,7 +87,7 @@ async def create_agent(
 @router.get("/{agent_id}")
 async def get_agent(
     agent_id: UUID,
-    token: Annotated[ValidateResult, Depends(require_token)],
+    token: RequireOperatorMetadataRead,
     session: Annotated[AsyncSession, Depends(org_session)],
 ) -> AgentResponse:
     return await agent_service.get_agent(session, token.org_id, agent_id)

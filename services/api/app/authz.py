@@ -11,6 +11,7 @@ from authclient.permissions import (
     LEGAL_HOLD_MANAGE,
     OPERATOR_DELETE,
     OPERATOR_EXPORT,
+    OPERATOR_METADATA_READ,
     OPERATOR_RAW_READ,
     OPERATOR_REPLAY,
     ORG_SETTINGS_WRITE,
@@ -183,3 +184,9 @@ def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
         return token
 
     return _dep
+
+
+RequireOperatorMetadataRead = Annotated[
+    ValidateResult,
+    Depends(require_operator_permission(OPERATOR_METADATA_READ)),
+]

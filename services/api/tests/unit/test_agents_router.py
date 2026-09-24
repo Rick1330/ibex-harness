@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-from authclient.permissions import ADMIN
+from authclient.permissions import ADMIN, OPERATOR_METADATA_READ
 
 from app.auth.client import ValidateResult
 from app.pagination import CursorPage, PaginationMeta
@@ -121,6 +121,43 @@ def test_list_get_patch_delete_routes() -> None:
             deleted = client.delete(f"/v1/agents/{agent.id}", headers=bearer_headers())
             assert deleted.status_code == 204
             delete_fake.assert_awaited()
+
+
+def test_viewer_can_read_agents_with_metadata_permission() -> None:
+    org_id = uuid4()
+    agent = _agent_response(org_id=org_id)
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            role="viewer",
+            result=ValidateResult(
+                org_id=org_id,
+                permissions=OPERATOR_METADATA_READ,
+                user_id="viewer-1",
+            ),
+        ),
+        "app.routers.agents.agent_service.get_agent",
+        AsyncMock(return_value=agent),
+    ) as (client, _res, _pub):
+        response = client.get(f"/v1/agents/{agent.id}", headers=bearer_headers())
+
+    assert response.status_code == 200
+
+
+def test_agent_read_denies_missing_metadata_permission() -> None:
+    org_id = uuid4()
+    with patched_managed_client(
+        ManagedClientOpts(
+            org_id=org_id,
+            result=ValidateResult(org_id=org_id, permissions=0, user_id="member-1"),
+        ),
+        "app.routers.agents.agent_service.get_agent",
+        AsyncMock(),
+    ) as (client, _res, _pub):
+        response = client.get(f"/v1/agents/{uuid4()}", headers=bearer_headers())
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "INSUFFICIENT_PERMISSIONS"
 
 
 def test_soft_provider_validation_on_create() -> None:
