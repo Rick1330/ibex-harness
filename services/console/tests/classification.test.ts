@@ -7,58 +7,58 @@ import {
 } from "@/lib/classification"
 import { getPreviewFixture } from "@/lib/preview-fixtures"
 
-describe("operator-web data boundary", () => {
+describe("console data boundary", () => {
   it("defaults to production and never enables preview implicitly", () => {
     expect(resolveDataMode({})).toBe("production")
-    expect(resolveDataMode({ OPERATOR_WEB_DATA_MODE: "preview" })).toBe(
+    expect(resolveDataMode({ CONSOLE_DATA_MODE: "preview" })).toBe(
       "production",
     )
     expect(
       resolveDataMode({
-        OPERATOR_WEB_DATA_MODE: "preview",
-        OPERATOR_WEB_PREVIEW: "1",
+        CONSOLE_DATA_MODE: "preview",
+        CONSOLE_PREVIEW: "1",
       }),
     ).toBe("preview")
     expect(
       resolveDataMode({
         NODE_ENV: "production",
-        OPERATOR_WEB_DATA_MODE: "preview",
-        OPERATOR_WEB_PREVIEW: "1",
+        CONSOLE_DATA_MODE: "preview",
+        CONSOLE_PREVIEW: "1",
       }),
     ).toBe("production")
     expect(
       isPreviewEnabled({
         NODE_ENV: "production",
-        OPERATOR_WEB_DATA_MODE: "test",
+        CONSOLE_DATA_MODE: "test",
       }),
     ).toBe(false)
     expect(
       isDashboardPreviewEnabled({
         NODE_ENV: "production",
-        NEXT_PUBLIC_OPERATOR_WEB_PREVIEW: "1",
-        OPERATOR_WEB_DATA_MODE: "preview",
-        OPERATOR_WEB_PREVIEW: "1",
+        NEXT_PUBLIC_CONSOLE_PREVIEW: "1",
+        CONSOLE_DATA_MODE: "preview",
+        CONSOLE_PREVIEW: "1",
       }),
     ).toBe(false)
   })
 
   it("requires both server preview variables and the public presentation flag", () => {
     const serverPreview = {
-      NEXT_PUBLIC_OPERATOR_WEB_PREVIEW: "1",
-      OPERATOR_WEB_DATA_MODE: "preview",
-      OPERATOR_WEB_PREVIEW: "1",
+      NEXT_PUBLIC_CONSOLE_PREVIEW: "1",
+      CONSOLE_DATA_MODE: "preview",
+      CONSOLE_PREVIEW: "1",
     }
     expect(isDashboardPreviewEnabled(serverPreview)).toBe(true)
     expect(
       isDashboardPreviewEnabled({
         ...serverPreview,
-        OPERATOR_WEB_PREVIEW: "0",
+        CONSOLE_PREVIEW: "0",
       }),
     ).toBe(false)
     expect(
       isDashboardPreviewEnabled({
         ...serverPreview,
-        NEXT_PUBLIC_OPERATOR_WEB_PREVIEW: "0",
+        NEXT_PUBLIC_CONSOLE_PREVIEW: "0",
       }),
     ).toBe(false)
   })
@@ -71,7 +71,7 @@ describe("operator-web data boundary", () => {
   })
 })
 
-describe("operator-web route classification", () => {
+describe("console route classification", () => {
   it("keeps D0 overview preview-only and later surfaces deferred", () => {
     expect(classifyPath("/dashboard").status).toBe("preview-only")
     expect(classifyPath("/dashboard/explore").status).toBe("deferred")

@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-This document defines the target architecture and evidence boundary for the operator product. The canonical authenticated application name is **`services/operator-web`**. `web/` remains the public documentation site. `services/dashboard/` is only the temporary 4.P.0 compatibility shell and is not a second production product.
+This document defines the target architecture and evidence boundary for the operator product. The canonical authenticated application name is **`services/console`**. `web/` remains the public documentation site. `services/dashboard/` is only the temporary 4.P.0 compatibility shell and is not a second production product.
 
 The repository baseline is commit `8f8e130` plus pre-existing review documents. Statements below distinguish four states: **implemented** means verified in the baseline; **mounted-but-provisional** means code is present but not production-ready; **specified-not-implemented** means a contract or design exists without a verified implementation; **deferred** means intentionally outside the current slice. A design contract is not deployment evidence.
 
@@ -16,7 +16,7 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 |---|---|---|
 | `web/` | Implemented public site | Public docs, roadmap, benchmark, and marketing content only. Do not place authenticated operator routes here. |
 | `services/dashboard/` | Mounted-but-provisional | Static 4.P.0 connection/session/SSE compatibility shell. Retain while migration proceeds; do not expand it into Track D. |
-| `services/operator-web/` | Specified-not-implemented | Canonical Next.js operator application. Its package, workload, origin, and promotion evidence must be established before claiming implementation. |
+| `services/console/` | Specified-not-implemented | Canonical Next.js operator application. Its package, workload, origin, and promotion evidence must be established before claiming implementation. |
 | Overview/context/health/events contract | Mounted backend foundations, operator composition not fully verified | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
 | Explore, Trace Inspector, Sessions, Memories, Incidents, Directives, Drift, Billing, Analytics, Agents, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Enable one vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
 | Full production operator deployment and shell retirement | Deferred | Requires approved runtime ownership, staging browser promotion, rollback evidence, and parity decision. |
@@ -25,7 +25,7 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 
 | Layer | Required contract | Primary owner | Status boundary |
 |---|---|---|---|
-| Identity | session, tenant membership, permission, assurance, revocation | Auth service/API | Backend foundations exist; operator-web integration is not claimed. |
+| Identity | session, tenant membership, permission, assurance, revocation | Auth service/API | Backend foundations exist; console integration is not claimed. |
 | Operator context | principal, active organization, roles/permissions, step-up, feature/kill-switch state, allowed navigation | API/BFF | Specified; expose only fields verified by the server. |
 | Overview | metrics with source, freshness, completeness, generated time, and optionality | API read model | Specified D1 contract; not a claim that all cards/charts exist. |
 | Platform health | liveness/readiness and dependency-aware health facts | owning runtime/API | Existing service health is separate from an operator health composition. |
@@ -39,13 +39,13 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 
 ## Server-only DAL and BFF boundary
 
-`services/operator-web` must use a server-only DAL/BFF for privileged data. DAL modules must be marked `import 'server-only'`; resolve the authenticated session and organization on the server, authorize the request, call the owning API, validate the response, redact sensitive fields, and return minimal DTOs. Client components must never import server-only clients, bearer credentials, provider secrets, or raw tenant context.
+`services/console` must use a server-only DAL/BFF for privileged data. DAL modules must be marked `import 'server-only'`; resolve the authenticated session and organization on the server, authorize the request, call the owning API, validate the response, redact sensitive fields, and return minimal DTOs. Client components must never import server-only clients, bearer credentials, provider secrets, or raw tenant context.
 
 Use Next.js proxy preprocessing only for lightweight routing/correlation concerns. Route Handlers are narrow same-origin BFF functions for session/bootstrap, CSRF-protected mutations, small composed reads, short-lived exports, or SSE forwarding when topology requires it. There must be no generic open proxy. Final authorization remains in the DAL and API.
 
 ## API contract ownership and validation
 
-The owning backend service owns each contract; operator-web owns presentation and client behavior, not truth. The API pipeline must produce a versioned **OpenAPI snapshot**, generate the TypeScript client from that snapshot, and run runtime validation at the BFF/DAL boundary. CI must fail on snapshot drift, generated-client drift, incompatible fixtures, or an unhandled response shape. SSE envelopes require a versioned schema validator and `Last-Event-ID` resume tests. Hand-maintained mock types are not a contract.
+The owning backend service owns each contract; console owns presentation and client behavior, not truth. The API pipeline must produce a versioned **OpenAPI snapshot**, generate the TypeScript client from that snapshot, and run runtime validation at the BFF/DAL boundary. CI must fail on snapshot drift, generated-client drift, incompatible fixtures, or an unhandled response shape. SSE envelopes require a versioned schema validator and `Last-Event-ID` resume tests. Hand-maintained mock types are not a contract.
 
 The initial D1 contract is limited to `context`, `overview`, `platform/health`, and `events` reads as approved by the API owner. Exact deployed paths, hostnames, and route availability remain an open decision unless verified by an implementation record.
 
@@ -67,9 +67,9 @@ Mandatory identifiers are not inferred from timestamps or content hashes: `trace
 
 ## Deployment and runtime ownership
 
-The deployment owner must explicitly choose one approved runtime for `services/operator-web`: a versioned static artifact/workload with an approved BFF/API/SSE topology, or an approved transition runtime for the migration period. No hostname, ingress, Cloudflare project, Kubernetes workload, image, workflow, or production promotion is assumed from this document. The static compatibility shell may remain independently runnable until the canonical artifact has parity and rollback evidence.
+The deployment owner must explicitly choose one approved runtime for `services/console`: a versioned static artifact/workload with an approved BFF/API/SSE topology, or an approved transition runtime for the migration period. No hostname, ingress, Cloudflare project, Kubernetes workload, image, workflow, or production promotion is assumed from this document. The static compatibility shell may remain independently runnable until the canonical artifact has parity and rollback evidence.
 
-Staging promotion must use the operator-web artifact and authenticated browser evidence, not a public-docs smoke test. Promotion requires contract/OpenAPI and generated-client checks, four-role/two-tenant browser journeys, accessibility/visual/hostile-content/cache/SSE/performance gates, immutable artifact evidence, and a named rollback owner. Rollback must restore the prior known-good operator-web artifact/digest and verify session, cache, SSE drain, and tenant boundaries. Retire `services/dashboard` only after an approved parity matrix, migration notice, rollback window, and removal of its workflow/runtime references; no retirement date is claimed here.
+Staging promotion must use the console artifact and authenticated browser evidence, not a public-docs smoke test. Promotion requires contract/OpenAPI and generated-client checks, four-role/two-tenant browser journeys, accessibility/visual/hostile-content/cache/SSE/performance gates, immutable artifact evidence, and a named rollback owner. Rollback must restore the prior known-good console artifact/digest and verify session, cache, SSE drain, and tenant boundaries. Retire `services/dashboard` only after an approved parity matrix, migration notice, rollback window, and removal of its workflow/runtime references; no retirement date is claimed here.
 
 ## Required trace prerequisites
 
@@ -81,4 +81,4 @@ A capability is promotable only when contract snapshots, golden fixtures, tenant
 
 ## References
 
-See [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [TESTING_STRATEGY.md](TESTING_STRATEGY.md), and [OPERATOR_WEB_DEEP_READINESS_PLAN.md](../../OPERATOR_WEB_DEEP_READINESS_PLAN.md) for the corresponding contract, runtime, test, and readiness rules.
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [TESTING_STRATEGY.md](TESTING_STRATEGY.md), and [CONSOLE_DEEP_READINESS_PLAN.md](../../CONSOLE_DEEP_READINESS_PLAN.md) for the corresponding contract, runtime, test, and readiness rules.

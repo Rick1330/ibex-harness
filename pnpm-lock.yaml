@@ -35,7 +35,7 @@ importers:
 
   services/dashboard: {}
 
-  services/operator-web:
+  services/console:
     dependencies:
       '@base-ui/react':
         specifier: ^1.8.0

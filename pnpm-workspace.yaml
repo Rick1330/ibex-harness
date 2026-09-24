@@ -2,4 +2,4 @@ packages:
   - web
   - packages/*
   - services/dashboard
-  - services/operator-web
+  - services/console

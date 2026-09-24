@@ -55,9 +55,9 @@ govulncheck ./packages/... ./services/auth/... ./services/proxy/...
 1. Revoke any PAT exposed in chat; CI uses `GITHUB_TOKEN` only.
 2. Disable CodeQL **Default** setup; keep `.github/workflows/codeql.yml`.
 
-## Operator-web gates
+## IBEX Console gates
 
-The canonical product is `services/operator-web`; `web/` remains public docs and `services/dashboard/` remains a temporary compatibility shell. Before operator-web staging promotion, CI must publish evidence for:
+The canonical product is `services/console`; `web/` remains public docs and `services/dashboard/` remains a temporary compatibility shell. Before IBEX Console staging promotion, CI must publish evidence for:
 
 - OpenAPI snapshot diff, generated TypeScript client freshness, runtime DTO validation, and versioned SSE envelope validation;
 - four-role/two-tenant contract and authenticated browser journeys, including tenant-negative authorization;
@@ -65,4 +65,4 @@ The canonical product is `services/operator-web`; `web/` remains public docs and
 - SSE resume/deduplication/slow-client/drain behavior and page/query/SSE performance budgets;
 - accessibility (axe plus keyboard/screen-reader states), visual baselines, immutable artifact identity, and rollback evidence.
 
-Do not mark a route, hostname, deployment workflow, operator-web workload, or shell retirement as implemented without a linked artifact or environment record.
+Do not mark a route, hostname, deployment workflow, console workload, or shell retirement as implemented without a linked artifact or environment record.

@@ -92,10 +92,10 @@ all P/D evidence + E1 + E2 + E3 + F4-035 disposition → E4
 
 **Sequencing:** `P0 + P1 → (D0 ∥ P6-bootstrap) → D1`; then each of D2–D6 requires its own P contract plus P6-slice-certification.
 
-`D0` establishes `services/operator-web` as the canonical application boundary. `services/dashboard` remains compatibility-only during migration and is retired only after its cutover gate passes. D1 must use real context, Overview, platform-health, and SSE contracts; navigation is not live domain delivery, and org switching is a deferred gate until verified. D2 is metadata-first and remains evidence-gated by P2 plus P6-slice-certification. D3–D6 each consume their named P contract plus P6-slice-certification.
+`D0` establishes `services/console` as the canonical application boundary. `services/dashboard` remains compatibility-only during migration and is retired only after its cutover gate passes. D1 must use real context, Overview, platform-health, and SSE contracts; navigation is not live domain delivery, and org switching is a deferred gate until verified. D2 is metadata-first and remains evidence-gated by P2 plus P6-slice-certification. D3–D6 each consume their named P contract plus P6-slice-certification.
 
 **Milestones:**
-- [4.D.0 — Canonical Operator Web Foundation & Shell Migration](/roadmap/phase-4-multi-provider/milestones/4.d.0-canonical-operator-web-foundation-shell-migration)
+- [4.D.0 — Canonical IBEX Console Foundation & Shell Migration](/roadmap/phase-4-multi-provider/milestones/4.d.0-canonical-console-foundation-shell-migration)
 - [4.D.1 — Authenticated Shell & Operational Overview](/roadmap/phase-4-multi-provider/milestones/4.d.1-authenticated-shell-operational-overview)
 - [4.D.2 — Explore & Provenance Trace Inspector](/roadmap/phase-4-multi-provider/milestones/4.d.2-explore-provenance-trace-inspector)
 - [4.D.3 — Sessions, Memory, Context & Safe Replay Evidence](/roadmap/phase-4-multi-provider/milestones/4.d.3-sessions-memory-context-safe-replay)

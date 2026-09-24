@@ -1,4 +1,4 @@
-# IBEX Operator Web — Deep Readiness and Implementation Plan
+# IBEX IBEX Console — Deep Readiness and Implementation Plan
 
 **Status:** Research and architecture plan; no implementation changes made by this review.
 **Repository baseline:** `ibex-harness` at `8f8e130`.
@@ -7,7 +7,7 @@
 
 ## Documentation status taxonomy
 
-This plan is a readiness proposal, not implementation evidence. Use **implemented** only for behavior verified in the baseline; **mounted-but-provisional** for present shell/backend foundations that still require production gates; **specified-not-implemented** for contracts, routes, packages, or workloads described here but not verified; and **deferred** for intentionally later work. The canonical name is `services/operator-web`; `web/` is public docs; `services/dashboard/` is a temporary compatibility shell. Do not infer hostnames, workflows, routes, deployment artifacts, or retirement from this plan.
+This plan is a readiness proposal, not implementation evidence. Use **implemented** only for behavior verified in the baseline; **mounted-but-provisional** for present shell/backend foundations that still require production gates; **specified-not-implemented** for contracts, routes, packages, or workloads described here but not verified; and **deferred** for intentionally later work. The canonical name is `services/console`; `web/` is public docs; `services/dashboard/` is a temporary compatibility shell. Do not infer hostnames, workflows, routes, deployment artifacts, or retirement from this plan.
 
 ## Executive conclusion
 
@@ -21,7 +21,7 @@ The correct strategy is to create **one canonical operator Next.js application i
 
 > **The mock should be transplanted before it is integrated. The design must be frozen before milestone implementation begins. The API, security, evidence, and operational truth must remain server-owned.**
 
-The immediate goal is not to make every mock route live. The immediate goal is to establish a production-quality operator-web foundation, integrate the shell and 4.D.1 Overview, and create the contract and quality gates that prevent future design and security drift.
+The immediate goal is not to make every mock route live. The immediate goal is to establish a production-quality console foundation, integrate the shell and 4.D.1 Overview, and create the contract and quality gates that prevent future design and security drift.
 
 ## What the research verified
 
@@ -35,7 +35,7 @@ The root workspace uses pnpm and Turbo. `pnpm-workspace.yaml` currently includes
 
 `services/dashboard/` is a separate static SPA. Its README describes it as the 4.P.0 topology shell and explicitly says product UI is Track D. Its tested surface includes API-origin allowlisting, credentialed fetch behavior, login-body encoding, SSE parsing, event ID monotonicity, retry behavior, and reconnect backoff. It is not the full Track D product.
 
-The mock is a separate Next.js 16.3.5/React 19.2.8 application with a historical/prototype inventory of 20 dashboard routes plus authentication routes, approximately 97 components, and 37 domain/lib files. That inventory is not evidence of mounted operator-web routes. It builds successfully in the reviewed prototype context, but its own lint command reports 19 errors and 6 warnings.
+The mock is a separate Next.js 16.3.5/React 19.2.8 application with a historical/prototype inventory of 20 dashboard routes plus authentication routes, approximately 97 components, and 37 domain/lib files. That inventory is not evidence of mounted console routes. It builds successfully in the reviewed prototype context, but its own lint command reports 19 errors and 6 warnings.
 
 ### Mock implementation quality
 
@@ -61,7 +61,7 @@ No Next.js BFF Route Handlers were found in the mock. The mock supports a `NEXT_
 
 The repository guidance requires explicit authentication, authorization, tenant filtering, fail-closed missing organization context, cross-tenant tests, no secret/raw-memory logging, approved cryptography, and safe treatment of memory content as untrusted input.
 
-The backend has relevant controls, but gaps must be closed before production operator-web integration:
+The backend has relevant controls, but gaps must be closed before production console integration:
 
 - The provisional HMAC refresh path is not equivalent to rotating AuthService refresh tokens and must not be reachable in staging or production.
 - The reviewed operator SSE route verifies a signed cookie and organization binding, but its dedicated operator permission boundary must be explicitly confirmed and tested.
@@ -81,9 +81,9 @@ Billing foundations exist, including rate cards, budgets, enforcement decisions,
 
 ### Deployment and quality readiness
 
-No operator-web deployment workflow or complete production promotion path was verified in the baseline. The existing static shell is provisional; any manual/preview process must be treated as transition-only until an artifact, runtime owner, staging browser gate, and rollback record exist. The Helm chart contains runtime workloads and security settings, but no operator-web workload, ingress/gateway, TLS contract, or complete browser promotion gate. Staging and production values include sentinel image digests that are not deployable until CI injects real artifacts.
+No console deployment workflow or complete production promotion path was verified in the baseline. The existing static shell is provisional; any manual/preview process must be treated as transition-only until an artifact, runtime owner, staging browser gate, and rollback record exist. The Helm chart contains runtime workloads and security settings, but no console workload, ingress/gateway, TLS contract, or complete browser promotion gate. Staging and production values include sentinel image digests that are not deployable until CI injects real artifacts.
 
-The repository has useful unit and service tests, but the required operator-web assurance harness is not complete. The current web Playwright setup has two E2E specs and one Chromium project. There is no verified four-role/two-tenant fixture, visual baseline suite, axe gate, operator authenticated journey matrix, OpenAPI snapshot gate, or complete cross-tenant browser suite.
+The repository has useful unit and service tests, but the required console assurance harness is not complete. The current web Playwright setup has two E2E specs and one Chromium project. There is no verified four-role/two-tenant fixture, visual baseline suite, axe gate, operator authenticated journey matrix, OpenAPI snapshot gate, or complete cross-tenant browser suite.
 
 The branch protection inventory does not yet require the P.6/E.1 checks that the roadmap calls for. Those checks must exist and become required before any Track D completion claim.
 
@@ -92,7 +92,7 @@ The branch protection inventory does not yet require the P.6/E.1 checks that the
 Create a new workspace service:
 
 ```text
-services/operator-web/
+services/console/
 ├── src/
 │   ├── app/
 │   │   ├── (auth)/
@@ -124,7 +124,7 @@ services/operator-web/
 └── tsconfig.json
 ```
 
-Add `services/operator-web` to `pnpm-workspace.yaml`. Keep `web/` public and keep `services/dashboard/` as the temporary 4.P.0 compatibility shell during migration. Do not leave two production-intended dashboard implementations indefinitely; define a retirement gate for the static shell.
+Add `services/console` to `pnpm-workspace.yaml`. Keep `web/` public and keep `services/dashboard/` as the temporary 4.P.0 compatibility shell during migration. Do not leave two production-intended dashboard implementations indefinitely; define a retirement gate for the static shell.
 
 This decision avoids three common failures:
 
@@ -155,7 +155,7 @@ The baseline is not a snapshot of every volatile chart pixel. Dynamic charts mus
 
 ### Stage B: transplant without redesign
 
-Copy the mock’s `src/app`, `src/components`, `src/lib` type/rationale files, `globals.css`, brand assets, and shadcn configuration into `services/operator-web` with the smallest possible visual delta.
+Copy the mock’s `src/app`, `src/components`, `src/lib` type/rationale files, `globals.css`, brand assets, and shadcn configuration into `services/console` with the smallest possible visual delta.
 
 Do not move fixture adapters into the production API layer. Move them into an explicit preview/test boundary. Every preview page must display a `Preview data` indicator and must not accept production session credentials or perform production mutations.
 
@@ -588,7 +588,7 @@ Operator responses must include an approved security header set. At minimum:
 
 ### Container and cluster
 
-If operator-web is deployed as a container, add:
+If console is deployed as a container, add:
 
 - immutable image digest;
 - SBOM and provenance;
@@ -606,7 +606,7 @@ If the UI remains static on Pages, still require immutable assets, exact API con
 
 ### Observability
 
-Add operator-web and API telemetry for:
+Add console and API telemetry for:
 
 - page and API latency p50/p95/p99;
 - request counts and status classes;
@@ -628,14 +628,14 @@ Logs must be structured with request ID, trace ID, and organization ID where ava
 The canonical operator package should expose:
 
 ```text
-pnpm --filter operator-web lint
-pnpm --filter operator-web typecheck
-pnpm --filter operator-web test
-pnpm --filter operator-web test:contract
-pnpm --filter operator-web test:a11y
-pnpm --filter operator-web test:visual
-pnpm --filter operator-web test:e2e:smoke
-pnpm --filter operator-web build
+pnpm --filter console lint
+pnpm --filter console typecheck
+pnpm --filter console test
+pnpm --filter console test:contract
+pnpm --filter console test:a11y
+pnpm --filter console test:visual
+pnpm --filter console test:e2e:smoke
+pnpm --filter console build
 ```
 
 The CI environment must install dependencies with a frozen lockfile, install pinned browsers, and publish test artifacts.
@@ -746,7 +746,7 @@ Exit condition: no unresolved decision would change the application boundary, co
 
 Deliver:
 
-- `services/operator-web` package;
+- `services/console` package;
 - mock route/component transplant;
 - deterministic clock and fixture boundaries;
 - lint cleanup;
@@ -841,7 +841,7 @@ Deliver:
 
 No UI changes. Add the topology ADR, origin matrix, ownership matrix, and shell retirement criteria.
 
-### PR 2 — operator-web seed
+### PR 2 — console seed
 
 Copy the mock into the new workspace package. Preserve visual output. Do not connect real APIs.
 
@@ -883,7 +883,7 @@ The following decisions are recommended now:
 
 | Decision | Recommendation | Why |
 |---|---|---|
-| Canonical operator app | New `services/operator-web` | Separates public docs and authenticated product concerns. |
+| Canonical operator app | New `services/console` | Separates public docs and authenticated product concerns. |
 | Mock role | Visual/product baseline and preview/test source | Preserves quality without treating fixtures as truth. |
 | Production data path | Server-only DAL/BFF with typed DTOs | Centralizes authorization, redaction, caching, and errors. |
 | Auth | AuthService RS256 rotation and revocation | Removes provisional HMAC risk from shared environments. |

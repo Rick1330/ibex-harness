@@ -31,7 +31,7 @@ The main repository currently has two different front-end concerns:
 The mock is a full Next.js operator product and should not be forced into the public docs app or permanently constrained by the static shell. The recommended target is:
 
 ```text
-services/operator-web/
+services/console/
 ├── src/app/
 ├── src/components/
 ├── src/lib/
@@ -42,14 +42,14 @@ services/operator-web/
 └── tsconfig.json
 ```
 
-Add `services/operator-web` to `pnpm-workspace.yaml`.
+Add `services/console` to `pnpm-workspace.yaml`.
 
 This keeps the boundaries clear:
 
 | Application | Responsibility | Origin |
 |---|---|---|
 | `web` | Public documentation, roadmap, benchmarks, marketing | Public docs origin |
-| `services/operator-web` | Authenticated operator product | Operator origin |
+| `services/console` | Authenticated operator product | Operator origin |
 | `services/api` | Management, operator, tenant-scoped APIs | API origin or same-origin BFF |
 | `services/dashboard` | Temporary 4.P.0 compatibility shell | Retire after parity |
 
@@ -59,7 +59,7 @@ Do not merge the operator product into `web` merely because both use Next.js. Th
 
 The mock already uses a good Next.js foundation: App Router, React Server Components, client components for interactions, typed domain libraries, shadcn-style primitives, responsive layout, and theme support.
 
-The first implementation should be a **controlled transplant**, not a rewrite. Copy the mock into `services/operator-web`, make it build in the monorepo, and only then replace data adapters.
+The first implementation should be a **controlled transplant**, not a rewrite. Copy the mock into `services/console`, make it build in the monorepo, and only then replace data adapters.
 
 Preserve initially:
 
@@ -95,12 +95,12 @@ These screenshots become visual regression fixtures. A milestone cannot change t
 Extract the mock’s visual rules into explicit design tokens and shared primitives:
 
 ```text
-services/operator-web/src/styles/tokens.css
-services/operator-web/src/components/ui/
-services/operator-web/src/components/shell/
-services/operator-web/src/components/data-state/
-services/operator-web/src/components/metrics/
-services/operator-web/src/components/evidence/
+services/console/src/styles/tokens.css
+services/console/src/components/ui/
+services/console/src/components/shell/
+services/console/src/components/data-state/
+services/console/src/components/metrics/
+services/console/src/components/evidence/
 ```
 
 The token set covers semantic colors, chart colors, typography, mono versus sans usage, radius, spacing, control heights, sidebar widths, density, motion, and focus rings.
@@ -301,7 +301,7 @@ This allows designers and reviewers to continue using the mock-quality surface w
 
 Deliverables:
 
-- copy the mock into a dedicated branch or `services/operator-web` seed;
+- copy the mock into a dedicated branch or `services/console` seed;
 - record the mock source commit/hash;
 - fix lint issues that affect correctness or determinism;
 - capture route/state screenshots;
@@ -322,7 +322,7 @@ Exit gate:
 
 Deliverables:
 
-- create `services/operator-web`;
+- create `services/console`;
 - add it to the pnpm workspace;
 - align versions with the repository’s Next 16/React 19 stack;
 - use repository lint, TypeScript, formatting, and CI conventions;
@@ -333,7 +333,7 @@ Deliverables:
 
 Exit gate:
 
-- `pnpm --filter operator-web build` passes;
+- `pnpm --filter console build` passes;
 - the mock screenshots have no unintended visual diff;
 - the public `web` app remains unaffected;
 - the operator app is not accidentally indexed as public docs.
@@ -470,7 +470,7 @@ Drift remains behind the Phase 4.5 producer contract. Billing keeps estimated an
 
 **Maps to:** 4.P.5, 4.P.6, Track E.
 
-When operator-web has topology parity and the required routes are real:
+When console has topology parity and the required routes are real:
 
 - deploy it through the application Helm/compose topology;
 - add probes, limits, PDBs, network policy, and immutable image digests;
@@ -488,13 +488,13 @@ When operator-web has topology parity and the required routes are real:
 ### 6.1 Required checks on every pull request
 
 ```text
-pnpm --filter operator-web lint
-pnpm --filter operator-web typecheck
-pnpm --filter operator-web test
-pnpm --filter operator-web test:visual
-pnpm --filter operator-web test:a11y
-pnpm --filter operator-web test:e2e:smoke
-pnpm --filter operator-web build
+pnpm --filter console lint
+pnpm --filter console typecheck
+pnpm --filter console test
+pnpm --filter console test:visual
+pnpm --filter console test:a11y
+pnpm --filter console test:e2e:smoke
+pnpm --filter console build
 ```
 
 Add API contract checks alongside the front end:
@@ -646,11 +646,11 @@ A route is not complete because it compiles or because it resembles the mock. It
 
 ## 9. Immediate next actions
 
-The next implementation should be a dedicated **operator-web foundation PR series**, not another isolated milestone attempt:
+The next implementation should be a dedicated **console foundation PR series**, not another isolated milestone attempt:
 
 ### PR 1 — Seed and freeze
 
-- Add `services/operator-web` from the mock.
+- Add `services/console` from the mock.
 - Add workspace/config/build scripts.
 - Preserve the mock routes and visual output.
 - Fix deterministic-render and high-value lint issues.
