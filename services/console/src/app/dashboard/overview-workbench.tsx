@@ -139,8 +139,12 @@ function useCountUp(value: number, duration = 900) {
     let frame = 0
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      frame = window.requestAnimationFrame(() => setDisplay(value))
-      return () => window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        setDisplay(value)
+      })
+      return () => {
+        window.cancelAnimationFrame(frame)
+      }
     }
 
     const started = performance.now()
@@ -315,7 +319,7 @@ function TrendPanel() {
     expected: d.expected,
     errors: d.errors,
   }))
-  const now = series.at(-1)
+  const now = series.at(-1)!
 
   return (
     <Card className={`${panelClass} rise`} style={{ animationDelay: "60ms" }}>
@@ -338,11 +342,7 @@ function TrendPanel() {
             baseline={6500}
             baselineLabel="band"
             highlightX="Now"
-            marks={
-              now
-                ? [{ x: "Now", y: now.requests, tone: "destructive" }]
-                : undefined
-            }
+            marks={[{ x: "Now", y: now.requests, tone: "destructive" }]}
             height={160}
             yFormatter={(v) => compact.format(v)}
             config={{
@@ -358,9 +358,7 @@ function TrendPanel() {
             data={series}
             dataKey="errors"
             highlightX="Now"
-            marks={
-              now ? [{ x: "Now", y: now.errors, tone: "amber" }] : undefined
-            }
+            marks={[{ x: "Now", y: now.errors, tone: "amber" }]}
             height={160}
             config={{
               value: { label: "Errors", color: "var(--foreground)" },
@@ -628,15 +626,7 @@ function OverviewState({
   )
 }
 
-function OverviewFixtureContent() {
-  const {
-    showChecklist,
-    agentCount,
-    demoZeroAgents,
-    setDemoZeroAgents,
-    resetOnboarding,
-    requiredComplete,
-  } = useOnboarding()
+function useOverviewView(agentCount: number) {
   const [view, setView] = React.useState<ViewState>("loading")
   const locked = React.useRef(false)
   const timers = React.useRef<number[]>([])
@@ -647,12 +637,34 @@ function OverviewFixtureContent() {
 
   React.useEffect(() => {
     later(() => {
-      if (!locked.current) setView(agentCount === 0 ? "empty" : "success")
+      if (!locked.current) {
+        setView(agentCount === 0 ? "empty" : "success")
+      }
     }, 600)
     const stash = timers.current
-    return () => stash.forEach((t) => window.clearTimeout(t))
+    return () => {
+      stash.forEach((t) => {
+        window.clearTimeout(t)
+      })
+    }
   }, [later, agentCount])
 
+  const preview = React.useCallback((nextView: ViewState) => {
+    locked.current = true
+    setView(nextView)
+  }, [])
+  const retry = React.useCallback(() => {
+    locked.current = true
+    setView("loading")
+    later(() => {
+      setView(agentCount === 0 ? "empty" : "success")
+    }, 1000)
+  }, [agentCount, later])
+
+  return { view, preview, retry }
+}
+
+function useOnboardingScroll(showChecklist: boolean) {
   React.useEffect(() => {
     if (typeof window === "undefined") return
     if (window.location.hash === "#onboarding" && showChecklist) {
@@ -661,16 +673,81 @@ function OverviewFixtureContent() {
         ?.scrollIntoView({ behavior: "smooth", block: "start" })
     }
   }, [showChecklist])
+}
 
-  const preview = (nextView: ViewState) => {
-    locked.current = true
-    setView(nextView)
-  }
-  const retry = () => {
-    locked.current = true
-    setView("loading")
-    later(() => setView(agentCount === 0 ? "empty" : "success"), 1000)
-  }
+type OverviewControlsProps = Readonly<{
+  view: ViewState
+  demoZeroAgents: boolean
+  setDemoZeroAgents: (value: boolean) => void
+  resetOnboarding: () => void
+  onPreview: (view: ViewState) => void
+  onRetry: () => void
+}>
+
+function OverviewControls({
+  view,
+  demoZeroAgents,
+  setDemoZeroAgents,
+  resetOnboarding,
+  onPreview,
+  onRetry,
+}: OverviewControlsProps) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-1">
+      <Button
+        size="sm"
+        variant={demoZeroAgents ? "default" : "ghost"}
+        className="h-7 px-2 text-[11px]"
+        onClick={() => {
+          setDemoZeroAgents(!demoZeroAgents)
+        }}
+      >
+        {demoZeroAgents ? "Exit first-run" : "First-run demo"}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 px-2 text-[11px]"
+        onClick={() => {
+          resetOnboarding()
+        }}
+      >
+        Reset checklist
+      </Button>
+      {(["loading", "empty", "error", "success"] as ViewState[]).map(
+        (nextView) => (
+          <Button
+            key={nextView}
+            size="sm"
+            variant={view === nextView ? "default" : "ghost"}
+            className="h-7 px-2 text-[12px] capitalize"
+            onClick={() => {
+              if (nextView === "loading") {
+                onRetry()
+              } else {
+                onPreview(nextView)
+              }
+            }}
+          >
+            {nextView}
+          </Button>
+        ),
+      )}
+    </div>
+  )
+}
+
+function OverviewFixtureContent() {
+  const {
+    showChecklist,
+    agentCount,
+    demoZeroAgents,
+    setDemoZeroAgents,
+    resetOnboarding,
+    requiredComplete,
+  } = useOnboarding()
+  const { view, preview, retry } = useOverviewView(agentCount)
+  useOnboardingScroll(showChecklist)
 
   return (
     <div className="@container/main flex flex-1 flex-col gap-2">
@@ -679,39 +756,14 @@ function OverviewFixtureContent() {
           <OnboardingChecklist />
         </div>
         {view !== "loading" ? (
-          <div className="flex flex-wrap items-center justify-end gap-1">
-            <Button
-              size="sm"
-              variant={demoZeroAgents ? "default" : "ghost"}
-              className="h-7 px-2 text-[11px]"
-              onClick={() => setDemoZeroAgents(!demoZeroAgents)}
-            >
-              {demoZeroAgents ? "Exit first-run" : "First-run demo"}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-[11px]"
-              onClick={resetOnboarding}
-            >
-              Reset checklist
-            </Button>
-            {(["loading", "empty", "error", "success"] as ViewState[]).map(
-              (nextView) => (
-                <Button
-                  key={nextView}
-                  size="sm"
-                  variant={view === nextView ? "default" : "ghost"}
-                  className="h-7 px-2 text-[12px] capitalize"
-                  onClick={() =>
-                    nextView === "loading" ? retry() : preview(nextView)
-                  }
-                >
-                  {nextView}
-                </Button>
-              ),
-            )}
-          </div>
+          <OverviewControls
+            view={view}
+            demoZeroAgents={demoZeroAgents}
+            setDemoZeroAgents={setDemoZeroAgents}
+            resetOnboarding={resetOnboarding}
+            onPreview={preview}
+            onRetry={retry}
+          />
         ) : null}
         <OverviewState
           view={view}
