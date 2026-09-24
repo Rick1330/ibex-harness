@@ -161,7 +161,9 @@ function useCountUp(value: number, duration = 900) {
 
     frame = window.requestAnimationFrame(tick)
 
-    return () => window.cancelAnimationFrame(frame)
+    return () => {
+      window.cancelAnimationFrame(frame)
+    }
   }, [duration, value])
 
   return display
@@ -319,7 +321,10 @@ function TrendPanel() {
     expected: d.expected,
     errors: d.errors,
   }))
-  const now = series.at(-1)!
+  const now = series.at(-1)
+  if (!now) {
+    return null
+  }
 
   return (
     <Card className={`${panelClass} rise`} style={{ animationDelay: "60ms" }}>
