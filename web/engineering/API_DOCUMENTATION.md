@@ -27,7 +27,6 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 
 ---
 
-
 > **Operator platform contract (specification-only):** The historical Phase 4 dashboard work is gated by Track P. The planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
 > **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
 >
@@ -122,7 +121,6 @@ Clients reconnect with `Last-Event-ID`. Server deduplicates by `event_id`.
 No production, staging, sandbox, docs, operator, or API hostname is asserted by this repository baseline. Configure origins through the approved topology ADR and environment manifests; do not copy example hostnames into clients or tests. Local service ports may be documented by the owning service only when verified.
 
 ---
-
 
 ## 🔑 Authentication
 
@@ -2888,7 +2886,6 @@ X-IBEX-Test-Mode: true
 ### Sandbox and API playground
 
 No sandbox hostname or live API playground is verified by the repository baseline. If either is provisioned later, document its owner, data isolation, credential policy, reset behavior, and approved origin in the environment record rather than treating this reference page as deployment evidence.
-
 
 ## Operator-web implementation checklist
 

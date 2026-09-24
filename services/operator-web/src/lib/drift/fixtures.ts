@@ -157,7 +157,7 @@ export const DRIFT_ALERT_PRIMARY: DriftAlertDetail = {
 export const DRIFT_ALERT_MEDIUM: DriftAlertDetail = {
   alert_id: "drift_3b91c0",
   org_id: "org_acme",
-  agent_id: "agt_01h9billing",
+  agent_id: "agent_billing",
   agent_name: "billing-bot",
   agent_slug: "billing-bot",
   severity: "medium",

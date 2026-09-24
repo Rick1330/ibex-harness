@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AgentApiError, getAgent } from "@/lib/agents/api"
+import { getAgent } from "@/lib/agents/api"
 import type { AgentDetail } from "@/lib/agents/types"
 
 export default function AgentDetailPage() {
@@ -32,14 +32,10 @@ export default function AgentDetailPage() {
         setAgent(a)
         setState("ready")
       })
-      .catch((e) => {
+      .catch(() => {
         if (cancelled) return
         // Identical UI for missing vs cross-tenant (API 404 for both).
-        if (e instanceof AgentApiError && e.status === 404) {
-          setState("not_found")
-        } else {
-          setState("not_found")
-        }
+        setState("not_found")
       })
     return () => {
       cancelled = true

@@ -86,7 +86,7 @@ export const AGENT_STORE: AgentDetail[] = [
     config: defaultConfig(),
   },
   {
-    agent_id: "agt_01h9billing",
+    agent_id: "agent_billing",
     org_id: "org_acme",
     name: "billing-bot",
     slug: "billing-bot",

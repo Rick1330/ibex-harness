@@ -28,26 +28,36 @@ const unavailable = () =>
     "auth_unavailable",
     "AuthService integration is not connected; no credentials were submitted.",
   )
+
 export function getAuthEnvironment(): AuthEnvironment {
   const value = process.env.NEXT_PUBLIC_IBEX_ENV
   return value === "preview" || value === "staging" || value === "production"
     ? value
     : "local"
 }
-export function setAuthDemoFlags(_flags: {
+
+export function setAuthDemoFlags(flags: {
   authDown?: boolean
   previewMissing?: boolean
 }) {
-  void _flags
+  void flags
 }
+
 export function loadSession(): {
   session: OperatorSession
   cookies: SessionCookies
 } | null {
   return null
 }
-export function clearSession() {}
-export function logout() {}
+
+export function clearSession(): void {
+  return undefined
+}
+
+export function logout(): void {
+  return undefined
+}
+
 export async function issueOperatorSession(
   email: string,
   password: string,
@@ -56,6 +66,7 @@ export async function issueOperatorSession(
   void password
   throw unavailable()
 }
+
 export async function registerOperatorOrg(input: {
   orgName: string
   email: string
@@ -64,19 +75,23 @@ export async function registerOperatorOrg(input: {
   void input
   throw unavailable()
 }
+
 export async function refreshOperatorSession(
   csrfHeader: string,
 ): Promise<{ session: OperatorSession; cookies: SessionCookies }> {
   void csrfHeader
   throw unavailable()
 }
+
 export async function beginTotpEnrollment(): Promise<BeginEnrollmentResult> {
   throw unavailable()
 }
+
 export async function confirmTotpEnrollment(code: string): Promise<void> {
   void code
   throw unavailable()
 }
+
 export async function createStepUpToken(code: string): Promise<StepUpToken> {
   void code
   throw unavailable()

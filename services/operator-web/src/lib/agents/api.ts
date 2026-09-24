@@ -105,7 +105,7 @@ export async function createAgent(input: {
   }
   const now = new Date().toISOString()
   const row: AgentDetail = {
-    agent_id: `agt_${Math.random().toString(36).slice(2, 12)}`,
+    agent_id: `agt_${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`,
     org_id: input.org_id ?? "org_acme",
     name: input.name.trim(),
     slug,

@@ -72,10 +72,10 @@ export async function issueOnboardingPat(input: {
   }
   const uuid = crypto.randomUUID().replace(/-/g, "")
   const secret =
-    Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+    crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")
   const plaintext = `ibex_pat_${uuid}_${secret}`
   return {
-    token_id: `tok_${Math.random().toString(36).slice(2, 10)}`,
+    token_id: `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
     prefix: plaintext.slice(0, 18) + "…",
     plaintext,
     scopes: input.scopes,
@@ -95,7 +95,7 @@ export async function createUserInvite(input: {
   const roles: MemberRole[] = ["owner", "admin", "member", "viewer"]
   if (!roles.includes(input.role)) throw new Error("Invalid role")
   return {
-    user_id: `usr_${Math.random().toString(36).slice(2, 8)}`,
+    user_id: `usr_${crypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
     email,
     name: input.name.trim(),
     role: input.role,

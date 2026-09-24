@@ -84,11 +84,11 @@ export async function createPatToken(
   }
   const uuid = crypto.randomUUID().replace(/-/g, "")
   const secret =
-    Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+    crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "")
   const plaintext = `ibex_pat_${uuid}_${secret}`
   const now = new Date().toISOString()
   const token: PatToken = {
-    token_id: `tok_${Math.random().toString(36).slice(2, 10)}`,
+    token_id: `tok_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
     name: input.name.trim(),
     prefix: `ibex_pat_${uuid.slice(0, 4)}`,
     permissions: input.permissions,
@@ -210,9 +210,9 @@ export async function createWebhookEndpoint(
   if (input.events.length === 0) {
     throw new SettingsApiError(400, "INVALID", "Select at least one event")
   }
-  const secret = `whsec_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  const secret = `whsec_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`
   const webhook: WebhookEndpoint = {
-    webhook_id: `wh_${Math.random().toString(36).slice(2, 8)}`,
+    webhook_id: `wh_${crypto.randomUUID().replace(/-/g, "").slice(0, 6)}`,
     url: url.toString(),
     events: input.events,
     status: "active",
@@ -236,7 +236,7 @@ export async function rotateWebhookSecret(
       "Missing permission: TokenCreate",
     )
   }
-  const secret = `whsec_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  const secret = `whsec_${crypto.randomUUID().replace(/-/g, "")}${crypto.randomUUID().replace(/-/g, "")}`
   return {
     webhook: {
       ...webhook,

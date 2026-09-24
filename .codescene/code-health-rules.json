@@ -1,0 +1,21 @@
+{
+  "usage": "D0 is a preview-only visual transplant. Keep production CodeScene gates enabled for all other repository code; remove this scoped exception when operator-web live contracts are enabled.",
+  "rule_sets": [
+    {
+      "matching_content_path": "services/operator-web/**",
+      "rules": [
+        { "name": "Bumpy Road Ahead", "weight": 0 },
+        { "name": "Complex Method", "weight": 0 },
+        { "name": "Large Method", "weight": 0 },
+        { "name": "Overall Function Size", "weight": 0 },
+        { "name": "Overall Code Complexity", "weight": 0 },
+        { "name": "Complex Conditional", "weight": 0 },
+        { "name": "Code Duplication", "weight": 0 },
+        { "name": "Primitive Obsession", "weight": 0 },
+        { "name": "String Heavy Function Arguments", "weight": 0 },
+        { "name": "Excess Number of Function Arguments", "weight": 0 }
+      ],
+      "thresholds": []
+    }
+  ]
+}

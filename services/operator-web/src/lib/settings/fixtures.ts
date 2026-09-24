@@ -338,7 +338,7 @@ export const SETTINGS_V2: SettingsPageV2 = {
       step_up_verified: false,
       step_up_jti: null,
       preview_token: null,
-      idempotency_key: "idem_billing",
+      idempotency_key: "preview-idempotency-01",
       requires_second_actor: false,
       second_actor_user_id: null,
       second_actor_email: null,

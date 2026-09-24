@@ -115,7 +115,15 @@ export function ExploreQueryBar({
             "flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1",
             "focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50",
           )}
+          role="button"
+          tabIndex={0}
           onClick={() => inputRef.current?.focus()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              inputRef.current?.focus()
+            }
+          }}
         >
           {chips.map((chip) => (
             <span

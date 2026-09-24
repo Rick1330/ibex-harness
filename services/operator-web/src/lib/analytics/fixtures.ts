@@ -76,7 +76,7 @@ const BASE_OVERVIEW: Omit<AnalyticsOverview, "period" | "series"> = {
       token_count: 12_400_000,
     },
     {
-      agent_id: "agt_01h9billing",
+      agent_id: "agent_billing",
       name: "billing-bot",
       slug: "billing-bot",
       request_count: 12_100,
