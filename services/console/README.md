@@ -32,6 +32,18 @@ The current shell intentionally has no login route or demo credentials. AuthServ
 | Dashboard shell                                                                                                       | **Presentation-only**         | The shell is directly reachable for inspection; it has no tenant authority and authenticated mutations remain disabled.                                                             |
 | Explore, sessions, memories, directives, incidents, drift, analytics, billing, settings data                          | **Deferred/live integration** | The mock route and visual states are retained. Live reads, authorization, mutations, evidence contracts, and upstream fetches are not claimed until owning APIs are connected.            |
 
+## Preview configuration migration
+
+The internal preview flags use the Console names. Migrate local configuration as follows; these flags are not production authentication or tenant-authority controls.
+
+| Legacy variable | Console variable |
+| --- | --- |
+| `OPERATOR_WEB_DATA_MODE` | `CONSOLE_DATA_MODE` |
+| `OPERATOR_WEB_PREVIEW` | `CONSOLE_PREVIEW` |
+| `NEXT_PUBLIC_OPERATOR_WEB_PREVIEW` | `NEXT_PUBLIC_CONSOLE_PREVIEW` |
+
+Preview remains enabled only when the server-side mode and preview flags are set together with the public presentation flag, and it is always disabled when `NODE_ENV=production`.
+
 ## Security posture
 
 There is no browser-side arbitrary upstream fetch, bearer credential, client-supplied organization authority, fake login, or browser secret. The auth context is credential-free and exists only to preserve future step-up integration seams; it never loads, manufactures, or stores a session. Token issuance, bearer-curl generation, and TOTP enrollment are not exposed.
