@@ -94,11 +94,12 @@ async function fetchSearchIndex(port) {
 async function assertSearchIndexContract(body, { routeRoot = appRoot } = {}) {
   const payload = JSON.parse(body);
   const storedDocs = payload?.docs?.docs;
-  const docs = Array.isArray(storedDocs)
-    ? storedDocs
-    : storedDocs && typeof storedDocs === "object"
-      ? Object.values(storedDocs)
-      : [];
+  let docs = [];
+  if (Array.isArray(storedDocs)) {
+    docs = storedDocs;
+  } else if (storedDocs && typeof storedDocs === "object") {
+    docs = Object.values(storedDocs);
+  }
   if (docs.length === 0 || docs.some((doc) => !doc || typeof doc !== "object")) {
     throw new Error("search index does not contain the expected Orama document collection");
   }

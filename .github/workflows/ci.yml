@@ -1283,12 +1283,13 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
         run: |
           set -euo pipefail
-          # Docker Hub minio/minio tag is gone; quay.io is the current upstream.
+          # MinIO stopped publishing community images to Docker Hub and Quay.
+          # Chainguard publishes a maintained, public MinIO-compatible image.
           docker run -d --name ibex-ci-minio \
             -p 9100:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3 \
+            cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 \
             server /data
           for _ in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:9100/minio/health/live >/dev/null; then

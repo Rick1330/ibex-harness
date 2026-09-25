@@ -16,7 +16,7 @@ Phase 1 local development runs **data stores in Docker** and **Go services on th
 | Postgres + pgvector | `pgvector/pgvector:pg16` | **5432** | Primary OLTP + migrations |
 | Redis Stack | `redis/redis-stack:7.4.0-v1` | **6379** | Rate limits, readiness probes |
 | ClickHouse | `clickhouse/clickhouse-server:24.8` | **8123** (HTTP), **9002** (native) | Analytics (Phase 2+) |
-| MinIO | `minio/minio` | **9000** (API), **9001** (console) | Object storage (Phase 2+) |
+| MinIO | `cgr.dev/chainguard/minio:latest` | **9000** (API), **9001** (console) | Object storage (Phase 2+) |
 
 ClickHouse native is mapped to **9002** so it does not collide with MinIO on **9000**.
 

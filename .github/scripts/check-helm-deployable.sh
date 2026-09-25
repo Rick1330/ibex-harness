@@ -9,6 +9,13 @@ case "${OVERLAY_INPUT}" in
   values-staging.yaml|values-prod.yaml)
     OVERLAY_INPUT="${CHART}/${OVERLAY_INPUT}"
     ;;
+  /*)
+    # Absolute paths are validated against the checked-in allowlist below.
+    ;;
+  *)
+    echo "refusing unexpected overlay input: ${OVERLAY_INPUT}" >&2
+    exit 2
+    ;;
 esac
 
 if ! OVERLAY="$(realpath -e -- "${OVERLAY_INPUT}")"; then
