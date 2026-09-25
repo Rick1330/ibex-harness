@@ -57,6 +57,16 @@ func baseLoadCases() []loadCase {
 			env:     map[string]string{"IBEX_ENV": "development", "IBEX_SHUTDOWN_TIMEOUT": "0s"},
 			wantErr: true,
 		},
+		{
+			name:    "invalid self-hosted enabled flag",
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_SELFHOSTED_ENABLED": "maybe"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid capability overlays",
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_MODEL_CAPABILITY_OVERLAYS": "{"},
+			wantErr: true,
+		},
 	}
 }
 

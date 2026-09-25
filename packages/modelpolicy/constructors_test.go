@@ -75,6 +75,13 @@ func TestOrgAwareRegistry_Base(t *testing.T) {
 	}
 }
 
+func TestDenyAllRegistry_FallbackChain(t *testing.T) {
+	t.Parallel()
+	if _, err := (DenyAllRegistry{}).FallbackChain(context.Background(), uuid.New(), "gpt-4o"); err != ErrPolicyUnavailable {
+		t.Fatalf("FallbackChain error=%v, want ErrPolicyUnavailable", err)
+	}
+}
+
 func TestNewStore_NilDB(t *testing.T) {
 	t.Parallel()
 	if _, err := NewStore(nil); err == nil {
