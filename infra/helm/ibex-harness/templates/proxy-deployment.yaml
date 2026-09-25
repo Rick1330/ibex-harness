@@ -43,6 +43,19 @@ spec:
               value: {{ include "ibex.imageDigest" .Values.images.proxy | quote }}
             - name: IBEX_ENV
               value: {{ required "proxy.environment must be explicitly set" .Values.proxy.environment | quote }}
+            - name: IBEX_LLM_MODE
+              value: {{ required "proxy.llm.mode must be explicitly set" .Values.proxy.llm.mode | quote }}
+            {{- if eq .Values.proxy.llm.mode "live" }}
+            {{- if ne .Values.proxy.llm.provider "openai" }}
+            {{- fail "proxy.llm.provider must be openai when proxy.llm.mode=live" }}
+            {{- end }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "proxy.llm.secretName is required for live LLM mode" .Values.proxy.llm.secretName | quote }}
+                  key: {{ required "proxy.llm.apiKeyKey is required for live LLM mode" .Values.proxy.llm.apiKeyKey | quote }}
+                  optional: false
+            {{- end }}
             - name: REDIS_URL
               valueFrom:
                 secretKeyRef:

@@ -85,17 +85,24 @@ type envConfig struct {
 }
 
 func loadFromEnv() (Config, error) {
-	if err := requireExplicitEnvironment(); err != nil {
-		return Config{}, err
-	}
-	if err := rejectModelPolicyPassthroughEnv(); err != nil {
-		return Config{}, err
-	}
-	envCfg, err := ibexconfig.Load[envConfig]()
+	envCfg, err := loadEnvConfig()
 	if err != nil {
 		return Config{}, err
 	}
+	return buildProxyConfig(envCfg)
+}
 
+func loadEnvConfig() (envConfig, error) {
+	if err := requireExplicitEnvironment(); err != nil {
+		return envConfig{}, err
+	}
+	if err := rejectModelPolicyPassthroughEnv(); err != nil {
+		return envConfig{}, err
+	}
+	return ibexconfig.Load[envConfig]()
+}
+
+func buildProxyConfig(envCfg envConfig) (Config, error) {
 	level, err := parseLogLevel(envCfg.LogLevel)
 	if err != nil {
 		return Config{}, err

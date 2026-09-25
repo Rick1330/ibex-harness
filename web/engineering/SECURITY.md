@@ -360,7 +360,7 @@ Protected Proxy routes enforce the shared rate limiter before provider work. The
 - If a configured rate-limit dependency errors, the Proxy returns **503** `SERVICE_DEGRADED` with `Retry-After: 5`; it does not call downstream route or provider work.
 - Quota exhaustion remains **429** `RATE_LIMITED` with the quota-derived `Retry-After` and rate-limit headers.
 
-[ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md) records the historical Phase 1 design. Its fail-open behavior and empty-URL Noop default are superseded by [ADR-0081](adr/0081-fail-closed-proxy-runtime-controls.mdx). Development readiness remains degraded when its critical Redis readiness checker is configured but Redis is absent; the request-path Noop exception does not imply a healthy `/ready` response.
+[ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md) records the historical Phase 1 design. Its fail-open behavior and empty-URL Noop default are superseded by [ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx). Development readiness remains degraded when its critical Redis readiness checker is configured but Redis is absent; the request-path Noop exception does not imply a healthy `/ready` response.
 
 ### 8.3 SSRF / External Calls
 

@@ -54,6 +54,17 @@
       "required": ["environment", "redis"],
       "properties": {
         "environment": { "type": "string", "enum": ["development", "staging", "production"] },
+        "llm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "provider", "secretName", "apiKeyKey"],
+          "properties": {
+            "mode": { "type": "string", "enum": ["mock", "live"] },
+            "provider": { "type": "string", "enum": ["openai"] },
+            "secretName": { "type": "string", "minLength": 1 },
+            "apiKeyKey": { "type": "string", "minLength": 1 }
+          }
+        },
         "redis": {
           "type": "object",
           "additionalProperties": false,

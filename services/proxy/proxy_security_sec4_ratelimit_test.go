@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
 
@@ -121,9 +123,10 @@ func TestSecurity_SEC4_7_RedisOutageBlocksChatProviderWork(t *testing.T) {
 		providers:  []provider.Provider{providerCounter},
 	})
 	env.redisMR.Close()
+	chatToken, _ := testutil.SeedToken(t, env.db, env.orgA.OrgID, permissions.ProxyChatCompletion)
 
 	resp, body := chatPOST(t, chatRequestOpts{
-		srvURL: env.proxy.URL, bearer: env.orgA.Token, agentID: env.orgA.AgentID,
+		srvURL: env.proxy.URL, bearer: chatToken, agentID: env.orgA.AgentID,
 		contentType: "application/json", body: minimalChatBody,
 	})
 	defer resp.Body.Close()
@@ -134,7 +137,7 @@ func TestSecurity_SEC4_7_RedisOutageBlocksChatProviderWork(t *testing.T) {
 	if got := resp.Header.Get("Retry-After"); got != "5" {
 		t.Fatalf("Retry-After=%q want 5 seconds", got)
 	}
-	assertSecurityErrorEnvelope(t, resp, body, env.orgA.Token)
+	assertSecurityErrorEnvelope(t, resp, body, chatToken)
 	if got := providerCounter.calls.Load(); got != 0 {
 		t.Fatalf("provider was invoked %d times during Redis outage; want 0", got)
 	}

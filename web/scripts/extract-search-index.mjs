@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { generateOgImages } from "./generate-og-images.mjs";
 
@@ -91,7 +91,7 @@ async function fetchSearchIndex(port) {
   return body;
 }
 
-async function assertSearchIndexContract(body) {
+async function assertSearchIndexContract(body, { routeRoot = appRoot } = {}) {
   const payload = JSON.parse(body);
   const storedDocs = payload?.docs?.docs;
   const docs = Array.isArray(storedDocs)
@@ -104,32 +104,42 @@ async function assertSearchIndexContract(body) {
   }
 
   const byUrl = new Map(docs.map((doc) => [doc.url, doc]));
-  const requiredTokens = new Map([
+  for (const [url, token] of requiredSearchDocuments()) {
+    await assertRequiredSearchDocument(byUrl, routeRoot, url, token);
+  }
+  assertExcludedSearchDocuments(byUrl);
+}
+
+function requiredSearchDocuments() {
+  return new Map([
     ["/docs/adr/0081-fail-closed-proxy-runtime-controls", "SERVICE_DEGRADED"],
     ["/roadmap/phase-4-multi-provider/findings", "F4-037"],
     ["/roadmap/phase-4-multi-provider/risks", "Redis"],
   ]);
-  for (const [url, token] of requiredTokens) {
-    const doc = byUrl.get(url);
-    if (!doc) throw new Error(`required search document is missing: ${url}`);
-    const searchable = `${doc.title ?? ""}\n${doc.description ?? ""}\n${doc.content ?? ""}`;
-    if (!searchable.toLowerCase().includes(token.toLowerCase())) {
-      throw new Error(`search document ${url} is missing its required token ${token}`);
-    }
-    const routeArtifact = path.join(
-      appRoot,
-      ".next",
-      "server",
-      "app",
-      `${url.slice(1)}.html`,
-    );
-    try {
-      await access(routeArtifact);
-    } catch {
-      throw new Error(`search document ${url} has no compiled route artifact`);
-    }
-  }
+}
 
+async function assertRequiredSearchDocument(byUrl, routeRoot, url, token) {
+  const doc = byUrl.get(url);
+  if (!doc) throw new Error(`required search document is missing: ${url}`);
+  const searchable = `${doc.title ?? ""}\n${doc.description ?? ""}\n${doc.content ?? ""}`;
+  if (!searchable.toLowerCase().includes(token.toLowerCase())) {
+    throw new Error(`search document ${url} is missing its required token ${token}`);
+  }
+  const routeArtifact = path.join(
+    routeRoot,
+    ".next",
+    "server",
+    "app",
+    `${url.slice(1)}.html`,
+  );
+  try {
+    await access(routeArtifact);
+  } catch {
+    throw new Error(`search document ${url} has no compiled route artifact`);
+  }
+}
+
+function assertExcludedSearchDocuments(byUrl) {
   const excludedMilestone =
     "/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract";
   if (byUrl.has(excludedMilestone)) {
@@ -211,9 +221,16 @@ async function main() {
   await extractToPublic(EXTRACT_PORT);
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error("[search] extract failed:", error);
-  process.exit(1);
+export { assertSearchIndexContract };
+
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  try {
+    await main();
+  } catch (error) {
+    console.error("[search] extract failed:", error);
+    process.exit(1);
+  }
 }

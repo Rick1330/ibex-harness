@@ -39,6 +39,9 @@ assert_contains "${TMP_DIR}/production.yaml" 'value: "production"' 'production o
 assert_contains "${TMP_DIR}/production.yaml" 'name: "ibex-redis"' 'production references the documented Redis Secret'
 assert_contains "${TMP_DIR}/production.yaml" 'key: "redis-url"' 'production references the documented Redis Secret key'
 assert_contains "${TMP_DIR}/production.yaml" 'optional: false' 'production requires its Redis Secret'
+assert_contains "${TMP_DIR}/production.yaml" 'value: "live"' 'production explicitly selects live LLM mode'
+assert_contains "${TMP_DIR}/production.yaml" 'name: "ibex-proxy-provider"' 'production references the provider Secret'
+assert_contains "${TMP_DIR}/production.yaml" 'key: "openai-api-key"' 'production references the provider Secret key'
 
 if helm template ibex "$CHART" -f "${CHART}/values-prod.yaml" --set proxy.environment=development >/dev/null 2>&1; then
 	echo 'FAIL: production overlay accepted a development Proxy profile override' >&2

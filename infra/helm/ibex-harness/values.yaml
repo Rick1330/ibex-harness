@@ -25,6 +25,11 @@ deployment:
   profile: development
 proxy:
   environment: development
+  llm:
+    mode: mock
+    provider: openai
+    secretName: ibex-proxy-provider
+    apiKeyKey: openai-api-key
   redis:
     secretName: ibex-redis
     urlKey: redis-url

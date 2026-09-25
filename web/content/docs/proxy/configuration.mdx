@@ -36,9 +36,9 @@ Copy `services/proxy/.env.example` to `services/proxy/.env` for local developmen
     {
       name: "REDIS_URL",
       type: "string (URL)",
-      required: true,
+      required: false,
       description:
-        "Shared Redis for rate limiting, auth-cache revocation subscribe, idempotency, and /ready; required outside development.",
+        "Shared Redis for rate limiting, auth-cache revocation subscribe, idempotency, and /ready; required outside development and optional for explicit development Noop mode.",
     },
   ]}
 />

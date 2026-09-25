@@ -10,16 +10,17 @@ SEMANTIC_WORKFLOW="${ROOT}/.github/workflows/semantic-pr.yml"
 # Map each protected context to the workflow expected to emit it. The inventory
 # drives iteration, so adding/removing a required context cannot silently escape
 # this guard. Both the job id and effective displayed context name are checked.
-workflow_for_context() {
+	workflow_for_context() {
   case "$1" in
     ci-gate-repo|ci-gate-go|ci-gate-web|ci-gate-security|ci-gate-python|gitleaks) printf '%s\n' "$CI_WORKFLOW" ;;
     ci-gate-semgrep) printf '%s\n' "$SEMGREP_WORKFLOW" ;;
     semantic-pr-title) printf '%s\n' "$SEMANTIC_WORKFLOW" ;;
     *) return 1 ;;
   esac
-}
+	}
 
-mapfile -t contexts < <(jq -er '.required_status_checks.checks | map(.context) | .[]' "$PROTECTION")
+contexts_output="$(jq -er '.required_status_checks.checks | map(.context) | .[]' "$PROTECTION")"
+mapfile -t contexts <<< "$contexts_output"
 if (( ${#contexts[@]} == 0 )); then
   echo 'Required-check inventory is empty' >&2
   exit 1

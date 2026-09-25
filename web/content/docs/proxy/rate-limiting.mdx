@@ -54,8 +54,8 @@ Implementation lives in `packages/ratelimit` (`HierarchicalLimiter`) — service
     {
       name: "REDIS_URL",
       type: "string (URL)",
-      required: true,
-      description: "Redis connection used by the limiter and /ready probe.",
+      required: false,
+      description: "Redis connection used by the limiter and /ready probe; required outside development and optional for explicit development Noop mode.",
     },
   ]}
 />
