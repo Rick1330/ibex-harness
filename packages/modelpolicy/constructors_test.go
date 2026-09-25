@@ -56,7 +56,7 @@ func TestInvalidate_NilOrgNoop(t *testing.T) {
 	cache.Invalidate(uuid.Nil)
 }
 
-func TestOrgAwareRegistry_BaseAndPassthrough(t *testing.T) {
+func TestOrgAwareRegistry_Base(t *testing.T) {
 	t.Parallel()
 	base, err := provider.NewRegistry(testCatalog("gpt-4o"), fakeProvider{models: []string{"gpt-4o"}})
 	if err != nil {
@@ -73,9 +73,12 @@ func TestOrgAwareRegistry_BaseAndPassthrough(t *testing.T) {
 	if reg.Base() != base {
 		t.Fatal("Base mismatch")
 	}
-	p := PassthroughRegistry{Base: base}
-	if _, err := p.ForOrg(context.Background(), uuid.New(), "gpt-4o"); err != nil {
-		t.Fatal(err)
+}
+
+func TestDenyAllRegistry_FallbackChain(t *testing.T) {
+	t.Parallel()
+	if _, err := (DenyAllRegistry{}).FallbackChain(context.Background(), uuid.New(), "gpt-4o"); err != ErrPolicyUnavailable {
+		t.Fatalf("FallbackChain error=%v, want ErrPolicyUnavailable", err)
 	}
 }
 

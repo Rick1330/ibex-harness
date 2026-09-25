@@ -334,7 +334,7 @@ Write-path PII detection and redaction run in the memory pipeline ([ADR-0054](/d
 
 1. **Token validation** — gRPC `ValidateToken`; fail closed → **503** `SERVICE_DEGRADED` ([ADR-0011](adr/ADR-0011-proxy-auth-client.md))
 2. **Agent identity verification** — gRPC `ValidateAgent(agent_id, org_id_from_token)`; requires `X-IBEX-Agent-ID`; cross-org or inactive agent → **403** (`AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`, never **404**); auth outage → **503** `AUTH_UNAVAILABLE` ([ADR-0016](adr/ADR-0016-agent-identity-verification.md))
-3. **Rate limit** — org-level Redis RPM; fail open on Redis errors ([ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md))
+3. **Rate limit** — org-level Redis RPM; configured Redis errors fail closed → **503** `SERVICE_DEGRADED` before provider work ([ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx); Phase 1 behavior in [ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md) is superseded)
 
 Middleware order: `auth → agentVerify → rateLimit → handler`.
 
@@ -351,16 +351,16 @@ Middleware order: `auth → agentVerify → rateLimit → handler`.
 
 Body size is enforced with `http.MaxBytesReader` **before** JSON decode. Semantic failures return **400** `VALIDATION_ERROR` with `field_errors` (not **501**).
 
-### 8.2 Rate Limiting (Phase 1 — ADR-0015)
+### 8.2 Rate Limiting (current contract: ADR-0081)
 
-Phase 1 implements **org-level per-minute RPM** only (agent ID ignored):
+Protected Proxy routes enforce the shared rate limiter before provider work. The runtime profile controls whether Redis may be omitted:
 
-- Redis `INCR` + `EXPIRE` per org per calendar minute (not atomic; Lua scripts deferred to Phase 4)
-- Default RPM from `IBEX_RATE_LIMIT_DEFAULT_RPM` (60); optional per-org overrides
-- On Redis errors: **fail open** (allow request, log warning) per [ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md)
-- When `REDIS_URL` is empty: Noop limiter (no rate limiting); `/ready` redis check reports degraded
+- An explicitly selected `development` profile may use the Noop limiter when `REDIS_URL` is empty.
+- `staging` and `production` require a configured shared Redis URL and a non-nil limiter when protected routes are mounted.
+- If a configured rate-limit dependency errors, the Proxy returns **503** `SERVICE_DEGRADED` with `Retry-After: 5`; it does not call downstream route or provider work.
+- Quota exhaustion remains **429** `RATE_LIMITED` with the quota-derived `Retry-After` and rate-limit headers.
 
-**Deferred to Phase 4+:** hierarchical agent/org/global limits, atomic Lua token bucket, in-memory fallback limiter.
+[ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md) records the historical Phase 1 design. Its fail-open behavior and empty-URL Noop default are superseded by [ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx). Development readiness remains degraded when its critical Redis readiness checker is configured but Redis is absent; the request-path Noop exception does not imply a healthy `/ready` response.
 
 ### 8.3 SSRF / External Calls
 
@@ -474,7 +474,7 @@ Before adding a dependency:
 | OSSF Scorecard | `.github/workflows/scorecard.yml` | No (main + schedule) | Yes |
 | Dependabot | `.github/dependabot.yml` | N/A (automated PRs) | N/A |
 
-Required status checks: `.github/branch-protection-main.json` (see [ADR-0008](adr/ADR-0008-security-ci-gates.md)).
+Required status-check inventory: `.github/branch-protection-main.json` (see [ADR-0008](adr/ADR-0008-security-ci-gates.md)). The file and its CI guard do not configure GitHub settings. A repository administrator must apply the complete context set to live `main` protection and verify the required contexts through GitHub after every policy change. The latest Stage 1 review found that live protection did not yet include `ci-gate-python` or `ci-gate-semgrep`; treat that external configuration as an open merge-readiness action until it is applied and verified.
 
 ### 12.3 Build integrity
 
@@ -590,7 +590,7 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 | Inactive agents (paused/archived/suspended) rejected | SEC-2.5, SEC-2.6 |
 | Auth service unavailable returns 503 with envelope | SEC-2.8 |
 | Rate limits enforced per org with correct headers | SEC-4.1–SEC-4.5 |
-| Rate limiter fails open when Redis unavailable (ADR-0015) | SEC-4.6 |
+| Configured Redis outage returns 503 before protected route/provider work | SEC-4.6 |
 | Permission bitmap enforced on protected routes | SEC-5.1–SEC-5.3 |
 | All error responses use stable JSON envelope | SEC-6.1–SEC-6.5 (parametrized sweep) |
 | Oversized chat body returns 413 `PAYLOAD_TOO_LARGE` with envelope | SEC-7.1 |

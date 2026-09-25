@@ -6,6 +6,8 @@
       { "context": "ci-gate-go" },
       { "context": "ci-gate-web" },
       { "context": "ci-gate-security" },
+      { "context": "ci-gate-python" },
+      { "context": "ci-gate-semgrep" },
       { "context": "gitleaks" },
       { "context": "semantic-pr-title" }
     ]

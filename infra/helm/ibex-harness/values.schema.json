@@ -2,8 +2,16 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "ibex-harness values",
   "type": "object",
-  "required": ["images"],
+  "required": ["images", "proxy", "deployment"],
   "properties": {
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile"],
+      "properties": {
+        "profile": { "type": "string", "enum": ["development", "staging", "production"] }
+      }
+    },
     "images": {
       "type": "object",
       "required": [
@@ -40,6 +48,34 @@
         "backoffLimit": { "type": "integer", "minimum": 0 }
       }
     },
+    "proxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment", "redis"],
+      "properties": {
+        "environment": { "type": "string", "enum": ["development", "staging", "production"] },
+        "llm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "provider", "secretName", "apiKeyKey"],
+          "properties": {
+            "mode": { "type": "string", "enum": ["mock", "live"] },
+            "provider": { "type": "string", "enum": ["openai"] },
+            "secretName": { "type": "string", "minLength": 1 },
+            "apiKeyKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        "redis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secretName", "urlKey"],
+          "properties": {
+            "secretName": { "type": "string", "minLength": 1 },
+            "urlKey": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "worker": {
       "type": "object",
       "properties": {
@@ -55,6 +91,44 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deployment": { "properties": { "profile": { "const": "development" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "proxy": { "properties": { "environment": { "const": "development" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deployment": { "properties": { "profile": { "const": "staging" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "proxy": { "properties": { "environment": { "const": "staging" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "deployment": { "properties": { "profile": { "const": "production" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "proxy": { "properties": { "environment": { "const": "production" } } }
+        }
+      }
+    }
+  ],
   "definitions": {
     "digestPinnedImage": {
       "type": "string",

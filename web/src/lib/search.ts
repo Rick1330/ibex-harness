@@ -1,19 +1,14 @@
 import { create, insertMultiple, save } from "@orama/orama";
 import { createSearchAPI, type Index } from "fumadocs-core/search/server";
 
-import { buildSearchContent, type SearchablePage } from "@/lib/search-content";
+import {
+  buildSearchContent,
+  shouldIndexSearchPage,
+  type SearchablePage,
+} from "@/lib/search-content";
 import { blogSource, roadmapSource, source } from "@/lib/source";
 
 export { buildSearchContent } from "@/lib/search-content";
-
-/** Roadmap milestone specs inflate the index; keep hub and phase overviews only. */
-function shouldIndexPage(url: string): boolean {
-  if (url.includes("/_design")) return false;
-  if (!url.startsWith("/roadmap")) return true;
-  if (url === "/roadmap" || url === "/roadmap/current-state") return true;
-  if (url.includes("/milestones/")) return false;
-  return true;
-}
 
 function toSimpleIndex(page: SearchablePage): Index {
   const description = page.data.description ?? page.data.excerpt ?? "";
@@ -26,7 +21,7 @@ function toSimpleIndex(page: SearchablePage): Index {
   };
 }
 
-function collectSearchPages(): SearchablePage[] {
+export function collectSearchPages(): SearchablePage[] {
   const staticPages: SearchablePage[] = [
     {
       url: "/releases",
@@ -36,16 +31,29 @@ function collectSearchPages(): SearchablePage[] {
           "What shipped in each IBEX Harness release — curated highlights from CHANGELOG.md.",
       },
     },
+    // These register routes are emitted by the roadmap page tree but omitted
+    // from roadmapSource.getPages() in the current Fumadocs walker output.
+    // Their compact, tested summaries keep the critical readiness records
+    // discoverable without indexing their dense tables.
+    {
+      url: "/roadmap/phase-4-multi-provider/findings",
+      data: { title: "Phase 4 — Findings Register" },
+    },
+    {
+      url: "/roadmap/phase-4-multi-provider/risks",
+      data: { title: "Phase 4 — Risks and Mitigations" },
+    },
   ];
 
-  return [
+  const pages = [
     ...source.getPages(),
     ...blogSource.getPages(),
     ...roadmapSource.getPages(),
     ...staticPages,
   ]
-    .filter((page) => shouldIndexPage(page.url))
+    .filter((page) => shouldIndexSearchPage(page.url))
     .map((page) => ({ url: page.url, data: page.data }));
+  return Array.from(new Map(pages.map((page) => [page.url, page])).values());
 }
 
 const searchOptions = {

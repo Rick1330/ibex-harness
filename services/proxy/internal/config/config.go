@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	defaultEnvironment            = envDevelopment
 	defaultServiceName            = "proxy"
 	defaultLogLevel               = slog.LevelInfo
 	defaultPort                   = "8080"
@@ -125,9 +124,6 @@ type Config struct {
 	Tokenizer            TokenizerConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
-	// ModelPolicyAllowPassthrough enables fail-open PassthroughRegistry when
-	// Postgres is unavailable (default false → DenyAllRegistry). Residual risk.
-	ModelPolicyAllowPassthrough bool
 	// Provider circuit breaker (shared defaults).
 	// FAILURES/COOLDOWN apply to self-hosted consecutive mode; WINDOW/BUCKET/
 	// MIN_SAMPLES/FAILURE_RATE apply to hosted OpenAI + Anthropic rolling mode.
@@ -181,9 +177,6 @@ func (c *Config) applyClickHouseDefaults() {
 }
 
 func (c *Config) applyIdentityDefaults() {
-	if strings.TrimSpace(c.Environment) == "" {
-		c.Environment = defaultEnvironment
-	}
 	if strings.TrimSpace(c.ServiceName) == "" {
 		c.ServiceName = defaultServiceName
 	}

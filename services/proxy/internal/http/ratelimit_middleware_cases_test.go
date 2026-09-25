@@ -56,8 +56,8 @@ func TestRateLimitMiddleware_errorPaths(t *testing.T) {
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
-			name: "fail open", limiter: &mockLimiter{err: errors.New("redis down")},
-			opts: rateLimitProbeOpts{withAuth: true, orgID: orgID}, wantStatus: http.StatusOK,
+			name: "fail closed on backend error", limiter: &mockLimiter{err: errors.New("redis down")},
+			opts: rateLimitProbeOpts{withAuth: true, orgID: orgID}, wantStatus: http.StatusServiceUnavailable,
 		},
 	}
 

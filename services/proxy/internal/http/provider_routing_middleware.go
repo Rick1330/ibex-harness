@@ -30,7 +30,8 @@ type providerRoutingOpts struct {
 // ProviderRoutingMiddleware selects the LLM provider for the candidate model.
 // Org identity comes from auth.FromContext (AuthMiddleware). Empty request model
 // is filled from agents.default_model when AgentDefaults is configured.
-// Deny → 403 MODEL_NOT_ALLOWED; unknown model → 501 PROVIDER_NOT_CONFIGURED.
+// Policy denial → 403 MODEL_NOT_ALLOWED; unavailable policy state → 503;
+// unknown model after an allow decision → 501 PROVIDER_NOT_CONFIGURED.
 func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http.Handler {
 	if opts.agentDefaults == nil {
 		opts.agentDefaults = modelpolicy.NoopAgentDefaults{}

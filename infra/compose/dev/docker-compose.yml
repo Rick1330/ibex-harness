@@ -50,9 +50,18 @@ services:
       retries: 10
       start_period: 15s
 
+  minio-init:
+    image: alpine:3.21@sha256:ce64758a109eb420d874a118f87920e625e12d3634e03b4a5573fd9f6e5d3507
+    container_name: ibex-dev-minio-init
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 65532:65532 /data"]
+    volumes:
+      - ibex_minio_data:/data
+    restart: "no"
+
   minio:
-    # Docker Hub minio/minio tags removed; quay.io is upstream.
-    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    # MinIO stopped publishing community images to Docker Hub and Quay.
+    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     container_name: ibex-dev-minio
     command: server /data --console-address ":9001"
     environment:
@@ -63,8 +72,11 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - ibex_minio_data:/data
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 5s
       retries: 10

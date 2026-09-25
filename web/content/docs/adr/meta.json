@@ -76,6 +76,9 @@
     "0075-per-org-model-routing-policy",
     "0076-circuit-breaker-per-provider",
     "0077-provider-fallback-routing",
-    "0078-operator-runtime-topology"
+    "0078-operator-runtime-topology",
+    "0079-operator-session-rs256-totp",
+    "0080-ibex-console-service-rename",
+    "0081-fail-closed-proxy-runtime-controls"
   ]
 }

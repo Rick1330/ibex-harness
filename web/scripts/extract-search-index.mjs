@@ -3,9 +3,10 @@ import { createRequire } from "node:module";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { generateOgImages } from "./generate-og-images.mjs";
+import { assertSearchIndexContract } from "./search-index-contract.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
@@ -76,16 +77,18 @@ async function fetchSearchIndex(port) {
     throw new Error(`/api/search returned HTTP ${response.status}`);
   }
   const body = await response.text();
+  const bodyBytes = Buffer.byteLength(body, "utf8");
   if (body.length < 1000 || body === "[]") {
     throw new Error(
-      `/api/search response too small (${body.length} bytes); expected prerendered Orama export`,
+      `/api/search response too small (${bodyBytes} bytes); expected prerendered Orama export`,
     );
   }
-  if (body.length > MAX_INDEX_BYTES) {
+  if (bodyBytes > MAX_INDEX_BYTES) {
     throw new Error(
-      `search index too large (${body.length} bytes); max ${MAX_INDEX_BYTES}`,
+      `search index too large (${bodyBytes} bytes); max ${MAX_INDEX_BYTES}`,
     );
   }
+  await assertSearchIndexContract(body, { routeRoot: appRoot });
   return body;
 }
 
@@ -117,7 +120,7 @@ async function writeIndexArtifacts(body, buildId) {
     targets.map(async (target) => {
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, body, "utf8");
-      console.log(`[search] wrote ${target} (${body.length} bytes)`);
+      console.log(`[search] wrote ${target} (${Buffer.byteLength(body, "utf8")} bytes)`);
     }),
   );
 }
@@ -163,9 +166,14 @@ async function main() {
   await extractToPublic(EXTRACT_PORT);
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error("[search] extract failed:", error);
-  process.exit(1);
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  try {
+    await main();
+  } catch (error) {
+    console.error("[search] extract failed:", error);
+    process.exit(1);
+  }
 }

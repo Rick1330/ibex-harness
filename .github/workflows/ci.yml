@@ -75,6 +75,20 @@ jobs:
       - name: Repo layout guard
         run: bash .github/scripts/check-repo-layout.sh
 
+      - name: CI aggregate gate regression tests
+        run: bash .github/scripts/test-ci-gate.sh
+
+      - name: Required CI gate inventory guard
+        run: bash .github/scripts/check-required-ci-gates.sh
+
+      - name: Set up Helm 3 for chart regression checks
+        uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.0
+
+      - name: Proxy profile and Redis Secret chart regression
+        run: bash .github/scripts/test-proxy-helm-profile.sh
+
       - name: Landing hero assets guard
         run: bash .github/scripts/check-landing-assets.sh
 
@@ -1269,12 +1283,13 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
         run: |
           set -euo pipefail
-          # Docker Hub minio/minio tag is gone; quay.io is the current upstream.
+          # MinIO stopped publishing community images to Docker Hub and Quay.
+          # Chainguard publishes a maintained, public MinIO-compatible image.
           docker run -d --name ibex-ci-minio \
             -p 9100:9000 \
             -e MINIO_ROOT_USER=minioadmin \
             -e MINIO_ROOT_PASSWORD=minioadmin \
-            quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z@sha256:1dce27c494a16bae114774f1cec295493f3613142713130c2d22dd5696be6ad3 \
+            cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 \
             server /data
           for _ in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:9100/minio/health/live >/dev/null; then
@@ -2533,7 +2548,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate Go gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" "${{ needs.changes.result }}" \
             "${{ needs.buf-lint.result }}" \
             "${{ needs.proto-contract.result }}" \
             "${{ needs.db-migrate-smoke.result }}" \
@@ -2577,7 +2592,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate web gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" "${{ needs.changes.result }}" \
             "${{ needs.web-build.result }}"
 
   ci-gate-security:
@@ -2598,7 +2613,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate security gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_security }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_security }}" "${{ needs.changes.result }}" \
             "${{ needs.trivy.result }}" \
             "${{ needs.osv-scan.result }}" \
             "${{ needs.bandit.result }}" \
@@ -2637,7 +2652,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate Python gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" "${{ needs.changes.result }}" \
             "${{ needs.embedder-test.result }}" \
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \

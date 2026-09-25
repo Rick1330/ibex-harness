@@ -83,6 +83,9 @@ type RouterDeps struct {
 // was not fully initialized and must not be served.
 func NewRouter(deps RouterDeps) (http.Handler, error) {
 	deps.Config.ApplyDefaults()
+	if protectedRoutesRequireLimiter(deps) {
+		return nil, fmt.Errorf("proxy %s profile requires a rate limiter when protected routes are mounted", deps.Config.Environment)
+	}
 	mux := http.NewServeMux()
 	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
 	if err != nil {
@@ -99,6 +102,14 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 		registerProtectedRoutes(prd)
 	}
 	return wrapRouterHandler(deps, mux), nil
+}
+
+func protectedRoutesRequireLimiter(deps RouterDeps) bool {
+	if deps.Validator == nil || deps.Limiter != nil {
+		return false
+	}
+	_, protectedProfile := map[string]struct{}{"staging": {}, "production": {}}[deps.Config.Environment]
+	return protectedProfile
 }
 
 func resolveProviderRegistry(reg *provider.Registry) (*provider.Registry, error) {

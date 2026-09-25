@@ -2,6 +2,8 @@ package config
 
 import (
 	"log/slog"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -40,7 +42,7 @@ func baseLoadCases() []loadCase {
 		},
 		{
 			name:    "invalid log level",
-			env:     map[string]string{"IBEX_LOG_LEVEL": "VERBOSE"},
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_LOG_LEVEL": "VERBOSE"},
 			wantErr: true,
 		},
 		{
@@ -52,7 +54,17 @@ func baseLoadCases() []loadCase {
 		},
 		{
 			name:    "zero shutdown timeout",
-			env:     map[string]string{"IBEX_SHUTDOWN_TIMEOUT": "0s"},
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_SHUTDOWN_TIMEOUT": "0s"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid self-hosted enabled flag",
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_SELFHOSTED_ENABLED": "maybe"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid capability overlays",
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_MODEL_CAPABILITY_OVERLAYS": "{"},
 			wantErr: true,
 		},
 	}
@@ -88,12 +100,12 @@ func contextFlagLoadCases() []loadCase {
 		},
 		{
 			name:    "invalid context enabled",
-			env:     map[string]string{"IBEX_CONTEXT_ENABLED": "maybe"},
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_ENABLED": "maybe"},
 			wantErr: true,
 		},
 		{
 			name:    "invalid context embed metadata",
-			env:     map[string]string{"IBEX_CONTEXT_EMBED_METADATA": "maybe"},
+			env:     map[string]string{"IBEX_ENV": "development", "IBEX_CONTEXT_EMBED_METADATA": "maybe"},
 			wantErr: true,
 		},
 	}
@@ -154,6 +166,32 @@ func TestLoad(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runLoadCase(t, tc)
+		})
+	}
+}
+
+func TestLoad_RejectsRemovedModelPolicyPassthrough(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH", "true")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "has been removed") {
+		t.Fatalf("Load() error=%v, want removed fail-open setting error", err)
+	}
+}
+
+func TestLoad_RequiresExplicitEnvironment(t *testing.T) {
+	t.Setenv("IBEX_ENV", "")
+	for _, state := range []string{"empty", "unset"} {
+		t.Run(state, func(t *testing.T) {
+			if state == "unset" {
+				if err := os.Unsetenv("IBEX_ENV"); err != nil {
+					t.Fatalf("Unsetenv: %v", err)
+				}
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), "IBEX_ENV must be set explicitly") {
+				t.Fatalf("Load() error=%v, want explicit environment error", err)
+			}
 		})
 	}
 }

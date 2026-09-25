@@ -49,12 +49,13 @@ Closure evidence is the ADR, environment matrix, origin/security negative tests,
 
 ## Findings addressed
 
-F4-001, F4-007, F4-020, F4-033.
+F4-001, F4-007, F4-020, F4-033, F4-036, F4-037.
 
 ## Exit checklist
 
 - [ ] Canonical operator topology ADR and ownership are linked.
 - [ ] Environment matrix covers local/preview/staging/production.
+- [ ] Proxy deployment declares `IBEX_ENV` explicitly and provisions healthy shared `REDIS_URL` outside local development; Redis outage returns 503 before provider work.
 - [ ] Operator runtime transcript proves login, API, SSE reconnect/resume, and drain.
 - [ ] Provider streaming and operator SSE contracts are tested separately.
 - [ ] `services/dashboard/` is labeled compatibility-only with a retirement condition.

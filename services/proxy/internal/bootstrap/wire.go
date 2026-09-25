@@ -377,11 +377,10 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 		return routerAssembleParts{}, fmt.Errorf("idempotency store: %w", err)
 	}
 	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
-		PGDB:             in.infra.pgDB,
-		Base:             providerReg,
-		Log:              in.log,
-		Metrics:          in.reg,
-		AllowPassthrough: in.cfg.ModelPolicyAllowPassthrough,
+		PGDB:    in.infra.pgDB,
+		Base:    providerReg,
+		Log:     in.log,
+		Metrics: in.reg,
 	})
 	if err != nil {
 		return routerAssembleParts{}, fmt.Errorf("model policy: %w", err)

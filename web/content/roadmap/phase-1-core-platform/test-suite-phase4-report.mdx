@@ -78,7 +78,7 @@ Manual review: deleting function bodies in these tests would **fail** CI:
 |------|-------------|
 | `TestSecurity_SEC1_1_MissingToken` | Auth bypass (401 + `MISSING_TOKEN`) |
 | `TestSecurity_SEC3_*` | Cross-tenant 404 enumeration |
-| `TestSecurity_SEC4_6_RedisFailOpen` | Rate-limit fail-closed regression |
+| `TestSecurity_SEC4_6_RedisOutageFailsClosed` | Redis outage returns 503 `SERVICE_DEGRADED` rather than passing through to downstream work |
 | `TestSecurity_SEC6_*` | Error envelope / `request_id` drift |
 | `auth_contract_test.go` | Proto breaking changes |
 | `validate_integration_test.go` | Token validation + RLS |

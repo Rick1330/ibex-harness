@@ -57,7 +57,8 @@ type rateLimitHandler struct {
 }
 
 // RateLimitMiddleware enforces org-level rate limits after authentication.
-// On Redis failure: fail open (allow request) with warning log.
+// Infrastructure failures fail closed; paid-provider work cannot bypass the
+// configured shared limit when its backing store is unavailable.
 func RateLimitMiddleware(limiter ratelimit.Limiter, log *logger.Logger, reg *metrics.ProxyRegistry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return &rateLimitHandler{limiter: limiter, logger: log, reg: reg, next: next}
@@ -82,11 +83,11 @@ func (h *rateLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result, err := h.limiter.Check(r.Context(), orgUUID, agentUUID)
 	if err != nil {
 		h.reg.IncRateLimitRedisError()
-		h.logger.WarnCtx(r.Context(), "rate limit check failed; failing open",
+		h.logger.WarnCtx(r.Context(), "rate limit check failed; failing closed",
 			"org_id", res.OrgID,
 			"error", err,
 		)
-		h.next.ServeHTTP(w, r)
+		writeRateLimitUnavailable(w, requestID, docsBase)
 		return
 	}
 	if !result.Allowed {
@@ -121,6 +122,15 @@ func writeRateLimitInternalError(w http.ResponseWriter, requestID, docsBase, det
 	apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
 		"Internal error", requestID,
 		apierror.WriteOpts{Detail: detail, DocsBase: docsBase})
+}
+
+func writeRateLimitUnavailable(w http.ResponseWriter, requestID, docsBase string) {
+	// A short bounded delay avoids immediate retry storms while the shared store
+	// is degraded. Unlike quota exhaustion, the dependency recovery time is unknown.
+	w.Header().Set("Retry-After", "5")
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+		"Service temporarily unavailable", requestID,
+		apierror.WriteOpts{Detail: "rate limit service unavailable", DocsBase: docsBase})
 }
 
 func writeRateLimitExceeded(w http.ResponseWriter, requestID, docsBase string, result ratelimit.Result) {
