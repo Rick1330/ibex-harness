@@ -251,8 +251,13 @@ def _validate_claims(
     now = int(time.time())
     if int(payload.get("exp", 0)) < now:
         raise SessionStubError("expired")
-    if "nbf" in payload and int(payload["nbf"]) > now:
-        raise SessionStubError("not yet valid")
+    if "nbf" in payload:
+        try:
+            not_before = int(payload["nbf"])
+        except (TypeError, ValueError) as exc:
+            raise SessionStubError("invalid not-before claim") from exc
+        if not_before > now:
+            raise SessionStubError("not yet valid")
     claims = _to_claims(payload, verify_method=verify_method)
     if verify_method == "RS256" and not claims.session_id:
         raise SessionStubError("missing session claim")

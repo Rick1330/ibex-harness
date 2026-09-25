@@ -83,6 +83,25 @@ def test_verify_rs256_ok_and_multi_key_rotation() -> None:
     assert claims.verify_method == "RS256"
 
 
+def test_verify_rejects_malformed_nbf_claim() -> None:
+    org = str(uuid4())
+    key, pub = _rsa_keypair()
+    payload = _access_payload(org)
+    payload["nbf"] = "not-a-number"
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, payload)
+    with pytest.raises(SessionStubError, match="invalid not-before claim"):
+        verify_token_opts(
+            tok,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=pub,
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     ("empty_pem", "match"),
     [

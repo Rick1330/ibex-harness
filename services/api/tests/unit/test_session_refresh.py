@@ -223,7 +223,7 @@ async def test_lifecycle_rpc_clients() -> None:
     stub = AsyncMock(return_value=validate_resp)
     with _patch_channel(stub):
         claims = await validate_operator_session(auth_grpc_addr="127.0.0.1:50051", access_token="a")
-        await revoke_operator_session(auth_grpc_addr="127.0.0.1:50051", session_id="sid", family_id="fid", access_jti="jti")
+        await revoke_operator_session(auth_grpc_addr="127.0.0.1:50051", session_id="sid", family_id="fid", access_jti="jti", access_token="a")
         await consume_step_up(auth_grpc_addr="127.0.0.1:50051", token="step", subject="subject", org_id="org", session_id="sid", action="legal_hold.manage", permission=8)
     assert claims.subject == "subject"
     assert claims.permissions == 9

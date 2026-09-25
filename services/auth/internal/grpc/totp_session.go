@@ -159,11 +159,21 @@ func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOp
 	if strings.TrimSpace(req.GetSessionId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, errMsgInvalidRequest)
 	}
+	if strings.TrimSpace(req.GetAccessToken()) == "" {
+		return nil, status.Error(codes.Unauthenticated, "access token required")
+	}
 	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
 	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
 	}
-	if err := issuer.RevokeSession(ctx, req.GetSessionId(), req.GetFamilyId(), req.GetAccessJti()); err != nil {
+	claims, err := issuer.ValidateAccess(ctx, sessionjwt.RawToken(req.GetAccessToken()))
+	if err != nil {
+		return nil, mapSessionValidationErr(err)
+	}
+	if claims.SessionID != req.GetSessionId() {
+		return nil, mapSessionValidationErr(sessionjwt.ErrInvalidToken)
+	}
+	if err := issuer.RevokeSession(ctx, claims.SessionID, req.GetFamilyId(), req.GetAccessJti()); err != nil {
 		return nil, status.Error(codes.Unavailable, "session revocation unavailable")
 	}
 	return &authv1.RevokeOperatorSessionResponse{}, nil

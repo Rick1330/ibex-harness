@@ -410,6 +410,7 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
                     session_id=sid,
                     family_id=family_id,
                     access_jti=access_jti,
+                    access_token=access or "",
                     timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
                 )
             except AuthFailedError as exc:

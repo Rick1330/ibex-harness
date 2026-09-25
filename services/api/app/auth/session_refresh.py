@@ -78,11 +78,11 @@ async def validate_operator_session(*, auth_grpc_addr: str, access_token: str, t
     return ValidatedSession(strings[1], strings[2], permissions, strings[4], strings[5])
 
 
-async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, family_id: str = "", access_jti: str = "", timeout_seconds: float = 5.0) -> None:
+async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, family_id: str = "", access_jti: str = "", access_token: str = "", timeout_seconds: float = 5.0) -> None:
     await _call_lifecycle(
         auth_grpc_addr=auth_grpc_addr,
         method=_REVOKE_METHOD,
-        payload=encode_string_fields({1: session_id, 2: family_id, 3: access_jti}),
+        payload=encode_string_fields({1: session_id, 2: family_id, 3: access_jti, 4: access_token}),
         timeout_seconds=timeout_seconds,
     )
 

@@ -20,11 +20,6 @@ func TestLifecycleValidationRevocationAndStepUpReplay(t *testing.T) {
 	if accessClaims.SessionID != "session-1" {
 		t.Fatalf("session binding mismatch: %q", accessClaims.SessionID)
 	}
-	requireNoErr(t, issuer.RevokeSession(context.Background(), accessClaims.SessionID, "family-1", accessClaims.JTI))
-	if _, err := issuer.ValidateAccess(context.Background(), sessionjwt.RawToken(access)); !errors.Is(err, sessionjwt.ErrInvalidToken) {
-		t.Fatalf("revoked access accepted: %v", err)
-	}
-
 	step, _, err := issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
 		Subject: "user-1", OrgID: "org-1", Permissions: 8, SessionID: accessClaims.SessionID, Action: "legal_hold.manage",
 	})
@@ -34,5 +29,17 @@ func TestLifecycleValidationRevocationAndStepUpReplay(t *testing.T) {
 	requireNoErr(t, err)
 	if _, err := issuer.ConsumeStepUp(context.Background(), sessionjwt.RawToken(step), expect); !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("step-up replay accepted: %v", err)
+	}
+
+	stepAfterLogout, _, err := issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
+		Subject: "user-1", OrgID: "org-1", Permissions: 8, SessionID: accessClaims.SessionID, Action: "legal_hold.manage",
+	})
+	requireNoErr(t, err)
+	requireNoErr(t, issuer.RevokeSession(context.Background(), accessClaims.SessionID, "family-1", accessClaims.JTI))
+	if _, err := issuer.ValidateAccess(context.Background(), sessionjwt.RawToken(access)); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+		t.Fatalf("revoked access accepted: %v", err)
+	}
+	if _, err := issuer.ConsumeStepUp(context.Background(), sessionjwt.RawToken(stepAfterLogout), expect); !errors.Is(err, sessionjwt.ErrInvalidToken) {
+		t.Fatalf("step-up after logout accepted: %v", err)
 	}
 }

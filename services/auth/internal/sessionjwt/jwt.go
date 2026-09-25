@@ -249,6 +249,13 @@ func (i *Issuer) ConsumeStepUp(ctx context.Context, token RawToken, expect StepU
 	if expect.RequiredPermission != 0 && claims.Permissions&expect.RequiredPermission != expect.RequiredPermission {
 		return Claims{}, ErrInvalidToken
 	}
+	revoked, err := i.jtiStore.SessionRevoked(ctx, claims.SessionID)
+	if err != nil {
+		return Claims{}, err
+	}
+	if revoked {
+		return Claims{}, ErrInvalidToken
+	}
 	first, err := i.jtiStore.ConsumeStepUp(ctx, claims.JTI, refreshRemainingTTL(claims))
 	if err != nil {
 		return Claims{}, err
