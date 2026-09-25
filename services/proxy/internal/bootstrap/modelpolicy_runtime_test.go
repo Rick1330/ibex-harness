@@ -20,51 +20,22 @@ import (
 
 func TestUnit_BuildModelPolicyRuntime_NilPostgresFailsClosed(t *testing.T) {
 	t.Parallel()
-	assertNilPostgresFallback(t, nilPostgresCase{
-		logNeedle:      "model policy deny-all",
-		assertResolver: assertPolicyUnavailableResolver,
-	})
+	assertModelPolicyRuntimeFailsClosed(t, mustTestRegistry(t), "mp-nil-pg-test", "model policy deny-all", "without postgres")
 }
 
 func TestUnit_BuildModelPolicyRuntime_NilProviderFailsClosed(t *testing.T) {
 	t.Parallel()
-	var buf bytes.Buffer
-	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := ibexmetrics.NewProxy("mp-nil-base-test")
-	cache, resolver, defaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{Log: log, Metrics: reg})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cache != nil {
-		t.Fatal("expected nil cache without provider registry")
-	}
-	assertPolicyUnavailableResolver(t, resolver)
-	assertNoopDefaults(t, defaults)
-	if !strings.Contains(buf.String(), "provider registry nil") {
-		t.Fatalf("expected missing-provider reason in warning, got %q", buf.String())
-	}
-	assertModelPolicyEnabledGauge(t, reg, 0)
+	assertModelPolicyRuntimeFailsClosed(t, nil, "mp-nil-base-test", "provider registry nil", "without provider registry")
 }
 
-type nilPostgresCase struct {
-	logNeedle      string
-	assertResolver func(*testing.T, interface {
-		ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error)
-	})
-}
-
-func assertNilPostgresFallback(t *testing.T, tc nilPostgresCase) {
+func assertModelPolicyRuntimeFailsClosed(t *testing.T, base *provider.Registry, metricsName, logNeedle, cacheReason string) {
 	t.Helper()
-	base := mustTestRegistry(t)
 	var buf bytes.Buffer
 	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := ibexmetrics.NewProxy("mp-nil-pg-test")
+	reg := ibexmetrics.NewProxy(metricsName)
 	cache, resolver, defaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
 		Base: base, Log: log, Metrics: reg,
 	})
@@ -72,12 +43,12 @@ func assertNilPostgresFallback(t *testing.T, tc nilPostgresCase) {
 		t.Fatal(err)
 	}
 	if cache != nil {
-		t.Fatal("expected nil cache without postgres")
+		t.Fatalf("expected nil cache %s", cacheReason)
 	}
-	tc.assertResolver(t, resolver)
+	assertPolicyUnavailableResolver(t, resolver)
 	assertNoopDefaults(t, defaults)
-	if !strings.Contains(buf.String(), tc.logNeedle) {
-		t.Fatalf("expected %q in log, got %q", tc.logNeedle, buf.String())
+	if !strings.Contains(buf.String(), logNeedle) {
+		t.Fatalf("expected %q in log, got %q", logNeedle, buf.String())
 	}
 	assertModelPolicyEnabledGauge(t, reg, 0)
 }
