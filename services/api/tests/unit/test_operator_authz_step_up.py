@@ -148,6 +148,7 @@ def test_assert_operator_permission_bitmap_missing() -> None:
 
 
 def test_require_operator_permission_dep_reads_step_up_flag() -> None:
+    import asyncio
     from app.auth.client import ValidateResult
     from app.authz import require_operator_permission
 
@@ -157,10 +158,11 @@ def test_require_operator_permission_dep_reads_step_up_flag() -> None:
     req = _request_with_settings(_settings(operator_allow_secret_use=True))
     req.state.ibex_step_up_ok = False
     with pytest.raises(ApiError) as exc:
-        dep(req, token)
+        asyncio.run(dep(req, token))
     assert "Step-up" in exc.value.message
     req.state.ibex_step_up_ok = True
-    assert dep(req, token) is token
+    with pytest.raises(ApiError):
+        asyncio.run(dep(req, token))
 
 
 def test_step_up_header_missing_sets_false() -> None:

@@ -82,6 +82,7 @@ def test_assert_path_org_mismatch() -> None:
 
 
 def test_require_legal_hold_manage_step_up() -> None:
+    import asyncio
     from unittest.mock import MagicMock
 
     from authclient.permissions import LEGAL_HOLD_MANAGE, bitmap_for_role
@@ -98,11 +99,12 @@ def test_require_legal_hold_manage_step_up() -> None:
     request = MagicMock()
     request.state.ibex_step_up_ok = False
     with pytest.raises(ApiError) as exc:
-        dep(request=request, token=token)
+        asyncio.run(dep(request=request, token=token))
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
     request.state.ibex_step_up_ok = True
-    assert dep(request=request, token=token) is token
+    with pytest.raises(ApiError):
+        asyncio.run(dep(request=request, token=token))
     assert LEGAL_HOLD_MANAGE
 
 

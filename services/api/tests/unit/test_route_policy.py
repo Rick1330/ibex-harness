@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from app.main import create_app
-from app.route_policy import ROUTE_POLICY, mounted_route_keys, policy_keys
+from app.route_policy import (
+    ROUTE_POLICY,
+    executable_dependency_gaps,
+    mounted_route_keys,
+    policy_keys,
+)
 
 
 def test_route_policy_covers_every_mounted_route() -> None:
     app = create_app()
     assert policy_keys() == mounted_route_keys(app)
+
+
+def test_protected_routes_have_executable_dependency_coverage() -> None:
+    assert executable_dependency_gaps(create_app()) == ()
 
 
 def test_route_policy_rows_declare_security_contract_fields() -> None:

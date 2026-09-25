@@ -36,6 +36,7 @@ from app.http_metrics import HTTPMetricsMiddleware
 from app.logutil import install_request_id_log_filter, request_id_for_log
 from app.middleware.csrf import CSRFMiddleware
 from app.middleware.request_id import RequestIdMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.model_policy_publish import (
     ModelPolicyPublisher,
     NoopModelPolicyPublisher,
@@ -183,6 +184,7 @@ def _mount_routers(application: FastAPI) -> None:
 def _mount_middleware(application: FastAPI, cfg: Settings) -> None:
     # Middleware: last added = outermost. CORS must be outermost (Sonar/FastAPI).
     # CSRF is pure ASGI so RequestId contextvars remain visible to handlers.
+    application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(HTTPMetricsMiddleware)
     application.add_middleware(CSRFMiddleware, settings=cfg)
     application.add_middleware(RequestIdMiddleware)

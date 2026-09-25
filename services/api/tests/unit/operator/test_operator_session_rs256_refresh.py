@@ -134,7 +134,7 @@ def test_me_cookie_rs256_is_not_provisional() -> None:
     )
     org = str(uuid4())
     now = int(time.time())
-    header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "v1"}).encode())
     payload = _b64url(
         json.dumps(
             {
@@ -147,6 +147,7 @@ def test_me_cookie_rs256_is_not_provisional() -> None:
                 "iat": now,
                 "exp": now + 60,
                 "jti": "jti-me",
+                "sid": "sid-me",
             }
         ).encode()
     )

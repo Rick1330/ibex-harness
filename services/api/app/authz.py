@@ -28,6 +28,7 @@ from app.auth.client import ValidateResult
 from app.config import Settings
 from app.deps import org_session, require_token
 from app.errors import ApiError
+from app.step_up import enforce_step_up
 
 AdminRoles = frozenset({"owner", "admin"})
 OwnerRoles = frozenset({"owner"})
@@ -110,18 +111,16 @@ RequireOwnerOrgSettings = Annotated[
 def require_legal_hold_manage() -> Callable[..., ValidateResult]:
     """Owner/admin + LegalHoldManage + step-up (4.P.3)."""
 
-    def _dep(
+    async def _dep(
         request: Request,
         token: Annotated[
             ValidateResult,
             Depends(require_roles(AdminRoles, required_permission=LEGAL_HOLD_MANAGE)),
         ],
     ) -> ValidateResult:
-        step_up_ok = bool(getattr(request.state, "ibex_step_up_ok", False))
-        if requires_step_up(LEGAL_HOLD_MANAGE) and not step_up_ok:
-            raise ApiError(
-                code=INSUFFICIENT_PERMISSIONS,
-                message="Step-up authentication required",
+        if requires_step_up(LEGAL_HOLD_MANAGE):
+            await enforce_step_up(
+                request, token, required_permission=LEGAL_HOLD_MANAGE, action="legal_hold.manage"
             )
         return token
 
@@ -173,11 +172,19 @@ def assert_operator_permission(
 
 
 def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
-    def _dep(
+    async def _dep(
         request: Request,
         token: Annotated[ValidateResult, Depends(require_token)],
     ) -> ValidateResult:
-        step_up_ok = bool(getattr(request.state, "ibex_step_up_ok", False))
+        step_up_ok = False
+        if requires_step_up(required):
+            await enforce_step_up(
+                request,
+                token,
+                required_permission=required,
+                action=f"operator.permission.{required}",
+            )
+            step_up_ok = True
         assert_operator_permission(
             _settings(request), token.permissions, required, step_up_ok=step_up_ok
         )

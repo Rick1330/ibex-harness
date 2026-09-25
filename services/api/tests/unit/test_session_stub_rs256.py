@@ -38,6 +38,7 @@ def _rsa_keypair() -> tuple[rsa.RSAPrivateKey, str]:
 
 
 def _sign_rs256(private_key: rsa.RSAPrivateKey, header: dict, payload: dict) -> str:
+    header = {**header, "kid": header.get("kid", "v1")}
     hb = _b64url(json.dumps(header, separators=(",", ":")).encode())
     pb = _b64url(json.dumps(payload, separators=(",", ":")).encode())
     body = f"{hb}.{pb}"
@@ -59,6 +60,7 @@ def _access_payload(org_id: str, *, exp_offset: int = 60) -> dict:
         "iat": now,
         "exp": now + exp_offset,
         "jti": "jti-1",
+        "sid": "sid-1",
     }
 
 

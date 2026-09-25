@@ -77,6 +77,36 @@ def policy_keys() -> frozenset[tuple[str, str]]:
     return frozenset((str(row['method']), str(row['path'])) for row in ROUTE_POLICY)
 
 
+def _dependency_calls(dependant: object) -> list[object]:
+    calls: list[object] = []
+    for child in getattr(dependant, "dependencies", ()):
+        call = getattr(child, "call", None)
+        if call is not None:
+            calls.append(call)
+        calls.extend(_dependency_calls(child))
+    return calls
+
+
+def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
+    """Return protected mounted routes lacking an executable auth dependency."""
+    gaps: list[tuple[str, str]] = []
+    public = {str(row["path"]) for row in ROUTE_POLICY if row["auth_source"] == "public"}
+    for route in getattr(app, "routes", ()):
+        methods = getattr(route, "methods", None)
+        path = getattr(route, "path", None)
+        if not methods or not path:
+            continue
+        key_rows = [(method, path) for method in sorted(methods)]
+        for key in key_rows:
+            if path in public:
+                continue
+            calls = _dependency_calls(getattr(route, "dependant", None))
+            modules = {getattr(call, "__module__", "") for call in calls}
+            if not any(module.startswith(("app.deps", "app.authz", "app.routers.session")) for module in modules):
+                gaps.append(key)
+    return tuple(sorted(set(gaps)))
+
+
 def mounted_route_keys(application: object) -> frozenset[tuple[str, str]]:
     """Return concrete method/path pairs from a FastAPI application."""
     keys: set[tuple[str, str]] = set()
