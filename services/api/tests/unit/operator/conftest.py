@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from authclient.permissions import OPERATOR_METADATA_READ
 from fastapi.testclient import TestClient
 
 from app.auth.client import StaticTokenValidator, ValidateResult
@@ -25,6 +26,7 @@ def operator_settings(**kwargs: object) -> Settings:
         "cookie_secure": False,
         "cookie_samesite": "lax",
         "operator_feature_enabled": True,
+        "environment": "development",
     }
     base.update(kwargs)
     return Settings(**base)  # type: ignore[arg-type]
@@ -49,7 +51,11 @@ def settings() -> Settings:
 @pytest.fixture
 def validator() -> StaticTokenValidator:
     return StaticTokenValidator(
-        {"ibex_pat_test_secret": ValidateResult(org_id=uuid4(), permissions=1, user_id="u1")}
+        {
+            "ibex_pat_test_secret": ValidateResult(
+                org_id=uuid4(), permissions=OPERATOR_METADATA_READ, user_id="u1"
+            )
+        }
     )
 
 
@@ -95,7 +101,11 @@ def create_operator_app(
     def _cm():
         s = settings or operator_settings()
         v = validator or StaticTokenValidator(
-            {"ibex_pat_test_secret": ValidateResult(org_id=uuid4(), permissions=1, user_id="u1")}
+            {
+                "ibex_pat_test_secret": ValidateResult(
+                    org_id=uuid4(), permissions=OPERATOR_METADATA_READ, user_id="u1"
+                )
+            }
         )
         with (
             patch("app.main.create_engine", return_value=mock_engine()),

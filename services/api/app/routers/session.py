@@ -9,6 +9,7 @@ from uuid import UUID
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
 from app.auth.client import (
     AuthFailedError,
@@ -25,10 +26,12 @@ from app.auth.session_refresh import (
 )
 from app.config import Settings
 from app.deps import get_validator
-from app.errors import ApiError
+from app.errors import ApiError, ResponseOpts, envelope_response
+from app.reqid import require_current
 from app.session_stub import (
     SESSION_KIND_ACCESS,
     SESSION_KIND_REFRESH,
+    SessionClaims,
     SessionStubError,
     TokenIssueOpts,
     TokenVerifyOpts,
@@ -369,61 +372,113 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response) -> dict[str, str]:
+async def logout(request: Request) -> Response:
     settings = _settings(request)
     if settings.environment != "development":
-        access = request.cookies.get(settings.dashboard_session_cookie_name)
-        refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
-        if access or refresh:
-            sid = family_id = access_jti = ""
-            try:
-                if access:
-                    access_claims = verify_token_opts(
-                        access,
-                        TokenVerifyOpts(
-                            secret=None,
-                            issuer=settings.jwt_issuer,
-                            audience=settings.jwt_audience,
-                            expect_kind=SESSION_KIND_ACCESS,
-                            public_keys_pem=settings.jwt_public_keys_pem,
-                        ),
-                    )
-                    sid, access_jti = access_claims.session_id, access_claims.jti
-                if refresh:
-                    refresh_claims = verify_token_opts(
-                        refresh,
-                        TokenVerifyOpts(
-                            secret=None,
-                            issuer=settings.jwt_issuer,
-                            audience=settings.jwt_audience,
-                            expect_kind=SESSION_KIND_REFRESH,
-                            public_keys_pem=settings.jwt_public_keys_pem,
-                        ),
-                    )
-                    sid = sid or refresh_claims.session_id
-                    family_id = refresh_claims.family_id or ""
-            except SessionStubError as exc:
-                raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
-            try:
-                await revoke_operator_session(
-                    auth_grpc_addr=settings.auth_grpc_addr,
-                    session_id=sid,
-                    family_id=family_id,
-                    access_jti=access_jti,
-                    access_token=access or "",
-                    timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
-                )
-            except AuthFailedError as exc:
-                raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
-            except AuthUnavailableError as exc:
-                raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+        raw_access = request.cookies.get(settings.dashboard_session_cookie_name)
+        raw_refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
+        access_claims = _logout_claims(
+            raw_access,
+            settings=settings,
+            kind=SESSION_KIND_ACCESS,
+        )
+        refresh_claims = _logout_claims(
+            raw_refresh,
+            settings=settings,
+            kind=SESSION_KIND_REFRESH,
+        )
+        if access_claims is None and refresh_claims is None:
+            error = envelope_response(
+                code=INVALID_TOKEN,
+                message="no valid session proof",
+                opts=ResponseOpts(settings=settings),
+            )
+            _clear_session_cookies(error, settings)
+            return error  # type: ignore[return-value]
+        if access_claims is not None and refresh_claims is not None and (
+            access_claims.session_id != refresh_claims.session_id
+            or access_claims.family_id != refresh_claims.family_id
+        ):
+            error = envelope_response(
+                code=INVALID_TOKEN,
+                message="session proofs do not match",
+                opts=ResponseOpts(settings=settings),
+            )
+            _clear_session_cookies(error, settings)
+            return error  # type: ignore[return-value]
+
+        claims = access_claims if access_claims is not None else refresh_claims
+        try:
+            await revoke_operator_session(
+                auth_grpc_addr=settings.auth_grpc_addr,
+                session_id=claims.session_id,
+                family_id=claims.family_id or "",
+                access_jti=access_claims.jti if access_claims else "",
+                access_token=raw_access if access_claims else "",
+                refresh_token=raw_refresh if refresh_claims else "",
+                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+            )
+        except AuthFailedError:
+            error = envelope_response(
+                code=INVALID_TOKEN,
+                message="invalid session",
+                opts=ResponseOpts(settings=settings),
+            )
+            _clear_session_cookies(error, settings)
+            return error  # type: ignore[return-value]
+        except AuthUnavailableError:
+            error = envelope_response(
+                code=SERVICE_DEGRADED,
+                message=_AUTH_UNAVAILABLE,
+                opts=ResponseOpts(settings=settings),
+            )
+            _clear_session_cookies(error, settings)
+            return error  # type: ignore[return-value]
+    success = JSONResponse(
+        {"status": "ok"},
+        headers={"X-Request-ID": require_current()},
+    )
+    _clear_session_cookies(success, settings)
+    return success
+
+
+def _logout_claims(
+    raw: str | None, *, settings: Settings, kind: str
+) -> SessionClaims | None:
+    """Return locally verified logout claims, treating stale/malformed cookies independently."""
+    if not raw:
+        return None
+    try:
+        return verify_token_opts(
+            raw,
+            TokenVerifyOpts(
+                secret=None,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                expect_kind=kind,
+                public_keys_pem=settings.jwt_public_keys_pem,
+            ),
+        )
+    except SessionStubError:
+        return None
+
+
+def _clear_session_cookies(response: Response, settings: Settings) -> None:
+    """Delete all operator-session cookies using the same path/domain attributes."""
+    secure, samesite = _cookie_security(settings)
     for name in (
         settings.dashboard_session_cookie_name,
         settings.dashboard_refresh_cookie_name,
         settings.dashboard_csrf_cookie_name,
     ):
-        response.delete_cookie(name, path="/", domain=settings.cookie_domain)
-    return {"status": "ok"}
+        response.delete_cookie(
+            name,
+            path="/",
+            domain=settings.cookie_domain,
+            secure=secure,
+            httponly=name != settings.dashboard_csrf_cookie_name,
+            samesite=samesite,
+        )
 
 
 @router.get("/me")

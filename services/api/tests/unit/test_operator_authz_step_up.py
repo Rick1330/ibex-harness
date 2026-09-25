@@ -110,28 +110,21 @@ def _assert_step_up_denied(req: Request) -> None:
 )
 def test_assert_operator_permission_denies(settings_kw: dict, want_code: str | None) -> None:
     settings = _settings(**settings_kw)
-    step_up_ok = want_code is not None
     if want_code is None:
         with pytest.raises(ApiError) as exc:
             assert_operator_permission(
-                settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ, step_up_ok=False
+                settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ
             )
         assert "Step-up" in exc.value.message
         return
     with pytest.raises(ApiError) as exc:
-        assert_operator_permission(
-            settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ, step_up_ok=step_up_ok
-        )
+        assert_operator_permission(settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ)
     assert exc.value.code == want_code
 
 
-def test_assert_operator_permission_ok_with_step_up() -> None:
-    assert_operator_permission(
-        _settings(),
-        OPERATOR_RAW_READ,
-        OPERATOR_RAW_READ,
-        step_up_ok=True,
-    )
+def test_assert_operator_permission_cannot_replace_step_up_dependency() -> None:
+    with pytest.raises(ApiError, match="Step-up"):
+        assert_operator_permission(_settings(), OPERATOR_RAW_READ, OPERATOR_RAW_READ)
 
 
 def test_assert_operator_permission_bitmap_missing() -> None:
@@ -141,29 +134,54 @@ def test_assert_operator_permission_bitmap_missing() -> None:
             settings,
             0,
             OPERATOR_RAW_READ,
-            step_up_ok=True,
         )
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert "Insufficient permissions" in exc.value.message
 
 
-def test_require_operator_permission_dep_reads_step_up_flag() -> None:
+@pytest.mark.parametrize(
+    ("settings_kw", "permissions", "expected_code"),
+    [
+        ({"operator_feature_enabled": False}, SECRET_USE, SERVICE_DEGRADED),
+        ({"operator_allow_secret_use": False}, SECRET_USE, INSUFFICIENT_PERMISSIONS),
+        ({}, 0, INSUFFICIENT_PERMISSIONS),
+    ],
+)
+def test_require_operator_permission_denial_does_not_consume_step_up(
+    settings_kw: dict[str, object], permissions: int, expected_code: str
+) -> None:
     import asyncio
+    from unittest.mock import AsyncMock, patch
 
     from app.auth.client import ValidateResult
     from app.authz import require_operator_permission
 
-    org = uuid4()
-    token = ValidateResult(org_id=org, permissions=SECRET_USE, user_id="u1")
+    token = ValidateResult(org_id=uuid4(), permissions=permissions, user_id="u1")
     dep = require_operator_permission(SECRET_USE)
+    req = _request_with_settings(_settings(**settings_kw))
+    with (
+        patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce,
+        pytest.raises(ApiError) as exc,
+    ):
+        asyncio.run(dep(req, token))
+    assert exc.value.code == expected_code
+    enforce.assert_not_awaited()
+
+
+def test_require_operator_permission_consumes_step_up_after_authorization() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.auth.client import ValidateResult
+    from app.authz import require_operator_permission
+
+    token = ValidateResult(org_id=uuid4(), permissions=SECRET_USE, user_id="u1")
     req = _request_with_settings(_settings(operator_allow_secret_use=True))
-    req.state.ibex_step_up_ok = False
-    with pytest.raises(ApiError) as exc:
-        asyncio.run(dep(req, token))
-    assert "Step-up" in exc.value.message
-    req.state.ibex_step_up_ok = True
-    with pytest.raises(ApiError):
-        asyncio.run(dep(req, token))
+    dep = require_operator_permission(SECRET_USE)
+    with patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce:
+        result = asyncio.run(dep(req, token))
+    assert result is token
+    enforce.assert_awaited_once()
 
 
 def test_step_up_header_missing_sets_false() -> None:
@@ -206,3 +224,144 @@ def test_step_up_header_denies(case: str) -> None:
         token = _step_up_token(settings, StepUpTokenSpec(org))
         req = _step_up_request(settings, token, session_org=None, session_sub=None)
     _assert_step_up_denied(req)
+
+
+@pytest.mark.parametrize(
+    ("token_kwargs", "identity_kwargs"),
+    [
+        ({"org_id": uuid4()}, {}),
+        ({"subject": "other-user"}, {}),
+        ({"session_id": "other-session"}, {}),
+        ({"action": "operator.permission.999"}, {}),
+        ({"permissions": 0}, {}),
+    ],
+)
+def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
+    token_kwargs: dict[str, object], identity_kwargs: dict[str, object]
+) -> None:
+    import asyncio
+
+    from app.auth.client import ValidateResult
+    from app.step_up import enforce_step_up
+
+    org = uuid4()
+    action = f"operator.permission.{SECRET_USE}"
+    token_settings = _settings()
+    values: dict[str, object] = {
+        "org_id": org,
+        "subject": "user-1",
+        "session_id": "sid-1",
+        "action": action,
+        "permissions": SECRET_USE,
+    }
+    values.update(token_kwargs)
+    claims = StepUpTokenSpec(
+        org_id=values["org_id"],
+        subject=str(values["subject"]),
+        permissions=int(values["permissions"]),
+    )
+    raw = issue_token_opts(
+        TokenIssueOpts(
+            secret=token_settings.jwt_hmac_secret,
+            issuer=token_settings.jwt_issuer,
+            audience=token_settings.jwt_audience,
+            org_id=claims.org_id,
+            permissions=claims.permissions,
+            subject=claims.subject,
+            session_kind=SESSION_KIND_STEP_UP,
+            ttl_seconds=300,
+            session_id=str(values["session_id"]),
+            action=str(values["action"]),
+        )
+    )
+    req = _request_with_settings(token_settings, headers=[(b"x-ibex-step-up", raw.encode())])
+    req.state.ibex_session_id = "sid-1"
+    identity = {"org_id": org, "permissions": SECRET_USE, "user_id": "user-1"}
+    identity.update(identity_kwargs)
+    caller = ValidateResult(**identity)
+
+    async def enforce() -> None:
+        await enforce_step_up(req, caller, required_permission=SECRET_USE, action=action)
+
+    with pytest.raises(ApiError) as exc:
+        asyncio.run(enforce())
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert exc.value.message == "Step-up authentication required"
+
+
+def test_enforce_step_up_rejects_missing_header_and_missing_identity() -> None:
+    import asyncio
+
+    from app.auth.client import ValidateResult
+    from app.step_up import enforce_step_up
+
+    req = _request_with_settings(_settings())
+    caller = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
+    with pytest.raises(ApiError) as exc:
+        asyncio.run(enforce_step_up(req, caller, required_permission=SECRET_USE, action="op"))
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    assert exc.value.message == "Step-up authentication required"
+
+    req = _request_with_settings(_settings(), headers=[(b"x-ibex-step-up", b"untrusted")])
+    missing_identity = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
+    with pytest.raises(ApiError) as exc:
+        asyncio.run(
+            enforce_step_up(req, missing_identity, required_permission=SECRET_USE, action="op")
+        )
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+@pytest.mark.parametrize(
+    ("rpc_error", "expected_code"),
+    [
+        (None, None),
+        ("invalid", INSUFFICIENT_PERMISSIONS),
+        ("unavailable", SERVICE_DEGRADED),
+    ],
+)
+def test_enforce_step_up_uses_authservice_in_non_development(
+    rpc_error: str | None, expected_code: str | None
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.auth.client import ValidateResult
+    from app.auth.errors import AuthFailedError, AuthUnavailableError
+    from app.step_up import enforce_step_up
+
+    error = {
+        "invalid": AuthFailedError("invalid"),
+        "unavailable": AuthUnavailableError("down"),
+    }.get(rpc_error)
+    settings = _settings(
+        environment="staging",
+        jwt_hmac_secret=None,
+        jwt_public_keys_pem="configured-public-key",
+        auth_timeout_ms=50,
+    )
+    req = _request_with_settings(settings, headers=[(b"x-ibex-step-up", b"opaque-proof")])
+    req.state.ibex_session_id = "sid-1"
+    caller = ValidateResult(org_id=uuid4(), permissions=SECRET_USE, user_id="user-1")
+    consume = AsyncMock(side_effect=error)
+
+    async def enforce() -> None:
+        await enforce_step_up(
+            req,
+            caller,
+            required_permission=SECRET_USE,
+            action=f"operator.permission.{SECRET_USE}",
+        )
+
+    with patch("app.step_up.consume_step_up", new=consume):
+        if expected_code is None:
+            asyncio.run(enforce())
+            assert req.state.ibex_step_up_ok is True
+        else:
+            with pytest.raises(ApiError) as exc:
+                asyncio.run(enforce())
+            assert exc.value.code == expected_code
+    assert consume.await_count == 1
+    assert consume.await_args.kwargs["subject"] == "user-1"
+    assert consume.await_args.kwargs["session_id"] == "sid-1"
+    assert consume.await_args.kwargs["action"] == f"operator.permission.{SECRET_USE}"
+    assert consume.await_args.kwargs["permission"] == SECRET_USE

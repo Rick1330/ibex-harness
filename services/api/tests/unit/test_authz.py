@@ -133,15 +133,9 @@ def test_assert_operator_permission_gates() -> None:
         operator_allow_delete=True,
     )
     with pytest.raises(ApiError) as exc:
-        assert_operator_permission(settings, 0, OPERATOR_DELETE, step_up_ok=True)
+        assert_operator_permission(settings, 0, OPERATOR_DELETE)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
     with pytest.raises(ApiError) as exc:
-        assert_operator_permission(
-            settings, OPERATOR_DELETE, OPERATOR_DELETE, step_up_ok=False
-        )
+        assert_operator_permission(settings, OPERATOR_DELETE, OPERATOR_DELETE)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
-
-    assert_operator_permission(
-        settings, OPERATOR_DELETE, OPERATOR_DELETE, step_up_ok=True
-    )

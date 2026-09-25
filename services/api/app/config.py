@@ -277,6 +277,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _operator_session_boundary(self) -> Settings:
+        if self.operator_feature_enabled and "environment" not in self.model_fields_set:
+            raise ValueError(
+                "IBEX_ENV must be explicitly set when operator sessions are enabled"
+            )
         if self.environment != "development" and self.jwt_hmac_secret is not None:
             raise ValueError("JWT_HMAC_SECRET is permitted only in development")
         if self.environment != "development" and self.operator_feature_enabled:

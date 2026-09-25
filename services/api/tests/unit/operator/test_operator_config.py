@@ -39,6 +39,53 @@ def test_operator_feature_defaults_off() -> None:
     assert s.operator_feature_enabled is False
 
 
+def test_operator_sessions_require_explicit_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("IBEX_ENV", raising=False)
+    monkeypatch.delenv("IBEX_API_ENV", raising=False)
+    with pytest.raises(ValidationError, match="must be explicitly set"):
+        Settings(_env_file=None, operator_feature_enabled=True)
+
+
+def test_operator_sessions_allow_explicit_development_environment() -> None:
+    settings = Settings(operator_feature_enabled=True, environment="development")
+    assert settings.environment == "development"
+
+
+def test_operator_sessions_accept_explicit_api_environment_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("IBEX_ENV", raising=False)
+    monkeypatch.setenv("IBEX_API_ENV", "development")
+    settings = Settings(_env_file=None, operator_feature_enabled=True)
+    assert settings.environment == "development"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"jwt_hmac_secret": HMAC_SECRET}, "only in development"),
+        ({"jwt_public_keys_pem": None}, "DASHBOARD_JWT_PUBLIC_KEYS_PEM"),
+        ({"redis_url": None}, "REDIS_URL"),
+        ({"dashboard_csrf_secret": None}, "DASHBOARD_CSRF_SECRET"),
+        ({"cookie_secure": False}, "DASHBOARD_COOKIE_SECURE"),
+    ],
+)
+def test_non_development_operator_profile_rejects_each_missing_security_control(
+    overrides: dict[str, object], message: str
+) -> None:
+    settings_kwargs: dict[str, object] = {
+        "environment": "staging",
+        "jwt_hmac_secret": None,
+        "jwt_public_keys_pem": "configured-public-key-set",
+        "redis_url": "redis://127.0.0.1:6379/0",
+        "dashboard_csrf_secret": "csrf-secret-for-staging-32-bytes",
+        "cookie_secure": True,
+    }
+    settings_kwargs.update(overrides)
+    with pytest.raises(ValidationError, match=message):
+        operator_settings(**settings_kwargs)
+
+
 def test_hmac_secret_accepts_long_value() -> None:
     s = operator_settings(jwt_hmac_secret=HMAC_SECRET)
     assert s.jwt_hmac_secret == HMAC_SECRET

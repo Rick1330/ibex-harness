@@ -1,83 +1,40 @@
-"""Machine-readable mounted route policy inventory for PR2 parity checks.
-
-This file is generated from the mounted route inventory and reviewed policy
-overrides. It intentionally records current enforcement evidence separately from
-future product decisions.
-"""
+"""Executable parity checks for the generated mounted-route policy inventory."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Final
 
-ROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (
-    {'method': 'GET', 'path': '/docs', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'fastapi.applications.FastAPI.setup.<locals>.swagger_ui_html', 'source': None},
-    {'method': 'GET', 'path': '/docs/oauth2-redirect', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'fastapi.applications.FastAPI.setup.<locals>.swagger_ui_redirect', 'source': None},
-    {'method': 'GET', 'path': '/health', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'app.probes.health', 'source': 'services/api/app/probes.py'},
-    {'method': 'GET', 'path': '/metrics', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'app.probes.metrics', 'source': 'services/api/app/probes.py'},
-    {'method': 'GET', 'path': '/openapi.json', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'fastapi.applications.FastAPI.setup.<locals>.openapi', 'source': None},
-    {'method': 'GET', 'path': '/ready', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'app.probes.ready', 'source': 'services/api/app/probes.py'},
-    {'method': 'GET', 'path': '/redoc', 'auth_source': 'public', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'default', 'evidence': 'inventory_only', 'endpoint': 'fastapi.applications.FastAPI.setup.<locals>.redoc_html', 'source': None},
-    {'method': 'GET', 'path': '/v1/agents', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.list_agents', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'POST', 'path': '/v1/agents', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.create_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'DELETE', 'path': '/v1/agents/{agent_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.delete_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'GET', 'path': '/v1/agents/{agent_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.get_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'PATCH', 'path': '/v1/agents/{agent_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.patch_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'POST', 'path': '/v1/agents/{agent_id}/activate', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.activate_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'POST', 'path': '/v1/agents/{agent_id}/archive', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.archive_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'POST', 'path': '/v1/agents/{agent_id}/pause', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.agents.pause_agent', 'source': 'services/api/app/routers/agents.py'},
-    {'method': 'GET', 'path': '/v1/operator/events/stream', 'auth_source': 'operator_permission', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.operator_events.stream_events', 'source': 'services/api/app/routers/operator_events.py'},
-    {'method': 'GET', 'path': '/v1/operator/platform/health', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.platform.platform_health', 'source': 'services/api/app/routers/platform.py'},
-    {'method': 'POST', 'path': '/v1/operator/session/login', 'auth_source': 'operator_session', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': True, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.session.login', 'source': 'services/api/app/routers/session.py'},
-    {'method': 'POST', 'path': '/v1/operator/session/logout', 'auth_source': 'operator_session', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': True, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.session.logout', 'source': 'services/api/app/routers/session.py'},
-    {'method': 'GET', 'path': '/v1/operator/session/me', 'auth_source': 'operator_session', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.session.me', 'source': 'services/api/app/routers/session.py'},
-    {'method': 'POST', 'path': '/v1/operator/session/refresh', 'auth_source': 'operator_session', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': True, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.session.refresh_session', 'source': 'services/api/app/routers/session.py'},
-    {'method': 'DELETE', 'path': '/v1/organizations/{org_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.organizations.delete_org', 'source': 'services/api/app/routers/organizations.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.organizations.get_org', 'source': 'services/api/app/routers/organizations.py'},
-    {'method': 'PATCH', 'path': '/v1/organizations/{org_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.organizations.patch_org', 'source': 'services/api/app/routers/organizations.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/budget-periods', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.billing.list_budget_periods', 'source': 'services/api/app/routers/billing.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/budget-periods', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.billing.create_budget_period', 'source': 'services/api/app/routers/billing.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/capture-policies', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.capture_policies.list_capture_policies', 'source': 'services/api/app/routers/capture_policies.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/capture-policies', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.capture_policies.create_capture_policy', 'source': 'services/api/app/routers/capture_policies.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/capture-policies/resolved', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.capture_policies.resolve_capture_mode', 'source': 'services/api/app/routers/capture_policies.py'},
-    {'method': 'DELETE', 'path': '/v1/organizations/{org_id}/capture-policies/{policy_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.capture_policies.delete_capture_policy', 'source': 'services/api/app/routers/capture_policies.py'},
-    {'method': 'PATCH', 'path': '/v1/organizations/{org_id}/capture-policies/{policy_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.capture_policies.patch_capture_policy', 'source': 'services/api/app/routers/capture_policies.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/deletion-jobs/{job_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.organizations.get_org_deletion_job', 'source': 'services/api/app/routers/organizations.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/legal-holds', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.legal_holds.list_holds', 'source': 'services/api/app/routers/legal_holds.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/legal-holds', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.legal_holds.set_hold', 'source': 'services/api/app/routers/legal_holds.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/legal-holds/{hold_id}/clear', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.legal_holds.clear_hold', 'source': 'services/api/app/routers/legal_holds.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/model-policies', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.model_policies.list_model_policies', 'source': 'services/api/app/routers/model_policies.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/model-policies', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.model_policies.create_model_policy', 'source': 'services/api/app/routers/model_policies.py'},
-    {'method': 'DELETE', 'path': '/v1/organizations/{org_id}/model-policies/{policy_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.model_policies.delete_model_policy', 'source': 'services/api/app/routers/model_policies.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/model-policies/{policy_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.model_policies.get_model_policy', 'source': 'services/api/app/routers/model_policies.py'},
-    {'method': 'PATCH', 'path': '/v1/organizations/{org_id}/model-policies/{policy_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.model_policies.patch_model_policy', 'source': 'services/api/app/routers/model_policies.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/providers', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.providers.list_providers', 'source': 'services/api/app/routers/providers.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/providers', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.providers.upsert_provider', 'source': 'services/api/app/routers/providers.py'},
-    {'method': 'DELETE', 'path': '/v1/organizations/{org_id}/providers/{provider_name}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.providers.delete_provider', 'source': 'services/api/app/routers/providers.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/rate-cards', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.billing.list_rate_cards', 'source': 'services/api/app/routers/billing.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/rate-cards', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.billing.create_rate_card', 'source': 'services/api/app/routers/billing.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/rate-cards/{card_id}/versions', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.billing.publish_rate_card_version', 'source': 'services/api/app/routers/billing.py'},
-    {'method': 'GET', 'path': '/v1/organizations/{org_id}/rate-limits', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.rate_limits.get_rate_limits', 'source': 'services/api/app/routers/rate_limits.py'},
-    {'method': 'PATCH', 'path': '/v1/organizations/{org_id}/rate-limits', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.rate_limits.patch_rate_limits', 'source': 'services/api/app/routers/rate_limits.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/suspend', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.organizations.suspend_org', 'source': 'services/api/app/routers/organizations.py'},
-    {'method': 'POST', 'path': '/v1/organizations/{org_id}/usage/query', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.usage_query.query_usage', 'source': 'services/api/app/routers/usage_query.py'},
-    {'method': 'GET', 'path': '/v1/tenant/ping', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.tenant.tenant_ping', 'source': 'services/api/app/routers/tenant.py'},
-    {'method': 'GET', 'path': '/v1/tokens', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.tokens.list_tokens', 'source': 'services/api/app/routers/tokens.py'},
-    {'method': 'POST', 'path': '/v1/tokens', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.tokens.create_token', 'source': 'services/api/app/routers/tokens.py'},
-    {'method': 'DELETE', 'path': '/v1/tokens/{token_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.tokens.delete_token', 'source': 'services/api/app/routers/tokens.py'},
-    {'method': 'GET', 'path': '/v1/tokens/{token_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.tokens.get_token', 'source': 'services/api/app/routers/tokens.py'},
-    {'method': 'GET', 'path': '/v1/users', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.users.list_users', 'source': 'services/api/app/routers/users.py'},
-    {'method': 'POST', 'path': '/v1/users', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.users.create_user', 'source': 'services/api/app/routers/users.py'},
-    {'method': 'DELETE', 'path': '/v1/users/{user_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.users.delete_user', 'source': 'services/api/app/routers/users.py'},
-    {'method': 'GET', 'path': '/v1/users/{user_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.users.get_user', 'source': 'services/api/app/routers/users.py'},
-    {'method': 'PATCH', 'path': '/v1/users/{user_id}', 'auth_source': 'bearer_pat', 'role': 'explicit_route_dependency', 'permission': 'declared_by_endpoint_dependency', 'organization_source': 'verified_token_or_session', 'action': None, 'anti_enumeration': 'route_dependency_contract', 'unavailable_result': '503_without_side_effect', 'csrf_origin_required': False, 'cache_control': 'no-store', 'evidence': 'inventory_only', 'endpoint': 'app.routers.users.patch_user', 'source': 'services/api/app/routers/users.py'},
+from app.deps import get_validator, require_token
+from app.route_policy_data import ROUTE_POLICY
+
+SUPPORTED_AUTH_SOURCES: Final[frozenset[str]] = frozenset(
+    {"public", "bearer_pat", "pat_exchange", "operator_session", "operator_permission"}
 )
+
+# These session routes enforce their cookie/session lifecycle in the handler body.
+# Their concrete endpoint identities are also checked against the reviewed inventory.
+_INLINE_SESSION_ENDPOINTS: Final[dict[tuple[str, str], str]] = {
+    ("POST", "/v1/operator/session/refresh"): "app.routers.session.refresh_session",
+    ("POST", "/v1/operator/session/logout"): "app.routers.session.logout",
+    ("GET", "/v1/operator/session/me"): "app.routers.session.me",
+}
 
 
 def policy_keys() -> frozenset[tuple[str, str]]:
-    return frozenset((str(row['method']), str(row['path'])) for row in ROUTE_POLICY)
+    """Return the method/path keys represented by the generated inventory."""
+    return frozenset((str(row["method"]), str(row["path"])) for row in ROUTE_POLICY)
 
 
-def _dependency_calls(dependant: object) -> list[object]:
+def _endpoint_identity(endpoint: object) -> str:
+    """Return a stable module-qualified identity for a mounted endpoint."""
+    module = getattr(endpoint, "__module__", "")
+    qualified_name = getattr(endpoint, "__qualname__", "")
+    return f"{module}.{qualified_name}" if module and qualified_name else ""
+
+
+def _dependency_calls(dependant: object | None) -> list[object]:
+    """Collect dependency callables recursively from FastAPI's resolved graph."""
     calls: list[object] = []
     for child in getattr(dependant, "dependencies", ()):
         call = getattr(child, "call", None)
@@ -87,46 +44,90 @@ def _dependency_calls(dependant: object) -> list[object]:
     return calls
 
 
-def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
-    """Return protected mounted routes lacking an executable auth dependency."""
-    gaps: list[tuple[str, str]] = []
-    public = {str(row["path"]) for row in ROUTE_POLICY if row["auth_source"] == "public"}
-    for route in getattr(app, "routes", ()):
-        methods = getattr(route, "methods", None)
-        path = getattr(route, "path", None)
-        if not methods or not path:
-            continue
-        key_rows = [(method, path) for method in sorted(methods)]
-        for key in key_rows:
-            if path in public:
+def _mounted_routes(application: object) -> Iterable[object]:
+    """Yield concrete routes from FastAPI and nested router containers."""
+    seen_containers: set[int] = set()
+
+    def visit(routes: object) -> Iterable[object]:
+        if id(routes) in seen_containers:
+            return
+        seen_containers.add(id(routes))
+        for route in routes:  # type: ignore[union-attr]
+            original = getattr(route, "original_router", None)
+            if original is not None:
+                yield from visit(original.routes)
                 continue
+            nested = getattr(route, "routes", None)
+            if nested is not None:
+                yield from visit(nested)
+                continue
+            yield route
+
+    yield from visit(getattr(application, "routes", ()))
+
+
+def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
+    """Return policy rows whose concrete endpoint or authorization guard is missing."""
+    rows = {
+        (str(row["method"]), str(row["path"])): row
+        for row in ROUTE_POLICY
+    }
+    gaps: set[tuple[str, str]] = set()
+
+    for route in _mounted_routes(app):
+        methods = getattr(route, "methods", None) or set()
+        path = getattr(route, "path", None)
+        endpoint = getattr(route, "endpoint", None)
+        if path is None:
+            continue
+        for method in methods - {"HEAD", "OPTIONS"}:
+            key = (str(method), str(path))
+            row = rows.get(key)
+            if row is None:
+                gaps.add(key)
+                continue
+            if _endpoint_identity(endpoint) != str(row.get("endpoint", "")):
+                gaps.add(key)
+                continue
+            auth_source = str(row.get("auth_source", ""))
+            if auth_source not in SUPPORTED_AUTH_SOURCES:
+                gaps.add(key)
+                continue
+            if auth_source == "public":
+                continue
+
             calls = _dependency_calls(getattr(route, "dependant", None))
-            modules = {getattr(call, "__module__", "") for call in calls}
-            if not any(module.startswith(("app.deps", "app.authz", "app.routers.session")) for module in modules):
-                gaps.append(key)
-    return tuple(sorted(set(gaps)))
+            if auth_source == "bearer_pat" and require_token not in calls or auth_source == "pat_exchange" and (
+                key != ("POST", "/v1/operator/session/login") or get_validator not in calls
+            ):
+                gaps.add(key)
+            elif auth_source == "operator_session":
+                if _INLINE_SESSION_ENDPOINTS.get(key) != _endpoint_identity(endpoint):
+                    gaps.add(key)
+            elif auth_source == "operator_permission":
+                from app.routers.operator_events import require_operator_event_session
+                from app.routers.platform import _require_operator_session
+
+                expected = {
+                    ("GET", "/v1/operator/events/stream"): require_operator_event_session,
+                    ("GET", "/v1/operator/platform/health"): _require_operator_session,
+                }.get(key)
+                if expected is None or expected not in calls:
+                    gaps.add(key)
+
+    return tuple(sorted(gaps))
 
 
 def mounted_route_keys(application: object) -> frozenset[tuple[str, str]]:
     """Return concrete method/path pairs from a FastAPI application."""
     keys: set[tuple[str, str]] = set()
-
-    def visit(routes: object) -> None:
-        for route in routes:  # type: ignore[union-attr]
-            nested = getattr(route, "routes", None)
-            if nested is not None:
-                visit(nested)
-                continue
-            original = getattr(route, "original_router", None)
-            if original is not None:
-                visit(original.routes)
-                continue
-            methods = getattr(route, "methods", None) or set()
-            path = getattr(route, "path", None)
-            if path is not None:
-                keys.update(
-                    (method, path) for method in methods if method not in {"HEAD", "OPTIONS"}
-                )
-
-    visit(getattr(application, "routes", ()))
+    for route in _mounted_routes(application):
+        methods = getattr(route, "methods", None) or set()
+        path = getattr(route, "path", None)
+        if path is not None:
+            keys.update(
+                (str(method), str(path))
+                for method in methods
+                if method not in {"HEAD", "OPTIONS"}
+            )
     return frozenset(keys)

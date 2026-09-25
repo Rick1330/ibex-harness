@@ -29,6 +29,8 @@ type sessionIssuerPort interface {
 
 type lifecycleIssuerPort interface {
 	ValidateAccess(ctx context.Context, accessToken sessionjwt.RawToken) (sessionjwt.Claims, error)
+	VerifyAccessProof(accessToken sessionjwt.RawToken) (sessionjwt.Claims, error)
+	VerifyRefreshProof(refreshToken sessionjwt.RefreshToken) (sessionjwt.Claims, error)
 	RevokeSession(ctx context.Context, sessionID, familyID, accessJTI string) error
 	ConsumeStepUp(ctx context.Context, token sessionjwt.RawToken, expect sessionjwt.StepUpExpectations) (sessionjwt.Claims, error)
 }
@@ -156,24 +158,48 @@ func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOp
 	if s.sessionIssuer == nil {
 		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
 	}
-	if strings.TrimSpace(req.GetSessionId()) == "" {
-		return nil, status.Error(codes.InvalidArgument, errMsgInvalidRequest)
-	}
-	if strings.TrimSpace(req.GetAccessToken()) == "" {
-		return nil, status.Error(codes.Unauthenticated, "access token required")
-	}
 	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
 	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
 	}
-	claims, err := issuer.ValidateAccess(ctx, sessionjwt.RawToken(req.GetAccessToken()))
-	if err != nil {
-		return nil, mapSessionValidationErr(err)
+	var accessClaims, refreshClaims *sessionjwt.Claims
+	if token := strings.TrimSpace(req.GetAccessToken()); token != "" {
+		claims, err := issuer.VerifyAccessProof(sessionjwt.RawToken(token))
+		if err == nil {
+			accessClaims = &claims
+		}
 	}
-	if claims.SessionID != req.GetSessionId() {
-		return nil, mapSessionValidationErr(sessionjwt.ErrInvalidToken)
+	if token := strings.TrimSpace(req.GetRefreshToken()); token != "" {
+		claims, err := issuer.VerifyRefreshProof(sessionjwt.RefreshToken(token))
+		if err == nil {
+			refreshClaims = &claims
+		}
 	}
-	if err := issuer.RevokeSession(ctx, claims.SessionID, req.GetFamilyId(), req.GetAccessJti()); err != nil {
+	if accessClaims == nil && refreshClaims == nil {
+		return nil, status.Error(codes.Unauthenticated, "valid session proof required")
+	}
+	if accessClaims != nil && refreshClaims != nil &&
+		(accessClaims.SessionID != refreshClaims.SessionID || accessClaims.FamilyID != refreshClaims.FamilyID) {
+		return nil, status.Error(codes.Unauthenticated, "session proofs do not match")
+	}
+	claims := accessClaims
+	if claims == nil {
+		claims = refreshClaims
+	}
+	if req.GetSessionId() != "" && req.GetSessionId() != claims.SessionID {
+		return nil, status.Error(codes.Unauthenticated, "session proof does not match")
+	}
+	if req.GetFamilyId() != "" && req.GetFamilyId() != claims.FamilyID {
+		return nil, status.Error(codes.Unauthenticated, "session proof does not match")
+	}
+	if claims.SessionID == "" || claims.FamilyID == "" {
+		return nil, status.Error(codes.Unauthenticated, "incomplete session proof")
+	}
+	accessJTI := ""
+	if accessClaims != nil {
+		accessJTI = accessClaims.JTI
+	}
+	if err := issuer.RevokeSession(ctx, claims.SessionID, claims.FamilyID, accessJTI); err != nil {
 		return nil, status.Error(codes.Unavailable, "session revocation unavailable")
 	}
 	return &authv1.RevokeOperatorSessionResponse{}, nil

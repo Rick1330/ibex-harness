@@ -14,6 +14,7 @@ from app.auth.session_refresh import (
     _decode_string_field,
     consume_step_up,
     encode_issue_with_refresh,
+    issue_operator_session,
     refresh_operator_session,
     revoke_operator_session,
     validate_operator_session,
@@ -223,7 +224,187 @@ async def test_lifecycle_rpc_clients() -> None:
     stub = AsyncMock(return_value=validate_resp)
     with _patch_channel(stub):
         claims = await validate_operator_session(auth_grpc_addr="127.0.0.1:50051", access_token="a")
-        await revoke_operator_session(auth_grpc_addr="127.0.0.1:50051", session_id="sid", family_id="fid", access_jti="jti", access_token="a")
+        await revoke_operator_session(
+            auth_grpc_addr="127.0.0.1:50051",
+            session_id="sid",
+            family_id="fid",
+            access_jti="jti",
+            access_token="a",
+            refresh_token="r",
+        )
         await consume_step_up(auth_grpc_addr="127.0.0.1:50051", token="step", subject="subject", org_id="org", session_id="sid", action="legal_hold.manage", permission=8)
     assert claims.subject == "subject"
     assert claims.permissions == 9
+    revoke_payload = stub.await_args_list[1].args[0]
+    assert decode_string_fields(revoke_payload, {1, 2, 3, 4, 5}) == {
+        1: "sid",
+        2: "fid",
+        3: "jti",
+        4: "a",
+        5: "r",
+    }
+
+
+@pytest.mark.asyncio
+async def test_validate_operator_session_defaults_omitted_proto3_permissions_to_zero() -> None:
+    response = (
+        _proto_string(1, "subject")
+        + _proto_string(2, "org")
+        + _proto_string(4, "sid")
+        + _proto_string(5, "jti")
+    )
+    with _patch_channel(AsyncMock(return_value=response)):
+        claims = await validate_operator_session(
+            auth_grpc_addr="127.0.0.1:50051", access_token="access"
+        )
+    assert claims.permissions == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        _proto_string(2, "org") + _proto_string(4, "sid") + _proto_string(5, "jti"),
+        _proto_string(1, "subject") + _proto_string(4, "sid") + _proto_string(5, "jti"),
+        _proto_string(1, "subject") + _proto_string(2, "org") + _proto_string(5, "jti"),
+        _proto_string(1, "subject") + _proto_string(2, "org") + _proto_string(4, "sid"),
+    ],
+)
+async def test_validate_operator_session_rejects_each_missing_identity_claim(response: bytes) -> None:
+    with _patch_channel(AsyncMock(return_value=response)), pytest.raises(
+        AuthUnavailableError, match="incomplete claims"
+    ):
+        await validate_operator_session(
+            auth_grpc_addr="127.0.0.1:50051", access_token="access"
+        )
+
+
+@pytest.mark.asyncio
+async def test_validate_operator_session_maps_malformed_wire_to_unavailable() -> None:
+    with _patch_channel(AsyncMock(return_value=b"\x0f")), pytest.raises(
+        AuthUnavailableError, match="codec error"
+    ):
+        await validate_operator_session(
+            auth_grpc_addr="127.0.0.1:50051", access_token="access"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("code", "expected", "message"),
+    [
+        (grpc.StatusCode.UNAUTHENTICATED, AuthFailedError, "invalid session"),
+        (grpc.StatusCode.PERMISSION_DENIED, AuthFailedError, "invalid session"),
+        (grpc.StatusCode.UNAVAILABLE, AuthUnavailableError, "unavailable"),
+        (grpc.StatusCode.INTERNAL, AuthUnavailableError, "unavailable"),
+    ],
+)
+async def test_validate_operator_session_maps_auth_service_errors(code, expected, message) -> None:
+    stub = AsyncMock(side_effect=grpc.aio.AioRpcError(code, details="failure"))
+    with _patch_channel(stub), pytest.raises(expected, match=message):
+        await validate_operator_session(
+            auth_grpc_addr="127.0.0.1:50051", access_token="access"
+        )
+
+
+@pytest.mark.asyncio
+async def test_validate_operator_session_maps_timeout_to_unavailable() -> None:
+    with _patch_channel(AsyncMock(side_effect=TimeoutError())), pytest.raises(
+        AuthUnavailableError, match="timeout"
+    ):
+        await validate_operator_session(
+            auth_grpc_addr="localhost:50051", access_token="access", timeout_seconds=0.01
+        )
+
+
+@pytest.mark.asyncio
+async def test_consume_step_up_omits_zero_permission_wire_field() -> None:
+    stub = AsyncMock(return_value=b"")
+    with _patch_channel(stub):
+        await consume_step_up(
+            auth_grpc_addr="127.0.0.1:50051",
+            token="step",
+            subject="subject",
+            org_id="org",
+            session_id="sid",
+            action="operator.export",
+            permission=0,
+        )
+    payload = stub.await_args.args[0]
+    assert decode_string_fields(payload, {1, 2, 3, 4, 5}) == {
+        1: "step",
+        2: "subject",
+        3: "org",
+        4: "sid",
+        5: "operator.export",
+    }
+    assert decode_int64_field(payload, 6) is None
+
+
+@pytest.mark.asyncio
+async def test_issue_operator_session_sends_pat_only_as_authorization_metadata() -> None:
+    stub = AsyncMock(return_value=_proto_string(1, "access") + _proto_string(2, "refresh"))
+    with _patch_channel(stub):
+        pair = await issue_operator_session(
+            auth_grpc_addr="127.0.0.1:50051", pat="ibex_pat_private"
+        )
+    assert pair.access_token == "access"
+    assert pair.refresh_token == "refresh"
+    assert stub.await_args.args == (b"",)
+    assert stub.await_args.kwargs["metadata"] == (
+        ("authorization", "Bearer ibex_pat_private"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_operator_session_maps_failed_precondition_without_leaking_details() -> None:
+    stub = AsyncMock(
+        side_effect=grpc.aio.AioRpcError(
+            grpc.StatusCode.FAILED_PRECONDITION, details="internal key configuration"
+        )
+    )
+    with _patch_channel(stub), pytest.raises(
+        AuthUnavailableError, match="issuer unavailable"
+    ) as exc:
+        await issue_operator_session(auth_grpc_addr="127.0.0.1:50051", pat="pat")
+    assert "internal key configuration" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_issue_operator_session_rejects_untrusted_insecure_target_before_dial() -> None:
+    with pytest.raises(ValueError, match="refusing target"):
+        await issue_operator_session(auth_grpc_addr="auth.example.com:50051", pat="pat")
+
+
+@pytest.mark.parametrize("field_num", [1, 2])
+def test_encode_string_fields_omits_empty_values_and_rejects_oversize(field_num: int) -> None:
+    from app.auth.session_refresh_codec import _MAX_TOKEN_FIELD
+
+    assert encode_string_fields({field_num: ""}) == b""
+    with pytest.raises(AuthCodecError, match="exceeds limit"):
+        encode_string_fields({field_num: "x" * (_MAX_TOKEN_FIELD + 1)})
+
+
+def test_lifecycle_decoders_reject_oversized_messages() -> None:
+    from app.auth import session_refresh_codec as codec
+
+    huge = b"\x00" * (codec._MAX_MESSAGE + 1)
+    with pytest.raises(AuthCodecError, match="too large"):
+        decode_string_fields(huge, {1})
+    with pytest.raises(AuthCodecError, match="too large"):
+        decode_int64_field(huge, 3)
+
+
+def test_lifecycle_string_decoder_rejects_invalid_utf8() -> None:
+    malformed = encode_varint((1 << 3) | 2) + encode_varint(1) + b"\xff"
+    with pytest.raises(AuthCodecError, match="utf-8"):
+        decode_string_fields(malformed, {1})
+
+
+@pytest.mark.asyncio
+async def test_issue_operator_session_timeout_maps_to_unavailable() -> None:
+    stub = AsyncMock(side_effect=TimeoutError())
+    with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="issue timeout"):
+        await issue_operator_session(
+            auth_grpc_addr="127.0.0.1:50051", pat="pat", timeout_seconds=0.01
+        )

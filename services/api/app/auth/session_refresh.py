@@ -73,16 +73,18 @@ async def validate_operator_session(*, auth_grpc_addr: str, access_token: str, t
         permissions = decode_int64_field(raw, 3)
     except AuthCodecError as exc:
         raise AuthUnavailableError("auth session validation codec error") from exc
-    if not strings.get(1) or not strings.get(2) or not strings.get(4) or not strings.get(5) or permissions is None:
+    if not strings.get(1) or not strings.get(2) or not strings.get(4) or not strings.get(5):
         raise AuthUnavailableError("auth session validation returned incomplete claims")
-    return ValidatedSession(strings[1], strings[2], permissions, strings[4], strings[5])
+    return ValidatedSession(strings[1], strings[2], permissions or 0, strings[4], strings[5])
 
 
-async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, family_id: str = "", access_jti: str = "", access_token: str = "", timeout_seconds: float = 5.0) -> None:
+async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, family_id: str = "", access_jti: str = "", access_token: str = "", refresh_token: str = "", timeout_seconds: float = 5.0) -> None:
     await _call_lifecycle(
         auth_grpc_addr=auth_grpc_addr,
         method=_REVOKE_METHOD,
-        payload=encode_string_fields({1: session_id, 2: family_id, 3: access_jti, 4: access_token}),
+        payload=encode_string_fields(
+            {1: session_id, 2: family_id, 3: access_jti, 4: access_token, 5: refresh_token}
+        ),
         timeout_seconds=timeout_seconds,
     )
 

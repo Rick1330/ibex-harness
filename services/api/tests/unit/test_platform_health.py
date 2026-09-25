@@ -45,6 +45,7 @@ def _authed_request(
     req = MagicMock()
     req.app.state.settings = MagicMock(
         operator_feature_enabled=feature,
+        environment="development",
         jwt_hmac_secret="sekrit",
         jwt_public_keys_pem=None,
         jwt_issuer="ibex",
@@ -130,7 +131,7 @@ async def test_platform_health_non_object_drill_ok(
         patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, _claims())
     assert out.last_restore_drill is None
 
 
@@ -147,7 +148,7 @@ def test_parse_dlq_depth(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_platform_health_disabled() -> None:
     req = _authed_request(feature=False)
     with pytest.raises(ApiError) as exc:
-        await platform_health(req)
+        await _require_operator_session(req)
     assert "operator feature disabled" in str(exc.value)
 
 
@@ -156,7 +157,7 @@ async def test_platform_health_missing_cookie() -> None:
     req = _authed_request()
     req.cookies = {}
     with pytest.raises(ApiError) as exc:
-        await platform_health(req)
+        await _require_operator_session(req)
     assert exc.value.code == INVALID_TOKEN
 
 
@@ -169,7 +170,7 @@ async def test_platform_health_ok(monkeypatch: pytest.MonkeyPatch) -> None:
         patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, _claims())
     assert out.dlq_depth == 3
     assert out.deploy_image_digest == "sha256:abc"
     assert out.dependency_health["api"] == "ok"
@@ -186,7 +187,7 @@ async def test_platform_health_draining() -> None:
         patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, _claims())
     assert out.degraded_mode is True
 
 
@@ -206,7 +207,7 @@ async def test_platform_health_postgres_ok() -> None:
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
         patch.object(platform_mod, "session_with_org", return_value=cm),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, claims)
     assert out.dependency_health["postgres"] == "ok"
     assert out.outbox_max_aggregate_seq == 42
     assert out.degraded_mode is False
@@ -228,56 +229,66 @@ async def test_platform_health_postgres_error() -> None:
         patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, _claims())
     assert out.dependency_health["postgres"] == "unavailable"
     assert out.degraded_mode is True
 
 
-def test_require_session_no_secret() -> None:
+@pytest.mark.asyncio
+async def test_require_session_no_secret() -> None:
     req = MagicMock()
     req.app.state.settings = MagicMock(
         operator_feature_enabled=True,
+        environment="development",
         jwt_hmac_secret=None,
         jwt_public_keys_pem=None,
         dashboard_session_cookie_name="ibex_session",
     )
     req.cookies = {"ibex_session": "x"}
     with pytest.raises(ApiError) as exc:
-        _require_operator_session(req)
-    assert "session signing secret" in str(exc.value)
+        await _require_operator_session(req)
+    assert "verification key" in str(exc.value)
 
 
-def test_require_session_verify_ok() -> None:
+@pytest.mark.asyncio
+async def test_require_session_verify_ok() -> None:
     req = _authed_request()
     claims = _claims()
-    with patch.object(platform_mod, "verify_token_opts", return_value=claims) as verify:
-        got = _require_operator_session(req)
+    with patch.object(
+        platform_mod, "require_operator_session", new=AsyncMock(return_value=claims)
+    ) as verify:
+        got = await _require_operator_session(req)
     assert got is claims
-    verify.assert_called_once()
+    verify.assert_awaited_once_with(req)
 
 
-def test_require_session_permissions_zero() -> None:
+@pytest.mark.asyncio
+async def test_require_session_permissions_zero() -> None:
     req = _authed_request()
     claims = _claims(permissions=0)
     with (
-        patch.object(platform_mod, "verify_token_opts", return_value=claims),
-        pytest.raises(ApiError) as exc,
-    ):
-        _require_operator_session(req)
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-
-
-def test_require_session_verify_fails() -> None:
-    from app.session_stub import SessionStubError
-
-    req = _authed_request()
-    with (
         patch.object(
-            platform_mod, "verify_token_opts", side_effect=SessionStubError("bad token")
+            platform_mod, "require_operator_session", new=AsyncMock(return_value=claims)
         ),
         pytest.raises(ApiError) as exc,
     ):
-        _require_operator_session(req)
+        await _require_operator_session(req)
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+@pytest.mark.asyncio
+async def test_require_session_verification_failure_is_propagated() -> None:
+    req = _authed_request()
+    invalid = ApiError(code=INVALID_TOKEN, message="invalid session")
+    with (
+        patch.object(
+            platform_mod,
+            "require_operator_session",
+            new=AsyncMock(side_effect=invalid),
+        ),
+        pytest.raises(ApiError) as exc,
+    ):
+        await _require_operator_session(req)
     assert exc.value.code == INVALID_TOKEN
 
 
@@ -306,7 +317,7 @@ async def test_platform_health_outbox_factory_raises() -> None:
         patch.object(platform_mod, "_redis_status", AsyncMock(return_value="ok")),
         patch.object(platform_mod, "session_with_org", return_value=cm),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, _claims())
     assert out.outbox_max_aggregate_seq is None
     assert out.dependency_health["postgres"] == "unavailable"
 
@@ -346,7 +357,7 @@ async def test_platform_health_redis_degraded() -> None:
         patch.object(platform_mod, "_require_operator_session", return_value=_claims()),
         patch("redis.asyncio.Redis.from_url", return_value=client),
     ):
-        out = await platform_health(req)
+        out = await platform_health(req, _claims())
     assert out.dependency_health["redis"] == "unavailable"
     assert out.degraded_mode is True
 

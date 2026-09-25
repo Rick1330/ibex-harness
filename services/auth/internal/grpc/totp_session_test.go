@@ -38,6 +38,15 @@ type fakeSessionIssuer struct {
 	aExp, rExp      time.Time
 	issueErr        error
 	refreshErr      error
+	accessProof     sessionjwt.Claims
+	refreshProof    sessionjwt.Claims
+	accessProofErr  error
+	refreshProofErr error
+	revokeErr       error
+	revokedSession  string
+	revokedFamily   string
+	revokedAccess   string
+	revokeCalls     int
 }
 
 func (f *fakeSessionIssuer) IssuePair(sessionjwt.IssuePairParams) (string, string, time.Time, time.Time, error) {
@@ -45,6 +54,34 @@ func (f *fakeSessionIssuer) IssuePair(sessionjwt.IssuePairParams) (string, strin
 }
 func (f *fakeSessionIssuer) RefreshPair(context.Context, sessionjwt.RefreshToken) (string, string, time.Time, time.Time, error) {
 	return f.access, f.refresh, f.aExp, f.rExp, f.refreshErr
+}
+
+func (f *fakeSessionIssuer) ValidateAccess(context.Context, sessionjwt.RawToken) (sessionjwt.Claims, error) {
+	return f.accessProof, f.accessProofErr
+}
+
+func (f *fakeSessionIssuer) VerifyAccessProof(token sessionjwt.RawToken) (sessionjwt.Claims, error) {
+	if string(token) != "access-proof" {
+		return sessionjwt.Claims{}, sessionjwt.ErrInvalidToken
+	}
+	return f.accessProof, f.accessProofErr
+}
+
+func (f *fakeSessionIssuer) VerifyRefreshProof(token sessionjwt.RefreshToken) (sessionjwt.Claims, error) {
+	if string(token) != "refresh-proof" {
+		return sessionjwt.Claims{}, sessionjwt.ErrInvalidToken
+	}
+	return f.refreshProof, f.refreshProofErr
+}
+
+func (f *fakeSessionIssuer) RevokeSession(_ context.Context, sessionID, familyID, accessJTI string) error {
+	f.revokeCalls++
+	f.revokedSession, f.revokedFamily, f.revokedAccess = sessionID, familyID, accessJTI
+	return f.revokeErr
+}
+
+func (f *fakeSessionIssuer) ConsumeStepUp(context.Context, sessionjwt.RawToken, sessionjwt.StepUpExpectations) (sessionjwt.Claims, error) {
+	return sessionjwt.Claims{}, nil
 }
 
 func totpServer(t *testing.T, totp totpPort, sess sessionIssuerPort) *Server {
@@ -189,4 +226,66 @@ func TestUnit_TotpHandlers_NilServiceAndAuthz(t *testing.T) {
 	ft.beginErr = service.ErrTOTPAlreadyDone
 	_, err = srv.BeginTotpEnrollment(ctx, &authv1.BeginTotpEnrollmentRequest{OrgId: "org", UserId: "user"})
 	requireCode(t, err, codes.AlreadyExists, "begin map")
+}
+
+func TestRevokeOperatorSession_DerivesIdentifiersFromVerifiedAccessClaims(t *testing.T) {
+	t.Parallel()
+	issuer := &fakeSessionIssuer{
+		accessProof: sessionjwt.Claims{SessionID: "sid-a", FamilyID: "family-a", JTI: "jti-a"},
+	}
+	srv := totpServer(t, nil, issuer)
+	_, err := srv.RevokeOperatorSession(context.Background(), &authv1.RevokeOperatorSessionRequest{
+		SessionId: "sid-a", FamilyId: "family-a", AccessJti: "attacker-jti", AccessToken: "access-proof",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issuer.revokeCalls != 1 || issuer.revokedSession != "sid-a" || issuer.revokedFamily != "family-a" || issuer.revokedAccess != "jti-a" {
+		t.Fatalf("revocation used unverified request identifiers: %+v", issuer)
+	}
+}
+
+func TestRevokeOperatorSession_RejectsMismatchedRefreshProofWithoutSideEffects(t *testing.T) {
+	t.Parallel()
+	issuer := &fakeSessionIssuer{
+		accessProof:  sessionjwt.Claims{SessionID: "sid-a", FamilyID: "family-a", JTI: "jti-a"},
+		refreshProof: sessionjwt.Claims{SessionID: "sid-b", FamilyID: "family-b", JTI: "refresh-jti"},
+	}
+	srv := totpServer(t, nil, issuer)
+	_, err := srv.RevokeOperatorSession(context.Background(), &authv1.RevokeOperatorSessionRequest{
+		SessionId: "sid-a", AccessToken: "access-proof", RefreshToken: "refresh-proof",
+	})
+	requireCode(t, err, codes.Unauthenticated, "mismatched proofs")
+	if issuer.revokeCalls != 0 {
+		t.Fatalf("mismatched proofs triggered %d revocations", issuer.revokeCalls)
+	}
+}
+
+func TestRevokeOperatorSession_RefreshOnlyProofAndFailureCases(t *testing.T) {
+	t.Parallel()
+	issuer := &fakeSessionIssuer{
+		refreshProof: sessionjwt.Claims{SessionID: "sid-refresh", FamilyID: "family-refresh", JTI: "refresh-jti"},
+	}
+	srv := totpServer(t, nil, issuer)
+	_, err := srv.RevokeOperatorSession(context.Background(), &authv1.RevokeOperatorSessionRequest{
+		SessionId: "sid-refresh", FamilyId: "family-refresh", RefreshToken: "refresh-proof",
+	})
+	if err != nil {
+		t.Fatalf("refresh-only logout proof: %v", err)
+	}
+	if issuer.revokeCalls != 1 || issuer.revokedSession != "sid-refresh" || issuer.revokedFamily != "family-refresh" || issuer.revokedAccess != "" {
+		t.Fatalf("refresh-only revocation mismatch: %+v", issuer)
+	}
+
+	_, err = srv.RevokeOperatorSession(context.Background(), &authv1.RevokeOperatorSessionRequest{})
+	requireCode(t, err, codes.Unauthenticated, "missing proof")
+	if issuer.revokeCalls != 1 {
+		t.Fatalf("missing proof triggered revocation: %+v", issuer)
+	}
+
+	issuer.revokeErr = errors.New("redis down")
+	_, err = srv.RevokeOperatorSession(context.Background(), &authv1.RevokeOperatorSessionRequest{
+		SessionId: "sid-refresh", RefreshToken: "refresh-proof",
+	})
+	requireCode(t, err, codes.Unavailable, "revocation store unavailable")
 }

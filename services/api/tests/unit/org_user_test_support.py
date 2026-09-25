@@ -125,7 +125,11 @@ def api_client(
     def _enqueue(job_id: str, org_id: str) -> None:
         calls.append((job_id, org_id))
 
-    settings = Settings(database_url=None, operator_feature_enabled=True)
+    settings = Settings(
+        database_url=None,
+        operator_feature_enabled=True,
+        environment="development",
+    )
     app = create_app(
         settings=settings,
         validator=StaticTokenValidator({cfg.token: res}),

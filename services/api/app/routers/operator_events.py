@@ -7,23 +7,20 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Annotated
 from uuid import UUID
 
-from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
-from fastapi import APIRouter, Request
+from apierror_py import SERVICE_DEGRADED
+from authclient.permissions import OPERATOR_METADATA_READ
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from starlette.responses import JSONResponse, Response
 
+from app.authz import assert_operator_permission
 from app.config import Settings
 from app.drain import DrainState
 from app.errors import ApiError
-from app.session_stub import (
-    SESSION_KIND_ACCESS,
-    SessionClaims,
-    SessionStubError,
-    TokenVerifyOpts,
-    verify_token_opts,
-)
+from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
 from app.sse.operator_events import SSE_SLOW_WRITES, SSE_WRITE_SECONDS, OperatorSSEHub
 
 logger = logging.getLogger(__name__)
@@ -45,46 +42,11 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-def _require_operator_secret(settings: Settings) -> str | None:
-    if not settings.operator_feature_enabled:
-        raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
-    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
-        raise ApiError(code=SERVICE_DEGRADED, message="session signing secret not configured")
-    return settings.jwt_hmac_secret
-
-
-def _access_cookie_raw(request: Request, settings: Settings) -> str:
-    raw = request.cookies.get(settings.dashboard_session_cookie_name)
-    if not raw:
-        raise ApiError(code=INVALID_TOKEN, message="missing session cookie")
-    return raw
-
-
-def _verify_access_cookie(raw: str, settings: Settings, secret: str | None) -> SessionClaims:
-    try:
-        claims = verify_token_opts(
-            raw,
-            TokenVerifyOpts(
-                secret=secret,
-                issuer=settings.jwt_issuer,
-                audience=settings.jwt_audience,
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=settings.jwt_public_keys_pem,
-            ),
-        )
-    except SessionStubError as exc:
-        raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
-    if not isinstance(claims.org_id, UUID):
-        raise ApiError(code=INVALID_TOKEN, message="missing org context in session")
+async def require_operator_event_session(request: Request) -> OperatorSessionAuthorization:
+    """Require a verified operator session and the explicit event-stream permission."""
+    claims = await require_operator_session(request)
+    assert_operator_permission(_settings(request), claims.permissions, OPERATOR_METADATA_READ)
     return claims
-
-
-def _require_session(request: Request) -> SessionClaims:
-    """Validate provisional access cookie and return server-verified claims (incl. org_id)."""
-    settings = _settings(request)
-    secret = _require_operator_secret(settings)
-    raw = _access_cookie_raw(request, settings)
-    return _verify_access_cookie(raw, settings, secret)
 
 
 def _parse_last_event_id(request: Request) -> int | None:
@@ -148,8 +110,10 @@ def _hub_or_503(request: Request) -> OperatorSSEHub:
 
 
 @router.get("/stream", response_model=None)
-async def stream_events(request: Request) -> Response:
-    claims = _require_session(request)
+async def stream_events(
+    request: Request,
+    claims: Annotated[OperatorSessionAuthorization, Depends(require_operator_event_session)],
+) -> Response:
     settings = _settings(request)
     hub = _hub_or_503(request)
     drain = request.app.state.api.drain
@@ -167,8 +131,10 @@ async def stream_events(request: Request) -> Response:
         _event_stream(ctx),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
+            "Pragma": "no-cache",
+            "Expires": "0",
             "X-Accel-Buffering": "no",
         },
     )

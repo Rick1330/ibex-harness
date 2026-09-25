@@ -29,6 +29,7 @@ type JTIStore interface {
 	// FamilyRevoked reports whether the family was revoked.
 	FamilyRevoked(ctx context.Context, familyID string) (bool, error)
 	RevokeSession(ctx context.Context, sessionID string, ttl time.Duration) error
+	RevokeSessionAndFamily(ctx context.Context, sessionID, familyID string, ttl time.Duration) error
 	SessionRevoked(ctx context.Context, sessionID string) (bool, error)
 	RevokeAccess(ctx context.Context, jti string, ttl time.Duration) error
 	AccessRevoked(ctx context.Context, jti string) (bool, error)
@@ -160,6 +161,20 @@ func (s *MemoryJTIStore) RevokeSession(_ context.Context, sessionID string, ttl 
 	return nil
 }
 
+// RevokeSessionAndFamily marks both session and refresh-family state for the same TTL.
+func (s *MemoryJTIStore) RevokeSessionAndFamily(ctx context.Context, sessionID, familyID string, ttl time.Duration) error {
+	if sessionID == "" {
+		return fmt.Errorf("sessionjwt: empty session id")
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	if err := s.RevokeSession(ctx, sessionID, ttl); err != nil {
+		return err
+	}
+	return s.RevokeFamily(ctx, familyID, ttl)
+}
+
 func (s *MemoryJTIStore) SessionRevoked(_ context.Context, sessionID string) (bool, error) {
 	return s.revokedLive("session:" + sessionID), nil
 }
@@ -256,6 +271,38 @@ func (s *RedisJTIStore) RevokeSession(ctx context.Context, sessionID string, ttl
 		ttl = time.Second
 	}
 	return s.client.Set(ctx, sessionRevokedKeyPrefix+sessionID, "1", ttl).Err()
+}
+
+// RevokeSessionAndFamily writes both revocation markers atomically in Redis.
+func (s *RedisJTIStore) RevokeSessionAndFamily(ctx context.Context, sessionID, familyID string, ttl time.Duration) error {
+	if sessionID == "" {
+		return fmt.Errorf("sessionjwt: empty session id")
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	if familyID == "" {
+		return s.RevokeSession(ctx, sessionID, ttl)
+	}
+	const script = `
+redis.call('SET', KEYS[1], '1', 'PX', ARGV[1])
+redis.call('SET', KEYS[2], '1', 'PX', ARGV[1])
+return 1
+`
+	ttlMilliseconds := ttl.Milliseconds()
+	if ttlMilliseconds < 1 {
+		ttlMilliseconds = 1
+	}
+	_, err := s.client.Eval(
+		ctx,
+		script,
+		[]string{sessionRevokedKeyPrefix + sessionID, refreshFamilyRevokedKeyPrefix + familyID},
+		ttlMilliseconds,
+	).Result()
+	if err != nil {
+		return fmt.Errorf("sessionjwt: atomically revoke session and family: %w", err)
+	}
+	return nil
 }
 
 func (s *RedisJTIStore) SessionRevoked(ctx context.Context, sessionID string) (bool, error) {

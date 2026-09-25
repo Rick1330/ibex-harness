@@ -140,7 +140,7 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	}
 	access, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
-		Permissions: p.Permissions, SessionKind: string(KindAccess),
+		Permissions: p.Permissions, SessionKind: string(KindAccess), FamilyID: familyID,
 		IssuedAt: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
 	})
 	if err != nil {
@@ -218,6 +218,13 @@ func (i *Issuer) ValidateAccess(ctx context.Context, accessToken RawToken) (Clai
 		}
 		return Claims{}, ErrInvalidToken
 	}
+	familyRevoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
+	if err != nil || familyRevoked {
+		if err != nil {
+			return Claims{}, err
+		}
+		return Claims{}, ErrInvalidToken
+	}
 	revoked, err = i.jtiStore.AccessRevoked(ctx, claims.JTI)
 	if err != nil || revoked {
 		if err != nil {
@@ -228,11 +235,21 @@ func (i *Issuer) ValidateAccess(ctx context.Context, accessToken RawToken) (Clai
 	return claims, nil
 }
 
+// VerifyAccessProof verifies signature and claims without consulting revocation state.
+// It is reserved for idempotent logout, where already-revoked cookies must still
+// prove ownership of the session being revoked again.
+func (i *Issuer) VerifyAccessProof(accessToken RawToken) (Claims, error) {
+	return i.verifyToken(accessToken, KindAccess)
+}
+
+// VerifyRefreshProof verifies a refresh JWT without consuming it or consulting state.
+// The signed claims are used only to authorize idempotent session revocation.
+func (i *Issuer) VerifyRefreshProof(refreshToken RefreshToken) (Claims, error) {
+	return i.verifyRefreshToken(refreshToken)
+}
+
 func (i *Issuer) RevokeSession(ctx context.Context, sessionID, familyID, accessJTI string) error {
-	if err := i.jtiStore.RevokeSession(ctx, sessionID, i.refreshTTL); err != nil {
-		return err
-	}
-	if err := i.jtiStore.RevokeFamily(ctx, familyID, i.refreshTTL); err != nil {
+	if err := i.jtiStore.RevokeSessionAndFamily(ctx, sessionID, familyID, i.refreshTTL); err != nil {
 		return err
 	}
 	return i.jtiStore.RevokeAccess(ctx, accessJTI, i.accessTTL)
@@ -290,6 +307,13 @@ func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
 
 func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) error {
 	ttl := refreshRemainingTTL(claims)
+	sessionRevoked, err := i.jtiStore.SessionRevoked(ctx, claims.SessionID)
+	if err != nil {
+		return err
+	}
+	if sessionRevoked {
+		return ErrInvalidToken
+	}
 	revoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
 	if err != nil {
 		return err
@@ -304,11 +328,13 @@ func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) erro
 	if first {
 		return nil
 	}
-	familyTTL := i.refreshTTL
-	if ttl > familyTTL {
-		familyTTL = ttl
+	revokeTTL := i.refreshTTL
+	if ttl > revokeTTL {
+		revokeTTL = ttl
 	}
-	_ = i.jtiStore.RevokeFamily(ctx, claims.FamilyID, familyTTL)
+	if err := i.jtiStore.RevokeSessionAndFamily(ctx, claims.SessionID, claims.FamilyID, revokeTTL); err != nil {
+		return err
+	}
 	return ErrInvalidToken
 }
 

@@ -266,3 +266,96 @@ def test_load_rsa_keys_rejects_private_pem() -> None:
     )
     with pytest.raises(SessionStubError, match="bad public key|no public keys|bad signature"):
         verify_token_opts(tok, opts)
+
+
+@pytest.mark.parametrize(
+    ("claim", "message"),
+    [("sub", "missing required claims"), ("org_id", "missing required claims"),
+     ("exp", "expired"), ("iat", "missing required claims"), ("jti", "missing required claims")],
+)
+def test_verify_rs256_rejects_each_missing_required_claim(claim: str, message: str) -> None:
+    key, pub = _rsa_keypair()
+    payload = _access_payload(str(uuid4()))
+    payload.pop(claim)
+    token = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, payload)
+    with pytest.raises(SessionStubError, match=message):
+        verify_token_opts(
+            token,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=pub,
+            ),
+        )
+
+
+def test_verify_rejects_future_not_before_and_missing_rs256_session_id() -> None:
+    import time
+
+    key, pub = _rsa_keypair()
+    future = _access_payload(str(uuid4()))
+    future["nbf"] = int(time.time()) + 60
+    token = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, future)
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
+    with pytest.raises(SessionStubError, match="not yet valid"):
+        verify_token_opts(token, opts)
+
+    missing_sid = _access_payload(str(uuid4()))
+    missing_sid.pop("sid")
+    token = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, missing_sid)
+    with pytest.raises(SessionStubError, match="missing session claim"):
+        verify_token_opts(token, opts)
+
+
+def test_verify_rejects_wrong_jwt_type() -> None:
+    key, pub = _rsa_keypair()
+    token = _sign_rs256(key, {"alg": "RS256", "typ": "not-jwt"}, _access_payload(str(uuid4())))
+    with pytest.raises(SessionStubError, match="typ mismatch"):
+        verify_token_opts(
+            token,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=pub,
+            ),
+        )
+
+
+def test_hs256_verifier_rejects_non_jwt_typ() -> None:
+    import hashlib
+    import hmac
+
+    secret = "s" * 32
+    header = _b64url(json.dumps({"alg": "HS256", "typ": "not-jwt"}).encode())
+    payload = _b64url(json.dumps({"iss": "ibex-harness"}).encode())
+    body = f"{header}.{payload}"
+    signature = _b64url(hmac.new(secret.encode(), body.encode("ascii"), hashlib.sha256).digest())
+    with pytest.raises(SessionStubError, match="typ mismatch"):
+        verify_token_opts(
+            f"{body}.{signature}",
+            TokenVerifyOpts(
+                secret=secret,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+            ),
+        )
+
+
+def test_private_header_type_reader_rejects_invalid_and_non_object_json() -> None:
+    from app.session_stub import _header_typ
+
+    with pytest.raises(SessionStubError, match="bad header"):
+        _header_typ("not-base64!")
+    with pytest.raises(SessionStubError, match="bad header"):
+        _header_typ(_b64url(b"[]"))

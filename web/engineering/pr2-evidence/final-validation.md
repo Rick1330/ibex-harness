@@ -1,78 +1,51 @@
 # PR2 Final Validation and Evidence Report
 
-## Scope and commits
+## Executive result
 
-The authoritative execution directive was applied on branch `fix/IBEX-PR2-mounted-identity-authorization-assurance`. The verified base is `origin/main` at `df657fd2436b6d7646b9c491b429a23634d22750`. The current head is `dfff193`.
+Local validation of the PR #900 remediation passes the primary API, Go, web, and repository checks. The API suite passes **693 tests with 10 skips** at **97.42% total coverage**, above the 95% gate. Diff coverage is **100% of 444 changed API lines**. Repository-wide `go test ./...` and `go vet ./...` pass after the final Go sweep exposed and led to fixes for two additional downstream compatibility issues. Web typecheck, tests, and the static build pass. Repository guards, DCO, workflow syntax, shell lint, and aggregate-gate regression cases pass.
 
-The new local commits are:
+These results are local evidence, not a claim that hosted CI or hosted static analyzers passed. The recorded GitHub run is an earlier run on the pre-remediation head [1]. This remediation was assembled on top of that checked-out head and must be validated by the new hosted run triggered by delivery to the PR branch. SonarQube and CodeScene have not been rerun at the final PR head.
 
-| Commit | Change | DCO |
+## Scope and commit context
+
+The branch is `fix/IBEX-PR2-mounted-identity-authorization-assurance`. The verified base is `origin/main` at `df657fd2436b6d7646b9c491b429a23634d22750`. This remediation was built on the previous local head `fc7b46db96378a52f004d707699c8fab453e250d`. It comprises **38 tracked files**: source, tests, workflow/security checks, configuration documentation, and this report. `AGENTS.md` was not modified.
+
+The new remediation commit uses the requested identity, `elshaday mengesha <elishum8@gmail.com>`, and includes a `Signed-off-by` trailer. The existing PR commit range also passes the repository DCO guard. The branch was pushed to the existing PR branch; no repository settings or branch-protection configuration were changed.
+
+## Final local validation matrix
+
+| Area | Command or check | Result |
 |---|---|---|
-| `5ebc6da` | Enforce the non-development AuthService-owned RS256 operator-session boundary | Signed by the pre-existing repository identity |
-| `1c204fd` | Harden Python and Go session-JWT verification | Signed by the pre-existing repository identity |
-| `95ec9c6` | Complete the AuthService operator-session lifecycle contract | `Signed-off-by: elshaday mengesha <elishum8@gmail.com>` |
-| `0794277` | Enforce ordered step-up and browser boundaries | `Signed-off-by: elshaday mengesha <elishum8@gmail.com>` |
-| `dfff193` | Cover lifecycle transport and ordered step-up regressions | `Signed-off-by: elshaday mengesha <elishum8@gmail.com>` |
+| API unit and mounted tests | `pytest -q --cov=app --cov-report=term-missing --cov-report=xml:coverage-api.xml` in `services/api` | **693 passed, 10 skipped**; total coverage **97.42%**; configured 95% threshold passed. One dependency deprecation warning from Starlette/httpx remains; no unawaited-queue warning was emitted. |
+| Changed API lines | `diff-cover services/api/coverage-api.xml --compare-branch=origin/main --fail-under=95` | **100%**; 444 changed lines, zero uncovered. |
+| API lint | `ruff check app tests` | Pass. |
+| Repository Go packages | `go test ./...` | Pass. The final sweep found two additional failures outside the originally changed packages; both were repaired. |
+| Go static analysis | `go vet ./...` | Pass. |
+| Go lifecycle and proxy validation | `bash infra/scripts/verify_phase25.sh`; AuthService/proxy tests and race checks | Pass. AuthService session/JTI race tests and proxy client compile checks also pass. |
+| Protobuf | `buf lint`, scoped breaking check, and `buf generate` | Pass; generated outputs used for validation remain uncommitted. |
+| Web | `pnpm --filter web typecheck && pnpm --filter web test && pnpm web:build:clean` | Pass; 59 test files and 182 tests passed; static build completed. The build restored its temporarily stashed API route directory, and generated TypeScript files were restored. |
+| Repository guards | Repo layout, required-context inventory, Helm profile, landing assets, static export, credential-schema leak, action pin, DCO, and PR tracking checks | Pass. PR #900 tracks issue #899 with required templates and reciprocal references. |
+| Aggregate-gate behavior | `bash .github/scripts/test-ci-gate.sh` | All success, skipped, failure, cancellation, unknown-state, and inactive-area cases pass. |
+| Workflow and shell lint | `actionlint` on repository workflows; ShellCheck on repository scripts | Pass. |
+| Other security and documentation checks | Custom Semgrep workflow-equivalent mode, Gitleaks working-tree scan, Markdown lint, and Helm chart checks | Pass. |
+| Whitespace and DCO | `git diff --check`; `.github/scripts/check-dco-signoff.sh` over the PR commit range | Pass. |
 
-No push, pull-request update, repository-setting change, branch-protection change, force-push, or history rewrite was performed.
+## Review and CI finding reconciliation
 
-## Implemented requirements mapped to evidence
+The operator-session boundary now uses one verifier for Platform and SSE routes. Non-development sessions use AuthService-backed validation, and startup rejects implicit development defaults or incomplete staging/production requirements. Logout verifies access and refresh proofs independently, requires consistent session/family identity when both are supplied, supports refresh-proof revocation, and clears session cookies on success and failure. Step-up feature and permission gates run before consuming a single-use proof. Route policy data is generated into a separate module so regeneration cannot overwrite maintained verifier helpers; traversal and exact-guard branches have targeted tests.
 
-| Requirement | Implementation | Evidence |
-|---|---|---|
-| AuthService lifecycle extension | Added `ValidateOperatorSession`, `RevokeOperatorSession`, and `ConsumeStepUp` protobuf RPCs, generated ephemeral bindings, server handlers, issuer APIs, and bounded API transport codecs | Go AuthService tests; API lifecycle client tests; Buf lint, scoped breaking check, and generation pass |
-| Session identity and replay state | Added `sid`, `fid`, `kid`, and action-bound claims; added memory and Redis session/access/step-up JTI operations; refresh replay revokes the family | `services/auth/internal/sessionjwt/lifecycle_test.go`; session-JWT suite; race suite |
-| AuthService-owned validation and logout | Non-development `/me` calls AuthService validation; logout revokes session, family, and access JTI before cookie deletion | API operator session suite; lifecycle client tests |
-| Strict RS256 boundary | Non-development configuration rejects HMAC, requires public keys and CSRF secret when enabled, and now requires Redis lifecycle state; protected JWTs require RS256/JWT/non-empty `kid`/core claims | Configuration tests; Python session-JWT tests; Go verifier tests |
-| Ordered step-up | Legal-hold and marked operator permission dependencies require an action-bound token and consume it through AuthService immediately before mutation; mutable request flags no longer grant production step-up | Authz and operator step-up tests; Go one-time replay test |
-| Executable route policy | Added runtime dependency traversal and a parity test proving every protected mounted route has executable dependency coverage | Three route-policy tests pass |
-| Tenant and anti-enumeration boundary | Existing path organization checks remain mandatory and return generic not-found semantics; lifecycle responses use verified AuthService organization context | Existing organization/router suites; route-policy inventory |
-| Browser boundary | Added production Origin/Referer allow-list checks for cookie mutations, retained double-submit CSRF, credentialed explicit-origin CORS, authenticated API `no-store`, and SSE `no-cache`/`X-Accel-Buffering: no` | Browser/header tests; 605 API tests |
-| Malformed-token resilience | Added a Go fuzz target for JWT wire splitting and protected-header parsing | Five-second fuzz campaign: 106,259 executions, pass |
+The original repository-guard failure passes its local reproduction. API unit, total-coverage, and changed-line coverage gates pass locally. The phase-verification compile failure was fixed in its proxy mock. A broader Go sweep additionally found that `packages/healthcheck` lacked stubs for the new AuthService client methods and that the protobuf contract test still expected the old RPC count; both were corrected, and the full Go test/vet commands now pass. The original web aggregate's child was skipped because repository guards failed; the corresponding web typecheck, tests, and build now pass locally. Aggregate shell tests continue to fail closed when a child fails or is skipped.
 
-## Validation commands and results
+The local analyzer results are not substitutes for hosted analysis. SonarQube and CodeScene were not run on the delivered PR head, so no exact-head analyzer pass is claimed.
 
-| Command | Result |
-|---|---|
-| `pytest -q` in `services/api` | **605 passed, 10 skipped**, 2 existing coroutine warnings |
-| `pytest -q --cov=app` in `services/api` | 607 passed, 10 skipped; overall API coverage **94.17%**, below the repository fail-under 95 gate |
-| `diff-cover ... --compare-branch=origin/main --fail-under=95` | Changed-line coverage **62%** across the complete PR2 diff from origin/main; gate failed |
-| `ruff check app tests` | Pass |
-| `go test ./services/auth/...` with ambient sandbox OTEL variables unset | Pass for all AuthService packages |
-| `go vet` on changed AuthService packages | Pass |
-| `gofmt` changed AuthService packages | Pass; no files requiring formatting |
-| `CGO_ENABLED=1 go test -race ./services/auth/internal/sessionjwt/...` | Pass |
-| `go test ... -fuzz=FuzzSplitJWTAndHeader -fuzztime=5s` | Pass; 106,259 executions and 18 new interesting inputs in the final run |
-| `buf lint` | Pass |
-| `buf breaking --against '../../.git#branch=main,subdir=packages/proto'` | Pass |
-| `buf generate` | Pass; generated output remained ephemeral/uncommitted |
-| `git diff --check` | Pass before the final test-only commit; must be rerun after this report update |
+## Live and hosted evidence still outstanding
 
-The API coverage gate is not being misreported as passing. The complete suite passes, but coverage thresholds are not yet satisfied: overall API coverage is 94.17%, and diff coverage against the full origin/main delta is 62%. The main missing coverage is in AuthService transport error branches, non-development cookie/logout branches, configuration rejection branches, route-policy traversal edge cases, and step-up dependency failure branches.
+The sandbox has no Docker or Podman. PostgreSQL 16.15 and Redis 7.0.15 are installed and reachable, but PostgreSQL has no CI-style `ibex` role/database and does not expose the `vector` extension. The exact migration/pgvector integration jobs were therefore not reproduced against an equivalent database. Redis connectivity was verified, but the local race tests do not establish multi-replica behavior against a shared deployment.
 
-## Evidence classification
+Live AuthService/API/Redis/PostgreSQL integration, two-replica revocation visibility, real-browser cookie/CSRF/Origin/SSE behavior, and staging or production rollout remain unverified. These require an environment with the CI database extensions, service topology, credentials, and browser/Ingress access. Protected hosted CI and exact-head SonarQube/CodeScene results remain the authoritative next checks after the push [1] [2].
 
-| Area | Implemented | Unit-tested | Mounted-tested | Integration-tested | Runtime-tested | Staging-tested | Production-tested | Blocked | Unverified |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Protobuf lifecycle contract | Yes | Yes | N/A | Contract only | No | No | No | Live AuthService unavailable | Live rollout compatibility |
-| JWT issuance, verification, and replay state | Yes | Yes | Partial | No live Redis | Race/fuzz locally | No | No | Redis/AuthService unavailable | Multi-replica timing |
-| API session login/refresh/me/logout | Yes | Yes | Yes | Mocked transport only | No | No | No | Live AuthService unavailable | Browser session against real AuthService |
-| Step-up ordering and consumption | Yes | Yes | Legal-hold mounted dependency | Mocked transport only | No live Redis | No | No | Redis/AuthService unavailable | Mutation-failure transaction behavior |
-| Route-policy and tenant checks | Yes | Yes | Yes | No Postgres | No | No | No | Postgres unavailable | Two-tenant live matrix |
-| CSRF, Origin/Referer, CORS, cache, SSE headers | Yes | Yes | Yes | No browser-capable runtime | No | No | No | Browser/Ingress unavailable | Proxy buffering and browser credential matrix |
-| CI/tooling gates | Partial | Yes | N/A | N/A | Local | No | No | Branch-protection/CI owner evidence | Full hosted CI transcript |
+## References
 
-## External blockers and required owner inputs
-
-The sandbox has no Docker, Podman, Postgres, Redis, AuthService listener, browser-capable Playwright environment, staging endpoint, deployment-owned key material, TLS/Ingress, secret manager, or production-like multi-replica topology. Consequently, the following evidence cannot be honestly claimed locally:
-
-1. Live AuthService/API/Redis/Postgres integration, including atomic refresh replay and step-up consumption across replicas.
-2. Tenant isolation and anti-enumeration behavior against disposable Postgres data for two organizations and all canonical roles.
-3. Browser cookie, Origin/Referer, credentialed CORS, CSRF, SSE drain, and proxy buffering behavior in a real browser and Ingress.
-4. Staging TLS/Ingress, secret rotation, deployment rollback, branch-protection verification, Track-D acceptance, security sign-off, and production-like resilience.
-
-The owner of each blocked item is the staging/deployment operator or release owner, who must provide the live endpoint/topology and an approved test identity; no production secrets should be copied into this repository or sandbox.
-
-## Hygiene and authorization confirmation
-
-No secrets, private keys, prohibited generated protobuf output, Docker installation, unrelated source refactor, branch-protection change, repository-setting change, push, or pull-request update was performed. Ephemeral generated protobuf bindings were used only for local compilation and validation and are not included in the commit. The final evidence report itself is untracked documentation until explicitly committed.
+[1]: https://github.com/Rick1330/ibex-harness/actions/runs/36123918689 "Original PR 900 CI run"
+[2]: https://github.com/Rick1330/ibex-harness/pull/900 "Pull request 900"
+[3]: https://github.com/Rick1330/ibex-harness/issues/899 "Tracked implementation issue 899"

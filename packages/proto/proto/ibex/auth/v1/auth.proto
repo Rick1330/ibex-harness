@@ -270,6 +270,9 @@ message RevokeOperatorSessionRequest {
   string access_jti = 3;
   // Access token proving that the caller owns the session being revoked.
   string access_token = 4;
+  // Refresh token proves ownership when the access token has expired.
+  // The server verifies but never consumes this token during logout.
+  string refresh_token = 5;
 }
 
 message RevokeOperatorSessionResponse {}

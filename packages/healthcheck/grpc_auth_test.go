@@ -84,6 +84,24 @@ func (m *mockAuthClient) IssueOperatorSession(
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthClient) ValidateOperatorSession(
+	context.Context, *authv1.ValidateOperatorSessionRequest, ...grpc.CallOption,
+) (*authv1.ValidateOperatorSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) RevokeOperatorSession(
+	context.Context, *authv1.RevokeOperatorSessionRequest, ...grpc.CallOption,
+) (*authv1.RevokeOperatorSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthClient) ConsumeStepUp(
+	context.Context, *authv1.ConsumeStepUpRequest, ...grpc.CallOption,
+) (*authv1.ConsumeStepUpResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
 func TestAuthGRPC_UnauthenticatedIsHealthy(t *testing.T) {
 	t.Parallel()
 	client := &mockAuthClient{err: status.Error(codes.Unauthenticated, "invalid token")}

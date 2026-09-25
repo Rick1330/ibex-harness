@@ -12,9 +12,13 @@ for row in rows:
     path = row["path"]
     if path.startswith(public_prefixes):
         auth = "public"
+    elif path == "/v1/operator/session/login":
+        auth = "pat_exchange"
     elif path.startswith("/v1/operator/session"):
         auth = "operator_session"
-    elif path == "/v1/operator/events" or "operator_events" in row["endpoint"]:
+    elif path == "/v1/operator/platform/health":
+        auth = "operator_permission"
+    elif path == "/v1/operator/events/stream":
         auth = "operator_permission"
     else:
         auth = "bearer_pat"
@@ -42,8 +46,8 @@ for row in rows:
         "source": source,
     })
 
-out = root / "services" / "api" / "app" / "route_policy.py"
-body = '''"""Machine-readable mounted route policy inventory for PR2 parity checks.\n\nThis file is generated from the mounted route inventory and reviewed policy\noverrides. It intentionally records current enforcement evidence separately from\nfuture product decisions.\n"""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\nROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (\n'''
+out = root / "services" / "api" / "app" / "route_policy_data.py"
+body = '''"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\nROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (\n'''
 for item in policy:
     body += f"    {item!r},\n"
 body += ")\n\n\ndef policy_keys() -> frozenset[tuple[str, str]]:\n    return frozenset((str(row['method']), str(row['path'])) for row in ROUTE_POLICY)\n"

@@ -151,10 +151,10 @@ def _assert_operator_action_enabled(settings: Settings, required: int) -> None:
         raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Action disabled by policy")
 
 
-def _assert_operator_bitmap(bitmap: int, required: int, *, step_up_ok: bool) -> None:
+def _assert_operator_bitmap(bitmap: int, required: int) -> None:
     if not has_permission(bitmap, required):
         raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
-    if requires_step_up(required) and not step_up_ok:
+    if requires_step_up(required):
         raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
 
 
@@ -162,13 +162,11 @@ def assert_operator_permission(
     settings: Settings,
     bitmap: int,
     required: int,
-    *,
-    step_up_ok: bool = False,
 ) -> None:
-    """Deny-by-default operator action gate (bitmap + kill switch + step-up)."""
+    """Check non-step-up operator access; high-impact actions use an async dependency."""
     _assert_operator_feature_enabled(settings)
     _assert_operator_action_enabled(settings, required)
-    _assert_operator_bitmap(bitmap, required, step_up_ok=step_up_ok)
+    _assert_operator_bitmap(bitmap, required)
 
 
 def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
@@ -176,18 +174,19 @@ def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
         request: Request,
         token: Annotated[ValidateResult, Depends(require_token)],
     ) -> ValidateResult:
-        step_up_ok = False
-        if requires_step_up(required):
+        needs_step_up = requires_step_up(required)
+        settings = _settings(request)
+        _assert_operator_feature_enabled(settings)
+        _assert_operator_action_enabled(settings, required)
+        if not has_permission(token.permissions, required):
+            raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
+        if needs_step_up:
             await enforce_step_up(
                 request,
                 token,
                 required_permission=required,
                 action=f"operator.permission.{required}",
             )
-            step_up_ok = True
-        assert_operator_permission(
-            _settings(request), token.permissions, required, step_up_ok=step_up_ok
-        )
         return token
 
     return _dep
