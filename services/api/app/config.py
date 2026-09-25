@@ -144,6 +144,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DASHBOARD_COOKIE_DOMAIN", "IBEX_API_COOKIE_DOMAIN"),
         description="Optional shared cookie domain (e.g. .ibexharness.com)",
     )
+    environment: Literal["development", "staging", "production"] = Field(
+        default="development",
+        validation_alias=AliasChoices("IBEX_ENV", "IBEX_API_ENV"),
+        description="Deployment profile; HMAC operator sessions are local-development only",
+    )
     sse_write_deadline_seconds: float = Field(
         default=15.0,
         ge=1.0,
@@ -268,6 +273,19 @@ class Settings(BaseSettings):
             self.dashboard_csrf_cookie_name,
         ):
             raise ValueError("dashboard cookie names must not include leading/trailing whitespace")
+        return self
+
+    @model_validator(mode="after")
+    def _operator_session_boundary(self) -> Settings:
+        if self.environment != "development" and self.jwt_hmac_secret is not None:
+            raise ValueError("JWT_HMAC_SECRET is permitted only in development")
+        if self.environment != "development" and self.operator_feature_enabled:
+            if not self.jwt_public_keys_pem:
+                raise ValueError("DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development")
+            if not self.dashboard_csrf_secret:
+                raise ValueError("DASHBOARD_CSRF_SECRET is required outside development")
+            if not self.cookie_secure:
+                raise ValueError("DASHBOARD_COOKIE_SECURE must be true outside development")
         return self
 
     def cors_origin_list(self) -> list[str]:

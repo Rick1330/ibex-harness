@@ -17,7 +17,7 @@ from app.auth.client import (
     ValidateResult,
     parse_authorization_header,
 )
-from app.auth.session_refresh import refresh_operator_session
+from app.auth.session_refresh import issue_operator_session, refresh_operator_session
 from app.config import Settings
 from app.deps import get_validator
 from app.errors import ApiError
@@ -70,6 +70,11 @@ def _require_operator_enabled(settings: Settings) -> None:
 
 
 def _require_hmac(settings: Settings) -> str:
+    if settings.environment != "development":
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="provisional HMAC operator sessions are disabled outside development",
+        )
     if not settings.jwt_hmac_secret:
         raise ApiError(
             code=SERVICE_DEGRADED,
@@ -213,8 +218,31 @@ async def login(
     """PROVISIONAL: PAT → HttpOnly access+refresh cookies. 4.P.1 moves issuance to auth."""
     settings = _settings(request)
     _require_operator_enabled(settings)
-    secret = _require_hmac(settings)
     result = await _validate_pat(validator, body.pat.strip())
+    if settings.environment != "development":
+        try:
+            pair = await issue_operator_session(
+                auth_grpc_addr=settings.auth_grpc_addr,
+                pat=body.pat.strip(),
+                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+            )
+        except AuthFailedError as exc:
+            raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
+        except AuthUnavailableError as exc:
+            raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+        _apply_session_cookies(
+            response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+        )
+        csrf = _mint_and_set_csrf(
+            response, settings=settings, secret=settings.dashboard_csrf_secret or ""
+        )
+        return {
+            "status": "ok",
+            "provisional": False,
+            "org_id": str(result.org_id),
+            "csrf_token": csrf,
+        }
+    secret = _require_hmac(settings)
     subject = result.user_id or result.token_id or str(result.org_id)
     access, refresh = _issue_session_pair(
         _SessionPrincipal(
@@ -322,6 +350,8 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
     raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
     if not raw:
         raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+    if settings.environment != "development":
+        return await _refresh_via_auth(response=response, settings=settings, refresh_token=raw)
     try:
         alg = peek_token_alg(raw)
     except SessionStubError as exc:
@@ -350,7 +380,13 @@ async def me(request: Request) -> dict[str, object]:
     """Prove cookie session works for authenticated API calls."""
     settings = _settings(request)
     _require_operator_enabled(settings)
-    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
+    if settings.environment != "development" and not settings.jwt_public_keys_pem:
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="session public keys not configured",
+            detail="set DASHBOARD_JWT_PUBLIC_KEYS_PEM",
+        )
+    if settings.environment == "development" and not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="session signing secret not configured",
@@ -359,7 +395,8 @@ async def me(request: Request) -> dict[str, object]:
     raw = request.cookies.get(settings.dashboard_session_cookie_name)
     if not raw:
         return await _me_bearer(request)
-    return _me_cookie(raw, settings=settings, secret=settings.jwt_hmac_secret)
+    secret = settings.jwt_hmac_secret if settings.environment == "development" else None
+    return _me_cookie(raw, settings=settings, secret=secret)
 
 
 def _me_cookie(raw: str, *, settings: Settings, secret: str | None) -> dict[str, object]:

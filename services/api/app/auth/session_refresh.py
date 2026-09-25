@@ -47,6 +47,35 @@ def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
     return RefreshedSession(access_token=access, refresh_token=refresh)
 
 
+async def issue_operator_session(
+    *,
+    auth_grpc_addr: str,
+    pat: str,
+    timeout_seconds: float = 5.0,
+) -> RefreshedSession:
+    """Issue an Auth-owned session pair for a validated PAT caller."""
+    assert_trusted_insecure_auth_target(auth_grpc_addr)
+    try:
+        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
+            stub = channel.unary_unary(
+                _ISSUE_METHOD,
+                request_serializer=lambda b: b,
+                response_deserializer=lambda b: b,
+            )
+            raw = await asyncio.wait_for(
+                stub(b"", metadata=(("authorization", f"Bearer {pat}"),)),
+                timeout=timeout_seconds,
+            )
+    except TimeoutError as exc:
+        raise AuthUnavailableError("auth session issue timeout") from exc
+    except grpc.aio.AioRpcError as exc:
+        mapped = _map_rpc_error(exc)
+        if exc.code() == grpc.StatusCode.FAILED_PRECONDITION:
+            mapped = AuthUnavailableError("auth session issuer unavailable")
+        raise mapped from exc
+    return _parse_refreshed_session(raw)
+
+
 async def _call_issue_operator_session(
     *,
     auth_grpc_addr: str,

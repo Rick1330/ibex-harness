@@ -72,3 +72,13 @@ def test_cookie_names_must_be_distinct() -> None:
 def test_cookie_names_must_be_non_empty() -> None:
     with pytest.raises(ValidationError):
         operator_settings(dashboard_session_cookie_name="  ")
+
+
+def test_non_development_rejects_hmac_operator_sessions() -> None:
+    with pytest.raises(ValidationError, match="only in development"):
+        operator_settings(environment="staging", jwt_hmac_secret=HMAC_SECRET)
+
+
+def test_non_development_operator_profile_requires_rs256_browser_config() -> None:
+    with pytest.raises(ValidationError, match="DASHBOARD_JWT_PUBLIC_KEYS_PEM"):
+        operator_settings(environment="staging", jwt_hmac_secret=None)
