@@ -20,35 +20,51 @@ import (
 
 func TestUnit_BuildModelPolicyRuntime_NilPostgresFailsClosed(t *testing.T) {
 	t.Parallel()
-	assertModelPolicyRuntimeFailsClosed(t, mustTestRegistry(t), "mp-nil-pg-test", "model policy deny-all", "without postgres")
+	assertModelPolicyRuntimeFailsClosed(t, modelPolicyFallbackCase{
+		base:        mustTestRegistry(t),
+		metricsName: "mp-nil-pg-test",
+		logNeedle:   "model policy deny-all",
+		cacheReason: "without postgres",
+	})
 }
 
 func TestUnit_BuildModelPolicyRuntime_NilProviderFailsClosed(t *testing.T) {
 	t.Parallel()
-	assertModelPolicyRuntimeFailsClosed(t, nil, "mp-nil-base-test", "provider registry nil", "without provider registry")
+	assertModelPolicyRuntimeFailsClosed(t, modelPolicyFallbackCase{
+		metricsName: "mp-nil-base-test",
+		logNeedle:   "provider registry nil",
+		cacheReason: "without provider registry",
+	})
 }
 
-func assertModelPolicyRuntimeFailsClosed(t *testing.T, base *provider.Registry, metricsName, logNeedle, cacheReason string) {
+type modelPolicyFallbackCase struct {
+	base        *provider.Registry
+	metricsName string
+	logNeedle   string
+	cacheReason string
+}
+
+func assertModelPolicyRuntimeFailsClosed(t *testing.T, tc modelPolicyFallbackCase) {
 	t.Helper()
 	var buf bytes.Buffer
 	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := ibexmetrics.NewProxy(metricsName)
+	reg := ibexmetrics.NewProxy(tc.metricsName)
 	cache, resolver, defaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
-		Base: base, Log: log, Metrics: reg,
+		Base: tc.base, Log: log, Metrics: reg,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cache != nil {
-		t.Fatalf("expected nil cache %s", cacheReason)
+		t.Fatalf("expected nil cache %s", tc.cacheReason)
 	}
 	assertPolicyUnavailableResolver(t, resolver)
 	assertNoopDefaults(t, defaults)
-	if !strings.Contains(buf.String(), logNeedle) {
-		t.Fatalf("expected %q in log, got %q", logNeedle, buf.String())
+	if !strings.Contains(buf.String(), tc.logNeedle) {
+		t.Fatalf("expected %q in log, got %q", tc.logNeedle, buf.String())
 	}
 	assertModelPolicyEnabledGauge(t, reg, 0)
 }
