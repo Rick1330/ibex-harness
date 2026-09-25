@@ -27,7 +27,7 @@ func (r *ProxyRegistry) initModelPolicyMetrics() {
 	})
 	r.modelPolicyEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ibex_proxy_model_policy_enabled",
-		Help: "1 when org model-policy enforcement is active; 0 when PassthroughRegistry (no Postgres).",
+		Help: "1 when organization model-policy enforcement is active; 0 when the policy store is unavailable and model selection fails closed.",
 	})
 }
 

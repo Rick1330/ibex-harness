@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSearchContent } from "@/lib/search-content";
+import { buildSearchContent, shouldIndexSearchPage } from "@/lib/search-content";
+
+describe("shouldIndexSearchPage", () => {
+  it("keeps public documentation and roadmap hubs searchable", () => {
+    expect(shouldIndexSearchPage("/docs/proxy/rate-limiting")).toBe(true);
+    expect(shouldIndexSearchPage("/roadmap/current-state")).toBe(true);
+    expect(shouldIndexSearchPage("/roadmap/phase-4-multi-provider")).toBe(true);
+  });
+
+  it("keeps compact Phase 4 register summaries searchable and excludes milestone specs", () => {
+    expect(shouldIndexSearchPage("/roadmap/phase-4-multi-provider/findings")).toBe(true);
+    expect(shouldIndexSearchPage("/roadmap/phase-4-multi-provider/risks")).toBe(true);
+    expect(shouldIndexSearchPage("/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract")).toBe(false);
+    expect(shouldIndexSearchPage("/docs/adr/0081-fail-closed-proxy-runtime-controls")).toBe(true);
+  });
+});
 
 describe("buildSearchContent", () => {
   it("includes description and toc titles for body keyword discoverability", () => {
@@ -49,5 +64,34 @@ describe("buildSearchContent", () => {
     });
 
     expect(content).toBe("a".repeat(800));
+  });
+
+  it("keeps ADR-0081 discoverable without indexing its full dense body", () => {
+    const content = buildSearchContent({
+      url: "/docs/adr/0081-fail-closed-proxy-runtime-controls",
+      data: {
+        description: "Redis-backed rate-limit and organization model-policy dependency failure behavior.",
+        structuredData: { contents: [{ content: "x".repeat(5000) }] },
+      },
+    });
+
+    expect(content).toContain("IBEX_ENV");
+    expect(content).toContain("Redis");
+    expect(content).toContain("SERVICE_DEGRADED");
+    expect(content).toContain("organization policy");
+    expect(content).toContain("501");
+    expect(content.length).toBeLessThan(500);
+  });
+
+  it("keeps new Phase 4 P0 findings discoverable through a bounded register summary", () => {
+    const content = buildSearchContent({
+      url: "/roadmap/phase-4-multi-provider/findings",
+      data: { structuredData: { contents: [{ content: "x".repeat(5000) }] } },
+    });
+
+    expect(content).toContain("F4-034");
+    expect(content).toContain("F4-036");
+    expect(content).toContain("F4-037");
+    expect(content.length).toBeLessThan(1000);
   });
 });

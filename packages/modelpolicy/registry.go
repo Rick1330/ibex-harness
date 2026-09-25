@@ -67,37 +67,19 @@ func (r *OrgAwareRegistry) FallbackChain(ctx context.Context, orgID uuid.UUID, m
 // Base returns the underlying platform registry.
 func (r *OrgAwareRegistry) Base() *provider.Registry { return r.base }
 
-// DenyAllRegistry rejects every model. Used when Postgres/policy store is
-// unavailable (4.P.1 fail-closed default).
+// DenyAllRegistry rejects every model when the policy store is unavailable.
+// The unavailable error preserves the distinction between a policy denial
+// (403) and an infrastructure failure (503) at the HTTP boundary.
 type DenyAllRegistry struct{}
 
-// ForOrg always denies.
+// ForOrg never permits a model without an available organization policy.
 func (DenyAllRegistry) ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error) {
-	return nil, ErrModelNotAllowedForOrg
+	return nil, ErrPolicyUnavailable
 }
 
-// FallbackChain is always empty under deny-all.
+// FallbackChain cannot be trusted while the policy store is unavailable.
 func (DenyAllRegistry) FallbackChain(context.Context, uuid.UUID, string) ([]string, error) {
-	return nil, nil
-}
-
-// PassthroughRegistry adapts *provider.Registry to ForOrg without policies.
-// Only for explicit IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH (default off); residual risk.
-type PassthroughRegistry struct {
-	Base *provider.Registry
-}
-
-// ForOrg ignores orgID and calls Registry.For.
-func (p PassthroughRegistry) ForOrg(_ context.Context, _ uuid.UUID, model string) (provider.Provider, error) {
-	if p.Base == nil {
-		return nil, provider.ErrNoProviderForModel
-	}
-	return p.Base.For(strings.TrimSpace(model))
-}
-
-// FallbackChain always returns nil when policies are disabled.
-func (PassthroughRegistry) FallbackChain(context.Context, uuid.UUID, string) ([]string, error) {
-	return nil, nil
+	return nil, ErrPolicyUnavailable
 }
 
 // ResolveCandidateModel applies precedence: request model, else agent default_model.

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,41 @@ func TestValidate_acceptsValidConfig(t *testing.T) {
 				t.Fatalf("expected config to validate: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidate_RequiresRedisOutsideDevelopment(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"staging", "production"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg := validProxyConfig()
+			cfg.Environment = environment
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "REDIS_URL is required") {
+				t.Fatalf("Validate() error=%v, want missing REDIS_URL error", err)
+			}
+
+			cfg.RedisURL = "redis://redis.internal:6379/0"
+			if environment == "production" {
+				cfg.LLMMode = "live"
+				cfg.OpenAI.APIKey = "test-key"
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() with shared Redis: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate_RequiresExplicitEnvironmentAfterDefaults(t *testing.T) {
+	t.Parallel()
+	cfg := validProxyConfig()
+	cfg.Environment = ""
+	cfg.ApplyDefaults()
+	if cfg.Environment != "" {
+		t.Fatalf("ApplyDefaults() selected environment %q without an explicit profile", cfg.Environment)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "IBEX_ENV must be one of") {
+		t.Fatalf("Validate() error=%v, want explicit IBEX_ENV error", err)
 	}
 }
 

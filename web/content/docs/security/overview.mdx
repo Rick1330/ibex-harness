@@ -97,7 +97,7 @@ graph TB
 | org_id context not set | **Fail closed** — deny access |
 | Token validation incomplete (no safe cache) | **Fail closed** — 503 `AUTH_UNAVAILABLE` |
 | Permission check ambiguous | **Fail closed** — 403 |
-| Redis unavailable (rate limit) | **Fail open** — allow request, log warning ([ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton)) |
+| Proxy Redis unavailable (rate limit) | **Fail closed** — return 503 `SERVICE_DEGRADED`; do not reach provider work ([ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls)) |
 | Memory retrieval timeout | **Fail open** — directive-only context |
 
 <Callout type="danger" title="Never disable controls to recover">

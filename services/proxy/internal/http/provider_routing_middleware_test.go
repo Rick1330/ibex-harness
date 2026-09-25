@@ -159,7 +159,7 @@ func serveProviderRouting(t *testing.T, tc routingCase) *httptest.ResponseRecord
 	}
 	resolver := tc.resolver
 	if resolver == nil {
-		resolver = modelpolicy.PassthroughRegistry{Base: mustOpenAIRegistry(t)}
+		resolver = testAllowingModelResolver{base: mustOpenAIRegistry(t)}
 	}
 	h := ProviderRoutingMiddleware(providerRoutingOpts{
 		resolver: resolver, agentDefaults: tc.defaults, log: logger.Discard("proxy"),

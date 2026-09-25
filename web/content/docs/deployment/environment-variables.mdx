@@ -187,8 +187,8 @@ Run `make db-migrate` after compose is healthy.
   ]}
 />
 
-<Callout type="warning" title="Fail-open rate limiting">
-  When Redis is unreachable, the proxy rate limiter fails open (requests proceed) and auth cache is not wrapped. Readiness still reports Redis as a critical check — see [Proxy health](/docs/api-reference/proxy-health).
+<Callout type="warning" title="Set the Proxy runtime profile explicitly">
+  Proxy startup rejects missing/empty `IBEX_ENV`; it must not silently assume `development`. Staging/production also reject a missing `REDIS_URL`. If configured Redis is unreachable during a limiter operation, the Proxy returns `503 SERVICE_DEGRADED` before provider work; auth-cache wrapping is skipped when its revocation channel is unavailable. Readiness reports required Redis health — see [Proxy health](/docs/api-reference/proxy-health) and [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls).
 </Callout>
 
 ## ClickHouse (optional traces)

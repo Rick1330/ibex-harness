@@ -390,6 +390,19 @@ func TestUnit_BuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
 	}
 }
 
+func TestUnit_BuildProxyHealth_DevelopmentWithoutRedisIsNotReady(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{Environment: "development"}
+	checks := buildProxyHealth(cfg, nil, nil, nil).CriticalCheckers
+	redisCheck, ok := checks["redis"]
+	if !ok {
+		t.Fatal("missing critical Redis readiness checker")
+	}
+	if err := redisCheck(context.Background()); err == nil {
+		t.Fatal("expected readiness to remain degraded when development omits Redis")
+	}
+}
+
 func TestUnit_NewCachedDirectiveResolver_NilDB(t *testing.T) {
 	t.Parallel()
 	log := logger.Discard("proxy")

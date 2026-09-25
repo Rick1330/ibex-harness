@@ -1,0 +1,45 @@
+---
+title: "ADR-0081: Fail-closed Proxy runtime controls"
+description: "Redis-backed rate-limit and organization model-policy dependency failure behavior."
+adrId: "0081"
+status: "Accepted"
+date: "2026-09-24"
+authors: "IBEX Harness team"
+---
+
+# ADR-0081: Fail-closed Proxy runtime controls
+
+- **Status:** Accepted
+- **Date:** 2026-09-24
+- **Authors:** IBEX Harness team
+- **Amends:** [ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton) and [ADR-0075](/docs/adr/0075-per-org-model-routing-policy)
+
+## Context
+
+The Proxy controls paid-provider access, organization model eligibility, and shared request budgets. Two existing fallbacks could silently weaken those controls: rate-limit middleware proceeded when Redis operations failed, and an environment-variable escape hatch selected a provider registry without organization policies when PostgreSQL was absent. A missing Redis URL also constructed an always-allow limiter without regard to environment. Availability and accurate error classification still matter: infrastructure failure is not equivalent to a request quota denial or an organization policy denial.
+
+## Decision
+
+1. **Runtime profile and shared limiter must be explicit.** Proxy `IBEX_ENV` must be explicitly set to `development`, `staging`, or `production`; neither environment parsing nor `Config.ApplyDefaults()` may manufacture a development profile. Direct config validation rejects a missing profile. Outside development, missing `REDIS_URL` is invalid and fails startup/config validation. A configured Redis URL whose shared rate-limit operation fails produces a `503 SERVICE_DEGRADED`; the request must not reach provider work. This is neither a `429 RATE_LIMITED` response nor permission to proceed without a limit.
+2. **Model selection never bypasses organization policy.** Remove `PassthroughRegistry` and `IBEX_MODEL_POLICY_ALLOW_PASSTHROUGH` as operational controls. Unset or false legacy values do not enable bypass; true fails startup with a migration diagnostic. When the model-policy store or required routing dependencies are unavailable, deny provider selection with `503 SERVICE_DEGRADED`. A valid policy denial remains `403 MODEL_NOT_ALLOWED`; an unknown model after an allow decision remains `501 PROVIDER_NOT_CONFIGURED`.
+3. **Development/test exceptions are explicit.** A local development environment may omit Redis and use the Noop limiter for local work. Tests may provide isolated fake implementations through test-only adapters. Production runtime types contain no allow-without-policy model resolver.
+4. **Availability trade-off is intentional.** During Redis or PostgreSQL policy-store failure, paid chat can become unavailable rather than bypassing the configured tenant policy or shared limit. Restore the dependency, roll back to an evidence-backed compatible deployment, or disable the affected capability; do not weaken the controls temporarily.
+5. **Errors are observable without leaking secrets.** Continue rate-limit Redis error metrics and model-policy enabled-state metrics. Log dependency failure class and organization/request correlation where permitted, but do not log credentials, DSNs, or raw provider data. Redis remains a critical `/ready` dependency in every profile. Development may start and use the Noop request limiter without Redis, but `/ready` intentionally remains degraded until Redis is available; local probes and runbooks must account for this distinction.
+
+## Consequences
+
+- Operators must explicitly set the Proxy profile and provide an actual shared Redis URL, then verify Redis health before deploying in staging or production. In development, missing Redis does not block process startup or request handling through the Noop limiter, but it does keep `/ready` degraded. Helm values do not by themselves prove profile/secret delivery or provision a live endpoint; see [4.P.0](/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract) and [4.P.5](/roadmap/phase-4-multi-provider/milestones/4.p.5-production-platform-recovery-supply-chain).
+- Provider routing and rate-limit tests must distinguish dependency-unavailable `503` from policy-denied `403`, exhausted-quota `429`, and unconfigured-provider `501`, and prove the next handler/provider was not invoked on dependency failure.
+- The old accepted Phase 1 fail-open choice in ADR-0015 is historical and superseded for current multi-provider runtime by this ADR. `POSTGRES_DSN` absence must not turn off policy enforcement silently.
+- This ADR does not settle emergency local rate limiting, Redis HA/failover design, AuthService's separate internal `ValidateToken` limiter, or chat idempotency-store behavior. Those remain separate contracts and risks, not implicit exceptions to this decision.
+
+## Verification
+
+The implementation must have tests for missing non-development Redis configuration, development Noop behavior, Redis operation failure and no provider invocation, model-policy missing-store startup/runtime behavior, and distinct HTTP status/error envelopes for policy denial versus dependency unavailability. Passing those tests proves source behavior only; deployed readiness, external Redis secrets, and production/staging rollout evidence are owned by P0/P5/E2.
+
+## Related
+
+- [ADR-0015 — Proxy rate-limit skeleton](/docs/adr/0015-proxy-rate-limit-skeleton)
+- [ADR-0075 — Per-org model routing policy](/docs/adr/0075-per-org-model-routing-policy)
+- [Proxy rate limiting](/docs/proxy/rate-limiting)
+- [Phase 4 findings](/roadmap/phase-4-multi-provider/findings)

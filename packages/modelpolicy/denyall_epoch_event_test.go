@@ -27,7 +27,7 @@ func TestDenyAllRegistry_ForOrg(t *testing.T) {
 	t.Parallel()
 	var r modelpolicy.DenyAllRegistry
 	_, err := r.ForOrg(t.Context(), uuid.New(), "gpt-4o")
-	if err != modelpolicy.ErrModelNotAllowedForOrg {
+	if err != modelpolicy.ErrPolicyUnavailable {
 		t.Fatalf("err=%v", err)
 	}
 }

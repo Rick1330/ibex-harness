@@ -48,7 +48,7 @@ graph LR
     gRPC `ValidateAgent(agent_id, org_id_from_token)` requires header `X-IBEX-Agent-ID`. Cross-org or inactive agents return **403** (`AGENT_NOT_AUTHORIZED`), never **404**.
   </Step>
   <Step title="Rate limit">
-    Org-level RPM via Redis. Redis errors fail open per [ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton).
+    Org-level RPM via shared Redis. An exhausted quota returns 429; Redis dependency failure returns 503 and does not proceed to a provider, per [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls).
   </Step>
 </Steps>
 
