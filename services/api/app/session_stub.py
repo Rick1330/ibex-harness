@@ -181,6 +181,16 @@ def _header_alg(header_b64: str) -> str:
     return str(header.get("alg", ""))
 
 
+def _header_typ(header_b64: str) -> str:
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+    except (json.JSONDecodeError, SessionStubError) as exc:
+        raise SessionStubError("bad header") from exc
+    if not isinstance(header, dict):
+        raise SessionStubError("bad header")
+    return str(header.get("typ", ""))
+
+
 def peek_token_alg(token: str) -> str:
     """Return the JWT alg claim without verifying the signature."""
     return _header_alg(_split_jwt(token).header_b64)
@@ -202,16 +212,19 @@ def _session_kind_of(payload: dict[str, Any]) -> str | None:
 
 
 def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
-    return SessionClaims(
-        sub=str(payload.get("sub", "")),
-        org_id=UUID(str(payload["org_id"])),
-        permissions=int(payload.get("permissions", 0)),
-        session_kind=str(_session_kind_of(payload)),
-        exp=int(payload.get("exp", 0)),
-        iat=int(payload.get("iat", 0)),
-        jti=str(payload.get("jti", "")),
-        verify_method=verify_method,
-    )
+    try:
+        return SessionClaims(
+            sub=str(payload["sub"]),
+            org_id=UUID(str(payload["org_id"])),
+            permissions=int(payload.get("permissions", 0)),
+            session_kind=str(_session_kind_of(payload)),
+            exp=int(payload["exp"]),
+            iat=int(payload["iat"]),
+            jti=str(payload["jti"]),
+            verify_method=verify_method,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SessionStubError("missing required claims") from exc
 
 
 def _validate_claims(
@@ -221,8 +234,11 @@ def _validate_claims(
         raise SessionStubError("issuer/audience mismatch")
     if _session_kind_of(payload) != opts.expect_kind:
         raise SessionStubError("wrong token kind")
-    if int(payload.get("exp", 0)) < int(time.time()):
+    now = int(time.time())
+    if int(payload.get("exp", 0)) < now:
         raise SessionStubError("expired")
+    if "nbf" in payload and int(payload["nbf"]) > now:
+        raise SessionStubError("not yet valid")
     return _to_claims(payload, verify_method=verify_method)
 
 
@@ -245,6 +261,8 @@ def _verify_rs256_token(
 ) -> SessionClaims:
     if not opts.public_keys_pem:
         raise SessionStubError("no verify material")
+    if _header_typ(parts.header_b64) != "JWT":
+        raise SessionStubError("typ mismatch")
     _verify_rs256(parts, public_keys_pem=opts.public_keys_pem)
     return _validate_claims(payload, opts, verify_method="RS256")
 
@@ -256,6 +274,8 @@ def _verify_hs256_token(
 ) -> SessionClaims:
     if not opts.secret:
         raise SessionStubError("no verify material")
+    if _header_typ(parts.header_b64) != "JWT":
+        raise SessionStubError("typ mismatch")
     _verify_hs256(parts, secret=opts.secret)
     _LOG.warning(
         "provisional_hs256_verify=1 issuer=%s audience=%s",

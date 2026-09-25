@@ -46,10 +46,31 @@ func (v *Verifier) Verify(token RawToken, expectKind SessionKind) (Claims, error
 	if err != nil {
 		return Claims{}, err
 	}
+	if err := validateHeader(parts.header); err != nil {
+		return Claims{}, err
+	}
 	if err := v.verifySignature(parts); err != nil {
 		return Claims{}, err
 	}
 	return v.parseAndValidateClaims(parts.payload, expectKind)
+}
+
+func validateHeader(headerB64 string) error {
+	raw, err := b64dec(headerB64)
+	if err != nil {
+		return ErrInvalidToken
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return ErrInvalidToken
+	}
+	if header.Algorithm != algRS256 || header.Type != "JWT" {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
 func splitJWT(token string) (jwtWireParts, error) {
@@ -89,8 +110,14 @@ func (v *Verifier) parseAndValidateClaims(payloadB64 string, expectKind SessionK
 	if claims.SessionKind != string(expectKind) {
 		return Claims{}, ErrInvalidToken
 	}
+	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" || claims.IssuedAt <= 0 {
+		return Claims{}, ErrInvalidToken
+	}
 	if claims.ExpiresAt < time.Now().UTC().Unix() {
 		return Claims{}, ErrExpired
+	}
+	if expectKind == KindRefresh && claims.FamilyID == "" {
+		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil
 }
