@@ -149,6 +149,7 @@ def test_assert_operator_permission_bitmap_missing() -> None:
 
 def test_require_operator_permission_dep_reads_step_up_flag() -> None:
     import asyncio
+
     from app.auth.client import ValidateResult
     from app.authz import require_operator_permission
 

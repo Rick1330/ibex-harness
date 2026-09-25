@@ -12,8 +12,16 @@ from authclient.errors import AuthFailedError, AuthUnavailableError
 
 from app.auth.session_refresh import (
     _decode_string_field,
+    consume_step_up,
     encode_issue_with_refresh,
     refresh_operator_session,
+    revoke_operator_session,
+    validate_operator_session,
+)
+from app.auth.session_refresh_codec import (
+    decode_int64_field,
+    decode_string_fields,
+    encode_string_fields,
 )
 
 
@@ -31,6 +39,12 @@ def test_encode_issue_with_refresh_multi_byte() -> None:
     payload = encode_issue_with_refresh(long_tok)
     assert payload[0] == 0x0A
     assert long_tok.encode() in payload
+
+
+def test_lifecycle_codec_round_trip() -> None:
+    payload = encode_string_fields({1: "subject", 2: "org", 4: "sid", 5: "jti"}) + _proto_varint(3, 9)
+    assert decode_string_fields(payload, {1, 2, 4, 5}) == {1: "subject", 2: "org", 4: "sid", 5: "jti"}
+    assert decode_int64_field(payload, 3) == 9
 
 
 def test_decode_string_field_skips_other_fields_and_varints() -> None:
@@ -195,3 +209,21 @@ async def test_refresh_operator_session_auth_codec_error_from_rpc() -> None:
     stub = AsyncMock(side_effect=AuthCodecError("boom"))
     with _patch_channel(stub), pytest.raises(AuthUnavailableError, match="codec"):
         await refresh_operator_session(auth_grpc_addr="127.0.0.1:50051", refresh_token="r")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_rpc_clients() -> None:
+    validate_resp = (
+        _proto_string(1, "subject")
+        + _proto_string(2, "org")
+        + _proto_varint(3, 9)
+        + _proto_string(4, "sid")
+        + _proto_string(5, "jti")
+    )
+    stub = AsyncMock(return_value=validate_resp)
+    with _patch_channel(stub):
+        claims = await validate_operator_session(auth_grpc_addr="127.0.0.1:50051", access_token="a")
+        await revoke_operator_session(auth_grpc_addr="127.0.0.1:50051", session_id="sid", family_id="fid", access_jti="jti")
+        await consume_step_up(auth_grpc_addr="127.0.0.1:50051", token="step", subject="subject", org_id="org", session_id="sid", action="legal_hold.manage", permission=8)
+    assert claims.subject == "subject"
+    assert claims.permissions == 9
