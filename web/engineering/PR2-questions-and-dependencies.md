@@ -1,13 +1,13 @@
 # PR2, PR3, and Track D Questions and Dependencies
 
-This sheet is the response form for the complete decision register in [the PR2 investigation note](.pr2-evidence/investigation.md). The implementation has already completed two locally validated phases on `fix/IBEX-PR2-mounted-identity-authorization-assurance`:
+This sheet is the response form for the complete decision register in [the PR2 investigation note](pr2-evidence/investigation.md). The implementation has already completed two locally validated phases on `fix/IBEX-PR2-mounted-identity-authorization-assurance`:
 
 - `5ebc6da` — route-policy parity, explicit environment profiles, non-development HMAC rejection, and AuthService-owned RS256 login/refresh.
 - `1c204fd` — Python and Go JWT protected-header and required-claim hardening.
 - Validation — 119 focused API tests passed; AuthService session-JWT and gRPC Go tests passed; Ruff passed.
 - Installed tools — Go 1.25.13, Buf 1.47.2, Helm 3.19.0, ShellCheck 0.9.0, actionlint 1.7.12, golangci-lint 2.8.0, jq, and yq.
 
-The remaining gaps are not being guessed: complete lifecycle revocation and one-time action/session-bound step-up require an explicit AuthService contract extension, storage semantics, and live integration environment.
+The branch now implements AuthService session validation, revocation, refresh-proof logout, and one-time action/session-bound step-up. Live AuthService/Redis integration and deployment behavior remain unverified; these are evidence gaps, not pending contract work.
 
 ## Required blocking answers
 

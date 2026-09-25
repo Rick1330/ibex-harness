@@ -291,7 +291,7 @@ def test_verify_rs256_rejects_each_missing_required_claim(claim: str, message: s
         )
 
 
-def test_verify_rejects_future_not_before_and_missing_rs256_session_id() -> None:
+def test_verify_rejects_future_not_before() -> None:
     import time
 
     key, pub = _rsa_keypair()
@@ -308,9 +308,19 @@ def test_verify_rejects_future_not_before_and_missing_rs256_session_id() -> None
     with pytest.raises(SessionStubError, match="not yet valid"):
         verify_token_opts(token, opts)
 
+
+def test_verify_rejects_missing_rs256_session_id() -> None:
+    key, pub = _rsa_keypair()
     missing_sid = _access_payload(str(uuid4()))
     missing_sid.pop("sid")
     token = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, missing_sid)
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
     with pytest.raises(SessionStubError, match="missing session claim"):
         verify_token_opts(token, opts)
 
@@ -318,17 +328,15 @@ def test_verify_rejects_future_not_before_and_missing_rs256_session_id() -> None
 def test_verify_rejects_wrong_jwt_type() -> None:
     key, pub = _rsa_keypair()
     token = _sign_rs256(key, {"alg": "RS256", "typ": "not-jwt"}, _access_payload(str(uuid4())))
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
     with pytest.raises(SessionStubError, match="typ mismatch"):
-        verify_token_opts(
-            token,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=pub,
-            ),
-        )
+        verify_token_opts(token, opts)
 
 
 def test_hs256_verifier_rejects_non_jwt_typ() -> None:

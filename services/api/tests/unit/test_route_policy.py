@@ -124,18 +124,27 @@ def test_mounted_route_traversal_handles_cycles_and_pathless_routes() -> None:
 def test_route_policy_rejects_missing_rows_wrong_endpoints_and_unknown_auth(monkeypatch) -> None:
     from app import route_policy
 
-    endpoint = lambda: None
+    def endpoint() -> None:
+        pass
+
+    def wrong_endpoint() -> None:
+        pass
+
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", ())
     assert executable_dependency_gaps(
         SimpleNamespace(routes=[_route("/missing", endpoint)])
     ) == (("GET", "/missing"),)
 
-    row = _policy_row("/protected", endpoint, "unsupported")
+    row = _policy_row("/protected", endpoint, "public")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
-    wrong_endpoint = _route("/protected", lambda: None)
-    assert executable_dependency_gaps(SimpleNamespace(routes=[wrong_endpoint])) == (
+    assert executable_dependency_gaps(
+        SimpleNamespace(routes=[_route("/protected", wrong_endpoint)])
+    ) == (
         ("GET", "/protected"),
     )
+
+    row = _policy_row("/protected", endpoint, "unsupported")
+    monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
     assert executable_dependency_gaps(
         SimpleNamespace(routes=[_route("/protected", endpoint)])
     ) == (("GET", "/protected"),)

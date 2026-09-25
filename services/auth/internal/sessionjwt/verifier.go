@@ -131,23 +131,31 @@ func (v *Verifier) parseAndValidateClaims(payloadB64 string, expectKind SessionK
 	if err := json.Unmarshal(raw, &claims); err != nil {
 		return Claims{}, ErrInvalidToken
 	}
-	if claims.Issuer != string(v.issuer) || claims.Audience != string(v.audience) {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.SessionKind != string(expectKind) {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" || claims.IssuedAt <= 0 {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.SessionID == "" {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.ExpiresAt < time.Now().UTC().Unix() {
-		return Claims{}, ErrExpired
-	}
-	if expectKind == KindRefresh && claims.FamilyID == "" {
-		return Claims{}, ErrInvalidToken
+	if err := validateClaims(claims, v.issuer, v.audience, expectKind); err != nil {
+		return Claims{}, err
 	}
 	return claims, nil
+}
+
+func validateClaims(claims Claims, issuer TokenIssuer, audience TokenAudience, expectKind SessionKind) error {
+	if claims.Issuer != string(issuer) || claims.Audience != string(audience) {
+		return ErrInvalidToken
+	}
+	if claims.SessionKind != string(expectKind) {
+		return ErrInvalidToken
+	}
+	if !hasRequiredIdentityClaims(claims) || claims.SessionID == "" {
+		return ErrInvalidToken
+	}
+	if claims.ExpiresAt < time.Now().UTC().Unix() {
+		return ErrExpired
+	}
+	if expectKind == KindRefresh && claims.FamilyID == "" {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func hasRequiredIdentityClaims(claims Claims) bool {
+	return claims.Subject != "" && claims.OrgID != "" && claims.JTI != "" && claims.IssuedAt > 0
 }

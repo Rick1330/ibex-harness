@@ -546,3 +546,65 @@ def test_provisional_hmac_issuer_is_rejected_outside_development() -> None:
     with pytest.raises(ApiError) as exc:
         _require_hmac(settings)
     assert exc.value.code == "SERVICE_DEGRADED"
+
+
+def test_non_development_refresh_dispatches_to_authservice_before_jwt_parsing() -> None:
+    settings = _logout_settings(_RS256_PEM)
+    with (
+        create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+        patch(
+            "app.routers.session.refresh_operator_session",
+            new=AsyncMock(
+                return_value=RefreshedSession(access_token="new-access", refresh_token="new-refresh")
+            ),
+        ) as refresh_fn,
+    ):
+        client.cookies.set("ibex_refresh", "malformed-but-cookie-present")
+        csrf = _csrf_headers(client)
+        response = client.post(
+            "/v1/operator/session/refresh",
+            headers={**csrf, "Origin": "https://operator.ibexharness.com"},
+        )
+    assert response.status_code == 200
+    assert response.json()["provisional"] is False
+    refresh_fn.assert_awaited_once()
+    assert refresh_fn.await_args.kwargs["refresh_token"] == "malformed-but-cookie-present"
+
+
+def test_me_non_development_without_public_keys_fails_degraded() -> None:
+    import asyncio
+
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+
+    from app.config import Settings
+    from app.errors import ApiError
+    from app.routers.session import me
+
+    settings = Settings.model_construct(
+        environment="staging",
+        operator_feature_enabled=True,
+        jwt_public_keys_pem=None,
+    )
+    app = Starlette()
+    app.state.settings = settings
+    request = Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/v1/operator/session/me",
+            "raw_path": b"/v1/operator/session/me",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 123),
+            "server": ("test", 80),
+            "app": app,
+        }
+    )
+    with pytest.raises(ApiError) as exc:
+        asyncio.run(me(request))
+    assert exc.value.code == "SERVICE_DEGRADED"
+    assert exc.value.detail == "set DASHBOARD_JWT_PUBLIC_KEYS_PEM"

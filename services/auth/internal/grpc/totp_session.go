@@ -162,47 +162,81 @@ func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOp
 	if !ok {
 		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
 	}
-	var accessClaims, refreshClaims *sessionjwt.Claims
-	if token := strings.TrimSpace(req.GetAccessToken()); token != "" {
-		claims, err := issuer.VerifyAccessProof(sessionjwt.RawToken(token))
-		if err == nil {
-			accessClaims = &claims
-		}
-	}
-	if token := strings.TrimSpace(req.GetRefreshToken()); token != "" {
-		claims, err := issuer.VerifyRefreshProof(sessionjwt.RefreshToken(token))
-		if err == nil {
-			refreshClaims = &claims
-		}
-	}
-	if accessClaims == nil && refreshClaims == nil {
-		return nil, status.Error(codes.Unauthenticated, "valid session proof required")
-	}
-	if accessClaims != nil && refreshClaims != nil &&
-		(accessClaims.SessionID != refreshClaims.SessionID || accessClaims.FamilyID != refreshClaims.FamilyID) {
-		return nil, status.Error(codes.Unauthenticated, "session proofs do not match")
-	}
-	claims := accessClaims
-	if claims == nil {
-		claims = refreshClaims
-	}
-	if req.GetSessionId() != "" && req.GetSessionId() != claims.SessionID {
-		return nil, status.Error(codes.Unauthenticated, "session proof does not match")
-	}
-	if req.GetFamilyId() != "" && req.GetFamilyId() != claims.FamilyID {
-		return nil, status.Error(codes.Unauthenticated, "session proof does not match")
-	}
-	if claims.SessionID == "" || claims.FamilyID == "" {
-		return nil, status.Error(codes.Unauthenticated, "incomplete session proof")
-	}
-	accessJTI := ""
-	if accessClaims != nil {
-		accessJTI = accessClaims.JTI
+	claims, accessJTI, err := verifyRevokeSessionProofs(issuer, req)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
 	if err := issuer.RevokeSession(ctx, claims.SessionID, claims.FamilyID, accessJTI); err != nil {
 		return nil, status.Error(codes.Unavailable, "session revocation unavailable")
 	}
 	return &authv1.RevokeOperatorSessionResponse{}, nil
+}
+
+func verifyRevokeSessionProofs(
+	issuer lifecycleIssuerPort,
+	req *authv1.RevokeOperatorSessionRequest,
+) (sessionjwt.Claims, string, error) {
+	accessClaims := verifiedAccessProof(issuer, req.GetAccessToken())
+	refreshClaims := verifiedRefreshProof(issuer, req.GetRefreshToken())
+	claims, err := selectRevokeProofs(accessClaims, refreshClaims)
+	if err != nil {
+		return sessionjwt.Claims{}, "", err
+	}
+	if err := validateRevokeRequest(req, claims); err != nil {
+		return sessionjwt.Claims{}, "", err
+	}
+	accessJTI := ""
+	if accessClaims != nil {
+		accessJTI = accessClaims.JTI
+	}
+	return claims, accessJTI, nil
+}
+
+func verifiedAccessProof(issuer lifecycleIssuerPort, raw string) *sessionjwt.Claims {
+	if token := strings.TrimSpace(raw); token != "" {
+		claims, err := issuer.VerifyAccessProof(sessionjwt.RawToken(token))
+		if err == nil {
+			return &claims
+		}
+	}
+	return nil
+}
+
+func verifiedRefreshProof(issuer lifecycleIssuerPort, raw string) *sessionjwt.Claims {
+	if token := strings.TrimSpace(raw); token != "" {
+		claims, err := issuer.VerifyRefreshProof(sessionjwt.RefreshToken(token))
+		if err == nil {
+			return &claims
+		}
+	}
+	return nil
+}
+
+func selectRevokeProofs(accessClaims, refreshClaims *sessionjwt.Claims) (sessionjwt.Claims, error) {
+	if accessClaims == nil && refreshClaims == nil {
+		return sessionjwt.Claims{}, errors.New("valid session proof required")
+	}
+	if accessClaims != nil && refreshClaims != nil &&
+		(accessClaims.SessionID != refreshClaims.SessionID || accessClaims.FamilyID != refreshClaims.FamilyID) {
+		return sessionjwt.Claims{}, errors.New("session proofs do not match")
+	}
+	if accessClaims != nil {
+		return *accessClaims, nil
+	}
+	return *refreshClaims, nil
+}
+
+func validateRevokeRequest(req *authv1.RevokeOperatorSessionRequest, claims sessionjwt.Claims) error {
+	if req.GetSessionId() != "" && req.GetSessionId() != claims.SessionID {
+		return errors.New("session proof does not match")
+	}
+	if req.GetFamilyId() != "" && req.GetFamilyId() != claims.FamilyID {
+		return errors.New("session proof does not match")
+	}
+	if claims.SessionID == "" || claims.FamilyID == "" {
+		return errors.New("incomplete session proof")
+	}
+	return nil
 }
 
 func (s *Server) ConsumeStepUp(ctx context.Context, req *authv1.ConsumeStepUpRequest) (*authv1.ConsumeStepUpResponse, error) {

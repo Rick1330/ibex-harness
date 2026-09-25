@@ -6,6 +6,10 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 rows = json.loads((root / ".pr2-evidence" / "route_inventory.json").read_text(encoding="utf-8"))
 public_prefixes = ("/docs", "/redoc", "/openapi.json", "/health", "/ready", "/metrics")
+source_constants = {
+    "services/api/app/routers/organizations.py": "ORGANIZATIONS_ROUTER_SOURCE",
+    "services/api/app/routers/providers.py": "PROVIDERS_ROUTER_SOURCE",
+}
 policy = []
 for row in rows:
     method = row["methods"][0]
@@ -47,9 +51,16 @@ for row in rows:
     })
 
 out = root / "services" / "api" / "app" / "route_policy_data.py"
-body = '''"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\nROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (\n'''
+body = '''"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\n'''
+for source_path, constant in source_constants.items():
+    body += f"{constant}: Final = {source_path!r}\n"
+body += "\nROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (\n"
 for item in policy:
-    body += f"    {item!r},\n"
+    row = repr(item)
+    constant = source_constants.get(item["source"])
+    if constant:
+        row = row.replace(f"'source': {item['source']!r}", f"'source': {constant}")
+    body += f"    {row},\n"
 body += ")\n\n\ndef policy_keys() -> frozenset[tuple[str, str]]:\n    return frozenset((str(row['method']), str(row['path'])) for row in ROUTE_POLICY)\n"
 out.write_text(body, encoding="utf-8")
 print(f"wrote {len(policy)} policy rows to {out}")

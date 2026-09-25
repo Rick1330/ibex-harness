@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 SESSION_KIND_ACCESS = "access"
 SESSION_KIND_REFRESH = "refresh"
 SESSION_KIND_STEP_UP = "step_up"
+_BAD_HEADER = "bad header"
 
 # Bound externally supplied cookies/headers before JWT parse (DoS / memory).
 MAX_SESSION_TOKEN_LEN = 8192
@@ -186,9 +187,9 @@ def _header_alg(header_b64: str) -> str:
     try:
         header = json.loads(_b64url_decode(header_b64))
     except (json.JSONDecodeError, SessionStubError) as exc:
-        raise SessionStubError("bad header") from exc
+        raise SessionStubError(_BAD_HEADER) from exc
     if not isinstance(header, dict):
-        raise SessionStubError("bad header")
+        raise SessionStubError(_BAD_HEADER)
     return str(header.get("alg", ""))
 
 
@@ -196,9 +197,9 @@ def _header_typ(header_b64: str) -> str:
     try:
         header = json.loads(_b64url_decode(header_b64))
     except (json.JSONDecodeError, SessionStubError) as exc:
-        raise SessionStubError("bad header") from exc
+        raise SessionStubError(_BAD_HEADER) from exc
     if not isinstance(header, dict):
-        raise SessionStubError("bad header")
+        raise SessionStubError(_BAD_HEADER)
     return str(header.get("typ", ""))
 
 

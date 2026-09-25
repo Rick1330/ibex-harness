@@ -198,10 +198,12 @@ Exceptions:
 - G9:
 ```
 
-## Final execution status
+## Historical execution snapshot
+
+The following execution details describe the earlier snapshot recorded before later remediation commits; they are not the current branch status. See the [current final validation report](final-validation.md) for results associated with the latest validated commit.
 
 The final execution tranche added the AuthService lifecycle RPCs `ValidateOperatorSession`, `RevokeOperatorSession`, and `ConsumeStepUp`, server-side session/access/family/step-up state operations, explicit `sid`/`fid`/`kid`/action bindings, AuthService-backed API validation and logout, ordered action-bound step-up dependencies, executable route-policy dependency parity, production Origin/Referer checks, authenticated response cache headers, SSE anti-buffering headers, and malformed-token fuzz coverage. The complete API suite passes with 605 passed and 10 skipped tests. The complete AuthService suite, Go vet, Go race suite, JWT fuzz campaign, Ruff, Buf lint, scoped breaking check, and ephemeral generation pass.
 
 The coverage evidence is deliberately separated: full API coverage is 94.17% against the repository fail-under target of 95%; diff-cover against the complete origin/main delta reports 62%. These are validation shortfalls, not claims of passing gates. The remaining coverage work is concentrated in new transport error branches, non-development cookie/logout branches, configuration rejection branches, route traversal edges, and production step-up dependency-unavailable paths. Live runtime evidence remains unavailable because the sandbox has no Postgres, Redis, AuthService listener, browser-capable Playwright, Docker, or Podman.
 
-The exact command results, evidence classification, remaining external blockers, DCO status, and no-push confirmation are recorded in `.pr2-evidence/final-validation.md`.
+The exact command results, evidence classification, and remaining external blockers for that historical snapshot were recorded in `.pr2-evidence/final-validation.md` before the evidence files moved. Current results are in [final-validation.md](final-validation.md).

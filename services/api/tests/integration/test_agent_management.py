@@ -51,7 +51,11 @@ async def factory() -> async_sessionmaker[AsyncSession]:
 
 
 def _client(org_id: UUID, user_id: str) -> TestClient:
-    settings = Settings(database_url=_require_dsn(), operator_feature_enabled=True)
+    settings = Settings(
+        database_url=_require_dsn(),
+        environment="development",
+        operator_feature_enabled=True,
+    )
     validator = StaticTokenValidator(
         {
             "tok": ValidateResult(

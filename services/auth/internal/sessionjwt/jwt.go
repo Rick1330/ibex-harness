@@ -211,28 +211,33 @@ func (i *Issuer) ValidateAccess(ctx context.Context, accessToken RawToken) (Clai
 	if err != nil {
 		return Claims{}, err
 	}
-	revoked, err := i.jtiStore.SessionRevoked(ctx, claims.SessionID)
-	if err != nil || revoked {
-		if err != nil {
-			return Claims{}, err
-		}
-		return Claims{}, ErrInvalidToken
+	checks := []struct {
+		id     string
+		lookup func(context.Context, string) (bool, error)
+	}{
+		{claims.SessionID, i.jtiStore.SessionRevoked},
+		{claims.FamilyID, i.jtiStore.FamilyRevoked},
+		{claims.JTI, i.jtiStore.AccessRevoked},
 	}
-	familyRevoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
-	if err != nil || familyRevoked {
-		if err != nil {
+	for _, check := range checks {
+		if err := requireActiveSessionState(ctx, check.id, check.lookup); err != nil {
 			return Claims{}, err
 		}
-		return Claims{}, ErrInvalidToken
-	}
-	revoked, err = i.jtiStore.AccessRevoked(ctx, claims.JTI)
-	if err != nil || revoked {
-		if err != nil {
-			return Claims{}, err
-		}
-		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil
+}
+
+type revocationLookup func(context.Context, string) (bool, error)
+
+func requireActiveSessionState(ctx context.Context, id string, lookup revocationLookup) error {
+	revoked, err := lookup(ctx, id)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
 // VerifyAccessProof verifies signature and claims without consulting revocation state.

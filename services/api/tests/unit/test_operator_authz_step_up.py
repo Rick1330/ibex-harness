@@ -236,11 +236,9 @@ def test_step_up_header_denies(case: str) -> None:
         ({"permissions": 0}, {}),
     ],
 )
-def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
+async def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     token_kwargs: dict[str, object], identity_kwargs: dict[str, object]
 ) -> None:
-    import asyncio
-
     from app.auth.client import ValidateResult
     from app.step_up import enforce_step_up
 
@@ -280,11 +278,8 @@ def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     identity.update(identity_kwargs)
     caller = ValidateResult(**identity)
 
-    async def enforce() -> None:
-        await enforce_step_up(req, caller, required_permission=SECRET_USE, action=action)
-
     with pytest.raises(ApiError) as exc:
-        asyncio.run(enforce())
+        await enforce_step_up(req, caller, required_permission=SECRET_USE, action=action)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert exc.value.message == "Step-up authentication required"
 

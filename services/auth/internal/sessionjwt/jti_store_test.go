@@ -149,53 +149,26 @@ func TestRefreshPair_ReuseRevokesFamilyDescendants(t *testing.T) {
 	}
 }
 
-func TestIssuer_ConcurrentStepUpConsumptionHasExactlyOneWinner(t *testing.T) {
-	issuer := mustIssuer(t, time.Minute, time.Hour, time.Minute)
-	token, _, err := issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
-		Subject: "u", OrgID: "o", Permissions: 8, SessionID: "sid", Action: "legal_hold.manage",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	expect := sessionjwt.StepUpExpectations{Subject: "u", OrgID: "o", SessionID: "sid", Action: "legal_hold.manage", RequiredPermission: 8}
-	const workers = 32
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	wins, unexpected := 0, 0
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			_, consumeErr := issuer.ConsumeStepUp(context.Background(), sessionjwt.RawToken(token), expect)
-			mu.Lock()
-			defer mu.Unlock()
-			if consumeErr == nil {
-				wins++
-			} else if !errors.Is(consumeErr, sessionjwt.ErrInvalidToken) {
-				unexpected++
-			}
-		}()
-	}
-	close(start)
-	wg.Wait()
-	if wins != 1 || unexpected != 0 {
-		t.Fatalf("step-up consumption: winners=%d unexpected=%d", wins, unexpected)
-	}
-}
-
-func TestIssuer_ConcurrentRedisStepUpConsumptionHasExactlyOneWinner(t *testing.T) {
-	t.Parallel()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	store, err := sessionjwt.NewRedisJTIStore(rdb)
-	if err != nil {
-		t.Fatal(err)
+func testIssuerWithStore(t *testing.T, redisBacked bool) *sessionjwt.Issuer {
+	t.Helper()
+	var store sessionjwt.JTIStore = &sessionjwt.MemoryJTIStore{}
+	if redisBacked {
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = rdb.Close() })
+		redisStore, err := sessionjwt.NewRedisJTIStore(rdb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		store = redisStore
 	}
 	issuer := mustIssuer(t, time.Minute, time.Hour, time.Minute)
 	issuer.WithJTIStore(store)
+	return issuer
+}
+
+func concurrentStepUpWinners(t *testing.T, issuer *sessionjwt.Issuer) (int, int) {
+	t.Helper()
 	token, _, err := issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
 		Subject: "u", OrgID: "o", Permissions: 8, SessionID: "sid", Action: "legal_hold.manage",
 	})
@@ -225,13 +198,11 @@ func TestIssuer_ConcurrentRedisStepUpConsumptionHasExactlyOneWinner(t *testing.T
 	}
 	close(start)
 	wg.Wait()
-	if wins != 1 || unexpected != 0 {
-		t.Fatalf("Redis step-up consumption: winners=%d unexpected=%d", wins, unexpected)
-	}
+	return wins, unexpected
 }
 
-func TestIssuer_ConcurrentRefreshReplayRevokesSessionAndReturnedAccess(t *testing.T) {
-	issuer := mustIssuer(t, time.Minute, time.Hour, time.Minute)
+func assertRefreshReplayRevokesAccess(t *testing.T, issuer *sessionjwt.Issuer) {
+	t.Helper()
 	access, refresh, _, _, err := issuer.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o"})
 	if err != nil {
 		t.Fatal(err)
@@ -241,23 +212,27 @@ func TestIssuer_ConcurrentRefreshReplayRevokesSessionAndReturnedAccess(t *testin
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var descendants []string
+	var unexpected error
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
 			childAccess, _, _, _, refreshErr := issuer.RefreshPair(context.Background(), sessionjwt.RefreshToken(refresh))
+			mu.Lock()
+			defer mu.Unlock()
 			if refreshErr == nil {
-				mu.Lock()
 				descendants = append(descendants, childAccess)
-				mu.Unlock()
 			} else if !errors.Is(refreshErr, sessionjwt.ErrInvalidToken) {
-				t.Errorf("refresh error: %v", refreshErr)
+				unexpected = refreshErr
 			}
 		}()
 	}
 	close(start)
 	wg.Wait()
+	if unexpected != nil {
+		t.Fatalf("unexpected refresh error: %v", unexpected)
+	}
 	if len(descendants) == 0 {
 		t.Fatal("expected one initial refresh to win")
 	}
@@ -268,50 +243,31 @@ func TestIssuer_ConcurrentRefreshReplayRevokesSessionAndReturnedAccess(t *testin
 	}
 }
 
-func TestIssuer_ConcurrentRedisRefreshReplayRevokesSessionAndReturnedAccess(t *testing.T) {
-	t.Parallel()
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	store, err := sessionjwt.NewRedisJTIStore(rdb)
-	if err != nil {
-		t.Fatal(err)
-	}
-	issuer := mustIssuer(t, time.Minute, time.Hour, time.Minute)
-	issuer.WithJTIStore(store)
-	access, refresh, _, _, err := issuer.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const workers = 16
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var descendants []string
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			childAccess, _, _, _, refreshErr := issuer.RefreshPair(context.Background(), sessionjwt.RefreshToken(refresh))
-			if refreshErr == nil {
-				mu.Lock()
-				descendants = append(descendants, childAccess)
-				mu.Unlock()
-			} else if !errors.Is(refreshErr, sessionjwt.ErrInvalidToken) {
-				t.Errorf("Redis refresh error: %v", refreshErr)
+func TestIssuer_ConcurrentStepUpConsumptionHasExactlyOneWinner(t *testing.T) {
+	for _, backend := range []struct {
+		name        string
+		redisBacked bool
+	}{{name: "memory"}, {name: "redis", redisBacked: true}} {
+		t.Run(backend.name, func(t *testing.T) {
+			t.Parallel()
+			issuer := testIssuerWithStore(t, backend.redisBacked)
+			wins, unexpected := concurrentStepUpWinners(t, issuer)
+			if wins != 1 || unexpected != 0 {
+				t.Fatalf("step-up consumption: winners=%d unexpected=%d", wins, unexpected)
 			}
-		}()
+		})
 	}
-	close(start)
-	wg.Wait()
-	if len(descendants) == 0 {
-		t.Fatal("expected one Redis-backed initial refresh to win")
-	}
-	for _, candidate := range append([]string{access}, descendants...) {
-		if _, err := issuer.ValidateAccess(context.Background(), sessionjwt.RawToken(candidate)); !errors.Is(err, sessionjwt.ErrInvalidToken) {
-			t.Fatalf("Redis-backed access token survived concurrent refresh replay: %v", err)
-		}
+}
+
+func TestIssuer_ConcurrentRefreshReplayRevokesSessionAndReturnedAccess(t *testing.T) {
+	for _, backend := range []struct {
+		name        string
+		redisBacked bool
+	}{{name: "memory"}, {name: "redis", redisBacked: true}} {
+		t.Run(backend.name, func(t *testing.T) {
+			t.Parallel()
+			assertRefreshReplayRevokesAccess(t, testIssuerWithStore(t, backend.redisBacked))
+		})
 	}
 }
 

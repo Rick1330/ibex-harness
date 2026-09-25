@@ -77,7 +77,11 @@ async def test_cross_tenant_org_get_is_404(factory: async_sessionmaker[AsyncSess
             },
         )
 
-        settings = Settings(database_url=_require_dsn(), operator_feature_enabled=True)
+        settings = Settings(
+            database_url=_require_dsn(),
+            environment="development",
+            operator_feature_enabled=True,
+        )
         validator = StaticTokenValidator(
             {
                 "tok-a": ValidateResult(

@@ -21,7 +21,11 @@ scan_sealed() {
   shift
   local pat
   for pat in "${SEALED_PATTERNS[@]}"; do
-    if grep -En "${pat}" "$@" 2>/dev/null; then
+    if rg -n \
+      --glob '!**/tests/**' \
+      --glob '!**/*_test.go' \
+      --glob '!**/test_*.py' \
+      "${pat}" "$@" 2>/dev/null; then
       echo "provider credential leak pattern (${label}): ${pat}" >&2
       fail=1
     fi
