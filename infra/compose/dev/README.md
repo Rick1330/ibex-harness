@@ -39,6 +39,8 @@ docker compose down -v
 | ClickHouse | `clickhouse/clickhouse-server:24.8.14.39` | 8123 (HTTP), **9002** (native) | Analytics / `llm_traces` / `mcp_tool_calls` |
 | MinIO | `cgr.dev/chainguard/minio:latest` | 9000 (API), 9001 (console) | Object storage |
 
+The internal `minio-init` service runs first as root and assigns the named MinIO volume to UID `65532`, which is the non-root user used by the Chainguard image. Compose then starts MinIO only after that initialization completes successfully.
+
 ClickHouse **native** is mapped to host port **9002** so it does not conflict with MinIO on **9000**. Use HTTP (`8123`) for typical local DSNs — see [ENVIRONMENT_VARIABLES.md](../../../web/engineering/ENVIRONMENT_VARIABLES.md).
 
 ## Planned compose profiles (not required yet)

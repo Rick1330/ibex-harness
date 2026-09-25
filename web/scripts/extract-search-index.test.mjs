@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { assertSearchIndexContract } from "./extract-search-index.mjs";
+import { assertSearchIndexContract } from "./search-index-contract.mjs";
 
 const requiredDocs = [
   {

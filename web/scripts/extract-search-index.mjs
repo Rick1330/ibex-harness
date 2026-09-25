@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { generateOgImages } from "./generate-og-images.mjs";
+import { assertSearchIndexContract } from "./search-index-contract.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
@@ -87,65 +88,8 @@ async function fetchSearchIndex(port) {
       `search index too large (${bodyBytes} bytes); max ${MAX_INDEX_BYTES}`,
     );
   }
-  await assertSearchIndexContract(body);
+  await assertSearchIndexContract(body, { routeRoot: appRoot });
   return body;
-}
-
-async function assertSearchIndexContract(body, { routeRoot = appRoot } = {}) {
-  const payload = JSON.parse(body);
-  const storedDocs = payload?.docs?.docs;
-  let docs = [];
-  if (Array.isArray(storedDocs)) {
-    docs = storedDocs;
-  } else if (storedDocs && typeof storedDocs === "object") {
-    docs = Object.values(storedDocs);
-  }
-  if (docs.length === 0 || docs.some((doc) => !doc || typeof doc !== "object")) {
-    throw new Error("search index does not contain the expected Orama document collection");
-  }
-
-  const byUrl = new Map(docs.map((doc) => [doc.url, doc]));
-  for (const [url, token] of requiredSearchDocuments()) {
-    await assertRequiredSearchDocument(byUrl, routeRoot, url, token);
-  }
-  assertExcludedSearchDocuments(byUrl);
-}
-
-function requiredSearchDocuments() {
-  return new Map([
-    ["/docs/adr/0081-fail-closed-proxy-runtime-controls", "SERVICE_DEGRADED"],
-    ["/roadmap/phase-4-multi-provider/findings", "F4-037"],
-    ["/roadmap/phase-4-multi-provider/risks", "Redis"],
-  ]);
-}
-
-async function assertRequiredSearchDocument(byUrl, routeRoot, url, token) {
-  const doc = byUrl.get(url);
-  if (!doc) throw new Error(`required search document is missing: ${url}`);
-  const searchable = `${doc.title ?? ""}\n${doc.description ?? ""}\n${doc.content ?? ""}`;
-  if (!searchable.toLowerCase().includes(token.toLowerCase())) {
-    throw new Error(`search document ${url} is missing its required token ${token}`);
-  }
-  const routeArtifact = path.join(
-    routeRoot,
-    ".next",
-    "server",
-    "app",
-    `${url.slice(1)}.html`,
-  );
-  try {
-    await access(routeArtifact);
-  } catch {
-    throw new Error(`search document ${url} has no compiled route artifact`);
-  }
-}
-
-function assertExcludedSearchDocuments(byUrl) {
-  const excludedMilestone =
-    "/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract";
-  if (byUrl.has(excludedMilestone)) {
-    throw new Error(`dense milestone unexpectedly included in search index: ${excludedMilestone}`);
-  }
 }
 
 function spawnNextStart(port) {
@@ -221,8 +165,6 @@ async function main() {
   }
   await extractToPublic(EXTRACT_PORT);
 }
-
-export { assertSearchIndexContract };
 
 if (
   process.argv[1] &&
