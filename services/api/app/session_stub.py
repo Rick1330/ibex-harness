@@ -55,6 +55,9 @@ class SessionClaims:
     jti: str
     # Verifier outcome (not the unverified JWT header alg).
     verify_method: str  # "RS256" | "HS256"
+    session_id: str = ""
+    family_id: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +70,9 @@ class TokenIssueOpts:
     subject: str
     session_kind: str
     ttl_seconds: int
+    session_id: str | None = None
+    family_id: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,8 +97,13 @@ def issue_token_opts(opts: TokenIssueOpts) -> str:
         "iat": now,
         "exp": now + opts.ttl_seconds,
         "jti": secrets.token_urlsafe(16),
+        "sid": opts.session_id or secrets.token_urlsafe(16),
         "provisional": True,  # 4.P.0 marker — remove when auth issues sessions
     }
+    if opts.family_id:
+        payload["fid"] = opts.family_id
+    if opts.action:
+        payload["action"] = opts.action
     body = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}."
     body += _b64url(json.dumps(payload, separators=(',', ':')).encode())
     sig = hmac.new(opts.secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
@@ -221,6 +232,9 @@ def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
             exp=int(payload["exp"]),
             iat=int(payload["iat"]),
             jti=str(payload["jti"]),
+            session_id=str(payload.get("sid", "")),
+            family_id=str(payload["fid"]) if payload.get("fid") else None,
+            action=str(payload["action"]) if payload.get("action") else None,
             verify_method=verify_method,
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -239,7 +253,10 @@ def _validate_claims(
         raise SessionStubError("expired")
     if "nbf" in payload and int(payload["nbf"]) > now:
         raise SessionStubError("not yet valid")
-    return _to_claims(payload, verify_method=verify_method)
+    claims = _to_claims(payload, verify_method=verify_method)
+    if verify_method == "RS256" and not claims.session_id:
+        raise SessionStubError("missing session claim")
+    return claims
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:

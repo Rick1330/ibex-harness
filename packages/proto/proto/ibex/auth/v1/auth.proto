@@ -48,6 +48,15 @@ service AuthService {
 
   // IssueOperatorSession issues RS256 access/refresh JWTs for the authenticated caller.
   rpc IssueOperatorSession(IssueOperatorSessionRequest) returns (IssueOperatorSessionResponse);
+
+  // ValidateOperatorSession verifies an access JWT and checks server-side revocation state.
+  rpc ValidateOperatorSession(ValidateOperatorSessionRequest) returns (ValidateOperatorSessionResponse);
+
+  // RevokeOperatorSession invalidates the current session and its refresh family.
+  rpc RevokeOperatorSession(RevokeOperatorSessionRequest) returns (RevokeOperatorSessionResponse);
+
+  // ConsumeStepUp atomically consumes a bound one-time step-up JWT.
+  rpc ConsumeStepUp(ConsumeStepUpRequest) returns (ConsumeStepUpResponse);
 }
 
 enum TokenType {
@@ -221,6 +230,8 @@ message CreateStepUpTokenRequest {
   string org_id = 1;
   string user_id = 2;
   string totp_code = 3;
+  string session_id = 4;
+  string action = 5;
 }
 
 message CreateStepUpTokenResponse {
@@ -239,4 +250,41 @@ message IssueOperatorSessionResponse {
   string refresh_token = 2;
   google.protobuf.Timestamp access_expires_at = 3;
   google.protobuf.Timestamp refresh_expires_at = 4;
+}
+
+message ValidateOperatorSessionRequest {
+  string access_token = 1;
+}
+
+message ValidateOperatorSessionResponse {
+  string subject = 1;
+  string org_id = 2;
+  int64 permissions = 3;
+  string session_id = 4;
+  string jti = 5;
+}
+
+message RevokeOperatorSessionRequest {
+  string session_id = 1;
+  string family_id = 2;
+  string access_jti = 3;
+}
+
+message RevokeOperatorSessionResponse {}
+
+message ConsumeStepUpRequest {
+  string step_up_token = 1;
+  string expected_subject = 2;
+  string expected_org_id = 3;
+  string expected_session_id = 4;
+  string expected_action = 5;
+  int64 required_permission = 6;
+}
+
+message ConsumeStepUpResponse {
+  string subject = 1;
+  string org_id = 2;
+  string session_id = 3;
+  string action = 4;
+  int64 permissions = 5;
 }

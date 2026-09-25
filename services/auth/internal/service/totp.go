@@ -85,6 +85,8 @@ type CreateStepUpParams struct {
 	UserID      UserID
 	Code        string
 	Permissions int64
+	SessionID   string
+	Action      string
 }
 
 // TotpService handles enrollment and step-up issuance.
@@ -225,6 +227,7 @@ func (s *TotpService) CreateStepUp(ctx context.Context, p CreateStepUpParams) (s
 	s.attempts.Reset(ref)
 	return s.issuer.IssueStepUp(sessionjwt.IssueStepUpParams{
 		Subject: sessionjwt.Subject(userID), OrgID: sessionjwt.OrgID(orgID), Permissions: p.Permissions,
+		SessionID: p.SessionID, Action: p.Action,
 	})
 }
 

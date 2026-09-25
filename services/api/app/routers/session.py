@@ -17,7 +17,12 @@ from app.auth.client import (
     ValidateResult,
     parse_authorization_header,
 )
-from app.auth.session_refresh import issue_operator_session, refresh_operator_session
+from app.auth.session_refresh import (
+    issue_operator_session,
+    refresh_operator_session,
+    revoke_operator_session,
+    validate_operator_session,
+)
 from app.config import Settings
 from app.deps import get_validator
 from app.errors import ApiError
@@ -366,6 +371,51 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> dict[str, str]:
     settings = _settings(request)
+    if settings.environment != "development":
+        access = request.cookies.get(settings.dashboard_session_cookie_name)
+        refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
+        if access or refresh:
+            sid = family_id = access_jti = ""
+            try:
+                if access:
+                    access_claims = verify_token_opts(
+                        access,
+                        TokenVerifyOpts(
+                            secret=None,
+                            issuer=settings.jwt_issuer,
+                            audience=settings.jwt_audience,
+                            expect_kind=SESSION_KIND_ACCESS,
+                            public_keys_pem=settings.jwt_public_keys_pem,
+                        ),
+                    )
+                    sid, access_jti = access_claims.session_id, access_claims.jti
+                if refresh:
+                    refresh_claims = verify_token_opts(
+                        refresh,
+                        TokenVerifyOpts(
+                            secret=None,
+                            issuer=settings.jwt_issuer,
+                            audience=settings.jwt_audience,
+                            expect_kind=SESSION_KIND_REFRESH,
+                            public_keys_pem=settings.jwt_public_keys_pem,
+                        ),
+                    )
+                    sid = sid or refresh_claims.session_id
+                    family_id = refresh_claims.family_id or ""
+            except SessionStubError as exc:
+                raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
+            try:
+                await revoke_operator_session(
+                    auth_grpc_addr=settings.auth_grpc_addr,
+                    session_id=sid,
+                    family_id=family_id,
+                    access_jti=access_jti,
+                    timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+                )
+            except AuthFailedError as exc:
+                raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
+            except AuthUnavailableError as exc:
+                raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
     for name in (
         settings.dashboard_session_cookie_name,
         settings.dashboard_refresh_cookie_name,
@@ -395,6 +445,23 @@ async def me(request: Request) -> dict[str, object]:
     raw = request.cookies.get(settings.dashboard_session_cookie_name)
     if not raw:
         return await _me_bearer(request)
+    if settings.environment != "development":
+        try:
+            claims = await validate_operator_session(
+                auth_grpc_addr=settings.auth_grpc_addr,
+                access_token=raw,
+                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+            )
+        except AuthFailedError as exc:
+            raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
+        except AuthUnavailableError as exc:
+            raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+        return {
+            "auth": "cookie",
+            "org_id": claims.org_id,
+            "sub": claims.subject,
+            "provisional": False,
+        }
     secret = settings.jwt_hmac_secret if settings.environment == "development" else None
     return _me_cookie(raw, settings=settings, secret=secret)
 

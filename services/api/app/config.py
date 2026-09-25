@@ -282,6 +282,8 @@ class Settings(BaseSettings):
         if self.environment != "development" and self.operator_feature_enabled:
             if not self.jwt_public_keys_pem:
                 raise ValueError("DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development")
+            if not self.redis_url:
+                raise ValueError("REDIS_URL is required for non-development operator sessions")
             if not self.dashboard_csrf_secret:
                 raise ValueError("DASHBOARD_CSRF_SECRET is required outside development")
             if not self.cookie_secure:

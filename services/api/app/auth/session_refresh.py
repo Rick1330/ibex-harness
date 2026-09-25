@@ -7,15 +7,24 @@ import logging
 from dataclasses import dataclass
 
 import grpc
-from authclient.codec import AuthCodecError
+from authclient.codec import AuthCodecError, encode_varint
 from authclient.errors import AuthFailedError, AuthUnavailableError
 from authclient.target import assert_trusted_insecure_auth_target
 
-from app.auth.session_refresh_codec import decode_string_field, encode_issue_with_refresh
+from app.auth.session_refresh_codec import (
+    decode_int64_field,
+    decode_string_field,
+    decode_string_fields,
+    encode_issue_with_refresh,
+    encode_string_fields,
+)
 
 logger = logging.getLogger(__name__)
 
 _ISSUE_METHOD = "/ibex.auth.v1.AuthService/IssueOperatorSession"
+_VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateOperatorSession"
+_REVOKE_METHOD = "/ibex.auth.v1.AuthService/RevokeOperatorSession"
+_CONSUME_STEP_UP_METHOD = "/ibex.auth.v1.AuthService/ConsumeStepUp"
 
 # Re-export for unit tests that previously imported private helpers.
 _decode_string_field = decode_string_field
@@ -25,6 +34,64 @@ _decode_string_field = decode_string_field
 class RefreshedSession:
     access_token: str
     refresh_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedSession:
+    subject: str
+    org_id: str
+    permissions: int
+    session_id: str
+    jti: str
+
+
+async def _call_lifecycle(
+    *, auth_grpc_addr: str, method: str, payload: bytes, timeout_seconds: float
+) -> bytes:
+    assert_trusted_insecure_auth_target(auth_grpc_addr)
+    try:
+        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
+            stub = channel.unary_unary(method, request_serializer=lambda b: b, response_deserializer=lambda b: b)
+            return await asyncio.wait_for(stub(payload), timeout=timeout_seconds)
+    except TimeoutError as exc:
+        raise AuthUnavailableError("auth lifecycle timeout") from exc
+    except grpc.aio.AioRpcError as exc:
+        if exc.code() in (grpc.StatusCode.UNAUTHENTICATED, grpc.StatusCode.PERMISSION_DENIED):
+            raise AuthFailedError("invalid session") from exc
+        raise AuthUnavailableError("auth lifecycle unavailable") from exc
+
+
+async def validate_operator_session(*, auth_grpc_addr: str, access_token: str, timeout_seconds: float = 5.0) -> ValidatedSession:
+    raw = await _call_lifecycle(
+        auth_grpc_addr=auth_grpc_addr,
+        method=_VALIDATE_METHOD,
+        payload=encode_string_fields({1: access_token}),
+        timeout_seconds=timeout_seconds,
+    )
+    try:
+        strings = decode_string_fields(raw, {1, 2, 4, 5})
+        permissions = decode_int64_field(raw, 3)
+    except AuthCodecError as exc:
+        raise AuthUnavailableError("auth session validation codec error") from exc
+    if not strings.get(1) or not strings.get(2) or not strings.get(4) or not strings.get(5) or permissions is None:
+        raise AuthUnavailableError("auth session validation returned incomplete claims")
+    return ValidatedSession(strings[1], strings[2], permissions, strings[4], strings[5])
+
+
+async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, family_id: str = "", access_jti: str = "", timeout_seconds: float = 5.0) -> None:
+    await _call_lifecycle(
+        auth_grpc_addr=auth_grpc_addr,
+        method=_REVOKE_METHOD,
+        payload=encode_string_fields({1: session_id, 2: family_id, 3: access_jti}),
+        timeout_seconds=timeout_seconds,
+    )
+
+
+async def consume_step_up(*, auth_grpc_addr: str, token: str, subject: str, org_id: str, session_id: str, action: str, permission: int, timeout_seconds: float = 5.0) -> None:
+    payload = encode_string_fields({1: token, 2: subject, 3: org_id, 4: session_id, 5: action})
+    if permission:
+        payload += b"\x30" + encode_varint(permission)
+    await _call_lifecycle(auth_grpc_addr=auth_grpc_addr, method=_CONSUME_STEP_UP_METHOD, payload=payload, timeout_seconds=timeout_seconds)
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:

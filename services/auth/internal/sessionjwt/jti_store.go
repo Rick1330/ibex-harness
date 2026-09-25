@@ -13,6 +13,9 @@ import (
 const (
 	refreshJTIKeyPrefix           = "auth:session:refresh-jti:"
 	refreshFamilyRevokedKeyPrefix = "auth:session:refresh-family-revoked:"
+	sessionRevokedKeyPrefix       = "auth:session:revoked:"
+	accessRevokedKeyPrefix        = "auth:session:access-revoked:"
+	stepUpJTIKeyPrefix            = "auth:session:step-up-jti:"
 	memoryJTIPurgeEveryN          = 64
 	memoryJTIPurgeMinInterval     = time.Minute
 )
@@ -25,6 +28,11 @@ type JTIStore interface {
 	RevokeFamily(ctx context.Context, familyID string, ttl time.Duration) error
 	// FamilyRevoked reports whether the family was revoked.
 	FamilyRevoked(ctx context.Context, familyID string) (bool, error)
+	RevokeSession(ctx context.Context, sessionID string, ttl time.Duration) error
+	SessionRevoked(ctx context.Context, sessionID string) (bool, error)
+	RevokeAccess(ctx context.Context, jti string, ttl time.Duration) error
+	AccessRevoked(ctx context.Context, jti string) (bool, error)
+	ConsumeStepUp(ctx context.Context, jti string, ttl time.Duration) (bool, error)
 }
 
 type memoryJTIEntry struct {
@@ -141,6 +149,54 @@ func (s *MemoryJTIStore) FamilyRevoked(_ context.Context, familyID string) (bool
 	return false, nil
 }
 
+func (s *MemoryJTIStore) RevokeSession(_ context.Context, sessionID string, ttl time.Duration) error {
+	if sessionID == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	s.revoked.Store("session:"+sessionID, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
+	return nil
+}
+
+func (s *MemoryJTIStore) SessionRevoked(_ context.Context, sessionID string) (bool, error) {
+	return s.revokedLive("session:" + sessionID), nil
+}
+
+func (s *MemoryJTIStore) RevokeAccess(_ context.Context, jti string, ttl time.Duration) error {
+	if jti == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	s.revoked.Store("access:"+jti, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
+	return nil
+}
+
+func (s *MemoryJTIStore) AccessRevoked(_ context.Context, jti string) (bool, error) {
+	return s.revokedLive("access:" + jti), nil
+}
+
+func (s *MemoryJTIStore) ConsumeStepUp(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
+	return s.ConsumeOnce(ctx, "step-up:"+jti, ttl)
+}
+
+func (s *MemoryJTIStore) revokedLive(key string) bool {
+	now := time.Now().UTC()
+	v, ok := s.revoked.Load(key)
+	if !ok {
+		return false
+	}
+	ent := v.(memoryJTIEntry)
+	if now.Before(ent.expiresAt) {
+		return true
+	}
+	_ = s.revoked.CompareAndDelete(key, v)
+	return false
+}
+
 // RedisJTIStore persists refresh JTI consumption with TTL = remaining token life.
 type RedisJTIStore struct {
 	client redis.UniversalClient
@@ -190,4 +246,41 @@ func (s *RedisJTIStore) FamilyRevoked(ctx context.Context, familyID string) (boo
 		return false, fmt.Errorf("sessionjwt: family revoked check: %w", err)
 	}
 	return n > 0, nil
+}
+
+func (s *RedisJTIStore) RevokeSession(ctx context.Context, sessionID string, ttl time.Duration) error {
+	if sessionID == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	return s.client.Set(ctx, sessionRevokedKeyPrefix+sessionID, "1", ttl).Err()
+}
+
+func (s *RedisJTIStore) SessionRevoked(ctx context.Context, sessionID string) (bool, error) {
+	n, err := s.client.Exists(ctx, sessionRevokedKeyPrefix+sessionID).Result()
+	return n > 0, err
+}
+
+func (s *RedisJTIStore) RevokeAccess(ctx context.Context, jti string, ttl time.Duration) error {
+	if jti == "" {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	return s.client.Set(ctx, accessRevokedKeyPrefix+jti, "1", ttl).Err()
+}
+
+func (s *RedisJTIStore) AccessRevoked(ctx context.Context, jti string) (bool, error) {
+	n, err := s.client.Exists(ctx, accessRevokedKeyPrefix+jti).Result()
+	return n > 0, err
+}
+
+func (s *RedisJTIStore) ConsumeStepUp(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	return s.client.SetNX(ctx, stepUpJTIKeyPrefix+jti, "1", ttl).Result()
 }

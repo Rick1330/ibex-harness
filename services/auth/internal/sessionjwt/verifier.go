@@ -13,6 +13,7 @@ type Verifier struct {
 	keys     []*rsa.PublicKey
 	issuer   TokenIssuer
 	audience TokenAudience
+	keyID    string
 }
 
 // VerifierConfig scopes NewVerifier construction.
@@ -20,6 +21,7 @@ type VerifierConfig struct {
 	PublicKeysPEM PublicKeysPEM
 	Issuer        TokenIssuer
 	Audience      TokenAudience
+	KeyID         string
 }
 
 type jwtWireParts struct {
@@ -37,7 +39,7 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("sessionjwt: no public keys")
 	}
-	return &Verifier{keys: keys, issuer: cfg.Issuer, audience: cfg.Audience}, nil
+	return &Verifier{keys: keys, issuer: cfg.Issuer, audience: cfg.Audience, keyID: strings.TrimSpace(cfg.KeyID)}, nil
 }
 
 // Verify validates signature and standard claims; expectKind must match session_kind.
@@ -48,6 +50,9 @@ func (v *Verifier) Verify(token RawToken, expectKind SessionKind) (Claims, error
 	}
 	if err := validateHeader(parts.header); err != nil {
 		return Claims{}, err
+	}
+	if v.keyID != "" && headerKeyID(parts.header) != v.keyID {
+		return Claims{}, ErrInvalidToken
 	}
 	if err := v.verifySignature(parts); err != nil {
 		return Claims{}, err
@@ -63,6 +68,7 @@ func validateHeader(headerB64 string) error {
 	var header struct {
 		Algorithm string `json:"alg"`
 		Type      string `json:"typ"`
+		KeyID     string `json:"kid"`
 	}
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return ErrInvalidToken
@@ -70,7 +76,28 @@ func validateHeader(headerB64 string) error {
 	if header.Algorithm != algRS256 || header.Type != "JWT" {
 		return ErrInvalidToken
 	}
+	return validateKeyID(header.KeyID)
+}
+
+func validateKeyID(kid string) error {
+	if strings.TrimSpace(kid) == "" {
+		return ErrInvalidToken
+	}
 	return nil
+}
+
+func headerKeyID(headerB64 string) string {
+	raw, err := b64dec(headerB64)
+	if err != nil {
+		return ""
+	}
+	var header struct {
+		KeyID string `json:"kid"`
+	}
+	if json.Unmarshal(raw, &header) != nil {
+		return ""
+	}
+	return strings.TrimSpace(header.KeyID)
 }
 
 func splitJWT(token string) (jwtWireParts, error) {
@@ -111,6 +138,9 @@ func (v *Verifier) parseAndValidateClaims(payloadB64 string, expectKind SessionK
 		return Claims{}, ErrInvalidToken
 	}
 	if claims.Subject == "" || claims.OrgID == "" || claims.JTI == "" || claims.IssuedAt <= 0 {
+		return Claims{}, ErrInvalidToken
+	}
+	if claims.SessionID == "" {
 		return Claims{}, ErrInvalidToken
 	}
 	if claims.ExpiresAt < time.Now().UTC().Unix() {

@@ -19,6 +19,20 @@ def encode_issue_with_refresh(refresh_token: str) -> bytes:
     return encode_varint((1 << 3) | _WIRE_LEN) + encode_varint(len(raw)) + raw
 
 
+def encode_string_fields(fields: dict[int, str]) -> bytes:
+    out = bytearray()
+    for field_num, value in fields.items():
+        if not value:
+            continue
+        raw = value.encode("utf-8")
+        if len(raw) > _MAX_TOKEN_FIELD:
+            raise AuthCodecError("string field exceeds limit")
+        out.extend(encode_varint((field_num << 3) | _WIRE_LEN))
+        out.extend(encode_varint(len(raw)))
+        out.extend(raw)
+    return bytes(out)
+
+
 def _decode_varint(buf: bytes, idx: int) -> tuple[int, int]:
     shift = 0
     result = 0
@@ -92,4 +106,37 @@ def decode_string_field(buf: bytes, field_num: int) -> str | None:
         matched = _take_matching_string(fn, field_num, val)
         if matched is not None:
             return matched
+    return None
+
+
+def decode_string_fields(buf: bytes, field_nums: set[int]) -> dict[int, str]:
+    values: dict[int, str] = {}
+    if len(buf) > _MAX_MESSAGE:
+        raise AuthCodecError("auth lifecycle response too large")
+    idx = 0
+    while idx < len(buf):
+        key, idx = _decode_varint(buf, idx)
+        fn, wt = key >> 3, key & 7
+        if wt == _WIRE_LEN:
+            val, idx = _read_bytes(buf, idx, max_len=_MAX_TOKEN_FIELD)
+            if fn in field_nums:
+                values[fn] = _utf8_string(val)
+        else:
+            idx = _skip_unknown(buf, idx, wt)
+    return values
+
+
+def decode_int64_field(buf: bytes, field_num: int) -> int | None:
+    if len(buf) > _MAX_MESSAGE:
+        raise AuthCodecError("auth lifecycle response too large")
+    idx = 0
+    while idx < len(buf):
+        key, idx = _decode_varint(buf, idx)
+        fn, wt = key >> 3, key & 7
+        if wt == _WIRE_VARINT:
+            val, idx = _decode_varint(buf, idx)
+            if fn == field_num:
+                return val
+        else:
+            idx = _skip_unknown(buf, idx, wt)
     return None

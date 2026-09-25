@@ -27,6 +27,12 @@ type sessionIssuerPort interface {
 	RefreshPair(ctx context.Context, refreshToken sessionjwt.RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error)
 }
 
+type lifecycleIssuerPort interface {
+	ValidateAccess(ctx context.Context, accessToken sessionjwt.RawToken) (sessionjwt.Claims, error)
+	RevokeSession(ctx context.Context, sessionID, familyID, accessJTI string) error
+	ConsumeStepUp(ctx context.Context, token sessionjwt.RawToken, expect sessionjwt.StepUpExpectations) (sessionjwt.Claims, error)
+}
+
 func (s *Server) requireTotpSelf(ctx context.Context, orgID, userID string) (CallerContext, error) {
 	if s.totpService == nil {
 		return CallerContext{}, status.Error(codes.FailedPrecondition, errMsgTOTPNotConfigured)
@@ -107,6 +113,7 @@ func (s *Server) CreateStepUpToken(
 	}
 	token, exp, err := s.totpService.CreateStepUp(ctx, service.CreateStepUpParams{
 		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), Code: req.GetTotpCode(), Permissions: caller.Permissions,
+		SessionID: req.GetSessionId(), Action: req.GetAction(),
 	})
 	if err != nil {
 		return nil, mapTotpErr(err)
@@ -128,6 +135,60 @@ func (s *Server) IssueOperatorSession(
 		return s.issueFromRefresh(ctx, rt)
 	}
 	return s.issueFromCaller(ctx)
+}
+
+func (s *Server) ValidateOperatorSession(ctx context.Context, req *authv1.ValidateOperatorSessionRequest) (*authv1.ValidateOperatorSessionResponse, error) {
+	if s.sessionIssuer == nil {
+		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+	}
+	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
+	}
+	claims, err := issuer.ValidateAccess(ctx, sessionjwt.RawToken(req.GetAccessToken()))
+	if err != nil {
+		return nil, mapSessionValidationErr(err)
+	}
+	return &authv1.ValidateOperatorSessionResponse{Subject: claims.Subject, OrgId: claims.OrgID, Permissions: claims.Permissions, SessionId: claims.SessionID, Jti: claims.JTI}, nil
+}
+
+func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOperatorSessionRequest) (*authv1.RevokeOperatorSessionResponse, error) {
+	if s.sessionIssuer == nil {
+		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+	}
+	if strings.TrimSpace(req.GetSessionId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, errMsgInvalidRequest)
+	}
+	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
+	}
+	if err := issuer.RevokeSession(ctx, req.GetSessionId(), req.GetFamilyId(), req.GetAccessJti()); err != nil {
+		return nil, status.Error(codes.Unavailable, "session revocation unavailable")
+	}
+	return &authv1.RevokeOperatorSessionResponse{}, nil
+}
+
+func (s *Server) ConsumeStepUp(ctx context.Context, req *authv1.ConsumeStepUpRequest) (*authv1.ConsumeStepUpResponse, error) {
+	if s.sessionIssuer == nil {
+		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+	}
+	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
+	}
+	claims, err := issuer.ConsumeStepUp(ctx, sessionjwt.RawToken(req.GetStepUpToken()), sessionjwt.StepUpExpectations{Subject: req.GetExpectedSubject(), OrgID: req.GetExpectedOrgId(), SessionID: req.GetExpectedSessionId(), Action: req.GetExpectedAction(), RequiredPermission: req.GetRequiredPermission()})
+	if err != nil {
+		return nil, mapSessionValidationErr(err)
+	}
+	return &authv1.ConsumeStepUpResponse{Subject: claims.Subject, OrgId: claims.OrgID, SessionId: claims.SessionID, Action: claims.Action, Permissions: claims.Permissions}, nil
+}
+
+func mapSessionValidationErr(err error) error {
+	if errors.Is(err, sessionjwt.ErrExpired) || errors.Is(err, sessionjwt.ErrInvalidToken) {
+		return status.Error(codes.Unauthenticated, "invalid session")
+	}
+	return status.Error(codes.Unavailable, "session state unavailable")
 }
 
 func (s *Server) issueFromRefresh(ctx context.Context, refreshToken string) (*authv1.IssueOperatorSessionResponse, error) {
