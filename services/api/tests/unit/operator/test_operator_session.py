@@ -165,6 +165,7 @@ def test_login_requires_hmac_secret() -> None:
         jwt_hmac_secret=None,
         dashboard_csrf_secret="c" * 32,
         operator_feature_enabled=True,
+        environment="development",
     )
     validator = StaticTokenValidator(
         {"ibex_pat_test_secret": ValidateResult(org_id=uuid4(), permissions=1)}
@@ -322,3 +323,25 @@ def test_session_stub_accepts_legacy_token_kind() -> None:
     }
     claims = verify_token_opts(_signed_stub_token(json.dumps(payload).encode()), _access_verify_hmac())
     assert claims.org_id == org
+
+
+
+def test_session_token_issues_optional_family_and_action_claims() -> None:
+    org = uuid4()
+    token = issue_token_opts(
+        TokenIssueOpts(
+            secret=HMAC_SECRET,
+            issuer="ibex-harness",
+            audience="ibex-dashboard",
+            org_id=org,
+            permissions=1,
+            subject="u",
+            session_kind=SESSION_KIND_ACCESS,
+            ttl_seconds=60,
+            family_id="family-1",
+            action="operator.export",
+        )
+    )
+    claims = verify_token_opts(token, _access_verify(HMAC_SECRET))
+    assert claims.family_id == "family-1"
+    assert claims.action == "operator.export"

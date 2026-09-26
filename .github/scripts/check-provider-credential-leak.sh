@@ -21,7 +21,10 @@ scan_sealed() {
   shift
   local pat
   for pat in "${SEALED_PATTERNS[@]}"; do
-    if rg -n --glob '!**/tests/**' --glob '!**/*_test.go' --glob '!**/test_*.py' \
+    if rg -n \
+      --glob '!**/tests/**' \
+      --glob '!**/*_test.go' \
+      --glob '!**/test_*.py' \
       "${pat}" "$@" 2>/dev/null; then
       echo "provider credential leak pattern (${label}): ${pat}" >&2
       fail=1
@@ -51,16 +54,15 @@ scan_sealed "auth-handlers" \
   "${ROOT}/services/auth/internal/service/provider_credentials.go"
 
 # Response models must not declare api_key (write request may).
-if rg -n 'api_key' "${ROOT}/services/api/app/schemas/providers.py" \
-  | rg -v 'UpsertRequest|ApiKeyStr|api_key: ApiKeyStr'; then
+if grep -En 'api_key' "${ROOT}/services/api/app/schemas/providers.py" \
+  | grep -Ev 'UpsertRequest|ApiKeyStr|api_key: ApiKeyStr'; then
   echo "unexpected api_key field outside upsert request schema" >&2
   fail=1
 fi
 
 # Structured-log field keys must not name secrets on credential paths.
-# Matches logger key args ("api_key",) and Python log kwargs (log.info(..., api_key=)).
-LOG_KEY_RE='("(?:api_key|ciphertext|wrapped_dek|encrypted_api_key)"[[:space:]]*,|\.(?:debug|info|warning|warn|error|exception|critical)\([^
-]*\b(?:api_key|ciphertext|wrapped_dek|encrypted_api_key)[[:space:]]*=)'
+# Matches logger key args ("api_key",) and same-line Python log kwargs.
+LOG_KEY_RE='("(api_key|ciphertext|wrapped_dek|encrypted_api_key)"[[:space:]]*,|\.(debug|info|warning|warn|error|exception|critical)\([^)]*(api_key|ciphertext|wrapped_dek|encrypted_api_key)[[:space:]]*=)'
 log_targets=(
   "${ROOT}/services/api/app/routers/providers.py"
   "${ROOT}/services/api/app/services/providers.py"
@@ -74,7 +76,7 @@ log_targets=(
 )
 for f in "${log_targets[@]}"; do
   [[ -f "$f" ]] || continue
-  if rg -n "${LOG_KEY_RE}" "$f" 2>/dev/null; then
+  if grep -En "${LOG_KEY_RE}" "$f" 2>/dev/null; then
     echo "forbidden secret log field key in ${f#"$ROOT"/}" >&2
     fail=1
   fi

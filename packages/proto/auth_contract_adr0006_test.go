@@ -45,6 +45,9 @@ func TestAuthProtoAuthServiceMethods(t *testing.T) {
 		"ConfirmTotpEnrollment",
 		"CreateStepUpToken",
 		"IssueOperatorSession",
+		"ValidateOperatorSession",
+		"RevokeOperatorSession",
+		"ConsumeStepUp",
 	})
 }
 

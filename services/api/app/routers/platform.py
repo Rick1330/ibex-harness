@@ -15,12 +15,11 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from authclient.permissions import OPERATOR_METADATA_READ
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -28,14 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.authz import assert_operator_permission
 from app.db import session_with_org
-from app.errors import ApiError
-from app.session_stub import (
-    SESSION_KIND_ACCESS,
-    SessionClaims,
-    SessionStubError,
-    TokenVerifyOpts,
-    verify_token_opts,
-)
+from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
 
 logger = logging.getLogger(__name__)
 
@@ -74,41 +66,10 @@ def _settings(request: Request) -> Any:
     return request.app.state.settings
 
 
-def _assert_feature_and_secret(settings: Any) -> None:
-    if not getattr(settings, "operator_feature_enabled", False):
-        raise ApiError(code=SERVICE_DEGRADED, message="operator feature disabled")
-    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
-        raise ApiError(code=SERVICE_DEGRADED, message="session signing secret not configured")
-
-
-def _access_cookie(request: Request, settings: Any) -> str:
-    raw = request.cookies.get(settings.dashboard_session_cookie_name)
-    if not raw:
-        raise ApiError(code=INVALID_TOKEN, message="missing session cookie")
-    return raw
-
-
-def _verify_access_cookie(raw: str, settings: Any) -> SessionClaims:
-    try:
-        return verify_token_opts(
-            raw,
-            TokenVerifyOpts(
-                secret=settings.jwt_hmac_secret,
-                issuer=settings.jwt_issuer,
-                audience=settings.jwt_audience,
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=settings.jwt_public_keys_pem,
-            ),
-        )
-    except SessionStubError as exc:
-        raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
-
-
-def _require_operator_session(request: Request) -> SessionClaims:
-    """Fail closed: feature flag + access cookie + OPERATOR_METADATA_READ."""
+async def _require_operator_session(request: Request) -> OperatorSessionAuthorization:
+    """Fail closed: live session validation + OPERATOR_METADATA_READ."""
     settings = _settings(request)
-    _assert_feature_and_secret(settings)
-    claims = _verify_access_cookie(_access_cookie(request, settings), settings)
+    claims = await require_operator_session(request)
     assert_operator_permission(settings, claims.permissions, OPERATOR_METADATA_READ)
     return claims
 
@@ -228,10 +189,11 @@ def _parse_dlq_depth() -> int | None:
 
 
 @router.get("/health")
-async def platform_health(request: Request) -> PlatformHealthResponse:
+async def platform_health(
+    request: Request,
+    claims: Annotated[OperatorSessionAuthorization, Depends(_require_operator_session)],
+) -> PlatformHealthResponse:
     """Read-only platform freshness for operator Overview (4.D.1 consumer)."""
-    claims = _require_operator_session(request)
-
     deps = await _dep_health(request)
     drain = getattr(request.app.state.api, "drain", None)
     draining = bool(drain is not None and getattr(drain, "is_draining", lambda: False)())

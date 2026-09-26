@@ -9,6 +9,7 @@ from uuid import UUID
 from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 
 from app.auth.client import (
     AuthFailedError,
@@ -17,13 +18,22 @@ from app.auth.client import (
     ValidateResult,
     parse_authorization_header,
 )
-from app.auth.session_refresh import refresh_operator_session
+from app.auth.session_refresh import (
+    AuthRPC,
+    RevokeSessionParams,
+    issue_operator_session,
+    refresh_operator_session,
+    revoke_operator_session,
+    validate_operator_session,
+)
 from app.config import Settings
 from app.deps import get_validator
-from app.errors import ApiError
+from app.errors import ApiError, ResponseOpts, envelope_response
+from app.reqid import require_current
 from app.session_stub import (
     SESSION_KIND_ACCESS,
     SESSION_KIND_REFRESH,
+    SessionClaims,
     SessionStubError,
     TokenIssueOpts,
     TokenVerifyOpts,
@@ -37,6 +47,7 @@ router = APIRouter(prefix="/v1/operator/session", tags=["operator-session-provis
 
 _AUTH_UNAVAILABLE = "auth unavailable"
 _ALG_RS256 = "RS256"
+_INVALID_TOKEN_MESSAGE = INVALID_TOKEN.lower().replace("_", " ")
 
 
 class LoginBody(BaseModel):
@@ -69,7 +80,90 @@ def _require_operator_enabled(settings: Settings) -> None:
         )
 
 
+def _require_me_verify_material(settings: Settings) -> None:
+    if _non_dev_missing_public_keys(settings):
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="session public keys not configured",
+            detail="set DASHBOARD_JWT_PUBLIC_KEYS_PEM",
+        )
+    if _dev_missing_all_verify_material(settings):
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="session signing secret not configured",
+            detail="set JWT_HMAC_SECRET and/or DASHBOARD_JWT_PUBLIC_KEYS_PEM",
+        )
+
+
+def _non_dev_missing_public_keys(settings: Settings) -> bool:
+    return settings.environment != "development" and not settings.jwt_public_keys_pem
+
+
+def _dev_missing_all_verify_material(settings: Settings) -> bool:
+    return (
+        settings.environment == "development"
+        and not settings.jwt_hmac_secret
+        and not settings.jwt_public_keys_pem
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionMeGate:
+    """Operator-session gate for GET /me (cookie present or bearer fallback)."""
+
+    settings: Settings
+    access_cookie: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionRefreshGate:
+    """Operator-session gate for POST /refresh (refresh cookie required)."""
+
+    settings: Settings
+    refresh_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class SessionLogoutGate:
+    """Operator-session gate for POST /logout."""
+
+    settings: Settings
+
+
+def require_session_me(request: Request) -> SessionMeGate:
+    """Executable session dependency for /me — feature + verify material + cookie peek."""
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    _require_me_verify_material(settings)
+    return SessionMeGate(
+        settings=settings,
+        access_cookie=request.cookies.get(settings.dashboard_session_cookie_name),
+    )
+
+
+def require_session_refresh(request: Request) -> SessionRefreshGate:
+    """Executable session dependency for /refresh — feature + refresh cookie present."""
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
+    if not raw:
+        raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+    return SessionRefreshGate(settings=settings, refresh_token=raw)
+
+
+def require_session_logout(request: Request) -> SessionLogoutGate:
+    """Executable session dependency for /logout — feature enabled before cookie clear/revoke."""
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    return SessionLogoutGate(settings=settings)
+
+
 def _require_hmac(settings: Settings) -> str:
+    if settings.environment != "development":
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="provisional HMAC operator sessions are disabled outside development",
+        )
     if not settings.jwt_hmac_secret:
         raise ApiError(
             code=SERVICE_DEGRADED,
@@ -77,6 +171,7 @@ def _require_hmac(settings: Settings) -> str:
             detail="set JWT_HMAC_SECRET for 4.P.0 stub",
         )
     return settings.jwt_hmac_secret
+
 
 def _cookie_security(settings: Settings) -> tuple[bool, str]:
     samesite = settings.cookie_samesite
@@ -213,8 +308,41 @@ async def login(
     """PROVISIONAL: PAT → HttpOnly access+refresh cookies. 4.P.1 moves issuance to auth."""
     settings = _settings(request)
     _require_operator_enabled(settings)
-    secret = _require_hmac(settings)
     result = await _validate_pat(validator, body.pat.strip())
+    if settings.environment != "development":
+        return await _login_via_auth(response, settings, result, body.pat.strip())
+    return _login_via_hmac(response, settings, result)
+
+
+async def _login_via_auth(
+    response: Response, settings: Settings, result: ValidateResult, pat: str
+) -> dict[str, object]:
+    try:
+        pair = await issue_operator_session(
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
+            pat=pat,
+        )
+    except AuthFailedError as exc:
+        raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
+    except AuthUnavailableError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+    _apply_session_cookies(
+        response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+    )
+    csrf = _mint_and_set_csrf(
+        response, settings=settings, secret=settings.dashboard_csrf_secret or ""
+    )
+    return {"status": "ok", "provisional": False, "org_id": str(result.org_id), "csrf_token": csrf}
+
+
+def _login_via_hmac(
+    response: Response, settings: Settings, result: ValidateResult
+) -> dict[str, object]:
+    secret = _require_hmac(settings)
     subject = result.user_id or result.token_id or str(result.org_id)
     access, refresh = _issue_session_pair(
         _SessionPrincipal(
@@ -240,7 +368,7 @@ async def _validate_pat(validator: TokenValidator, pat: str) -> ValidateResult:
     try:
         return await validator.validate(pat)
     except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
+        raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
     except AuthUnavailableError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
 
@@ -256,27 +384,32 @@ async def _refresh_via_auth(
 ) -> dict[str, object]:
     if not settings.jwt_public_keys_pem:
         raise ApiError(code=SERVICE_DEGRADED, message="session public keys not configured")
+    pair = await _refresh_pair_from_auth(settings, refresh_token)
+    _apply_session_cookies(
+        response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+    )
+    csrf = _maybe_mint_csrf(response, settings)
+    return {"status": "ok", "provisional": False, "csrf_token": csrf}
+
+
+async def _refresh_pair_from_auth(settings: Settings, refresh_token: str):
     try:
-        pair = await refresh_operator_session(
-            auth_grpc_addr=settings.auth_grpc_addr,
+        return await refresh_operator_session(
+            AuthRPC(settings.auth_grpc_addr, settings.auth_service_token or ""),
             refresh_token=refresh_token,
         )
     except AuthFailedError as exc:
         raise ApiError(code=INVALID_TOKEN, message="invalid refresh token") from exc
     except AuthUnavailableError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
-    _apply_session_cookies(
-        response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
-    )
-    csrf = ""
-    if settings.dashboard_csrf_secret:
-        csrf = mint_csrf_token(secret=settings.dashboard_csrf_secret)
-        _set_csrf_cookie(response, csrf=csrf, settings=settings)
-    return {
-        "status": "ok",
-        "provisional": False,
-        "csrf_token": csrf,
-    }
+
+
+def _maybe_mint_csrf(response: Response, settings: Settings) -> str:
+    if not settings.dashboard_csrf_secret:
+        return ""
+    csrf = mint_csrf_token(secret=settings.dashboard_csrf_secret)
+    _set_csrf_cookie(response, csrf=csrf, settings=settings)
+    return csrf
 
 
 def _refresh_via_hmac(
@@ -292,6 +425,7 @@ def _refresh_via_hmac(
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_REFRESH,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError as exc:
@@ -316,50 +450,191 @@ def _refresh_via_hmac(
 
 
 @router.post("/refresh")
-async def refresh_session(request: Request, response: Response) -> dict[str, object]:
-    settings = _settings(request)
-    _require_operator_enabled(settings)
-    raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
-    if not raw:
-        raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+async def refresh_session(
+    request: Request,
+    response: Response,
+    gate: Annotated[SessionRefreshGate, Depends(require_session_refresh)],
+) -> dict[str, object]:
+    settings = gate.settings
+    raw = gate.refresh_token
+    if settings.environment != "development":
+        return await _refresh_via_auth(response=response, settings=settings, refresh_token=raw)
     try:
         alg = peek_token_alg(raw)
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
     if _auth_owned_refresh(alg, settings):
-        return await _refresh_via_auth(
-            response=response, settings=settings, refresh_token=raw
-        )
+        return await _refresh_via_auth(response=response, settings=settings, refresh_token=raw)
     return _refresh_via_hmac(response=response, settings=settings, refresh_token=raw)
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response) -> dict[str, str]:
-    settings = _settings(request)
+async def logout(
+    request: Request,
+    gate: Annotated[SessionLogoutGate, Depends(require_session_logout)],
+) -> Response:
+    settings = gate.settings
+    if settings.environment != "development":
+        auth_error = await _logout_via_auth(request, settings)
+        if auth_error is not None:
+            return auth_error
+    success = JSONResponse(
+        {"status": "ok"},
+        headers={"X-Request-ID": require_current()},
+    )
+    _clear_session_cookies(success, settings)
+    return success
+
+
+@dataclass(frozen=True, slots=True)
+class _LogoutProofs:
+    claims: SessionClaims
+    access_claims: SessionClaims | None
+    refresh_claims: SessionClaims | None
+    raw_access: str | None
+    raw_refresh: str | None
+
+
+async def _logout_via_auth(request: Request, settings: Settings) -> Response | None:
+    raw_access = request.cookies.get(settings.dashboard_session_cookie_name)
+    raw_refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
+    access_claims = _logout_claims(raw_access, settings=settings, kind=SESSION_KIND_ACCESS)
+    refresh_claims = _logout_claims(raw_refresh, settings=settings, kind=SESSION_KIND_REFRESH)
+    claims = _select_logout_claims(access_claims, refresh_claims, settings)
+    if isinstance(claims, Response):
+        return claims
+    return await _revoke_logout_session(
+        settings,
+        _LogoutProofs(claims, access_claims, refresh_claims, raw_access, raw_refresh),
+    )
+
+
+def _select_logout_claims(
+    access_claims: SessionClaims | None,
+    refresh_claims: SessionClaims | None,
+    settings: Settings,
+) -> SessionClaims | Response:
+    if access_claims is None and refresh_claims is None:
+        return _logout_error(settings, INVALID_TOKEN, "no valid session proof")
+    if _logout_proofs_mismatch(access_claims, refresh_claims):
+        return _logout_error(settings, INVALID_TOKEN, "session proofs do not match")
+    claims = access_claims if access_claims is not None else refresh_claims
+    if claims is None:
+        return _logout_error(settings, INVALID_TOKEN, "no valid session proof")
+    return claims
+
+
+async def _revoke_logout_session(settings: Settings, proofs: _LogoutProofs) -> Response | None:
+    try:
+        await revoke_operator_session(
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
+            RevokeSessionParams(
+                session_id=proofs.claims.session_id,
+                family_id=proofs.claims.family_id or "",
+                access_jti=proofs.access_claims.jti if proofs.access_claims else "",
+                access_token=proofs.raw_access if proofs.access_claims else "",
+                refresh_token=proofs.raw_refresh if proofs.refresh_claims else "",
+            ),
+        )
+    except AuthFailedError:
+        return _logout_error(settings, INVALID_TOKEN, "invalid session")
+    except AuthUnavailableError:
+        return _logout_error(settings, SERVICE_DEGRADED, _AUTH_UNAVAILABLE)
+    return None
+
+
+def _logout_proofs_mismatch(
+    access_claims: SessionClaims | None, refresh_claims: SessionClaims | None
+) -> bool:
+    return bool(
+        access_claims
+        and refresh_claims
+        and (
+            access_claims.session_id != refresh_claims.session_id
+            or access_claims.family_id != refresh_claims.family_id
+        )
+    )
+
+
+def _logout_error(settings: Settings, code: str, message: str) -> Response:
+    error = envelope_response(code=code, message=message, opts=ResponseOpts(settings=settings))
+    _clear_session_cookies(error, settings)
+    return error
+
+
+def _logout_claims(raw: str | None, *, settings: Settings, kind: str) -> SessionClaims | None:
+    """Return locally verified logout claims, treating stale/malformed cookies independently."""
+    if not raw:
+        return None
+    try:
+        return verify_token_opts(
+            raw,
+            TokenVerifyOpts(
+                secret=None,
+                issuer=settings.jwt_issuer,
+                audience=settings.jwt_audience,
+                expect_kind=kind,
+                public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
+            ),
+        )
+    except SessionStubError:
+        return None
+
+
+def _clear_session_cookies(response: Response, settings: Settings) -> None:
+    """Delete all operator-session cookies using the same path/domain attributes."""
+    secure, samesite = _cookie_security(settings)
     for name in (
         settings.dashboard_session_cookie_name,
         settings.dashboard_refresh_cookie_name,
         settings.dashboard_csrf_cookie_name,
     ):
-        response.delete_cookie(name, path="/", domain=settings.cookie_domain)
-    return {"status": "ok"}
+        response.delete_cookie(
+            name,
+            path="/",
+            domain=settings.cookie_domain,
+            secure=secure,
+            httponly=name != settings.dashboard_csrf_cookie_name,
+            samesite=samesite,
+        )
 
 
 @router.get("/me")
-async def me(request: Request) -> dict[str, object]:
+async def me(
+    request: Request,
+    gate: Annotated[SessionMeGate, Depends(require_session_me)],
+) -> dict[str, object]:
     """Prove cookie session works for authenticated API calls."""
-    settings = _settings(request)
-    _require_operator_enabled(settings)
-    if not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
-        raise ApiError(
-            code=SERVICE_DEGRADED,
-            message="session signing secret not configured",
-            detail="set JWT_HMAC_SECRET and/or DASHBOARD_JWT_PUBLIC_KEYS_PEM",
-        )
-    raw = request.cookies.get(settings.dashboard_session_cookie_name)
+    settings = gate.settings
+    raw = gate.access_cookie
     if not raw:
         return await _me_bearer(request)
-    return _me_cookie(raw, settings=settings, secret=settings.jwt_hmac_secret)
+    if settings.environment != "development":
+        return await _me_auth(raw, settings)
+    secret = settings.jwt_hmac_secret if settings.environment == "development" else None
+    return _me_cookie(raw, settings=settings, secret=secret)
+
+
+async def _me_auth(raw: str, settings: Settings) -> dict[str, object]:
+    try:
+        claims = await validate_operator_session(
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
+            access_token=raw,
+        )
+    except AuthFailedError as exc:
+        raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
+    except AuthUnavailableError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+    return {"auth": "cookie", "org_id": claims.org_id, "sub": claims.subject, "provisional": False}
 
 
 def _me_cookie(raw: str, *, settings: Settings, secret: str | None) -> dict[str, object]:
@@ -372,6 +647,7 @@ def _me_cookie(raw: str, *, settings: Settings, secret: str | None) -> dict[str,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_ACCESS,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError as exc:
@@ -388,7 +664,7 @@ async def _validate_bearer(validator: TokenValidator, bearer: str) -> ValidateRe
     try:
         return await validator.validate(bearer)
     except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
+        raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
     except AuthUnavailableError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
 

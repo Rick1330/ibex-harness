@@ -31,7 +31,7 @@ func (s *Server) CreateProviderCredential(
 		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
-	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
+	if err := RequireOrgAndPermission(ctx, OrgPermissionCheck{OrgID: orgID, Required: permissions.OrgSettingsWrite}); err != nil {
 		return nil, err
 	}
 	if err := ssrf.ValidateHTTPURL(ctx, req.GetBaseUrl()); err != nil {
@@ -67,7 +67,7 @@ func (s *Server) GetProviderCredential(
 		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
-	if err := RequireOrgAndPermission(ctx, orgID, permissions.SecretUse); err != nil {
+	if err := RequireOrgAndPermission(ctx, OrgPermissionCheck{OrgID: orgID, Required: permissions.SecretUse}); err != nil {
 		return nil, err
 	}
 	result, err := s.credService.Get(ctx, service.OrgProviderRef{
@@ -94,7 +94,7 @@ func (s *Server) DeleteProviderCredential(
 		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
-	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
+	if err := RequireOrgAndPermission(ctx, OrgPermissionCheck{OrgID: orgID, Required: permissions.OrgSettingsWrite}); err != nil {
 		return nil, err
 	}
 	if err := s.credService.Delete(ctx, service.OrgProviderRef{
@@ -113,7 +113,7 @@ func (s *Server) ListProviderCredentials(
 		return nil, status.Error(codes.FailedPrecondition, errMsgProviderCredentialsNotConfigured)
 	}
 	orgID := req.GetOrgId()
-	if err := RequireOrgAndPermission(ctx, orgID, permissions.OrgSettingsWrite); err != nil {
+	if err := RequireOrgAndPermission(ctx, OrgPermissionCheck{OrgID: orgID, Required: permissions.OrgSettingsWrite}); err != nil {
 		return nil, err
 	}
 	rows, err := s.credService.List(ctx, orgID)

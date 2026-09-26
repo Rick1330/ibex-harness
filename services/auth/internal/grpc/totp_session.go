@@ -14,7 +14,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const errMsgTOTPNotConfigured = "totp not configured"
+const (
+	errMsgTOTPNotConfigured  = "totp not configured"
+	errMsgSessionJWTNotReady = "session jwt issuer not configured"
+	errMsgLifecycleNotReady  = "session lifecycle not configured"
+)
 
 type totpPort interface {
 	BeginEnrollment(ctx context.Context, p service.BeginEnrollmentParams) (string, error)
@@ -25,6 +29,14 @@ type totpPort interface {
 type sessionIssuerPort interface {
 	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
 	RefreshPair(ctx context.Context, refreshToken sessionjwt.RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error)
+}
+
+type lifecycleIssuerPort interface {
+	ValidateAccess(ctx context.Context, accessToken sessionjwt.RawToken) (sessionjwt.Claims, error)
+	VerifyAccessProof(accessToken sessionjwt.RawToken) (sessionjwt.Claims, error)
+	VerifyRefreshProof(refreshToken sessionjwt.RefreshToken) (sessionjwt.Claims, error)
+	RevokeSession(ctx context.Context, sessionID, familyID, accessJTI string) error
+	ConsumeStepUp(ctx context.Context, token sessionjwt.RawToken, expect sessionjwt.StepUpExpectations) (sessionjwt.Claims, error)
 }
 
 func (s *Server) requireTotpSelf(ctx context.Context, orgID, userID string) (CallerContext, error) {
@@ -107,6 +119,7 @@ func (s *Server) CreateStepUpToken(
 	}
 	token, exp, err := s.totpService.CreateStepUp(ctx, service.CreateStepUpParams{
 		OrgID: service.OrgID(req.GetOrgId()), UserID: service.UserID(req.GetUserId()), Code: req.GetTotpCode(), Permissions: caller.Permissions,
+		SessionID: req.GetSessionId(), Action: req.GetAction(),
 	})
 	if err != nil {
 		return nil, mapTotpErr(err)
@@ -122,12 +135,141 @@ func (s *Server) IssueOperatorSession(
 	req *authv1.IssueOperatorSessionRequest,
 ) (*authv1.IssueOperatorSessionResponse, error) {
 	if s.sessionIssuer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
 	}
 	if rt := strings.TrimSpace(req.GetRefreshToken()); rt != "" {
 		return s.issueFromRefresh(ctx, rt)
 	}
 	return s.issueFromCaller(ctx)
+}
+
+func (s *Server) ValidateOperatorSession(ctx context.Context, req *authv1.ValidateOperatorSessionRequest) (*authv1.ValidateOperatorSessionResponse, error) {
+	if s.sessionIssuer == nil {
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
+	}
+	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
+	}
+	claims, err := issuer.ValidateAccess(ctx, sessionjwt.RawToken(req.GetAccessToken()))
+	if err != nil {
+		return nil, mapSessionValidationErr(err)
+	}
+	return &authv1.ValidateOperatorSessionResponse{Subject: claims.Subject, OrgId: claims.OrgID, Permissions: claims.Permissions, SessionId: claims.SessionID, Jti: claims.JTI}, nil
+}
+
+func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOperatorSessionRequest) (*authv1.RevokeOperatorSessionResponse, error) {
+	if s.sessionIssuer == nil {
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
+	}
+	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
+	}
+	claims, accessJTI, err := verifyRevokeSessionProofs(issuer, req)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	if err := issuer.RevokeSession(ctx, claims.SessionID, claims.FamilyID, accessJTI); err != nil {
+		return nil, status.Error(codes.Unavailable, "session revocation unavailable")
+	}
+	return &authv1.RevokeOperatorSessionResponse{}, nil
+}
+
+func verifyRevokeSessionProofs(
+	issuer lifecycleIssuerPort,
+	req *authv1.RevokeOperatorSessionRequest,
+) (sessionjwt.Claims, string, error) {
+	accessClaims := verifiedAccessProof(issuer, req.GetAccessToken())
+	refreshClaims := verifiedRefreshProof(issuer, req.GetRefreshToken())
+	claims, err := selectRevokeProofs(accessClaims, refreshClaims)
+	if err != nil {
+		return sessionjwt.Claims{}, "", err
+	}
+	if err := validateRevokeRequest(req, claims); err != nil {
+		return sessionjwt.Claims{}, "", err
+	}
+	accessJTI := ""
+	if accessClaims != nil {
+		accessJTI = accessClaims.JTI
+	}
+	return claims, accessJTI, nil
+}
+
+func verifiedAccessProof(issuer lifecycleIssuerPort, raw string) *sessionjwt.Claims {
+	if token := strings.TrimSpace(raw); token != "" {
+		claims, err := issuer.VerifyAccessProof(sessionjwt.RawToken(token))
+		if err == nil {
+			return &claims
+		}
+	}
+	return nil
+}
+
+func verifiedRefreshProof(issuer lifecycleIssuerPort, raw string) *sessionjwt.Claims {
+	if token := strings.TrimSpace(raw); token != "" {
+		claims, err := issuer.VerifyRefreshProof(sessionjwt.RefreshToken(token))
+		if err == nil {
+			return &claims
+		}
+	}
+	return nil
+}
+
+func selectRevokeProofs(accessClaims, refreshClaims *sessionjwt.Claims) (sessionjwt.Claims, error) {
+	if accessClaims == nil && refreshClaims == nil {
+		return sessionjwt.Claims{}, errors.New("valid session proof required")
+	}
+	if revokeProofsMismatch(accessClaims, refreshClaims) {
+		return sessionjwt.Claims{}, errors.New("session proofs do not match")
+	}
+	if accessClaims != nil {
+		return *accessClaims, nil
+	}
+	return *refreshClaims, nil
+}
+
+func revokeProofsMismatch(accessClaims, refreshClaims *sessionjwt.Claims) bool {
+	if accessClaims == nil || refreshClaims == nil {
+		return false
+	}
+	return accessClaims.SessionID != refreshClaims.SessionID ||
+		accessClaims.FamilyID != refreshClaims.FamilyID
+}
+
+func validateRevokeRequest(req *authv1.RevokeOperatorSessionRequest, claims sessionjwt.Claims) error {
+	if req.GetSessionId() != "" && req.GetSessionId() != claims.SessionID {
+		return errors.New("session proof does not match")
+	}
+	if req.GetFamilyId() != "" && req.GetFamilyId() != claims.FamilyID {
+		return errors.New("session proof does not match")
+	}
+	if claims.SessionID == "" || claims.FamilyID == "" {
+		return errors.New("incomplete session proof")
+	}
+	return nil
+}
+
+func (s *Server) ConsumeStepUp(ctx context.Context, req *authv1.ConsumeStepUpRequest) (*authv1.ConsumeStepUpResponse, error) {
+	if s.sessionIssuer == nil {
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
+	}
+	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
+	if !ok {
+		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
+	}
+	claims, err := issuer.ConsumeStepUp(ctx, sessionjwt.RawToken(req.GetStepUpToken()), sessionjwt.StepUpExpectations{Subject: req.GetExpectedSubject(), OrgID: req.GetExpectedOrgId(), SessionID: req.GetExpectedSessionId(), Action: req.GetExpectedAction(), RequiredPermission: req.GetRequiredPermission()})
+	if err != nil {
+		return nil, mapSessionValidationErr(err)
+	}
+	return &authv1.ConsumeStepUpResponse{Subject: claims.Subject, OrgId: claims.OrgID, SessionId: claims.SessionID, Action: claims.Action, Permissions: claims.Permissions}, nil
+}
+
+func mapSessionValidationErr(err error) error {
+	if errors.Is(err, sessionjwt.ErrExpired) || errors.Is(err, sessionjwt.ErrInvalidToken) {
+		return status.Error(codes.Unauthenticated, "invalid session")
+	}
+	return status.Error(codes.Unavailable, "session state unavailable")
 }
 
 func (s *Server) issueFromRefresh(ctx context.Context, refreshToken string) (*authv1.IssueOperatorSessionResponse, error) {

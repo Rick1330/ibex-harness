@@ -41,6 +41,7 @@ type Config struct {
 	JWTAccessTTL           time.Duration
 	JWTRefreshTTL          time.Duration
 	JWTStepUpTTL           time.Duration
+	AuthServiceToken       string
 	Argon2                 token.Argon2Params
 	ShutdownTimeout        time.Duration
 	Telemetry              telemetry.Config
@@ -59,6 +60,7 @@ func (c Config) Validate() error {
 		func() error { return validatePostgresDSN(c.PostgresDSN) },
 		func() error { return validateCredentialsMasterKey(c) },
 		func() error { return validateTOTPSessionConfig(c) },
+		func() error { return validateAuthServiceToken(c) },
 		func() error { return validateValidateTokenRPM(c.ValidateTokenRPM) },
 		func() error { return shutdown.ValidateTimeout(c.ShutdownTimeout) },
 	}
@@ -68,6 +70,23 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validateAuthServiceToken(c Config) error {
+	if !requiresAuthServiceToken(c) {
+		return nil
+	}
+	if strings.TrimSpace(c.AuthServiceToken) == "" {
+		return fmt.Errorf("IBEX_AUTH_SERVICE_TOKEN is required when operator sessions are enabled outside development")
+	}
+	return nil
+}
+
+func requiresAuthServiceToken(c Config) bool {
+	if c.Environment == "development" {
+		return false
+	}
+	return c.TOTPEnabled || strings.TrimSpace(c.JWTPrivateKeyPEM) != ""
 }
 
 func validateServiceName(name string) error {

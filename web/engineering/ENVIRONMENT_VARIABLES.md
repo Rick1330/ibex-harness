@@ -693,6 +693,7 @@ Topology and hostnames: [ADR-0078](/docs/adr/0078-operator-runtime-topology).
 | `JWT_HMAC_SECRET` | Yes when feature on (HS256 path) | (none) | Provisional HS256 secret (≥32 bytes) | **No** `JWT_PRIVATE_KEY_PEM` alias; dual-verify logs `provisional_hs256_verify=1` |
 | `JWT_PRIVATE_KEY_PEM` | Yes (auth RS256) | (none) | Auth-only RS256 signing key | Never load on API/dashboard |
 | `DASHBOARD_JWT_PUBLIC_KEYS_PEM` | Yes when verifying RS256 | (none) | API verifies Auth-issued RS256 session/step-up JWTs | Keep server-only |
+| `IBEX_ENV` / `IBEX_API_ENV` | Yes when operator sessions are enabled | `development` only when feature is off | Explicit API profile: `development`, `staging`, or `production` | Missing explicit profile is rejected at startup when operator sessions are enabled; HMAC sessions are development-only |
 | `IBEX_OPERATOR_FEATURE_ENABLED` | No | `false` | Enables provisional `/v1/operator/session` + SSE | Default off until 4.P.1 |
 | `IBEX_OPERATOR_ALLOW_RAW_READ` | No | `false` | API per-action kill switch | See global table |
 | `IBEX_OPERATOR_ALLOW_EXPORT` | No | `false` | API per-action kill switch | |

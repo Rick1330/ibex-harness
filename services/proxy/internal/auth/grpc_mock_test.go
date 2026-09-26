@@ -90,6 +90,26 @@ func (m *mockAuthServiceClient) IssueOperatorSession(
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthServiceClient) ValidateOperatorSession(
+	context.Context, *authv1.ValidateOperatorSessionRequest, ...grpc.CallOption,
+) (*authv1.ValidateOperatorSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) RevokeOperatorSession(
+	context.Context, *authv1.RevokeOperatorSessionRequest, ...grpc.CallOption,
+) (*authv1.RevokeOperatorSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+func (m *mockAuthServiceClient) ConsumeStepUp(
+	context.Context, *authv1.ConsumeStepUpRequest, ...grpc.CallOption,
+) (*authv1.ConsumeStepUpResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
+var _ authv1.AuthServiceClient = (*mockAuthServiceClient)(nil)
+
 func assertWantError(t *testing.T, err, want error) {
 	t.Helper()
 	if !errors.Is(err, want) {

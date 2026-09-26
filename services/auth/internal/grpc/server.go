@@ -201,7 +201,7 @@ func (s *Server) authorizeCreateTokenRequest(ctx context.Context, req *authv1.Cr
 		s.auditCrossTenant(ctx, caller.OrgID, "token", "")
 		return service.CreateTokenInput{}, status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
-	if err := RequireOrgAndPermission(ctx, orgID.String(), permissions.TokenCreate); err != nil {
+	if err := RequireOrgAndPermission(ctx, OrgPermissionCheck{OrgID: orgID.String(), Required: permissions.TokenCreate}); err != nil {
 		return service.CreateTokenInput{}, err
 	}
 	if err := authorizeCreateTokenPermissions(caller.Permissions, req.GetPermissions()); err != nil {
@@ -247,7 +247,7 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 		s.auditCrossTenant(ctx, caller.OrgID, "token", req.GetTokenId())
 		return nil, status.Error(codes.PermissionDenied, "forbidden")
 	}
-	if !CanRevoke(caller, req.GetOrgId(), req.GetTokenId()) {
+	if !CanRevoke(caller, RevokeTarget{OrgID: req.GetOrgId(), TokenID: req.GetTokenId()}) {
 		return nil, status.Error(codes.PermissionDenied, "forbidden")
 	}
 	var reason *string
@@ -267,7 +267,7 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 }
 
 func (s *Server) ListTokens(ctx context.Context, req *authv1.ListTokensRequest) (*authv1.ListTokensResponse, error) {
-	if err := RequireOrgAndPermission(ctx, req.GetOrgId(), permissions.TokenCreate); err != nil {
+	if err := RequireOrgAndPermission(ctx, OrgPermissionCheck{OrgID: req.GetOrgId(), Required: permissions.TokenCreate}); err != nil {
 		return nil, err
 	}
 	rows, next, err := s.tokenService.ListTokens(ctx, req.GetOrgId(), req.GetCursor(), req.GetLimit())

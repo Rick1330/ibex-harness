@@ -110,7 +110,7 @@ func TestRequireOrgAndPermission(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := RequireOrgAndPermission(tc.ctx, tc.orgID, tc.required)
+			err := RequireOrgAndPermission(tc.ctx, OrgPermissionCheck{OrgID: tc.orgID, Required: tc.required})
 
 			if tc.wantCode == codes.OK {
 				if err != nil {
@@ -170,7 +170,7 @@ func TestCanRevoke(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := CanRevoke(tc.caller, tc.orgID, tc.tokenID)
+			got := CanRevoke(tc.caller, RevokeTarget{OrgID: tc.orgID, TokenID: tc.tokenID})
 
 			if got != tc.wantAllow {
 				t.Fatalf("CanRevoke = %v, want %v", got, tc.wantAllow)

@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         description="Auth service gRPC target for ValidateToken",
     )
     auth_timeout_ms: int = Field(default=50, ge=1)
+    auth_service_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_AUTH_SERVICE_TOKEN", "IBEX_API_AUTH_SERVICE_TOKEN"),
+        description="Dedicated API-to-AuthService lifecycle credential",
+    )
 
     redis_url: str | None = Field(
         default=None,
@@ -106,6 +111,11 @@ class Settings(BaseSettings):
         ),
         description="PEM public key(s) for Auth-issued RS256 session JWTs (4.P.1 dual-verify)",
     )
+    jwt_key_id: str = Field(
+        default="v1",
+        validation_alias=AliasChoices("JWT_KEY_ID", "IBEX_API_JWT_KEY_ID"),
+        min_length=1,
+    )
     dashboard_session_cookie_name: str = Field(
         default="ibex_session",
         validation_alias=AliasChoices(
@@ -143,6 +153,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("DASHBOARD_COOKIE_DOMAIN", "IBEX_API_COOKIE_DOMAIN"),
         description="Optional shared cookie domain (e.g. .ibexharness.com)",
+    )
+    environment: Literal["development", "staging", "production"] = Field(
+        default="development",
+        validation_alias=AliasChoices("IBEX_ENV", "IBEX_API_ENV"),
+        description="Deployment profile; HMAC operator sessions are local-development only",
     )
     sse_write_deadline_seconds: float = Field(
         default=15.0,
@@ -270,6 +285,11 @@ class Settings(BaseSettings):
             raise ValueError("dashboard cookie names must not include leading/trailing whitespace")
         return self
 
+    @model_validator(mode="after")
+    def _operator_session_boundary(self) -> Settings:
+        _validate_operator_session_boundary(self)
+        return self
+
     def cors_origin_list(self) -> list[str]:
         return [part.strip() for part in self.allowed_origins.split(",") if part.strip()]
 
@@ -277,3 +297,39 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def _validate_operator_session_boundary(settings: Settings) -> None:
+    if settings.operator_feature_enabled and "environment" not in settings.model_fields_set:
+        raise ValueError("IBEX_ENV must be explicitly set when operator sessions are enabled")
+    if settings.environment == "development":
+        return
+    _reject_hmac_outside_development(settings)
+    if not settings.operator_feature_enabled:
+        return
+    _require_non_dev_operator_material(settings)
+
+
+def _reject_hmac_outside_development(settings: Settings) -> None:
+    if settings.jwt_hmac_secret is not None:
+        raise ValueError("JWT_HMAC_SECRET is permitted only in development")
+
+
+def _require_non_dev_operator_material(settings: Settings) -> None:
+    required = (
+        (
+            settings.auth_service_token,
+            "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled",
+        ),
+        (
+            settings.jwt_public_keys_pem,
+            "DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development",
+        ),
+        (settings.redis_url, "REDIS_URL is required for non-development operator sessions"),
+        (settings.dashboard_csrf_secret, "DASHBOARD_CSRF_SECRET is required outside development"),
+    )
+    for value, message in required:
+        if not value:
+            raise ValueError(message)
+    if not settings.cookie_secure:
+        raise ValueError("DASHBOARD_COOKIE_SECURE must be true outside development")

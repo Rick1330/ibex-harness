@@ -7,6 +7,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from authclient.permissions import OPERATOR_METADATA_READ
 
 from app.drain import DrainState
 from app.sse.operator_events import OperatorSSEHub, redis_fan_in_loop, write_sse_chunk
@@ -157,44 +158,11 @@ async def test_write_sse_chunk_deadline() -> None:
 
 @pytest.mark.asyncio
 async def test_redis_fan_in_publishes_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
-
-    class FakePubSub:
-        def __init__(self) -> None:
-            self._n = 0
-
-        async def subscribe(self, *_a, **_k) -> None:
-            return None
-
-        async def unsubscribe(self, *_a, **_k) -> None:
-            return None
-
-        async def aclose(self) -> None:
-            return None
-
-        async def get_message(self, **_k):
-            self._n += 1
-            if self._n == 1:
-                return {"data": f'{{"k":1,"org_id":"{ORG_A}"}}'}
-            stop.set()
-            return None
-
-    class FakeRedis:
-        def pubsub(self) -> FakePubSub:
-            return FakePubSub()
-
-        async def aclose(self) -> None:
-            return None
-
-    class FakeRedisMod:
-        @staticmethod
-        def from_url(*_a, **_k) -> FakeRedis:
-            return FakeRedis()
-
-    monkeypatch.setattr("app.sse.operator_events.Redis", FakeRedisMod)
+    hub, stop = _fan_in_hub()
+    monkeypatch.setattr(
+        "app.sse.operator_events.Redis",
+        _fake_redis_mod([{"data": f'{{"k":1,"org_id":"{ORG_A}"}}'}], stop),
+    )
     await asyncio.wait_for(
         redis_fan_in_loop(hub, redis_url="redis://x", channel="c", stop=stop),
         timeout=2.0,
@@ -205,11 +173,24 @@ async def test_redis_fan_in_publishes_json(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.asyncio
 async def test_redis_fan_in_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
+    hub, stop = _fan_in_hub()
+    monkeypatch.setattr(
+        "app.sse.operator_events.Redis",
+        _fake_redis_mod([{"data": "not-json"}], stop),
+    )
+    await asyncio.wait_for(
+        redis_fan_in_loop(hub, redis_url="redis://x", channel="c", stop=stop),
+        timeout=2.0,
+    )
+    # Fan-in without org_id is dropped (never delivered cross-tenant / unscoped).
+    assert hub._history == []
 
+
+def _fan_in_hub() -> tuple[OperatorSSEHub, asyncio.Event]:
+    return OperatorSSEHub(settings=operator_settings(), drain=DrainState()), asyncio.Event()
+
+
+def _fake_redis_mod(messages: list[dict | None], stop: asyncio.Event):
     class FakePubSub:
         def __init__(self) -> None:
             self._n = 0
@@ -224,9 +205,10 @@ async def test_redis_fan_in_invalid_json(monkeypatch: pytest.MonkeyPatch) -> Non
             return None
 
         async def get_message(self, **_k):
-            self._n += 1
-            if self._n == 1:
-                return {"data": "not-json"}
+            if self._n < len(messages):
+                msg = messages[self._n]
+                self._n += 1
+                return msg
             stop.set()
             return None
 
@@ -242,19 +224,32 @@ async def test_redis_fan_in_invalid_json(monkeypatch: pytest.MonkeyPatch) -> Non
         def from_url(*_a, **_k) -> FakeRedis:
             return FakeRedis()
 
-    monkeypatch.setattr("app.sse.operator_events.Redis", FakeRedisMod)
-    await asyncio.wait_for(
-        redis_fan_in_loop(hub, redis_url="redis://x", channel="c", stop=stop),
-        timeout=2.0,
-    )
-    # Fan-in without org_id is dropped (never delivered cross-tenant / unscoped).
-    assert hub._history == []
+    return FakeRedisMod
 
 
 def test_sse_stream_requires_session_cookie(app_client) -> None:
     _, client = app_client
     resp = client.get("/v1/operator/events/stream")
     assert resp.status_code == 401
+
+
+def test_sse_stream_denies_without_metadata_permission_before_subscribe() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.auth.client import StaticTokenValidator, ValidateResult
+    from tests.unit.operator.conftest import create_operator_app
+
+    validator = StaticTokenValidator(
+        {"ibex_pat_test_secret": ValidateResult(org_id=ORG_A, permissions=0, user_id="u1")}
+    )
+    with create_operator_app(validator=validator) as (app, client):
+        login = client.post("/v1/operator/session/login", json={"pat": "ibex_pat_test_secret"})
+        assert login.status_code == 200
+        subscribe = AsyncMock()
+        app.state.operator_sse_hub.subscribe = subscribe
+        response = client.get("/v1/operator/events/stream")
+    assert response.status_code == 403
+    subscribe.assert_not_awaited()
 
 
 def test_sse_stream_backlog_and_last_event_id_http(app_client) -> None:
@@ -271,6 +266,8 @@ def test_sse_stream_backlog_and_last_event_id_http(app_client) -> None:
         resp = client.get("/v1/operator/events/stream")
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
+        assert "no-store" in resp.headers.get("cache-control", "")
+        assert resp.headers.get("x-content-type-options") == "nosniff"
         assert "id: 1" in resp.text
 
     async def resume_sub(org_id, last_event_id: int | None = None):
@@ -333,7 +330,13 @@ async def test_hub_heartbeat_and_close_all_full_queue() -> None:
     async def one_heartbeat() -> bytes:
         agen = hub.subscribe(ORG_A, None)
         try:
-            with patch("asyncio.wait_for", side_effect=TimeoutError):
+            async def expire_without_leaking(awaitable, **_kwargs):
+                close = getattr(awaitable, "close", None)
+                if close is not None:
+                    close()
+                raise TimeoutError
+
+            with patch("asyncio.wait_for", side_effect=expire_without_leaking):
                 return await agen.__anext__()
         finally:
             await agen.aclose()
@@ -362,10 +365,7 @@ async def test_decode_and_backoff_helpers() -> None:
 async def test_redis_fan_in_auth_error_stops(monkeypatch: pytest.MonkeyPatch) -> None:
     from redis.exceptions import AuthenticationError
 
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
+    hub, stop = _fan_in_hub()
 
     class Boom:
         @staticmethod
@@ -383,10 +383,7 @@ async def test_redis_fan_in_auth_error_stops(monkeypatch: pytest.MonkeyPatch) ->
 async def test_redis_fan_in_retry_then_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     from redis.exceptions import RedisError
 
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
+    hub, stop = _fan_in_hub()
     calls = {"n": 0}
 
     class Boom:
@@ -434,6 +431,143 @@ def test_sse_stream_bad_cookie(app_client) -> None:
     client.cookies.set("ibex_session", "a.b.c")
     resp = client.get("/v1/operator/events/stream")
     assert resp.status_code == 401
+
+
+def _staging_operator_settings():
+    from tests.unit.operator.conftest import operator_settings
+
+    return operator_settings(
+        environment="staging",
+        jwt_hmac_secret=None,
+        jwt_public_keys_pem="configured-public-key-set",
+        redis_url="redis://127.0.0.1:6379/0",
+        cookie_secure=True,
+    )
+
+
+def _validated_session(*, org_id: str = str(ORG_A), permissions: int = OPERATOR_METADATA_READ):
+    from app.auth.session_refresh import ValidatedSession
+
+    return ValidatedSession(
+        subject="operator-1",
+        org_id=org_id,
+        permissions=permissions,
+        session_id="session-1",
+        jti="access-jti-1",
+    )
+
+
+def _assert_staging_sse_reject(cookie: str, validate_mock, expected_status: int) -> None:
+    from unittest.mock import AsyncMock
+
+    from tests.unit.operator.conftest import create_operator_app
+
+    with create_operator_app(settings=_staging_operator_settings()) as (app, client):
+        client.cookies.set("ibex_session", cookie)
+        subscribe = AsyncMock()
+        app.state.operator_sse_hub.subscribe = subscribe
+        with patch(
+            "app.operator_session_auth.validate_operator_session",
+            new=validate_mock,
+        ) as validate:
+            response = client.get("/v1/operator/events/stream")
+    assert response.status_code == expected_status
+    validate.assert_awaited_once()
+    subscribe.assert_not_awaited()
+
+
+def test_staging_sse_rejects_revoked_session_before_subscribing() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.auth.client import AuthFailedError
+
+    _assert_staging_sse_reject(
+        "signed-but-revoked",
+        AsyncMock(side_effect=AuthFailedError("revoked")),
+        401,
+    )
+
+
+def test_staging_sse_fails_closed_when_auth_service_is_unavailable() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.auth.client import AuthUnavailableError
+
+    _assert_staging_sse_reject(
+        "session-cookie",
+        AsyncMock(side_effect=AuthUnavailableError("offline")),
+        503,
+    )
+
+
+def test_staging_sse_uses_auth_service_tenant_and_permission() -> None:
+    from unittest.mock import AsyncMock
+
+    from tests.unit.operator.conftest import create_operator_app
+
+    observed: list[object] = []
+
+    async def finite_subscribe(org_id, last_event_id=None):
+        observed.extend([org_id, last_event_id])
+        yield b"id: 9\nevent: operator.evidence\ndata: {}\n\n"
+
+    with create_operator_app(settings=_staging_operator_settings()) as (app, client):
+        client.cookies.set("ibex_session", "valid-session-cookie")
+        app.state.operator_sse_hub.subscribe = finite_subscribe
+        with patch(
+            "app.operator_session_auth.validate_operator_session",
+            new=AsyncMock(return_value=_validated_session()),
+        ) as validate:
+            response = client.get("/v1/operator/events/stream")
+    assert response.status_code == 200
+    assert observed == [ORG_A, None]
+    validate.assert_awaited_once()
+
+
+def test_staging_sse_rejects_invalid_tenant_claim_before_subscribe() -> None:
+    from unittest.mock import AsyncMock
+
+    _assert_staging_sse_reject(
+        "malformed-org-claim",
+        AsyncMock(return_value=_validated_session(org_id="not-a-uuid")),
+        401,
+    )
+
+
+def _assert_staging_platform_health(cookie: str, validate_mock, expected_status: int) -> None:
+    from tests.unit.operator.conftest import create_operator_app
+
+    with create_operator_app(settings=_staging_operator_settings()) as (_, client):
+        client.cookies.set("ibex_session", cookie)
+        with patch(
+            "app.operator_session_auth.validate_operator_session",
+            new=validate_mock,
+        ) as validate:
+            response = client.get("/v1/operator/platform/health")
+    assert response.status_code == expected_status
+    validate.assert_awaited_once()
+
+
+def test_staging_platform_health_rejects_revoked_session() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.auth.client import AuthFailedError
+
+    _assert_staging_platform_health(
+        "revoked-session-cookie",
+        AsyncMock(side_effect=AuthFailedError("revoked")),
+        401,
+    )
+
+
+def test_staging_platform_health_rejects_missing_metadata_permission() -> None:
+    from unittest.mock import AsyncMock
+
+    _assert_staging_platform_health(
+        "valid-session-without-metadata-grant",
+        AsyncMock(return_value=_validated_session(permissions=0)),
+        403,
+    )
 
 
 def test_sse_stream_write_deadline_and_disconnect(app_client) -> None:
