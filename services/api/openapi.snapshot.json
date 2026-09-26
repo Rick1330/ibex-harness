@@ -1002,6 +1002,157 @@
         "title": "ModelPolicyResponse",
         "type": "object"
       },
+      "OperatorContextResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "org_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Org Name",
+            "type": "string"
+          },
+          "org_slug": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Org Slug",
+            "type": "string"
+          },
+          "org_status": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Org Status",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "owner",
+                  "admin",
+                  "member",
+                  "viewer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "schema_version": {
+            "const": "operator.context.v1",
+            "default": "operator.context.v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "role",
+          "org_name",
+          "org_slug",
+          "org_status",
+          "observed_at"
+        ],
+        "title": "OperatorContextResponse",
+        "type": "object"
+      },
+      "OperatorOverviewCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "active_agents": {
+            "minimum": 0.0,
+            "title": "Active Agents",
+            "type": "integer"
+          },
+          "active_users": {
+            "minimum": 0.0,
+            "title": "Active Users",
+            "type": "integer"
+          },
+          "agents": {
+            "minimum": 0.0,
+            "title": "Agents",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active_users",
+          "agents",
+          "active_agents"
+        ],
+        "title": "OperatorOverviewCounts",
+        "type": "object"
+      },
+      "OperatorOverviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "completeness": {
+            "const": "complete",
+            "default": "complete",
+            "title": "Completeness",
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/OperatorOverviewCounts"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "org_id": {
+            "format": "uuid",
+            "title": "Org Id",
+            "type": "string"
+          },
+          "org_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Org Name",
+            "type": "string"
+          },
+          "org_slug": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Org Slug",
+            "type": "string"
+          },
+          "org_status": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Org Status",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "operator.overview.v1",
+            "default": "operator.overview.v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "org_name",
+          "org_slug",
+          "org_status",
+          "counts",
+          "observed_at"
+        ],
+        "title": "OperatorOverviewResponse",
+        "type": "object"
+      },
       "OrgDeletionJobResponse": {
         "properties": {
           "created_at": {
@@ -2784,6 +2935,27 @@
         ]
       }
     },
+    "/v1/operator/context": {
+      "get": {
+        "operationId": "operator_context_v1_operator_context_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorContextResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Operator Context",
+        "tags": [
+          "operator-overview"
+        ]
+      }
+    },
     "/v1/operator/events/stream": {
       "get": {
         "operationId": "stream_events_v1_operator_events_stream_get",
@@ -2800,6 +2972,27 @@
         "summary": "Stream Events",
         "tags": [
           "operator-events"
+        ]
+      }
+    },
+    "/v1/operator/overview": {
+      "get": {
+        "operationId": "operator_overview_v1_operator_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorOverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Operator Overview",
+        "tags": [
+          "operator-overview"
         ]
       }
     },

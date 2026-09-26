@@ -65,6 +65,7 @@ export function OnboardingChecklist({ className }: { className?: string }) {
           <div
             className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted"
             role="progressbar"
+            aria-label="Setup checklist completion"
             aria-valuenow={pct}
             aria-valuemin={0}
             aria-valuemax={100}

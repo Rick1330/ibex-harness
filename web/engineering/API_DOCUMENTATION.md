@@ -8,8 +8,9 @@
 |---|---|---|
 | Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`) | **Implemented** in the documented Phase 1 baseline | Auth service owns authentication and revocation. |
 | Proxy HTTP auth probes, health/readiness/metrics, and chat stub | **Implemented** only where verified by the Phase 1 service tests; the chat stub returns `501` | Do not infer operator product APIs from proxy routes. |
-| API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | Verify permission boundary, secure-cookie configuration, tenant scope, no-store behavior, and staging evidence before production use. |
-| `context`, `overview`, `platform/health`, `events` operator composition | **Specified-not-implemented as a complete operator contract** | Owning API service must publish the OpenAPI/SSE contract and evidence. |
+| API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | D1 context and Overview reads enforce the metadata-read permission and RLS-bound session scope. Verify canonical secure-cookie/origin policy, real AuthService-backed sessions, and staging evidence before production use. |
+| D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
+| Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
 | Memories, sessions, agents, directives, analytics, incidents, Explore, Trace Inspector, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
 | Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
 
@@ -340,6 +341,24 @@ X-Idempotency-Replayed: false  -- true if returning cached result
 ### API Version: v1
 
 All endpoints prefixed with `/v1/`
+
+---
+
+## Operator Shell API (4.D.1 — mounted, staging-provisional)
+
+The first D1 read routes use the authenticated operator access cookie. The API verifies the session, requires `operator:metadata:read`, derives the organization from verified session claims, and reads through the organization-bound PostgreSQL session/RLS policy. Clients must not supply an authoritative `org_id`. Responses are request-time and non-cacheable. Missing or out-of-scope organizations are returned as the same not-found result; database/read-budget failures fail closed as service-degraded responses.
+
+The development environment may verify its process-local signed session. Staging and production must use AuthService validation; local fixture/browser tests are not evidence of that external identity gate.
+
+### GET /v1/operator/context
+
+Returns the minimal server-derived organization and operator context: `schema_version` (`operator.context.v1`), `org_id`, `role` (`owner`, `admin`, `member`, `viewer`, or `null` if no current non-deleted membership row maps to the subject), `org_name`, `org_slug`, `org_status`, and timezone-aware `observed_at`.
+
+### GET /v1/operator/overview
+
+Returns `schema_version` (`operator.overview.v1`), organization identity/status, `observed_at`, `completeness: "complete"`, and `counts`: `active_users` (non-deleted users whose status is `active`), `agents` (non-deleted agents), and `active_agents` (non-deleted agents whose status is `active`). These are all-time organization counts, not filtered by the Console time-range control. The aggregate is bounded by a transaction-local 3-second statement timeout. The response intentionally excludes organization settings, credentials, and user/agent records.
+
+The canonical response models and path inventory are maintained in [`services/api/openapi.snapshot.json`](../../services/api/openapi.snapshot.json) and generated route inventory. Local two-tenant RLS and Console browser evidence is recorded in [`D1_READINESS.md`](console/D1_READINESS.md); hosted AuthService, canonical-origin, four-role/two-tenant, performance, SSE drain, and rollback evidence is still required before 4.D.1 acceptance.
 
 ---
 

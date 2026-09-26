@@ -37,8 +37,41 @@ export const PlatformHealthSchema = z
   })
   .strict()
 
+export const OperatorContextSchema = z
+  .object({
+    schema_version: z.literal("operator.context.v1"),
+    org_id: z.string().uuid(),
+    role: z.enum(["owner", "admin", "member", "viewer"]).nullable(),
+    org_name: z.string().min(1).max(200),
+    org_slug: z.string().min(1).max(100),
+    org_status: z.string().min(1).max(32),
+    observed_at: z.string().datetime({ offset: true }),
+  })
+  .strict()
+
+export const OperatorOverviewSchema = z
+  .object({
+    schema_version: z.literal("operator.overview.v1"),
+    org_id: z.string().uuid(),
+    org_name: z.string().min(1).max(200),
+    org_slug: z.string().min(1).max(100),
+    org_status: z.string().min(1).max(32),
+    counts: z
+      .object({
+        active_users: z.number().int().nonnegative(),
+        agents: z.number().int().nonnegative(),
+        active_agents: z.number().int().nonnegative(),
+      })
+      .strict(),
+    observed_at: z.string().datetime({ offset: true }),
+    completeness: z.literal("complete"),
+  })
+  .strict()
+
 export type OperatorSession = z.infer<typeof OperatorSessionSchema>
 export type PlatformHealth = z.infer<typeof PlatformHealthSchema>
+export type OperatorContext = z.infer<typeof OperatorContextSchema>
+export type OperatorOverview = z.infer<typeof OperatorOverviewSchema>
 
 export function parseOperatorSession(value: unknown): OperatorSession {
   return OperatorSessionSchema.parse(value)

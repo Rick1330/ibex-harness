@@ -37,11 +37,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { TimeRangeControl } from "@/components/time-range-control"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import {
   FRESHNESS_TONE,
   SHELL_HEALTH,
   type FreshnessState,
 } from "@/lib/shell-health"
+import type { OperatorContext, PlatformHealth } from "@/lib/api/contracts"
 
 const notifications = [
   {
@@ -211,7 +213,55 @@ function resolvePageMeta(pathname: string) {
   return pageMeta[pathname] ?? pageMeta["/dashboard"]
 }
 
-function PageFreshness() {
+function PageFreshness({
+  liveMode,
+  platformHealth,
+}: {
+  liveMode: boolean
+  platformHealth: PlatformHealth | null
+}) {
+  return liveMode ? (
+    <LivePageFreshness platformHealth={platformHealth} />
+  ) : (
+    <PreviewPageFreshness />
+  )
+}
+
+function LivePageFreshness({
+  platformHealth,
+}: {
+  platformHealth: PlatformHealth | null
+}) {
+  const degraded = Boolean(
+    platformHealth?.degraded_mode ||
+      Object.values(platformHealth?.dependency_health ?? {}).some(
+        (status) => status !== "ok",
+      ),
+  )
+  const label = platformHealth
+    ? degraded
+      ? "health snapshot · degraded"
+      : "health snapshot"
+    : "health unavailable"
+  return (
+    <span
+      role="status"
+      className="hidden items-center gap-1.5 rounded-full border border-sidebar-border px-2 py-1 text-[12px] whitespace-nowrap sm:flex"
+      title={
+        platformHealth
+          ? `Platform health observed ${platformHealth.observed_at}.`
+          : "Platform health is unavailable."
+      }
+    >
+      <span
+        className={`inline-flex size-1.5 rounded-full ${degraded ? FRESHNESS_TONE.degraded.dot : platformHealth ? FRESHNESS_TONE.historical.dot : FRESHNESS_TONE.stale.dot}`}
+      />
+      <span className="font-medium">{label}</span>
+    </span>
+  )
+}
+
+function PreviewPageFreshness() {
   // Fixed initial value for SSR/client match; tick only after mount.
   const health = SHELL_HEALTH
   const [ago, setAgo] = React.useState(2)
@@ -237,10 +287,9 @@ function PageFreshness() {
     <button
       type="button"
       className="hidden items-center gap-1.5 rounded-full border border-sidebar-border px-2 py-1 text-[12px] whitespace-nowrap sm:flex"
-      title={`${health.detail} · click to cycle freshness demo states`}
+        title={`${health.detail} · preview-only demonstration`}
       onClick={() => {
         const order: FreshnessState[] = [
-          "live",
           "historical",
           "reconnecting",
           "degraded",
@@ -298,7 +347,15 @@ function ThemeToggle() {
   )
 }
 
-export function SiteHeader() {
+export function SiteHeader({
+  liveMode = false,
+  operatorContext = null,
+  platformHealth = null,
+}: {
+  liveMode?: boolean
+  operatorContext?: OperatorContext | null
+  platformHealth?: PlatformHealth | null
+}) {
   const pathname = usePathname()
   const meta = resolvePageMeta(pathname)
 
@@ -307,10 +364,13 @@ export function SiteHeader() {
       <div className="flex w-full items-center gap-2 px-4 lg:px-6">
         {/* Left — Breadcrumb: Org → Section → Resource */}
         <div className="flex flex-1 items-center gap-2">
+          <SidebarTrigger className="size-8 md:hidden" />
           <Breadcrumb className="hidden md:block">
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink href="/dashboard">Acme Corp</BreadcrumbLink>
+                <BreadcrumbLink href="/dashboard">
+                  {liveMode ? operatorContext?.org_name ?? "Organization" : "Acme Corp"}
+                </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
@@ -353,10 +413,23 @@ export function SiteHeader() {
         {/* Right */}
         <div className="flex flex-1 items-center justify-end gap-1">
           {/* Global time range + custom / as-of — only place these live */}
-          <TimeRangeControl />
+          {liveMode ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              title="D1 organization counts are not filtered by time range."
+              className="h-8 max-w-[200px] gap-1.5 px-2 font-mono text-xs sm:px-2.5"
+              aria-label="Time range: not applicable to D1 counts"
+            >
+              all-time
+            </Button>
+          ) : (
+            <TimeRangeControl />
+          )}
 
           {/* Page freshness chip */}
-          <PageFreshness />
+          <PageFreshness liveMode={liveMode} platformHealth={platformHealth} />
 
           {/* Notifications */}
           <DropdownMenu>
@@ -366,19 +439,27 @@ export function SiteHeader() {
                 size="icon"
                 className="relative size-8"
                 title="Notifications"
-                aria-label={`Notifications, ${notifications.length} unread`}
+                aria-label={
+                  liveMode
+                    ? "Notifications unavailable in D1"
+                    : `Notifications, ${notifications.length} unread`
+                }
               >
                 <IconBell className="size-4" />
-                <span className="absolute top-0.5 right-0.5 flex size-4 items-center justify-center rounded-full bg-primary text-[11px] font-medium text-primary-foreground tabular-nums">
-                  {notifications.length}
-                </span>
+                {!liveMode ? (
+                  <span className="absolute top-0.5 right-0.5 flex size-4 items-center justify-center rounded-full bg-primary text-[11px] font-medium text-primary-foreground tabular-nums">
+                    {notifications.length}
+                  </span>
+                ) : null}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-80 rounded-xl">
               <DropdownMenuLabel>Notifications</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
-                {notifications.map((n) => (
+                {liveMode ? (
+                  <DropdownMenuItem disabled>No live notification feed is connected.</DropdownMenuItem>
+                ) : notifications.map((n) => (
                   <DropdownMenuItem
                     key={n.title}
                     className="flex-col items-start gap-0.5 py-2"
@@ -412,7 +493,27 @@ export function SiteHeader() {
           </Button>
 
           {/* Account menu */}
-          <DropdownMenu>
+          {liveMode ? (
+            <Button
+              variant="ghost"
+              disabled
+              className="h-8 gap-2 rounded-full px-1.5 sm:rounded-md sm:pr-2"
+              title="Session and organization context are read-only in D1."
+              aria-label={
+                operatorContext
+                  ? `Operator role ${operatorContext.role ?? "unmapped"} in ${operatorContext.org_name}`
+                  : "Operator context unavailable"
+              }
+            >
+              <Avatar className="size-7 rounded-full ring-1 ring-border">
+                <AvatarFallback className="rounded-full text-[11px]">OP</AvatarFallback>
+              </Avatar>
+              <span className="hidden max-w-[9rem] truncate text-left text-[13px] font-medium sm:block">
+                {operatorContext?.role ?? "Context unavailable"}
+              </span>
+            </Button>
+          ) : (
+            <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -444,11 +545,15 @@ export function SiteHeader() {
                   <div className="truncate text-[13px] font-medium">
                     Operator
                   </div>
-                  <div className="truncate text-[12px] text-muted-foreground">
-                    you@acme.com
-                  </div>
+                  {!liveMode ? (
+                    <div className="truncate text-[12px] text-muted-foreground">
+                      you@acme.com
+                    </div>
+                  ) : null}
                   <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
-                    Acme Corp · owner
+                    {liveMode
+                      ? `${operatorContext?.org_name ?? "Organization"} · ${operatorContext?.role ?? "role unavailable"}`
+                      : "Acme Corp · owner"}
                   </div>
                 </div>
               </div>
@@ -485,7 +590,8 @@ export function SiteHeader() {
                 Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
-          </DropdownMenu>
+            </DropdownMenu>
+          )}
         </div>
       </div>
     </header>

@@ -11,15 +11,26 @@ def source_constant_name(source: str) -> str:
     return f"ROUTE_SOURCE_{suffix}"
 
 
-def _auth_source(path: str, public_paths: frozenset[str]) -> str:
+def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -> str:
     if path in public_paths:
         return "public"
     if path == "/v1/operator/session/login":
         return "pat_exchange"
+    if path in {
+        "/v1/operator/context",
+        "/v1/operator/overview",
+        "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
+    }:
+        return "operator_session"
     if path.startswith("/v1/operator/session"):
         return "operator_session"
     if path in {"/v1/operator/platform/health", "/v1/operator/events/stream"}:
         return "operator_permission"
+    if method == "POST" and path in {
+        "/v1/organizations/{org_id}/legal-holds",
+        "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
+    }:
+        return "operator_session"
     return "bearer_pat"
 
 
@@ -38,7 +49,7 @@ def _policy_row(
 ) -> dict[str, object]:
     method = str(row["methods"][0])
     path = str(row["path"])
-    auth = _auth_source(path, public_paths)
+    auth = _auth_source(path, public_paths, method)
     source = _source_path(root, row.get("source"))
     return {
         "method": method,

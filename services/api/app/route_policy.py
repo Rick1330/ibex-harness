@@ -68,6 +68,7 @@ def _operator_permission_dependencies() -> dict[tuple[str, str], object]:
 
 
 def _operator_session_dependencies() -> dict[tuple[str, str], object]:
+    from app.routers.operator_overview import require_operator_metadata_session
     from app.routers.session import (
         require_session_logout,
         require_session_me,
@@ -75,6 +76,8 @@ def _operator_session_dependencies() -> dict[tuple[str, str], object]:
     )
 
     return {
+        ("GET", "/v1/operator/context"): require_operator_metadata_session,
+        ("GET", "/v1/operator/overview"): require_operator_metadata_session,
         ("GET", "/v1/operator/session/me"): require_session_me,
         ("POST", "/v1/operator/session/refresh"): require_session_refresh,
         ("POST", "/v1/operator/session/logout"): require_session_logout,

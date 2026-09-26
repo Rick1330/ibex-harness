@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   classifyPath,
   isDashboardPreviewEnabled,
+  isLiveD1Enabled,
   isPreviewEnabled,
   resolveDashboardBoundary,
   resolveDataMode,
@@ -62,6 +63,12 @@ describe("console data boundary", () => {
     ).toBe(false)
   })
 
+  it("requires read-only mode and a server API origin for live D1", () => {
+    expect(isLiveD1Enabled({ CONSOLE_DATA_MODE: "live", CONSOLE_READ_ONLY: "1" })).toBe(false)
+    expect(isLiveD1Enabled({ CONSOLE_DATA_MODE: "live", IBEX_OPERATOR_API_ORIGIN: "https://api.example" })).toBe(false)
+    expect(isLiveD1Enabled({ CONSOLE_DATA_MODE: "live", CONSOLE_READ_ONLY: "1", IBEX_OPERATOR_API_ORIGIN: "https://api.example" })).toBe(true)
+  })
+
   it.each([
     [{}, "unavailable"],
     [{ CONSOLE_DATA_MODE: "preview" }, "unavailable"],
@@ -102,7 +109,10 @@ describe("console route classification", () => {
     expect(classifyPath("/dashboard/explore").status).toBe("deferred")
     expect(classifyPath("/dashboard/analytics").status).toBe("deferred")
     expect(classifyPath("/dashboard/settings").status).toBe("deferred")
-    expect(classifyPath("/login").status).toBe("specified-not-implemented")
-    expect(classifyPath("/onboarding").status).toBe("specified-not-implemented")
+    expect(classifyPath("/dashboard/explore/t/trace-1").status).toBe("deferred")
+    expect(classifyPath("/dashboard/unknown").status).toBe("deferred")
+    expect(classifyPath("/login").status).toBe("unavailable")
+    expect(classifyPath("/onboarding").status).toBe("unavailable")
+    expect(classifyPath("/not-a-console-route").status).toBe("unavailable")
   })
 })

@@ -11,18 +11,56 @@ import { SiteHeader } from "@/components/site-header"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { FRESHNESS_TONE } from "@/lib/shell-health"
+import type { OperatorContext, PlatformHealth } from "@/lib/api/contracts"
 import { cn } from "@/lib/utils"
 
 /** Shared dashboard chrome — auth gate + session refresh + step-up modal. */
-export function DashboardShell({ children }: { children: React.ReactNode }) {
+export type DashboardShellProps = {
+  children: React.ReactNode
+  liveMode?: boolean
+  showPreviewBanner?: boolean
+  operatorContext?: OperatorContext | null
+  platformHealth?: PlatformHealth | null
+}
+
+function SessionBoundOnboarding({
+  liveMode,
+  children,
+}: {
+  liveMode: boolean
+  children: React.ReactNode
+}) {
+  return liveMode ? children : <OnboardingProvider>{children}</OnboardingProvider>
+}
+
+export function DashboardShell({
+  children,
+  liveMode = false,
+  showPreviewBanner = true,
+  operatorContext = null,
+  platformHealth = null,
+}: DashboardShellProps) {
   return (
     <AuthProvider>
-      <DashboardShellInner>{children}</DashboardShellInner>
+      <DashboardShellInner
+        liveMode={liveMode}
+        showPreviewBanner={showPreviewBanner}
+        operatorContext={operatorContext}
+        platformHealth={platformHealth}
+      >
+        {children}
+      </DashboardShellInner>
     </AuthProvider>
   )
 }
 
-function DashboardShellInner({ children }: { children: React.ReactNode }) {
+function DashboardShellInner({
+  children,
+  liveMode = false,
+  showPreviewBanner = true,
+  operatorContext = null,
+  platformHealth = null,
+}: DashboardShellProps) {
   const { ready, session, banner, tryRefresh, logout } = useAuth()
   const pathname = usePathname()
 
@@ -52,7 +90,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <OnboardingProvider>
+    <SessionBoundOnboarding liveMode={liveMode}>
       <SidebarProvider
         style={
           {
@@ -61,9 +99,26 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           } as React.CSSProperties
         }
       >
-        <AppSidebar variant="inset" />
+        <AppSidebar
+          variant="inset"
+          liveMode={liveMode}
+          operatorContext={operatorContext}
+        />
         <SidebarInset>
-          <SiteHeader />
+          <SiteHeader
+            liveMode={liveMode}
+            operatorContext={operatorContext}
+            platformHealth={platformHealth}
+          />
+          {showPreviewBanner ? (
+            <div
+              role="status"
+              aria-label="Preview data"
+              className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-center font-mono text-[11px] uppercase tracking-[0.16em] text-amber-900 dark:text-amber-200"
+            >
+              Preview data — no live operator contract
+            </div>
+          ) : null}
           {banner ? (
             <div
               className={cn(
@@ -103,7 +158,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
         </SidebarInset>
         <StepUpModal />
       </SidebarProvider>
-    </OnboardingProvider>
+    </SessionBoundOnboarding>
   )
 }
 

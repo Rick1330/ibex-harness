@@ -1086,6 +1086,8 @@ jobs:
           enable-cache: true
       - name: Check API OpenAPI snapshot freshness
         run: bash .github/scripts/check-openapi-snapshot.sh
+      - name: Check API mounted-route inventory freshness
+        run: uv run --project services/api python services/api/scripts/route_inventory.py --check
       - name: API unit tests (pytest + ruff)
         run: bash infra/scripts/api-test-ci.sh
 
@@ -1964,6 +1966,45 @@ jobs:
           done
           grep -Fq "Overview unavailable" /tmp/console-dashboard.html
           ! grep -Fq "1,284,092" /tmp/console-dashboard.html
+
+      - name: Verify production D1 fails closed without fixture fallback
+        run: |
+          set -euo pipefail
+          log_file="${RUNNER_TEMP}/console-d1.log"
+          (cd services/console && NODE_ENV=production PORT=3101 CONSOLE_DATA_MODE=live CONSOLE_READ_ONLY=1 IBEX_OPERATOR_API_ORIGIN=http://127.0.0.1:3199 pnpm start >"${log_file}" 2>&1) &
+          server_pid=$!
+          cleanup() { kill "${server_pid}" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error -H 'Cookie: ibex_session=fixture-test-cookie' http://127.0.0.1:3101/dashboard >/tmp/console-d1.html; then
+              break
+            fi
+            sleep 1
+          done
+          grep -Fq "Organization overview is unavailable" /tmp/console-d1.html
+          grep -Fq "No mock values are substituted" /tmp/console-d1.html
+          ! grep -Fq "1,284,092" /tmp/console-d1.html
+          ! grep -Fq "Acme Corp" /tmp/console-d1.html
+
+      - name: Install Chromium for Console browser gates
+        run: pnpm --filter @ibex/console exec playwright install --with-deps chromium
+
+      - name: Test Console route boundaries and WCAG 2.2 AA
+        timeout-minutes: 8
+        run: pnpm --filter @ibex/console test:e2e
+
+      - name: Test authenticated live D1 API and SSE journey
+        timeout-minutes: 8
+        run: pnpm --filter @ibex/console test:e2e:live
+
+      - name: Upload Console browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: console-d0-d1-browser-evidence
+          path: services/console/test-results/
+          if-no-files-found: warn
+          retention-days: 14
 
   hadolint:
     name: hadolint
