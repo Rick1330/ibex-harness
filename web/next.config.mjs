@@ -17,6 +17,8 @@ const config = {
     : {}),
   distDir: process.env.NEXT_DIST_DIR || ".next",
   reactStrictMode: true,
+  // Local Playwright and manual browser runs may use either loopback hostname.
+  allowedDevOrigins: ["localhost", "127.0.0.1"],
   experimental: {
     optimizePackageImports: ["lucide-react", "fumadocs-ui"],
     webpackMemoryOptimizations: true,

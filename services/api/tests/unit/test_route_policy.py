@@ -49,9 +49,7 @@ def test_same_module_unrelated_dependency_does_not_satisfy_auth_contract() -> No
 
     app = create_app()
     route = next(
-        route
-        for route in _mounted_routes(app)
-        if getattr(route, "path", None) == "/v1/tenant/ping"
+        route for route in _mounted_routes(app) if getattr(route, "path", None) == "/v1/tenant/ping"
     )
     route.dependant.dependencies = [SimpleNamespace(call=get_validator, dependencies=[])]
     assert ("GET", "/v1/tenant/ping") in executable_dependency_gaps(app)
@@ -63,18 +61,12 @@ def test_route_policy_generator_preserves_helpers_and_is_deterministic(tmp_path:
     app_dir = repo / "services/api/app"
     scripts.mkdir(parents=True)
     app_dir.mkdir(parents=True)
-    source_script = (
-        Path(__file__).resolve().parents[2] / "scripts/generate_route_policy.py"
-    )
-    source_inventory = (
-        Path(__file__).resolve().parents[2] / "scripts/route_inventory.json"
-    )
+    source_script = Path(__file__).resolve().parents[2] / "scripts/generate_route_policy.py"
+    source_inventory = Path(__file__).resolve().parents[2] / "scripts/route_inventory.json"
     script = scripts / "generate_route_policy.py"
     script.write_bytes(source_script.read_bytes())
     inventory = json.loads(source_inventory.read_text(encoding="utf-8"))
-    (scripts / "route_inventory.json").write_text(
-        json.dumps(inventory[:2]), encoding="utf-8"
-    )
+    (scripts / "route_inventory.json").write_text(json.dumps(inventory[:2]), encoding="utf-8")
     runtime_module = app_dir / "route_policy.py"
     preserved_helpers = (
         "def executable_dependency_gaps():\n    return ()\n\n"
@@ -120,6 +112,8 @@ def test_auth_source_requires_exact_public_path_match() -> None:
     assert module._auth_source("/healthcheck", public_paths) == "bearer_pat"
     assert module._auth_source("/metrics/private", public_paths) == "bearer_pat"
     assert module._auth_source("/docs-admin", public_paths) == "bearer_pat"
+
+
 def _route(path: str | None, endpoint: object, dependencies: list[object] | None = None):
     return SimpleNamespace(
         path=path,
@@ -160,23 +154,21 @@ def test_route_policy_rejects_missing_rows_wrong_endpoints_and_unknown_auth(monk
         pass
 
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", ())
-    assert executable_dependency_gaps(
-        SimpleNamespace(routes=[_route("/missing", endpoint)])
-    ) == (("GET", "/missing"),)
+    assert executable_dependency_gaps(SimpleNamespace(routes=[_route("/missing", endpoint)])) == (
+        ("GET", "/missing"),
+    )
 
     row = _policy_row("/protected", endpoint, "public")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
     assert executable_dependency_gaps(
         SimpleNamespace(routes=[_route("/protected", wrong_endpoint)])
-    ) == (
-        ("GET", "/protected"),
-    )
+    ) == (("GET", "/protected"),)
 
     row = _policy_row("/protected", endpoint, "unsupported")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
-    assert executable_dependency_gaps(
-        SimpleNamespace(routes=[_route("/protected", endpoint)])
-    ) == (("GET", "/protected"),)
+    assert executable_dependency_gaps(SimpleNamespace(routes=[_route("/protected", endpoint)])) == (
+        ("GET", "/protected"),
+    )
 
 
 def test_route_policy_checks_bearer_and_pat_exchange_exact_dependencies(monkeypatch) -> None:
@@ -188,9 +180,7 @@ def test_route_policy_checks_bearer_and_pat_exchange_exact_dependencies(monkeypa
     row = _policy_row(bearer_path, endpoint, "bearer_pat")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
     no_guard = _route(bearer_path, endpoint)
-    assert executable_dependency_gaps(SimpleNamespace(routes=[no_guard])) == (
-        ("GET", bearer_path),
-    )
+    assert executable_dependency_gaps(SimpleNamespace(routes=[no_guard])) == (("GET", bearer_path),)
     guarded = _route(
         bearer_path,
         endpoint,
@@ -224,9 +214,9 @@ def test_route_policy_requires_operator_session_dependencies(monkeypatch) -> Non
     path = "/v1/operator/session/me"
     row = _policy_row(path, me, "operator_session")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
-    assert executable_dependency_gaps(
-        SimpleNamespace(routes=[_route(path, lambda: None)])
-    ) == (("GET", path),)
+    assert executable_dependency_gaps(SimpleNamespace(routes=[_route(path, lambda: None)])) == (
+        ("GET", path),
+    )
     assert executable_dependency_gaps(SimpleNamespace(routes=[_route(path, me)])) == (
         ("GET", path),
     )
@@ -261,12 +251,43 @@ def test_route_policy_skips_pathless_routes_and_rejects_missing_session_dep(monk
     key = ("GET", "/v1/operator/session/me")
     row = _policy_row(key[1], me, "operator_session")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
-    assert executable_dependency_gaps(
-        SimpleNamespace(routes=[_route(key[1], me)])
-    ) == (key,)
+    assert executable_dependency_gaps(SimpleNamespace(routes=[_route(key[1], me)])) == (key,)
     guarded = _route(
         key[1],
         me,
         [SimpleNamespace(call=require_session_me, dependencies=[])],
     )
     assert executable_dependency_gaps(SimpleNamespace(routes=[guarded])) == ()
+
+
+def test_operator_session_legal_hold_guard_helpers() -> None:
+    from app.authz import require_operator_legal_hold_manage
+    from app.route_policy import (
+        _has_expected_guard,
+        _has_operator_session_guard,
+        _is_operator_legal_hold_guard,
+    )
+
+    key = ("POST", "/v1/organizations/{org_id}/legal-holds")
+    foreign = SimpleNamespace(__module__="elsewhere", __qualname__="other")
+    assert _is_operator_legal_hold_guard(foreign) is False
+    assert _has_operator_session_guard(key, [foreign]) is False
+
+    hold_dep = require_operator_legal_hold_manage()
+    assert _is_operator_legal_hold_guard(hold_dep) is True
+    assert _has_operator_session_guard(key, [hold_dep]) is True
+    assert _has_expected_guard(key, "operator_session", [hold_dep]) is True
+
+    wrong_exchange = ("POST", "/v1/operator/session/refresh")
+    assert _has_expected_guard(wrong_exchange, "pat_exchange", []) is False
+
+
+def test_dependency_calls_recurse_into_nested_dependants() -> None:
+    from app.deps import require_token
+    from app.route_policy import _dependency_calls
+
+    nested = SimpleNamespace(
+        call=None,
+        dependencies=[SimpleNamespace(call=require_token, dependencies=[])],
+    )
+    assert _dependency_calls(nested) == [require_token]

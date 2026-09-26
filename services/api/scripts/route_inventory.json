@@ -85,8 +85,8 @@
     "path": "/v1/agents",
     "response_model": "<class 'app.pagination.CursorPage[AgentResponse]'>",
     "security": [
-      "<function _agent_list_ctx at 0x7f13bc0671a0>",
-      "<function require_operator_permission.<locals>._dep at 0x7f13bc067f60>"
+      "<function _agent_list_ctx at 0x7fac2e37c5e0>",
+      "<function require_operator_permission.<locals>._dep at 0x7fac2e3b93a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -99,8 +99,8 @@
     "path": "/v1/agents",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -113,8 +113,8 @@
     "path": "/v1/agents/{agent_id}",
     "response_model": "None",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -127,8 +127,8 @@
     "path": "/v1/agents/{agent_id}",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "<function require_operator_permission.<locals>._dep at 0x7f13bc067f60>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_operator_permission.<locals>._dep at 0x7fac2e3b93a0>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -141,8 +141,8 @@
     "path": "/v1/agents/{agent_id}",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -155,8 +155,8 @@
     "path": "/v1/agents/{agent_id}/activate",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -169,8 +169,8 @@
     "path": "/v1/agents/{agent_id}/archive",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -183,8 +183,8 @@
     "path": "/v1/agents/{agent_id}/pause",
     "response_model": "<class 'app.schemas.agents.AgentResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/agents.py"
   },
@@ -196,7 +196,9 @@
     "name": "stream_events",
     "path": "/v1/operator/events/stream",
     "response_model": "None",
-    "security": [],
+    "security": [
+      "<function require_operator_event_session at 0x7fac2ddcc9a0>"
+    ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/operator_events.py"
   },
   {
@@ -207,7 +209,9 @@
     "name": "platform_health",
     "path": "/v1/operator/platform/health",
     "response_model": "<class 'app.routers.platform.PlatformHealthResponse'>",
-    "security": [],
+    "security": [
+      "<function _require_operator_session at 0x7fac2ddcea20>"
+    ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/platform.py"
   },
   {
@@ -219,7 +223,7 @@
     "path": "/v1/operator/session/login",
     "response_model": "dict[str, object]",
     "security": [
-      "<function get_validator at 0x7f13bc067420>"
+      "<function get_validator at 0x7fac2e37c2c0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/session.py"
   },
@@ -230,8 +234,10 @@
     ],
     "name": "logout",
     "path": "/v1/operator/session/logout",
-    "response_model": "dict[str, str]",
-    "security": [],
+    "response_model": "None",
+    "security": [
+      "<function require_session_logout at 0x7fac2dab1620>"
+    ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/session.py"
   },
   {
@@ -242,7 +248,9 @@
     "name": "me",
     "path": "/v1/operator/session/me",
     "response_model": "dict[str, object]",
-    "security": [],
+    "security": [
+      "<function require_session_me at 0x7fac2dab0720>"
+    ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/session.py"
   },
   {
@@ -253,7 +261,9 @@
     "name": "refresh_session",
     "path": "/v1/operator/session/refresh",
     "response_model": "dict[str, object]",
-    "security": [],
+    "security": [
+      "<function require_session_refresh at 0x7fac2dab1580>"
+    ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/session.py"
   },
   {
@@ -265,8 +275,8 @@
     "path": "/v1/organizations/{org_id}",
     "response_model": "<class 'app.schemas.organizations.OrgDeletionJobResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067920>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8c20>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/organizations.py"
   },
@@ -279,8 +289,8 @@
     "path": "/v1/organizations/{org_id}",
     "response_model": "<class 'app.schemas.organizations.OrganizationResponse'>",
     "security": [
-      "<function require_operator_permission.<locals>._dep at 0x7f13bc067f60>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_operator_permission.<locals>._dep at 0x7fac2e3b93a0>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/organizations.py"
   },
@@ -293,8 +303,8 @@
     "path": "/v1/organizations/{org_id}",
     "response_model": "<class 'app.schemas.organizations.OrganizationResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067880>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8b80>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/organizations.py"
   },
@@ -307,7 +317,7 @@
     "path": "/v1/organizations/{org_id}/budget-periods",
     "response_model": "<class 'app.pagination.CursorPage[BudgetPeriodResponse]'>",
     "security": [
-      "<function _billing_read_ctx at 0x7f13bc0fe980>"
+      "<function _billing_read_ctx at 0x7fac2e3fbd80>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/billing.py"
   },
@@ -320,7 +330,7 @@
     "path": "/v1/organizations/{org_id}/budget-periods",
     "response_model": "<class 'app.schemas.billing.BudgetPeriodResponse'>",
     "security": [
-      "<function _billing_write_ctx at 0x7f13bc0fea20>"
+      "<function _billing_write_ctx at 0x7fac2e3fbe20>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/billing.py"
   },
@@ -333,7 +343,7 @@
     "path": "/v1/organizations/{org_id}/capture-policies",
     "response_model": "list[app.schemas.capture_policies.CapturePolicyResponse]",
     "security": [
-      "<function _read_ctx at 0x7f13bbfa80e0>"
+      "<function _read_ctx at 0x7fac2e28d580>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/capture_policies.py"
   },
@@ -346,7 +356,7 @@
     "path": "/v1/organizations/{org_id}/capture-policies",
     "response_model": "<class 'app.schemas.capture_policies.CapturePolicyResponse'>",
     "security": [
-      "<function _write_ctx at 0x7f13bbfa8220>"
+      "<function _write_ctx at 0x7fac2e28d620>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/capture_policies.py"
   },
@@ -359,7 +369,7 @@
     "path": "/v1/organizations/{org_id}/capture-policies/resolved",
     "response_model": "dict[str, str]",
     "security": [
-      "<function _read_ctx at 0x7f13bbfa80e0>"
+      "<function _read_ctx at 0x7fac2e28d580>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/capture_policies.py"
   },
@@ -372,7 +382,7 @@
     "path": "/v1/organizations/{org_id}/capture-policies/{policy_id}",
     "response_model": "None",
     "security": [
-      "<function _write_ctx at 0x7f13bbfa8220>"
+      "<function _write_ctx at 0x7fac2e28d620>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/capture_policies.py"
   },
@@ -385,7 +395,7 @@
     "path": "/v1/organizations/{org_id}/capture-policies/{policy_id}",
     "response_model": "<class 'app.schemas.capture_policies.CapturePolicyResponse'>",
     "security": [
-      "<function _write_ctx at 0x7f13bbfa8220>"
+      "<function _write_ctx at 0x7fac2e28d620>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/capture_policies.py"
   },
@@ -398,8 +408,8 @@
     "path": "/v1/organizations/{org_id}/deletion-jobs/{job_id}",
     "response_model": "<class 'app.schemas.organizations.OrgDeletionJobResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067920>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8c20>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/organizations.py"
   },
@@ -412,8 +422,8 @@
     "path": "/v1/organizations/{org_id}/legal-holds",
     "response_model": "list[app.schemas.legal_holds.LegalHoldResponse]",
     "security": [
-      "<function require_token at 0x7f13bc067560>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_token at 0x7fac2e37f600>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/legal_holds.py"
   },
@@ -426,8 +436,8 @@
     "path": "/v1/organizations/{org_id}/legal-holds",
     "response_model": "<class 'app.schemas.legal_holds.LegalHoldResponse'>",
     "security": [
-      "<function require_legal_hold_manage.<locals>._dep at 0x7f13bc067a60>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_operator_legal_hold_manage.<locals>._dep at 0x7fac2e3b8d60>",
+      "<function operator_org_session at 0x7fac2e37f740>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/legal_holds.py"
   },
@@ -440,8 +450,8 @@
     "path": "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
     "response_model": "<class 'app.schemas.legal_holds.LegalHoldResponse'>",
     "security": [
-      "<function require_legal_hold_manage.<locals>._dep at 0x7f13bc067a60>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_operator_legal_hold_manage.<locals>._dep at 0x7fac2e3b8d60>",
+      "<function operator_org_session at 0x7fac2e37f740>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/legal_holds.py"
   },
@@ -454,7 +464,7 @@
     "path": "/v1/organizations/{org_id}/model-policies",
     "response_model": "<class 'app.pagination.CursorPage[ModelPolicyResponse]'>",
     "security": [
-      "<function _read_ctx at 0x7f13bbe20540>"
+      "<function _read_ctx at 0x7fac2e135da0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/model_policies.py"
   },
@@ -467,7 +477,7 @@
     "path": "/v1/organizations/{org_id}/model-policies",
     "response_model": "<class 'app.schemas.model_policies.ModelPolicyResponse'>",
     "security": [
-      "<function _write_ctx at 0x7f13bbe20680>"
+      "<function _write_ctx at 0x7fac2e135f80>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/model_policies.py"
   },
@@ -480,7 +490,7 @@
     "path": "/v1/organizations/{org_id}/model-policies/{policy_id}",
     "response_model": "None",
     "security": [
-      "<function _write_ctx at 0x7f13bbe20680>"
+      "<function _write_ctx at 0x7fac2e135f80>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/model_policies.py"
   },
@@ -493,7 +503,7 @@
     "path": "/v1/organizations/{org_id}/model-policies/{policy_id}",
     "response_model": "<class 'app.schemas.model_policies.ModelPolicyResponse'>",
     "security": [
-      "<function _read_ctx at 0x7f13bbe20540>"
+      "<function _read_ctx at 0x7fac2e135da0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/model_policies.py"
   },
@@ -506,7 +516,7 @@
     "path": "/v1/organizations/{org_id}/model-policies/{policy_id}",
     "response_model": "<class 'app.schemas.model_policies.ModelPolicyResponse'>",
     "security": [
-      "<function _write_ctx at 0x7f13bbe20680>"
+      "<function _write_ctx at 0x7fac2e135f80>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/model_policies.py"
   },
@@ -519,7 +529,7 @@
     "path": "/v1/organizations/{org_id}/providers",
     "response_model": "<class 'app.schemas.providers.ProviderCredentialListResponse'>",
     "security": [
-      "<function _provider_ctx at 0x7f13bbab2340>"
+      "<function _provider_ctx at 0x7fac2ddcf240>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/providers.py"
   },
@@ -532,7 +542,7 @@
     "path": "/v1/organizations/{org_id}/providers",
     "response_model": "<class 'app.schemas.providers.ProviderCredentialResponse'>",
     "security": [
-      "<function _provider_ctx at 0x7f13bbab2340>"
+      "<function _provider_ctx at 0x7fac2ddcf240>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/providers.py"
   },
@@ -545,7 +555,7 @@
     "path": "/v1/organizations/{org_id}/providers/{provider_name}",
     "response_model": "None",
     "security": [
-      "<function _provider_ctx at 0x7f13bbab2340>"
+      "<function _provider_ctx at 0x7fac2ddcf240>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/providers.py"
   },
@@ -558,7 +568,7 @@
     "path": "/v1/organizations/{org_id}/rate-cards",
     "response_model": "<class 'app.pagination.CursorPage[RateCardResponse]'>",
     "security": [
-      "<function _billing_read_ctx at 0x7f13bc0fe980>"
+      "<function _billing_read_ctx at 0x7fac2e3fbd80>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/billing.py"
   },
@@ -571,7 +581,7 @@
     "path": "/v1/organizations/{org_id}/rate-cards",
     "response_model": "<class 'app.schemas.billing.RateCardResponse'>",
     "security": [
-      "<function _billing_write_ctx at 0x7f13bc0fea20>"
+      "<function _billing_write_ctx at 0x7fac2e3fbe20>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/billing.py"
   },
@@ -584,7 +594,7 @@
     "path": "/v1/organizations/{org_id}/rate-cards/{card_id}/versions",
     "response_model": "<class 'app.schemas.billing.RateCardVersionResponse'>",
     "security": [
-      "<function _billing_write_ctx at 0x7f13bc0fea20>"
+      "<function _billing_write_ctx at 0x7fac2e3fbe20>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/billing.py"
   },
@@ -597,7 +607,7 @@
     "path": "/v1/organizations/{org_id}/rate-limits",
     "response_model": "<class 'app.schemas.rate_limits.RateLimitsResponse'>",
     "security": [
-      "<function _rate_limit_read_ctx at 0x7f13bb736340>"
+      "<function _rate_limit_read_ctx at 0x7fac2da57240>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/rate_limits.py"
   },
@@ -610,7 +620,7 @@
     "path": "/v1/organizations/{org_id}/rate-limits",
     "response_model": "<class 'app.schemas.rate_limits.RateLimitsResponse'>",
     "security": [
-      "<function _rate_limit_write_ctx at 0x7f13bb7362a0>"
+      "<function _rate_limit_write_ctx at 0x7fac2da571a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/rate_limits.py"
   },
@@ -623,8 +633,8 @@
     "path": "/v1/organizations/{org_id}/suspend",
     "response_model": "<class 'app.schemas.organizations.OrganizationResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc067920>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8c20>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/organizations.py"
   },
@@ -637,7 +647,7 @@
     "path": "/v1/organizations/{org_id}/usage/query",
     "response_model": "<class 'app.schemas.billing.UsageQueryResponse'>",
     "security": [
-      "<function require_token at 0x7f13bc067560>"
+      "<function require_token at 0x7fac2e37f600>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/usage_query.py"
   },
@@ -650,8 +660,8 @@
     "path": "/v1/tenant/ping",
     "response_model": "dict[str, str]",
     "security": [
-      "<function require_token at 0x7f13bc067560>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_token at 0x7fac2e37f600>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/tenant.py"
   },
@@ -664,8 +674,8 @@
     "path": "/v1/tokens",
     "response_model": "<class 'app.pagination.CursorPage[TokenResponse]'>",
     "security": [
-      "<function _token_ctx at 0x7f13bb7d05e0>",
-      "<function _list_query at 0x7f13bb7927a0>"
+      "<function _token_ctx at 0x7fac2daca5c0>",
+      "<function _list_query at 0x7fac2dac8720>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/tokens.py"
   },
@@ -678,7 +688,7 @@
     "path": "/v1/tokens",
     "response_model": "<class 'app.schemas.tokens.TokenCreateResponse'>",
     "security": [
-      "<function _token_ctx at 0x7f13bb7d05e0>"
+      "<function _token_ctx at 0x7fac2daca5c0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/tokens.py"
   },
@@ -691,7 +701,7 @@
     "path": "/v1/tokens/{token_id}",
     "response_model": "None",
     "security": [
-      "<function _token_ctx at 0x7f13bb7d05e0>"
+      "<function _token_ctx at 0x7fac2daca5c0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/tokens.py"
   },
@@ -704,7 +714,7 @@
     "path": "/v1/tokens/{token_id}",
     "response_model": "<class 'app.schemas.tokens.TokenResponse'>",
     "security": [
-      "<function _token_ctx at 0x7f13bb7d05e0>"
+      "<function _token_ctx at 0x7fac2daca5c0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/tokens.py"
   },
@@ -717,7 +727,7 @@
     "path": "/v1/users",
     "response_model": "<class 'app.pagination.CursorPage[UserResponse]'>",
     "security": [
-      "<function _user_list_ctx at 0x7f13bb620360>"
+      "<function _user_list_ctx at 0x7fac2d91a340>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/users.py"
   },
@@ -730,8 +740,8 @@
     "path": "/v1/users",
     "response_model": "<class 'app.schemas.users.UserResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc0677e0>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8ae0>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/users.py"
   },
@@ -744,9 +754,9 @@
     "path": "/v1/users/{user_id}",
     "response_model": "None",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc0677e0>",
-      "<function org_session at 0x7f13bc067600>",
-      "<function _revoke_context at 0x7f13bb6202c0>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8ae0>",
+      "<function org_session at 0x7fac2e37f6a0>",
+      "<function _revoke_context at 0x7fac2d91a2a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/users.py"
   },
@@ -759,8 +769,8 @@
     "path": "/v1/users/{user_id}",
     "response_model": "<class 'app.schemas.users.UserResponse'>",
     "security": [
-      "<function require_roles.<locals>._dep at 0x7f13bc0677e0>",
-      "<function org_session at 0x7f13bc067600>"
+      "<function require_roles.<locals>._dep at 0x7fac2e3b8ae0>",
+      "<function org_session at 0x7fac2e37f6a0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/users.py"
   },
@@ -773,7 +783,7 @@
     "path": "/v1/users/{user_id}",
     "response_model": "<class 'app.schemas.users.UserResponse'>",
     "security": [
-      "<function _user_patch_ctx at 0x7f13bb620e00>"
+      "<function _user_patch_ctx at 0x7fac2d91ade0>"
     ],
     "source": "/home/ubuntu/ibex-harness/services/api/app/routers/users.py"
   }

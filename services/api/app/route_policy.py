@@ -81,16 +81,41 @@ def _operator_session_dependencies() -> dict[tuple[str, str], object]:
     }
 
 
+_LEGAL_HOLD_SESSION_KEYS: Final[frozenset[tuple[str, str]]] = frozenset(
+    {
+        ("POST", "/v1/organizations/{org_id}/legal-holds"),
+        ("POST", "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear"),
+    }
+)
+
+
+def _is_operator_legal_hold_guard(call: object) -> bool:
+    if getattr(call, "__module__", "") != "app.authz":
+        return False
+    qualname = str(getattr(call, "__qualname__", ""))
+    return qualname.startswith("require_operator_legal_hold_manage.<locals>")
+
+
+def _has_operator_session_guard(key: tuple[str, str], calls: list[object]) -> bool:
+    expected = _operator_session_dependencies().get(key)
+    if expected is not None and expected in calls:
+        return True
+    if key not in _LEGAL_HOLD_SESSION_KEYS:
+        return False
+    return any(_is_operator_legal_hold_guard(call) for call in calls)
+
+
 def _has_expected_guard(key: tuple[str, str], auth_source: str, calls: list[object]) -> bool:
     if auth_source == "public":
         return True
     if auth_source == "bearer_pat":
         return require_token in calls
     if auth_source == "pat_exchange":
-        return key == ("POST", "/v1/operator/session/login") and get_validator in calls
+        if key != ("POST", "/v1/operator/session/login"):
+            return False
+        return get_validator in calls
     if auth_source == "operator_session":
-        expected = _operator_session_dependencies().get(key)
-        return expected is not None and expected in calls
+        return _has_operator_session_guard(key, calls)
     if auth_source == "operator_permission":
         return _operator_permission_dependencies().get(key) in calls
     return False

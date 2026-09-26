@@ -22,11 +22,12 @@ from authclient.permissions import (
 )
 from fastapi import Depends, Request
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import ValidateResult
 from app.config import Settings
-from app.deps import org_session, require_token
+from app.db import session_with_org
+from app.deps import get_session_factory, org_session, require_token
 from app.errors import ApiError
 from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
 from app.step_up import StepUpAction, enforce_step_up
@@ -110,8 +111,63 @@ RequireOwnerOrgSettings = Annotated[
 ]
 
 
+def require_operator_legal_hold_manage() -> Callable[..., OperatorSessionAuthorization]:
+    """Require a verified browser session, owner/admin role, permission, and step-up."""
+
+    async def _dep(
+        request: Request,
+        operator: Annotated[
+            OperatorSessionAuthorization, Depends(require_operator_session)
+        ],
+        factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    ) -> OperatorSessionAuthorization:
+        async with session_with_org(factory, str(operator.org_id)) as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT role
+                    FROM ibex_core.users
+                    WHERE id = :user_id AND org_id = :org_id AND deleted_at IS NULL
+                    """
+                ),
+                {"user_id": operator.subject, "org_id": str(operator.org_id)},
+            )
+        role = result.scalar_one_or_none()
+        if role is None or str(role) not in AdminRoles:
+            raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient role")
+        if not has_permission(operator.permissions, LEGAL_HOLD_MANAGE):
+            raise ApiError(code=INSUFFICIENT_PERMISSIONS, message=INSUFFICIENT_PERMISSIONS_MSG)
+        token = ValidateResult(
+            org_id=operator.org_id,
+            permissions=operator.permissions,
+            user_id=operator.subject,
+            token_id=operator.session_id,
+        )
+        await enforce_step_up(
+            request,
+            token,
+            action=StepUpAction(
+                required_permission=LEGAL_HOLD_MANAGE,
+                action="legal_hold.manage",
+                session_id=operator.session_id,
+            ),
+        )
+        return operator
+
+    return _dep
+
+
+RequireLegalHoldManage = Annotated[
+    OperatorSessionAuthorization, Depends(require_operator_legal_hold_manage())
+]
+
+
 def require_legal_hold_manage() -> Callable[..., ValidateResult]:
-    """Owner/admin + LegalHoldManage + step-up (4.P.3)."""
+    """Deprecated PAT helper retained for isolated compatibility tests only.
+
+    No mounted legal-hold mutation route uses this dependency. Browser mutations
+    use ``require_operator_legal_hold_manage`` above.
+    """
 
     async def _dep(
         request: Request,
@@ -123,22 +179,18 @@ def require_legal_hold_manage() -> Callable[..., ValidateResult]:
             OperatorSessionAuthorization | None, Depends(_maybe_operator_session)
         ] = None,
     ) -> ValidateResult:
-        if requires_step_up(LEGAL_HOLD_MANAGE):
-            await enforce_step_up(
-                request,
-                token,
-                action=StepUpAction(
-                    required_permission=LEGAL_HOLD_MANAGE,
-                    action="legal_hold.manage",
-                    session_id=operator_session.session_id if operator_session else None,
-                ),
-            )
+        await enforce_step_up(
+            request,
+            token,
+            action=StepUpAction(
+                required_permission=LEGAL_HOLD_MANAGE,
+                action="legal_hold.manage",
+                session_id=operator_session.session_id if operator_session else None,
+            ),
+        )
         return token
 
     return _dep
-
-
-RequireLegalHoldManage = Annotated[ValidateResult, Depends(require_legal_hold_manage())]
 
 
 def assert_path_org(token_org: UUID, path_org: UUID) -> None:

@@ -20,6 +20,7 @@ from app.auth.client import TokenValidator, ValidateResult, parse_authorization_
 from app.auth.errors import AuthFailedError, AuthUnavailableError, OrgSuspendedError
 from app.db import session_with_org
 from app.errors import ApiError
+from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
 
 
 def _require_api_component(request: Request, attr: str, *, message: str):
@@ -64,6 +65,17 @@ async def org_session(
 ) -> AsyncIterator[AsyncSession]:
     """Request-scoped DB session with ``app.current_org_id`` set from the token."""
     async with session_with_org(factory, str(token.org_id)) as session:
+        yield session
+
+
+async def operator_org_session(
+    operator: Annotated[
+        OperatorSessionAuthorization, Depends(require_operator_session)
+    ],
+    factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> AsyncIterator[AsyncSession]:
+    """Request-scoped DB session bound to the AuthService-verified operator org."""
+    async with session_with_org(factory, str(operator.org_id)) as session:
         yield session
 
 

@@ -5,12 +5,13 @@ test.describe("benchmark dashboard", () => {
     await page.goto("/benchmarks");
     await expect(page.getByRole("heading", { name: "Benchmarks", exact: true })).toBeVisible();
 
+    await page.getByRole("button", { name: "Proxy", exact: true }).click();
     await page.getByRole("link", { name: "Latency", exact: true }).first().click();
     await expect(page).toHaveURL(/\/benchmarks\/latency$/);
     await expect(page.url()).not.toMatch(/\.txt$/);
     await expect(page.getByRole("heading", { name: "Latency trends" })).toBeVisible();
 
-    await page.getByRole("navigation", { name: /sidebar|benchmarks/i }).getByRole("link", { name: "History", exact: true }).first().click();
+    await page.getByRole("complementary").locator('a[href="/benchmarks/history"]').click();
     await expect(page).toHaveURL(/\/benchmarks\/history$/);
     await expect(page.getByRole("heading", { name: "Run history" })).toBeVisible();
   });
@@ -33,6 +34,7 @@ test.describe("benchmark dashboard", () => {
 
   test("history table responds to keyboard help", async ({ page }) => {
     await page.goto("/benchmarks/history");
+    await expect(page.getByText(/Press.*keyboard shortcuts/)).toBeVisible();
     await page.keyboard.press("?");
     await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
   });

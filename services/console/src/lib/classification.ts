@@ -48,7 +48,7 @@ export function classifyPath(pathname: string): SurfaceClassification {
       )
     )
       return SURFACE_CLASSIFICATIONS.deferred
-    return SURFACE_CLASSIFICATIONS.shell
+    return SURFACE_CLASSIFICATIONS.deferred
   }
   return SURFACE_CLASSIFICATIONS.shell
 }
