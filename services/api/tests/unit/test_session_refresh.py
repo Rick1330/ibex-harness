@@ -42,7 +42,6 @@ def _rpc(addr: str = "127.0.0.1:50051", token: str = "", timeout: float = 5.0) -
     return AuthRPC(addr, token, timeout)
 
 
-
 def test_encode_issue_with_refresh_multi_byte() -> None:
     long_tok = "r" * 200
     payload = encode_issue_with_refresh(long_tok)
@@ -103,6 +102,23 @@ def _patch_channel(stub: AsyncMock):
     return patch("app.auth.session_refresh.grpc.aio.insecure_channel", side_effect=_cm)
 
 
+async def _assert_rpc_raises(
+    stub: AsyncMock,
+    awaitable,
+    exc_type: type[BaseException],
+    match: str,
+) -> BaseException:
+    """Await under channel patch with a single throwable in pytest.raises (S5914)."""
+    patcher = _patch_channel(stub)
+    patcher.start()
+    try:
+        with pytest.raises(exc_type, match=match) as caught:
+            await awaitable
+        return caught.value
+    finally:
+        patcher.stop()
+
+
 @pytest.mark.asyncio
 async def test_refresh_operator_session_success() -> None:
     resp = _proto_string(1, "access-rs") + _proto_string(2, "refresh-rs")
@@ -121,14 +137,12 @@ async def test_refresh_operator_session_success() -> None:
 @pytest.mark.asyncio
 async def test_refresh_operator_session_timeout() -> None:
     stub = AsyncMock(side_effect=TimeoutError())
-    rpc = _rpc("localhost:50051", "", 0.01)
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="timeout"):
-            await refresh_operator_session(rpc, refresh_token="r")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        refresh_operator_session(_rpc("localhost:50051", "", 0.01), refresh_token="r"),
+        AuthUnavailableError,
+        "timeout",
+    )
 
 
 @pytest.mark.asyncio
@@ -144,40 +158,34 @@ async def test_refresh_operator_session_timeout() -> None:
 )
 async def test_refresh_operator_session_rpc_errors(code, exc_type, match) -> None:
     stub = AsyncMock(side_effect=grpc.aio.AioRpcError(code, details="boom"))
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(exc_type, match=match):
-            await refresh_operator_session(rpc, refresh_token="r")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        refresh_operator_session(_rpc("127.0.0.1:50051"), refresh_token="r"),
+        exc_type,
+        match,
+    )
 
 
 @pytest.mark.asyncio
 async def test_refresh_operator_session_incomplete_response() -> None:
     stub = AsyncMock(return_value=_proto_string(1, "access-only"))
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="incomplete"):
-            await refresh_operator_session(rpc, refresh_token="r")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        refresh_operator_session(_rpc("127.0.0.1:50051"), refresh_token="r"),
+        AuthUnavailableError,
+        "incomplete",
+    )
 
 
 @pytest.mark.asyncio
 async def test_refresh_operator_session_codec_error_maps_unavailable() -> None:
     stub = AsyncMock(return_value=bytes([0x0F]))
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="codec"):
-            await refresh_operator_session(rpc, refresh_token="r")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        refresh_operator_session(_rpc("127.0.0.1:50051"), refresh_token="r"),
+        AuthUnavailableError,
+        "codec",
+    )
 
 
 def test_decode_string_field_skips_fixed32() -> None:
@@ -235,27 +243,23 @@ def test_decode_string_field_rejects_truncated_fixed32() -> None:
 @pytest.mark.asyncio
 async def test_refresh_operator_session_empty_tokens() -> None:
     stub = AsyncMock(return_value=_proto_string(1, "") + _proto_string(2, ""))
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="incomplete"):
-            await refresh_operator_session(rpc, refresh_token="r")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        refresh_operator_session(_rpc("127.0.0.1:50051"), refresh_token="r"),
+        AuthUnavailableError,
+        "incomplete",
+    )
 
 
 @pytest.mark.asyncio
 async def test_refresh_operator_session_auth_codec_error_from_rpc() -> None:
     stub = AsyncMock(side_effect=AuthCodecError("boom"))
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="codec"):
-            await refresh_operator_session(rpc, refresh_token="r")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        refresh_operator_session(_rpc("127.0.0.1:50051"), refresh_token="r"),
+        AuthUnavailableError,
+        "codec",
+    )
 
 
 @pytest.mark.asyncio
@@ -340,27 +344,23 @@ async def test_validate_operator_session_rejects_each_missing_identity_claim(
     response: bytes,
 ) -> None:
     stub = AsyncMock(return_value=response)
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="incomplete claims"):
-            await validate_operator_session(rpc, access_token="access")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        validate_operator_session(_rpc("127.0.0.1:50051"), access_token="access"),
+        AuthUnavailableError,
+        "incomplete claims",
+    )
 
 
 @pytest.mark.asyncio
 async def test_validate_operator_session_maps_malformed_wire_to_unavailable() -> None:
     stub = AsyncMock(return_value=b"\x0f")
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="codec error"):
-            await validate_operator_session(rpc, access_token="access")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        validate_operator_session(_rpc("127.0.0.1:50051"), access_token="access"),
+        AuthUnavailableError,
+        "codec error",
+    )
 
 
 @pytest.mark.asyncio
@@ -375,27 +375,23 @@ async def test_validate_operator_session_maps_malformed_wire_to_unavailable() ->
 )
 async def test_validate_operator_session_maps_auth_service_errors(code, expected, message) -> None:
     stub = AsyncMock(side_effect=grpc.aio.AioRpcError(code, details="failure"))
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(expected, match=message):
-            await validate_operator_session(rpc, access_token="access")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        validate_operator_session(_rpc("127.0.0.1:50051"), access_token="access"),
+        expected,
+        message,
+    )
 
 
 @pytest.mark.asyncio
 async def test_validate_operator_session_maps_timeout_to_unavailable() -> None:
     stub = AsyncMock(side_effect=TimeoutError())
-    rpc = _rpc("localhost:50051", "", 0.01)
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="timeout"):
-            await validate_operator_session(rpc, access_token="access")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        validate_operator_session(_rpc("localhost:50051", "", 0.01), access_token="access"),
+        AuthUnavailableError,
+        "timeout",
+    )
 
 
 @pytest.mark.asyncio
@@ -448,15 +444,13 @@ async def test_issue_operator_session_maps_failed_precondition_without_leaking_d
             grpc.StatusCode.FAILED_PRECONDITION, details="internal key configuration"
         )
     )
-    rpc = _rpc("127.0.0.1:50051")
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="issuer unavailable") as exc:
-            await issue_operator_session(rpc, pat="pat")
-    finally:
-        patcher.stop()
-    assert "internal key configuration" not in str(exc.value)
+    err = await _assert_rpc_raises(
+        stub,
+        issue_operator_session(_rpc("127.0.0.1:50051"), pat="pat"),
+        AuthUnavailableError,
+        "issuer unavailable",
+    )
+    assert "internal key configuration" not in str(err)
 
 
 @pytest.mark.asyncio
@@ -494,11 +488,9 @@ def test_lifecycle_string_decoder_rejects_invalid_utf8() -> None:
 @pytest.mark.asyncio
 async def test_issue_operator_session_timeout_maps_to_unavailable() -> None:
     stub = AsyncMock(side_effect=TimeoutError())
-    rpc = _rpc("127.0.0.1:50051", "", 0.01)
-    patcher = _patch_channel(stub)
-    patcher.start()
-    try:
-        with pytest.raises(AuthUnavailableError, match="issue timeout"):
-            await issue_operator_session(rpc, pat="pat")
-    finally:
-        patcher.stop()
+    await _assert_rpc_raises(
+        stub,
+        issue_operator_session(_rpc("127.0.0.1:50051", "", 0.01), pat="pat"),
+        AuthUnavailableError,
+        "issue timeout",
+    )

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import base64
 import json
 import time
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -227,10 +226,14 @@ def test_me_cookie_rs256_is_not_provisional() -> None:
 
 
 def _rsa_pub_pem(key) -> str:
-    return key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("ascii")
+    return (
+        key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
 
 
 def _post_logout(client, *, access: str | None = None, refresh: str | None = None):
@@ -279,7 +282,10 @@ def test_logout_cookie_proof_matrix(case: str) -> None:
         )
         revoke = AsyncMock()
         with (
-            create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+            create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (
+                _,
+                client,
+            ),
             patch("app.routers.session.revoke_operator_session", new=revoke),
         ):
             response = _post_logout(client, access=access, refresh=refresh)
@@ -305,7 +311,10 @@ def test_logout_cookie_proof_matrix(case: str) -> None:
             ),
         )
         with (
-            create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+            create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (
+                _,
+                client,
+            ),
             patch(
                 "app.routers.session.revoke_operator_session",
                 new=AsyncMock(side_effect=AuthUnavailableError("down")),
@@ -337,8 +346,6 @@ def test_logout_cookie_proof_matrix(case: str) -> None:
     assert response.status_code == 401
     revoke.assert_not_awaited()
     _assert_session_cookies_deleted(response)
-
-
 
 
 def test_refresh_non_hs256_alg_with_keys_routes_to_auth() -> None:
@@ -419,11 +426,20 @@ def test_production_logout_without_any_valid_proof_clears_all_cookies() -> None:
 
 def test_production_logout_authservice_rejection_clears_all_cookies() -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pub_pem = key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("ascii")
-    access = _signed_session_token(key, _SignedTokenSpec(kind="access", session_id="sid-1", family_id="fid-1", jti="jti-1", expires_in=300))
+    pub_pem = (
+        key.public_key()
+        .public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
+    access = _signed_session_token(
+        key,
+        _SignedTokenSpec(
+            kind="access", session_id="sid-1", family_id="fid-1", jti="jti-1", expires_in=300
+        ),
+    )
     with (
         create_operator_app(
             settings=_logout_settings(pub_pem), validator=StaticTokenValidator({})
@@ -448,23 +464,21 @@ def test_production_login_uses_authservice_and_sets_opaque_session_cookies() -> 
     from app.auth.session_refresh import RefreshedSession
 
     result = StaticTokenValidator(
-        {"ibex_pat_test_secret": __import__("app.auth.client", fromlist=["ValidateResult"]).ValidateResult(
-            org_id=uuid4(), permissions=1, user_id="user-1"
-        )}
+        {
+            "ibex_pat_test_secret": __import__(
+                "app.auth.client", fromlist=["ValidateResult"]
+            ).ValidateResult(org_id=uuid4(), permissions=1, user_id="user-1")
+        }
     )
     settings = _logout_settings(_RS256_PEM)
     with (
         create_operator_app(settings=settings, validator=result) as (_, client),
         patch(
             "app.routers.session.issue_operator_session",
-            new=AsyncMock(
-                return_value=RefreshedSession("opaque-access", "opaque-refresh")
-            ),
+            new=AsyncMock(return_value=RefreshedSession("opaque-access", "opaque-refresh")),
         ) as issue,
     ):
-        response = client.post(
-            "/v1/operator/session/login", json={"pat": "ibex_pat_test_secret"}
-        )
+        response = client.post("/v1/operator/session/login", json={"pat": "ibex_pat_test_secret"})
     assert response.status_code == 200
     assert response.json()["provisional"] is False
     assert issue.await_args.kwargs["pat"] == "ibex_pat_test_secret"
@@ -532,24 +546,19 @@ def test_production_login_maps_authservice_issue_errors(
     from app.auth.client import ValidateResult
 
     validator = StaticTokenValidator(
-        {
-            "ibex_pat_test_secret": ValidateResult(
-                org_id=uuid4(), permissions=1, user_id="user-1"
-            )
-        }
+        {"ibex_pat_test_secret": ValidateResult(org_id=uuid4(), permissions=1, user_id="user-1")}
     )
     with (
-        create_operator_app(
-            settings=_logout_settings(_RS256_PEM), validator=validator
-        ) as (_, client),
+        create_operator_app(settings=_logout_settings(_RS256_PEM), validator=validator) as (
+            _,
+            client,
+        ),
         patch(
             "app.routers.session.issue_operator_session",
             new=AsyncMock(side_effect=error),
         ) as issue,
     ):
-        response = client.post(
-            "/v1/operator/session/login", json={"pat": "ibex_pat_test_secret"}
-        )
+        response = client.post("/v1/operator/session/login", json={"pat": "ibex_pat_test_secret"})
     assert response.status_code == expected_status
     assert response.json()["error"]["code"] == expected_code
     issue.assert_awaited_once()
@@ -576,7 +585,9 @@ def test_non_development_refresh_dispatches_to_authservice_before_jwt_parsing() 
         patch(
             "app.routers.session.refresh_operator_session",
             new=AsyncMock(
-                return_value=RefreshedSession(access_token="new-access", refresh_token="new-refresh")
+                return_value=RefreshedSession(
+                    access_token="new-access", refresh_token="new-refresh"
+                )
             ),
         ) as refresh_fn,
     ):
