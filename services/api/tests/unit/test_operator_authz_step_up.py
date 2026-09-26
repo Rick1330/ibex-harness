@@ -239,7 +239,7 @@ async def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     token_kwargs: dict[str, object], identity_kwargs: dict[str, object]
 ) -> None:
     from app.auth.client import ValidateResult
-    from app.step_up import StepUpAction, enforce_step_up
+    from app.step_up import enforce_step_up
 
     org = uuid4()
     action = f"operator.permission.{SECRET_USE}"
@@ -277,8 +277,9 @@ async def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     identity.update(identity_kwargs)
     caller = ValidateResult(**identity)
 
+    step = StepUpAction(required_permission=SECRET_USE, action=action)
     with pytest.raises(ApiError) as exc:
-        await enforce_step_up(req, caller, action=StepUpAction(required_permission=SECRET_USE, action=action))
+        await enforce_step_up(req, caller, action=step)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert exc.value.message == "Step-up authentication required"
 
@@ -287,7 +288,7 @@ def test_enforce_step_up_rejects_missing_header_and_missing_identity() -> None:
     import asyncio
 
     from app.auth.client import ValidateResult
-    from app.step_up import StepUpAction, enforce_step_up
+    from app.step_up import enforce_step_up
 
     req = _request_with_settings(_settings())
     caller = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
@@ -325,7 +326,7 @@ def test_enforce_step_up_uses_authservice_in_non_development(
 
     from app.auth.client import ValidateResult
     from app.auth.errors import AuthFailedError, AuthUnavailableError
-    from app.step_up import StepUpAction, enforce_step_up
+    from app.step_up import enforce_step_up
 
     error = {
         "invalid": AuthFailedError("invalid"),

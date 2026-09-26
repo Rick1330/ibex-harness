@@ -156,7 +156,7 @@ func TestWithJTIStoreNilGuards(t *testing.T) {
 	}
 	issuer := mustIssuer(t, time.Minute, time.Hour, time.Minute)
 	issuer.WithJTIStore(store)
-	if got := issuer.WithJTIStore(nil); got != issuer {
+	if issuer.WithJTIStore(nil) != issuer {
 		t.Fatal("nil store should leave issuer unchanged")
 	}
 }

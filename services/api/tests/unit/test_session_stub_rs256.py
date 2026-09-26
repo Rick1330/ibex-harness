@@ -104,6 +104,23 @@ def test_verify_rejects_malformed_nbf_claim() -> None:
         verify_token_opts(tok, opts)
 
 
+def test_verify_rejects_malformed_exp_claim() -> None:
+    org = str(uuid4())
+    key, pub = _rsa_keypair()
+    payload = _access_payload(org)
+    payload["exp"] = "not-a-number"
+    tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, payload)
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
+    with pytest.raises(SessionStubError, match="invalid expiration claim"):
+        verify_token_opts(tok, opts)
+
+
 @pytest.mark.parametrize(
     ("empty_pem", "match"),
     [
@@ -346,8 +363,9 @@ def _rs256_verify_opts(pub: str) -> TokenVerifyOpts:
 
 
 def _assert_rs256_verify_rejects(token: str, pub: str, match: str) -> None:
+    opts = _rs256_verify_opts(pub)
     with pytest.raises(SessionStubError, match=match):
-        verify_token_opts(token, _rs256_verify_opts(pub))
+        verify_token_opts(token, opts)
 
 
 def test_verify_rejects_future_not_before() -> None:

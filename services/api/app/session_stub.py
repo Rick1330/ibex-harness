@@ -291,7 +291,11 @@ def _assert_issuer_audience(payload: dict[str, Any], opts: TokenVerifyOpts) -> N
 
 def _assert_temporal_claims(payload: dict[str, Any]) -> None:
     now = int(time.time())
-    if int(payload.get("exp", 0)) < now:
+    try:
+        exp = int(payload.get("exp", 0))
+    except (TypeError, ValueError) as exc:
+        raise SessionStubError("invalid expiration claim") from exc
+    if exp < now:
         raise SessionStubError("expired")
     _assert_not_before(payload, now)
 

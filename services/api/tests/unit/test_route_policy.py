@@ -99,7 +99,8 @@ def test_auth_source_requires_exact_public_path_match() -> None:
 
     script = Path(__file__).resolve().parents[2] / "scripts/generate_route_policy.py"
     spec = importlib.util.spec_from_file_location("generate_route_policy", script)
-    assert spec is not None and spec.loader is not None
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     public_paths = frozenset(
