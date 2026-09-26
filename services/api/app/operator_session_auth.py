@@ -110,9 +110,9 @@ def _parse_session_org_id(raw: str) -> UUID:
 
 
 def _require_complete_session_claims(claims: ValidatedSession) -> None:
-    if claims.subject and claims.session_id and claims.jti:
-        return
-    raise ApiError(code=INVALID_TOKEN, message="incomplete session claims")
+    for value in (claims.subject, claims.session_id, claims.jti):
+        if not value:
+            raise ApiError(code=INVALID_TOKEN, message="incomplete session claims")
 
 
 def _authorization_from_validated(claims: ValidatedSession) -> OperatorSessionAuthorization:

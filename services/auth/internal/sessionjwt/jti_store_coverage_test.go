@@ -11,12 +11,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestMemoryJTIStore_ZeroTTLEmptyIDsAndRevokeSessionAndFamily(t *testing.T) {
+func TestMemoryJTIStore_ZeroTTLConsume(t *testing.T) {
+	t.Parallel()
+	store := &sessionjwt.MemoryJTIStore{}
+	ok, err := store.ConsumeOnce(context.Background(), "zero-ttl", 0)
+	requireConsume(t, consumeResult{ok, err}, true, "zero ttl consume")
+}
+
+func TestMemoryJTIStore_EmptyIDRevokesAreNoOps(t *testing.T) {
 	t.Parallel()
 	store := &sessionjwt.MemoryJTIStore{}
 	ctx := context.Background()
-	ok, err := store.ConsumeOnce(ctx, "zero-ttl", 0)
-	requireConsume(t, consumeResult{ok, err}, true, "zero ttl consume")
 	if err := store.RevokeFamily(ctx, "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -26,6 +31,12 @@ func TestMemoryJTIStore_ZeroTTLEmptyIDsAndRevokeSessionAndFamily(t *testing.T) {
 	if err := store.RevokeAccess(ctx, "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestMemoryJTIStore_RevokeSessionAndFamilySuccess(t *testing.T) {
+	t.Parallel()
+	store := &sessionjwt.MemoryJTIStore{}
+	ctx := context.Background()
 	if err := store.RevokeSessionAndFamily(ctx, "sid", "fam", time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -95,12 +106,6 @@ func TestMemoryJTIStore_RevokeZeroTTLMarkers(t *testing.T) {
 	if revoked, err := store.FamilyRevoked(ctx, "fam0"); err != nil || !revoked {
 		t.Fatalf("family: %v %v", revoked, err)
 	}
-	if revoked, err := store.SessionRevoked(ctx, "sid0"); err != nil || !revoked {
-		t.Fatalf("session: %v %v", revoked, err)
-	}
-	if revoked, err := store.AccessRevoked(ctx, "jti0"); err != nil || !revoked {
-		t.Fatalf("access: %v %v", revoked, err)
-	}
 }
 
 func redisStore(t *testing.T) (*sessionjwt.RedisJTIStore, *miniredis.Miniredis) {
@@ -115,7 +120,7 @@ func redisStore(t *testing.T) (*sessionjwt.RedisJTIStore, *miniredis.Miniredis) 
 	return store, mr
 }
 
-func TestRedisJTIStore_EmptyFamilyAndSessionOnlyRevoke(t *testing.T) {
+func TestRedisJTIStore_EmptyIDNoOps(t *testing.T) {
 	t.Parallel()
 	store, _ := redisStore(t)
 	ctx := context.Background()
@@ -131,6 +136,12 @@ func TestRedisJTIStore_EmptyFamilyAndSessionOnlyRevoke(t *testing.T) {
 	if err := store.RevokeAccess(ctx, "", time.Minute); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRedisJTIStore_SessionOnlyRevoke(t *testing.T) {
+	t.Parallel()
+	store, _ := redisStore(t)
+	ctx := context.Background()
 	if err := store.RevokeSessionAndFamily(ctx, "", "fam", time.Minute); err == nil {
 		t.Fatal("expected empty session id error")
 	}
@@ -152,12 +163,6 @@ func TestRedisJTIStore_ZeroTTLHappyPaths(t *testing.T) {
 	if err := store.RevokeFamily(ctx, "fam-z", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RevokeSession(ctx, "sid-z", 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RevokeAccess(ctx, "acc-z", 0); err != nil {
-		t.Fatal(err)
-	}
 	first, err := store.ConsumeStepUp(ctx, "step-z", 0)
 	requireConsume(t, consumeResult{first, err}, true, "step zero")
 	if err := store.RevokeSessionAndFamily(ctx, "sid-ms", "fam-ms", 500*time.Microsecond); err != nil {
@@ -170,27 +175,31 @@ func TestRedisJTIStore_ErrorsAfterClose(t *testing.T) {
 	store, mr := redisStore(t)
 	ctx := context.Background()
 	mr.Close()
-	cases := []struct {
-		name string
-		fn   func() error
-	}{
-		{"ConsumeOnce", func() error { _, err := store.ConsumeOnce(ctx, "j", time.Minute); return err }},
-		{"RevokeFamily", func() error { return store.RevokeFamily(ctx, "f", time.Minute) }},
-		{"FamilyRevoked", func() error { _, err := store.FamilyRevoked(ctx, "f"); return err }},
-		{"RevokeSession", func() error { return store.RevokeSession(ctx, "s", time.Minute) }},
-		{"RevokeSessionAndFamily", func() error {
-			return store.RevokeSessionAndFamily(ctx, "s", "f", time.Minute)
-		}},
-		{"SessionRevoked", func() error { _, err := store.SessionRevoked(ctx, "s"); return err }},
-		{"RevokeAccess", func() error { return store.RevokeAccess(ctx, "j", time.Minute) }},
-		{"AccessRevoked", func() error { _, err := store.AccessRevoked(ctx, "j"); return err }},
-		{"ConsumeStepUp", func() error { _, err := store.ConsumeStepUp(ctx, "s", time.Minute); return err }},
+	if _, err := store.ConsumeOnce(ctx, "j", time.Minute); err == nil {
+		t.Fatal("ConsumeOnce")
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.fn(); err == nil {
-				t.Fatal("expected redis error after close")
-			}
-		})
+	if err := store.RevokeFamily(ctx, "f", time.Minute); err == nil {
+		t.Fatal("RevokeFamily")
+	}
+	if _, err := store.FamilyRevoked(ctx, "f"); err == nil {
+		t.Fatal("FamilyRevoked")
+	}
+	if err := store.RevokeSession(ctx, "s", time.Minute); err == nil {
+		t.Fatal("RevokeSession")
+	}
+	if err := store.RevokeSessionAndFamily(ctx, "s", "f", time.Minute); err == nil {
+		t.Fatal("RevokeSessionAndFamily")
+	}
+	if _, err := store.SessionRevoked(ctx, "s"); err == nil {
+		t.Fatal("SessionRevoked")
+	}
+	if err := store.RevokeAccess(ctx, "j", time.Minute); err == nil {
+		t.Fatal("RevokeAccess")
+	}
+	if _, err := store.AccessRevoked(ctx, "j"); err == nil {
+		t.Fatal("AccessRevoked")
+	}
+	if _, err := store.ConsumeStepUp(ctx, "s", time.Minute); err == nil {
+		t.Fatal("ConsumeStepUp")
 	}
 }

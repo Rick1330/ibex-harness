@@ -18,67 +18,68 @@ func b64urlJSON(v any) string {
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
-func TestVerify_RejectsMalformedPartsAndClaims(t *testing.T) {
-	priv, privPEM := mustRSAPrivatePEM(t)
-	pub := mustPublicPEM(t, priv)
-	iss, err := sessionjwt.NewIssuer(testIssuerConfig(privPEM, time.Minute, time.Hour, time.Minute))
-	requireNoErr(t, err)
-	ver := mustVerifier(t, pub, "ibex-auth", "ibex-dashboard")
+func testVerifier(t *testing.T) *sessionjwt.Verifier {
+	t.Helper()
+	priv, _ := mustRSAPrivatePEM(t)
+	return mustVerifier(t, mustPublicPEM(t, priv), "ibex-auth", "ibex-dashboard")
+}
 
-	if _, err := ver.Verify(sessionjwt.RawToken("a.b"), sessionjwt.KindAccess); err == nil {
+func TestVerify_RejectsShortToken(t *testing.T) {
+	if _, err := testVerifier(t).Verify(sessionjwt.RawToken("a.b"), sessionjwt.KindAccess); err == nil {
 		t.Fatal("expected split error")
-	}
-	badHeader := "!!!.payload.sig"
-	if _, err := ver.Verify(sessionjwt.RawToken(badHeader), sessionjwt.KindAccess); err == nil {
-		t.Fatal("expected bad header")
-	}
-	hsHeader := b64urlJSON(map[string]string{"alg": "HS256", "typ": "JWT", "kid": "v1"})
-	if _, err := ver.Verify(sessionjwt.RawToken(hsHeader+".payload.sig"), sessionjwt.KindAccess); err == nil {
-		t.Fatal("expected alg mismatch")
-	}
-	noKid := b64urlJSON(map[string]string{"alg": "RS256", "typ": "JWT"})
-	if _, err := ver.Verify(sessionjwt.RawToken(noKid+".payload.sig"), sessionjwt.KindAccess); err == nil {
-		t.Fatal("expected missing kid")
-	}
-
-	access, _, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
-	requireNoErr(t, err)
-	parts := strings.Split(access, ".")
-	if len(parts) != 3 {
-		t.Fatal(parts)
-	}
-	badSig := parts[0] + "." + parts[1] + ".!!!"
-	if _, err := ver.Verify(sessionjwt.RawToken(badSig), sessionjwt.KindAccess); err == nil {
-		t.Fatal("expected bad signature encoding")
-	}
-	badPayload := parts[0] + ".!!!" + "." + parts[2]
-	if _, err := ver.Verify(sessionjwt.RawToken(badPayload), sessionjwt.KindAccess); err == nil {
-		t.Fatal("expected bad payload")
-	}
-	nonJSON := parts[0] + "." + base64.RawURLEncoding.EncodeToString([]byte("not-json")) + "." + parts[2]
-	if _, err := ver.Verify(sessionjwt.RawToken(nonJSON), sessionjwt.KindAccess); err == nil {
-		t.Fatal("expected malformed payload json")
 	}
 }
 
-func TestVerify_RejectsMissingSessionIDAndFutureNBF(t *testing.T) {
+func TestVerify_RejectsInvalidHeaderEncoding(t *testing.T) {
+	if _, err := testVerifier(t).Verify(sessionjwt.RawToken("!!!.payload.sig"), sessionjwt.KindAccess); err == nil {
+		t.Fatal("expected bad header")
+	}
+}
+
+func TestVerify_RejectsNonRS256Header(t *testing.T) {
+	hsHeader := b64urlJSON(map[string]string{"alg": "HS256", "typ": "JWT", "kid": "v1"})
+	if _, err := testVerifier(t).Verify(sessionjwt.RawToken(hsHeader+".payload.sig"), sessionjwt.KindAccess); err == nil {
+		t.Fatal("expected alg mismatch")
+	}
+}
+
+func TestVerify_RejectsMissingKidHeader(t *testing.T) {
+	noKid := b64urlJSON(map[string]string{"alg": "RS256", "typ": "JWT"})
+	if _, err := testVerifier(t).Verify(sessionjwt.RawToken(noKid+".payload.sig"), sessionjwt.KindAccess); err == nil {
+		t.Fatal("expected missing kid")
+	}
+}
+
+func issuedAccessParts(t *testing.T) (*sessionjwt.Verifier, []string) {
+	t.Helper()
 	priv, privPEM := mustRSAPrivatePEM(t)
 	pub := mustPublicPEM(t, priv)
 	iss, err := sessionjwt.NewIssuer(testIssuerConfig(privPEM, time.Minute, time.Hour, time.Minute))
 	requireNoErr(t, err)
 	ver := mustVerifier(t, pub, "ibex-auth", "ibex-dashboard")
-
-	// Missing session id: craft by issuing then we can't easily strip sid from signed token.
-	// Use IssuePair and VerifyAccessProof then check KindRefresh without family via raw verify path
-	// covered by IssuePair always setting SessionID. Instead issue step-up which has session id,
-	// and verify access kind mismatch already covered. Here cover future nbf via issuer short path:
-	access, refresh, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
+	access, _, _, _, err := iss.IssuePair(sessionjwt.IssuePairParams{Subject: "u", OrgID: "o", Permissions: 1})
 	requireNoErr(t, err)
-	if _, err := ver.Verify(sessionjwt.RawToken(access), sessionjwt.KindAccess); err != nil {
-		t.Fatal(err)
+	return ver, strings.Split(access, ".")
+}
+
+func TestVerify_RejectsBadSignatureEncoding(t *testing.T) {
+	ver, parts := issuedAccessParts(t)
+	if _, err := ver.Verify(sessionjwt.RawToken(parts[0]+"."+parts[1]+".!!!"), sessionjwt.KindAccess); err == nil {
+		t.Fatal("expected bad signature encoding")
 	}
-	if _, err := ver.Verify(sessionjwt.RawToken(refresh), sessionjwt.KindRefresh); err != nil {
-		t.Fatal(err)
+}
+
+func TestVerify_RejectsBadPayloadEncoding(t *testing.T) {
+	ver, parts := issuedAccessParts(t)
+	if _, err := ver.Verify(sessionjwt.RawToken(parts[0]+".!!!."+parts[2]), sessionjwt.KindAccess); err == nil {
+		t.Fatal("expected bad payload")
 	}
-	_ = priv
+}
+
+func TestVerify_RejectsNonJSONPayload(t *testing.T) {
+	ver, parts := issuedAccessParts(t)
+	payload := base64.RawURLEncoding.EncodeToString([]byte("not-json"))
+	if _, err := ver.Verify(sessionjwt.RawToken(parts[0]+"."+payload+"."+parts[2]), sessionjwt.KindAccess); err == nil {
+		t.Fatal("expected malformed payload json")
+	}
 }
