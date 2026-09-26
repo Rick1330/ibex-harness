@@ -23,15 +23,13 @@ def _reset_enqueue_flag() -> None:
     reset_enqueue_http_for_tests()
 
 
-def _settings(
-    *,
-    token: str | None = "sekrit",
-    host: str = "127.0.0.1",
-    port: int = 18007,
-    redis_url: str | None = None,
-    broker_url: str | None = None,
-) -> SimpleNamespace:
-    tok = SecretStr(token) if token else None
+def _settings(**overrides: object) -> SimpleNamespace:
+    token = overrides.get("token", "sekrit")
+    host = overrides.get("host", "127.0.0.1")
+    port = overrides.get("port", 18007)
+    redis_url = overrides.get("redis_url")
+    broker_url = overrides.get("broker_url")
+    tok = SecretStr(str(token)) if token else None
     resolved = broker_url if broker_url is not None else redis_url
     return SimpleNamespace(
         enqueue_api_token=tok,
