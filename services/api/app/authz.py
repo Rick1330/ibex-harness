@@ -28,6 +28,7 @@ from app.auth.client import ValidateResult
 from app.config import Settings
 from app.deps import org_session, require_token
 from app.errors import ApiError
+from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
 from app.step_up import enforce_step_up
 
 AdminRoles = frozenset({"owner", "admin"})
@@ -35,6 +36,7 @@ OwnerRoles = frozenset({"owner"})
 ORG_NOT_FOUND_MSG = "Organization not found"
 USER_NOT_FOUND_MSG = "User not found"
 AGENT_NOT_FOUND_MSG = "Agent not found"
+INSUFFICIENT_PERMISSIONS_MSG = "Insufficient permissions"
 
 _KILL_SWITCH_BY_PERM: dict[int, str] = {
     OPERATOR_RAW_READ: "operator_allow_raw_read",
@@ -87,7 +89,7 @@ def require_roles(
         if not has_permission(token.permissions, required_permission):
             raise ApiError(
                 code=INSUFFICIENT_PERMISSIONS,
-                message="Insufficient permissions",
+                message=INSUFFICIENT_PERMISSIONS_MSG,
             )
         return token
 
@@ -117,10 +119,17 @@ def require_legal_hold_manage() -> Callable[..., ValidateResult]:
             ValidateResult,
             Depends(require_roles(AdminRoles, required_permission=LEGAL_HOLD_MANAGE)),
         ],
+        operator_session: Annotated[
+            OperatorSessionAuthorization | None, Depends(_maybe_operator_session)
+        ] = None,
     ) -> ValidateResult:
         if requires_step_up(LEGAL_HOLD_MANAGE):
             await enforce_step_up(
-                request, token, required_permission=LEGAL_HOLD_MANAGE, action="legal_hold.manage"
+                request,
+                token,
+                required_permission=LEGAL_HOLD_MANAGE,
+                action="legal_hold.manage",
+                session_id=operator_session.session_id if operator_session else None,
             )
         return token
 
@@ -153,7 +162,7 @@ def _assert_operator_action_enabled(settings: Settings, required: int) -> None:
 
 def _assert_operator_bitmap(bitmap: int, required: int) -> None:
     if not has_permission(bitmap, required):
-        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
+        raise ApiError(code=INSUFFICIENT_PERMISSIONS, message=INSUFFICIENT_PERMISSIONS_MSG)
     if requires_step_up(required):
         raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Step-up authentication required")
 
@@ -173,23 +182,36 @@ def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
     async def _dep(
         request: Request,
         token: Annotated[ValidateResult, Depends(require_token)],
+        operator_session: Annotated[
+            OperatorSessionAuthorization | None, Depends(_maybe_operator_session)
+        ] = None,
     ) -> ValidateResult:
         needs_step_up = requires_step_up(required)
         settings = _settings(request)
         _assert_operator_feature_enabled(settings)
         _assert_operator_action_enabled(settings, required)
         if not has_permission(token.permissions, required):
-            raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient permissions")
+            raise ApiError(code=INSUFFICIENT_PERMISSIONS, message=INSUFFICIENT_PERMISSIONS_MSG)
         if needs_step_up:
             await enforce_step_up(
                 request,
                 token,
                 required_permission=required,
                 action=f"operator.permission.{required}",
+                session_id=operator_session.session_id if operator_session else None,
             )
         return token
 
     return _dep
+
+
+async def _maybe_operator_session(
+    request: Request,
+) -> OperatorSessionAuthorization | None:
+    """Validate the operator session only when a step-up proof is presented."""
+    if not request.headers.get("X-IBEX-Step-Up"):
+        return None
+    return await require_operator_session(request)
 
 
 RequireOperatorMetadataRead = Annotated[

@@ -287,23 +287,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _operator_session_boundary(self) -> Settings:
-        if self.operator_feature_enabled and "environment" not in self.model_fields_set:
-            raise ValueError("IBEX_ENV must be explicitly set when operator sessions are enabled")
-        if self.environment != "development" and self.jwt_hmac_secret is not None:
-            raise ValueError("JWT_HMAC_SECRET is permitted only in development")
-        if self.environment != "development" and self.operator_feature_enabled:
-            if not self.auth_service_token:
-                raise ValueError(
-                    "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled"
-                )
-            if not self.jwt_public_keys_pem:
-                raise ValueError("DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development")
-            if not self.redis_url:
-                raise ValueError("REDIS_URL is required for non-development operator sessions")
-            if not self.dashboard_csrf_secret:
-                raise ValueError("DASHBOARD_CSRF_SECRET is required outside development")
-            if not self.cookie_secure:
-                raise ValueError("DASHBOARD_COOKIE_SECURE must be true outside development")
+        _validate_operator_session_boundary(self)
         return self
 
     def cors_origin_list(self) -> list[str]:
@@ -313,3 +297,31 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def _validate_operator_session_boundary(settings: Settings) -> None:
+    if settings.operator_feature_enabled and "environment" not in settings.model_fields_set:
+        raise ValueError("IBEX_ENV must be explicitly set when operator sessions are enabled")
+    if settings.environment == "development":
+        return
+    if settings.jwt_hmac_secret is not None:
+        raise ValueError("JWT_HMAC_SECRET is permitted only in development")
+    if not settings.operator_feature_enabled:
+        return
+    required = (
+        (
+            settings.auth_service_token,
+            "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled",
+        ),
+        (
+            settings.jwt_public_keys_pem,
+            "DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development",
+        ),
+        (settings.redis_url, "REDIS_URL is required for non-development operator sessions"),
+        (settings.dashboard_csrf_secret, "DASHBOARD_CSRF_SECRET is required outside development"),
+    )
+    for value, message in required:
+        if not value:
+            raise ValueError(message)
+    if not settings.cookie_secure:
+        raise ValueError("DASHBOARD_COOKIE_SECURE must be true outside development")

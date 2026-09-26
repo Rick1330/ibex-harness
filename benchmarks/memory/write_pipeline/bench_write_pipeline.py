@@ -90,7 +90,7 @@ async def run_bench(*, iterations: int) -> dict:
         session_factory = create_session_factory(engine)
         store = PgVectorStore(session_factory, settings)
         org_id, agent_id, _ = await seed_org_agent_memory(
-            session_factory, content="write pipeline bench seed"
+            session_factory, content=f"write pipeline bench seed {uuid4().hex}"
         )
         orch = build_orchestrator(
             OrchestratorTestDeps(

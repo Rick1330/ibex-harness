@@ -45,6 +45,7 @@ router = APIRouter(prefix="/v1/operator/session", tags=["operator-session-provis
 
 _AUTH_UNAVAILABLE = "auth unavailable"
 _ALG_RS256 = "RS256"
+_INVALID_TOKEN_MESSAGE = INVALID_TOKEN.lower().replace("_", " ")
 
 
 class LoginBody(BaseModel):
@@ -229,29 +230,36 @@ async def login(
     _require_operator_enabled(settings)
     result = await _validate_pat(validator, body.pat.strip())
     if settings.environment != "development":
-        try:
-            pair = await issue_operator_session(
-                auth_grpc_addr=settings.auth_grpc_addr,
-                service_token=settings.auth_service_token or "",
-                pat=body.pat.strip(),
-                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
-            )
-        except AuthFailedError as exc:
-            raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
-        except AuthUnavailableError as exc:
-            raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
-        _apply_session_cookies(
-            response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+        return await _login_via_auth(response, settings, result, body.pat.strip())
+    return _login_via_hmac(response, settings, result)
+
+
+async def _login_via_auth(
+    response: Response, settings: Settings, result: ValidateResult, pat: str
+) -> dict[str, object]:
+    try:
+        pair = await issue_operator_session(
+            auth_grpc_addr=settings.auth_grpc_addr,
+            service_token=settings.auth_service_token or "",
+            pat=pat,
+            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
         )
-        csrf = _mint_and_set_csrf(
-            response, settings=settings, secret=settings.dashboard_csrf_secret or ""
-        )
-        return {
-            "status": "ok",
-            "provisional": False,
-            "org_id": str(result.org_id),
-            "csrf_token": csrf,
-        }
+    except AuthFailedError as exc:
+        raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
+    except AuthUnavailableError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+    _apply_session_cookies(
+        response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+    )
+    csrf = _mint_and_set_csrf(
+        response, settings=settings, secret=settings.dashboard_csrf_secret or ""
+    )
+    return {"status": "ok", "provisional": False, "org_id": str(result.org_id), "csrf_token": csrf}
+
+
+def _login_via_hmac(
+    response: Response, settings: Settings, result: ValidateResult
+) -> dict[str, object]:
     secret = _require_hmac(settings)
     subject = result.user_id or result.token_id or str(result.org_id)
     access, refresh = _issue_session_pair(
@@ -278,7 +286,7 @@ async def _validate_pat(validator: TokenValidator, pat: str) -> ValidateResult:
     try:
         return await validator.validate(pat)
     except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
+        raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
     except AuthUnavailableError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
 
@@ -377,76 +385,64 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
 async def logout(request: Request) -> Response:
     settings = _settings(request)
     if settings.environment != "development":
-        raw_access = request.cookies.get(settings.dashboard_session_cookie_name)
-        raw_refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
-        access_claims = _logout_claims(
-            raw_access,
-            settings=settings,
-            kind=SESSION_KIND_ACCESS,
-        )
-        refresh_claims = _logout_claims(
-            raw_refresh,
-            settings=settings,
-            kind=SESSION_KIND_REFRESH,
-        )
-        if access_claims is None and refresh_claims is None:
-            error = envelope_response(
-                code=INVALID_TOKEN,
-                message="no valid session proof",
-                opts=ResponseOpts(settings=settings),
-            )
-            _clear_session_cookies(error, settings)
-            return error  # type: ignore[return-value]
-        if (
-            access_claims is not None
-            and refresh_claims is not None
-            and (
-                access_claims.session_id != refresh_claims.session_id
-                or access_claims.family_id != refresh_claims.family_id
-            )
-        ):
-            error = envelope_response(
-                code=INVALID_TOKEN,
-                message="session proofs do not match",
-                opts=ResponseOpts(settings=settings),
-            )
-            _clear_session_cookies(error, settings)
-            return error  # type: ignore[return-value]
-
-        claims = access_claims if access_claims is not None else refresh_claims
-        try:
-            await revoke_operator_session(
-                auth_grpc_addr=settings.auth_grpc_addr,
-                service_token=settings.auth_service_token or "",
-                session_id=claims.session_id,
-                family_id=claims.family_id or "",
-                access_jti=access_claims.jti if access_claims else "",
-                access_token=raw_access if access_claims else "",
-                refresh_token=raw_refresh if refresh_claims else "",
-                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
-            )
-        except AuthFailedError:
-            error = envelope_response(
-                code=INVALID_TOKEN,
-                message="invalid session",
-                opts=ResponseOpts(settings=settings),
-            )
-            _clear_session_cookies(error, settings)
-            return error  # type: ignore[return-value]
-        except AuthUnavailableError:
-            error = envelope_response(
-                code=SERVICE_DEGRADED,
-                message=_AUTH_UNAVAILABLE,
-                opts=ResponseOpts(settings=settings),
-            )
-            _clear_session_cookies(error, settings)
-            return error  # type: ignore[return-value]
+        auth_error = await _logout_via_auth(request, settings)
+        if auth_error is not None:
+            return auth_error
     success = JSONResponse(
         {"status": "ok"},
         headers={"X-Request-ID": require_current()},
     )
     _clear_session_cookies(success, settings)
     return success
+
+
+async def _logout_via_auth(request: Request, settings: Settings) -> Response | None:
+    raw_access = request.cookies.get(settings.dashboard_session_cookie_name)
+    raw_refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
+    access_claims = _logout_claims(raw_access, settings=settings, kind=SESSION_KIND_ACCESS)
+    refresh_claims = _logout_claims(raw_refresh, settings=settings, kind=SESSION_KIND_REFRESH)
+    if access_claims is None and refresh_claims is None:
+        return _logout_error(settings, INVALID_TOKEN, "no valid session proof")
+    if _logout_proofs_mismatch(access_claims, refresh_claims):
+        return _logout_error(settings, INVALID_TOKEN, "session proofs do not match")
+    claims = access_claims if access_claims is not None else refresh_claims
+    if claims is None:
+        return _logout_error(settings, INVALID_TOKEN, "no valid session proof")
+    try:
+        await revoke_operator_session(
+            auth_grpc_addr=settings.auth_grpc_addr,
+            service_token=settings.auth_service_token or "",
+            session_id=claims.session_id,
+            family_id=claims.family_id or "",
+            access_jti=access_claims.jti if access_claims else "",
+            access_token=raw_access if access_claims else "",
+            refresh_token=raw_refresh if refresh_claims else "",
+            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+        )
+    except AuthFailedError:
+        return _logout_error(settings, INVALID_TOKEN, "invalid session")
+    except AuthUnavailableError:
+        return _logout_error(settings, SERVICE_DEGRADED, _AUTH_UNAVAILABLE)
+    return None
+
+
+def _logout_proofs_mismatch(
+    access_claims: SessionClaims | None, refresh_claims: SessionClaims | None
+) -> bool:
+    return bool(
+        access_claims
+        and refresh_claims
+        and (
+            access_claims.session_id != refresh_claims.session_id
+            or access_claims.family_id != refresh_claims.family_id
+        )
+    )
+
+
+def _logout_error(settings: Settings, code: str, message: str) -> Response:
+    error = envelope_response(code=code, message=message, opts=ResponseOpts(settings=settings))
+    _clear_session_cookies(error, settings)
+    return error
 
 
 def _logout_claims(raw: str | None, *, settings: Settings, kind: str) -> SessionClaims | None:
@@ -512,25 +508,24 @@ async def me(request: Request) -> dict[str, object]:
     if not raw:
         return await _me_bearer(request)
     if settings.environment != "development":
-        try:
-            claims = await validate_operator_session(
-                auth_grpc_addr=settings.auth_grpc_addr,
-                service_token=settings.auth_service_token or "",
-                access_token=raw,
-                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
-            )
-        except AuthFailedError as exc:
-            raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
-        except AuthUnavailableError as exc:
-            raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
-        return {
-            "auth": "cookie",
-            "org_id": claims.org_id,
-            "sub": claims.subject,
-            "provisional": False,
-        }
+        return await _me_auth(raw, settings)
     secret = settings.jwt_hmac_secret if settings.environment == "development" else None
     return _me_cookie(raw, settings=settings, secret=secret)
+
+
+async def _me_auth(raw: str, settings: Settings) -> dict[str, object]:
+    try:
+        claims = await validate_operator_session(
+            auth_grpc_addr=settings.auth_grpc_addr,
+            service_token=settings.auth_service_token or "",
+            access_token=raw,
+            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+        )
+    except AuthFailedError as exc:
+        raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc
+    except AuthUnavailableError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
+    return {"auth": "cookie", "org_id": claims.org_id, "sub": claims.subject, "provisional": False}
 
 
 def _me_cookie(raw: str, *, settings: Settings, secret: str | None) -> dict[str, object]:
@@ -560,7 +555,7 @@ async def _validate_bearer(validator: TokenValidator, bearer: str) -> ValidateRe
     try:
         return await validator.validate(bearer)
     except AuthFailedError as exc:
-        raise ApiError(code=INVALID_TOKEN, message="invalid token") from exc
+        raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
     except AuthUnavailableError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
 

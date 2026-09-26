@@ -12,8 +12,6 @@ SUPPORTED_AUTH_SOURCES: Final[frozenset[str]] = frozenset(
     {"public", "bearer_pat", "pat_exchange", "operator_session", "operator_permission"}
 )
 
-# These session routes enforce their cookie/session lifecycle in the handler body.
-# Their concrete endpoint identities are also checked against the reviewed inventory.
 _INLINE_SESSION_ENDPOINTS: Final[dict[tuple[str, str], str]] = {
     ("POST", "/v1/operator/session/refresh"): "app.routers.session.refresh_session",
     ("POST", "/v1/operator/session/logout"): "app.routers.session.logout",
@@ -49,12 +47,10 @@ def _mounted_routes(application: object) -> Iterable[object]:
     seen_containers: set[int] = set()
 
     def visit(routes: object) -> Iterable[object]:
-        if not isinstance(routes, Iterable):
-            return
-        if id(routes) in seen_containers:
+        if not isinstance(routes, Iterable) or id(routes) in seen_containers:
             return
         seen_containers.add(id(routes))
-        for route in routes:  # type: ignore[union-attr]
+        for route in routes:
             original = getattr(route, "original_router", None)
             if original is not None:
                 yield from visit(original.routes)
@@ -68,55 +64,55 @@ def _mounted_routes(application: object) -> Iterable[object]:
     yield from visit(getattr(application, "routes", ()))
 
 
+def _operator_permission_dependencies() -> dict[tuple[str, str], object]:
+    from app.routers.operator_events import require_operator_event_session
+    from app.routers.platform import _require_operator_session
+
+    return {
+        ("GET", "/v1/operator/events/stream"): require_operator_event_session,
+        ("GET", "/v1/operator/platform/health"): _require_operator_session,
+    }
+
+
+def _has_expected_guard(
+    key: tuple[str, str],
+    auth_source: str,
+    endpoint_identity: str,
+    calls: list[object],
+) -> bool:
+    if auth_source == "public":
+        return True
+    if auth_source == "bearer_pat":
+        return require_token in calls
+    if auth_source == "pat_exchange":
+        return key == ("POST", "/v1/operator/session/login") and get_validator in calls
+    if auth_source == "operator_session":
+        return _INLINE_SESSION_ENDPOINTS.get(key) == endpoint_identity
+    if auth_source == "operator_permission":
+        return _operator_permission_dependencies().get(key) in calls
+    return False
+
+
 def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
     """Return policy rows whose concrete endpoint or authorization guard is missing."""
     rows = {(str(row["method"]), str(row["path"])): row for row in ROUTE_POLICY}
     gaps: set[tuple[str, str]] = set()
-
     for route in _mounted_routes(app):
         methods = getattr(route, "methods", None) or set()
         path = getattr(route, "path", None)
-        endpoint = getattr(route, "endpoint", None)
         if path is None:
             continue
+        endpoint_identity = _endpoint_identity(getattr(route, "endpoint", None))
+        calls = _dependency_calls(getattr(route, "dependant", None))
         for method in methods - {"HEAD", "OPTIONS"}:
             key = (str(method), str(path))
             row = rows.get(key)
-            if row is None:
-                gaps.add(key)
-                continue
-            if _endpoint_identity(endpoint) != str(row.get("endpoint", "")):
+            if row is None or endpoint_identity != str(row.get("endpoint", "")):
                 gaps.add(key)
                 continue
             auth_source = str(row.get("auth_source", ""))
-            if auth_source not in SUPPORTED_AUTH_SOURCES:
+            if not _has_expected_guard(key, auth_source, endpoint_identity, calls):
                 gaps.add(key)
-                continue
-            if auth_source == "public":
-                continue
-
-            calls = _dependency_calls(getattr(route, "dependant", None))
-            if (
-                auth_source == "bearer_pat"
-                and require_token not in calls
-                or auth_source == "pat_exchange"
-                and (key != ("POST", "/v1/operator/session/login") or get_validator not in calls)
-            ):
-                gaps.add(key)
-            elif auth_source == "operator_session":
-                if _INLINE_SESSION_ENDPOINTS.get(key) != _endpoint_identity(endpoint):
-                    gaps.add(key)
-            elif auth_source == "operator_permission":
-                from app.routers.operator_events import require_operator_event_session
-                from app.routers.platform import _require_operator_session
-
-                expected = {
-                    ("GET", "/v1/operator/events/stream"): require_operator_event_session,
-                    ("GET", "/v1/operator/platform/health"): _require_operator_session,
-                }.get(key)
-                if expected is None or expected not in calls:
-                    gaps.add(key)
-
     return tuple(sorted(gaps))
 
 

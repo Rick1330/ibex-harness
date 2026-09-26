@@ -14,7 +14,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-const errMsgTOTPNotConfigured = "totp not configured"
+const (
+	errMsgTOTPNotConfigured  = "totp not configured"
+	errMsgSessionJWTNotReady = "session jwt issuer not configured"
+	errMsgLifecycleNotReady  = "session lifecycle not configured"
+)
 
 type totpPort interface {
 	BeginEnrollment(ctx context.Context, p service.BeginEnrollmentParams) (string, error)
@@ -131,7 +135,7 @@ func (s *Server) IssueOperatorSession(
 	req *authv1.IssueOperatorSessionRequest,
 ) (*authv1.IssueOperatorSessionResponse, error) {
 	if s.sessionIssuer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
 	}
 	if rt := strings.TrimSpace(req.GetRefreshToken()); rt != "" {
 		return s.issueFromRefresh(ctx, rt)
@@ -141,11 +145,11 @@ func (s *Server) IssueOperatorSession(
 
 func (s *Server) ValidateOperatorSession(ctx context.Context, req *authv1.ValidateOperatorSessionRequest) (*authv1.ValidateOperatorSessionResponse, error) {
 	if s.sessionIssuer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
 	}
 	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
 	if !ok {
-		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
 	}
 	claims, err := issuer.ValidateAccess(ctx, sessionjwt.RawToken(req.GetAccessToken()))
 	if err != nil {
@@ -156,11 +160,11 @@ func (s *Server) ValidateOperatorSession(ctx context.Context, req *authv1.Valida
 
 func (s *Server) RevokeOperatorSession(ctx context.Context, req *authv1.RevokeOperatorSessionRequest) (*authv1.RevokeOperatorSessionResponse, error) {
 	if s.sessionIssuer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
 	}
 	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
 	if !ok {
-		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
 	}
 	claims, accessJTI, err := verifyRevokeSessionProofs(issuer, req)
 	if err != nil {
@@ -241,11 +245,11 @@ func validateRevokeRequest(req *authv1.RevokeOperatorSessionRequest, claims sess
 
 func (s *Server) ConsumeStepUp(ctx context.Context, req *authv1.ConsumeStepUpRequest) (*authv1.ConsumeStepUpResponse, error) {
 	if s.sessionIssuer == nil {
-		return nil, status.Error(codes.FailedPrecondition, "session jwt issuer not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgSessionJWTNotReady)
 	}
 	issuer, ok := s.sessionIssuer.(lifecycleIssuerPort)
 	if !ok {
-		return nil, status.Error(codes.FailedPrecondition, "session lifecycle not configured")
+		return nil, status.Error(codes.FailedPrecondition, errMsgLifecycleNotReady)
 	}
 	claims, err := issuer.ConsumeStepUp(ctx, sessionjwt.RawToken(req.GetStepUpToken()), sessionjwt.StepUpExpectations{Subject: req.GetExpectedSubject(), OrgID: req.GetExpectedOrgId(), SessionID: req.GetExpectedSessionId(), Action: req.GetExpectedAction(), RequiredPermission: req.GetRequiredPermission()})
 	if err != nil {

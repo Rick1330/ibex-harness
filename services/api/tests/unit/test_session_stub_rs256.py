@@ -11,9 +11,13 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from app.session_stub import (
+    MAX_JWT_PART_LEN,
+    MAX_SESSION_TOKEN_LEN,
     SESSION_KIND_ACCESS,
     SessionStubError,
     TokenVerifyOpts,
+    _header_kid,
+    _load_rsa_public_keys,
     mint_csrf_token,
     verify_csrf_token,
     verify_token_opts,
@@ -132,6 +136,45 @@ def test_verify_rejects_non_object_header() -> None:
     opts = TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access")
     with pytest.raises(SessionStubError, match="bad header"):
         verify_token_opts(token, opts)
+
+
+def test_session_token_and_jwt_parts_have_bounded_size() -> None:
+    with pytest.raises(SessionStubError, match="token too large"):
+        verify_token_opts(
+            "x" * (MAX_SESSION_TOKEN_LEN + 1),
+            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
+        )
+    oversized_part = "x" * (MAX_JWT_PART_LEN + 1)
+    with pytest.raises(SessionStubError, match="token too large"):
+        verify_token_opts(
+            f"{oversized_part}.payload.signature",
+            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
+        )
+
+
+def test_rsa_loader_rejects_non_rsa_public_key() -> None:
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode("ascii")
+    )
+    with pytest.raises(SessionStubError, match="bad public key"):
+        _load_rsa_public_keys(pem)
+
+
+def test_rsa_loader_stops_on_malformed_trailing_pem() -> None:
+    _, pem = _rsa_keypair()
+    assert len(_load_rsa_public_keys(pem + "-----BEGIN PUBLIC KEY-----\nmalformed")) == 1
+
+
+def test_header_kid_rejects_malformed_and_non_object_headers() -> None:
+    with pytest.raises(SessionStubError, match="bad header"):
+        _header_kid(_b64url(b"not-json"))
+    with pytest.raises(SessionStubError, match="bad header"):
+        _header_kid(_b64url(b"[]"))
 
 
 def test_verify_rejects_missing_material() -> None:

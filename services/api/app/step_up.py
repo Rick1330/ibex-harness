@@ -90,7 +90,12 @@ RequireStepUpProbe = Annotated[None, Depends(require_step_up_header)]
 
 
 async def enforce_step_up(
-    request: Request, token: ValidateResult, *, required_permission: int, action: str
+    request: Request,
+    token: ValidateResult,
+    *,
+    required_permission: int,
+    action: str,
+    session_id: str | None = None,
 ) -> None:
     """Verify and atomically consume the action-bound step-up immediately before mutation."""
     raw = request.headers.get(STEP_UP_HEADER)
@@ -98,38 +103,63 @@ async def enforce_step_up(
         raise _deny_step_up()
     settings = _settings(request)
     subject = token.user_id or token.token_id
-    session_id = getattr(request.state, "ibex_session_id", None) or token.token_id
+    session_id = session_id or getattr(request.state, "ibex_session_id", None)
     if not subject or not session_id:
         raise _deny_step_up()
     if str(settings.environment) not in {"staging", "production"}:
-        claims = _verify_step_up_token(raw, settings)
-        if (
-            claims.sub != subject
-            or str(claims.org_id) != str(token.org_id)
-            or claims.session_id != session_id
-        ):
-            raise _deny_step_up()
-        if (
-            claims.action != action
-            or claims.permissions & required_permission != required_permission
-        ):
-            raise _deny_step_up()
+        _enforce_local_step_up(
+            raw, settings, token, subject, session_id, action, required_permission
+        )
     else:
-        try:
-            await consume_step_up(
-                auth_grpc_addr=settings.auth_grpc_addr,
-                service_token=settings.auth_service_token or "",
-                token=raw,
-                subject=subject,
-                org_id=str(token.org_id),
-                session_id=session_id,
-                action=action,
-                permission=required_permission,
-                timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
-            )
-        except AuthFailedError as exc:
-            raise _deny_step_up() from exc
-        except AuthUnavailableError as exc:
-            raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc
+        await _enforce_auth_step_up(
+            raw, settings, token, subject, session_id, action, required_permission
+        )
     request.state.ibex_step_up_ok = True
     request.state.ibex_step_up_action = action
+
+
+def _enforce_local_step_up(
+    raw: str,
+    settings: Settings,
+    token: ValidateResult,
+    subject: str,
+    session_id: str,
+    action: str,
+    required_permission: int,
+) -> None:
+    claims = _verify_step_up_token(raw, settings)
+    if (
+        claims.sub != subject
+        or str(claims.org_id) != str(token.org_id)
+        or claims.session_id != session_id
+    ):
+        raise _deny_step_up()
+    if claims.action != action or claims.permissions & required_permission != required_permission:
+        raise _deny_step_up()
+
+
+async def _enforce_auth_step_up(
+    raw: str,
+    settings: Settings,
+    token: ValidateResult,
+    subject: str,
+    session_id: str,
+    action: str,
+    required_permission: int,
+) -> None:
+    try:
+        await consume_step_up(
+            auth_grpc_addr=settings.auth_grpc_addr,
+            service_token=settings.auth_service_token or "",
+            token=raw,
+            subject=subject,
+            org_id=str(token.org_id),
+            session_id=session_id,
+            action=action,
+            permission=required_permission,
+            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+        )
+    except AuthFailedError as exc:
+        raise _deny_step_up() from exc
+    except AuthUnavailableError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc

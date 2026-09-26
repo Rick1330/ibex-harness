@@ -19,19 +19,28 @@ class SecurityHeadersMiddleware:
         is_sse = path.endswith("/events/stream")
 
         async def send_with_headers(message: Message) -> None:
-            if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
-                existing = {key.lower() for key, _ in headers}
-                if is_api and b"cache-control" not in existing:
-                    headers.append((b"cache-control", b"no-store"))
-                if is_sse:
-                    if b"cache-control" not in existing:
-                        headers.append((b"cache-control", b"no-cache, no-store"))
-                    if b"x-accel-buffering" not in existing:
-                        headers.append((b"x-accel-buffering", b"no"))
-                if b"x-content-type-options" not in existing:
-                    headers.append((b"x-content-type-options", b"nosniff"))
-                message = {**message, "headers": headers}
-            await send(message)
+            await send(_add_security_headers(message, is_api=is_api, is_sse=is_sse))
 
         await self.app(scope, receive, send_with_headers)
+
+
+def _add_security_headers(message: Message, *, is_api: bool, is_sse: bool) -> Message:
+    if message["type"] != "http.response.start":
+        return message
+    headers = list(message.get("headers", []))
+    existing = {key.lower() for key, _ in headers}
+    _append_if_missing(headers, existing, b"x-content-type-options", b"nosniff")
+    if is_sse:
+        _append_if_missing(headers, existing, b"cache-control", b"no-cache, no-store")
+        _append_if_missing(headers, existing, b"x-accel-buffering", b"no")
+    elif is_api:
+        _append_if_missing(headers, existing, b"cache-control", b"no-store")
+    return {**message, "headers": headers}
+
+
+def _append_if_missing(
+    headers: list[tuple[bytes, bytes]], existing: set[bytes], name: bytes, value: bytes
+) -> None:
+    if name not in existing:
+        headers.append((name, value))
+        existing.add(name)
