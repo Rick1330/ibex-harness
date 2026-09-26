@@ -51,6 +51,8 @@ test.describe("journey 8: hard-cap denial", () => {
   test("exhausted hard-cap returns 402 BUDGET_EXCEEDED via BudgetMiddleware", async ({
     request,
   }) => {
+    // The first `go run` may download/build the fixture module graph in a clean sandbox.
+    test.setTimeout(90_000);
     const { baseURL, child } = await startHardCapFixture();
     try {
       const res = await request.post(`${baseURL}/v1/chat/completions`, {
