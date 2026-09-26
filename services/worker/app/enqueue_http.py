@@ -88,17 +88,39 @@ def health(_request: Request) -> Response:
 
 
 async def ready(request: Request) -> Response:
-    """Report readiness only when enqueue auth and Redis are available."""
+    """Report readiness only when enqueue auth and Celery broker Redis are available."""
     settings: Settings = request.app.state.settings
-    token = getattr(settings, "enqueue_api_token", None)
-    redis_url = getattr(settings, "redis_url", None)
-    if token is None or not token.get_secret_value().strip() or not redis_url:
+    if not _enqueue_auth_ready(settings):
         return JSONResponse({"status": "not_ready"}, status_code=503)
+    broker_url = _broker_url(settings)
+    if not broker_url:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    return await _ping_broker(broker_url)
+
+
+def _enqueue_auth_ready(settings: Settings) -> bool:
+    token = getattr(settings, "enqueue_api_token", None)
+    if token is None:
+        return False
+    return bool(token.get_secret_value().strip())
+
+
+def _broker_url(settings: Settings) -> str | None:
+    resolved = getattr(settings, "resolved_broker_url", None)
+    if isinstance(resolved, str) and resolved.strip():
+        return resolved
+    redis_url = getattr(settings, "redis_url", None)
+    if isinstance(redis_url, str) and redis_url.strip():
+        return redis_url
+    return None
+
+
+async def _ping_broker(broker_url: str) -> Response:
     client = None
     try:
         from redis.asyncio import Redis
 
-        client = Redis.from_url(redis_url, socket_timeout=0.5)
+        client = Redis.from_url(broker_url, socket_timeout=0.5)
         await asyncio.wait_for(client.ping(), timeout=0.5)
     except (RedisError, OSError):
         return JSONResponse({"status": "not_ready"}, status_code=503)
@@ -109,10 +131,7 @@ async def ready(request: Request) -> Response:
 
 
 def _turns_kwargs(turns: list[TurnPayload]) -> list[dict[str, Any]]:
-    return [
-        {"turn_index": t.turn_index, "role": t.role, "content": t.content}
-        for t in turns
-    ]
+    return [{"turn_index": t.turn_index, "role": t.role, "content": t.content} for t in turns]
 
 
 def _parse_enqueue_body(payload: object) -> dict[str, Any]:

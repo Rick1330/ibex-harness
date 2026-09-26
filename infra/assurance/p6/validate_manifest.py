@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -141,7 +142,15 @@ def _validate_artifact_reference(
         fail(f"{where}.artifact_uris: URI is not declared in manifest.artifacts: {uri}")
 
 
-def _read_check(check: dict[str, Any], where: str) -> tuple[str, bool, str, str]:
+@dataclass(frozen=True, slots=True)
+class _CheckCore:
+    name: str
+    expected: bool
+    applicability: str
+    result: str
+
+
+def _read_check(check: dict[str, Any], where: str) -> _CheckCore:
     require(
         check,
         "name",
@@ -159,38 +168,46 @@ def _read_check(check: dict[str, Any], where: str) -> tuple[str, bool, str, str]
     )
     result = enum(check["result"], RESULTS, f"{where}.result", "result")
     enum(check["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state")
-    return name, check["expected"], applicability, result
+    return _CheckCore(name, check["expected"], applicability, result)
 
 
-def _validate_check_outcome(
-    check: dict[str, Any], where: str, expected: bool, applicability: str, result: str
-) -> None:
-    if applicability == "inapplicable":
-        _validate_inapplicable_check(check, where, expected, result)
+def _validate_check_outcome(check: dict[str, Any], where: str, core: _CheckCore) -> None:
+    if core.applicability == "inapplicable":
+        _validate_inapplicable_check(check, where, core)
         return
-    if result != "passed":
-        fail(f"{where}: applicable checks must pass; got {result}")
+    if core.result != "passed":
+        fail(f"{where}: applicable checks must pass; got {core.result}")
 
 
 def _validate_inapplicable_check(
-    check: dict[str, Any], where: str, expected: bool, result: str
+    check: dict[str, Any], where: str, core: _CheckCore
 ) -> None:
-    if expected:
+    if core.expected:
         fail(f"{where}: inapplicable checks cannot be expected")
     reason = check.get("reason")
     if not isinstance(reason, str) or not reason:
         fail(f"{where}: inapplicable checks require a reason")
-    if result not in {"skipped", "missing"}:
+    if core.result not in {"skipped", "missing"}:
         fail(f"{where}: inapplicable checks must be skipped or missing")
 
 
-def _validate_expected_evidence(
-    check: dict[str, Any], where: str, expected: bool
-) -> None:
-    if not expected:
+def _validate_expected_evidence(check: dict[str, Any], where: str, core: _CheckCore) -> None:
+    if not core.expected:
         return
     if check["evidence_state"] in {"blocked", "declared"}:
         fail(f"{where}: expected check is not executable evidence")
+
+
+def _validate_one_check(
+    check: dict[str, Any], where: str, declared_uris: set[str], seen: set[str]
+) -> None:
+    core = _read_check(check, where)
+    if core.name in seen:
+        fail(f"{where}.name: duplicate check name {core.name}")
+    seen.add(core.name)
+    _validate_check_artifacts(check, where, declared_uris)
+    _validate_check_outcome(check, where, core)
+    _validate_expected_evidence(check, where, core)
 
 
 def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
@@ -201,13 +218,7 @@ def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
         where = f"manifest.checks[{index}]"
         if not isinstance(check, dict):
             fail(f"{where}: expected object")
-        name, expected, applicability, result = _read_check(check, where)
-        if name in seen:
-            fail(f"{where}.name: duplicate check name {name}")
-        seen.add(name)
-        _validate_check_artifacts(check, where, declared_uris)
-        _validate_check_outcome(check, where, expected, applicability, result)
-        _validate_expected_evidence(check, where, expected)
+        _validate_one_check(check, where, declared_uris, seen)
 
 
 def _validate_rollback(rollback: Any) -> None:

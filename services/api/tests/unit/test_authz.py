@@ -98,9 +98,7 @@ async def test_operator_legal_hold_role_session_closes_before_step_up() -> None:
     ("role", "permissions"),
     [("member", "admin"), ("admin", "member")],
 )
-async def test_operator_legal_hold_denies_before_step_up(
-    role: str, permissions: str
-) -> None:
+async def test_operator_legal_hold_denies_before_step_up(role: str, permissions: str) -> None:
     from authclient.permissions import bitmap_for_role
 
     from app.authz import require_operator_legal_hold_manage
@@ -123,14 +121,19 @@ async def test_operator_legal_hold_denies_before_step_up(
         subject="user-1",
     )
     pending = require_operator_legal_hold_manage()(MagicMock(), operator, object())
-    with (
-        patch("app.authz.session_with_org", return_value=_RoleSession()),
-        patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce,
-        pytest.raises(ApiError) as exc,
-    ):
-        await pending
+    session_patch = patch("app.authz.session_with_org", return_value=_RoleSession())
+    step_up = AsyncMock()
+    enforce_patch = patch("app.authz.enforce_step_up", new=step_up)
+    session_patch.start()
+    enforce_patch.start()
+    try:
+        with pytest.raises(ApiError) as exc:
+            await pending
+    finally:
+        enforce_patch.stop()
+        session_patch.stop()
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
-    enforce.assert_not_awaited()
+    step_up.assert_not_awaited()
 
 
 def test_require_roles_permission_gate() -> None:
@@ -250,7 +253,9 @@ def test_maybe_operator_session_delegates_when_step_up_header_present() -> None:
     request = MagicMock()
     request.headers.get.return_value = "proof"
     expected = OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="sid")
-    with patch("app.authz.require_operator_session", new=AsyncMock(return_value=expected)) as require:
+    with patch(
+        "app.authz.require_operator_session", new=AsyncMock(return_value=expected)
+    ) as require:
         got = asyncio.run(_maybe_operator_session(request))
     assert got is expected
     require.assert_awaited_once_with(request)
