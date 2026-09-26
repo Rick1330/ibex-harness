@@ -1,0 +1,14 @@
+{
+  "version": "console-boundary.v1",
+  "routes": {
+    "/": { "status": "unavailable", "data_mode": "none", "owner": "console" },
+    "/dashboard": { "status": "preview-only", "data_mode": "fixture", "owner": "console" },
+    "/dashboard/explore": { "status": "deferred", "data_mode": "none", "owner": "D2" },
+    "/dashboard/sessions": { "status": "deferred", "data_mode": "none", "owner": "D3" },
+    "/dashboard/incidents": { "status": "deferred", "data_mode": "none", "owner": "D4" },
+    "/dashboard/directives": { "status": "deferred", "data_mode": "none", "owner": "D5" },
+    "/dashboard/billing": { "status": "deferred", "data_mode": "none", "owner": "D6" },
+    "/login": { "status": "unavailable", "data_mode": "none", "owner": "AuthService" }
+  },
+  "production_rule": "fixture adapters are unreachable when NODE_ENV=production"
+}

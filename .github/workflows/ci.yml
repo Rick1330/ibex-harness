@@ -81,6 +81,9 @@ jobs:
       - name: Required CI gate inventory guard
         run: bash .github/scripts/check-required-ci-gates.sh
 
+      - name: P6 bootstrap manifest contract guard
+        run: bash .github/scripts/check-p6-bootstrap.sh
+
       - name: Set up Helm 3 for chart regression checks
         uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -1081,6 +1084,8 @@ jobs:
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: true
+      - name: Check API OpenAPI snapshot freshness
+        run: bash .github/scripts/check-openapi-snapshot.sh
       - name: API unit tests (pytest + ruff)
         run: bash infra/scripts/api-test-ci.sh
 

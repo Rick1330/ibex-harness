@@ -30,7 +30,7 @@ spec:
             - name: POSTGRES_MIGRATE_DSN
               valueFrom:
                 secretKeyRef:
-                  name: ibex-postgres
-                  key: migrate-dsn
+                  name: {{ .Values.secrets.postgres.name | quote }}
+                  key: {{ .Values.secrets.postgres.migrateDsnKey | quote }}
                   optional: false
 {{- end }}

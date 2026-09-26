@@ -55,6 +55,16 @@ migrate:
   # Off until images.migrate is published; enable with a real digest pin.
   enabled: false
   backoffLimit: 1
+  # Until the migration image is published, migrations are owned by the reviewed CI job.
+  externalMechanism: ci-job
+
+ingress:
+  # ADR-0078 keeps the console on Pages; this optional resource fronts only API/SSE.
+  enabled: false
+  className: ""
+  host: ""
+  tlsSecretName: ""
+  annotations: {}
 
 backup:
   enabled: true
@@ -129,6 +139,7 @@ secrets:
   postgres:
     name: ibex-postgres
     dsnKey: postgres-dsn
+    migrateDsnKey: migrate-dsn
   embedder:
     name: ibex-embedder
     apiTokenKey: api-token

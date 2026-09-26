@@ -43,9 +43,22 @@
     },
     "migrate": {
       "type": "object",
+      "required": ["enabled", "externalMechanism"],
       "properties": {
         "enabled": { "type": "boolean" },
-        "backoffLimit": { "type": "integer", "minimum": 0 }
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "externalMechanism": { "type": "string", "enum": ["ci-job", "operator-runbook", "none"] }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["enabled", "className", "host", "tlsSecretName", "annotations"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "tlsSecretName": { "type": "string" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
       }
     },
     "proxy": {
@@ -86,6 +99,20 @@
             "secretName": { "type": "string", "minLength": 1 },
             "redisUrlKey": { "type": "string", "minLength": 1 },
             "enqueueTokenKey": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "postgres": {
+          "type": "object",
+          "required": ["name", "dsnKey", "migrateDsnKey"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "dsnKey": { "type": "string", "minLength": 1 },
+            "migrateDsnKey": { "type": "string", "minLength": 1 }
           }
         }
       }
