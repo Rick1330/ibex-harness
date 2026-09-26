@@ -94,10 +94,10 @@ def _validate_versions(versions: Any) -> None:
         string(value, f"manifest.versions.{key}")
 
 
-def _validate_artifacts(artifacts: Any) -> set[str]:
+def _validate_artifacts(artifacts: Any) -> dict[str, str]:
     if not isinstance(artifacts, list):
         fail("manifest.artifacts: expected array")
-    declared_uris: set[str] = set()
+    declared: dict[str, str] = {}
     for index, artifact in enumerate(artifacts):
         where = f"manifest.artifacts[{index}]"
         if not isinstance(artifact, dict):
@@ -110,20 +110,23 @@ def _validate_artifacts(artifacts: Any) -> set[str]:
         uri = string(artifact["uri"], f"{where}.uri")
         if not ARTIFACT_URI.fullmatch(uri):
             fail(f"{where}.uri: unsupported immutable artifact URI")
-        enum(artifact["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state")
-        declared_uris.add(uri)
-    return declared_uris
+        state = enum(
+            artifact["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state"
+        )
+        declared[uri] = state
+    return declared
 
 
 def _validate_check_artifacts(
-    check: dict[str, Any], where: str, declared_uris: set[str]
+    check: dict[str, Any], where: str, declared: dict[str, str]
 ) -> None:
     raw_uris = check.get("artifact_uris", [])
     if not isinstance(raw_uris, list):
         fail(f"{where}.artifact_uris: expected array")
     uris = [string(uri, f"{where}.artifact_uris[{i}]") for i, uri in enumerate(raw_uris)]
     for uri in uris:
-        _validate_artifact_reference(uri, where, declared_uris)
+        _validate_artifact_reference(uri, where, declared)
+    _reject_blocked_only_contract_evidence(check, where, uris, declared)
     if check["applicability"] != "applicable":
         return
     if not check["expected"]:
@@ -133,13 +136,24 @@ def _validate_check_artifacts(
     fail(f"{where}: applicable expected checks require artifact_uris")
 
 
-def _validate_artifact_reference(
-    uri: str, where: str, declared_uris: set[str]
-) -> None:
+def _validate_artifact_reference(uri: str, where: str, declared: dict[str, str]) -> None:
     if not ARTIFACT_URI.fullmatch(uri):
         fail(f"{where}.artifact_uris: unsupported artifact URI")
-    if uri not in declared_uris:
-        fail(f"{where}.artifact_uris: URI is not declared in manifest.artifacts: {uri}")
+    if uri not in declared:
+        fail(f"{where}.artifact_uris: URI is not declared in manifest.artifacts")
+
+
+def _reject_blocked_only_contract_evidence(
+    check: dict[str, Any], where: str, uris: list[str], declared: dict[str, str]
+) -> None:
+    if check.get("result") != "passed":
+        return
+    if check.get("evidence_state") != "contract-tested":
+        return
+    if not uris:
+        return
+    if all(declared[uri] == "blocked" for uri in uris):
+        fail(f"{where}: contract-tested evidence cannot rely only on blocked artifacts")
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,18 +213,18 @@ def _validate_expected_evidence(check: dict[str, Any], where: str, core: _CheckC
 
 
 def _validate_one_check(
-    check: dict[str, Any], where: str, declared_uris: set[str], seen: set[str]
+    check: dict[str, Any], where: str, declared: dict[str, str], seen: set[str]
 ) -> None:
     core = _read_check(check, where)
     if core.name in seen:
         fail(f"{where}.name: duplicate check name {core.name}")
     seen.add(core.name)
-    _validate_check_artifacts(check, where, declared_uris)
+    _validate_check_artifacts(check, where, declared)
     _validate_check_outcome(check, where, core)
     _validate_expected_evidence(check, where, core)
 
 
-def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
+def _validate_checks(checks: Any, declared: dict[str, str]) -> None:
     if not isinstance(checks, list) or not checks:
         fail("manifest.checks: expected a non-empty array")
     seen: set[str] = set()
@@ -218,7 +232,7 @@ def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
         where = f"manifest.checks[{index}]"
         if not isinstance(check, dict):
             fail(f"{where}: expected object")
-        _validate_one_check(check, where, declared_uris, seen)
+        _validate_one_check(check, where, declared, seen)
 
 
 def _validate_rollback(rollback: Any) -> None:

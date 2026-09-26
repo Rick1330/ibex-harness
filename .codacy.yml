@@ -14,10 +14,10 @@ exclude_paths:
   # Pytest uses assert for expectations; Codacy flags S101/Bandit B101 in test bodies.
   - "services/**/tests/**"
   - "packages/**/tests/**"
-  # Operator console transport: origin comes only from IBEX_OPERATOR_API_ORIGIN
-  # (server env); path keys are a fixed OperatorApiPath allowlist, never request
-  # input. Opengrep SSRF rules still flag the allowlisted fetch construction.
-  - "services/console/src/lib/api/transport.ts"
+  # Codacy .codacy.yml exclude_paths can only ignore whole files/globs, not a
+  # single finding. The Opengrep SSRF false positive on the allowlisted
+  # fetch() in services/console/src/lib/api/transport.ts is suppressed inline
+  # with `// nosemgrep` at the call site (origin=server env, path=allowlist).
   # Plan-gate / benchmark helpers use static parameterized SQL outside app/ hot paths
   # (see benchmarks/memory/README.md — not production request handlers).
   - "benchmarks/memory/**"
