@@ -5,19 +5,22 @@ import { ApiErrorSchema } from "./contracts"
 export class OperatorApiError extends Error {
   readonly status: number
   readonly code: string
+  readonly requestId: string | null
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, requestId: string | null = null) {
     super(message)
     this.name = "OperatorApiError"
     this.status = status
     this.code = code
+    this.requestId = requestId
   }
 }
 
 const OPERATOR_API_PATHS = {
-  session: "/operator/session",
-  operatorHealth: "/operator/health",
-  platformHealth: "/platform/health",
+  context: "/v1/operator/context",
+  overview: "/v1/operator/overview",
+  platformHealth: "/v1/operator/platform/health",
+  events: "/v1/operator/events/stream",
 } as const
 type OperatorApiPath = keyof typeof OPERATOR_API_PATHS
 
@@ -29,55 +32,52 @@ function invalidOrigin(): never {
   throw new OperatorApiError(503, "API_ORIGIN_INVALID", "Operator API origin is invalid")
 }
 
-function assertHttpProtocol(parsed: URL): void {
-  if (parsed.protocol === "http:") return
-  if (parsed.protocol === "https:") return
+function assertHttpOriginProtocol(origin: URL): void {
+  if (origin.protocol === "http:") return
+  if (origin.protocol === "https:") return
   throw new Error("unsafe protocol")
 }
 
-function assertNoUserInfo(parsed: URL): void {
-  if (parsed.username) throw new Error("unsafe username")
-  if (parsed.password) throw new Error("unsafe password")
+function assertNoUserinfo(origin: URL): void {
+  if (origin.username) throw new Error("userinfo not allowed")
+  if (origin.password) throw new Error("userinfo not allowed")
 }
 
-function apiOrigin(): URL {
-  const origin = process.env.IBEX_OPERATOR_API_ORIGIN
-  if (!origin) unavailableOrigin()
+function assertOriginHasNoPath(origin: URL): void {
+  if (origin.pathname !== "/") throw new Error("API configuration must be an origin without a path")
+  if (origin.search) throw new Error("API configuration must be an origin without a path")
+  if (origin.hash) throw new Error("API configuration must be an origin without a path")
+}
+
+function assertSafeOperatorOrigin(origin: URL): void {
+  assertHttpOriginProtocol(origin)
+  assertNoUserinfo(origin)
+  assertOriginHasNoPath(origin)
+}
+
+export function operatorApiUrl(path: OperatorApiPath): URL {
+  const rawOrigin = process.env.IBEX_OPERATOR_API_ORIGIN
+  if (!rawOrigin) unavailableOrigin()
   try {
-    const parsed = new URL(origin)
-    assertHttpProtocol(parsed)
-    assertNoUserInfo(parsed)
-    return parsed
+    const origin = new URL(rawOrigin)
+    assertSafeOperatorOrigin(origin)
+    const target = new URL(OPERATOR_API_PATHS[path], origin)
+    if (target.origin !== origin.origin) throw new Error("path changed origin")
+    return target
   } catch (error) {
     if (error instanceof OperatorApiError) throw error
     invalidOrigin()
   }
 }
 
-function pathnameFor(path: OperatorApiPath): string {
-  switch (path) {
-    case "session":
-      return OPERATOR_API_PATHS.session
-    case "operatorHealth":
-      return OPERATOR_API_PATHS.operatorHealth
-    case "platformHealth":
-      return OPERATOR_API_PATHS.platformHealth
-    default: {
-      const _exhaustive: never = path
-      throw new OperatorApiError(400, "API_PATH_INVALID", `Unknown operator API path: ${_exhaustive}`)
-    }
+function assertNoCleartextSessionCookie(target: URL, headers: Headers): void {
+  if (headers.get("cookie")?.trim() && target.protocol !== "https:") {
+    throw new OperatorApiError(
+      503,
+      "API_ORIGIN_INSECURE",
+      "Operator session cookies require an HTTPS API origin",
+    )
   }
-}
-
-function assertNoCleartextSessionCookie(origin: URL, headers: Headers): void {
-  const cookie = headers.get("cookie")
-  if (!cookie || !cookie.trim()) return
-  if (origin.protocol === "https:") return
-  throw new OperatorApiError(
-    503,
-    "API_ORIGIN_INSECURE",
-    "Operator session cookies require an HTTPS API origin",
-  )
 }
 
 export async function fetchOperatorJson<T>(
@@ -87,20 +87,15 @@ export async function fetchOperatorJson<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set("Accept", "application/json")
-  const origin = apiOrigin()
-  assertNoCleartextSessionCookie(origin, headers)
-  const target = new URL(pathnameFor(path), origin)
-  if (target.origin !== origin.origin) {
-    throw new OperatorApiError(400, "API_PATH_INVALID", "Operator API path changed origin")
-  }
-  // Origin is IBEX_OPERATOR_API_ORIGIN (server env only); path is a fixed
-  // OperatorApiPath allowlist key — never request/user input.
-  // nosemgrep: javascript.lang.security.audit.network.request-ssrf
+  const target = operatorApiUrl(path)
+  assertNoCleartextSessionCookie(target, headers)
+  // Origin is IBEX_OPERATOR_API_ORIGIN (server env); path is OperatorApiPath allowlist.
+  // nosemgrep
   const response = await fetch(target.toString(), {
     ...init,
     cache: "no-store",
-    // Server components do not have a browser cookie jar. Callers must forward
-    // the request Cookie header explicitly after Next.js request validation.
+    redirect: "error",
+    signal: init.signal ?? AbortSignal.timeout(5000),
     headers,
   })
   const body: unknown = await response.json().catch(() => null)
@@ -110,6 +105,7 @@ export async function fetchOperatorJson<T>(
       response.status,
       parsed.success ? parsed.data.error.code : "API_REQUEST_FAILED",
       parsed.success ? parsed.data.error.message : "Operator API request failed",
+      parsed.success ? parsed.data.error.request_id ?? null : null,
     )
   }
   return parse(body)

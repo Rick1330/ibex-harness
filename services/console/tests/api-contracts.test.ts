@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { parseOperatorSession, parsePlatformHealth } from "../src/lib/api/contracts"
+import {
+  OperatorContextSchema,
+  OperatorOverviewSchema,
+  parseOperatorSession,
+  parsePlatformHealth,
+} from "../src/lib/api/contracts"
 
 const session = {
   subject: "user-1",
@@ -22,10 +27,38 @@ const health = {
   observed_at: "2026-09-26T12:00:00.000Z",
 }
 
+const context = {
+  schema_version: "operator.context.v1",
+  org_id: session.org_id,
+  role: "admin",
+  org_name: "Example",
+  org_slug: "example",
+  org_status: "active",
+  observed_at: "2026-09-26T12:00:00.000Z",
+}
+
+const overview = {
+  schema_version: "operator.overview.v1",
+  org_id: session.org_id,
+  org_name: "Example",
+  org_slug: "example",
+  org_status: "active",
+  counts: { active_users: 3, agents: 7, active_agents: 4 },
+  observed_at: "2026-09-26T12:00:00.000Z",
+  completeness: "complete",
+}
+
 describe("operator response contracts", () => {
   it("accepts the stable session and health shapes", () => {
     expect(parseOperatorSession(session).org_id).toBe(session.org_id)
     expect(parsePlatformHealth(health).dependency_health.redis).toBe("ok")
+  })
+
+  it("accepts versioned D1 DTOs and rejects secrets or unsupported metrics", () => {
+    expect(OperatorContextSchema.parse(context).role).toBe("admin")
+    expect(OperatorOverviewSchema.parse(overview).counts.active_agents).toBe(4)
+    expect(() => OperatorContextSchema.parse({ ...context, access_token: "secret" })).toThrow()
+    expect(() => OperatorOverviewSchema.parse({ ...overview, estimated_cost_usd: 0 })).toThrow()
   })
 
   it("rejects unknown session fields", () => {

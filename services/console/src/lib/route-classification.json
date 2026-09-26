@@ -1,20 +1,28 @@
 {
-  "version": "console-boundary.v1",
+  "version": "console-boundary.v2",
   "routes": {
-    "/": { "status": "unavailable", "data_mode": "none", "owner": "console" },
+    "/": { "status": "implemented", "data_mode": "none", "owner": "console", "target": "/dashboard" },
+    "/deferred": { "status": "implemented", "data_mode": "none", "owner": "console" },
     "/login": { "status": "unavailable", "data_mode": "none", "owner": "AuthService" },
-    "/dashboard": { "status": "preview-only", "data_mode": "fixture", "owner": "console" },
+    "/dashboard": { "status": "preview-only", "data_mode": "fixture", "owner": "D0/D1", "live_mode": "read-only" },
     "/dashboard/explore": { "status": "deferred", "data_mode": "none", "owner": "D2" },
+    "/dashboard/explore/t/:traceId": { "status": "deferred", "data_mode": "none", "owner": "D2" },
     "/dashboard/analytics": { "status": "deferred", "data_mode": "none", "owner": "D2" },
     "/dashboard/sessions": { "status": "deferred", "data_mode": "none", "owner": "D3" },
+    "/dashboard/sessions/:sessionId": { "status": "deferred", "data_mode": "none", "owner": "D3" },
     "/dashboard/incidents": { "status": "deferred", "data_mode": "none", "owner": "D4" },
+    "/dashboard/incidents/:incidentId": { "status": "deferred", "data_mode": "none", "owner": "D4" },
     "/dashboard/drift": { "status": "deferred", "data_mode": "none", "owner": "D4" },
+    "/dashboard/drift/:alertId": { "status": "deferred", "data_mode": "none", "owner": "D4" },
     "/dashboard/directives": { "status": "deferred", "data_mode": "none", "owner": "D5" },
+    "/dashboard/directives/:directiveId": { "status": "deferred", "data_mode": "none", "owner": "D5" },
     "/dashboard/billing": { "status": "deferred", "data_mode": "none", "owner": "D6" },
     "/dashboard/agents": { "status": "deferred", "data_mode": "none", "owner": "D2" },
+    "/dashboard/agents/:agentId": { "status": "deferred", "data_mode": "none", "owner": "D2" },
     "/dashboard/memories": { "status": "deferred", "data_mode": "none", "owner": "D2" },
+    "/dashboard/memories/:memoryId": { "status": "deferred", "data_mode": "none", "owner": "D2" },
     "/dashboard/settings": { "status": "deferred", "data_mode": "none", "owner": "D1-read-only" },
     "/onboarding": { "status": "unavailable", "data_mode": "none", "owner": "console" }
   },
-  "production_rule": "fixture adapters and deferred domain mutations are unreachable when NODE_ENV=production"
+  "production_rule": "fixture adapters and deferred domain routes are unreachable when NODE_ENV=production"
 }

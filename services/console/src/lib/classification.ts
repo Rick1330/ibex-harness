@@ -1,56 +1,56 @@
+import routeInventory from "./route-classification.json"
+
 export type DataMode = "production" | "preview" | "test"
 export type SurfaceStatus =
-  "implemented" | "preview-only" | "specified-not-implemented" | "deferred"
+  | "implemented"
+  | "preview-only"
+  | "specified-not-implemented"
+  | "deferred"
+  | "unavailable"
 export type SurfaceClassification = {
   status: SurfaceStatus
   dataMode: "none" | "fixture"
   note: string
 }
 
-export const SURFACE_CLASSIFICATIONS: Record<string, SurfaceClassification> = {
-  overview: {
-    status: "preview-only",
-    dataMode: "fixture",
-    note: "Dashboard presentation uses deterministic fixtures only when preview is explicitly enabled.",
-  },
-  auth: {
-    status: "specified-not-implemented",
-    dataMode: "none",
-    note: "Authentication is owned by AuthService; this is presentation only.",
-  },
-  onboarding: {
-    status: "specified-not-implemented",
-    dataMode: "none",
-    note: "Organization setup has no client-side authority or success handler.",
-  },
-  shell: {
-    status: "implemented",
-    dataMode: "none",
-    note: "Shared dashboard presentation is transplanted from the supplied mock.",
-  },
-  deferred: {
-    status: "deferred",
-    dataMode: "none",
-    note: "This surface remains visually available but has no live data contract.",
-  },
+type InventoryStatus = "implemented" | "preview-only" | "deferred" | "unavailable"
+type InventoryEntry = { status: InventoryStatus; data_mode: "none" | "fixture"; owner: string }
+const routes = routeInventory.routes as Record<string, InventoryEntry>
+
+function pathMatches(pattern: string, pathname: string): boolean {
+  const expected = pattern.split("/").filter(Boolean)
+  const actual = pathname.split("/").filter(Boolean)
+  return expected.length === actual.length && expected.every((part, index) =>
+    part.startsWith(":") ? actual[index].length > 0 : part === actual[index],
+  )
 }
 
 export function classifyPath(pathname: string): SurfaceClassification {
-  if (pathname === "/dashboard" || pathname === "/dashboard/")
-    return SURFACE_CLASSIFICATIONS.overview
-  if (pathname === "/login") return SURFACE_CLASSIFICATIONS.auth
-  if (pathname.startsWith("/onboarding"))
-    return SURFACE_CLASSIFICATIONS.onboarding
-  if (pathname.startsWith("/dashboard")) {
-    if (
-      /^\/dashboard\/(explore|analytics|sessions|directives|incidents|settings|billing|agents|memories|drift)/.test(
-        pathname,
-      )
-    )
-      return SURFACE_CLASSIFICATIONS.deferred
-    return SURFACE_CLASSIFICATIONS.deferred
+  const normalized = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname
+  const inventoryPath =
+    Object.keys(routes).find((pattern) => pathMatches(pattern, normalized)) ?? null
+  const entry = inventoryPath ? routes[inventoryPath] : null
+  if (entry) {
+    return {
+      status: entry.status,
+      dataMode: entry.data_mode,
+      note: `${entry.owner} owns this ${entry.status} surface.`,
+    }
   }
-  return SURFACE_CLASSIFICATIONS.shell
+  // Unknown nested dashboard paths stay fail-closed rather than inheriting a
+  // fixture-bearing page or being classified as an implemented shell route.
+  if (normalized.startsWith("/dashboard/")) {
+    return {
+      status: "deferred",
+      dataMode: "none",
+      note: "This dashboard route is not in the D1 allowlist.",
+    }
+  }
+  return {
+    status: "unavailable",
+    dataMode: "none",
+    note: "No canonical Console route is registered for this path.",
+  }
 }
 
 export function resolveDataMode(
@@ -80,6 +80,17 @@ export function isDashboardPreviewEnabled(
     env.CONSOLE_DATA_MODE === "preview" &&
     env.CONSOLE_PREVIEW === "1" &&
     mode === "preview"
+  )
+}
+
+/** Live D1 mode is opt-in, read-only, and requires a server-only API origin. */
+export function isLiveD1Enabled(
+  env: Record<string, string | undefined> = process.env,
+) {
+  return (
+    env.CONSOLE_DATA_MODE === "live" &&
+    env.CONSOLE_READ_ONLY === "1" &&
+    Boolean(env.IBEX_OPERATOR_API_ORIGIN)
   )
 }
 

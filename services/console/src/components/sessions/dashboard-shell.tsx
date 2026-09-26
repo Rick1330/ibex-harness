@@ -11,22 +11,120 @@ import { SiteHeader } from "@/components/site-header"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { FRESHNESS_TONE } from "@/lib/shell-health"
+import type { OperatorContext, PlatformHealth } from "@/lib/api/contracts"
+import type { AuthShellBanner } from "@/lib/auth/types"
 import { cn } from "@/lib/utils"
 
 /** Shared dashboard chrome — auth gate + session refresh + step-up modal. */
-export function DashboardShell({ children }: { children: React.ReactNode }) {
+export type DashboardShellProps = Readonly<{
+  children: React.ReactNode
+  liveMode?: boolean
+  showPreviewBanner?: boolean
+  operatorContext?: OperatorContext | null
+  platformHealth?: PlatformHealth | null
+}>
+
+function SessionBoundOnboarding({
+  liveMode,
+  children,
+}: Readonly<{
+  liveMode: boolean
+  children: React.ReactNode
+}>) {
+  return liveMode ? children : <OnboardingProvider>{children}</OnboardingProvider>
+}
+
+export function DashboardShell({
+  children,
+  liveMode = false,
+  showPreviewBanner = true,
+  operatorContext = null,
+  platformHealth = null,
+}: DashboardShellProps) {
   return (
     <AuthProvider>
-      <DashboardShellInner>{children}</DashboardShellInner>
+      <DashboardShellInner
+        liveMode={liveMode}
+        showPreviewBanner={showPreviewBanner}
+        operatorContext={operatorContext}
+        platformHealth={platformHealth}
+      >
+        {children}
+      </DashboardShellInner>
     </AuthProvider>
   )
 }
 
-function DashboardShellInner({ children }: { children: React.ReactNode }) {
+function ShellLoading() {
+  return (
+    <div className="flex min-h-svh items-center justify-center p-6">
+      <Skeleton className="h-8 w-48" />
+    </div>
+  )
+}
+
+function PreviewDataBanner({ show }: Readonly<{ show: boolean }>) {
+  if (!show) return null
+  return (
+    <output
+      aria-label="Preview data"
+      className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-center font-mono text-[11px] uppercase tracking-[0.16em] text-amber-900 dark:text-amber-200"
+    >
+      Preview data — no live operator contract
+    </output>
+  )
+}
+
+function SessionStatusBanner({
+  banner,
+  onRetry,
+  onLogout,
+}: Readonly<{
+  banner: AuthShellBanner
+  onRetry: () => void
+  onLogout: () => void
+}>) {
+  if (!banner) return null
+  const toneDot =
+    banner.kind === "degraded"
+      ? FRESHNESS_TONE.degraded.dot
+      : FRESHNESS_TONE.stale.dot
+  const kindClass =
+    banner.kind === "degraded"
+      ? "border-amber-500/40 bg-amber-500/5 text-foreground"
+      : "border-destructive/40 bg-destructive/5 text-foreground"
+  return (
+    <div className={cn("border-b px-4 py-2 text-[12px]", kindClass)}>
+      <span className={cn("mr-2 inline-block size-1.5 rounded-full", toneDot)} />
+      {banner.message}
+      <button
+        type="button"
+        className="ml-3 underline-offset-2 hover:underline"
+        onClick={onRetry}
+      >
+        Retry refresh
+      </button>
+      <button
+        type="button"
+        className="ml-2 text-muted-foreground underline-offset-2 hover:underline"
+        onClick={onLogout}
+      >
+        Sign out
+      </button>
+    </div>
+  )
+}
+
+function DashboardShellInner({
+  children,
+  liveMode = false,
+  showPreviewBanner = true,
+  operatorContext = null,
+  platformHealth = null,
+}: DashboardShellProps) {
   const { ready, session, banner, tryRefresh, logout } = useAuth()
   const pathname = usePathname()
 
-  // Silent refresh probe — simulates 401 → refresh → retry path.
   React.useEffect(() => {
     if (!session) return
     const id = window.setInterval(() => {
@@ -35,24 +133,11 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(id)
   }, [session, tryRefresh])
 
-  if (!ready) {
-    return (
-      <div className="flex min-h-svh items-center justify-center p-6">
-        <Skeleton className="h-8 w-48" />
-      </div>
-    )
-  }
-
-  if (session?.mfa_required && !session.totp_enrolled) {
-    return (
-      <div className="flex min-h-svh items-center justify-center p-6">
-        <Skeleton className="h-8 w-48" />
-      </div>
-    )
-  }
+  if (!ready) return <ShellLoading />
+  if (session?.mfa_required && !session.totp_enrolled) return <ShellLoading />
 
   return (
-    <OnboardingProvider>
+    <SessionBoundOnboarding liveMode={liveMode}>
       <SidebarProvider
         style={
           {
@@ -61,49 +146,30 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           } as React.CSSProperties
         }
       >
-        <AppSidebar variant="inset" />
+        <AppSidebar
+          variant="inset"
+          liveMode={liveMode}
+          operatorContext={operatorContext}
+        />
         <SidebarInset>
-          <SiteHeader />
-          {banner ? (
-            <div
-              className={cn(
-                "border-b px-4 py-2 text-[12px]",
-                banner.kind === "degraded" &&
-                  "border-amber-500/40 bg-amber-500/5 text-foreground",
-                banner.kind === "stale" &&
-                  "border-destructive/40 bg-destructive/5 text-foreground",
-              )}
-            >
-              <span
-                className={cn(
-                  "mr-2 inline-block size-1.5 rounded-full",
-                  FRESHNESS_TONE[banner.kind].dot,
-                )}
-              />
-              {banner.message}
-              <button
-                type="button"
-                className="ml-3 underline-offset-2 hover:underline"
-                onClick={() => void tryRefresh()}
-              >
-                Retry refresh
-              </button>
-              <button
-                type="button"
-                className="ml-2 text-muted-foreground underline-offset-2 hover:underline"
-                onClick={() => logout()}
-              >
-                Sign out
-              </button>
-            </div>
-          ) : null}
+          <SiteHeader
+            liveMode={liveMode}
+            operatorContext={operatorContext}
+            platformHealth={platformHealth}
+          />
+          <PreviewDataBanner show={showPreviewBanner} />
+          <SessionStatusBanner
+            banner={banner}
+            onRetry={() => void tryRefresh()}
+            onLogout={() => logout()}
+          />
           <div className="flex flex-1 flex-col" data-pathname={pathname}>
             {children}
           </div>
         </SidebarInset>
         <StepUpModal />
       </SidebarProvider>
-    </OnboardingProvider>
+    </SessionBoundOnboarding>
   )
 }
 

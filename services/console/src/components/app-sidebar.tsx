@@ -54,6 +54,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { OPEN_DRIFT_COUNT } from "@/lib/drift/fixtures"
+import type { OperatorContext } from "@/lib/api/contracts"
 
 const orgs = [
   { name: "Acme Corp", plan: "Pro", color: "bg-foreground" },
@@ -171,7 +172,46 @@ const recent: IbexNavItem[] = [
   },
 ]
 
-function OrgEnvSwitcher() {
+function OrgEnvSwitcher({
+  liveMode,
+  operatorContext,
+}: Readonly<{
+  liveMode: boolean
+  operatorContext: OperatorContext | null
+}>) {
+  return liveMode ? (
+    <LiveOrgSwitcher operatorContext={operatorContext} />
+  ) : (
+    <PreviewOrgEnvSwitcher />
+  )
+}
+
+function LiveOrgSwitcher({
+  operatorContext,
+}: Readonly<{ operatorContext: OperatorContext | null }>) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="lg"
+            disabled
+            tooltip="Tenant scope comes from the verified operator session; switching is not available in D1."
+            className="border border-sidebar-border bg-sidebar-accent/40"
+          >
+            <span aria-hidden className="size-2.5 shrink-0 rounded-full bg-foreground" />
+            <span className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
+              <span className="truncate text-sm font-medium">{operatorContext?.org_name ?? "Organization"}</span>
+              <span className="truncate text-xs text-muted-foreground">
+                {operatorContext ? `${operatorContext.org_slug} · read-only` : "Context unavailable · read-only"}
+              </span>
+            </span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    )
+}
+
+function PreviewOrgEnvSwitcher() {
   const [org, setOrg] = React.useState(orgs[0])
   const [env, setEnv] = React.useState(envs[0])
 
@@ -342,7 +382,18 @@ function SetupGuideLink() {
   )
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+type AppSidebarProps = Readonly<
+  React.ComponentProps<typeof Sidebar> & {
+    liveMode?: boolean
+    operatorContext?: OperatorContext | null
+  }
+>
+
+export function AppSidebar({
+  liveMode = false,
+  operatorContext = null,
+  ...props
+}: AppSidebarProps) {
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader className="gap-2">
@@ -369,13 +420,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </div>
         <div aria-hidden className="mx-1 border-t border-sidebar-border" />
         {/* Row 2 — Org switcher: functional control, own card treatment */}
-        <OrgEnvSwitcher />
+        <OrgEnvSwitcher liveMode={liveMode} operatorContext={operatorContext} />
       </SidebarHeader>
       <SidebarContent>
         {navGroups.map((group) => (
-          <NavGroup key={group.label} label={group.label} items={group.items} />
+            <NavGroup
+              key={group.label}
+              label={group.label}
+              items={
+                liveMode
+                ? group.items.map((item) => {
+                    const liveItem = { ...item }
+                    delete liveItem.badge
+                    delete liveItem.badgeTitle
+                    return liveItem
+                  })
+                : group.items
+              }
+          />
         ))}
-        <SidebarGroup>
+        {!liveMode ? <SidebarGroup>
           <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">
             <IconStar className="mr-1 size-3" />
             Pinned
@@ -396,8 +460,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
+        </SidebarGroup> : null}
+        {!liveMode ? <SidebarGroup>
           <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">
             <IconHistory className="mr-1 size-3" />
             Recent
@@ -418,10 +482,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup>
+        </SidebarGroup> : null}
       </SidebarContent>
       <SidebarFooter>
-        <SetupGuideLink />
+        {!liveMode ? <SetupGuideLink /> : null}
         <CollapseToggle />
       </SidebarFooter>
     </Sidebar>

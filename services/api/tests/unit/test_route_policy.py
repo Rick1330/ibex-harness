@@ -114,6 +114,20 @@ def test_auth_source_requires_exact_public_path_match() -> None:
     assert module._auth_source("/docs-admin", public_paths) == "bearer_pat"
 
 
+def test_auth_source_is_method_aware_for_cookie_guarded_legal_hold_write() -> None:
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[2] / "scripts/generate_route_policy.py"
+    spec = importlib.util.spec_from_file_location("generate_route_policy_method", script)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    path = "/v1/organizations/{org_id}/legal-holds"
+    assert module._auth_source(path, frozenset(), "GET") == "bearer_pat"
+    assert module._auth_source(path, frozenset(), "POST") == "operator_session"
+
+
 def _route(path: str | None, endpoint: object, dependencies: list[object] | None = None):
     return SimpleNamespace(
         path=path,
