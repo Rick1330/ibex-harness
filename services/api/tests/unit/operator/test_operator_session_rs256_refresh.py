@@ -488,9 +488,13 @@ def test_refresh_via_auth_rejects_missing_public_keys_before_rpc() -> None:
         settings=_rs256_settings(jwt_public_keys_pem=None),
         refresh_token="proof",
     )
-    with patch("app.routers.session.refresh_operator_session", new=rpc):
+    patched = patch("app.routers.session.refresh_operator_session", new=rpc)
+    patched.start()
+    try:
         with pytest.raises(ApiError) as exc:
             asyncio.run(pending)
+    finally:
+        patched.stop()
     assert exc.value.code == "SERVICE_DEGRADED"
     rpc.assert_not_awaited()
 

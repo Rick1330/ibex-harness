@@ -155,9 +155,14 @@ def test_require_operator_permission_denial_does_not_consume_step_up(
     dep = require_operator_permission(SECRET_USE)
     req = _request_with_settings(_settings(**settings_kw))
     pending = dep(req, token)
-    with patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce:
+    enforce = AsyncMock()
+    patched = patch("app.authz.enforce_step_up", new=enforce)
+    patched.start()
+    try:
         with pytest.raises(ApiError) as exc:
             asyncio.run(pending)
+    finally:
+        patched.stop()
     assert exc.value.code == expected_code
     enforce.assert_not_awaited()
 

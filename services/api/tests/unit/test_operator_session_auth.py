@@ -55,9 +55,13 @@ def _settings(**overrides: object) -> Settings:
 def test_local_operator_session_rejects_non_uuid_org_context() -> None:
     settings = _settings()
     claims = SimpleNamespace(org_id="not-a-uuid", permissions=0, session_id="sid")
-    with patch("app.operator_session_auth.verify_token_opts", return_value=claims):
+    patched = patch("app.operator_session_auth.verify_token_opts", return_value=claims)
+    patched.start()
+    try:
         with pytest.raises(ApiError) as exc:
             _verified_local_session("token", settings)
+    finally:
+        patched.stop()
     assert exc.value.code == INVALID_TOKEN
     assert exc.value.message == "missing org context in session"
 
@@ -72,10 +76,14 @@ def test_authservice_operator_session_rejects_incomplete_verified_claims() -> No
         subject="", org_id=str(uuid4()), permissions=0, session_id="sid", jti="jti"
     )
     pending = require_operator_session(_request(settings))
-    with patch(
+    patched = patch(
         "app.operator_session_auth.validate_operator_session", return_value=incomplete
-    ):
+    )
+    patched.start()
+    try:
         with pytest.raises(ApiError) as exc:
             asyncio.run(pending)
+    finally:
+        patched.stop()
     assert exc.value.code == INVALID_TOKEN
     assert exc.value.message == "incomplete session claims"
