@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from apierror_py import NOT_FOUND, SERVICE_DEGRADED
@@ -19,6 +20,7 @@ from app.schemas.operator_overview import (
 )
 
 _ORG_NOT_FOUND = "Operator organization not found"
+_OVERVIEW_UNAVAILABLE = "Operator overview data is temporarily unavailable"
 _SET_D1_QUERY_TIMEOUT = text("SET LOCAL statement_timeout = '3000ms'")
 _ALLOWED_ROLES = frozenset({"owner", "admin", "member", "viewer"})
 
@@ -69,46 +71,49 @@ def _verified_role(value: object) -> str | None:
     return value if isinstance(value, str) and value in _ALLOWED_ROLES else None
 
 
-async def get_operator_d1_read_model(
-    session: AsyncSession,
-    authorization: OperatorSessionAuthorization,
-) -> tuple[OperatorContextResponse, OperatorOverviewResponse]:
-    """Read only minimal org metadata and bounded counts under the session's RLS scope."""
+def _parse_subject_id(raw: str) -> UUID | None:
     try:
-        subject_id: UUID | None
-        try:
-            subject_id = UUID(authorization.subject)
-        except (TypeError, ValueError):
-            subject_id = None
-        # The operator session dependency has already opened a transaction and
-        # bound the verified organization/RLS GUCs. SET LOCAL cannot leak to a
-        # later pooled request and bounds database work below the DAL deadline.
+        return UUID(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _fetch_d1_row(
+    session: AsyncSession, authorization: OperatorSessionAuthorization
+) -> Any:
+    subject_id = _parse_subject_id(authorization.subject)
+    # The operator session dependency has already opened a transaction and
+    # bound the verified organization/RLS GUCs. SET LOCAL cannot leak to a
+    # later pooled request and bounds database work below the DAL deadline.
+    try:
         await session.execute(_SET_D1_QUERY_TIMEOUT)
         result = await session.execute(
             _READ_D1_SUMMARY,
-            {"org_id": str(authorization.org_id), "subject_id": str(subject_id) if subject_id else None},
+            {
+                "org_id": str(authorization.org_id),
+                "subject_id": str(subject_id) if subject_id else None,
+            },
         )
-        row = result.mappings().first()
+        return result.mappings().first()
     except SQLAlchemyError as exc:
-        raise ApiError(
-            code=SERVICE_DEGRADED,
-            message="Operator overview data is temporarily unavailable",
-        ) from exc
+        raise ApiError(code=SERVICE_DEGRADED, message=_OVERVIEW_UNAVAILABLE) from exc
 
-    if row is None:
-        raise ApiError(code=NOT_FOUND, message=_ORG_NOT_FOUND)
+
+def _require_bound_org_id(row: Any, authorization: OperatorSessionAuthorization) -> UUID:
     try:
         row_org_id = UUID(str(row["org_id"]))
     except (KeyError, TypeError, ValueError) as exc:
-        raise ApiError(
-            code=SERVICE_DEGRADED,
-            message="Operator overview data is temporarily unavailable",
-        ) from exc
+        raise ApiError(code=SERVICE_DEGRADED, message=_OVERVIEW_UNAVAILABLE) from exc
     if row_org_id != authorization.org_id:
         # Defense in depth: never trust a tenant row that violates the bound
         # query/RLS contract, and do not reveal that another org exists.
         raise ApiError(code=NOT_FOUND, message=_ORG_NOT_FOUND)
+    return row_org_id
 
+
+def _build_d1_responses(
+    authorization: OperatorSessionAuthorization, row: Any
+) -> tuple[OperatorContextResponse, OperatorOverviewResponse]:
     observed_at = datetime.now(UTC)
     context = OperatorContextResponse(
         org_id=authorization.org_id,
@@ -131,3 +136,15 @@ async def get_operator_d1_read_model(
         observed_at=observed_at,
     )
     return context, overview
+
+
+async def get_operator_d1_read_model(
+    session: AsyncSession,
+    authorization: OperatorSessionAuthorization,
+) -> tuple[OperatorContextResponse, OperatorOverviewResponse]:
+    """Read only minimal org metadata and bounded counts under the session's RLS scope."""
+    row = await _fetch_d1_row(session, authorization)
+    if row is None:
+        raise ApiError(code=NOT_FOUND, message=_ORG_NOT_FOUND)
+    _require_bound_org_id(row, authorization)
+    return _build_d1_responses(authorization, row)

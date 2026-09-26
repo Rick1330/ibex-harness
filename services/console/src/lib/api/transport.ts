@@ -32,15 +32,20 @@ function invalidOrigin(): never {
   throw new OperatorApiError(503, "API_ORIGIN_INVALID", "Operator API origin is invalid")
 }
 
+function assertSafeOperatorOrigin(origin: URL): void {
+  if (!["http:", "https:"].includes(origin.protocol)) throw new Error("unsafe protocol")
+  if (origin.username || origin.password) throw new Error("userinfo not allowed")
+  if (origin.pathname !== "/" || origin.search || origin.hash) {
+    throw new Error("API configuration must be an origin without a path")
+  }
+}
+
 export function operatorApiUrl(path: OperatorApiPath): URL {
   const rawOrigin = process.env.IBEX_OPERATOR_API_ORIGIN
   if (!rawOrigin) unavailableOrigin()
   try {
     const origin = new URL(rawOrigin)
-    if (!["http:", "https:"].includes(origin.protocol)) throw new Error("unsafe protocol")
-    if (origin.username || origin.password) throw new Error("userinfo not allowed")
-    if (origin.pathname !== "/" || origin.search || origin.hash)
-      throw new Error("API configuration must be an origin without a path")
+    assertSafeOperatorOrigin(origin)
     const target = new URL(OPERATOR_API_PATHS[path], origin)
     if (target.origin !== origin.origin) throw new Error("path changed origin")
     return target

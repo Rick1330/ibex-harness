@@ -175,10 +175,10 @@ const recent: IbexNavItem[] = [
 function OrgEnvSwitcher({
   liveMode,
   operatorContext,
-}: {
+}: Readonly<{
   liveMode: boolean
   operatorContext: OperatorContext | null
-}) {
+}>) {
   return liveMode ? (
     <LiveOrgSwitcher operatorContext={operatorContext} />
   ) : (
@@ -186,7 +186,9 @@ function OrgEnvSwitcher({
   )
 }
 
-function LiveOrgSwitcher({ operatorContext }: { operatorContext: OperatorContext | null }) {
+function LiveOrgSwitcher({
+  operatorContext,
+}: Readonly<{ operatorContext: OperatorContext | null }>) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
@@ -380,10 +382,12 @@ function SetupGuideLink() {
   )
 }
 
-type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
-  liveMode?: boolean
-  operatorContext?: OperatorContext | null
-}
+type AppSidebarProps = Readonly<
+  React.ComponentProps<typeof Sidebar> & {
+    liveMode?: boolean
+    operatorContext?: OperatorContext | null
+  }
+>
 
 export function AppSidebar({
   liveMode = false,

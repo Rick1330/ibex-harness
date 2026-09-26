@@ -1,5 +1,6 @@
 import { cookies } from "next/headers"
 import { IconAlertCircle, IconCheck, IconCircleX, IconMinus } from "@tabler/icons-react"
+import type { ReactNode } from "react"
 
 import { DashboardShell, pagePad, panelClass } from "@/components/sessions/dashboard-shell"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,7 +9,7 @@ import {
   fetchOperatorOverview,
   fetchOperatorPlatformHealth,
 } from "@/lib/api/d1"
-import type { PlatformHealth } from "@/lib/api/contracts"
+import type { OperatorContext, OperatorOverview, PlatformHealth } from "@/lib/api/contracts"
 import { OperatorApiError } from "@/lib/api/transport"
 import { OperatorSseStatus } from "./operator-sse-status"
 
@@ -16,19 +17,49 @@ const unavailableText = "Not connected in D1"
 const formatObservedAt = (value: string) =>
   new Date(value).toISOString().replace("T", " ").replace("Z", " UTC")
 
-function SystemsStrip({ health }: { health: PlatformHealth | null }) {
+function dependencyDotClass(status: string): string {
+  if (status === "ok") return "bg-emerald-500"
+  if (status === "degraded") return "bg-amber-500"
+  return "bg-destructive"
+}
+
+function platformHealthPresentation(health: PlatformHealth | null): {
+  icon: ReactNode
+  label: string
+} {
+  if (!health) {
+    return {
+      icon: <IconCircleX className="size-4 text-destructive" aria-hidden />,
+      label: "unavailable · platform health",
+    }
+  }
+  const entries = Object.entries(health.dependency_health)
+  const degraded = Boolean(health.degraded_mode || entries.some(([, status]) => status !== "ok"))
+  if (degraded) {
+    return {
+      icon: <IconAlertCircle className="size-4 text-amber-600" aria-hidden />,
+      label: "degraded · platform health",
+    }
+  }
+  return {
+    icon: <IconCheck className="size-4 text-emerald-600" aria-hidden />,
+    label: "observed · platform health",
+  }
+}
+
+function SystemsStrip({ health }: Readonly<{ health: PlatformHealth | null }>) {
   const entries = health ? Object.entries(health.dependency_health) : []
-  const degraded = Boolean(health?.degraded_mode || entries.some(([, status]) => status !== "ok"))
+  const presentation = platformHealthPresentation(health)
   return (
     <Card className={panelClass}>
       <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
-        <span role="status" className="flex items-center gap-2 text-sm font-medium">
-          {health ? degraded ? <IconAlertCircle className="size-4 text-amber-600" aria-hidden /> : <IconCheck className="size-4 text-emerald-600" aria-hidden /> : <IconCircleX className="size-4 text-destructive" aria-hidden />}
-          {health ? degraded ? "degraded · platform health" : "observed · platform health" : "unavailable · platform health"}
-        </span>
+        <output className="flex items-center gap-2 text-sm font-medium">
+          {presentation.icon}
+          {presentation.label}
+        </output>
         {entries.map(([name, status]) => (
           <span key={name} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className={`size-1.5 rounded-full ${status === "ok" ? "bg-emerald-500" : status === "degraded" ? "bg-amber-500" : "bg-destructive"}`} />
+            <span className={`size-1.5 rounded-full ${dependencyDotClass(status)}`} />
             <span className="font-mono">{name}</span>
             <span>{status}</span>
           </span>
@@ -48,12 +79,12 @@ function AtAGlance({
   agents,
   activeAgents,
   observedAt,
-}: {
+}: Readonly<{
   activeUsers: number | null
   agents: number | null
   activeAgents: number | null
   observedAt: string | null
-}) {
+}>) {
   const metrics = [
     { label: "Agents", value: agents },
     { label: "Active agents", value: activeAgents },
@@ -102,10 +133,10 @@ function AtAGlance({
 function UnconnectedPanel({
   title,
   description,
-}: {
+}: Readonly<{
   title: string
   description: string
-}) {
+}>) {
   return (
     <Card className={`${panelClass} rise`}>
       <CardHeader>
@@ -120,7 +151,15 @@ function UnconnectedPanel({
   )
 }
 
-export async function LiveOverview() {
+type OverviewLoad = {
+  context: OperatorContext | null
+  overview: OperatorOverview | null
+  health: PlatformHealth | null
+  authUnavailable: boolean
+  overviewError: unknown
+}
+
+async function loadOverviewSnapshot(): Promise<OverviewLoad> {
   const cookieStore = await cookies()
   const sessionName = process.env.IBEX_OPERATOR_SESSION_COOKIE_NAME || "ibex_session"
   const value = cookieStore.get(sessionName)?.value
@@ -135,7 +174,44 @@ export async function LiveOverview() {
   const health = healthResult.status === "fulfilled" ? healthResult.value : null
   const contextError = contextResult.status === "rejected" ? contextResult.reason : null
   const overviewError = overviewResult.status === "rejected" ? overviewResult.reason : null
-  const authUnavailable = contextError instanceof OperatorApiError && [401, 403].includes(contextError.status)
+  const authUnavailable =
+    contextError instanceof OperatorApiError && [401, 403].includes(contextError.status)
+  return { context, overview, health, authUnavailable, overviewError }
+}
+
+function OverviewStatusBanners({
+  authUnavailable,
+  overview,
+  overviewError,
+}: Readonly<{
+  authUnavailable: boolean
+  overview: OperatorOverview | null
+  overviewError: unknown
+}>) {
+  if (authUnavailable) {
+    return (
+      <output className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+        Operator session is missing, expired, or lacks metadata-read permission. No preview data is shown.
+      </output>
+    )
+  }
+  if (overview) return null
+  const requestId =
+    overviewError instanceof OperatorApiError && overviewError.requestId
+      ? overviewError.requestId
+      : null
+  return (
+    <output className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+      Organization overview is unavailable. No mock values are substituted.
+      {requestId ? <span className="ml-2 font-mono text-xs">Reference: {requestId}</span> : null}
+    </output>
+  )
+}
+
+export async function LiveOverview() {
+  const { context, overview, health, authUnavailable, overviewError } = await loadOverviewSnapshot()
+  const rolePrefix = context?.role ? `${context.role} · ` : ""
+  const subtitle = context ? context.org_slug : "Verified organization context is unavailable."
 
   return (
     <DashboardShell
@@ -149,17 +225,20 @@ export async function LiveOverview() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <p className="font-mono text-[12px] uppercase tracking-[0.18em] text-muted-foreground">Overview</p>
-              <h1 className="mt-2 font-serif text-4xl font-normal tracking-normal md:text-5xl">{overview?.org_name ?? "Organization overview"}</h1>
-              <p className="mt-2 text-sm text-muted-foreground">{context?.role ? `${context.role} · ` : ""}{context ? context.org_slug : "Verified organization context is unavailable."}</p>
+              <h1 className="mt-2 font-serif text-4xl font-normal tracking-normal md:text-5xl">
+                {overview?.org_name ?? "Organization overview"}
+              </h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {rolePrefix}
+                {subtitle}
+              </p>
             </div>
           </div>
-          {authUnavailable ? <div role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">Operator session is missing, expired, or lacks metadata-read permission. No preview data is shown.</div> : null}
-          {!overview && !authUnavailable ? (
-            <div role="status" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
-              Organization overview is unavailable. No mock values are substituted.
-              {overviewError instanceof OperatorApiError && overviewError.requestId ? <span className="ml-2 font-mono text-xs">Reference: {overviewError.requestId}</span> : null}
-            </div>
-          ) : null}
+          <OverviewStatusBanners
+            authUnavailable={authUnavailable}
+            overview={overview}
+            overviewError={overviewError}
+          />
           <SystemsStrip health={health} />
           <AtAGlance
             activeUsers={overview?.counts.active_users ?? null}

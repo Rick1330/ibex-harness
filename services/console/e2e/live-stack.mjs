@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:https"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const consoleDir = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -19,7 +19,20 @@ let eventStreams = 0
 let closing = false
 let consoleProcess
 
-execFileSync("/usr/bin/openssl", [
+function assertUnderTempDir(candidate) {
+  const resolved = resolve(candidate)
+  const root = resolve(tempDir)
+  if (resolved !== root && !resolved.startsWith(`${root}/`)) {
+    throw new Error(`TLS material path escaped temp dir: ${candidate}`)
+  }
+  return resolved
+}
+
+function readTempTlsFile(candidate) {
+  return readFileSync(assertUnderTempDir(candidate))
+}
+
+execFileSync(process.env.OPENSSL_BIN || "openssl", [
   "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
   "-keyout", keyPath, "-out", certPath, "-subj", "/CN=127.0.0.1",
   "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
@@ -27,7 +40,7 @@ execFileSync("/usr/bin/openssl", [
 ], { stdio: "ignore" })
 
 const api = createServer(
-  { key: readFileSync(keyPath), cert: readFileSync(certPath) },
+  { key: readTempTlsFile(keyPath), cert: readTempTlsFile(certPath) },
   (request, response) => {
     const url = new URL(request.url ?? "/", `https://127.0.0.1:${apiPort}`)
     if (url.pathname === "/__test/requests") {

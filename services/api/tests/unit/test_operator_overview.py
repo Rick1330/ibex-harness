@@ -68,7 +68,8 @@ async def test_read_model_binds_verified_org_and_returns_real_bounded_counts() -
     assert context.observed_at.tzinfo == UTC
     args, kwargs = session.execute.await_args
     assert str(authorization.org_id) in repr(args) + repr(kwargs)
-    assert "organizations" in str(args[0]) and "agents" in str(args[0])
+    assert "organizations" in str(args[0])
+    assert "agents" in str(args[0])
     assert "deleted_at IS NULL" in str(args[0])
 
 
@@ -152,13 +153,78 @@ def test_context_and_overview_dtos_reject_extra_or_unversioned_fields() -> None:
         OperatorOverviewResponse.model_validate({**overview, "estimated_cost_usd": 0})
 
 
-@pytest.mark.asyncio
-async def test_metadata_permission_is_required() -> None:
+def test_metadata_permission_is_required() -> None:
     request = MagicMock()
     request.app.state.settings = MagicMock(operator_feature_enabled=True)
+    operator = _authorization(permissions=0)
     with pytest.raises(ApiError) as exc:
-        await require_operator_metadata_session(
-            request,
-            _authorization(permissions=0),
-        )
+        require_operator_metadata_session(request, operator)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+@pytest.mark.asyncio
+async def test_read_model_maps_sqlalchemy_errors_to_service_degraded() -> None:
+    from apierror_py import SERVICE_DEGRADED
+    from sqlalchemy.exc import OperationalError
+
+    session = AsyncMock()
+    session.execute = AsyncMock(
+        side_effect=OperationalError("stmt", {}, Exception("db down"))
+    )
+    with pytest.raises(ApiError) as error:
+        await get_operator_d1_read_model(session, _authorization())
+    assert error.value.code == SERVICE_DEGRADED
+
+
+@pytest.mark.asyncio
+async def test_read_model_rejects_missing_org_row() -> None:
+    result = MagicMock()
+    result.mappings.return_value.first.return_value = None
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    with pytest.raises(ApiError) as error:
+        await get_operator_d1_read_model(session, _authorization())
+    assert error.value.code == NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_read_model_maps_malformed_org_id_to_service_degraded() -> None:
+    from apierror_py import SERVICE_DEGRADED
+
+    authorization = _authorization()
+    result = MagicMock()
+    result.mappings.return_value.first.return_value = {
+        "org_name": "Broken",
+        "org_slug": "broken",
+        "org_status": "active",
+        "role": "admin",
+        "active_users": 0,
+        "agents": 0,
+        "active_agents": 0,
+        "org_id": "not-a-uuid",
+    }
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    with pytest.raises(ApiError) as error:
+        await get_operator_d1_read_model(session, authorization)
+    assert error.value.code == SERVICE_DEGRADED
+
+
+@pytest.mark.asyncio
+async def test_read_model_ignores_disallowed_roles() -> None:
+    authorization = _authorization()
+    result = MagicMock()
+    result.mappings.return_value.first.return_value = {
+        "org_id": authorization.org_id,
+        "org_name": "Example workspace",
+        "org_slug": "example",
+        "org_status": "active",
+        "role": "superuser",
+        "active_users": 1,
+        "agents": 1,
+        "active_agents": 1,
+    }
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    context, _ = await get_operator_d1_read_model(session, authorization)
+    assert context.role is None

@@ -15,21 +15,21 @@ import type { OperatorContext, PlatformHealth } from "@/lib/api/contracts"
 import { cn } from "@/lib/utils"
 
 /** Shared dashboard chrome — auth gate + session refresh + step-up modal. */
-export type DashboardShellProps = {
+export type DashboardShellProps = Readonly<{
   children: React.ReactNode
   liveMode?: boolean
   showPreviewBanner?: boolean
   operatorContext?: OperatorContext | null
   platformHealth?: PlatformHealth | null
-}
+}>
 
 function SessionBoundOnboarding({
   liveMode,
   children,
-}: {
+}: Readonly<{
   liveMode: boolean
   children: React.ReactNode
-}) {
+}>) {
   return liveMode ? children : <OnboardingProvider>{children}</OnboardingProvider>
 }
 
@@ -111,13 +111,12 @@ function DashboardShellInner({
             platformHealth={platformHealth}
           />
           {showPreviewBanner ? (
-            <div
-              role="status"
+            <output
               aria-label="Preview data"
               className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-center font-mono text-[11px] uppercase tracking-[0.16em] text-amber-900 dark:text-amber-200"
             >
               Preview data — no live operator contract
-            </div>
+            </output>
           ) : null}
           {banner ? (
             <div

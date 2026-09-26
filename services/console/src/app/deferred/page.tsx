@@ -1,8 +1,8 @@
 export default async function DeferredConsoleRoute({
   searchParams,
-}: {
+}: Readonly<{
   searchParams: Promise<{ route?: string }>
-}) {
+}>) {
   const { route } = await searchParams
   const routeLabel = typeof route === "string" && route.startsWith("/dashboard/") ? route : "/dashboard"
   return (

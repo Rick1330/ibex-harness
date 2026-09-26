@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
-from pathlib import Path
 import sys
+from collections.abc import Iterable, Iterator
+from pathlib import Path
 
 repo = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(repo / "services" / "api"))
-from app.main import create_app  # noqa: E402
+from app.main import create_app
+
+_EXCLUDED_SOURCE_PARTS = frozenset({".venv", "site-packages"})
 
 
 def _call_identity(call: object) -> str | None:
@@ -24,14 +27,17 @@ def _repository_source(endpoint: object) -> str | None:
     if not source:
         return None
     try:
-        return Path(source).resolve().relative_to(repo).as_posix()
+        relative = Path(source).resolve().relative_to(repo)
     except ValueError:
         # Do not bake local virtualenv/site-packages or runner paths into the
         # checked-in API contract inventory.
         return None
+    if any(part in _EXCLUDED_SOURCE_PARTS for part in relative.parts):
+        return None
+    return relative.as_posix()
 
 
-def _iter_routes(routes: object):
+def _iter_routes(routes: Iterable[object]) -> Iterator[object]:
     for route in routes:
         nested = getattr(route, "routes", None)
         if nested is not None:

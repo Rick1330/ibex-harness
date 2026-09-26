@@ -216,10 +216,10 @@ function resolvePageMeta(pathname: string) {
 function PageFreshness({
   liveMode,
   platformHealth,
-}: {
+}: Readonly<{
   liveMode: boolean
   platformHealth: PlatformHealth | null
-}) {
+}>) {
   return liveMode ? (
     <LivePageFreshness platformHealth={platformHealth} />
   ) : (
@@ -227,37 +227,43 @@ function PageFreshness({
   )
 }
 
+function liveHealthDotClass(platformHealth: PlatformHealth | null, degraded: boolean): string {
+  if (degraded) return FRESHNESS_TONE.degraded.dot
+  if (platformHealth) return FRESHNESS_TONE.historical.dot
+  return FRESHNESS_TONE.stale.dot
+}
+
+function liveHealthLabel(platformHealth: PlatformHealth | null, degraded: boolean): string {
+  if (!platformHealth) return "health unavailable"
+  if (degraded) return "health snapshot · degraded"
+  return "health snapshot"
+}
+
 function LivePageFreshness({
   platformHealth,
-}: {
+}: Readonly<{
   platformHealth: PlatformHealth | null
-}) {
+}>) {
   const degraded = Boolean(
     platformHealth?.degraded_mode ||
       Object.values(platformHealth?.dependency_health ?? {}).some(
         (status) => status !== "ok",
       ),
   )
-  const label = platformHealth
-    ? degraded
-      ? "health snapshot · degraded"
-      : "health snapshot"
-    : "health unavailable"
+  const label = liveHealthLabel(platformHealth, degraded)
+  const title = platformHealth
+    ? `Platform health observed ${platformHealth.observed_at}.`
+    : "Platform health is unavailable."
   return (
-    <span
-      role="status"
+    <output
       className="hidden items-center gap-1.5 rounded-full border border-sidebar-border px-2 py-1 text-[12px] whitespace-nowrap sm:flex"
-      title={
-        platformHealth
-          ? `Platform health observed ${platformHealth.observed_at}.`
-          : "Platform health is unavailable."
-      }
+      title={title}
     >
       <span
-        className={`inline-flex size-1.5 rounded-full ${degraded ? FRESHNESS_TONE.degraded.dot : platformHealth ? FRESHNESS_TONE.historical.dot : FRESHNESS_TONE.stale.dot}`}
+        className={`inline-flex size-1.5 rounded-full ${liveHealthDotClass(platformHealth, degraded)}`}
       />
       <span className="font-medium">{label}</span>
-    </span>
+    </output>
   )
 }
 
@@ -319,6 +325,12 @@ function PreviewPageFreshness() {
   )
 }
 
+function themeIconFor(current: "system" | "light" | "dark") {
+  if (current === "light") return IconSun
+  if (current === "dark") return IconMoon
+  return IconDeviceDesktop
+}
+
 function ThemeToggle() {
   const { theme, setTheme } = useTheme()
   const order = ["system", "light", "dark"] as const
@@ -326,6 +338,7 @@ function ThemeToggle() {
     ? (theme as (typeof order)[number])
     : "system"
   const next = order[(order.indexOf(current) + 1) % order.length]
+  const ThemeIcon = themeIconFor(current)
 
   return (
     <Button
@@ -336,13 +349,7 @@ function ThemeToggle() {
       title={`Theme: ${current} (click for ${next})`}
       aria-label={`Switch theme, current ${current}`}
     >
-      {current === "light" ? (
-        <IconSun className="size-4" />
-      ) : current === "dark" ? (
-        <IconMoon className="size-4" />
-      ) : (
-        <IconDeviceDesktop className="size-4" />
-      )}
+      <ThemeIcon className="size-4" />
     </Button>
   )
 }
@@ -351,11 +358,11 @@ export function SiteHeader({
   liveMode = false,
   operatorContext = null,
   platformHealth = null,
-}: {
+}: Readonly<{
   liveMode?: boolean
   operatorContext?: OperatorContext | null
   platformHealth?: PlatformHealth | null
-}) {
+}>) {
   const pathname = usePathname()
   const meta = resolvePageMeta(pathname)
 
@@ -545,15 +552,11 @@ export function SiteHeader({
                   <div className="truncate text-[13px] font-medium">
                     Operator
                   </div>
-                  {!liveMode ? (
-                    <div className="truncate text-[12px] text-muted-foreground">
-                      you@acme.com
-                    </div>
-                  ) : null}
+                  <div className="truncate text-[12px] text-muted-foreground">
+                    you@acme.com
+                  </div>
                   <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
-                    {liveMode
-                      ? `${operatorContext?.org_name ?? "Organization"} · ${operatorContext?.role ?? "role unavailable"}`
-                      : "Acme Corp · owner"}
+                    Acme Corp · owner
                   </div>
                 </div>
               </div>

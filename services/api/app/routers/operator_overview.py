@@ -22,7 +22,7 @@ OperatorSession = Annotated[
 OperatorSessionDatabase = Annotated[AsyncSession, Depends(operator_org_session)]
 
 
-async def require_operator_metadata_session(
+def require_operator_metadata_session(
     request: Request,
     operator: OperatorSession,
 ) -> OperatorSessionAuthorization:
@@ -41,7 +41,7 @@ async def _read_d1(
     return await get_operator_d1_read_model(session, operator)
 
 
-@router.get("/context", response_model=OperatorContextResponse)
+@router.get("/context")
 async def operator_context(
     operator: Annotated[
         OperatorSessionAuthorization,
@@ -53,7 +53,7 @@ async def operator_context(
     return context
 
 
-@router.get("/overview", response_model=OperatorOverviewResponse)
+@router.get("/overview")
 async def operator_overview(
     operator: Annotated[
         OperatorSessionAuthorization,

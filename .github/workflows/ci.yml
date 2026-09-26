@@ -1965,7 +1965,10 @@ jobs:
             sleep 1
           done
           grep -Fq "Overview unavailable" /tmp/console-dashboard.html
-          ! grep -Fq "1,284,092" /tmp/console-dashboard.html
+          if grep -Fq "1,284,092" /tmp/console-dashboard.html; then
+            echo "forbidden fixture metric leaked into production preview HTML" >&2
+            exit 1
+          fi
 
       - name: Verify production D1 fails closed without fixture fallback
         run: |
@@ -1983,11 +1986,17 @@ jobs:
           done
           grep -Fq "Organization overview is unavailable" /tmp/console-d1.html
           grep -Fq "No mock values are substituted" /tmp/console-d1.html
-          ! grep -Fq "1,284,092" /tmp/console-d1.html
-          ! grep -Fq "Acme Corp" /tmp/console-d1.html
+          if grep -Fq "1,284,092" /tmp/console-d1.html; then
+            echo "forbidden fixture metric leaked into live D1 HTML" >&2
+            exit 1
+          fi
+          if grep -Fq "Acme Corp" /tmp/console-d1.html; then
+            echo "forbidden preview org name leaked into live D1 HTML" >&2
+            exit 1
+          fi
 
       - name: Prepare Chromium for Console browser gates
-        run: node node_modules/playwright/cli.js install --with-deps chromium
+        run: pnpm --filter @ibex/console exec playwright install --with-deps chromium
 
       - name: Test Console route boundaries and WCAG 2.2 AA
         timeout-minutes: 8
