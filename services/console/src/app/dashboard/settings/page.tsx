@@ -29,7 +29,6 @@ import type {
   SettingsPageV2,
 } from "@/lib/settings/types"
 import { cn } from "@/lib/utils"
-import { isDashboardPreviewEnabled } from "@/lib/classification"
 
 function SettingsWorkbench() {
   const { openStepUp } = useAuth()
@@ -42,21 +41,6 @@ function SettingsWorkbench() {
   const caller = data.caller
   const ssoAllowed = data.org.tier_limits.sso_enabled
   const activeHolds = data.legal_holds.filter((h) => h.active).length
-
-  if (!isDashboardPreviewEnabled()) {
-    return (
-      <DashboardShell>
-        <div className={`${pagePad} space-y-3`}>
-          <h1 className="text-lg font-semibold">Settings unavailable</h1>
-          <p className="text-sm text-muted-foreground">
-            Settings and legal-hold mutations are disabled until the authenticated
-            API contract, operator session, CSRF, audit, and step-up evidence are
-            available. Enable the explicit preview mode only for fixture review.
-          </p>
-        </div>
-      </DashboardShell>
-    )
-  }
 
   /** Step-up gated actions — one-shot token via shell modal, then discard. */
   const requireStepUp = (action: () => void) => {

@@ -22,11 +22,12 @@ from authclient.permissions import (
 )
 from fastapi import Depends, Request
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import ValidateResult
 from app.config import Settings
-from app.deps import operator_org_session, org_session, require_token
+from app.db import session_with_org
+from app.deps import get_session_factory, org_session, require_token
 from app.errors import ApiError
 from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
 from app.step_up import StepUpAction, enforce_step_up
@@ -118,18 +119,19 @@ def require_operator_legal_hold_manage() -> Callable[..., OperatorSessionAuthori
         operator: Annotated[
             OperatorSessionAuthorization, Depends(require_operator_session)
         ],
-        session: Annotated[AsyncSession, Depends(operator_org_session)],
+        factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
     ) -> OperatorSessionAuthorization:
-        result = await session.execute(
-            text(
-                """
-                SELECT role
-                FROM ibex_core.users
-                WHERE id = :user_id AND org_id = :org_id AND deleted_at IS NULL
-                """
-            ),
-            {"user_id": operator.subject, "org_id": str(operator.org_id)},
-        )
+        async with session_with_org(factory, str(operator.org_id)) as session:
+            result = await session.execute(
+                text(
+                    """
+                    SELECT role
+                    FROM ibex_core.users
+                    WHERE id = :user_id AND org_id = :org_id AND deleted_at IS NULL
+                    """
+                ),
+                {"user_id": operator.subject, "org_id": str(operator.org_id)},
+            )
         role = result.scalar_one_or_none()
         if role is None or str(role) not in AdminRoles:
             raise ApiError(code=INSUFFICIENT_PERMISSIONS, message="Insufficient role")

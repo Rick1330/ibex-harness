@@ -14,10 +14,30 @@ export class OperatorApiError extends Error {
   }
 }
 
-function apiOrigin(): string {
+function apiOrigin(): URL {
   const origin = process.env.IBEX_OPERATOR_API_ORIGIN
   if (!origin) throw new OperatorApiError(503, "API_ORIGIN_UNAVAILABLE", "Operator API origin is unavailable")
-  return origin.replace(/\/$/, "")
+  try {
+    const parsed = new URL(origin)
+    if (!(["http:", "https:"].includes(parsed.protocol)) || parsed.username || parsed.password) {
+      throw new Error("unsafe origin")
+    }
+    return parsed
+  } catch {
+    throw new OperatorApiError(503, "API_ORIGIN_INVALID", "Operator API origin is invalid")
+  }
+}
+
+function apiUrl(path: string): string {
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new OperatorApiError(400, "API_PATH_INVALID", "Operator API path must be relative")
+  }
+  const origin = apiOrigin()
+  const target = new URL(path, origin)
+  if (target.origin !== origin.origin) {
+    throw new OperatorApiError(400, "API_PATH_INVALID", "Operator API path changed origin")
+  }
+  return target.toString()
 }
 
 export async function fetchOperatorJson<T>(
@@ -27,7 +47,7 @@ export async function fetchOperatorJson<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set("Accept", "application/json")
-  const response = await fetch(`${apiOrigin()}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     cache: "no-store",
     // Server components do not have a browser cookie jar. Callers must forward

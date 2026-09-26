@@ -72,8 +72,27 @@
           "reason": { "type": "string" },
           "result": { "type": "string", "enum": ["passed", "failed", "skipped", "missing", "unknown", "cancelled"] },
           "evidence_state": { "type": "string", "enum": ["declared", "mounted", "contract-tested", "runtime-tested", "staging-verified", "blocked"] },
-          "artifact_uris": { "type": "array", "items": { "type": "string" } }
-        }
+          "artifact_uris": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^(https://|s3://|gs://|file://).+" }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "applicability": { "const": "applicable" },
+                "expected": { "const": true }
+              }
+            },
+            "then": {
+              "required": ["artifact_uris"],
+              "properties": {
+                "artifact_uris": { "minItems": 1 }
+              }
+            }
+          }
+        ]
       }
     },
     "rollback": {

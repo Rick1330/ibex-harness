@@ -23,12 +23,19 @@ def _reset_enqueue_flag() -> None:
     reset_enqueue_http_for_tests()
 
 
-def _settings(*, token: str | None = "sekrit", host: str = "127.0.0.1", port: int = 18007) -> SimpleNamespace:
+def _settings(
+    *,
+    token: str | None = "sekrit",
+    host: str = "127.0.0.1",
+    port: int = 18007,
+    redis_url: str | None = None,
+) -> SimpleNamespace:
     tok = SecretStr(token) if token else None
     return SimpleNamespace(
         enqueue_api_token=tok,
         enqueue_host=host,
         enqueue_port=port,
+        redis_url=redis_url,
     )
 
 
@@ -381,6 +388,54 @@ def test_enqueue_uses_celery_when_no_inject() -> None:
 
 def test_health() -> None:
     assert _client().get("/health").status_code == 200
+
+
+def test_ready_requires_enqueue_token_and_redis_url() -> None:
+    assert _client().get("/ready").status_code == 503
+    assert TestClient(create_enqueue_app(_settings(token=None, redis_url="redis://redis"))).get(
+        "/ready"
+    ).status_code == 503
+    assert TestClient(create_enqueue_app(_settings(redis_url=""))).get("/ready").status_code == 503
+
+
+def test_ready_returns_ready_after_redis_ping(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Redis:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def ping(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    client = _Redis()
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_args, **_kwargs: client)
+    response = TestClient(
+        create_enqueue_app(_settings(redis_url="redis://redis"))
+    ).get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "service": "worker"}
+    assert client.closed is True
+
+
+@pytest.mark.parametrize("error", [OSError("connection refused"), TimeoutError("slow")])
+def test_ready_returns_not_ready_when_redis_fails(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    class _Redis:
+        async def ping(self) -> bool:
+            raise error
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_args, **_kwargs: _Redis())
+    response = TestClient(
+        create_enqueue_app(_settings(redis_url="redis://redis"))
+    ).get("/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
 
 
 def test_start_enqueue_server_disabled_without_token(caplog: pytest.LogCaptureFixture) -> None:

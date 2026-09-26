@@ -154,6 +154,23 @@
           "proxy": { "properties": { "environment": { "const": "production" } } }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "deployment": { "properties": { "profile": { "const": "production" } } },
+          "migrate": { "properties": { "enabled": { "const": false } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "migrate": {
+            "properties": {
+              "externalMechanism": { "enum": ["ci-job", "operator-runbook"] }
+            }
+          }
+        }
+      }
     }
   ],
   "definitions": {

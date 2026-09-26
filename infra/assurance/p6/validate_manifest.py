@@ -45,7 +45,14 @@ def string(value: Any, where: str) -> str:
     return value
 
 
-def validate(manifest: dict[str, Any]) -> None:
+def enum(value: Any, allowed: set[str], where: str, label: str) -> str:
+    value = string(value, where)
+    if value not in allowed:
+        fail(f"{where}: unsupported {label} value")
+    return value
+
+
+def _validate_top_level(manifest: dict[str, Any]) -> None:
     require(
         manifest,
         "manifest_version",
@@ -62,30 +69,34 @@ def validate(manifest: dict[str, Any]) -> None:
     )
     if manifest["manifest_version"] != "p6-bootstrap.v1":
         fail("manifest.manifest_version: unsupported version")
-    if not COMMIT.fullmatch(string(manifest["commit_sha"], "manifest.commit_sha") ):
+    commit_sha = string(manifest["commit_sha"], "manifest.commit_sha")
+    if not COMMIT.fullmatch(commit_sha):
         fail("manifest.commit_sha: expected a 40-character lowercase SHA")
-    if manifest["environment"] not in ENVIRONMENTS:
-        fail("manifest.environment: unsupported environment")
+    enum(manifest["environment"], ENVIRONMENTS, "manifest.environment", "environment")
     string(manifest["run_id"], "manifest.run_id")
     string(manifest["owner"], "manifest.owner")
 
-    topology = manifest["topology"]
+
+def _validate_topology(topology: Any) -> None:
     if not isinstance(topology, dict):
         fail("manifest.topology: expected object")
     require(topology, "ui_origin", "api_origin", "sse_origin", where="manifest.topology")
     for key in ("ui_origin", "api_origin", "sse_origin"):
         string(topology[key], f"manifest.topology.{key}")
 
-    versions = manifest["versions"]
+
+def _validate_versions(versions: Any) -> None:
     if not isinstance(versions, dict):
         fail("manifest.versions: expected object")
     require(versions, "fixture", "schema", "migration", where="manifest.versions")
     for key, value in versions.items():
         string(value, f"manifest.versions.{key}")
 
-    artifacts = manifest["artifacts"]
+
+def _validate_artifacts(artifacts: Any) -> set[str]:
     if not isinstance(artifacts, list):
         fail("manifest.artifacts: expected array")
+    declared_uris: set[str] = set()
     for index, artifact in enumerate(artifacts):
         where = f"manifest.artifacts[{index}]"
         if not isinstance(artifact, dict):
@@ -98,10 +109,28 @@ def validate(manifest: dict[str, Any]) -> None:
         uri = string(artifact["uri"], f"{where}.uri")
         if not ARTIFACT_URI.fullmatch(uri):
             fail(f"{where}.uri: unsupported immutable artifact URI")
-        if artifact["evidence_state"] not in EVIDENCE_STATES:
-            fail(f"{where}.evidence_state: unsupported value")
+        enum(artifact["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state")
+        declared_uris.add(uri)
+    return declared_uris
 
-    checks = manifest["checks"]
+
+def _validate_check_artifacts(
+    check: dict[str, Any], where: str, declared_uris: set[str]
+) -> None:
+    raw_uris = check.get("artifact_uris", [])
+    if not isinstance(raw_uris, list):
+        fail(f"{where}.artifact_uris: expected array")
+    uris = [string(uri, f"{where}.artifact_uris[{i}]") for i, uri in enumerate(raw_uris)]
+    for uri in uris:
+        if not ARTIFACT_URI.fullmatch(uri):
+            fail(f"{where}.artifact_uris: unsupported artifact URI")
+        if uri not in declared_uris:
+            fail(f"{where}.artifact_uris: URI is not declared in manifest.artifacts: {uri}")
+    if check["applicability"] == "applicable" and check["expected"] and not uris:
+        fail(f"{where}: applicable expected checks require artifact_uris")
+
+
+def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
     if not isinstance(checks, list) or not checks:
         fail("manifest.checks: expected a non-empty array")
     seen: set[str] = set()
@@ -124,14 +153,10 @@ def validate(manifest: dict[str, Any]) -> None:
         seen.add(name)
         if not isinstance(check["expected"], bool):
             fail(f"{where}.expected: expected boolean")
-        applicability = check["applicability"]
-        if applicability not in APPLICABILITY:
-            fail(f"{where}.applicability: unsupported value")
-        result = check["result"]
-        if result not in RESULTS:
-            fail(f"{where}.result: unsupported value")
-        if check["evidence_state"] not in EVIDENCE_STATES:
-            fail(f"{where}.evidence_state: unsupported value")
+        applicability = enum(check["applicability"], APPLICABILITY, f"{where}.applicability", "applicability")
+        result = enum(check["result"], RESULTS, f"{where}.result", "result")
+        enum(check["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state")
+        _validate_check_artifacts(check, where, declared_uris)
         reason = check.get("reason")
         if applicability == "inapplicable":
             if check["expected"]:
@@ -145,7 +170,8 @@ def validate(manifest: dict[str, Any]) -> None:
         if check["expected"] and check["evidence_state"] in {"blocked", "declared"}:
             fail(f"{where}: expected check is not executable evidence")
 
-    rollback = manifest["rollback"]
+
+def _validate_rollback(rollback: Any) -> None:
     if not isinstance(rollback, dict):
         fail("manifest.rollback: expected object")
     require(
@@ -164,6 +190,15 @@ def validate(manifest: dict[str, Any]) -> None:
             fail(f"manifest.rollback.{key}: expected boolean")
 
 
+def validate(manifest: dict[str, Any]) -> None:
+    _validate_top_level(manifest)
+    _validate_topology(manifest["topology"])
+    _validate_versions(manifest["versions"])
+    declared_uris = _validate_artifacts(manifest["artifacts"])
+    _validate_checks(manifest["checks"], declared_uris)
+    _validate_rollback(manifest["rollback"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("manifest", type=Path)
@@ -175,7 +210,7 @@ def main() -> int:
         if not isinstance(parsed, dict):
             fail("manifest: expected JSON object")
         validate(parsed)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, TypeError, json.JSONDecodeError, ValueError) as exc:
         print(f"P6 manifest invalid: {exc}", file=sys.stderr)
         return 1
     print(f"P6 manifest valid: {args.manifest}")

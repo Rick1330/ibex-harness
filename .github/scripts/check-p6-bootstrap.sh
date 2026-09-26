@@ -72,4 +72,40 @@ out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY
 python3 "$VALIDATOR" "$MANIFEST" --sha256
 
+python3 - <<'PY' "$MANIFEST" "$VALIDATOR"
+import copy
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+validator = sys.argv[2]
+
+def expect_invalid(label, mutate):
+    candidate = copy.deepcopy(manifest)
+    mutate(candidate)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as handle:
+        json.dump(candidate, handle)
+        handle.flush()
+        result = subprocess.run(
+            [sys.executable, validator, handle.name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert result.returncode != 0, f"{label}: malformed manifest was accepted"
+    print(f"P6 negative fixture rejected: {label}")
+
+expect_invalid("applicable failed check", lambda value: value["checks"][0].update(result="failed"))
+expect_invalid("applicable skipped check", lambda value: value["checks"][0].update(result="skipped"))
+expect_invalid("malformed commit_sha", lambda value: value.update(commit_sha="not-a-commit"))
+expect_invalid("missing artifact URI", lambda value: value["checks"][0].pop("artifact_uris"))
+expect_invalid(
+    "unlinked artifact URI",
+    lambda value: value["checks"][0].update(artifact_uris=["file:///not-declared"]),
+)
+PY
+
 echo "P6 bootstrap validator, schema, and revision-bound manifest checks passed"
