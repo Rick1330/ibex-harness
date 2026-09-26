@@ -10,7 +10,12 @@ from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
-from authclient.permissions import ADMIN, USER_MANAGE
+from authclient.permissions import (
+    ADMIN,
+    OPERATOR_METADATA_READ,
+    OPERATOR_REDACTED_READ,
+    USER_MANAGE,
+)
 from authclient.provider_credentials import FakeProviderCredentialManager
 from authclient.revoke import NoopTokenRevoker
 from authclient.tokens import FakeTokenManager
@@ -28,7 +33,7 @@ from app.revocation_publish import RecordingOrgSuspendPublisher
 def owner_result(*, org_id: UUID | None = None, user_id: str | None = None) -> ValidateResult:
     return ValidateResult(
         org_id=org_id or uuid4(),
-        permissions=ADMIN | USER_MANAGE,
+        permissions=ADMIN | USER_MANAGE | OPERATOR_METADATA_READ | OPERATOR_REDACTED_READ,
         user_id=user_id or str(uuid4()),
     )
 
@@ -120,7 +125,11 @@ def api_client(
     def _enqueue(job_id: str, org_id: str) -> None:
         calls.append((job_id, org_id))
 
-    settings = Settings(database_url=None)
+    settings = Settings(
+        database_url=None,
+        operator_feature_enabled=True,
+        environment="development",
+    )
     app = create_app(
         settings=settings,
         validator=StaticTokenValidator({cfg.token: res}),

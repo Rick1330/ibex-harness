@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
-from authclient.permissions import ADMIN
+from authclient.permissions import ADMIN, OPERATOR_METADATA_READ
 from authclient.revoke import NoopTokenRevoker
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -51,9 +51,19 @@ async def factory() -> async_sessionmaker[AsyncSession]:
 
 
 def _client(org_id: UUID, user_id: str) -> TestClient:
-    settings = Settings(database_url=_require_dsn())
+    settings = Settings(
+        database_url=_require_dsn(),
+        environment="development",
+        operator_feature_enabled=True,
+    )
     validator = StaticTokenValidator(
-        {"tok": ValidateResult(org_id=org_id, permissions=ADMIN, user_id=user_id)}
+        {
+            "tok": ValidateResult(
+                org_id=org_id,
+                permissions=ADMIN | OPERATOR_METADATA_READ,
+                user_id=user_id,
+            )
+        }
     )
     app = create_app(
         settings=settings,

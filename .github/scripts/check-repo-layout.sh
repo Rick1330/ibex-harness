@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALLOWED_TOP='^(web|services|packages|infra|reports|benchmarks|patches|\.cursor|\.github|\.git|_report|node_modules)$'
+ALLOWED_TOP='^(web|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.github|\.git|_report|node_modules)$'
 ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
 
 fail=0
@@ -15,7 +15,7 @@ for entry in *; do
     fi
   elif [[ -f "$entry" ]]; then
     case "$entry" in
-      .editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|sonar-project.properties|Makefile|go.mod|go.sum|osv-scanner.toml|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CLAUDE.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|CHANGELOG.md|README.md|node_modules|version-release.config.json|.version-release-manifest.json) ;;
+      .editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|sonar-project.properties|.sonarcloud.properties|Makefile|go.mod|go.sum|osv-scanner.toml|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CLAUDE.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|CHANGELOG.md|README.md|node_modules|version-release.config.json|.version-release-manifest.json) ;;
       *)
         if [[ "$entry" =~ \.md$ ]] && ! [[ "$entry" =~ $ROOT_DOCS ]]; then
           echo "Markdown at repo root not allowed: $entry (use web/engineering/)"

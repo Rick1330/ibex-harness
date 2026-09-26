@@ -1,7 +1,7 @@
 ---
 title: "Sessions, Memory, Context & Safe Replay Evidence"
-description: "Reconstruct a turn, see retrieval and memory provenance, and export or delete governed data."
-summary: "Reconstruct a turn, see retrieval and memory provenance, and export or delete governed data."
+description: "Expose governed session evidence and, only after its contracts exist, provide deterministic no-side-effect replay."
+summary: "Expose governed session evidence and, only after its contracts exist, provide deterministic no-side-effect replay."
 status: "planned"
 milestoneId: "4.D.3"
 track: "D"
@@ -15,57 +15,94 @@ fullTitle: "Milestone 4.D.3 — Sessions, Memory, Context & Safe Replay Evidence
 
 # Milestone 4.D.3 — Sessions, Memory, Context & Safe Replay Evidence
 
-**Status:** Planned  
-**Outcome:** An operator reconstructs a conversation turn, sees retrieval and memory provenance, and exports or deletes governed data with receipts.  
-**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** 4.D.2; 4.P.2 checkpoint/retrieval contracts; 4.P.3 lifecycle  
-**Estimated effort:** 4 weeks
+**Status:** Planned and blocked on the contracts below. The repository baseline is `8f8e130` plus pre-existing review documents; this page is not implementation evidence.
 
-<Callout type="note" title="Completion contract">
-  `memory_relationships` SQL is not a management API. Secure replay is not ordinary idempotency replay.
+**Outcome:** An operator can inspect tenant-scoped session, memory, and context evidence with explicit provenance and data quality. A separate, gated replay path can re-run an immutable checkpoint deterministically without production writes, tool effects, secret access, or deletion side effects.
+
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
+
+**Dependencies:** 4.D.2; 4.P.1 identity/step-up; 4.P.2 canonical evidence and retrieval contracts; 4.P.3 field policy, lifecycle, and deletion; 4.P.4 query/read model; governed raw/conversation storage and retention decision.
+
+**Estimated effort:** 4 weeks after prerequisites are accepted.
+
+<Callout type="warn" title="Evidence and replay are different capabilities">
+  Session evidence is a governed read/export/delete surface. Deterministic replay is a separate no-side-effect execution capability. A session page, an idempotency key, a fixture, or a repeated API request is not replay evidence.
 </Callout>
 
-## Why this milestone exists
+## Purpose
 
-Memory and session pages are only trustworthy when they prove what was used and what deletion removed (F4-019, F4-024).
+Make session and memory views trustworthy without implying that unavailable raw conversation, retrieval, or context data exists. Then add replay only when the system can prove what was replayed, with which versions, in which sandbox, and with which side effects excluded.
 
-## Scope and deliverables
+## Scope
 
-Session timeline with stable sequence; memory search/list/detail; bounded graph lineage; context pack breakdown; retrieval snapshot; cascade preview; asynchronous export/delete jobs; deletion receipt; replay-safe evidence view requiring immutable snapshot, explicit versions, sandbox, disabled/mocked tools, no writes/secrets, approval, diff, and separate audit trace.
+- Session timeline with stable turn sequence and canonical identity joins.
+- Memory search, detail, retrieval candidates, context-pack breakdown, lineage, and explicit missing/redacted/sampled states.
+- Immutable checkpoint references and governed retention, legal-hold, export, and deletion receipts.
+- A separate replay command that accepts only an authorized immutable checkpoint and produces a diff plus a separate audit trace.
+- Replay sandbox enforcement: no production writes, no external tool calls, no secret reads, no provider mutations, bounded resources, and explicit approval/step-up where policy requires it.
 
-## Contract and data requirements
+## Non-goals
 
-Preview equals execution scope. Embedding/ranking mismatch errors surfaced. Tenant-scoped jobs with step-up for delete/export/replay (F4-006, F4-010).
+- No claim of complete raw conversation, memory, or tool evidence when the backend cannot prove it.
+- No replay of mutable live sessions, no ordinary request retry presented as replay, and no execution against production tools or mutation-capable credentials.
+- No deletion implementation, export implementation, or legal-hold behavior is claimed merely because the UI has a route or fixture.
+- No replacement of the canonical evidence/read model with client-composed joins or fixture data.
 
-## Product and UX requirements
+## Hard prerequisites
 
-Missing/redacted/sampled events explicit. Link to current memory records labeled when not immutable per-trace snapshots.
+1. Canonical `org_id`, request/trace/run/session/checkpoint/turn/memory identity and cardinality rules are documented and tested.
+2. Durable evidence has immutable checkpoint identity, governed raw/conversation storage, retention and legal-hold semantics, field classification, and redaction rules.
+3. Retrieval and context contracts persist policy, directive, tokenizer, model, ranking, packing, and embedding versions plus publication/source watermarks.
+4. Export/delete commands have server-side authorization, step-up, tenant scope, idempotency, audit, and receipts; replay is not used to fill those gaps.
+5. The centralized command pipeline and cross-tenant negative-test harness from the platform readiness plan are available.
 
-## Non-functional requirements
+## Deliverables
 
-Deleted data absent from all normal queries; no production side effects from replay; stable tie ordering.
+1. Versioned, tenant-scoped session/memory/context read DTOs with completeness, freshness, retention, sampling, redaction, and source-watermark fields.
+2. Timeline, provenance, context-pack, cascade-preview, and governed export/delete journeys that show unavailable data rather than inferring it.
+3. A replay contract defining immutable input/checkpoint, captured versions, sandbox boundary, allowed outputs, diff format, resource limits, and audit fields.
+4. Server-side replay enforcement and a separate replay evidence record; UI controls alone do not enable replay.
+5. Runbooks for disabling replay/export/delete, parking queued privileged jobs, and resuming only after evidence checks.
 
-## Verification gates
+## Acceptance evidence (machine-verifiable)
 
-Cascade preview equals executed deletion; cross-store receipt; replay sandbox negative tests; privileged-job disable path.
+- Contract tests assert tenant-scoped DTOs, stable ordering, identity joins, version capture, watermark propagation, and explicit incomplete/redacted states.
+- Org A/Org B tests prove session, memory, checkpoint, export, delete, and replay lookups cannot cross tenants; missing organization context fails closed.
+- A golden checkpoint replay run records identical deterministic outputs for the same versions and a non-empty diff when an input/version changes.
+- Negative tests prove replay cannot write Postgres/Redis/ClickHouse/object storage, call external tools/providers, read secrets, or bypass resource/time limits; side-effect counters remain zero.
+- Export/delete tests prove preview scope equals execution scope, retries are idempotent, and receipts identify actor, request, scope, watermark, and outcome without sensitive payloads.
+- CI validates that privileged commands use the backend command pipeline and that read-only/degraded states are rendered when evidence is incomplete. Fixtures are test evidence only, not production evidence.
+
+## Completion rule
+
+Complete only when governed session evidence and deterministic replay have separate contracts and audit records, all hard prerequisites are closed, machine-verifiable tests pass, and rollout/rollback evidence shows replay and privileged jobs can be disabled without affecting read-only views. If any evidence, redaction, retention, or side-effect control is unresolved, replay remains disabled and the milestone is incomplete.
+
+## PR sequence
+
+1. Close canonical identity, evidence publication/watermark, data classification, retention, and legal-hold decisions.
+2. Implement read-only session/memory/context DTOs and metadata-first UI with completeness and redaction states.
+3. Implement governed export/delete commands, receipts, cross-tenant tests, and job disable/park behavior.
+4. Implement the replay contract and isolated executor with no-side-effect instrumentation and deterministic golden tests.
+5. Add approval/step-up, audit, diff, rollout flag, rollback drill, and production enablement gate; otherwise leave replay disabled.
+
+## Open questions
+
+- What is the authoritative raw/conversation store, retention period, legal-hold interaction, and deletion propagation SLA?
+- Which policy, directive, tokenizer, model, embedding, ranking, and packing versions are sufficient to claim deterministic replay?
+- Which replay outputs may be retained or exported, and what exact redaction/step-up policy applies to each field?
+- What sandbox technology and deny-by-default network/credential boundary will be audited for replay?
 
 ## Rollout and rollback
 
-**Trigger:** privileged replay/job failures, unsafe mutation, or tenant-scope defects. **Reversal:** disable privileged jobs; leave read-only session/memory views. **Verify:** queued jobs drain or park safely; no new privileged writes; recovery resumes only after evidence checks pass.
+**Trigger:** cross-tenant exposure, unsafe side effect, replay divergence, receipt mismatch, or privileged-job failure. **Reversal:** disable replay and privileged export/delete jobs; retain read-only evidence with explicit degradation. **Verify:** queued jobs are parked safely, no new privileged writes occur, audit records remain readable, and recovery requires fresh evidence checks.
 
 ## Findings addressed
 
 F4-006, F4-010, F4-019, F4-024, F4-031.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
-- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
 ## Exit checklist
 
-- [ ] Session timeline + memory provenance journeys evidenced.
-- [ ] Export/delete receipt demo attached.
-- [ ] Replay sandbox and approval path evidenced.
-- [ ] Rollback of privileged jobs demonstrated.
+- [ ] Session evidence and replay contracts are separate and versioned.
+- [ ] Read-only evidence, provenance, retention, redaction, export, and delete tests are attached.
+- [ ] Replay golden, no-side-effect, cross-tenant, approval, and disable-path evidence is attached.
+- [ ] No replay completion claim is made while any hard prerequisite remains open.

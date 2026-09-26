@@ -3,8 +3,10 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +108,54 @@ func TestRateLimitMiddleware_denied(t *testing.T) {
 	if body.Error.Code != string(apierror.CodeRateLimited) {
 		t.Fatalf("code: %q", body.Error.Code)
 	}
+}
+
+func TestRateLimitMiddleware_BackendFailureFailsClosed(t *testing.T) {
+	t.Parallel()
+	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	reg := metrics.NewProxy("ratelimit-failure-test")
+	called := false
+	handler := RateLimitMiddleware(&mockLimiter{err: errors.New("redis unavailable")}, logger.Discard("proxy"), reg)(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }),
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: orgID}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if called {
+		t.Fatal("downstream handler was called while shared rate-limit state was unavailable")
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After=%q want 5 seconds", got)
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeServiceDegraded)) {
+		t.Fatalf("body does not report service degradation: %s", rec.Body.String())
+	}
+	assertCounterValue(t, reg, "ibex_proxy_rate_limit_redis_errors_total", 1)
+}
+
+func assertCounterValue(t *testing.T, reg *metrics.ProxyRegistry, name string, want float64) {
+	t.Helper()
+	families, err := reg.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		if len(family.GetMetric()) == 0 {
+			t.Fatalf("metric %s has no samples", name)
+		}
+		if got := family.GetMetric()[0].GetCounter().GetValue(); got != want {
+			t.Fatalf("metric %s=%v want %v", name, got, want)
+		}
+		return
+	}
+	t.Fatalf("metric %s not found", name)
 }
 
 func TestRetryAfterSeconds(t *testing.T) {

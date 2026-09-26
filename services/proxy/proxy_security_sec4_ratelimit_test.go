@@ -3,12 +3,28 @@
 package proxy_test
 
 import (
+	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/permissions"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 )
+
+type outageCountingProvider struct{ calls atomic.Int64 }
+
+func (*outageCountingProvider) Name() string { return "outage-counting" }
+
+func (*outageCountingProvider) SupportedModels() []string { return []string{"gpt-4o"} }
+
+func (p *outageCountingProvider) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
+	p.calls.Add(1)
+	return mockForwardingProvider{}.Complete(ctx, req)
+}
 
 func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
 	env := rateLimitEnv(t)
@@ -86,8 +102,43 @@ func TestSecurity_SEC4_5_PerOrgIsolation(t *testing.T) {
 	}
 }
 
-func TestSecurity_SEC4_6_RedisFailOpen(t *testing.T) {
+func TestSecurity_SEC4_6_RedisOutageFailsClosed(t *testing.T) {
 	env := rateLimitEnv(t)
 	env.redisMR.Close()
-	requireProbeOK(t, orgAProbeOpts(env))
+	resp, body := authProbeGET(t, orgAProbeOpts(env))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, http.StatusServiceUnavailable, body)
+	}
+	requireErrorCode(t, body, apierror.CodeServiceDegraded)
+	if got := resp.Header.Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After=%q want 5 seconds", got)
+	}
+}
+
+func TestSecurity_SEC4_7_RedisOutageBlocksChatProviderWork(t *testing.T) {
+	providerCounter := &outageCountingProvider{}
+	env := setupSecurityTestEnv(t, proxyServerOpts{
+		defaultRPM: rateLimitBurstRPM,
+		providers:  []provider.Provider{providerCounter},
+	})
+	env.redisMR.Close()
+	chatToken, _ := testutil.SeedToken(t, env.db, env.orgA.OrgID, permissions.ProxyChatCompletion)
+
+	resp, body := chatPOST(t, chatRequestOpts{
+		srvURL: env.proxy.URL, bearer: chatToken, agentID: env.orgA.AgentID,
+		contentType: "application/json", body: minimalChatBody,
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, http.StatusServiceUnavailable, body)
+	}
+	requireErrorCode(t, body, apierror.CodeServiceDegraded)
+	if got := resp.Header.Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After=%q want 5 seconds", got)
+	}
+	assertSecurityErrorEnvelope(t, resp, body, chatToken)
+	if got := providerCounter.calls.Load(); got != 0 {
+		t.Fatalf("provider was invoked %d times during Redis outage; want 0", got)
+	}
 }

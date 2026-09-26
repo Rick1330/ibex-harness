@@ -1,7 +1,7 @@
 ---
 title: "Directives, Routing, Experiments & Controlled Actions"
-description: "Understand and safely change policy with preview, approval, provenance, and rollback."
-summary: "Understand and safely change policy with preview, approval, provenance, and rollback."
+description: "Understand and safely change policy through a mandatory backend command pipeline, preview, approval, provenance, staged rollout, and rollback."
+summary: "Understand and safely change policy through a mandatory backend command pipeline, preview, approval, provenance, staged rollout, and rollback."
 status: "planned"
 milestoneId: "4.D.5"
 track: "D"
@@ -15,58 +15,95 @@ fullTitle: "Milestone 4.D.5 — Directives, Routing, Experiments & Controlled Ac
 
 # Milestone 4.D.5 — Directives, Routing, Experiments & Controlled Actions
 
-**Status:** Planned  
-**Outcome:** Operators understand and safely change policy with preview, approval, provenance, and rollback.  
-**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** 4.D.2; 4.D.4 recommended; 4.P.1 step-up; 4.P.2 routing decision + directive snapshot; 4.P.3 audit; Phase 4.5 fingerprinting for drift UI  
-**Estimated effort:** 4 weeks
+**Status:** Planned and blocked on the backend action contract. Controls remain read-only/disabled until the complete command pipeline and rollout evidence exist. The repository baseline is `8f8e130` plus pre-existing review documents; no implementation evidence is claimed.
 
-<Callout type="note" title="Completion contract">
-  Drift UI stays behind a Phase 4.5 producer contract (F4-013). Directive/routing controls ship first.
+**Outcome:** Operators can inspect directive and routing provenance and, only through server-enforced commands, preview, approve, roll out, abort, and roll back policy changes with complete action evidence.
+
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
+
+**Dependencies:** 4.D.2; 4.D.4 recommended for incident linkage; 4.P.1 permissions and fresh step-up; 4.P.2 routing decision/directive snapshot; 4.P.3 audit/outbox; Phase 4.5 fingerprint producer for drift UI; durable rollout/rollback ownership.
+
+**Estimated effort:** 4 weeks after prerequisites are accepted.
+
+<Callout type="warn" title="The backend command pipeline is the control">
+  A UI button, disabled button, preview screen, or client-side permission check is not evidence. Every controlled action must pass: permission and tenant resolution → kill switch → fresh step-up → idempotency → preview → approval → mutation/outbox → action ledger, with rollout, abort, and rollback enforced server-side.
 </Callout>
 
-## Why this milestone exists
+## Purpose
 
-Provider/policy mutations lack action journal, approval, preview, rollback, and decision provenance (F4-010, F4-026).
+Make policy changes explainable and reversible without allowing a presentation layer to become the authorization boundary or silently mutate provider behavior.
 
-## Scope and deliverables
+## Scope
 
-Immutable directive versions, diff, promotion/revoke state machine, regression-run linkage, matched policy revision, ordered candidates and rejection reasons, capability-catalog version, provider credential scope, fallback trigger, experiment assignment/exposure/holdback, guardrails, kill switch, operator action ledger, dry-run preview, bounded rollout, rollback pointer.
+- Immutable directive versions, diffs, promotion/revoke state machine, policy revision, regression linkage, and routing decision provenance.
+- Ordered candidates and rejection reasons, capability-catalog version, provider credential scope, fallback trigger, experiment assignment/exposure/holdback, and guardrails.
+- A mandatory backend command pipeline for permission, tenant, kill switch, fresh step-up, idempotency, preview, approval/dual approval, mutation/outbox, action ledger, rollout, abort, and rollback.
+- Bounded dark launch and staged rollout with sample/bake windows and automated guardrail aborts.
+- Drift UI only behind the Phase 4.5 fingerprint producer contract; otherwise keep it unavailable or explicitly read-only.
 
-## Contract and data requirements
+## Non-goals
 
-Replaying recorded inputs with recorded versions yields the same decision. Sensitive changes require step-up; high-impact changes may require dual approval. Duplicate submits safe; blast radius shown before confirmation.
+- No production mutation through UI-only controls, client-side authorization, direct provider calls, or an unvalidated API endpoint.
+- No claim that fixture decisions, a dry-run screenshot, or a local action log proves real routing provenance or rollback.
+- No drift alerts before the Phase 4.5 producer contract; no unrestricted credential exposure or arbitrary provider targeting.
+- No rollout to 100% without measured guardrail, sample, bake, abort, and rollback evidence.
 
-## Product and UX requirements
+## Hard prerequisites
 
-Preview/approval UX; clear abort reasons; no drift alerts without producer evidence.
+1. Directive and routing identity/version contracts capture the exact policy, candidates, rejection reasons, capabilities, credentials scope, fallback, and decision provenance.
+2. Backend command pipeline is implemented once and is mandatory for every listed action, including retries and asynchronous workers.
+3. Permission/role, tenant ownership, kill-switch, fresh step-up, idempotency, preview-token, approval/dual-approval, outbox, ledger, and audit contracts are specified.
+4. Rollout controller defines cohort identity, exposure/holdback, sample and bake windows, guardrails, abort authority, rollback pointer, and recovery behavior.
+5. Provider credential scope, secret handling, regression evidence, and Phase 4.5 drift producer ownership are approved.
 
-## Non-functional requirements
+## Deliverables
 
-Dark launch → 1% shadow → 10% → 25% → 100% only after sample and bake windows. Automated abort on quality/latency/error/safety/cost guardrail breach.
+1. Read-only provenance and versioned directive/routing DTOs with explicit completeness and source state.
+2. Backend command API/service that enforces the full pipeline and returns durable command/action identifiers and outcomes.
+3. Preview/diff and approval records bound to exact versions, scope, actor, expiration, and idempotency key.
+4. Action ledger and outbox records covering requested, approved, mutated, published, aborted, and rolled-back states.
+5. Staged rollout controller, guardrail metrics, kill switch, abort drill, rollback pointer, and operator runbook.
 
-## Verification gates
+## Acceptance evidence (machine-verifiable)
 
-Deterministic replay of recorded decisions; action ledger completeness; abort/rollback drill.
+- Contract tests prove each controlled command fails closed when permission, tenant ownership, kill switch, fresh step-up, idempotency, preview, approval, or required second actor is missing or stale.
+- Org A/Org B tests prove policy, provider, experiment, rollout, action, and ledger resources cannot cross tenants; backend ignores browser-supplied organization identity.
+- Replay tests with recorded versions produce the same routing decision; changed policy/version produces an explicit difference and provenance update.
+- Duplicate and concurrent submits produce one durable outcome and one correctly linked ledger/outbox result; UI retries cannot create duplicate mutations.
+- Rollout tests demonstrate dark launch → 1% → 10% → 25% gates, guardrail breach abort, kill switch, traffic restoration to prior version, and rollback audit history.
+- CI inspects or tests server routes/workers to prove no controlled mutation bypasses the command pipeline. UI evidence is supplementary only.
+
+## Completion rule
+
+Complete only when every controlled action uses the mandatory backend pipeline, all provenance/approval/ledger/outbox/rollout contracts are real, machine-verifiable negative and failure tests pass, and abort/rollback evidence is attached. Until then, controls remain read-only/disabled and drift remains behind Phase 4.5.
+
+## PR sequence
+
+1. Freeze directive/routing identity, version, credential-scope, provenance, and read-only DTO contracts.
+2. Implement the centralized command pipeline, policy checks, idempotency, preview, approval, mutation/outbox, action ledger, and cross-tenant tests.
+3. Implement directive lifecycle, routing/experiment records, dry-run diff, and deterministic recorded-decision tests.
+4. Implement staged rollout, guardrails, kill switch, abort, rollback pointer, and failure drills.
+5. Add UI controls only as a client of the command API; run security and rollback review before enabling any production action.
+
+## Open questions
+
+- Which actions require dual approval, what constitutes a fresh step-up, and who owns emergency abort authority?
+- What is the canonical cohort/holdback identity and how are retries, reassignment, and partial rollout represented?
+- Which quality, latency, error, safety, and cost thresholds trigger automatic abort, and where are they sourced?
+- Which provider credential scopes are permitted for each action and how are they revoked during rollback?
+- When will the Phase 4.5 fingerprint producer be available for drift claims?
 
 ## Rollout and rollback
 
-**Trigger:** directive/routing abort, unsafe experiment promotion, or action-ledger inconsistency. **Reversal:** reactivate prior policy/directive version; disable new controlled actions. **Verify:** traffic uses prior version; aborted actions recorded; preview/approval fail closed until restored.
+**Trigger:** provenance mismatch, unsafe promotion, guardrail breach, kill switch activation, or action-ledger inconsistency. **Reversal:** abort the rollout, reactivate the prior directive/routing version, and disable new controlled commands. **Verify:** traffic uses the prior version, all abort/rollback actions are ledgered, pending outbox work is reconciled, and preview/approval fail closed until restored.
 
 ## Findings addressed
 
 F4-010, F4-013, F4-026.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [Trace Inspector data-contract gaps](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/02-trace-inspector-data-contract-gaps.md)
-- [World-class cross-cutting audit before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/04-world-class-cross-cutting-audit-before-track-d.md)
 ## Exit checklist
 
-- [ ] Directive lifecycle + action ledger evidenced.
-- [ ] Step-up/dual-approval paths tested.
-- [ ] Staged rollout abort drill attached.
-- [ ] Drift UI gated behind Phase 4.5 contract note.
+- [ ] Read-only provenance and directive version evidence is attached.
+- [ ] Mandatory backend pipeline negative tests cover every control in the required order.
+- [ ] Preview, approval, idempotency, ledger/outbox, staged rollout, abort, and rollback drills are attached.
+- [ ] UI is not treated as evidence; drift remains gated by Phase 4.5.

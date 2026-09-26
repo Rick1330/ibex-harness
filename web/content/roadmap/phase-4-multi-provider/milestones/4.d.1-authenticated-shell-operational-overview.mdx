@@ -15,27 +15,43 @@ fullTitle: "Milestone 4.D.1 — Authenticated Shell & Operational Overview"
 
 # Milestone 4.D.1 — Authenticated Shell & Operational Overview
 
-**Status:** Planned  
-**Outcome:** An authorized operator enters a real application, selects an organization, sees platform health/freshness, and reaches every investigation surface.  
-**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** 4.P.0; 4.P.1; 4.P.2 query subset; 4.P.3 redaction defaults; 4.P.6 assurance harness mature enough for Playwright  
+**Status:** planned/specification
+**Outcome:** The canonical application provides an authenticated shell with evidenced context, platform-health/freshness, and navigation entry points. Navigation is not live domain delivery. Org switching is an explicit deferred gate and is not claimed until server-derived switching, tenant isolation, and URL-state evidence are verified.
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
+**Dependencies:** D0 + P0 + P1 + P6-bootstrap. P2/P3 domain contracts and P6-slice-certification belong to the later D slices; they are not silently assumed by D1.
 **Estimated effort:** 3 weeks
 
 <Callout type="note" title="Completion contract">
-  Docs-site pages and benchmark charts are not operator shell evidence. Consume generated SDK only against the live operator topology.
+  Docs-site pages, benchmark charts, and fixture-backed preview routes are not operator shell evidence. Production journeys must consume real contracts through the canonical operator topology; `services/dashboard` is compatibility-only during migration.
 </Callout>
 
 ## Why this milestone exists
 
 Proves the runtime and operator context before specialized screens consume deep data.
 
-## Scope and deliverables
+## Purpose
 
-Operator app shell, org/role context, Overview, Agents/Resources, Explore entry, Incidents entry, Settings, breadcrumbs, global search entry, live/historical selector, connection state, and data-state components (empty/error/partial/stale/degraded).
+Turn the canonical D0 foundation into the first real operator slice: authenticated context, operational overview, platform health, and live connection state.
+
+## Dependencies
+
+D0 + P0 + P1 + P6-bootstrap. D1 consumes only contracts evidenced at those gates; later P contracts are not implied.
+
+## Scope
+
+Operator app shell, evidenced server-derived session/tenant context, real Overview, platform health, SSE connection state, and navigation entry points. Explore, Incidents, Settings, breadcrumbs, search, and selectors are navigation surfaces unless their domain contracts are separately evidenced. Preview fixtures may support deterministic tests only and must not be a production fallback.
+
+## Deliverables
+
+Canonical shell routes, real context/Overview/health/SSE integration, navigation and URL-state behavior, and explicit empty/error/partial/stale/degraded states.
+
+## Non-goals
+
+Full Explore/Trace Inspector provenance, replay, incident workflows, controlled mutations, billing reconciliation, and retirement of `services/dashboard` are later milestones or release gates.
 
 ## Contract and data requirements
 
-URL state stores `org_id`, time range, filters, columns, and selected resource. No mutation controls beyond approved read-only actions in this slice.
+URL state may store time range, filters, columns, and selected resource. An `org_id` URL value is not authority. Org switching is deferred until server-derived switching and cross-tenant evidence pass. No mutation controls beyond approved read-only actions in this slice.
 
 ## Product and UX requirements
 
@@ -43,11 +59,33 @@ Clear empty/error/partial/stale/degraded states; keyboard navigation; Explore-fi
 
 ## Non-functional requirements
 
-Four roles, two tenants, initial-read budget, axe, keyboard, no-cross-tenant, operator SSE reconnect gates pass.
+Four roles, two tenants, initial-read budget, axe, keyboard, no-cross-tenant, and operator SSE reconnect gates pass; org switching remains a separate explicit gate.
 
 ## Verification gates
 
-Internal allowlist and read-only flag. Disable route access independently. Playwright shell journeys upload traces/reports.
+Internal allowlist and read-only flag. Disable route access independently. Playwright shell journeys upload traces/reports, including real context/Overview/health/SSE paths, four roles, two tenants, and a no-fixture production assertion.
+
+## Acceptance evidence
+
+Attach operator-origin smoke, four-role/two-tenant Playwright traces, cross-tenant denial results, SSE reconnect/drain results, accessibility reports, URL-state evidence, and real-data freshness/partial/stale/degraded state evidence. Attach org-switch evidence only if the deferred gate is actually verified; otherwise record it as planned/specification.
+
+## Completion rule
+
+Complete only when the real D1 contracts are exercised through canonical `services/console`, the required tenant, auth, accessibility, and SSE evidence passes, route rollback is demonstrated, and the org-switch gate is either verified with evidence or explicitly recorded as residual-risk. Fixture-backed previews do not satisfy completion.
+
+## Implementation sequence
+
+1. Connect server-owned session and organization context.
+2. Connect Overview, platform health, freshness/completeness states, and SSE through the D0 transport boundary.
+3. Add navigation, URL state, responsive/accessibility behavior, and failure states.
+4. Run the four-role/two-tenant and no-fixture production journeys, then record rollback evidence.
+5. Verify org switching separately; if unverified, leave the gate deferred and do not claim it.
+
+## Open questions
+
+- What final operator/API origin and cookie/CSRF policy does 4.P.0 approve?
+- Which exact backend owners and response schemas are authoritative for context, Overview, health, and events?
+- What initial-read and SSE reconnect budgets are release thresholds?
 
 ## Rollout and rollback
 
@@ -55,7 +93,7 @@ Creates the first end-to-end operator proof on top of Track P. **Trigger:** shel
 
 ## Findings addressed
 
-F4-001, F4-002, F4-012.
+F4-001, F4-002, F4-012, F4-035.
 
 ## Research depth
 
@@ -65,6 +103,7 @@ Further audit context (provenance only — roadmap and engineering pages are aut
 ## Exit checklist
 
 - [ ] Operator origin smoke + Playwright four-role shell journeys green.
-- [ ] Org switch and URL state round-trip proven.
+- [ ] Real context, Overview, platform health, and SSE evidence is attached; no fixture production path is reachable.
+- [ ] URL-state behavior is proven; org switching is separately proven or explicitly marked as a deferred gate/residual-risk.
 - [ ] Cross-tenant shell isolation evidenced.
 - [ ] Rollback of routes demonstrated without data loss.

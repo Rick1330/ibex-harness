@@ -1,91 +1,84 @@
 # Operator Platform Architecture
 
-## Purpose
+## Purpose and status
 
-This document is the implementation companion for Phase 4 Tracks P, D, and E. It defines the contracts that make the operator dashboard trustworthy rather than merely attractive. The dashboard is a consumer of authenticated, versioned, tenant-scoped evidence; it is not the source of truth for traces, decisions, usage, or deletion.
+This document defines the target architecture and evidence boundary for the operator product. The canonical authenticated application name is **`services/console`**. `web/` remains the public documentation site. `services/dashboard/` is only the temporary 4.P.0 compatibility shell and is not a second production product.
+
+The repository baseline is commit `8f8e130` plus pre-existing review documents. Statements below distinguish four states: **implemented** means verified in the baseline; **mounted-but-provisional** means code is present but not production-ready; **specified-not-implemented** means a contract or design exists without a verified implementation; **deferred** means intentionally outside the current slice. A design contract is not deployment evidence.
 
 ## Product boundary
 
-IBEX should be differentiated as an **auditable context-and-policy provenance debugger**. The core workflow starts in global Explore and traverses a session, trace, checkpoint, retrieval candidate, memory score vector, context pack, directive version, routing decision, tool call, provider fallback, evaluation, incident, and rollout record. Every conclusion must link to immutable source evidence or be labeled unknown.
+IBEX is an **auditable context-and-policy provenance debugger**. The operator UI consumes authenticated, versioned, tenant-scoped evidence; it is not the source of truth for traces, decisions, usage, or deletion. The visual/product mock is a preview and test baseline, never an evidence source.
+
+## Surface status
+
+| Surface | Status in baseline | Ownership and constraint |
+|---|---|---|
+| `web/` | Implemented public site | Public docs, roadmap, benchmark, and marketing content only. Do not place authenticated operator routes here. |
+| `services/dashboard/` | Mounted-but-provisional | Static 4.P.0 connection/session/SSE compatibility shell. Retain while migration proceeds; do not expand it into Track D. |
+| `services/console/` | Specified-not-implemented | Canonical Next.js operator application. Its package, workload, origin, and promotion evidence must be established before claiming implementation. |
+| Overview/context/health/events contract | Mounted backend foundations, operator composition not fully verified | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
+| Explore, Trace Inspector, Sessions, Memories, Incidents, Directives, Drift, Billing, Analytics, Agents, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Enable one vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
+| Full production operator deployment and shell retirement | Deferred | Requires approved runtime ownership, staging browser promotion, rollback evidence, and parity decision. |
 
 ## Contract layers
 
-| Layer | Required contract | Primary store or transport |
-|---|---|---|
-| Identity | operator session, tenant membership, permission, assurance, revocation | API/auth service |
-| Evidence | trace/span/event IDs, parent/links, sequence, operation kind, status, provenance | OTel-compatible envelope, ClickHouse projection, object manifest |
-| Publication | event identity, aggregate sequence, schema version, digest, delivery state | Postgres transactional outbox, Redis relay |
-| Governance | capture mode, redaction, retention, deletion, legal hold, audit | Postgres policy and audit records, encrypted object storage |
-| Query | typed filters, facets, cursors, freshness, completeness, URL state | API query contract and bounded analytical projections |
-| Control | action intent, approval, before/after, idempotency, rollback | Postgres operator-action ledger |
-| Assurance | fixture, environment, commit, image, schema, result, artifact | CI/staging evidence bundle |
+| Layer | Required contract | Primary owner | Status boundary |
+|---|---|---|---|
+| Identity | session, tenant membership, permission, assurance, revocation | Auth service/API | Backend foundations exist; console integration is not claimed. |
+| Operator context | principal, active organization, roles/permissions, step-up, feature/kill-switch state, allowed navigation | API/BFF | Specified; expose only fields verified by the server. |
+| Overview | metrics with source, freshness, completeness, generated time, and optionality | API read model | Specified D1 contract; not a claim that all cards/charts exist. |
+| Platform health | liveness/readiness and dependency-aware health facts | owning runtime/API | Existing service health is separate from an operator health composition. |
+| Operator events | versioned SSE envelope, event ID, sequence, resume, deduplication, completeness | API/event plane | Shell parser is tested; production operator stream contract requires evidence. |
+| Evidence | trace/span/event IDs, parent links, sequence, operation kind, status, provenance | evidence plane | Required data model; missing evidence is `unknown`, never fabricated. |
+| Publication | event identity, aggregate sequence, schema version, digest, delivery state | Postgres outbox/relay | Target contract; replay and projection evidence required. |
+| Governance | capture, redaction, retention, deletion, legal hold, audit | policy/audit stores | Target contract; TTL is not deletion SLA. |
+| Query | typed filters, facets, cursors, freshness, completeness, URL state | API query contract | Specified; do not imply composed Explore APIs are live. |
+| Control | intent, approval, before/after, idempotency, rollback | operator-action ledger | Deferred until the owning command pipeline is enabled. |
+| Assurance | fixture, environment, commit, image, schema, result, artifact | CI/staging | Required evidence, not a current deployment claim. |
 
-## Mandatory identifiers
+## Server-only DAL and BFF boundary
 
-`trace_id` identifies distributed causality. `session_id` identifies a conversation or application grouping. `checkpoint_id` identifies the persisted turn snapshot. `span_id` and `parent_span_id` identify operation hierarchy. `event_id` identifies one immutable event. `aggregate_seq` gives deterministic ordering within an aggregate. These identifiers must not be inferred from timestamps or content hashes.
+`services/console` must use a server-only DAL/BFF for privileged data. DAL modules must be marked `import 'server-only'`; resolve the authenticated session and organization on the server, authorize the request, call the owning API, validate the response, redact sensitive fields, and return minimal DTOs. Client components must never import server-only clients, bearer credentials, provider secrets, or raw tenant context.
 
-## Data lifecycle
+Use Next.js proxy preprocessing only for lightweight routing/correlation concerns. Route Handlers are narrow same-origin BFF functions for session/bootstrap, CSRF-protected mutations, small composed reads, short-lived exports, or SSE forwarding when topology requires it. There must be no generic open proxy. Final authorization remains in the DAL and API.
 
-Content capture defaults to metadata-only. Redacted or privileged content is captured only under a versioned policy and is stored with an encrypted manifest, digest, retention class, and deletion state. ClickHouse TTL is storage hygiene; it is not the application deletion SLA. Organization and data-subject deletion must propagate through Postgres, ClickHouse, Redis, object storage, queues, exports, and derived projections, and must return a verifiable receipt.
+## API contract ownership and validation
 
-## Publication and replay
+The owning backend service owns each contract; console owns presentation and client behavior, not truth. The API pipeline must produce a versioned **OpenAPI snapshot**, generate the TypeScript client from that snapshot, and run runtime validation at the BFF/DAL boundary. CI must fail on snapshot drift, generated-client drift, incompatible fixtures, or an unhandled response shape. SSE envelopes require a versioned schema validator and `Last-Event-ID` resume tests. Hand-maintained mock types are not a contract.
 
-Business changes and their outbox event are committed atomically. Relays are at-least-once and therefore idempotent. Downstream consumers acknowledge only after durable write. Replay starts from an outbox position or immutable evidence manifest, not from an expiring Redis stream. Partial, sampled, redacted, late, and deleted evidence must be represented explicitly.
+The initial D1 contract is limited to `context`, `overview`, `platform/health`, and `events` reads as approved by the API owner. Exact deployed paths, hostnames, and route availability remain an open decision unless verified by an implementation record.
 
-## Security boundary
+## Security and response policy
 
-The server evaluates tenant and resource authorization on every request. Raw payload access, export, deletion, replay, policy change, secret use, and break-glass require separate permissions and recent authentication assurance. Dashboard rendering treats prompts, tool arguments, outputs, links, HTML, and Markdown as untrusted inert data. Provider secrets and bearer tokens are never displayed.
+The server enforces tenant and resource authorization on every request, stream, export, deletion, replay, and asynchronous job. Browser-supplied organization or resource IDs are never authorization inputs. Cross-tenant reads return a uniform not-found/empty result without existence leaks.
 
-## Release boundary
+Authenticated personalized RSC, BFF, export, and SSE responses default to request-time **`no-store`**. Any exception requires an explicit tenant/key/scope design and tests for two roles and two tenants. Set `Cache-Control: no-store` on sensitive responses and prevent intermediary caching of streams and errors.
 
-A capability is promotable only when Track P gates, capability tests, accessibility tests, performance budgets, recovery evidence, supply-chain verification, and rollback procedures pass. Dark launch and staged rollout are required for new policy, routing, cost, and replay behavior.
+The approved topology must define secure cookies (`Secure` outside local development, `HttpOnly`, appropriate `SameSite`, narrow `Path`/`Domain`), CSRF validation for every cookie-authenticated mutation, exact credentialed CORS allowlists when origins differ, strict Origin/Referer checks, and SSE authorization/revocation/drain behavior. Security headers must include a reviewed CSP, `frame-ancestors`/`X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`, and a suitable Permissions-Policy. Values are topology decisions, not proof that they are currently deployed.
 
-## Required evidence
+Prompts, tool arguments, outputs, links, HTML, Markdown, exports, and memory content are hostile untrusted data. Render inert/sanitized content and never expose provider secrets, bearer tokens, PAT plaintext, or raw sensitive payloads by default.
 
-Each milestone record must link to contract snapshots, golden fixtures, tenant-negative tests, redaction/deletion results, performance data, CI reports, deployment digests, restore-drill output, and rollback transcripts.
+## Evidence and lifecycle
 
-## Trace Inspector data prerequisites
+Content capture defaults to metadata-only. Redacted or privileged content requires a versioned policy, encrypted manifest, digest, retention class, deletion state, and verifiable receipt. ClickHouse TTL is storage hygiene, not application deletion SLA. Partial, sampled, redacted, late, expired, deleted, and simulated states are explicit on every read and SSE envelope.
 
-The Trace Inspector (4.D.2) is honest only when the evidence plane exposes the following join keys and payloads. Missing fields must surface as `unknown` or `not evaluated`, never as zero or empty.
+Mandatory identifiers are not inferred from timestamps or content hashes: `trace_id` identifies distributed causality; `session_id` conversation grouping; `checkpoint_id` persisted turn snapshot; `span_id`/`parent_span_id` hierarchy; `event_id` one immutable event; `aggregate_seq` deterministic ordering.
 
-| Field / artifact | Source | Consumer |
-|---|---|---|
-| `trace_id`, `span_id`, `parent_span_id`, `aggregate_seq` | Proxy, context assembly, workers | Span tree, ordering |
-| `session_id`, `checkpoint_id`, `turn_id`, `request_id` | Session/checkpoint writes | Session bridge, turn replay |
-| `AssemblyMetrics` (stage timings) | Context assembly | Run summary strip |
-| Retrieval candidate list with retrieval rank, metric similarity, final rank, `delta_rank` | Context assembly scorer | Candidate matrix |
-| Composite score components and weights (`0.40/0.25/0.20/0.10/0.05`) | Versioned score payload | Explain tree |
-| Exclusion reason (`budget`, `filter`, `failed`, `unknown`) | Packer/scorer | Exclusion groups |
-| Directive snapshot hash/version | Policy store at inference time | Provenance panel |
-| Tool audit (sanitized args, idempotency key) | MCP/tool path | Tool span detail |
+## Deployment and runtime ownership
 
-## Publication topology
+The deployment owner must explicitly choose one approved runtime for `services/console`: a versioned static artifact/workload with an approved BFF/API/SSE topology, or an approved transition runtime for the migration period. No hostname, ingress, Cloudflare project, Kubernetes workload, image, workflow, or production promotion is assumed from this document. The static compatibility shell may remain independently runnable until the canonical artifact has parity and rollback evidence.
 
-```text
-Write path:  business txn + outbox row (same Postgres txn)
-Relay:       at-least-once, idempotent by event_id + aggregate_seq
-Projections: ClickHouse (analytics), read models (API), object manifest (raw)
-Replay:      from outbox position or immutable manifest — not Redis TTL alone
-```
+Staging promotion must use the console artifact and authenticated browser evidence, not a public-docs smoke test. Promotion requires contract/OpenAPI and generated-client checks, four-role/two-tenant browser journeys, accessibility/visual/hostile-content/cache/SSE/performance gates, immutable artifact evidence, and a named rollback owner. Rollback must restore the prior known-good console artifact/digest and verify session, cache, SSE drain, and tenant boundaries. Retire `services/dashboard` only after an approved parity matrix, migration notice, rollback window, and removal of its workflow/runtime references; no retirement date is claimed here.
 
-Partial, sampled, redacted, late, and deleted states are first-class on every read API and SSE envelope.
+## Required trace prerequisites
 
-## Operator action ledger
+The Trace Inspector is honest only when the evidence plane exposes stable join keys and payloads. Missing fields must be `unknown` or `not evaluated`, never zero or empty: trace/span/parent/aggregate identifiers; session/checkpoint/turn/request identifiers; assembly metrics; retrieval candidates and score schema; directive snapshot; sanitized tool audit; completeness and source watermark.
 
-High-impact actions (export, deletion, replay, policy change, fallback override, break-glass raw read) share one ledger shape:
+## Release evidence
 
-- `action_id`, idempotency key, actor, assurance level, resource scope
-- `preview_hash` / dry-run result before commit
-- `before_hash`, `after_hash`, approval context (when required)
-- `rollback_pointer` to prior config/version/digest
-- immutable audit event linked to `trace_id` where applicable
+A capability is promotable only when contract snapshots, golden fixtures, tenant-negative tests, redaction/deletion results, accessibility and performance reports, supply-chain evidence, deployment artifact digest, restore/rollback evidence, and staged browser results are linked. A route being designed or rendered from fixtures is not implementation evidence.
 
-Counterfactuals and replay are **simulated** against immutable snapshots; they never mutate the observed production trace.
+## References
 
-## Deployment and recovery
-
-Operator topology requires committed K8s/Helm/Kustomize overlays (4.P.5), dependency-aware readiness (not startup-only), drain for SSE, and documented RPO/RTO. Restore drills must verify tenant isolation post-restore. Image promotion uses immutable digests with SBOM/provenance and admission verification.
-
-## Research provenance
-
-Staff-engineering audits that informed this architecture are archived under [research/operator-platform/](research/operator-platform/README.md). Published roadmap and engineering pages supersede the archive.
+See [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [DEPLOYMENT.md](DEPLOYMENT.md), [TESTING_STRATEGY.md](TESTING_STRATEGY.md), and [CONSOLE_DEEP_READINESS_PLAN.md](console/CONSOLE_DEEP_READINESS_PLAN.md) for the corresponding contract, runtime, test, and readiness rules.

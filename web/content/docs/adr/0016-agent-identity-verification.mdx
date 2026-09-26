@@ -59,7 +59,7 @@ Inactive agents (`paused`, `suspended`, `archived`) return `PERMISSION_DENIED` w
 | --- | --- | --- | --- |
 | Token validate (M1.2.1) | Fail closed | 503 | `SERVICE_DEGRADED` (ADR-0011; unchanged) |
 | Agent verify (M1.2.5) | Fail closed | 503 | `AUTH_UNAVAILABLE` |
-| Rate limit (M1.2.4) | Fail open | — | — |
+| Rate limit (M1.2.4) | Fail closed in the current Proxy runtime (historical Phase 1 behavior superseded by [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls)) | 503 | `SERVICE_DEGRADED` |
 
 Agent identity is a security control; failing open during auth downtime would allow cross-tenant agent confusion.
 

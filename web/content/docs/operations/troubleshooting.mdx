@@ -134,7 +134,7 @@ Mock-mode smoke expectation: HTTP **200** means auth and provider routing passed
 
 ### Rate limiting oddities
 
-Redis down → rate limiter **fails open** (requests allowed, warning logged). Empty `REDIS_URL` → Noop limiter; `/ready` reports redis check failed.
+Redis down → Proxy rate limiting fails **closed** with `503 SERVICE_DEGRADED`; provider work does not run. An unset `REDIS_URL` is allowed only in development (where the Noop limiter is explicit); staging/production config rejects it. `/ready` reports required Redis health.
 
 Verify Redis:
 

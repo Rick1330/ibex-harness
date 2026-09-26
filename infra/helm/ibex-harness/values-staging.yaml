@@ -2,6 +2,13 @@
 # Until CI injects real mixed-hex digests, `check-helm-digest-placeholders.sh`
 # MUST fail on this overlay (sentinel alphabet aaaa…/bbbb… is intentional).
 # Do not deploy staging with these stubs.
+deployment:
+  profile: staging
+proxy:
+  environment: staging
+  redis:
+    secretName: ibex-redis
+    urlKey: redis-url
 images:
   proxy: "ghcr.io/rick1330/ibex-harness/proxy:main@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   auth: "ghcr.io/rick1330/ibex-harness/auth:main@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

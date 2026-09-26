@@ -49,9 +49,31 @@ Provider parity, routing, circuit breaking, opt-in fallback, and streaming behav
 
 ## Track P — Operator Readiness, Evidence & Control Plane
 
+## Canonical dependency model
+
+Use these graph terms everywhere: **P0**, **P1**, **D0**, **P6-bootstrap**, **P6-slice-certification**, **D1**, **D2**, **D3**, **D4**, **D5**, **D6**, **E1**, **E2**, **E3**, and **E4**. The acyclic dependency model is:
+
+```text
+P0 → P1
+P0 + P1 → (D0 ∥ P6-bootstrap)
+D0 + P0 + P1 + P6-bootstrap → D1
+P2 + P6-slice-certification → D2
+P3 + P6-slice-certification → D3
+P3 + P6-slice-certification → D4
+P1 + P2 + P4 + P6-slice-certification → D5
+P4 + P6-slice-certification → D6
+P6-bootstrap + D1 + D2 evidence → E1
+resilience evidence → E2
+E1 + E2 → E3
+all P/D evidence + E1 + E2 + E3 + full F4 register disposition (including F4-035) → E4
+```
+
+`P6-bootstrap` establishes the harness and manifest contract. `P6-slice-certification` is produced separately for each D slice after that slice's required P contract is available; it is not a claim that all assurance work is complete. `D0` and `P6-bootstrap` may proceed in parallel only after P0 and P1 are available. `E1` consumes P6-bootstrap plus D1/D2 evidence, `E2` consumes resilience evidence, `E3` follows E1 and E2, and E4 signs off all evidence and the full F4 register, including F4-035 surface separation.
+
+
 **Purpose:** establish the runtime, identity, evidence, privacy, data, deployment, and assurance contracts required before any dashboard UI can be called production-ready.
 
-**Sequencing:** `4.P.0 → 4.P.1 → 4.P.2 → 4.P.3 → (4.P.4 ∥ 4.P.5 ∥ 4.P.6)`
+**Sequencing:** `P0 → P1 → (D0 ∥ P6-bootstrap)`; P2–P5 are consumed by their named D slices and release gates, and P6-slice-certification is per slice.
 
 **Milestones:**
 - [4.P.0 — Runtime Topology & Environment Contract](/roadmap/phase-4-multi-provider/milestones/4.p.0-runtime-topology-environment-contract)
@@ -66,9 +88,12 @@ Provider parity, routing, circuit breaking, opt-in fallback, and streaming behav
 
 **Purpose:** deliver the world-class operator product as independently verifiable, end-to-end capability slices.
 
-**Sequencing:** `4.D.1 → 4.D.2 → (4.D.3 ∥ 4.D.4) → (4.D.5 ∥ 4.D.6)`
+**Sequencing:** `P0 + P1 → (D0 ∥ P6-bootstrap) → D1`; then each of D2–D6 requires its own P contract plus P6-slice-certification.
+
+`D0` establishes `services/console` as the canonical application boundary. `services/dashboard` remains compatibility-only during migration and is retired only after its cutover gate passes. D1 must use real context, Overview, platform-health, and SSE contracts; navigation is not live domain delivery, and org switching is a deferred gate until verified. D2 is metadata-first and remains evidence-gated by P2 plus P6-slice-certification. D3–D6 each consume their named P contract plus P6-slice-certification.
 
 **Milestones:**
+- [4.D.0 — Canonical IBEX Console Foundation & Shell Migration](/roadmap/phase-4-multi-provider/milestones/4.d.0-canonical-console-foundation-shell-migration)
 - [4.D.1 — Authenticated Shell & Operational Overview](/roadmap/phase-4-multi-provider/milestones/4.d.1-authenticated-shell-operational-overview)
 - [4.D.2 — Explore & Provenance Trace Inspector](/roadmap/phase-4-multi-provider/milestones/4.d.2-explore-provenance-trace-inspector)
 - [4.D.3 — Sessions, Memory, Context & Safe Replay Evidence](/roadmap/phase-4-multi-provider/milestones/4.d.3-sessions-memory-context-safe-replay)
@@ -80,7 +105,7 @@ Provider parity, routing, circuit breaking, opt-in fallback, and streaming behav
 
 **Purpose:** convert implementation into a promotable, recoverable, auditable release.
 
-**Sequencing:** `4.E.1 → 4.E.2 → 4.E.3 → 4.E.4`
+**Sequencing:** `P6-bootstrap + D1 + D2 evidence → E1`; resilience evidence → E2; `E1 + E2 → E3`; all P/D evidence plus full F4 register disposition (including F4-035) → E4.
 
 **Milestones:**
 - [4.E.1 — Environment, Fixtures & Required CI](/roadmap/phase-4-multi-provider/milestones/4.e.1-environment-fixtures-required-ci)

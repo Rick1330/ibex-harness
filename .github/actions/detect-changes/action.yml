@@ -6,15 +6,15 @@ inputs:
   ref:
     description: Optional git ref to checkout (workflow_run head SHA)
     required: false
-    default: ''
+    default: ""
   fetch-depth:
     description: Checkout depth (0 = full history for PRs)
     required: false
-    default: '0'
+    default: "0"
   force-full:
     description: Run full matrix (workflow_dispatch / nightly)
     required: false
-    default: 'false'
+    default: "false"
 outputs:
   go:
     description: Raw go path filter match
@@ -25,6 +25,9 @@ outputs:
   web:
     description: Raw web path filter match
     value: ${{ steps.filter.outputs.web }}
+  console:
+    description: Raw Console service path filter match
+    value: ${{ steps.filter.outputs.console }}
   proto:
     description: Raw proto path filter match
     value: ${{ steps.filter.outputs.proto }}
@@ -61,6 +64,9 @@ outputs:
   run_web:
     description: Run web build and checks
     value: ${{ steps.effective.outputs.run_web }}
+  run_console:
+    description: Run Console package quality gate
+    value: ${{ steps.effective.outputs.run_console }}
   run_security:
     description: Run in-repo security scans (trivy, osv, bandit, hadolint)
     value: ${{ steps.effective.outputs.run_security }}
@@ -101,6 +107,7 @@ runs:
         FILTER_GO: ${{ steps.filter.outputs.go }}
         FILTER_PYTHON: ${{ steps.filter.outputs.python }}
         FILTER_WEB: ${{ steps.filter.outputs.web }}
+        FILTER_CONSOLE: ${{ steps.filter.outputs.console }}
         FILTER_DOCKER: ${{ steps.filter.outputs.docker }}
         FILTER_WORKFLOWS: ${{ steps.filter.outputs.workflows }}
         FILTER_DEPS: ${{ steps.filter.outputs.deps }}
@@ -114,6 +121,7 @@ runs:
         run_go=false
         run_python=false
         run_web=false
+        run_console=false
         run_security=false
         run_docker=false
         run_compose=false
@@ -124,6 +132,7 @@ runs:
           run_go=true
           run_python=true
           run_web=true
+          run_console=true
           run_security=true
           run_docker=true
           run_compose=true
@@ -135,6 +144,7 @@ runs:
           run_go=true
           run_python=true
           run_web=true
+          run_console=true
           run_security=true
           run_memory=true
         fi
@@ -152,6 +162,11 @@ runs:
 
         if [ "$FILTER_WEB" = "true" ]; then
           run_web=true
+          run_security=true
+        fi
+
+        if [ "$FILTER_CONSOLE" = "true" ]; then
+          run_console=true
           run_security=true
         fi
 
@@ -177,6 +192,7 @@ runs:
           echo "run_go=$run_go"
           echo "run_python=$run_python"
           echo "run_web=$run_web"
+          echo "run_console=$run_console"
           echo "run_security=$run_security"
           echo "run_docker=$run_docker"
           echo "run_compose=$run_compose"

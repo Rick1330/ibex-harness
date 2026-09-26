@@ -48,9 +48,12 @@ type Claims struct {
 	Permissions int64  `json:"permissions"`
 	SessionKind string `json:"session_kind"`
 	IssuedAt    int64  `json:"iat"`
+	NotBefore   int64  `json:"nbf,omitempty"`
 	ExpiresAt   int64  `json:"exp"`
 	JTI         string `json:"jti"`
 	FamilyID    string `json:"fid,omitempty"`
+	SessionID   string `json:"sid,omitempty"`
+	Action      string `json:"action,omitempty"`
 }
 
 // IssuerConfig holds RS256 signing material and token TTLs for NewIssuer.
@@ -61,6 +64,7 @@ type IssuerConfig struct {
 	AccessTTL     time.Duration
 	RefreshTTL    time.Duration
 	StepUpTTL     time.Duration
+	KeyID         string
 }
 
 // Issuer signs RS256 JWTs with a PEM private key.
@@ -71,6 +75,7 @@ type Issuer struct {
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 	stepUpTTL  time.Duration
+	keyID      string
 	jtiStore   JTIStore
 }
 
@@ -80,11 +85,16 @@ func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
 	if err != nil {
 		return nil, err
 	}
+	keyID := strings.TrimSpace(cfg.KeyID)
+	if keyID == "" {
+		keyID = "v1"
+	}
 	return &Issuer{
 		key: key, issuer: string(cfg.Issuer), audience: string(cfg.Audience),
 		accessTTL:  defaultTTL(cfg.AccessTTL, 15*time.Minute),
 		refreshTTL: defaultTTL(cfg.RefreshTTL, 7*24*time.Hour),
 		stepUpTTL:  defaultTTL(cfg.StepUpTTL, 5*time.Minute),
+		keyID:      keyID,
 		jtiStore:   &MemoryJTIStore{},
 	}, nil
 }
@@ -112,6 +122,8 @@ type IssuePairParams struct {
 	Permissions int64
 	// FamilyID binds rotated refresh tokens; empty mints a new family.
 	FamilyID FamilyID
+	// SessionID binds access, refresh, and step-up tokens to one browser session.
+	SessionID string
 }
 
 // IssuePair returns access + refresh tokens for an operator session.
@@ -123,10 +135,14 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	if familyID == "" {
 		familyID = uuid.NewString()
 	}
+	sessionID := strings.TrimSpace(p.SessionID)
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
 	access, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
-		Permissions: p.Permissions, SessionKind: string(KindAccess),
-		IssuedAt: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(),
+		Permissions: p.Permissions, SessionKind: string(KindAccess), FamilyID: familyID,
+		IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
 	})
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
@@ -134,7 +150,7 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	refresh, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
 		Permissions: p.Permissions, SessionKind: string(KindRefresh), FamilyID: familyID,
-		IssuedAt: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(),
+		IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
 	})
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
@@ -147,16 +163,30 @@ type IssueStepUpParams struct {
 	Subject     Subject
 	OrgID       OrgID
 	Permissions int64
+	SessionID   string
+	Action      string
+}
+
+type StepUpExpectations struct {
+	Subject            string
+	OrgID              string
+	SessionID          string
+	Action             string
+	RequiredPermission int64
 }
 
 // IssueStepUp returns a short-lived step-up token after TOTP verification.
 func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, err error) {
 	now := time.Now().UTC()
 	exp = now.Add(i.stepUpTTL)
+	sessionID := strings.TrimSpace(p.SessionID)
+	if sessionID == "" {
+		sessionID = uuid.NewString()
+	}
 	token, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
 		Permissions: p.Permissions, SessionKind: string(KindStepUp),
-		IssuedAt: now.Unix(), ExpiresAt: exp.Unix(), JTI: uuid.NewString(),
+		IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: exp.Unix(), JTI: uuid.NewString(), SessionID: sessionID, Action: p.Action,
 	})
 	return token, exp, err
 }
@@ -173,8 +203,118 @@ func (i *Issuer) RefreshPair(ctx context.Context, refreshToken RefreshToken) (ac
 	}
 	return i.IssuePair(IssuePairParams{
 		Subject: Subject(claims.Subject), OrgID: OrgID(claims.OrgID), Permissions: claims.Permissions,
-		FamilyID: FamilyID(claims.FamilyID),
+		FamilyID: FamilyID(claims.FamilyID), SessionID: claims.SessionID,
 	})
+}
+
+func (i *Issuer) ValidateAccess(ctx context.Context, accessToken RawToken) (Claims, error) {
+	claims, err := i.verifyToken(accessToken, KindAccess)
+	if err != nil {
+		return Claims{}, err
+	}
+	checks := []struct {
+		id     string
+		lookup func(context.Context, string) (bool, error)
+	}{
+		{claims.SessionID, i.jtiStore.SessionRevoked},
+		{claims.FamilyID, i.jtiStore.FamilyRevoked},
+		{claims.JTI, i.jtiStore.AccessRevoked},
+	}
+	for _, check := range checks {
+		if err := requireActiveSessionState(ctx, check.id, check.lookup); err != nil {
+			return Claims{}, err
+		}
+	}
+	return claims, nil
+}
+
+type revocationLookup func(context.Context, string) (bool, error)
+
+func requireActiveSessionState(ctx context.Context, id string, lookup revocationLookup) error {
+	revoked, err := lookup(ctx, id)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+// VerifyAccessProof verifies signature and claims without consulting revocation state.
+// It is reserved for idempotent logout, where already-revoked cookies must still
+// prove ownership of the session being revoked again.
+func (i *Issuer) VerifyAccessProof(accessToken RawToken) (Claims, error) {
+	return i.verifyToken(accessToken, KindAccess)
+}
+
+// VerifyRefreshProof verifies a refresh JWT without consuming it or consulting state.
+// The signed claims are used only to authorize idempotent session revocation.
+func (i *Issuer) VerifyRefreshProof(refreshToken RefreshToken) (Claims, error) {
+	return i.verifyRefreshToken(refreshToken)
+}
+
+func (i *Issuer) RevokeSession(ctx context.Context, sessionID, familyID, accessJTI string) error {
+	if err := i.jtiStore.RevokeSessionAndFamily(ctx, sessionID, familyID, i.refreshTTL); err != nil {
+		return err
+	}
+	return i.jtiStore.RevokeAccess(ctx, accessJTI, i.accessTTL)
+}
+
+func (i *Issuer) ConsumeStepUp(ctx context.Context, token RawToken, expect StepUpExpectations) (Claims, error) {
+	claims, err := i.verifyToken(token, KindStepUp)
+	if err != nil {
+		return Claims{}, err
+	}
+	if !matchesStepUpExpectations(claims, expect) {
+		return Claims{}, ErrInvalidToken
+	}
+	if err := requireActiveStepUpSession(ctx, i.jtiStore, claims.SessionID); err != nil {
+		return Claims{}, err
+	}
+	first, err := i.jtiStore.ConsumeStepUp(ctx, claims.JTI, refreshRemainingTTL(claims))
+	if err != nil {
+		return Claims{}, err
+	}
+	if !first {
+		return Claims{}, ErrInvalidToken
+	}
+	return claims, nil
+}
+
+func matchesStepUpExpectations(claims Claims, expect StepUpExpectations) bool {
+	if !stepUpIdentityMatches(claims, expect) {
+		return false
+	}
+	return stepUpPermissionMatches(claims, expect)
+}
+
+func stepUpIdentityMatches(claims Claims, expect StepUpExpectations) bool {
+	return claims.Subject == expect.Subject &&
+		claims.OrgID == expect.OrgID &&
+		claims.SessionID == expect.SessionID &&
+		claims.Action == expect.Action
+}
+
+func stepUpPermissionMatches(claims Claims, expect StepUpExpectations) bool {
+	return expect.RequiredPermission == 0 ||
+		claims.Permissions&expect.RequiredPermission == expect.RequiredPermission
+}
+
+func requireActiveStepUpSession(ctx context.Context, store JTIStore, sessionID string) error {
+	revoked, err := store.SessionRevoked(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func (i *Issuer) verifyToken(token RawToken, kind SessionKind) (Claims, error) {
+	v := &Verifier{keys: []*rsa.PublicKey{&i.key.PublicKey}, issuer: TokenIssuer(i.issuer), audience: TokenAudience(i.audience), keyID: i.keyID}
+	return v.Verify(token, kind)
 }
 
 func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
@@ -182,6 +322,7 @@ func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
 		keys:     []*rsa.PublicKey{&i.key.PublicKey},
 		issuer:   TokenIssuer(i.issuer),
 		audience: TokenAudience(i.audience),
+		keyID:    i.keyID,
 	}
 	claims, err := v.Verify(RawToken(refreshToken), KindRefresh)
 	if err != nil {
@@ -195,12 +336,8 @@ func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
 
 func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) error {
 	ttl := refreshRemainingTTL(claims)
-	revoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
-	if err != nil {
+	if err := assertRefreshNotRevoked(ctx, i.jtiStore, claims); err != nil {
 		return err
-	}
-	if revoked {
-		return ErrInvalidToken
 	}
 	first, err := i.jtiStore.ConsumeOnce(ctx, claims.JTI, ttl)
 	if err != nil {
@@ -209,12 +346,39 @@ func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) erro
 	if first {
 		return nil
 	}
-	familyTTL := i.refreshTTL
-	if ttl > familyTTL {
-		familyTTL = ttl
+	return revokeRefreshReplay(ctx, i.jtiStore, claims, replayRevokeTTL(ttl, i.refreshTTL))
+}
+
+func assertRefreshNotRevoked(ctx context.Context, store JTIStore, claims Claims) error {
+	sessionRevoked, err := store.SessionRevoked(ctx, claims.SessionID)
+	if err != nil {
+		return err
 	}
-	_ = i.jtiStore.RevokeFamily(ctx, claims.FamilyID, familyTTL)
+	if sessionRevoked {
+		return ErrInvalidToken
+	}
+	revoked, err := store.FamilyRevoked(ctx, claims.FamilyID)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func revokeRefreshReplay(ctx context.Context, store JTIStore, claims Claims, ttl time.Duration) error {
+	if err := store.RevokeSessionAndFamily(ctx, claims.SessionID, claims.FamilyID, ttl); err != nil {
+		return err
+	}
 	return ErrInvalidToken
+}
+
+func replayRevokeTTL(remaining, configured time.Duration) time.Duration {
+	if remaining > configured {
+		return remaining
+	}
+	return configured
 }
 
 func refreshRemainingTTL(claims Claims) time.Duration {
@@ -242,7 +406,7 @@ func validateRefreshClaims(claims Claims) error {
 }
 
 func (i *Issuer) sign(claims Claims) (string, error) {
-	header := map[string]string{"alg": algRS256, "typ": "JWT"}
+	header := map[string]string{"alg": algRS256, "typ": "JWT", "kid": i.keyID}
 	hb, err := json.Marshal(header)
 	if err != nil {
 		return "", err

@@ -1,7 +1,7 @@
 ---
 title: "Usage, Cost Governance & Capacity"
-description: "Explain spend and enforce budgets without double charging or relying on ephemeral counters."
-summary: "Explain spend and enforce budgets without double charging or relying on ephemeral counters."
+description: "Separate advisory estimates from reconciled actuals, enforce atomic durable hard caps, and make capacity observable."
+summary: "Separate advisory estimates from reconciled actuals, enforce atomic durable hard caps, and make capacity observable."
 status: "planned"
 milestoneId: "4.D.6"
 track: "D"
@@ -15,56 +15,95 @@ fullTitle: "Milestone 4.D.6 — Usage, Cost Governance & Capacity"
 
 # Milestone 4.D.6 — Usage, Cost Governance & Capacity
 
-**Status:** Planned  
-**Outcome:** Operators explain spend and enforce budgets without double charging or relying on ephemeral counters.  
-**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)  
-**Dependencies:** 4.D.1; 4.D.2 recommended for pivots; 4.P.2 durable facts; 4.P.4 ledger/query; 4.P.5 resource controls  
-**Estimated effort:** 3 weeks
+**Status:** Planned and blocked on the actuals/reconciliation and enforcement contracts. Estimates may be shown as advisory only; hard-cap admission remains disabled until atomicity and observability evidence pass. The repository baseline is `8f8e130` plus pre-existing review documents; no implementation evidence is claimed.
 
-<Callout type="note" title="Completion contract">
-  Analytics becomes governance only when persisted facts can change authorization decisions and prove the result (F4-005).
+**Outcome:** Operators can distinguish estimates from reconciled actual cost, identify the named source and watermark behind every number, enforce durable tenant-scoped budgets without concurrent over-admission or double charging, and observe the capacity signals needed to operate those controls.
+
+**Track:** [Track D — Operator Capability Slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices)
+
+**Dependencies:** 4.D.1; 4.D.2 recommended for pivots; 4.P.2 durable usage facts; 4.P.4 ledger/query and watermark contract; 4.P.5 resource controls; rate-card ownership; capacity metric and alert ownership.
+
+**Estimated effort:** 3 weeks after prerequisites are accepted.
+
+<Callout type="warn" title="Estimates are not actuals and charts are not hard caps">
+  Estimated spend must be labeled separately from reconciled actuals. Every actual requires a named authoritative source, source watermark, reconciliation status, completeness, and late/duplicate fact counts. Hard-cap admission must be one atomic durable decision; Redis counters or UI state alone cannot deny requests safely.
 </Callout>
 
-## Why this milestone exists
+## Purpose
 
-Charts over ephemeral counters are not hard caps.
+Make spend and capacity decisions explainable, replayable, and tenant-safe without turning an incomplete projection or ephemeral counter into an authorization decision.
 
-## Scope and deliverables
+## Scope
 
-Usage ledger UI, versioned rate cards, provider/model/fallback attribution, rollups, budget scopes/periods, alert state, hard pause/degrade decisions, Redis hot counters with reconciliation, worker concurrency and queue dashboards, resource/cost ceilings, exportable cost evidence.
+- Usage ledger UI with estimate/actual distinction, versioned rate cards, provider/model/fallback attribution, rollups, budget scopes/periods, and completeness labels.
+- Named actuals source contract: fact identity, rate-card/policy version, source watermark, generated time, reconciliation state, late/duplicate/unknown counts, and correction policy.
+- Durable budget/enforcement decisions and an atomic hard-cap admission path with idempotency, retry safety, and concurrent over-admission protection.
+- Reconciliation jobs/reports between raw facts, aggregates, hot counters, enforcement decisions, and exported cost evidence.
+- Queue depth, worker concurrency, provider capacity, admission latency, denials, lag, saturation, and resource/cost ceiling observability with tenant-safe dimensions.
 
-## Contract and data requirements
+## Non-goals
 
-Idempotent ingestion; raw-to-aggregate reconciliation; retry does not double charge; policy-version replay; hard cap blocks proxy requests; completeness labels on live vs historical spend. All queries scoped by `org_id`.
+- No presentation of estimated spend as billing actuals, no silent filling of missing facts, and no claim of reconciliation from a chart or fixture.
+- No hard-cap authorization based solely on Redis, client state, eventual chart rollups, or a non-atomic read-then-write sequence.
+- No provider invoice settlement, tax/accounting ledger, or pricing change without an owned rate-card/version contract.
+- No unbounded high-cardinality dashboard, raw prompt/content exposure, or cross-tenant aggregate query.
 
-## Product and UX requirements
+## Hard prerequisites
 
-Visible rate-card/policy versions; soft vs hard enforcement state; alert-only vs deny.
+1. Usage fact identity/cardinality and retry/duplicate semantics are canonical; all queries and writes require `org_id`.
+2. A named authoritative actuals source and watermark contract define what is complete, delayed, sampled, corrected, or unavailable.
+3. Rate-card and policy versions are immutable/replayable, with ownership and effective-time semantics.
+4. Hard-cap admission is a single atomic durable decision with reservation/commit/release or equivalent semantics, and its failure mode is fail-closed or explicitly approved.
+5. Capacity metric definitions, cardinality bounds, SLOs, alert owners, and rollback-to-alert-only procedure are approved.
 
-## Non-functional requirements
+## Deliverables
 
-High-cardinality query remains bounded; concurrent over-admission tests.
+1. Separate estimated and actual cost DTOs/UI states with source, watermark, reconciliation, completeness, freshness, and late/duplicate metadata.
+2. Durable usage ledger, rate-card replay, idempotent ingestion, correction/reconciliation report, and exportable evidence.
+3. Atomic hard-cap admission command, durable enforcement decision, retry/idempotency behavior, and concurrent admission test harness.
+4. Capacity/queue/resource observability dashboards and alerts with bounded labels, tenant scope, lag, saturation, and denial reason.
+5. Runbook for false denies, source lag, reconciliation mismatch, capacity exhaustion, rollback-to-alert-only, and recovery.
 
-## Verification gates
+## Acceptance evidence (machine-verifiable)
 
-Hard-cap negative path on proxy; reconciliation report; rate-card replay; no double charge on retry.
+- Contract tests prove every actual response names its source, watermark, rate-card/policy version, reconciliation status, completeness, generated time, and late/duplicate counts; estimates cannot populate actual fields.
+- Raw-fact-to-aggregate reconciliation on a golden period reports totals, missing/late/duplicate/corrected facts, bounded tolerance, and a reproducible watermark; reruns and retries do not double charge.
+- Rate-card replay reproduces expected costs for provider/model/fallback cases, including version changes and corrections.
+- Concurrent admission tests prove the hard cap cannot over-admit across requests, workers, retries, or failover; every allow/deny has one durable enforcement decision and reason.
+- Cross-tenant tests prove usage, budget, capacity, and enforcement queries cannot cross `org_id`; missing organization context fails closed.
+- Capacity tests and dashboards expose queue depth, worker concurrency, admission latency, source lag, saturation, denials, and resource ceilings with bounded cardinality; rollback-to-alert-only and recovery evidence is attached.
+
+## Completion rule
+
+Complete only when estimates and actuals are distinct in contract, storage, UI, and tests; the named-source/watermark/reconciliation contract is implemented; atomic hard-cap admission passes concurrent and failure tests; and capacity observability plus rollback evidence is operational. Until then, governance remains alert-only/advisory and no hard-cap completion claim is valid.
+
+## PR sequence
+
+1. Decide usage-fact identity, authoritative actuals source, watermark/completeness states, rate-card ownership, and correction semantics.
+2. Implement separate estimate/actual DTOs, durable ledger, versioned rate cards, idempotent ingestion, and reconciliation report.
+3. Implement atomic durable admission/enforcement decisions with concurrent, retry, failover, and cross-tenant tests.
+4. Add bounded capacity/queue/resource metrics, dashboards, alerts, and source-lag observability.
+5. Run false-deny, mismatch, exhaustion, rollback-to-alert-only, and recovery drills before enabling hard caps.
+
+## Open questions
+
+- Which system is the named authoritative source for actual usage/cost, and what watermark proves completeness?
+- How are late, duplicate, corrected, disputed, or provider-invoice facts represented and reconciled?
+- Which atomic admission/reservation primitive and failure mode are approved for each budget scope?
+- What are the tenant, provider, worker, and queue capacity SLOs and acceptable cardinality bounds?
+- Who may move a tenant from hard cap to alert-only during recovery, and what evidence permits re-enablement?
 
 ## Rollout and rollback
 
-**Trigger:** cost/governance false denies, chart-to-ledger mismatch, or tenant-limit regressions. **Reversal:** return affected tenants to soft or alert-only limits; stop hard governance denies from the new path. **Verify:** reconcile enforcement decisions; charts remain informational; soft/alert-only limits still fire before re-enabling hard governance.
+**Trigger:** false deny, over-admission, chart/ledger mismatch, source-watermark regression, tenant-limit leak, or capacity exhaustion. **Reversal:** stop new hard governance denies from the affected path and move affected tenants to alert-only/soft enforcement while preserving durable decisions. **Verify:** reconcile decisions against facts and watermarks, retain informational charts with honest completeness labels, and re-enable hard caps only after concurrent and recovery evidence passes.
 
 ## Findings addressed
 
 F4-005.
 
-## Research depth
-
-Further audit context (provenance only — roadmap and engineering pages are authoritative):
-
-- [Product roadmap redesign](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/01-operator-product-roadmap-redesign.md)
-- [Full-stack cross-cutting gaps before Track D](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/research/operator-platform/03-fullstack-cross-cutting-gaps-before-track-d.md)
 ## Exit checklist
 
-- [ ] Ledger + rate-card UI evidenced.
-- [ ] Hard-cap proxy denial test attached.
-- [ ] Reconciliation + rollback-to-alert-only demonstrated.
+- [ ] Estimates and actuals are visibly and contractually separate.
+- [ ] Named source, watermark, reconciliation, completeness, and late/duplicate evidence is attached.
+- [ ] Atomic hard-cap admission and no-double-charge/concurrency evidence is attached.
+- [ ] Capacity observability and rollback-to-alert-only recovery are demonstrated.

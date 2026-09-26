@@ -2,3 +2,4 @@ packages:
   - web
   - packages/*
   - services/dashboard
+  - services/console

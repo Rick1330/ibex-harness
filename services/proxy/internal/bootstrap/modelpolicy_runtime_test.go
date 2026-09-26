@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -17,51 +18,50 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestUnit_BuildModelPolicyRuntime_NilPostgresDenyAll(t *testing.T) {
+func TestUnit_BuildModelPolicyRuntime_NilPostgresFailsClosed(t *testing.T) {
 	t.Parallel()
-	assertNilPostgresFallback(t, nilPostgresCase{
-		allowPassthrough: false,
-		logNeedle:        "model policy deny-all",
-		assertResolver:   assertDenyAllResolver,
+	assertModelPolicyRuntimeFailsClosed(t, modelPolicyFallbackCase{
+		base:        mustTestRegistry(t),
+		metricsName: "mp-nil-pg-test",
+		logNeedle:   "model policy deny-all",
+		cacheReason: "without postgres",
 	})
 }
 
-func TestUnit_BuildModelPolicyRuntime_NilPostgresPassthroughEscapeHatch(t *testing.T) {
+func TestUnit_BuildModelPolicyRuntime_NilProviderFailsClosed(t *testing.T) {
 	t.Parallel()
-	assertNilPostgresFallback(t, nilPostgresCase{
-		allowPassthrough: true,
-		logNeedle:        "model policy passthrough",
-		assertResolver:   assertPassthroughResolver,
+	assertModelPolicyRuntimeFailsClosed(t, modelPolicyFallbackCase{
+		metricsName: "mp-nil-base-test",
+		logNeedle:   "provider registry nil",
+		cacheReason: "without provider registry",
 	})
 }
 
-type nilPostgresCase struct {
-	allowPassthrough bool
-	logNeedle        string
-	assertResolver   func(*testing.T, interface {
-		ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error)
-	})
+type modelPolicyFallbackCase struct {
+	base        *provider.Registry
+	metricsName string
+	logNeedle   string
+	cacheReason string
 }
 
-func assertNilPostgresFallback(t *testing.T, tc nilPostgresCase) {
+func assertModelPolicyRuntimeFailsClosed(t *testing.T, tc modelPolicyFallbackCase) {
 	t.Helper()
-	base := mustTestRegistry(t)
 	var buf bytes.Buffer
 	log, err := logger.New(logger.Config{Service: "bootstrap-mp", Level: slog.LevelWarn, Writer: &buf})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := ibexmetrics.NewProxy("mp-nil-pg-test")
+	reg := ibexmetrics.NewProxy(tc.metricsName)
 	cache, resolver, defaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
-		Base: base, Log: log, Metrics: reg, AllowPassthrough: tc.allowPassthrough,
+		Base: tc.base, Log: log, Metrics: reg,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cache != nil {
-		t.Fatal("expected nil cache without postgres")
+		t.Fatalf("expected nil cache %s", tc.cacheReason)
 	}
-	tc.assertResolver(t, resolver)
+	assertPolicyUnavailableResolver(t, resolver)
 	assertNoopDefaults(t, defaults)
 	if !strings.Contains(buf.String(), tc.logNeedle) {
 		t.Fatalf("expected %q in log, got %q", tc.logNeedle, buf.String())
@@ -132,22 +132,13 @@ func mustTestRegistry(t *testing.T) *provider.Registry {
 	return base
 }
 
-func assertPassthroughResolver(t *testing.T, resolver interface {
-	ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error)
-}) {
-	t.Helper()
-	if _, err := resolver.ForOrg(context.Background(), uuid.New(), "gpt-4o"); err != nil {
-		t.Fatalf("passthrough: %v", err)
-	}
-}
-
-func assertDenyAllResolver(t *testing.T, resolver interface {
+func assertPolicyUnavailableResolver(t *testing.T, resolver interface {
 	ForOrg(context.Context, uuid.UUID, string) (provider.Provider, error)
 }) {
 	t.Helper()
 	_, err := resolver.ForOrg(context.Background(), uuid.New(), "gpt-4o")
-	if err != modelpolicy.ErrModelNotAllowedForOrg {
-		t.Fatalf("deny-all err=%v", err)
+	if !errors.Is(err, modelpolicy.ErrPolicyUnavailable) {
+		t.Fatalf("policy unavailable err=%v", err)
 	}
 }
 

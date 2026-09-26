@@ -80,7 +80,7 @@ The **critical path** is every LLM request: authenticate, enforce limits, resolv
       icon: Waypoints,
       title: "Fail gracefully",
       description:
-        "Auth unreachable → fail closed (503). Redis down → rate limit fail-open; auth cache skips wrap. ClickHouse down → traces drop, chat continues.",
+        "Auth unreachable → fail closed (503). Proxy Redis rate-limit failure → fail closed (503); auth cache skips wrap. ClickHouse down → traces drop, chat continues.",
     },
     {
       icon: Brain,

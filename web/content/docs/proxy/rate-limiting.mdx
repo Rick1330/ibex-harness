@@ -5,10 +5,10 @@ description: Per-org request budgets enforced at the proxy edge.
 
 The proxy enforces hierarchical requests-per-minute (RPM) limits (agent → org → global) using an atomic Redis Lua script ([ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton), milestone 4.B.1). Limits apply **after** authentication and agent verification succeed and **before** request normalization hands off to a provider adapter.
 
-Rate limiting is a **cost control**, not a security boundary. Auth and tenant isolation remain fail-closed; the limiter intentionally fails open when Redis is down.
+Shared rate limiting is an enforced control for provider traffic. Outside local development, `REDIS_URL` is required; a Redis operation failure returns `503 SERVICE_DEGRADED` and does not call a provider. A quota denial remains `429 RATE_LIMITED`. See [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls); the Phase 1 fail-open choice in [ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton) is historical and superseded for the current Proxy runtime.
 
-<Callout type="warning" title="Fail-open on Redis outage">
-  When Redis is unreachable, rate limiting is skipped and requests proceed. Monitor `/ready` and Redis metrics in production. Hierarchical in-memory fallbacks are not in Phase 2 scope.
+<Callout type="warning" title="Redis is an availability dependency">
+  When Redis is unreachable, affected protected requests are rejected with 503 rather than sent to a provider without the configured shared limit. Restore Redis or disable the affected Proxy capability; do not bypass rate limiting. Local development may explicitly omit Redis and use the Noop limiter.
 </Callout>
 
 ## How it works
@@ -16,7 +16,7 @@ Rate limiting is a **cost control**, not a security boundary. Auth and tenant is
 ```mermaid
 flowchart TD
   A[Authenticated request] --> B{Redis reachable?}
-  B -->|No| C[Allow request — fail-open]
+  B -->|No| C[503 SERVICE_DEGRADED — do not call provider]
   B -->|Yes| D[Lua INCR agent then org then global]
   D --> E{all tiers within RPM?}
   E -->|Yes| F[Allow + set response headers]
@@ -54,8 +54,8 @@ Implementation lives in `packages/ratelimit` (`HierarchicalLimiter`) — service
     {
       name: "REDIS_URL",
       type: "string (URL)",
-      required: true,
-      description: "Redis connection used by the limiter and /ready probe.",
+      required: false,
+      description: "Redis connection used by the limiter and /ready probe; required outside development and optional for explicit development Noop mode.",
     },
   ]}
 />
@@ -72,7 +72,7 @@ Org IDs in overrides must be valid UUIDs. The limiter resolves the org from the 
 
 ## Response headers
 
-When rate limiting is active and Redis is healthy, protected responses include:
+When rate limiting is active and Redis is healthy, allowed protected responses include:
 
 | Header | Meaning |
 | --- | --- |
@@ -81,6 +81,8 @@ When rate limiting is active and Redis is healthy, protected responses include:
 | `X-RateLimit-Reset` | Unix timestamp when the window resets |
 
 On `429`, the proxy also sets `Retry-After` (seconds) so clients can back off without guessing.
+
+On a rate-limit infrastructure failure, the proxy returns `503 SERVICE_DEGRADED`; this must not be represented as a `429` or as an allowed request.
 
 ## Rate-limited error envelope
 
@@ -121,12 +123,12 @@ There is no per-agent or per-IP tier yet. Hierarchical limits (agent → org →
   </Step>
 </Steps>
 
-CI runs the full `security-integration` job including Redis fail-open cases. See [Testing strategy](/docs/architecture/request-lifecycle) and [current state](/roadmap/current-state).
+CI exercises both a normal shared-limit decision and Redis-failure rejection, including an assertion that the next handler is not called. See [Testing strategy](/docs/architecture/request-lifecycle) and [current state](/roadmap/current-state).
 
 ## Operational guidance
 
-<Callout type="tip" title="Monitor fail-open">
-  Alert on Redis `/ready` failures and elevated request volume during outages. Fail-open preserves availability but removes cost protection temporarily.
+<Callout type="tip" title="Monitor limiter availability">
+  Alert on Redis `/ready` failures and `ibex_proxy_rate_limit_redis_errors_total`. The intentional availability trade-off is a 503 on protected work until shared limiter state is restored.
 </Callout>
 
 - **Staging:** Keep `IBEX_RATE_LIMIT_DEFAULT_RPM` low enough to catch runaway integration tests.

@@ -14,7 +14,7 @@ fullTitle: "Phase 4 — Operator Platform & Multi-Provider"
 </Callout>
 
 <Callout type="info" title="Current status">
-  **Phase 3.5 is complete and 4.C.5 is treated as complete for planning.** The operator dashboard implementation must begin with Track P. The original Track D feature list is superseded by the redesigned sequence below because its runtime, data, authorization, privacy, and production prerequisites were not sufficiently defined.
+  **Phase 3.5 is complete and 4.C.5 is treated as complete for planning.** The operator dashboard implementation must begin with Track P, then 4.D.0. The current fact is that `web/` is the public documentation site, `services/dashboard/` is a provisional compatibility shell, and the broader operator mock is fixture-backed. The proposed target is one canonical `services/console` application; no fixture-backed production path is accepted.
 </Callout>
 
 ## What Phase 4 delivers
@@ -29,14 +29,34 @@ Phase 4 turns IBEX from a proxy and API-oriented system into a governed operator
 | B | Rate Limiting & Quota Enforcement | Foundation | 4.B.1–4.B.3 |
 | C | Multi-Provider Adapters & Resilience | 4.C.5 baseline complete | 4.C.1–4.C.5 |
 | **P** | **Operator Readiness, Evidence & Control Plane** | **Required before dashboard UI** | **4.P.0–4.P.6** |
-| **D** | **Operator Capability Slices** | **Redesigned** | **4.D.1–4.D.6** |
+| **D** | **Operator Capability Slices** | **D0 planned/specification; D1/D2 evidence-gated** | **4.D.0–4.D.6** |
 | E | Release Readiness & Phase Exit | Redesigned | 4.E.1–4.E.4 |
 
 ## Critical path
 
-`4.P.0 → 4.P.1 → 4.P.2 → 4.P.3 → 4.P.4/4.P.5/4.P.6 → 4.D.1 → 4.D.2 → 4.D.3/4.D.4 → 4.D.5/4.D.6 → 4.E.1–4.E.4`
+## Canonical dependency model
 
-Tracks A and B continue independently. Track C provides the completed streaming baseline and must pass its release-evidence checks before realtime dashboard claims are accepted. Track P is the non-negotiable gate before any dashboard UI milestone is marked complete.
+Use these graph terms everywhere: **P0**, **P1**, **D0**, **P6-bootstrap**, **P6-slice-certification**, **D1**, **D2**, **D3**, **D4**, **D5**, **D6**, **E1**, **E2**, **E3**, and **E4**. The acyclic dependency model is:
+
+```text
+P0 → P1
+P0 + P1 → (D0 ∥ P6-bootstrap)
+D0 + P0 + P1 + P6-bootstrap → D1
+P2 + P6-slice-certification → D2
+P3 + P6-slice-certification → D3
+P3 + P6-slice-certification → D4
+P1 + P2 + P4 + P6-slice-certification → D5
+P4 + P6-slice-certification → D6
+P6-bootstrap + D1 + D2 evidence → E1
+resilience evidence → E2
+E1 + E2 → E3
+all P/D evidence + E1 + E2 + E3 + full F4 register disposition (including F4-035) → E4
+```
+
+`P6-bootstrap` establishes the harness and manifest contract. `P6-slice-certification` is produced separately for each D slice after that slice's required P contract is available; it is not a claim that all assurance work is complete. `D0` and `P6-bootstrap` may proceed in parallel only after P0 and P1 are available. `E1` consumes P6-bootstrap plus D1/D2 evidence, `E2` consumes resilience evidence, `E3` follows E1 and E2, and E4 signs off all evidence and the full F4 register, including F4-035 surface separation.
+
+Tracks A and B continue independently. Track C provides a resilience input, not a completion claim. P0 and P1 are first; D0 and P6-bootstrap may proceed in parallel after them. D1 requires D0, P0, P1, and P6-bootstrap. D2–D6 each require their own P contract plus P6-slice-certification. Navigation is not live domain delivery, and org switching is a deferred D1 gate until verified.
+
 
 ## Entry conditions
 
@@ -48,7 +68,7 @@ Tracks A and B continue independently. Track C provides the completed streaming 
 ## Phase exit conditions
 
 1. Track P gates pass for runtime, identity, evidence, privacy, platform, and assurance.
-2. The operator application is deployed on a server-capable topology or a separately deployed SPA/API/SSE topology.
+2. The canonical operator application is deployed on a server-capable topology or a separately deployed SPA/API/SSE topology; `services/dashboard` is compatibility-only until its retirement gate passes.
 3. A nested multi-step agent run can be queried, explained, redacted, replayed safely, and linked to sessions, memories, tools, policies, evaluations, and incidents.
 4. Tenant isolation is demonstrated across synchronous and asynchronous paths.
 5. Usage and cost facts reconcile to immutable events and hard caps are enforced by the proxy.
@@ -67,7 +87,9 @@ The redesign records the following findings as roadmap requirements rather than 
 | Permission constants are not dashboard contracts. | Versioned API, tenancy, field policy, and step-up authorization are required. |
 | ClickHouse TTL is not coordinated deletion. | Retention, tombstones, per-store watermarks, and deletion receipts are required. |
 | Usage/cost tables assumed by the old 4.D.5 do not exist at the required scope. | Immutable usage ledger, rate-card versions, reconciliation, and enforcement are required. |
-| Deployment, restore, and Playwright gates are described but not wired as acceptance gates. | Track P.5/P.6 and Track E make them executable and required. |
+| Deployment, restore, and Playwright gates are described but not wired as acceptance gates. | Track P.5/P6-bootstrap, P6-slice-certification, and Track E make them executable and required. |
+| F4-035 identifies public docs, the compatibility shell, and the fixture-backed prototype as distinct surfaces. | D0 owns the canonical console boundary; E4 signs off its evidence and residual risk. |
+| F4-036/F4-037 capture Proxy profile-default and shared-rate-limit fail-open hazards. | PR 1 requires an explicit `IBEX_ENV`, shared Redis outside development, and 503/no-provider behavior on limiter failure; runtime evidence remains open. |
 
 ## Related documentation
 

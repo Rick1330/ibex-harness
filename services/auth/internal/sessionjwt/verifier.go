@@ -13,6 +13,7 @@ type Verifier struct {
 	keys     []*rsa.PublicKey
 	issuer   TokenIssuer
 	audience TokenAudience
+	keyID    string
 }
 
 // VerifierConfig scopes NewVerifier construction.
@@ -20,6 +21,7 @@ type VerifierConfig struct {
 	PublicKeysPEM PublicKeysPEM
 	Issuer        TokenIssuer
 	Audience      TokenAudience
+	KeyID         string
 }
 
 type jwtWireParts struct {
@@ -37,7 +39,11 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("sessionjwt: no public keys")
 	}
-	return &Verifier{keys: keys, issuer: cfg.Issuer, audience: cfg.Audience}, nil
+	keyID := strings.TrimSpace(cfg.KeyID)
+	if keyID == "" {
+		keyID = "v1"
+	}
+	return &Verifier{keys: keys, issuer: cfg.Issuer, audience: cfg.Audience, keyID: keyID}, nil
 }
 
 // Verify validates signature and standard claims; expectKind must match session_kind.
@@ -46,10 +52,56 @@ func (v *Verifier) Verify(token RawToken, expectKind SessionKind) (Claims, error
 	if err != nil {
 		return Claims{}, err
 	}
+	if err := validateHeader(parts.header); err != nil {
+		return Claims{}, err
+	}
+	if v.keyID != "" && headerKeyID(parts.header) != v.keyID {
+		return Claims{}, ErrInvalidToken
+	}
 	if err := v.verifySignature(parts); err != nil {
 		return Claims{}, err
 	}
 	return v.parseAndValidateClaims(parts.payload, expectKind)
+}
+
+func validateHeader(headerB64 string) error {
+	raw, err := b64dec(headerB64)
+	if err != nil {
+		return ErrInvalidToken
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+		KeyID     string `json:"kid"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return ErrInvalidToken
+	}
+	if header.Algorithm != algRS256 || header.Type != "JWT" {
+		return ErrInvalidToken
+	}
+	return validateKeyID(header.KeyID)
+}
+
+func validateKeyID(kid string) error {
+	if strings.TrimSpace(kid) == "" {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func headerKeyID(headerB64 string) string {
+	raw, err := b64dec(headerB64)
+	if err != nil {
+		return ""
+	}
+	var header struct {
+		KeyID string `json:"kid"`
+	}
+	if json.Unmarshal(raw, &header) != nil {
+		return ""
+	}
+	return strings.TrimSpace(header.KeyID)
 }
 
 func splitJWT(token string) (jwtWireParts, error) {
@@ -83,14 +135,53 @@ func (v *Verifier) parseAndValidateClaims(payloadB64 string, expectKind SessionK
 	if err := json.Unmarshal(raw, &claims); err != nil {
 		return Claims{}, ErrInvalidToken
 	}
-	if claims.Issuer != string(v.issuer) || claims.Audience != string(v.audience) {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.SessionKind != string(expectKind) {
-		return Claims{}, ErrInvalidToken
-	}
-	if claims.ExpiresAt < time.Now().UTC().Unix() {
-		return Claims{}, ErrExpired
+	if err := validateClaims(claims, v.issuer, v.audience, expectKind); err != nil {
+		return Claims{}, err
 	}
 	return claims, nil
+}
+
+func validateClaims(claims Claims, issuer TokenIssuer, audience TokenAudience, expectKind SessionKind) error {
+	if err := validateIssuerAudience(claims, issuer, audience); err != nil {
+		return err
+	}
+	if err := validateKindAndIdentity(claims, expectKind); err != nil {
+		return err
+	}
+	return validateClaimTimestamps(claims, expectKind)
+}
+
+func validateIssuerAudience(claims Claims, issuer TokenIssuer, audience TokenAudience) error {
+	if claims.Issuer != string(issuer) || claims.Audience != string(audience) {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func validateKindAndIdentity(claims Claims, expectKind SessionKind) error {
+	if claims.SessionKind != string(expectKind) {
+		return ErrInvalidToken
+	}
+	if !hasRequiredIdentityClaims(claims) || claims.SessionID == "" {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func validateClaimTimestamps(claims Claims, expectKind SessionKind) error {
+	now := time.Now().UTC().Unix()
+	if claims.ExpiresAt < now {
+		return ErrExpired
+	}
+	if claims.NotBefore > now {
+		return ErrInvalidToken
+	}
+	if expectKind == KindRefresh && claims.FamilyID == "" {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func hasRequiredIdentityClaims(claims Claims) bool {
+	return claims.Subject != "" && claims.OrgID != "" && claims.JTI != "" && claims.IssuedAt > 0
 }

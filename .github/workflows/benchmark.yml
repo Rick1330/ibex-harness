@@ -185,26 +185,31 @@ jobs:
           k6_use_chat=0
           case "$profile" in
             full)
-              echo "go_count=5" >> "$GITHUB_OUTPUT"
-              echo "k6_vus=100" >> "$GITHUB_OUTPUT"
-              echo "k6_duration=2m" >> "$GITHUB_OUTPUT"
+              go_count=5
+              k6_vus=100
+              k6_duration=2m
               k6_use_chat=1
               ;;
             smoke)
-              echo "go_count=1" >> "$GITHUB_OUTPUT"
-              echo "k6_vus=15" >> "$GITHUB_OUTPUT"
-              echo "k6_duration=15s" >> "$GITHUB_OUTPUT"
+              go_count=1
+              k6_vus=15
+              k6_duration=15s
               run_proxy_http_bench=0
               ;;
             *)
-              echo "go_count=2" >> "$GITHUB_OUTPUT"
-              echo "k6_vus=25" >> "$GITHUB_OUTPUT"
-              echo "k6_duration=30s" >> "$GITHUB_OUTPUT"
+              go_count=2
+              k6_vus=25
+              k6_duration=30s
               ;;
           esac
-          echo "run_proxy_http_bench=$run_proxy_http_bench" >> "$GITHUB_OUTPUT"
-          echo "k6_use_chat=$k6_use_chat" >> "$GITHUB_OUTPUT"
-          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          {
+            echo "go_count=$go_count"
+            echo "k6_vus=$k6_vus"
+            echo "k6_duration=$k6_duration"
+            echo "run_proxy_http_bench=$run_proxy_http_bench"
+            echo "k6_use_chat=$k6_use_chat"
+            echo "profile=$profile"
+          } >> "$GITHUB_OUTPUT"
           echo "BENCH_PROFILE=$profile" >> "$GITHUB_ENV"
           echo "Using BENCH_PROFILE=$profile"
 

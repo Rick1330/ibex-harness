@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 SESSION_KIND_ACCESS = "access"
 SESSION_KIND_REFRESH = "refresh"
 SESSION_KIND_STEP_UP = "step_up"
+_BAD_HEADER = "bad header"
 
 # Bound externally supplied cookies/headers before JWT parse (DoS / memory).
 MAX_SESSION_TOKEN_LEN = 8192
@@ -55,6 +56,9 @@ class SessionClaims:
     jti: str
     # Verifier outcome (not the unverified JWT header alg).
     verify_method: str  # "RS256" | "HS256"
+    session_id: str = ""
+    family_id: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +71,9 @@ class TokenIssueOpts:
     subject: str
     session_kind: str
     ttl_seconds: int
+    session_id: str | None = None
+    family_id: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +83,7 @@ class TokenVerifyOpts:
     audience: str
     expect_kind: str
     public_keys_pem: str | None = None
+    key_id: str = "v1"
 
 
 def issue_token_opts(opts: TokenIssueOpts) -> str:
@@ -89,12 +97,18 @@ def issue_token_opts(opts: TokenIssueOpts) -> str:
         "permissions": opts.permissions,
         "session_kind": opts.session_kind,
         "iat": now,
+        "nbf": now,
         "exp": now + opts.ttl_seconds,
         "jti": secrets.token_urlsafe(16),
+        "sid": opts.session_id or secrets.token_urlsafe(16),
         "provisional": True,  # 4.P.0 marker — remove when auth issues sessions
     }
+    if opts.family_id:
+        payload["fid"] = opts.family_id
+    if opts.action:
+        payload["action"] = opts.action
     body = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}."
-    body += _b64url(json.dumps(payload, separators=(',', ':')).encode())
+    body += _b64url(json.dumps(payload, separators=(",", ":")).encode())
     sig = hmac.new(opts.secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64url(sig)}"
 
@@ -175,10 +189,33 @@ def _header_alg(header_b64: str) -> str:
     try:
         header = json.loads(_b64url_decode(header_b64))
     except (json.JSONDecodeError, SessionStubError) as exc:
-        raise SessionStubError("bad header") from exc
+        raise SessionStubError(_BAD_HEADER) from exc
     if not isinstance(header, dict):
-        raise SessionStubError("bad header")
+        raise SessionStubError(_BAD_HEADER)
     return str(header.get("alg", ""))
+
+
+def _header_typ(header_b64: str) -> str:
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+    except (json.JSONDecodeError, SessionStubError) as exc:
+        raise SessionStubError(_BAD_HEADER) from exc
+    if not isinstance(header, dict):
+        raise SessionStubError(_BAD_HEADER)
+    return str(header.get("typ", ""))
+
+
+def _header_kid(header_b64: str) -> str:
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+    except (json.JSONDecodeError, SessionStubError) as exc:
+        raise SessionStubError(_BAD_HEADER) from exc
+    if not isinstance(header, dict):
+        raise SessionStubError(_BAD_HEADER)
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid.strip():
+        raise SessionStubError("key id missing")
+    return kid.strip()
 
 
 def peek_token_alg(token: str) -> str:
@@ -202,28 +239,76 @@ def _session_kind_of(payload: dict[str, Any]) -> str | None:
 
 
 def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
-    return SessionClaims(
-        sub=str(payload.get("sub", "")),
-        org_id=UUID(str(payload["org_id"])),
-        permissions=int(payload.get("permissions", 0)),
-        session_kind=str(_session_kind_of(payload)),
-        exp=int(payload.get("exp", 0)),
-        iat=int(payload.get("iat", 0)),
-        jti=str(payload.get("jti", "")),
-        verify_method=verify_method,
-    )
+    try:
+        return SessionClaims(
+            sub=str(payload["sub"]),
+            org_id=UUID(str(payload["org_id"])),
+            permissions=int(payload.get("permissions", 0)),
+            session_kind=str(_session_kind_of(payload)),
+            exp=int(payload["exp"]),
+            iat=int(payload["iat"]),
+            jti=str(payload["jti"]),
+            session_id=str(payload.get("sid", "")),
+            family_id=_optional_str(payload, "fid"),
+            action=_optional_str(payload, "action"),
+            verify_method=verify_method,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SessionStubError("missing required claims") from exc
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    if key not in payload or payload[key] is None:
+        return None
+    return str(payload[key])
 
 
 def _validate_claims(
     payload: dict[str, Any], opts: TokenVerifyOpts, *, verify_method: str
 ) -> SessionClaims:
+    _assert_issuer_audience(payload, opts)
+    _assert_expected_kind(payload, opts.expect_kind)
+    _assert_temporal_claims(payload)
+    claims = _to_claims(payload, verify_method=verify_method)
+    _assert_rs256_session_id(claims, verify_method)
+    return claims
+
+
+def _assert_expected_kind(payload: dict[str, Any], expect_kind: str) -> None:
+    if _session_kind_of(payload) != expect_kind:
+        raise SessionStubError("wrong token kind")
+
+
+def _assert_rs256_session_id(claims: SessionClaims, verify_method: str) -> None:
+    if verify_method == "RS256" and not claims.session_id:
+        raise SessionStubError("missing session claim")
+
+
+def _assert_issuer_audience(payload: dict[str, Any], opts: TokenVerifyOpts) -> None:
     if payload.get("iss") != opts.issuer or payload.get("aud") != opts.audience:
         raise SessionStubError("issuer/audience mismatch")
-    if _session_kind_of(payload) != opts.expect_kind:
-        raise SessionStubError("wrong token kind")
-    if int(payload.get("exp", 0)) < int(time.time()):
+
+
+def _assert_temporal_claims(payload: dict[str, Any]) -> None:
+    now = int(time.time())
+    try:
+        exp = int(payload.get("exp", 0))
+    except (TypeError, ValueError) as exc:
+        raise SessionStubError("invalid expiration claim") from exc
+    if exp < now:
         raise SessionStubError("expired")
-    return _to_claims(payload, verify_method=verify_method)
+    _assert_not_before(payload, now)
+
+
+def _assert_not_before(payload: dict[str, Any], now: int) -> None:
+    if "nbf" not in payload:
+        return
+    try:
+        not_before = int(payload["nbf"])
+    except (TypeError, ValueError) as exc:
+        raise SessionStubError("invalid not-before claim") from exc
+    if not_before > now:
+        raise SessionStubError("not yet valid")
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
@@ -245,6 +330,10 @@ def _verify_rs256_token(
 ) -> SessionClaims:
     if not opts.public_keys_pem:
         raise SessionStubError("no verify material")
+    if _header_typ(parts.header_b64) != "JWT":
+        raise SessionStubError("typ mismatch")
+    if _header_kid(parts.header_b64) != opts.key_id.strip():
+        raise SessionStubError("key id mismatch")
     _verify_rs256(parts, public_keys_pem=opts.public_keys_pem)
     return _validate_claims(payload, opts, verify_method="RS256")
 
@@ -256,6 +345,8 @@ def _verify_hs256_token(
 ) -> SessionClaims:
     if not opts.secret:
         raise SessionStubError("no verify material")
+    if _header_typ(parts.header_b64) != "JWT":
+        raise SessionStubError("typ mismatch")
     _verify_hs256(parts, secret=opts.secret)
     _LOG.warning(
         "provisional_hs256_verify=1 issuer=%s audience=%s",

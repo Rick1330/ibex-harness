@@ -1,6 +1,33 @@
-# IBEX Harness - Complete API Documentation
+# IBEX Harness - API Documentation
 
-> **Operator platform contract:** Phase 4 dashboard work is gated by Track P. The operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
+> **Status boundary:** This page contains a mixture of verified Phase 1 service APIs and historical/specification reference material. Do not treat an endpoint section as proof that a route is mounted. The canonical authenticated UI is `services/console`; `web/` is public documentation; `services/dashboard/` is a temporary compatibility shell.
+
+## Implementation status and ownership
+
+| Surface | Status | Rule |
+|---|---|---|
+| Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`) | **Implemented** in the documented Phase 1 baseline | Auth service owns authentication and revocation. |
+| Proxy HTTP auth probes, health/readiness/metrics, and chat stub | **Implemented** only where verified by the Phase 1 service tests; the chat stub returns `501` | Do not infer operator product APIs from proxy routes. |
+| API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | Verify permission boundary, secure-cookie configuration, tenant scope, no-store behavior, and staging evidence before production use. |
+| `context`, `overview`, `platform/health`, `events` operator composition | **Specified-not-implemented as a complete operator contract** | Owning API service must publish the OpenAPI/SSE contract and evidence. |
+| Memories, sessions, agents, directives, analytics, incidents, Explore, Trace Inspector, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
+
+### Contract ownership and validation
+
+The owning backend service is authoritative for each REST/gRPC/SSE contract. The console server-only DAL/BFF must authorize the session and organization, call the owner, validate responses at runtime, redact fields, and return minimal DTOs. CI must snapshot OpenAPI, generate the TypeScript client from the snapshot, fail on snapshot/client drift, and validate SSE envelopes including version, event ID, sequence, and `Last-Event-ID` resume semantics. Hand-maintained UI types and fixture routes are not API implementations.
+
+### Operator contract boundary
+
+The first operator slice is limited to server-owned context, overview, platform health, and operator events. Exact deployed paths, hostnames, origins, and workflows are intentionally not asserted here until verified. Personalized RSC, BFF, export, and SSE responses default to request-time `no-store`; any cache exception requires an explicit tenant-safe key design and two-role/two-tenant cache tests. Cookie-authenticated mutations require CSRF protection; cross-origin deployments require exact credentialed CORS allowlists and Origin/Referer validation.
+
+### Security and hostile content
+
+Every operator request, stream, export, deletion, replay, and asynchronous job derives organization context from server-side claims and enforces membership, permissions, resource scope, and step-up where required. Browser-supplied `org_id` is not trusted. Prompt, tool, HTML, Markdown, link, memory, and export content is untrusted and must be rendered inert or sanitized. Secrets and bearer tokens are never returned in general list/read responses.
+
+---
+
+> **Operator platform contract (specification-only):** The historical Phase 4 dashboard work is gated by Track P. The planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
 > **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
 >
 > **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented**. See [CURRENT_STATE.md](roadmap/CURRENT_STATE.md).
@@ -25,9 +52,9 @@
 
 ## Operator Evidence Plane Contract
 
-The operator dashboard is an investigation client over a canonical evidence plane. Every evidence record uses stable `event_id` and `source` identity, `trace_id`, `span_id`, `parent_span_id`, explicit `session_id`, `turn_id`, `request_id`, `checkpoint_id`, `aggregate_seq`, `schema_version`, timestamps, operation kind, status/error, capture mode, sample decision, and completeness metadata. `trace_id` represents causal distributed execution; `session_id` represents conversation grouping; neither may be inferred from the other.
+The planned operator UI is an investigation client over a canonical evidence plane. This is a specification, not evidence that an operator route is mounted. Every evidence record is intended to use stable `event_id` and `source` identity, `trace_id`, `span_id`, `parent_span_id`, explicit `session_id`, `turn_id`, `request_id`, `checkpoint_id`, `aggregate_seq`, `schema_version`, timestamps, operation kind, status/error, capture mode, sample decision, and completeness metadata. `trace_id` represents causal distributed execution; `session_id` represents conversation grouping; neither may be inferred from the other.
 
-### Required dashboard API behavior
+### Planned operator API behavior (specification-only)
 
 | Requirement | Contract |
 |---|---|
@@ -89,15 +116,9 @@ data: {"schema_version":"…","org_id":"…","aggregate_seq":42,"completeness":"
 
 Clients reconnect with `Last-Event-ID`. Server deduplicates by `event_id`.
 
-## 🌐 Base URLs
+## 🌐 Base URLs and origins
 
-```text
-Production:    https://api.ibexharness.com
-Staging:       https://api.staging.ibexharness.com
-Local Dev:     http://localhost:8000
-LLM Proxy:     https://proxy.ibexharness.com (separate service)
-Local Proxy:   http://localhost:8080
-```
+No production, staging, sandbox, docs, operator, or API hostname is asserted by this repository baseline. Configure origins through the approved topology ADR and environment manifests; do not copy example hostnames into clients or tests. Local service ports may be documented by the owning service only when verified.
 
 ---
 
@@ -109,16 +130,16 @@ Local Proxy:   http://localhost:8080
 Authorization: Bearer ibex_pat_7f3k2m9x...
 ```
 
-All SDK and programmatic API calls use Bearer token authentication. Tokens are created via the dashboard or CLI.
+All SDK and programmatic API calls use Bearer token authentication. Token creation ownership and availability are service-specific; this reference does not prove that an IBEX Console route or dashboard flow is mounted.
 
-### Session Token Authentication (Dashboard)
+### Historical/specification example: session token authentication (operator UI)
 
 ```http
 Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...
 X-IBEX-Session: {session_id}
 ```
 
-Dashboard sessions use short-lived JWT tokens (1 hour) with automatic refresh via the refresh token flow.
+The JWT lifetime, refresh-token lifetime, rotation/reuse behavior, and whether refresh is automatic are **not verified by this repository baseline**. Treat this example as a reference contract only; the AuthService-owned session implementation and environment configuration must establish the actual durations and refresh behavior before use.
 
 ### Request Signing (Webhooks)
 
@@ -133,7 +154,7 @@ Verify: `HMAC-SHA256(secret, timestamp + "." + body)`
 
 ---
 
-## 📋 Common Patterns
+## 📋 Common patterns (reference contract)
 
 ### Request Headers
 
@@ -195,7 +216,7 @@ Every error uses this structure:
     "code": "MEMORY_NOT_FOUND",
     "message": "Memory with ID '550e8400-...' not found",
     "detail": "The memory may have been deleted or you may not have permission to access it.",
-    "docs_url": "https://docs.ibexharness.com/errors/MEMORY_NOT_FOUND",
+    "docs_url": "{public-docs-origin}/errors/MEMORY_NOT_FOUND",
     "request_id": "req_7f3k2m9x",
     "timestamp": "2024-01-15T10:30:45.123Z",
     "field_errors": null
@@ -203,7 +224,7 @@ Every error uses this structure:
 }
 ```
 
-**Validation errors** include field-level details:
+**Validation errors** include field-level details. The `docs_url` shown below is a reference/example field only; `docs.ibexharness.com` is not a verified hostname and must not be copied into clients or deployment configuration:
 
 ```json
 {
@@ -314,7 +335,7 @@ X-Idempotency-Replayed: false  -- true if returning cached result
 
 ---
 
-## 🔌 API Reference
+## 🔌 API reference catalog (status-qualified)
 
 ### API Version: v1
 
@@ -1267,7 +1288,7 @@ already succeeded and the buffer was acknowledged, no additional work is enqueue
 
 **Get session replay data**
 
-Returns events for session replay in the dashboard.
+Returns events for session replay in the planned operator UI (specification-only; this section does not prove that a route is mounted).
 
 **Required Permission:** `session:read`
 
@@ -2833,14 +2854,14 @@ Month 12:  Old version receives no new features
 Month 13:  Old version returns 410 Gone with migration guide
 ```
 
-**Deprecation Headers:**
+**Deprecation Headers (reference example only; hostnames and dates require verification):**
 
 ```http
 X-IBEX-Deprecation: true
 X-IBEX-Deprecation-Date: 2025-01-15
 X-IBEX-Sunset-Date: 2025-06-01
-X-IBEX-Successor: https://api.ibexharness.com/v2/
-Link: <https://docs.ibexharness.com/migration/v1-to-v2>; rel="deprecation"
+X-IBEX-Successor: {api-origin}/v2/
+Link: <{public-docs-origin}/migration/v1-to-v2>; rel="deprecation"
 ```
 
 ---
@@ -2862,28 +2883,10 @@ X-IBEX-Test-Mode: true
 - Data created in test namespace (auto-deleted after 24h)
 - Clearly marked in responses: `"test_mode": true`
 
-### Sandbox Environment
+### Sandbox and API playground
 
-```text
-Base URL: https://sandbox.ibexharness.com
-```
+No sandbox hostname or live API playground is verified by the repository baseline. If either is provisioned later, document its owner, data isolation, credential policy, reset behavior, and approved origin in the environment record rather than treating this reference page as deployment evidence.
 
-- Isolated from production data
-- Free to use for development
-- Seeded with sample data
-- Reset weekly (Sundays 00:00 UTC)
+## IBEX Console implementation checklist
 
-### API Playground
-
-Interactive documentation with live API testing:
-
-```text
-https://docs.ibexharness.com/playground
-```
-
-Features:
-
-- Try any endpoint with your real credentials
-- View request/response in formatted JSON
-- Generate SDK code snippets
-- Export as curl, Python, TypeScript, Go
+Before an operator route is called implemented, attach all of the following to the owning service and release record: OpenAPI snapshot and diff; generated-client freshness; runtime DTO validation tests; context/overview/health/events owner; permission and two-tenant negative tests; `no-store`/cache evidence; CSRF/CORS/cookie/security-header checks; SSE reconnect, deduplication, slow-client, and drain evidence; performance results; staged authenticated browser report; immutable artifact and rollback record.

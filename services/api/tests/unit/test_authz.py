@@ -82,6 +82,7 @@ def test_assert_path_org_mismatch() -> None:
 
 
 def test_require_legal_hold_manage_step_up() -> None:
+    import asyncio
     from unittest.mock import MagicMock
 
     from authclient.permissions import LEGAL_HOLD_MANAGE, bitmap_for_role
@@ -97,12 +98,15 @@ def test_require_legal_hold_manage_step_up() -> None:
     )
     request = MagicMock()
     request.state.ibex_step_up_ok = False
+    missing_step_up = dep(request=request, token=token)
     with pytest.raises(ApiError) as exc:
-        dep(request=request, token=token)
+        asyncio.run(missing_step_up)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
     request.state.ibex_step_up_ok = True
-    assert dep(request=request, token=token) is token
+    with_step_up = dep(request=request, token=token)
+    with pytest.raises(ApiError):
+        asyncio.run(with_step_up)
     assert LEGAL_HOLD_MANAGE
 
 
@@ -131,15 +135,74 @@ def test_assert_operator_permission_gates() -> None:
         operator_allow_delete=True,
     )
     with pytest.raises(ApiError) as exc:
-        assert_operator_permission(settings, 0, OPERATOR_DELETE, step_up_ok=True)
+        assert_operator_permission(settings, 0, OPERATOR_DELETE)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
     with pytest.raises(ApiError) as exc:
-        assert_operator_permission(
-            settings, OPERATOR_DELETE, OPERATOR_DELETE, step_up_ok=False
-        )
+        assert_operator_permission(settings, OPERATOR_DELETE, OPERATOR_DELETE)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
-    assert_operator_permission(
-        settings, OPERATOR_DELETE, OPERATOR_DELETE, step_up_ok=True
+
+def test_maybe_operator_session_returns_none_without_step_up_header() -> None:
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from app.authz import _maybe_operator_session
+
+    request = MagicMock()
+    request.headers.get.return_value = None
+    assert asyncio.run(_maybe_operator_session(request)) is None
+    request.headers.get.assert_called_once_with("X-IBEX-Step-Up")
+
+
+def test_maybe_operator_session_delegates_when_step_up_header_present() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from uuid import uuid4
+
+    from app.authz import _maybe_operator_session
+    from app.operator_session_auth import OperatorSessionAuthorization
+
+    request = MagicMock()
+    request.headers.get.return_value = "proof"
+    expected = OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="sid")
+    with patch("app.authz.require_operator_session", new=AsyncMock(return_value=expected)) as require:
+        got = asyncio.run(_maybe_operator_session(request))
+    assert got is expected
+    require.assert_awaited_once_with(request)
+
+
+def test_assert_operator_permission_kill_switches() -> None:
+    from unittest.mock import MagicMock
+
+    from apierror_py import INSUFFICIENT_PERMISSIONS
+    from authclient.permissions import (
+        OPERATOR_EXPORT,
+        OPERATOR_RAW_READ,
+        OPERATOR_REPLAY,
+        SECRET_USE,
     )
+
+    from app.authz import assert_operator_permission
+    from app.errors import ApiError
+
+    cases = [
+        ({"operator_allow_export": False}, OPERATOR_EXPORT),
+        ({"operator_allow_replay": False}, OPERATOR_REPLAY),
+        ({"operator_allow_raw_read": False}, OPERATOR_RAW_READ),
+        ({"operator_allow_secret_use": False}, SECRET_USE),
+    ]
+    for kw, perm in cases:
+        settings = MagicMock(operator_feature_enabled=True, **kw)
+        for attr in (
+            "operator_allow_export",
+            "operator_allow_replay",
+            "operator_allow_raw_read",
+            "operator_allow_secret_use",
+            "operator_allow_delete",
+        ):
+            if attr not in kw:
+                setattr(settings, attr, True)
+        with pytest.raises(ApiError) as exc:
+            assert_operator_permission(settings, perm, perm)
+        assert exc.value.code == INSUFFICIENT_PERMISSIONS

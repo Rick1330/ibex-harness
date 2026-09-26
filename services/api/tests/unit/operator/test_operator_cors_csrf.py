@@ -83,3 +83,44 @@ def test_build_cors_middleware_strips_star() -> None:
     mw = build_cors_middleware(Starlette(), allow_origins=["http://localhost:3100", "*"])
     assert "http://localhost:3100" in mw.allow_origins
     assert "*" not in mw.allow_origins
+
+
+@pytest.mark.parametrize(
+    ("origin", "referer", "expected_status", "expected_code"),
+    [
+        (None, "https://operator.ibexharness.com/settings", 401, None),
+        (None, "https://evil.example/settings", 403, "origin_failed"),
+        (None, None, 403, "origin_failed"),
+        ("https://evil.example", "https://operator.ibexharness.com/", 403, "origin_failed"),
+    ],
+)
+def test_production_csrf_origin_and_referer_policy(
+    origin: str | None,
+    referer: str | None,
+    expected_status: int,
+    expected_code: str | None,
+) -> None:
+    from app.session_stub import mint_csrf_token
+    from tests.unit.operator.conftest import CSRF_SECRET
+
+    settings = operator_settings(
+        environment="staging",
+        jwt_hmac_secret=None,
+        jwt_public_keys_pem="configured-public-key",
+        redis_url="redis://127.0.0.1:6379/0",
+        cookie_secure=True,
+    )
+    csrf = mint_csrf_token(secret=CSRF_SECRET)
+    headers = {
+        "Cookie": f"ibex_session=opaque; ibex_csrf={csrf}",
+        "X-CSRF-Token": csrf,
+    }
+    if origin is not None:
+        headers["Origin"] = origin
+    if referer is not None:
+        headers["Referer"] = referer
+    with create_operator_app(settings=settings) as (_, client):
+        response = client.post(MUTATION, headers=headers)
+    assert response.status_code == expected_status
+    if expected_code:
+        assert response.json()["error"]["code"] == expected_code

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -63,6 +65,19 @@ class CSRFMiddleware:
         refresh = cookies.get(self._settings.dashboard_refresh_cookie_name)
         return bool(access or refresh)
 
+    def _origin_allowed(self, headers: dict[str, str]) -> bool:
+        if self._settings.environment == "development":
+            return True
+        allowed = set(self._settings.cors_origin_list())
+        origin = headers.get("origin")
+        if origin:
+            return origin in allowed
+        referer = headers.get("referer")
+        if not referer:
+            return False
+        parsed = urlparse(referer)
+        return f"{parsed.scheme}://{parsed.netloc}" in allowed
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if self._should_skip(scope):
             await self.app(scope, receive, send)
@@ -73,6 +88,10 @@ class CSRFMiddleware:
         if not self._session_cookies_present(cookies):
             # Bearer-PAT callers are not cookie sessions; CSRF does not apply.
             await self.app(scope, receive, send)
+            return
+
+        if not self._origin_allowed(headers):
+            await _csrf_json("origin_failed", "origin is not allowed", 403)(scope, receive, send)
             return
 
         secret = self._settings.dashboard_csrf_secret

@@ -4,7 +4,7 @@
 
 This document defines **how IBEX Harness is built, released, deployed, and rolled back** safely.
 
-**Current shipped surface:** `proxy` + `auth` (+ shared packages/infra). Later services (`embedder`, `memory`, `context`, `worker`, `api`, `dashboard`, `mcp-memory`, optional `tokenizer-service`) follow the redesigned phase sequence in [`web/content/roadmap/`](../content/roadmap/) and [`services/README.md`](../../services/README.md). Do not assume every service listed below is deployed today.
+**Current shipped surface:** `proxy` + `auth` (+ shared packages/infra), as verified by the baseline. Later services (`embedder`, `memory`, `context`, `worker`, `api`, `console`, `mcp-memory`, optional `tokenizer-service`) follow the redesigned phase sequence in [`web/content/roadmap/`](../content/roadmap/) and [`services/README.md`](../../services/README.md). Do not assume every service listed below is deployed today.
 
 IBEX Harness has (target topology):
 
@@ -21,6 +21,16 @@ A deployment strategy must guarantee:
 - **fast rollback** of application code (forward-only DB migrations),
 - **observability gates** to detect regressions during rollout,
 - **no secret leakage** through CI/CD or Helm values.
+
+---
+
+## 1.1 IBEX Console runtime and evidence boundary
+
+`services/console` is the canonical authenticated operator application. `web/` is the public documentation site. `services/dashboard` is a temporary compatibility shell only. The baseline does not verify an IBEX Console package, workload, ingress, hostname, deployment workflow, or production artifact; those must not be inferred from this target deployment document.
+
+The runtime owner must approve either (a) a versioned console static artifact/workload with an explicitly owned BFF/API/SSE topology, or (b) a time-boxed transition runtime. The owner must also define secure cookies, CSRF, exact credentialed CORS when cross-origin, security headers, authenticated SSE drain, and default `Cache-Control: no-store` for personalized/RSC/API/export responses. The API owns context, overview, platform-health, and events truth; console owns presentation and server-only DAL/BFF composition, not authorization or evidence.
+
+Staging promotion is an authenticated browser promotion gate for the IBEX Console artifact. It must include OpenAPI snapshot/generated-client/runtime validation, four-role/two-tenant contract and browser checks, accessibility, visual, hostile-content, cache, SSE, and performance gates, plus immutable artifact and rollback evidence. No public-docs smoke test is equivalent. Retire the compatibility shell only after parity, promotion, rollback, and removal-reference gates are recorded.
 
 ---
 
@@ -65,11 +75,14 @@ A deployment strategy must guarantee:
 
 ## 4) Source Control → Artifact → Deployment Flow (High-Level)
 
-### 4.1 “Main is always releasable”
+### 4.1 Release policy versus verified evidence
 
-- `main` must remain deployable at all times.
-- Every merge to `main` triggers a staging deployment.
-- Production deployments occur from tagged releases.
+The following are release-policy requirements, not evidence that the corresponding workflow exists in this baseline:
+
+- `main` should remain deployable.
+- A merge may trigger staging only through a verified workflow and artifact record.
+- Production promotion requires an approved release and immutable digest.
+- IBEX Console staging promotion additionally requires the authenticated browser gate in §1.1.
 
 ### 4.2 Artifact immutability
 
@@ -80,7 +93,7 @@ A deployment strategy must guarantee:
 
 - Desired deployment state is declared in Git.
 - ArgoCD reconciles cluster state to Git state.
-- Rollback is a Git revert + Argo sync.
+- For an actually configured GitOps workload, rollback is a Git revert + Argo sync. This document does not establish that such a workflow exists for console.
 
 ---
 
@@ -149,7 +162,7 @@ For each deployable service:
 
 ### 6.3 Progressive delivery strategies (per component)
 
-#### Stateless services (proxy / auth / embedder / tokenizer-service / mcp-memory / memory / context / api / dashboard)
+#### Stateless services (proxy / auth / embedder / tokenizer-service / mcp-memory / memory / context / api / console)
 
 Recommended rollout: **blue/green** or **canary** depending on risk. Exact service inventory:
 [`services/README.md`](../../services/README.md) (planning baseline).
@@ -191,8 +204,9 @@ If self-managed:
 
 ### 7.1 Stateless services
 
-- Roll back by reverting Git desired state to previous image digest
-- ArgoCD sync applies rollback
+- For a deployed service with recorded release evidence, roll back by reverting Git desired state to the prior evidence-backed artifact/image digest and syncing the configured controller.
+- For console, the rollback record must identify the prior evidence-backed artifact/digest; if no such artifact is verified, disable or remove the operator origin rather than claiming a rollback to an unverified build.
+- Public documentation must remain independently available during an IBEX Console rollback or origin disablement.
 
 ### 7.2 Database migrations (forward-only)
 
@@ -390,7 +404,9 @@ In environments where everything deploys together:
 4. Proxy (depends on Auth + Context)
 5. Worker service (depends on Memory/Embedder/ClickHouse)
 6. API server (management plane)
-7. Dashboard
+7. `services/console` (canonical authenticated operator application; deploy only after its artifact, runtime owner, and promotion evidence are verified)
+
+`services/dashboard` is not a deployment-order product. It is a temporary compatibility shell only and may be used as a transition fallback, not as the canonical operator deployment.
 
 **Important:** Many services can start without their deps (but not be ready).
 Readiness probes control routing. Do not “hard fail” startup unless configuration is missing.
@@ -401,14 +417,15 @@ Readiness probes control routing. Do not “hard fail” startup unless configur
 
 ### 14.1 Rollback playbook (stateless)
 
-1. Identify last known good image digest
-2. Update Git desired state (Helm values or manifest)
-3. ArgoCD sync
-4. Confirm:
+1. Identify the prior evidence-backed artifact/image digest for the affected service.
+2. If console has no verified prior artifact/digest, disable or remove the operator origin and keep public documentation independently available; do not roll back to an unverified build.
+3. Update Git desired state (Helm values or manifest) only when the prior artifact/digest is recorded.
+4. ArgoCD sync, if a configured GitOps workload exists.
+5. Confirm:
    - error rate back to baseline
    - latency back to baseline
    - fallbacks return to baseline
-5. Write incident notes with:
+6. Write incident notes with:
    - rollback reason
    - metrics evidence
    - follow-up issue
@@ -439,7 +456,7 @@ For any production deployment:
   - auth token validation
   - memory write/read basic
   - proxy request basic
-  - dashboard basic load
+  - authenticated IBEX Console browser promotion suite; do not substitute public-docs or compatibility-shell load
 
 ---
 
@@ -456,7 +473,7 @@ Minimum automated smoke tests:
    - context injected
    - trace emitted
 6. Worker: enqueue a small job and confirm it completes
-7. Dashboard: render agents list (server component path)
+7. IBEX Console: run the authenticated staging browser promotion suite; do not substitute a public-docs or compatibility-shell load check.
 
 ---
 

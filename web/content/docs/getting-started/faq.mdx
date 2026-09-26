@@ -41,7 +41,7 @@ make db-migrate
 
 ### Does the proxy fail open on rate limits?
 
-Yes — if Redis is unreachable, requests proceed without rate limiting. This is intentional for availability; see the security integration tests in `services/proxy`.
+No. If shared Redis is unreachable, the Proxy returns `503 SERVICE_DEGRADED` and does not call the provider. Only local development may omit `REDIS_URL` and use the explicit Noop limiter; see [ADR-0081](/docs/adr/0081-fail-closed-proxy-runtime-controls).
 
 ### Does agent verification fail closed?
 
