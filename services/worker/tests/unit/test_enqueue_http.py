@@ -427,6 +427,39 @@ def test_ready_requires_enqueue_token_and_redis_url() -> None:
     assert TestClient(create_enqueue_app(_settings(redis_url=""))).get("/ready").status_code == 503
 
 
+def test_broker_url_falls_back_to_redis_url_when_resolved_missing() -> None:
+    from app.enqueue_http import _broker_url
+
+    settings = SimpleNamespace(redis_url="redis://fallback:6379/1")
+    assert _broker_url(settings) == "redis://fallback:6379/1"
+    assert (
+        _broker_url(SimpleNamespace(resolved_broker_url="  ", redis_url="redis://x")) == "redis://x"
+    )
+    assert _broker_url(SimpleNamespace(resolved_broker_url=None, redis_url=None)) is None
+
+
+def test_ready_uses_redis_url_fallback_when_resolved_broker_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Redis:
+        async def ping(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_a, **_k: _Redis())
+    settings = SimpleNamespace(
+        enqueue_api_token=SecretStr("sekrit"),
+        enqueue_host="127.0.0.1",
+        enqueue_port=18007,
+        redis_url="redis://fallback",
+    )
+    response = TestClient(create_enqueue_app(settings)).get("/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
 def test_ready_returns_ready_after_redis_ping(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Redis:
         def __init__(self) -> None:
