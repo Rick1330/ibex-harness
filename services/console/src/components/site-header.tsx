@@ -173,10 +173,12 @@ function PreviewPageFreshness() {
   )
 }
 
-function themeIconFor(current: "system" | "light" | "dark") {
-  if (current === "light") return IconSun
-  if (current === "dark") return IconMoon
-  return IconDeviceDesktop
+function ThemeToggleIcon({
+  current,
+}: Readonly<{ current: "system" | "light" | "dark" }>) {
+  if (current === "light") return <IconSun className="size-4" />
+  if (current === "dark") return <IconMoon className="size-4" />
+  return <IconDeviceDesktop className="size-4" />
 }
 
 function ThemeToggle() {
@@ -186,7 +188,6 @@ function ThemeToggle() {
     ? (theme as (typeof order)[number])
     : "system"
   const next = order[(order.indexOf(current) + 1) % order.length]
-  const ThemeIcon = themeIconFor(current)
 
   return (
     <Button
@@ -197,7 +198,7 @@ function ThemeToggle() {
       title={`Theme: ${current} (click for ${next})`}
       aria-label={`Switch theme, current ${current}`}
     >
-      <ThemeIcon className="size-4" />
+      <ThemeToggleIcon current={current} />
     </Button>
   )
 }
