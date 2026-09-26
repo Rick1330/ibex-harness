@@ -100,7 +100,7 @@ async def ready(request: Request) -> Response:
 
         client = Redis.from_url(redis_url, socket_timeout=0.5)
         await asyncio.wait_for(client.ping(), timeout=0.5)
-    except (RedisError, OSError, TimeoutError):
+    except (RedisError, OSError):
         return JSONResponse({"status": "not_ready"}, status_code=503)
     finally:
         if client is not None:

@@ -116,11 +116,12 @@ def test_local_operator_session_rejects_missing_subject() -> None:
     authorization = OperatorSessionAuthorization(
         org_id=uuid4(), permissions=7, session_id="sid", subject=""
     )
-    with patch(
-        "app.operator_session_auth._verified_local_session",
-        return_value=authorization,
-    ), pytest.raises(ApiError) as exc:
-        asyncio.run(require_operator_session(request))
+    pending = require_operator_session(request)
+    with (
+        patch("app.operator_session_auth._verified_local_session", return_value=authorization),
+        pytest.raises(ApiError) as exc,
+    ):
+        asyncio.run(pending)
     assert exc.value.code == INVALID_TOKEN
     assert exc.value.message == "missing session subject"
 
@@ -135,22 +136,28 @@ def test_local_operator_session_rejects_missing_subject() -> None:
 def test_operator_session_rejects_unavailable_local_configuration(
     overrides: dict[str, object], message: str
 ) -> None:
+    request = _request(_settings(**overrides))
+    pending = require_operator_session(request)
     with pytest.raises(ApiError, match=message):
-        asyncio.run(require_operator_session(_request(_settings(**overrides))))
+        asyncio.run(pending)
 
 
 def test_operator_session_rejects_missing_cookie() -> None:
+    pending = require_operator_session(_request(_settings(), token=None))
     with pytest.raises(ApiError, match="missing session cookie"):
-        asyncio.run(require_operator_session(_request(_settings(), token=None)))
+        asyncio.run(pending)
 
 
 def test_local_operator_session_rejects_token_verification_error() -> None:
     from app.session_stub import SessionStubError
 
-    with patch(
-        "app.operator_session_auth.verify_token_opts",
-        side_effect=SessionStubError("expired"),
-    ), pytest.raises(ApiError, match="expired"):
+    with (
+        patch(
+            "app.operator_session_auth.verify_token_opts",
+            side_effect=SessionStubError("expired"),
+        ),
+        pytest.raises(ApiError, match="expired"),
+    ):
         _verified_local_session("token", _settings())
 
 
@@ -160,6 +167,7 @@ def test_local_operator_session_rejects_missing_org_claim() -> None:
         patch("app.operator_session_auth.verify_token_opts", return_value=claims),
         pytest.raises(ApiError, match="missing org context"),
     ):
+        _verified_local_session("token", _settings())
         _verified_local_session("token", _settings())
 
 
@@ -193,10 +201,12 @@ def test_remote_operator_session_maps_auth_errors(error: Exception) -> None:
     settings = _settings(
         environment="staging", jwt_hmac_secret=None, jwt_public_keys_pem="public"
     )
-    with patch(
-        "app.operator_session_auth.validate_operator_session", side_effect=error
-    ), pytest.raises(ApiError) as exc:
-        asyncio.run(require_operator_session(_request(settings)))
+    pending = require_operator_session(_request(settings))
+    with (
+        patch("app.operator_session_auth.validate_operator_session", side_effect=error),
+        pytest.raises(ApiError) as exc,
+    ):
+        asyncio.run(pending)
     assert exc.value.code in {"INVALID_TOKEN", "SERVICE_DEGRADED"}
 
 

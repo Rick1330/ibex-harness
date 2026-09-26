@@ -94,41 +94,13 @@ async def test_operator_legal_hold_role_session_closes_before_step_up() -> None:
 
 
 @pytest.mark.asyncio
-async def test_operator_legal_hold_denies_non_admin_before_step_up() -> None:
-    from authclient.permissions import LEGAL_HOLD_MANAGE, bitmap_for_role
-
-    from app.authz import require_operator_legal_hold_manage
-    from app.operator_session_auth import OperatorSessionAuthorization
-
-    class _RoleSession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-        async def execute(self, *_args: object):
-            return _RoleResult("member")
-
-    operator = OperatorSessionAuthorization(
-        org_id=uuid4(),
-        permissions=bitmap_for_role("admin"),
-        session_id="session-1",
-        subject="user-1",
-    )
-    with (
-        patch("app.authz.session_with_org", return_value=_RoleSession()),
-        patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce,
-        pytest.raises(ApiError) as exc,
-    ):
-        await require_operator_legal_hold_manage()(MagicMock(), operator, object())
-    assert exc.value.code == INSUFFICIENT_PERMISSIONS
-    enforce.assert_not_awaited()
-    assert LEGAL_HOLD_MANAGE
-
-
-@pytest.mark.asyncio
-async def test_operator_legal_hold_denies_missing_permission_before_step_up() -> None:
+@pytest.mark.parametrize(
+    ("role", "permissions"),
+    [("member", "admin"), ("admin", "member")],
+)
+async def test_operator_legal_hold_denies_before_step_up(
+    role: str, permissions: str
+) -> None:
     from authclient.permissions import bitmap_for_role
 
     from app.authz import require_operator_legal_hold_manage
@@ -142,20 +114,21 @@ async def test_operator_legal_hold_denies_missing_permission_before_step_up() ->
             return None
 
         async def execute(self, *_args: object):
-            return _RoleResult("admin")
+            return _RoleResult(role)
 
     operator = OperatorSessionAuthorization(
         org_id=uuid4(),
-        permissions=bitmap_for_role("member"),
+        permissions=bitmap_for_role(permissions),
         session_id="session-1",
         subject="user-1",
     )
+    pending = require_operator_legal_hold_manage()(MagicMock(), operator, object())
     with (
         patch("app.authz.session_with_org", return_value=_RoleSession()),
         patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce,
         pytest.raises(ApiError) as exc,
     ):
-        await require_operator_legal_hold_manage()(MagicMock(), operator, object())
+        await pending
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     enforce.assert_not_awaited()
 

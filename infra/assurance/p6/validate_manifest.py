@@ -122,12 +122,75 @@ def _validate_check_artifacts(
         fail(f"{where}.artifact_uris: expected array")
     uris = [string(uri, f"{where}.artifact_uris[{i}]") for i, uri in enumerate(raw_uris)]
     for uri in uris:
-        if not ARTIFACT_URI.fullmatch(uri):
-            fail(f"{where}.artifact_uris: unsupported artifact URI")
-        if uri not in declared_uris:
-            fail(f"{where}.artifact_uris: URI is not declared in manifest.artifacts: {uri}")
-    if check["applicability"] == "applicable" and check["expected"] and not uris:
-        fail(f"{where}: applicable expected checks require artifact_uris")
+        _validate_artifact_reference(uri, where, declared_uris)
+    if check["applicability"] != "applicable":
+        return
+    if not check["expected"]:
+        return
+    if uris:
+        return
+    fail(f"{where}: applicable expected checks require artifact_uris")
+
+
+def _validate_artifact_reference(
+    uri: str, where: str, declared_uris: set[str]
+) -> None:
+    if not ARTIFACT_URI.fullmatch(uri):
+        fail(f"{where}.artifact_uris: unsupported artifact URI")
+    if uri not in declared_uris:
+        fail(f"{where}.artifact_uris: URI is not declared in manifest.artifacts: {uri}")
+
+
+def _read_check(check: dict[str, Any], where: str) -> tuple[str, bool, str, str]:
+    require(
+        check,
+        "name",
+        "expected",
+        "applicability",
+        "result",
+        "evidence_state",
+        where=where,
+    )
+    name = string(check["name"], f"{where}.name")
+    if not isinstance(check["expected"], bool):
+        fail(f"{where}.expected: expected boolean")
+    applicability = enum(
+        check["applicability"], APPLICABILITY, f"{where}.applicability", "applicability"
+    )
+    result = enum(check["result"], RESULTS, f"{where}.result", "result")
+    enum(check["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state")
+    return name, check["expected"], applicability, result
+
+
+def _validate_check_outcome(
+    check: dict[str, Any], where: str, expected: bool, applicability: str, result: str
+) -> None:
+    if applicability == "inapplicable":
+        _validate_inapplicable_check(check, where, expected, result)
+        return
+    if result != "passed":
+        fail(f"{where}: applicable checks must pass; got {result}")
+
+
+def _validate_inapplicable_check(
+    check: dict[str, Any], where: str, expected: bool, result: str
+) -> None:
+    if expected:
+        fail(f"{where}: inapplicable checks cannot be expected")
+    reason = check.get("reason")
+    if not isinstance(reason, str) or not reason:
+        fail(f"{where}: inapplicable checks require a reason")
+    if result not in {"skipped", "missing"}:
+        fail(f"{where}: inapplicable checks must be skipped or missing")
+
+
+def _validate_expected_evidence(
+    check: dict[str, Any], where: str, expected: bool
+) -> None:
+    if not expected:
+        return
+    if check["evidence_state"] in {"blocked", "declared"}:
+        fail(f"{where}: expected check is not executable evidence")
 
 
 def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
@@ -138,37 +201,13 @@ def _validate_checks(checks: Any, declared_uris: set[str]) -> None:
         where = f"manifest.checks[{index}]"
         if not isinstance(check, dict):
             fail(f"{where}: expected object")
-        require(
-            check,
-            "name",
-            "expected",
-            "applicability",
-            "result",
-            "evidence_state",
-            where=where,
-        )
-        name = string(check["name"], f"{where}.name")
+        name, expected, applicability, result = _read_check(check, where)
         if name in seen:
             fail(f"{where}.name: duplicate check name {name}")
         seen.add(name)
-        if not isinstance(check["expected"], bool):
-            fail(f"{where}.expected: expected boolean")
-        applicability = enum(check["applicability"], APPLICABILITY, f"{where}.applicability", "applicability")
-        result = enum(check["result"], RESULTS, f"{where}.result", "result")
-        enum(check["evidence_state"], EVIDENCE_STATES, f"{where}.evidence_state", "evidence_state")
         _validate_check_artifacts(check, where, declared_uris)
-        reason = check.get("reason")
-        if applicability == "inapplicable":
-            if check["expected"]:
-                fail(f"{where}: inapplicable checks cannot be expected")
-            if not isinstance(reason, str) or not reason:
-                fail(f"{where}: inapplicable checks require a reason")
-            if result not in {"skipped", "missing"}:
-                fail(f"{where}: inapplicable checks must be skipped or missing")
-        elif result != "passed":
-            fail(f"{where}: applicable checks must pass; got {result}")
-        if check["expected"] and check["evidence_state"] in {"blocked", "declared"}:
-            fail(f"{where}: expected check is not executable evidence")
+        _validate_check_outcome(check, where, expected, applicability, result)
+        _validate_expected_evidence(check, where, expected)
 
 
 def _validate_rollback(rollback: Any) -> None:
@@ -210,7 +249,7 @@ def main() -> int:
         if not isinstance(parsed, dict):
             fail("manifest: expected JSON object")
         validate(parsed)
-    except (OSError, TypeError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, TypeError, ValueError) as exc:
         print(f"P6 manifest invalid: {exc}", file=sys.stderr)
         return 1
     print(f"P6 manifest valid: {args.manifest}")
