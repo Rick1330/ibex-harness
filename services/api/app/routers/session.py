@@ -486,6 +486,15 @@ async def logout(
     return success
 
 
+@dataclass(frozen=True, slots=True)
+class _LogoutProofs:
+    claims: SessionClaims
+    access_claims: SessionClaims | None
+    refresh_claims: SessionClaims | None
+    raw_access: str | None
+    raw_refresh: str | None
+
+
 async def _logout_via_auth(request: Request, settings: Settings) -> Response | None:
     raw_access = request.cookies.get(settings.dashboard_session_cookie_name)
     raw_refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
@@ -496,11 +505,7 @@ async def _logout_via_auth(request: Request, settings: Settings) -> Response | N
         return claims
     return await _revoke_logout_session(
         settings,
-        claims=claims,
-        access_claims=access_claims,
-        refresh_claims=refresh_claims,
-        raw_access=raw_access,
-        raw_refresh=raw_refresh,
+        _LogoutProofs(claims, access_claims, refresh_claims, raw_access, raw_refresh),
     )
 
 
@@ -519,15 +524,7 @@ def _select_logout_claims(
     return claims
 
 
-async def _revoke_logout_session(
-    settings: Settings,
-    *,
-    claims: SessionClaims,
-    access_claims: SessionClaims | None,
-    refresh_claims: SessionClaims | None,
-    raw_access: str | None,
-    raw_refresh: str | None,
-) -> Response | None:
+async def _revoke_logout_session(settings: Settings, proofs: _LogoutProofs) -> Response | None:
     try:
         await revoke_operator_session(
             AuthRPC(
@@ -536,11 +533,11 @@ async def _revoke_logout_session(
                 max(settings.auth_timeout_ms / 1000.0, 0.2),
             ),
             RevokeSessionParams(
-                session_id=claims.session_id,
-                family_id=claims.family_id or "",
-                access_jti=access_claims.jti if access_claims else "",
-                access_token=raw_access if access_claims else "",
-                refresh_token=raw_refresh if refresh_claims else "",
+                session_id=proofs.claims.session_id,
+                family_id=proofs.claims.family_id or "",
+                access_jti=proofs.access_claims.jti if proofs.access_claims else "",
+                access_token=proofs.raw_access if proofs.access_claims else "",
+                refresh_token=proofs.raw_refresh if proofs.refresh_claims else "",
             ),
         )
     except AuthFailedError:

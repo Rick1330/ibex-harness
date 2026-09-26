@@ -50,42 +50,54 @@ func TestMemoryJTIStore_RevokeSessionAndFamilySuccess(t *testing.T) {
 	}
 }
 
-func TestMemoryJTIStore_FamilyRevocationMarkerExpires(t *testing.T) {
+func TestMemoryJTIStore_RevocationMarkersExpire(t *testing.T) {
 	t.Parallel()
-	store := &sessionjwt.MemoryJTIStore{}
-	ctx := context.Background()
-	if err := store.RevokeFamily(ctx, "fam-exp", 5*time.Millisecond); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name   string
+		revoke func(context.Context, *sessionjwt.MemoryJTIStore) error
+		check  func(context.Context, *sessionjwt.MemoryJTIStore) (bool, error)
+	}{
+		{
+			name: "family",
+			revoke: func(ctx context.Context, s *sessionjwt.MemoryJTIStore) error {
+				return s.RevokeFamily(ctx, "fam-exp", 5*time.Millisecond)
+			},
+			check: func(ctx context.Context, s *sessionjwt.MemoryJTIStore) (bool, error) {
+				return s.FamilyRevoked(ctx, "fam-exp")
+			},
+		},
+		{
+			name: "session",
+			revoke: func(ctx context.Context, s *sessionjwt.MemoryJTIStore) error {
+				return s.RevokeSession(ctx, "sid-exp", 5*time.Millisecond)
+			},
+			check: func(ctx context.Context, s *sessionjwt.MemoryJTIStore) (bool, error) {
+				return s.SessionRevoked(ctx, "sid-exp")
+			},
+		},
+		{
+			name: "access",
+			revoke: func(ctx context.Context, s *sessionjwt.MemoryJTIStore) error {
+				return s.RevokeAccess(ctx, "jti-exp", 5*time.Millisecond)
+			},
+			check: func(ctx context.Context, s *sessionjwt.MemoryJTIStore) (bool, error) {
+				return s.AccessRevoked(ctx, "jti-exp")
+			},
+		},
 	}
-	time.Sleep(15 * time.Millisecond)
-	if revoked, err := store.FamilyRevoked(ctx, "fam-exp"); err != nil || revoked {
-		t.Fatalf("family expired: revoked=%v err=%v", revoked, err)
-	}
-}
-
-func TestMemoryJTIStore_SessionRevocationMarkerExpires(t *testing.T) {
-	t.Parallel()
-	store := &sessionjwt.MemoryJTIStore{}
-	ctx := context.Background()
-	if err := store.RevokeSession(ctx, "sid-exp", 5*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(15 * time.Millisecond)
-	if revoked, err := store.SessionRevoked(ctx, "sid-exp"); err != nil || revoked {
-		t.Fatalf("session expired: revoked=%v err=%v", revoked, err)
-	}
-}
-
-func TestMemoryJTIStore_AccessRevocationMarkerExpires(t *testing.T) {
-	t.Parallel()
-	store := &sessionjwt.MemoryJTIStore{}
-	ctx := context.Background()
-	if err := store.RevokeAccess(ctx, "jti-exp", 5*time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(15 * time.Millisecond)
-	if revoked, err := store.AccessRevoked(ctx, "jti-exp"); err != nil || revoked {
-		t.Fatalf("access expired: revoked=%v err=%v", revoked, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := &sessionjwt.MemoryJTIStore{}
+			ctx := context.Background()
+			if err := tc.revoke(ctx, store); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(15 * time.Millisecond)
+			if revoked, err := tc.check(ctx, store); err != nil || revoked {
+				t.Fatalf("%s expired: revoked=%v err=%v", tc.name, revoked, err)
+			}
+		})
 	}
 }
 

@@ -245,76 +245,77 @@ def _post_logout(client, *, access: str | None = None, refresh: str | None = Non
     )
 
 
-def test_logout_uses_valid_refresh_when_access_is_expired_and_clears_all_cookies() -> None:
+@pytest.mark.parametrize(
+    ("case",),
+    [
+        ("expired_access",),
+        ("refresh_only_outage",),
+        ("mismatched_proofs",),
+    ],
+)
+def test_logout_cookie_proof_matrix(case: str) -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    access = _signed_session_token(
-        key,
-        _SignedTokenSpec(
-            kind="access",
-            session_id="sid-expired",
-            family_id="fid-expired",
-            jti="jti-expired",
-            expires_in=-1,
-        ),
-    )
-    refresh = _signed_session_token(
-        key,
-        _SignedTokenSpec(
-            kind="refresh",
-            session_id="sid-expired",
-            family_id="fid-expired",
-            jti="rjti-valid",
-            expires_in=3600,
-        ),
-    )
-    with (
-        create_operator_app(
-            settings=_logout_settings(_rsa_pub_pem(key)), validator=StaticTokenValidator({})
-        ) as (_, client),
-        patch("app.routers.session.revoke_operator_session", new=AsyncMock()) as revoke,
-    ):
-        response = _post_logout(client, access=access, refresh=refresh)
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
-    revoke.assert_awaited_once()
-    params = revoke.await_args.args[1]
-    assert params.session_id == "sid-expired"
-    assert params.family_id == "fid-expired"
-    assert params.access_token == ""
-    assert params.access_jti == ""
-    assert params.refresh_token == refresh
-    _assert_session_cookies_deleted(response)
-
-
-def test_logout_refresh_only_survives_authservice_outage_as_degraded_but_clears_cookies() -> None:
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    refresh = _signed_session_token(
-        key,
-        _SignedTokenSpec(
-            kind="refresh",
-            session_id="sid-only",
-            family_id="fid-only",
-            jti="rjti-only",
-            expires_in=3600,
-        ),
-    )
-    with (
-        create_operator_app(
-            settings=_logout_settings(_rsa_pub_pem(key)), validator=StaticTokenValidator({})
-        ) as (_, client),
-        patch(
-            "app.routers.session.revoke_operator_session",
-            new=AsyncMock(side_effect=AuthUnavailableError("down")),
-        ),
-    ):
-        response = _post_logout(client, refresh=refresh)
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "SERVICE_DEGRADED"
-    _assert_session_cookies_deleted(response)
-
-
-def test_logout_mismatched_valid_proofs_are_rejected_without_rpc_and_cleared() -> None:
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    settings = _logout_settings(_rsa_pub_pem(key))
+    if case == "expired_access":
+        access = _signed_session_token(
+            key,
+            _SignedTokenSpec(
+                kind="access",
+                session_id="sid-expired",
+                family_id="fid-expired",
+                jti="jti-expired",
+                expires_in=-1,
+            ),
+        )
+        refresh = _signed_session_token(
+            key,
+            _SignedTokenSpec(
+                kind="refresh",
+                session_id="sid-expired",
+                family_id="fid-expired",
+                jti="rjti-valid",
+                expires_in=3600,
+            ),
+        )
+        revoke = AsyncMock()
+        with (
+            create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+            patch("app.routers.session.revoke_operator_session", new=revoke),
+        ):
+            response = _post_logout(client, access=access, refresh=refresh)
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+        revoke.assert_awaited_once()
+        params = revoke.await_args.args[1]
+        assert params.session_id == "sid-expired"
+        assert params.family_id == "fid-expired"
+        assert params.access_token == ""
+        assert params.refresh_token == refresh
+        _assert_session_cookies_deleted(response)
+        return
+    if case == "refresh_only_outage":
+        refresh = _signed_session_token(
+            key,
+            _SignedTokenSpec(
+                kind="refresh",
+                session_id="sid-only",
+                family_id="fid-only",
+                jti="rjti-only",
+                expires_in=3600,
+            ),
+        )
+        with (
+            create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+            patch(
+                "app.routers.session.revoke_operator_session",
+                new=AsyncMock(side_effect=AuthUnavailableError("down")),
+            ),
+        ):
+            response = _post_logout(client, refresh=refresh)
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "SERVICE_DEGRADED"
+        _assert_session_cookies_deleted(response)
+        return
     access = _signed_session_token(
         key,
         _SignedTokenSpec(
@@ -327,16 +328,17 @@ def test_logout_mismatched_valid_proofs_are_rejected_without_rpc_and_cleared() -
             kind="refresh", session_id="sid-b", family_id="fid-b", jti="jti-b", expires_in=3600
         ),
     )
+    revoke = AsyncMock()
     with (
-        create_operator_app(
-            settings=_logout_settings(_rsa_pub_pem(key)), validator=StaticTokenValidator({})
-        ) as (_, client),
-        patch("app.routers.session.revoke_operator_session", new=AsyncMock()) as revoke,
+        create_operator_app(settings=settings, validator=StaticTokenValidator({})) as (_, client),
+        patch("app.routers.session.revoke_operator_session", new=revoke),
     ):
         response = _post_logout(client, access=access, refresh=refresh)
     assert response.status_code == 401
     revoke.assert_not_awaited()
     _assert_session_cookies_deleted(response)
+
+
 
 
 def test_refresh_non_hs256_alg_with_keys_routes_to_auth() -> None:

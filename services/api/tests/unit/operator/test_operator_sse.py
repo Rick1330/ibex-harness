@@ -457,44 +457,47 @@ def _validated_session(*, org_id: str = str(ORG_A), permissions: int = OPERATOR_
     )
 
 
-def test_staging_sse_rejects_revoked_session_before_subscribing() -> None:
+def _assert_staging_sse_reject(cookie: str, validate_mock, expected_status: int) -> None:
     from unittest.mock import AsyncMock
 
-    from app.auth.client import AuthFailedError
     from tests.unit.operator.conftest import create_operator_app
 
     with create_operator_app(settings=_staging_operator_settings()) as (app, client):
-        client.cookies.set("ibex_session", "signed-but-revoked")
+        client.cookies.set("ibex_session", cookie)
         subscribe = AsyncMock()
         app.state.operator_sse_hub.subscribe = subscribe
         with patch(
             "app.operator_session_auth.validate_operator_session",
-            new=AsyncMock(side_effect=AuthFailedError("revoked")),
+            new=validate_mock,
         ) as validate:
             response = client.get("/v1/operator/events/stream")
-    assert response.status_code == 401
+    assert response.status_code == expected_status
     validate.assert_awaited_once()
     subscribe.assert_not_awaited()
+
+
+def test_staging_sse_rejects_revoked_session_before_subscribing() -> None:
+    from unittest.mock import AsyncMock
+
+    from app.auth.client import AuthFailedError
+
+    _assert_staging_sse_reject(
+        "signed-but-revoked",
+        AsyncMock(side_effect=AuthFailedError("revoked")),
+        401,
+    )
 
 
 def test_staging_sse_fails_closed_when_auth_service_is_unavailable() -> None:
     from unittest.mock import AsyncMock
 
     from app.auth.client import AuthUnavailableError
-    from tests.unit.operator.conftest import create_operator_app
 
-    with create_operator_app(settings=_staging_operator_settings()) as (app, client):
-        client.cookies.set("ibex_session", "session-cookie")
-        subscribe = AsyncMock()
-        app.state.operator_sse_hub.subscribe = subscribe
-        with patch(
-            "app.operator_session_auth.validate_operator_session",
-            new=AsyncMock(side_effect=AuthUnavailableError("offline")),
-        ) as validate:
-            response = client.get("/v1/operator/events/stream")
-    assert response.status_code == 503
-    validate.assert_awaited_once()
-    subscribe.assert_not_awaited()
+    _assert_staging_sse_reject(
+        "session-cookie",
+        AsyncMock(side_effect=AuthUnavailableError("offline")),
+        503,
+    )
 
 
 def test_staging_sse_uses_auth_service_tenant_and_permission() -> None:
@@ -524,19 +527,11 @@ def test_staging_sse_uses_auth_service_tenant_and_permission() -> None:
 def test_staging_sse_rejects_invalid_tenant_claim_before_subscribe() -> None:
     from unittest.mock import AsyncMock
 
-    from tests.unit.operator.conftest import create_operator_app
-
-    with create_operator_app(settings=_staging_operator_settings()) as (app, client):
-        client.cookies.set("ibex_session", "malformed-org-claim")
-        subscribe = AsyncMock()
-        app.state.operator_sse_hub.subscribe = subscribe
-        with patch(
-            "app.operator_session_auth.validate_operator_session",
-            new=AsyncMock(return_value=_validated_session(org_id="not-a-uuid")),
-        ):
-            response = client.get("/v1/operator/events/stream")
-    assert response.status_code == 401
-    subscribe.assert_not_awaited()
+    _assert_staging_sse_reject(
+        "malformed-org-claim",
+        AsyncMock(return_value=_validated_session(org_id="not-a-uuid")),
+        401,
+    )
 
 
 def _assert_staging_platform_health(cookie: str, validate_mock, expected_status: int) -> None:

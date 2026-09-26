@@ -249,25 +249,39 @@ def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
             iat=int(payload["iat"]),
             jti=str(payload["jti"]),
             session_id=str(payload.get("sid", "")),
-            family_id=str(payload["fid"]) if payload.get("fid") else None,
-            action=str(payload["action"]) if payload.get("action") else None,
+            family_id=_optional_str(payload, "fid"),
+            action=_optional_str(payload, "action"),
             verify_method=verify_method,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SessionStubError("missing required claims") from exc
 
 
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    if key not in payload or payload[key] is None:
+        return None
+    return str(payload[key])
+
+
 def _validate_claims(
     payload: dict[str, Any], opts: TokenVerifyOpts, *, verify_method: str
 ) -> SessionClaims:
     _assert_issuer_audience(payload, opts)
-    if _session_kind_of(payload) != opts.expect_kind:
-        raise SessionStubError("wrong token kind")
+    _assert_expected_kind(payload, opts.expect_kind)
     _assert_temporal_claims(payload)
     claims = _to_claims(payload, verify_method=verify_method)
+    _assert_rs256_session_id(claims, verify_method)
+    return claims
+
+
+def _assert_expected_kind(payload: dict[str, Any], expect_kind: str) -> None:
+    if _session_kind_of(payload) != expect_kind:
+        raise SessionStubError("wrong token kind")
+
+
+def _assert_rs256_session_id(claims: SessionClaims, verify_method: str) -> None:
     if verify_method == "RS256" and not claims.session_id:
         raise SessionStubError("missing session claim")
-    return claims
 
 
 def _assert_issuer_audience(payload: dict[str, Any], opts: TokenVerifyOpts) -> None:
@@ -279,6 +293,10 @@ def _assert_temporal_claims(payload: dict[str, Any]) -> None:
     now = int(time.time())
     if int(payload.get("exp", 0)) < now:
         raise SessionStubError("expired")
+    _assert_not_before(payload, now)
+
+
+def _assert_not_before(payload: dict[str, Any], now: int) -> None:
     if "nbf" not in payload:
         return
     try:

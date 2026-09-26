@@ -346,7 +346,7 @@ func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) erro
 	if first {
 		return nil
 	}
-	return revokeRefreshReplay(ctx, i.jtiStore, claims, ttl, i.refreshTTL)
+	return revokeRefreshReplay(ctx, i.jtiStore, claims, replayRevokeTTL(ttl, i.refreshTTL))
 }
 
 func assertRefreshNotRevoked(ctx context.Context, store JTIStore, claims Claims) error {
@@ -367,15 +367,18 @@ func assertRefreshNotRevoked(ctx context.Context, store JTIStore, claims Claims)
 	return nil
 }
 
-func revokeRefreshReplay(ctx context.Context, store JTIStore, claims Claims, ttl, refreshTTL time.Duration) error {
-	revokeTTL := refreshTTL
-	if ttl > revokeTTL {
-		revokeTTL = ttl
-	}
-	if err := store.RevokeSessionAndFamily(ctx, claims.SessionID, claims.FamilyID, revokeTTL); err != nil {
+func revokeRefreshReplay(ctx context.Context, store JTIStore, claims Claims, ttl time.Duration) error {
+	if err := store.RevokeSessionAndFamily(ctx, claims.SessionID, claims.FamilyID, ttl); err != nil {
 		return err
 	}
 	return ErrInvalidToken
+}
+
+func replayRevokeTTL(remaining, configured time.Duration) time.Duration {
+	if remaining > configured {
+		return remaining
+	}
+	return configured
 }
 
 func refreshRemainingTTL(claims Claims) time.Duration {

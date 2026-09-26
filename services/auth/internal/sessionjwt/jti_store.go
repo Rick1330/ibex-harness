@@ -74,26 +74,55 @@ func (s *MemoryJTIStore) ConsumeOnce(_ context.Context, jti string, ttl time.Dur
 }
 
 func (s *MemoryJTIStore) liveEntry(jti string, now time.Time) bool {
-	return entryLive(&s.m, jti, now)
+	return entryLive(liveLookup{m: &s.m, key: jti, now: now})
 }
 
-func (s *MemoryJTIStore) RevokeSession(_ context.Context, sessionID string, ttl time.Duration) error {
-	return s.storeRevoked("session:"+sessionID, sessionID == "", ttl)
+func (s *MemoryJTIStore) revokedLive(key string) bool {
+	return entryLive(liveLookup{m: &s.revoked, key: key, now: time.Now().UTC()})
 }
 
-func (s *MemoryJTIStore) RevokeAccess(_ context.Context, jti string, ttl time.Duration) error {
-	return s.storeRevoked("access:"+jti, jti == "", ttl)
+type liveLookup struct {
+	m   *sync.Map
+	key string
+	now time.Time
 }
 
-func (s *MemoryJTIStore) storeRevoked(key string, emptyID bool, ttl time.Duration) error {
+func entryLive(look liveLookup) bool {
+	v, ok := look.m.Load(look.key)
+	if !ok {
+		return false
+	}
+	ent := v.(memoryJTIEntry)
+	if look.now.Before(ent.expiresAt) {
+		return true
+	}
+	_ = look.m.CompareAndDelete(look.key, v)
+	return false
+}
+
+func (s *MemoryJTIStore) storeRevoked(marker memoryRevokeMarker, emptyID bool) error {
 	if emptyID {
 		return nil
 	}
+	ttl := marker.ttl
 	if ttl <= 0 {
 		ttl = time.Second
 	}
-	s.revoked.Store(key, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
+	s.revoked.Store(marker.key, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
 	return nil
+}
+
+type memoryRevokeMarker struct {
+	key string
+	ttl time.Duration
+}
+
+func (s *MemoryJTIStore) RevokeSession(_ context.Context, sessionID string, ttl time.Duration) error {
+	return s.storeRevoked(memoryRevokeMarker{key: "session:" + sessionID, ttl: ttl}, sessionID == "")
+}
+
+func (s *MemoryJTIStore) RevokeAccess(_ context.Context, jti string, ttl time.Duration) error {
+	return s.storeRevoked(memoryRevokeMarker{key: "access:" + jti, ttl: ttl}, jti == "")
 }
 
 func (s *MemoryJTIStore) SessionRevoked(_ context.Context, sessionID string) (bool, error) {
@@ -106,23 +135,6 @@ func (s *MemoryJTIStore) AccessRevoked(_ context.Context, jti string) (bool, err
 
 func (s *MemoryJTIStore) ConsumeStepUp(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
 	return s.ConsumeOnce(ctx, "step-up:"+jti, ttl)
-}
-
-func (s *MemoryJTIStore) revokedLive(key string) bool {
-	return entryLive(&s.revoked, key, time.Now().UTC())
-}
-
-func entryLive(m *sync.Map, key string, now time.Time) bool {
-	v, ok := m.Load(key)
-	if !ok {
-		return false
-	}
-	ent := v.(memoryJTIEntry)
-	if now.Before(ent.expiresAt) {
-		return true
-	}
-	_ = m.CompareAndDelete(key, v)
-	return false
 }
 
 // maybePurgeExpired amortizes full-map scans: every N successful inserts and at most
@@ -176,7 +188,7 @@ func (s *MemoryJTIStore) FamilyRevoked(_ context.Context, familyID string) (bool
 	if familyID == "" {
 		return false, nil
 	}
-	return entryLive(&s.revoked, familyID, time.Now().UTC()), nil
+	return entryLive(liveLookup{m: &s.revoked, key: familyID, now: time.Now().UTC()}), nil
 }
 
 // RevokeSessionAndFamily marks both session and refresh-family state for the same TTL.

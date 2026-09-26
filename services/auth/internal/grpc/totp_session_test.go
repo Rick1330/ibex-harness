@@ -250,8 +250,30 @@ func assertRevokeUsedVerifiedAccess(t *testing.T, issuer *fakeSessionIssuer) {
 	if issuer.revokeCalls != 1 {
 		t.Fatalf("revocation calls=%d", issuer.revokeCalls)
 	}
-	if issuer.revokedSession != "sid-a" || issuer.revokedFamily != "family-a" || issuer.revokedAccess != "jti-a" {
-		t.Fatalf("revocation used unverified request identifiers: %+v", issuer)
+	if issuer.revokedSession != "sid-a" {
+		t.Fatalf("session=%s", issuer.revokedSession)
+	}
+	if issuer.revokedFamily != "family-a" {
+		t.Fatalf("family=%s", issuer.revokedFamily)
+	}
+	if issuer.revokedAccess != "jti-a" {
+		t.Fatalf("access=%s", issuer.revokedAccess)
+	}
+}
+
+func assertRefreshOnlyRevoke(t *testing.T, issuer *fakeSessionIssuer) {
+	t.Helper()
+	if issuer.revokeCalls != 1 {
+		t.Fatalf("revocation calls=%d", issuer.revokeCalls)
+	}
+	if issuer.revokedSession != "sid-refresh" {
+		t.Fatalf("session=%s", issuer.revokedSession)
+	}
+	if issuer.revokedFamily != "family-refresh" {
+		t.Fatalf("family=%s", issuer.revokedFamily)
+	}
+	if issuer.revokedAccess != "" {
+		t.Fatalf("access=%s", issuer.revokedAccess)
 	}
 }
 
@@ -284,13 +306,6 @@ func TestRevokeOperatorSession_RefreshOnlyProofSucceeds(t *testing.T) {
 		t.Fatalf("refresh-only logout proof: %v", err)
 	}
 	assertRefreshOnlyRevoke(t, issuer)
-}
-
-func assertRefreshOnlyRevoke(t *testing.T, issuer *fakeSessionIssuer) {
-	t.Helper()
-	if issuer.revokeCalls != 1 || issuer.revokedSession != "sid-refresh" || issuer.revokedFamily != "family-refresh" || issuer.revokedAccess != "" {
-		t.Fatalf("refresh-only revocation mismatch: %+v", issuer)
-	}
 }
 
 func TestRevokeOperatorSession_MissingProofIsUnauthenticated(t *testing.T) {
