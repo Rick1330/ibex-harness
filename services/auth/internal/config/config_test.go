@@ -241,6 +241,24 @@ func TestValidate_TOTPSessionConfig(t *testing.T) {
 	})
 }
 
+func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
+	t.Parallel()
+	cfg := validAuthConfig()
+	cfg.Environment = "staging"
+	cfg.TOTPEnabled = true
+	cfg.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	cfg.JWTPrivateKeyPEM = "configured"
+	cfg.JWTIssuer = "ibex"
+	cfg.JWTAudience = "dash"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected missing AuthService token error")
+	}
+	cfg.AuthServiceToken = "service-secret"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("configured service token should validate: %v", err)
+	}
+}
+
 func TestLoad_JWTDurationOverrides(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")

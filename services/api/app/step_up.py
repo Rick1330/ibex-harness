@@ -42,6 +42,7 @@ def _verify_step_up_token(raw: str, settings: Settings) -> SessionClaims:
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_STEP_UP,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError as exc:
@@ -88,7 +89,9 @@ def require_step_up_header(request: Request) -> None:
 RequireStepUpProbe = Annotated[None, Depends(require_step_up_header)]
 
 
-async def enforce_step_up(request: Request, token: ValidateResult, *, required_permission: int, action: str) -> None:
+async def enforce_step_up(
+    request: Request, token: ValidateResult, *, required_permission: int, action: str
+) -> None:
     """Verify and atomically consume the action-bound step-up immediately before mutation."""
     raw = request.headers.get(STEP_UP_HEADER)
     if not raw:
@@ -100,14 +103,22 @@ async def enforce_step_up(request: Request, token: ValidateResult, *, required_p
         raise _deny_step_up()
     if str(settings.environment) not in {"staging", "production"}:
         claims = _verify_step_up_token(raw, settings)
-        if claims.sub != subject or str(claims.org_id) != str(token.org_id) or claims.session_id != session_id:
+        if (
+            claims.sub != subject
+            or str(claims.org_id) != str(token.org_id)
+            or claims.session_id != session_id
+        ):
             raise _deny_step_up()
-        if claims.action != action or claims.permissions & required_permission != required_permission:
+        if (
+            claims.action != action
+            or claims.permissions & required_permission != required_permission
+        ):
             raise _deny_step_up()
     else:
         try:
             await consume_step_up(
                 auth_grpc_addr=settings.auth_grpc_addr,
+                service_token=settings.auth_service_token or "",
                 token=raw,
                 subject=subject,
                 org_id=str(token.org_id),

@@ -148,15 +148,16 @@ func loadAuthBootstrap() (config.Config, *logger.Logger, bool) {
 }
 
 type authServiceDeps struct {
-	validator       *token.Validator
-	tokenSvc        *service.TokenService
-	credSvc         *service.ProviderCredentialService
-	totpSvc         *service.TotpService
-	sessionIssuer   *sessionjwt.Issuer
-	agentsRepo      *repository.AgentsRepository
-	redisClient     redis.UniversalClient
-	validateLimiter ratelimit.KeyedLimiter
-	log             *logger.Logger
+	validator        *token.Validator
+	authServiceToken string
+	tokenSvc         *service.TokenService
+	credSvc          *service.ProviderCredentialService
+	totpSvc          *service.TotpService
+	sessionIssuer    *sessionjwt.Issuer
+	agentsRepo       *repository.AgentsRepository
+	redisClient      redis.UniversalClient
+	validateLimiter  ratelimit.KeyedLimiter
+	log              *logger.Logger
 }
 
 func initAuthServices(
@@ -178,7 +179,7 @@ func initAuthServices(
 		return authServiceDeps{}, err
 	}
 	return authServiceDeps{
-		validator: core.validator, tokenSvc: core.tokenSvc, credSvc: credSvc,
+		validator: core.validator, authServiceToken: cfg.AuthServiceToken, tokenSvc: core.tokenSvc, credSvc: credSvc,
 		totpSvc: totpSvc, sessionIssuer: sessionIssuer,
 		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
 		validateLimiter: core.validateLimiter, log: log,
@@ -377,7 +378,7 @@ func newAuthGRPCServer(deps authServiceDeps, reg *ibexmetrics.AuthRegistry) (*gr
 				Limiter: deps.validateLimiter,
 				Log:     deps.log,
 			}),
-			grpcserver.AuthzUnaryInterceptor(deps.validator),
+			grpcserver.AuthzUnaryInterceptorWithServiceToken(deps.validator, deps.authServiceToken),
 		),
 	)
 	if err := registerAuthGRPC(grpcSrv, deps, reg); err != nil {

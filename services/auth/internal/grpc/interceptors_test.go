@@ -156,6 +156,33 @@ func TestAuthzUnaryInterceptor_invalidBearer(t *testing.T) {
 	}
 }
 
+func TestAuthzUnaryInterceptor_serviceTokenIsLimitedToLifecycleMethods(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	ic := AuthzUnaryInterceptorWithServiceToken(&stubTokenValidator{fn: func(context.Context, string) (*authv1.ValidateTokenResponse, error) {
+		t.Fatal("PAT validator must not run for a valid service-token lifecycle call")
+		return nil, nil
+	}}, "service-secret")
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(serviceTokenMetadataKey, "service-secret"))
+	_, err := ic(ctx, &authv1.ValidateOperatorSessionRequest{}, &grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/ValidateOperatorSession"}, func(context.Context, any) (any, error) {
+		called = true
+		return &authv1.ValidateOperatorSessionResponse{}, nil
+	})
+	if err != nil || !called {
+		t.Fatalf("service lifecycle call: err=%v called=%v", err, called)
+	}
+
+	called = false
+	_, err = ic(ctx, &authv1.CreateTokenRequest{}, &grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/CreateToken"}, func(context.Context, any) (any, error) {
+		called = true
+		return nil, nil
+	})
+	if status.Code(err) != codes.Unauthenticated || called {
+		t.Fatalf("service token must not authorize management RPC: err=%v called=%v", err, called)
+	}
+}
+
 func TestMetricsUnaryInterceptor(t *testing.T) {
 	t.Parallel()
 

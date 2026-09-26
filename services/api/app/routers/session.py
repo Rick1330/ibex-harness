@@ -91,6 +91,7 @@ def _require_hmac(settings: Settings) -> str:
         )
     return settings.jwt_hmac_secret
 
+
 def _cookie_security(settings: Settings) -> tuple[bool, str]:
     samesite = settings.cookie_samesite
     secure = settings.cookie_secure or samesite == "none"
@@ -231,6 +232,7 @@ async def login(
         try:
             pair = await issue_operator_session(
                 auth_grpc_addr=settings.auth_grpc_addr,
+                service_token=settings.auth_service_token or "",
                 pat=body.pat.strip(),
                 timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
             )
@@ -295,6 +297,7 @@ async def _refresh_via_auth(
     try:
         pair = await refresh_operator_session(
             auth_grpc_addr=settings.auth_grpc_addr,
+            service_token=settings.auth_service_token or "",
             refresh_token=refresh_token,
         )
     except AuthFailedError as exc:
@@ -328,6 +331,7 @@ def _refresh_via_hmac(
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_REFRESH,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError as exc:
@@ -365,9 +369,7 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
     except SessionStubError as exc:
         raise ApiError(code=INVALID_TOKEN, message=str(exc)) from exc
     if _auth_owned_refresh(alg, settings):
-        return await _refresh_via_auth(
-            response=response, settings=settings, refresh_token=raw
-        )
+        return await _refresh_via_auth(response=response, settings=settings, refresh_token=raw)
     return _refresh_via_hmac(response=response, settings=settings, refresh_token=raw)
 
 
@@ -395,9 +397,13 @@ async def logout(request: Request) -> Response:
             )
             _clear_session_cookies(error, settings)
             return error  # type: ignore[return-value]
-        if access_claims is not None and refresh_claims is not None and (
-            access_claims.session_id != refresh_claims.session_id
-            or access_claims.family_id != refresh_claims.family_id
+        if (
+            access_claims is not None
+            and refresh_claims is not None
+            and (
+                access_claims.session_id != refresh_claims.session_id
+                or access_claims.family_id != refresh_claims.family_id
+            )
         ):
             error = envelope_response(
                 code=INVALID_TOKEN,
@@ -411,6 +417,7 @@ async def logout(request: Request) -> Response:
         try:
             await revoke_operator_session(
                 auth_grpc_addr=settings.auth_grpc_addr,
+                service_token=settings.auth_service_token or "",
                 session_id=claims.session_id,
                 family_id=claims.family_id or "",
                 access_jti=access_claims.jti if access_claims else "",
@@ -442,9 +449,7 @@ async def logout(request: Request) -> Response:
     return success
 
 
-def _logout_claims(
-    raw: str | None, *, settings: Settings, kind: str
-) -> SessionClaims | None:
+def _logout_claims(raw: str | None, *, settings: Settings, kind: str) -> SessionClaims | None:
     """Return locally verified logout claims, treating stale/malformed cookies independently."""
     if not raw:
         return None
@@ -457,6 +462,7 @@ def _logout_claims(
                 audience=settings.jwt_audience,
                 expect_kind=kind,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError:
@@ -492,7 +498,11 @@ async def me(request: Request) -> dict[str, object]:
             message="session public keys not configured",
             detail="set DASHBOARD_JWT_PUBLIC_KEYS_PEM",
         )
-    if settings.environment == "development" and not settings.jwt_hmac_secret and not settings.jwt_public_keys_pem:
+    if (
+        settings.environment == "development"
+        and not settings.jwt_hmac_secret
+        and not settings.jwt_public_keys_pem
+    ):
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="session signing secret not configured",
@@ -505,6 +515,7 @@ async def me(request: Request) -> dict[str, object]:
         try:
             claims = await validate_operator_session(
                 auth_grpc_addr=settings.auth_grpc_addr,
+                service_token=settings.auth_service_token or "",
                 access_token=raw,
                 timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
             )
@@ -532,6 +543,7 @@ def _me_cookie(raw: str, *, settings: Settings, secret: str | None) -> dict[str,
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_ACCESS,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError as exc:

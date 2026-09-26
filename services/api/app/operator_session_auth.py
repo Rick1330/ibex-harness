@@ -57,6 +57,7 @@ def _verified_local_session(raw: str, settings: Settings) -> OperatorSessionAuth
                 audience=settings.jwt_audience,
                 expect_kind=SESSION_KIND_ACCESS,
                 public_keys_pem=settings.jwt_public_keys_pem,
+                key_id=settings.jwt_key_id,
             ),
         )
     except SessionStubError as exc:
@@ -86,6 +87,7 @@ async def require_operator_session(request: Request) -> OperatorSessionAuthoriza
     try:
         claims = await validate_operator_session(
             auth_grpc_addr=settings.auth_grpc_addr,
+            service_token=settings.auth_service_token or "",
             access_token=raw,
             timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
         )

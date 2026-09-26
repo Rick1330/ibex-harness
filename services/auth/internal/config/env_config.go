@@ -30,6 +30,7 @@ type envConfig struct {
 	JWTAccessTTLRaw        string            `env:"JWT_ACCESS_TOKEN_TTL"`
 	JWTRefreshTTLRaw       string            `env:"JWT_REFRESH_TOKEN_TTL"`
 	JWTStepUpTTLRaw        string            `env:"JWT_STEP_UP_TOKEN_TTL"`
+	AuthServiceToken       ibexconfig.Secret `env:"IBEX_AUTH_SERVICE_TOKEN" secret:"true"`
 	ShutdownTimeoutRaw     string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
 	Argon2MemoryKiB        uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
 	Argon2Time             uint32            `env:"IBEX_ARGON2_TIME"`
@@ -70,6 +71,7 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 		JWTPrivateKeyPEM:       envCfg.JWTPrivateKeyPEM.String(),
 		JWTIssuer:              strings.TrimSpace(envCfg.JWTIssuer),
 		JWTAudience:            strings.TrimSpace(envCfg.JWTAudience),
+		AuthServiceToken:       strings.TrimSpace(envCfg.AuthServiceToken.String()),
 		Argon2:                 crypto.ProductionParams(),
 	}
 	if err := applyAuthEnvOverrides(&cfg, envCfg); err != nil {

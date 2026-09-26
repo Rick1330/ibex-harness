@@ -48,6 +48,7 @@ type Claims struct {
 	Permissions int64  `json:"permissions"`
 	SessionKind string `json:"session_kind"`
 	IssuedAt    int64  `json:"iat"`
+	NotBefore   int64  `json:"nbf,omitempty"`
 	ExpiresAt   int64  `json:"exp"`
 	JTI         string `json:"jti"`
 	FamilyID    string `json:"fid,omitempty"`
@@ -141,7 +142,7 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	access, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
 		Permissions: p.Permissions, SessionKind: string(KindAccess), FamilyID: familyID,
-		IssuedAt: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
+		IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: accessExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
 	})
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
@@ -149,7 +150,7 @@ func (i *Issuer) IssuePair(p IssuePairParams) (access, refresh string, accessExp
 	refresh, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
 		Permissions: p.Permissions, SessionKind: string(KindRefresh), FamilyID: familyID,
-		IssuedAt: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
+		IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: refreshExp.Unix(), JTI: uuid.NewString(), SessionID: sessionID,
 	})
 	if err != nil {
 		return "", "", time.Time{}, time.Time{}, err
@@ -185,7 +186,7 @@ func (i *Issuer) IssueStepUp(p IssueStepUpParams) (token string, exp time.Time, 
 	token, err = i.sign(Claims{
 		Issuer: i.issuer, Audience: i.audience, Subject: string(p.Subject), OrgID: string(p.OrgID),
 		Permissions: p.Permissions, SessionKind: string(KindStepUp),
-		IssuedAt: now.Unix(), ExpiresAt: exp.Unix(), JTI: uuid.NewString(), SessionID: sessionID, Action: p.Action,
+		IssuedAt: now.Unix(), NotBefore: now.Unix(), ExpiresAt: exp.Unix(), JTI: uuid.NewString(), SessionID: sessionID, Action: p.Action,
 	})
 	return token, exp, err
 }

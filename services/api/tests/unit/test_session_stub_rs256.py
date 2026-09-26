@@ -148,6 +148,7 @@ def test_verify_rejects_missing_material() -> None:
     with pytest.raises(SessionStubError, match="no verify material"):
         verify_token_opts(token, opts)
 
+
 def test_csrf_missing_cookie_or_header_false() -> None:
     csrf = mint_csrf_token(secret="c" * 32)
     assert not verify_csrf_token(secret="c" * 32, cookie_value=None, header_value=csrf)
@@ -270,8 +271,13 @@ def test_load_rsa_keys_rejects_private_pem() -> None:
 
 @pytest.mark.parametrize(
     ("claim", "message"),
-    [("sub", "missing required claims"), ("org_id", "missing required claims"),
-     ("exp", "expired"), ("iat", "missing required claims"), ("jti", "missing required claims")],
+    [
+        ("sub", "missing required claims"),
+        ("org_id", "missing required claims"),
+        ("exp", "expired"),
+        ("iat", "missing required claims"),
+        ("jti", "missing required claims"),
+    ],
 )
 def test_verify_rs256_rejects_each_missing_required_claim(claim: str, message: str) -> None:
     key, pub = _rsa_keypair()
@@ -307,6 +313,35 @@ def test_verify_rejects_future_not_before() -> None:
     )
     with pytest.raises(SessionStubError, match="not yet valid"):
         verify_token_opts(token, opts)
+
+
+def test_verify_rejects_missing_or_wrong_rs256_key_id() -> None:
+    key, pub = _rsa_keypair()
+    payload = _access_payload(str(uuid4()))
+    missing = _sign_rs256(key, {"alg": "RS256", "typ": "JWT", "kid": ""}, payload)
+    with pytest.raises(SessionStubError, match="key id"):
+        verify_token_opts(
+            missing,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=pub,
+            ),
+        )
+    wrong = _sign_rs256(key, {"alg": "RS256", "typ": "JWT", "kid": "old"}, payload)
+    with pytest.raises(SessionStubError, match="key id"):
+        verify_token_opts(
+            wrong,
+            TokenVerifyOpts(
+                secret=None,
+                issuer="ibex-harness",
+                audience="ibex-dashboard",
+                expect_kind=SESSION_KIND_ACCESS,
+                public_keys_pem=pub,
+            ),
+        )
 
 
 def test_verify_rejects_missing_rs256_session_id() -> None:

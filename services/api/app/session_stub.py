@@ -83,6 +83,7 @@ class TokenVerifyOpts:
     audience: str
     expect_kind: str
     public_keys_pem: str | None = None
+    key_id: str = "v1"
 
 
 def issue_token_opts(opts: TokenIssueOpts) -> str:
@@ -96,6 +97,7 @@ def issue_token_opts(opts: TokenIssueOpts) -> str:
         "permissions": opts.permissions,
         "session_kind": opts.session_kind,
         "iat": now,
+        "nbf": now,
         "exp": now + opts.ttl_seconds,
         "jti": secrets.token_urlsafe(16),
         "sid": opts.session_id or secrets.token_urlsafe(16),
@@ -106,7 +108,7 @@ def issue_token_opts(opts: TokenIssueOpts) -> str:
     if opts.action:
         payload["action"] = opts.action
     body = f"{_b64url(json.dumps(header, separators=(',', ':')).encode())}."
-    body += _b64url(json.dumps(payload, separators=(',', ':')).encode())
+    body += _b64url(json.dumps(payload, separators=(",", ":")).encode())
     sig = hmac.new(opts.secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64url(sig)}"
 
@@ -203,6 +205,19 @@ def _header_typ(header_b64: str) -> str:
     return str(header.get("typ", ""))
 
 
+def _header_kid(header_b64: str) -> str:
+    try:
+        header = json.loads(_b64url_decode(header_b64))
+    except (json.JSONDecodeError, SessionStubError) as exc:
+        raise SessionStubError(_BAD_HEADER) from exc
+    if not isinstance(header, dict):
+        raise SessionStubError(_BAD_HEADER)
+    kid = header.get("kid")
+    if not isinstance(kid, str) or not kid.strip():
+        raise SessionStubError("key id missing")
+    return kid.strip()
+
+
 def peek_token_alg(token: str) -> str:
     """Return the JWT alg claim without verifying the signature."""
     return _header_alg(_split_jwt(token).header_b64)
@@ -286,6 +301,8 @@ def _verify_rs256_token(
         raise SessionStubError("no verify material")
     if _header_typ(parts.header_b64) != "JWT":
         raise SessionStubError("typ mismatch")
+    if _header_kid(parts.header_b64) != opts.key_id.strip():
+        raise SessionStubError("key id mismatch")
     _verify_rs256(parts, public_keys_pem=opts.public_keys_pem)
     return _validate_claims(payload, opts, verify_method="RS256")
 

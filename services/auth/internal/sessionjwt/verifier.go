@@ -39,7 +39,11 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("sessionjwt: no public keys")
 	}
-	return &Verifier{keys: keys, issuer: cfg.Issuer, audience: cfg.Audience, keyID: strings.TrimSpace(cfg.KeyID)}, nil
+	keyID := strings.TrimSpace(cfg.KeyID)
+	if keyID == "" {
+		keyID = "v1"
+	}
+	return &Verifier{keys: keys, issuer: cfg.Issuer, audience: cfg.Audience, keyID: keyID}, nil
 }
 
 // Verify validates signature and standard claims; expectKind must match session_kind.
@@ -149,6 +153,9 @@ func validateClaims(claims Claims, issuer TokenIssuer, audience TokenAudience, e
 	}
 	if claims.ExpiresAt < time.Now().UTC().Unix() {
 		return ErrExpired
+	}
+	if claims.NotBefore > time.Now().UTC().Unix() {
+		return ErrInvalidToken
 	}
 	if expectKind == KindRefresh && claims.FamilyID == "" {
 		return ErrInvalidToken

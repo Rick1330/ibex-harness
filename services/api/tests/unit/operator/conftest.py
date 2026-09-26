@@ -21,6 +21,7 @@ def operator_settings(**kwargs: object) -> Settings:
     base: dict[str, object] = {
         "database_url": "postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
         "allowed_origins": "http://localhost:3100,https://operator.ibexharness.com",
+        "auth_service_token": "test-auth-service-token",
         "jwt_hmac_secret": HMAC_SECRET,
         "dashboard_csrf_secret": CSRF_SECRET,
         "cookie_secure": False,

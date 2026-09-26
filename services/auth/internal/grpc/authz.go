@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"strings"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
@@ -18,7 +19,14 @@ const (
 	errMsgInvalidRequest       = "invalid request"
 	errMsgForbidden            = "forbidden"
 	errMsgCreateTokenFailed    = "create token failed"
+	serviceTokenMetadataKey    = "x-ibex-service-token"
 )
+
+var serviceLifecycleMethods = map[string]struct{}{
+	"/ibex.auth.v1.AuthService/ValidateOperatorSession": {},
+	"/ibex.auth.v1.AuthService/RevokeOperatorSession":   {},
+	"/ibex.auth.v1.AuthService/ConsumeStepUp":           {},
+}
 
 // CallerContext is the authenticated PAT used for management RPCs.
 type CallerContext struct {
@@ -42,35 +50,77 @@ func CallerFromContext(ctx context.Context) (CallerContext, bool) {
 // AuthzUnaryInterceptor validates caller bearer tokens for management RPCs.
 // tokenValidator is the unexported interface declared in server.go (same package).
 func AuthzUnaryInterceptor(validator tokenValidator) grpc.UnaryServerInterceptor {
+	return AuthzUnaryInterceptorWithServiceToken(validator, "")
+}
+
+// AuthzUnaryInterceptorWithServiceToken authenticates management RPCs with PATs
+// and permits only the explicitly listed lifecycle RPCs to use the dedicated
+// API-to-AuthService credential. IssueOperatorSession may use either path: PAT
+// metadata is required for login, while the service credential is required for
+// refresh.
+func AuthzUnaryInterceptorWithServiceToken(validator tokenValidator, serviceToken string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if info.FullMethod == "/ibex.auth.v1.AuthService/ValidateToken" {
 			return handler(ctx, req)
 		}
-
-		bearer, err := bearerFromMetadata(ctx)
+		if serviceAuthAllowed(ctx, info.FullMethod, serviceToken) {
+			return handler(ctx, req)
+		}
+		var err error
+		ctx, err = authenticatePAT(ctx, validator)
 		if err != nil {
 			return nil, err
 		}
-		resp, err := validator.Validate(ctx, bearer)
-		if err != nil {
-			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
-		}
-		tokenID := ""
-		if resp.TokenId != nil {
-			tokenID = *resp.TokenId
-		}
-		userID := ""
-		if resp.UserId != nil {
-			userID = *resp.UserId
-		}
-		ctx = ContextWithCaller(ctx, CallerContext{
-			OrgID:       resp.GetOrgId(),
-			TokenID:     tokenID,
-			UserID:      userID,
-			Permissions: resp.GetPermissions(),
-		})
 		return handler(ctx, req)
 	}
+}
+
+func serviceAuthAllowed(ctx context.Context, method, expected string) bool {
+	return isServiceLifecycleMethod(method) && validServiceToken(ctx, expected)
+}
+
+func authenticatePAT(ctx context.Context, validator tokenValidator) (context.Context, error) {
+	bearer, err := bearerFromMetadata(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := validator.Validate(ctx, bearer)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
+	}
+	return ContextWithCaller(ctx, CallerContext{
+		OrgID: resp.GetOrgId(), TokenID: optionalString(resp.TokenId),
+		UserID: optionalString(resp.UserId), Permissions: resp.GetPermissions(),
+	}), nil
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func isServiceLifecycleMethod(method string) bool {
+	if _, ok := serviceLifecycleMethods[method]; ok {
+		return true
+	}
+	return method == "/ibex.auth.v1.AuthService/IssueOperatorSession"
+}
+
+func validServiceToken(ctx context.Context, expected string) bool {
+	if strings.TrimSpace(expected) == "" {
+		return false
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	vals := md.Get(serviceTokenMetadataKey)
+	if len(vals) != 1 || vals[0] == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(vals[0]), []byte(expected)) == 1
 }
 
 func bearerFromMetadata(ctx context.Context) (string, error) {

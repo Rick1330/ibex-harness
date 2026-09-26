@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         description="Auth service gRPC target for ValidateToken",
     )
     auth_timeout_ms: int = Field(default=50, ge=1)
+    auth_service_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_AUTH_SERVICE_TOKEN", "IBEX_API_AUTH_SERVICE_TOKEN"),
+        description="Dedicated API-to-AuthService lifecycle credential",
+    )
 
     redis_url: str | None = Field(
         default=None,
@@ -105,6 +110,11 @@ class Settings(BaseSettings):
             "DASHBOARD_JWT_PUBLIC_KEYS_PEM", "IBEX_API_JWT_PUBLIC_KEYS_PEM"
         ),
         description="PEM public key(s) for Auth-issued RS256 session JWTs (4.P.1 dual-verify)",
+    )
+    jwt_key_id: str = Field(
+        default="v1",
+        validation_alias=AliasChoices("JWT_KEY_ID", "IBEX_API_JWT_KEY_ID"),
+        min_length=1,
     )
     dashboard_session_cookie_name: str = Field(
         default="ibex_session",
@@ -278,12 +288,14 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _operator_session_boundary(self) -> Settings:
         if self.operator_feature_enabled and "environment" not in self.model_fields_set:
-            raise ValueError(
-                "IBEX_ENV must be explicitly set when operator sessions are enabled"
-            )
+            raise ValueError("IBEX_ENV must be explicitly set when operator sessions are enabled")
         if self.environment != "development" and self.jwt_hmac_secret is not None:
             raise ValueError("JWT_HMAC_SECRET is permitted only in development")
         if self.environment != "development" and self.operator_feature_enabled:
+            if not self.auth_service_token:
+                raise ValueError(
+                    "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled"
+                )
             if not self.jwt_public_keys_pem:
                 raise ValueError("DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development")
             if not self.redis_url:

@@ -46,13 +46,18 @@ class ValidatedSession:
 
 
 async def _call_lifecycle(
-    *, auth_grpc_addr: str, method: str, payload: bytes, timeout_seconds: float
+    *, auth_grpc_addr: str, service_token: str, method: str, payload: bytes, timeout_seconds: float
 ) -> bytes:
     assert_trusted_insecure_auth_target(auth_grpc_addr)
     try:
         async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
-            stub = channel.unary_unary(method, request_serializer=lambda b: b, response_deserializer=lambda b: b)
-            return await asyncio.wait_for(stub(payload), timeout=timeout_seconds)
+            stub = channel.unary_unary(
+                method, request_serializer=lambda b: b, response_deserializer=lambda b: b
+            )
+            return await asyncio.wait_for(
+                stub(payload, metadata=(("x-ibex-service-token", service_token),)),
+                timeout=timeout_seconds,
+            )
     except TimeoutError as exc:
         raise AuthUnavailableError("auth lifecycle timeout") from exc
     except grpc.aio.AioRpcError as exc:
@@ -61,9 +66,12 @@ async def _call_lifecycle(
         raise AuthUnavailableError("auth lifecycle unavailable") from exc
 
 
-async def validate_operator_session(*, auth_grpc_addr: str, access_token: str, timeout_seconds: float = 5.0) -> ValidatedSession:
+async def validate_operator_session(
+    *, auth_grpc_addr: str, service_token: str = "", access_token: str, timeout_seconds: float = 5.0
+) -> ValidatedSession:
     raw = await _call_lifecycle(
         auth_grpc_addr=auth_grpc_addr,
+        service_token=service_token,
         method=_VALIDATE_METHOD,
         payload=encode_string_fields({1: access_token}),
         timeout_seconds=timeout_seconds,
@@ -78,9 +86,20 @@ async def validate_operator_session(*, auth_grpc_addr: str, access_token: str, t
     return ValidatedSession(strings[1], strings[2], permissions or 0, strings[4], strings[5])
 
 
-async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, family_id: str = "", access_jti: str = "", access_token: str = "", refresh_token: str = "", timeout_seconds: float = 5.0) -> None:
+async def revoke_operator_session(
+    *,
+    auth_grpc_addr: str,
+    service_token: str = "",
+    session_id: str,
+    family_id: str = "",
+    access_jti: str = "",
+    access_token: str = "",
+    refresh_token: str = "",
+    timeout_seconds: float = 5.0,
+) -> None:
     await _call_lifecycle(
         auth_grpc_addr=auth_grpc_addr,
+        service_token=service_token,
         method=_REVOKE_METHOD,
         payload=encode_string_fields(
             {1: session_id, 2: family_id, 3: access_jti, 4: access_token, 5: refresh_token}
@@ -89,11 +108,28 @@ async def revoke_operator_session(*, auth_grpc_addr: str, session_id: str, famil
     )
 
 
-async def consume_step_up(*, auth_grpc_addr: str, token: str, subject: str, org_id: str, session_id: str, action: str, permission: int, timeout_seconds: float = 5.0) -> None:
+async def consume_step_up(
+    *,
+    auth_grpc_addr: str,
+    service_token: str = "",
+    token: str,
+    subject: str,
+    org_id: str,
+    session_id: str,
+    action: str,
+    permission: int,
+    timeout_seconds: float = 5.0,
+) -> None:
     payload = encode_string_fields({1: token, 2: subject, 3: org_id, 4: session_id, 5: action})
     if permission:
         payload += b"\x30" + encode_varint(permission)
-    await _call_lifecycle(auth_grpc_addr=auth_grpc_addr, method=_CONSUME_STEP_UP_METHOD, payload=payload, timeout_seconds=timeout_seconds)
+    await _call_lifecycle(
+        auth_grpc_addr=auth_grpc_addr,
+        service_token=service_token,
+        method=_CONSUME_STEP_UP_METHOD,
+        payload=payload,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
@@ -148,6 +184,7 @@ async def issue_operator_session(
 async def _call_issue_operator_session(
     *,
     auth_grpc_addr: str,
+    service_token: str,
     refresh_token: str,
     timeout_seconds: float,
 ) -> bytes:
@@ -159,7 +196,10 @@ async def _call_issue_operator_session(
                 request_serializer=lambda b: b,
                 response_deserializer=lambda b: b,
             )
-            return await asyncio.wait_for(stub(payload), timeout=timeout_seconds)
+            return await asyncio.wait_for(
+                stub(payload, metadata=(("x-ibex-service-token", service_token),)),
+                timeout=timeout_seconds,
+            )
     except TimeoutError as exc:
         raise AuthUnavailableError("auth refresh timeout") from exc
     except grpc.aio.AioRpcError as exc:
@@ -171,6 +211,7 @@ async def _call_issue_operator_session(
 async def refresh_operator_session(
     *,
     auth_grpc_addr: str,
+    service_token: str = "",
     refresh_token: str,
     timeout_seconds: float = 5.0,
 ) -> RefreshedSession:
@@ -178,6 +219,7 @@ async def refresh_operator_session(
     assert_trusted_insecure_auth_target(auth_grpc_addr)
     raw = await _call_issue_operator_session(
         auth_grpc_addr=auth_grpc_addr,
+        service_token=service_token,
         refresh_token=refresh_token,
         timeout_seconds=timeout_seconds,
     )
