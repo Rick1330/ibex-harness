@@ -102,15 +102,23 @@ async def _validate_remote_session(raw: str, settings: Settings) -> ValidatedSes
         raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc
 
 
-def _authorization_from_validated(claims: ValidatedSession) -> OperatorSessionAuthorization:
+def _parse_session_org_id(raw: str) -> UUID:
     try:
-        org_id = UUID(claims.org_id)
+        return UUID(raw)
     except (TypeError, ValueError) as exc:
         raise ApiError(code=INVALID_TOKEN, message="missing org context in session") from exc
-    if not claims.subject or not claims.session_id or not claims.jti:
-        raise ApiError(code=INVALID_TOKEN, message="incomplete session claims")
+
+
+def _require_complete_session_claims(claims: ValidatedSession) -> None:
+    if claims.subject and claims.session_id and claims.jti:
+        return
+    raise ApiError(code=INVALID_TOKEN, message="incomplete session claims")
+
+
+def _authorization_from_validated(claims: ValidatedSession) -> OperatorSessionAuthorization:
+    _require_complete_session_claims(claims)
     return OperatorSessionAuthorization(
-        org_id=org_id,
+        org_id=_parse_session_org_id(claims.org_id),
         permissions=claims.permissions,
         session_id=claims.session_id,
     )

@@ -170,3 +170,39 @@ def test_maybe_operator_session_delegates_when_step_up_header_present() -> None:
         got = asyncio.run(_maybe_operator_session(request))
     assert got is expected
     require.assert_awaited_once_with(request)
+
+
+def test_assert_operator_permission_kill_switches() -> None:
+    from unittest.mock import MagicMock
+
+    from apierror_py import INSUFFICIENT_PERMISSIONS
+    from authclient.permissions import (
+        OPERATOR_EXPORT,
+        OPERATOR_RAW_READ,
+        OPERATOR_REPLAY,
+        SECRET_USE,
+    )
+
+    from app.authz import assert_operator_permission
+    from app.errors import ApiError
+
+    cases = [
+        ({"operator_allow_export": False}, OPERATOR_EXPORT),
+        ({"operator_allow_replay": False}, OPERATOR_REPLAY),
+        ({"operator_allow_raw_read": False}, OPERATOR_RAW_READ),
+        ({"operator_allow_secret_use": False}, SECRET_USE),
+    ]
+    for kw, perm in cases:
+        settings = MagicMock(operator_feature_enabled=True, **kw)
+        for attr in (
+            "operator_allow_export",
+            "operator_allow_replay",
+            "operator_allow_raw_read",
+            "operator_allow_secret_use",
+            "operator_allow_delete",
+        ):
+            if attr not in kw:
+                setattr(settings, attr, True)
+        with pytest.raises(ApiError) as exc:
+            assert_operator_permission(settings, perm, perm)
+        assert exc.value.code == INSUFFICIENT_PERMISSIONS

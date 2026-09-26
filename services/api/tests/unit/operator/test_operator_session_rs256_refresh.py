@@ -608,3 +608,52 @@ def test_me_non_development_without_public_keys_fails_degraded() -> None:
         require_session_me(request)
     assert exc.value.code == "SERVICE_DEGRADED"
     assert exc.value.detail == "set DASHBOARD_JWT_PUBLIC_KEYS_PEM"
+
+
+def test_require_me_verify_material_dev_missing_both_secrets() -> None:
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+
+    from app.config import Settings
+    from app.errors import ApiError
+    from app.routers.session import require_session_me
+
+    settings = Settings.model_construct(
+        environment="development",
+        operator_feature_enabled=True,
+        jwt_hmac_secret=None,
+        jwt_public_keys_pem=None,
+        dashboard_session_cookie_name="ibex_session",
+    )
+    app = Starlette()
+    app.state.settings = settings
+    request = Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 123),
+            "server": ("test", 80),
+            "app": app,
+        }
+    )
+    with pytest.raises(ApiError) as exc:
+        require_session_me(request)
+    assert exc.value.code == "SERVICE_DEGRADED"
+    assert "JWT_HMAC_SECRET" in (exc.value.detail or "")
+
+
+def test_cookie_security_samesite_none_forces_secure() -> None:
+    from app.config import Settings
+    from app.routers.session import _cookie_security
+
+    settings = Settings.model_construct(cookie_samesite="none", cookie_secure=False)
+    secure, samesite = _cookie_security(settings)
+    assert secure is True
+    assert samesite == "none"
