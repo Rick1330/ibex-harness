@@ -63,9 +63,8 @@ spec:
             timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
             failureThreshold: {{ .Values.probes.failureThreshold }}
           readinessProbe:
-            # Worker enqueue HTTP exposes /health only (no /ready yet; ADR-0022 residual).
             httpGet:
-              path: {{ .Values.probes.livenessPath }}
+              path: {{ .Values.probes.readinessPath }}
               port: http
             initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
             periodSeconds: {{ .Values.probes.periodSeconds }}

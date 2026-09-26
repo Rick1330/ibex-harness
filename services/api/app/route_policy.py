@@ -90,7 +90,20 @@ def _has_expected_guard(key: tuple[str, str], auth_source: str, calls: list[obje
         return key == ("POST", "/v1/operator/session/login") and get_validator in calls
     if auth_source == "operator_session":
         expected = _operator_session_dependencies().get(key)
-        return expected is not None and expected in calls
+        if expected is not None and expected in calls:
+            return True
+        if key in {
+            ("POST", "/v1/organizations/{org_id}/legal-holds"),
+            ("POST", "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear"),
+        }:
+            return any(
+                getattr(call, "__module__", "") == "app.authz"
+                and str(getattr(call, "__qualname__", "")).startswith(
+                    "require_operator_legal_hold_manage.<locals>"
+                )
+                for call in calls
+            )
+        return False
     if auth_source == "operator_permission":
         return _operator_permission_dependencies().get(key) in calls
     return False

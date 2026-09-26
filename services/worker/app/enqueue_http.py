@@ -11,6 +11,7 @@ import time
 from typing import Any
 from uuid import UUID
 
+from redis.exceptions import RedisError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -84,6 +85,27 @@ def _authorize(request: Request, settings: Settings) -> JSONResponse | None:
 
 def health(_request: Request) -> Response:
     return JSONResponse({"status": "ok"})
+
+
+async def ready(request: Request) -> Response:
+    """Report readiness only when enqueue auth and Redis are available."""
+    settings: Settings = request.app.state.settings
+    token = getattr(settings, "enqueue_api_token", None)
+    redis_url = getattr(settings, "redis_url", None)
+    if token is None or not token.get_secret_value().strip() or not redis_url:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    client = None
+    try:
+        from redis.asyncio import Redis
+
+        client = Redis.from_url(redis_url, socket_timeout=0.5)
+        await asyncio.wait_for(client.ping(), timeout=0.5)
+    except (RedisError, OSError, TimeoutError):
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    finally:
+        if client is not None:
+            await client.aclose()
+    return JSONResponse({"status": "ready", "service": "worker"})
 
 
 def _turns_kwargs(turns: list[TurnPayload]) -> list[dict[str, Any]]:
@@ -328,6 +350,7 @@ def create_enqueue_app(
     app = Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
+            Route("/ready", ready, methods=["GET"]),
             Route("/internal/extraction/enqueue", enqueue_extraction, methods=["POST"]),
         ]
     )

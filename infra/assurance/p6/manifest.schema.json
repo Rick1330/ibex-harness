@@ -37,11 +37,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "sha256", "uri"],
+        "required": ["name", "sha256", "uri", "evidence_state"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-          "uri": { "type": "string", "minLength": 1 }
+          "uri": { "type": "string", "pattern": "^(https://|s3://|gs://|file://).+" },
+          "evidence_state": { "type": "string", "enum": ["declared", "mounted", "contract-tested", "runtime-tested", "staging-verified", "blocked"] },
+          "producer": { "type": "string", "minLength": 1 },
+          "content_type": { "type": "string", "minLength": 1 }
         }
       }
     },
@@ -61,13 +64,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "expected", "applicability", "result"],
+        "required": ["name", "expected", "applicability", "result", "evidence_state"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
           "expected": { "type": "boolean" },
           "applicability": { "type": "string", "enum": ["applicable", "inapplicable"] },
           "reason": { "type": "string" },
           "result": { "type": "string", "enum": ["passed", "failed", "skipped", "missing", "unknown", "cancelled"] },
+          "evidence_state": { "type": "string", "enum": ["declared", "mounted", "contract-tested", "runtime-tested", "staging-verified", "blocked"] },
           "artifact_uris": { "type": "array", "items": { "type": "string" } }
         }
       }

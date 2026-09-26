@@ -15,9 +15,18 @@ ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = ROOT / "infra/assurance/p6/manifest.schema.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
+ARTIFACT_URI = re.compile(r"^(https://|s3://|gs://|file://).+")
 ENVIRONMENTS = {"local", "preview", "staging", "production"}
 APPLICABILITY = {"applicable", "inapplicable"}
 RESULTS = {"passed", "failed", "skipped", "missing", "unknown", "cancelled"}
+EVIDENCE_STATES = {
+    "declared",
+    "mounted",
+    "contract-tested",
+    "runtime-tested",
+    "staging-verified",
+    "blocked",
+}
 
 
 def fail(message: str) -> None:
@@ -81,12 +90,16 @@ def validate(manifest: dict[str, Any]) -> None:
         where = f"manifest.artifacts[{index}]"
         if not isinstance(artifact, dict):
             fail(f"{where}: expected object")
-        require(artifact, "name", "sha256", "uri", where=where)
+        require(artifact, "name", "sha256", "uri", "evidence_state", where=where)
         string(artifact["name"], f"{where}.name")
         digest = string(artifact["sha256"], f"{where}.sha256")
         if not SHA256.fullmatch(digest):
             fail(f"{where}.sha256: expected lowercase SHA-256")
-        string(artifact["uri"], f"{where}.uri")
+        uri = string(artifact["uri"], f"{where}.uri")
+        if not ARTIFACT_URI.fullmatch(uri):
+            fail(f"{where}.uri: unsupported immutable artifact URI")
+        if artifact["evidence_state"] not in EVIDENCE_STATES:
+            fail(f"{where}.evidence_state: unsupported value")
 
     checks = manifest["checks"]
     if not isinstance(checks, list) or not checks:
@@ -96,7 +109,15 @@ def validate(manifest: dict[str, Any]) -> None:
         where = f"manifest.checks[{index}]"
         if not isinstance(check, dict):
             fail(f"{where}: expected object")
-        require(check, "name", "expected", "applicability", "result", where=where)
+        require(
+            check,
+            "name",
+            "expected",
+            "applicability",
+            "result",
+            "evidence_state",
+            where=where,
+        )
         name = string(check["name"], f"{where}.name")
         if name in seen:
             fail(f"{where}.name: duplicate check name {name}")
@@ -109,14 +130,20 @@ def validate(manifest: dict[str, Any]) -> None:
         result = check["result"]
         if result not in RESULTS:
             fail(f"{where}.result: unsupported value")
+        if check["evidence_state"] not in EVIDENCE_STATES:
+            fail(f"{where}.evidence_state: unsupported value")
         reason = check.get("reason")
         if applicability == "inapplicable":
+            if check["expected"]:
+                fail(f"{where}: inapplicable checks cannot be expected")
             if not isinstance(reason, str) or not reason:
                 fail(f"{where}: inapplicable checks require a reason")
             if result not in {"skipped", "missing"}:
                 fail(f"{where}: inapplicable checks must be skipped or missing")
-        elif check["expected"] and result in {"skipped", "missing"}:
-            fail(f"{where}: expected applicable check cannot be {result}")
+        elif result != "passed":
+            fail(f"{where}: applicable checks must pass; got {result}")
+        if check["expected"] and check["evidence_state"] in {"blocked", "declared"}:
+            fail(f"{where}: expected check is not executable evidence")
 
     rollback = manifest["rollback"]
     if not isinstance(rollback, dict):
