@@ -32,3 +32,32 @@ def test_non_development_operator_sessions_require_auth_service_token() -> None:
     assert (
         Settings(auth_service_token="service-token", **kwargs).auth_service_token == "service-token"
     )
+
+
+def test_cors_origin_list_trims_and_skips_empty() -> None:
+    settings = Settings.model_construct(allowed_origins=" https://a.example , ,https://b.example ")
+    assert settings.cors_origin_list() == ["https://a.example", "https://b.example"]
+
+
+def test_cookie_names_reject_whitespace_padding() -> None:
+    try:
+        Settings(
+            environment="development",
+            dashboard_session_cookie_name=" ibex_session",
+            dashboard_refresh_cookie_name="ibex_refresh",
+            dashboard_csrf_cookie_name="ibex_csrf",
+        )
+    except ValueError as exc:
+        assert "whitespace" in str(exc)
+    else:
+        raise AssertionError("padded cookie names must fail")
+
+
+def test_staging_operator_feature_disabled_allows_minimal_config() -> None:
+    settings = Settings(
+        environment="staging",
+        operator_feature_enabled=False,
+        redis_url="redis://localhost",
+        cookie_secure=True,
+    )
+    assert settings.operator_feature_enabled is False

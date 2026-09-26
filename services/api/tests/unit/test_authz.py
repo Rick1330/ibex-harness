@@ -98,13 +98,15 @@ def test_require_legal_hold_manage_step_up() -> None:
     )
     request = MagicMock()
     request.state.ibex_step_up_ok = False
+    missing_step_up = dep(request=request, token=token)
     with pytest.raises(ApiError) as exc:
-        asyncio.run(dep(request=request, token=token))
+        asyncio.run(missing_step_up)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
     request.state.ibex_step_up_ok = True
+    with_step_up = dep(request=request, token=token)
     with pytest.raises(ApiError):
-        asyncio.run(dep(request=request, token=token))
+        asyncio.run(with_step_up)
     assert LEGAL_HOLD_MANAGE
 
 
@@ -139,3 +141,32 @@ def test_assert_operator_permission_gates() -> None:
     with pytest.raises(ApiError) as exc:
         assert_operator_permission(settings, OPERATOR_DELETE, OPERATOR_DELETE)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
+
+
+def test_maybe_operator_session_returns_none_without_step_up_header() -> None:
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from app.authz import _maybe_operator_session
+
+    request = MagicMock()
+    request.headers.get.return_value = None
+    assert asyncio.run(_maybe_operator_session(request)) is None
+    request.headers.get.assert_called_once_with("X-IBEX-Step-Up")
+
+
+def test_maybe_operator_session_delegates_when_step_up_header_present() -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from uuid import uuid4
+
+    from app.authz import _maybe_operator_session
+    from app.operator_session_auth import OperatorSessionAuthorization
+
+    request = MagicMock()
+    request.headers.get.return_value = "proof"
+    expected = OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="sid")
+    with patch("app.authz.require_operator_session", new=AsyncMock(return_value=expected)) as require:
+        got = asyncio.run(_maybe_operator_session(request))
+    assert got is expected
+    require.assert_awaited_once_with(request)

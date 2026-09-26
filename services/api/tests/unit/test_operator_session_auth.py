@@ -55,11 +55,9 @@ def _settings(**overrides: object) -> Settings:
 def test_local_operator_session_rejects_non_uuid_org_context() -> None:
     settings = _settings()
     claims = SimpleNamespace(org_id="not-a-uuid", permissions=0, session_id="sid")
-    with (
-        patch("app.operator_session_auth.verify_token_opts", return_value=claims),
-        pytest.raises(ApiError) as exc,
-    ):
-        _verified_local_session("token", settings)
+    with patch("app.operator_session_auth.verify_token_opts", return_value=claims):
+        with pytest.raises(ApiError) as exc:
+            _verified_local_session("token", settings)
     assert exc.value.code == INVALID_TOKEN
     assert exc.value.message == "missing org context in session"
 
@@ -73,10 +71,11 @@ def test_authservice_operator_session_rejects_incomplete_verified_claims() -> No
     incomplete = ValidatedSession(
         subject="", org_id=str(uuid4()), permissions=0, session_id="sid", jti="jti"
     )
-    with (
-        patch("app.operator_session_auth.validate_operator_session", return_value=incomplete),
-        pytest.raises(ApiError) as exc,
+    pending = require_operator_session(_request(settings))
+    with patch(
+        "app.operator_session_auth.validate_operator_session", return_value=incomplete
     ):
-        asyncio.run(require_operator_session(_request(settings)))
+        with pytest.raises(ApiError) as exc:
+            asyncio.run(pending)
     assert exc.value.code == INVALID_TOKEN
     assert exc.value.message == "incomplete session claims"

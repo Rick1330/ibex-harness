@@ -40,7 +40,7 @@ The step-up dependency in `services/api/app/step_up.py` is helper-level. It veri
 
 ## Mounted route inventory
 
-The complete route inventory is generated at `.pr2-evidence/route_inventory.json` and rendered at `.pr2-evidence/route_inventory.txt`. FastAPI 0.141 represents included routers as `_IncludedRouter` objects, so the evidence script traverses `original_router.routes` to enumerate actual mounted endpoints.
+The complete route inventory is generated at `services/api/scripts/route_inventory.json` and rendered at `services/api/scripts/route_inventory.txt`. FastAPI 0.141 represents included routers as `_IncludedRouter` objects, so the evidence script traverses `original_router.routes` to enumerate actual mounted endpoints.
 
 The inventory contains the mounted management, operator session, platform, SSE, legal-hold, provider, model-policy, billing, capture-policy, rate-limit, token, user, agent, organization, and health/readiness routes. It is a source inventory, not yet the checked-in route-policy contract required by PR2.
 

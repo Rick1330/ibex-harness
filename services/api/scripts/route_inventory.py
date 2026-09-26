@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-repo = Path(__file__).resolve().parents[1]
+repo = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(repo / "services" / "api"))
 from app.main import create_app  # noqa: E402
 

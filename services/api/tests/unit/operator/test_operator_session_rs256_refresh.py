@@ -483,17 +483,14 @@ def test_refresh_via_auth_rejects_missing_public_keys_before_rpc() -> None:
     from app.routers.session import _refresh_via_auth
 
     rpc = AsyncMock()
-    with (
-        patch("app.routers.session.refresh_operator_session", new=rpc),
-        pytest.raises(ApiError) as exc,
-    ):
-        asyncio.run(
-            _refresh_via_auth(
-                response=Response(),
-                settings=_rs256_settings(jwt_public_keys_pem=None),
-                refresh_token="proof",
-            )
-        )
+    pending = _refresh_via_auth(
+        response=Response(),
+        settings=_rs256_settings(jwt_public_keys_pem=None),
+        refresh_token="proof",
+    )
+    with patch("app.routers.session.refresh_operator_session", new=rpc):
+        with pytest.raises(ApiError) as exc:
+            asyncio.run(pending)
     assert exc.value.code == "SERVICE_DEGRADED"
     rpc.assert_not_awaited()
 
@@ -572,19 +569,18 @@ def test_non_development_refresh_dispatches_to_authservice_before_jwt_parsing() 
 
 
 def test_me_non_development_without_public_keys_fails_degraded() -> None:
-    import asyncio
-
     from starlette.applications import Starlette
     from starlette.requests import Request
 
     from app.config import Settings
     from app.errors import ApiError
-    from app.routers.session import me
+    from app.routers.session import require_session_me
 
     settings = Settings.model_construct(
         environment="staging",
         operator_feature_enabled=True,
         jwt_public_keys_pem=None,
+        dashboard_session_cookie_name="ibex_session",
     )
     app = Starlette()
     app.state.settings = settings
@@ -605,6 +601,6 @@ def test_me_non_development_without_public_keys_fails_degraded() -> None:
         }
     )
     with pytest.raises(ApiError) as exc:
-        asyncio.run(me(request))
+        require_session_me(request)
     assert exc.value.code == "SERVICE_DEGRADED"
     assert exc.value.detail == "set DASHBOARD_JWT_PUBLIC_KEYS_PEM"

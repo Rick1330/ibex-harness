@@ -59,16 +59,20 @@ def test_same_module_unrelated_dependency_does_not_satisfy_auth_contract() -> No
 
 def test_route_policy_generator_preserves_helpers_and_is_deterministic(tmp_path: Path) -> None:
     repo = tmp_path
-    evidence = repo / ".pr2-evidence"
+    scripts = repo / "services/api/scripts"
     app_dir = repo / "services/api/app"
-    evidence.mkdir(parents=True)
+    scripts.mkdir(parents=True)
     app_dir.mkdir(parents=True)
-    source_script = Path(__file__).resolve().parents[4] / ".pr2-evidence/generate_route_policy.py"
-    source_inventory = Path(__file__).resolve().parents[4] / ".pr2-evidence/route_inventory.json"
-    script = evidence / "generate_route_policy.py"
+    source_script = (
+        Path(__file__).resolve().parents[2] / "scripts/generate_route_policy.py"
+    )
+    source_inventory = (
+        Path(__file__).resolve().parents[2] / "scripts/route_inventory.json"
+    )
+    script = scripts / "generate_route_policy.py"
     script.write_bytes(source_script.read_bytes())
     inventory = json.loads(source_inventory.read_text(encoding="utf-8"))
-    (evidence / "route_inventory.json").write_text(
+    (scripts / "route_inventory.json").write_text(
         json.dumps(inventory[:2]), encoding="utf-8"
     )
     runtime_module = app_dir / "route_policy.py"
@@ -90,7 +94,31 @@ def test_route_policy_generator_preserves_helpers_and_is_deterministic(tmp_path:
     assert runtime_module.read_text(encoding="utf-8") == preserved_helpers
 
 
+def test_auth_source_requires_exact_public_path_match() -> None:
+    import importlib.util
 
+    script = Path(__file__).resolve().parents[2] / "scripts/generate_route_policy.py"
+    spec = importlib.util.spec_from_file_location("generate_route_policy", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    public_paths = frozenset(
+        {
+            "/docs",
+            "/docs/oauth2-redirect",
+            "/redoc",
+            "/openapi.json",
+            "/health",
+            "/ready",
+            "/metrics",
+        }
+    )
+    assert module._auth_source("/health", public_paths) == "public"
+    assert module._auth_source("/metrics", public_paths) == "public"
+    assert module._auth_source("/docs/oauth2-redirect", public_paths) == "public"
+    assert module._auth_source("/healthcheck", public_paths) == "bearer_pat"
+    assert module._auth_source("/metrics/private", public_paths) == "bearer_pat"
+    assert module._auth_source("/docs-admin", public_paths) == "bearer_pat"
 def _route(path: str | None, endpoint: object, dependencies: list[object] | None = None):
     return SimpleNamespace(
         path=path,
@@ -188,9 +216,9 @@ def test_route_policy_checks_bearer_and_pat_exchange_exact_dependencies(monkeypa
     assert executable_dependency_gaps(SimpleNamespace(routes=[exchange_guarded])) == ()
 
 
-def test_route_policy_requires_known_inline_and_operator_session_contracts(monkeypatch) -> None:
+def test_route_policy_requires_operator_session_dependencies(monkeypatch) -> None:
     from app import route_policy
-    from app.routers.session import me
+    from app.routers.session import me, require_session_me
 
     path = "/v1/operator/session/me"
     row = _policy_row(path, me, "operator_session")
@@ -198,7 +226,15 @@ def test_route_policy_requires_known_inline_and_operator_session_contracts(monke
     assert executable_dependency_gaps(
         SimpleNamespace(routes=[_route(path, lambda: None)])
     ) == (("GET", path),)
-    assert executable_dependency_gaps(SimpleNamespace(routes=[_route(path, me)])) == ()
+    assert executable_dependency_gaps(SimpleNamespace(routes=[_route(path, me)])) == (
+        ("GET", path),
+    )
+    guarded = _route(
+        path,
+        me,
+        [SimpleNamespace(call=require_session_me, dependencies=[])],
+    )
+    assert executable_dependency_gaps(SimpleNamespace(routes=[guarded])) == ()
 
     path = "/operator/unknown-protected-route"
     row = _policy_row(path, me, "operator_permission")
@@ -214,17 +250,22 @@ def test_generated_policy_data_public_helper_matches_runtime_rows() -> None:
     assert generated_policy_keys() == policy_keys()
 
 
-def test_route_policy_skips_pathless_routes_and_rejects_inline_contract_drift(monkeypatch) -> None:
+def test_route_policy_skips_pathless_routes_and_rejects_missing_session_dep(monkeypatch) -> None:
     from app import route_policy
-    from app.routers.session import me
+    from app.routers.session import me, require_session_me
 
     pathless = _route(None, me)
     assert executable_dependency_gaps(SimpleNamespace(routes=[pathless])) == ()
 
     key = ("GET", "/v1/operator/session/me")
-    monkeypatch.setattr(route_policy, "_INLINE_SESSION_ENDPOINTS", {})
     row = _policy_row(key[1], me, "operator_session")
     monkeypatch.setattr(route_policy, "ROUTE_POLICY", (row,))
     assert executable_dependency_gaps(
         SimpleNamespace(routes=[_route(key[1], me)])
     ) == (key,)
+    guarded = _route(
+        key[1],
+        me,
+        [SimpleNamespace(call=require_session_me, dependencies=[])],
+    )
+    assert executable_dependency_gaps(SimpleNamespace(routes=[guarded])) == ()

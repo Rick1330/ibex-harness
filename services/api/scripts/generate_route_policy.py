@@ -11,8 +11,8 @@ def source_constant_name(source: str) -> str:
     return f"ROUTE_SOURCE_{suffix}"
 
 
-def _auth_source(path: str, public_prefixes: tuple[str, ...]) -> str:
-    if path.startswith(public_prefixes):
+def _auth_source(path: str, public_paths: frozenset[str]) -> str:
+    if path in public_paths:
         return "public"
     if path == "/v1/operator/session/login":
         return "pat_exchange"
@@ -34,11 +34,11 @@ def _source_path(root: Path, raw_source: str | None) -> str | None:
 
 
 def _policy_row(
-    root: Path, row: dict[str, object], public_prefixes: tuple[str, ...]
+    root: Path, row: dict[str, object], public_paths: frozenset[str]
 ) -> dict[str, object]:
     method = str(row["methods"][0])
     path = str(row["path"])
-    auth = _auth_source(path, public_prefixes)
+    auth = _auth_source(path, public_paths)
     source = _source_path(root, row.get("source"))
     return {
         "method": method,
@@ -87,7 +87,7 @@ def _render(
     paths: dict[str, str],
 ) -> None:
     out = root / "services" / "api" / "app" / "route_policy_data.py"
-    body = '''"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\n'''
+    body = '''"""Generated mounted route policy rows; regenerate with services/api/scripts/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\n'''
     body += "".join(
         f"{constant}: Final = {value!r}\n" for value, constant in sources.items()
     )
@@ -112,19 +112,22 @@ def _render(
 
 
 def generate() -> None:
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[3]
     rows = json.loads(
-        (root / ".pr2-evidence" / "route_inventory.json").read_text(encoding="utf-8")
+        (Path(__file__).resolve().parent / "route_inventory.json").read_text(encoding="utf-8")
     )
-    public_prefixes = (
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/health",
-        "/ready",
-        "/metrics",
+    public_paths = frozenset(
+        {
+            "/docs",
+            "/docs/oauth2-redirect",
+            "/redoc",
+            "/openapi.json",
+            "/health",
+            "/ready",
+            "/metrics",
+        }
     )
-    policy = [_policy_row(root, row, public_prefixes) for row in rows]
+    policy = [_policy_row(root, row, public_paths) for row in rows]
     sources, paths = _constants(policy)
     _render(root, policy, sources, paths)
 

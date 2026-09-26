@@ -78,6 +78,76 @@ def _require_operator_enabled(settings: Settings) -> None:
         )
 
 
+def _require_me_verify_material(settings: Settings) -> None:
+    if settings.environment != "development" and not settings.jwt_public_keys_pem:
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="session public keys not configured",
+            detail="set DASHBOARD_JWT_PUBLIC_KEYS_PEM",
+        )
+    if (
+        settings.environment == "development"
+        and not settings.jwt_hmac_secret
+        and not settings.jwt_public_keys_pem
+    ):
+        raise ApiError(
+            code=SERVICE_DEGRADED,
+            message="session signing secret not configured",
+            detail="set JWT_HMAC_SECRET and/or DASHBOARD_JWT_PUBLIC_KEYS_PEM",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SessionMeGate:
+    """Operator-session gate for GET /me (cookie present or bearer fallback)."""
+
+    settings: Settings
+    access_cookie: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionRefreshGate:
+    """Operator-session gate for POST /refresh (refresh cookie required)."""
+
+    settings: Settings
+    refresh_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class SessionLogoutGate:
+    """Operator-session gate for POST /logout."""
+
+    settings: Settings
+
+
+def require_session_me(request: Request) -> SessionMeGate:
+    """Executable session dependency for /me — feature + verify material + cookie peek."""
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    _require_me_verify_material(settings)
+    return SessionMeGate(
+        settings=settings,
+        access_cookie=request.cookies.get(settings.dashboard_session_cookie_name),
+    )
+
+
+def require_session_refresh(request: Request) -> SessionRefreshGate:
+    """Executable session dependency for /refresh — feature + refresh cookie present."""
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
+    if not raw:
+        raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+    return SessionRefreshGate(settings=settings, refresh_token=raw)
+
+
+def require_session_logout(request: Request) -> SessionLogoutGate:
+    """Executable session dependency for /logout — feature enabled before cookie clear/revoke."""
+    settings = _settings(request)
+    _require_operator_enabled(settings)
+    return SessionLogoutGate(settings=settings)
+
+
 def _require_hmac(settings: Settings) -> str:
     if settings.environment != "development":
         raise ApiError(
@@ -364,12 +434,13 @@ def _refresh_via_hmac(
 
 
 @router.post("/refresh")
-async def refresh_session(request: Request, response: Response) -> dict[str, object]:
-    settings = _settings(request)
-    _require_operator_enabled(settings)
-    raw = request.cookies.get(settings.dashboard_refresh_cookie_name)
-    if not raw:
-        raise ApiError(code=INVALID_TOKEN, message="missing refresh cookie")
+async def refresh_session(
+    request: Request,
+    response: Response,
+    gate: Annotated[SessionRefreshGate, Depends(require_session_refresh)],
+) -> dict[str, object]:
+    settings = gate.settings
+    raw = gate.refresh_token
     if settings.environment != "development":
         return await _refresh_via_auth(response=response, settings=settings, refresh_token=raw)
     try:
@@ -382,8 +453,11 @@ async def refresh_session(request: Request, response: Response) -> dict[str, obj
 
 
 @router.post("/logout")
-async def logout(request: Request) -> Response:
-    settings = _settings(request)
+async def logout(
+    request: Request,
+    gate: Annotated[SessionLogoutGate, Depends(require_session_logout)],
+) -> Response:
+    settings = gate.settings
     if settings.environment != "development":
         auth_error = await _logout_via_auth(request, settings)
         if auth_error is not None:
@@ -484,27 +558,13 @@ def _clear_session_cookies(response: Response, settings: Settings) -> None:
 
 
 @router.get("/me")
-async def me(request: Request) -> dict[str, object]:
+async def me(
+    request: Request,
+    gate: Annotated[SessionMeGate, Depends(require_session_me)],
+) -> dict[str, object]:
     """Prove cookie session works for authenticated API calls."""
-    settings = _settings(request)
-    _require_operator_enabled(settings)
-    if settings.environment != "development" and not settings.jwt_public_keys_pem:
-        raise ApiError(
-            code=SERVICE_DEGRADED,
-            message="session public keys not configured",
-            detail="set DASHBOARD_JWT_PUBLIC_KEYS_PEM",
-        )
-    if (
-        settings.environment == "development"
-        and not settings.jwt_hmac_secret
-        and not settings.jwt_public_keys_pem
-    ):
-        raise ApiError(
-            code=SERVICE_DEGRADED,
-            message="session signing secret not configured",
-            detail="set JWT_HMAC_SECRET and/or DASHBOARD_JWT_PUBLIC_KEYS_PEM",
-        )
-    raw = request.cookies.get(settings.dashboard_session_cookie_name)
+    settings = gate.settings
+    raw = gate.access_cookie
     if not raw:
         return await _me_bearer(request)
     if settings.environment != "development":

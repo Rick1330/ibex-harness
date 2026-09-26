@@ -9,7 +9,7 @@ from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import Request
 
 from app.auth.client import AuthFailedError, AuthUnavailableError
-from app.auth.session_refresh import validate_operator_session
+from app.auth.session_refresh import ValidatedSession, validate_operator_session
 from app.config import Settings
 from app.errors import ApiError
 from app.session_stub import (
@@ -83,9 +83,13 @@ async def require_operator_session(request: Request) -> OperatorSessionAuthoriza
     raw = _access_cookie(request, settings)
     if settings.environment == "development":
         return _verified_local_session(raw, settings)
+    claims = await _validate_remote_session(raw, settings)
+    return _authorization_from_validated(claims)
 
+
+async def _validate_remote_session(raw: str, settings: Settings) -> ValidatedSession:
     try:
-        claims = await validate_operator_session(
+        return await validate_operator_session(
             auth_grpc_addr=settings.auth_grpc_addr,
             service_token=settings.auth_service_token or "",
             access_token=raw,
@@ -97,6 +101,8 @@ async def require_operator_session(request: Request) -> OperatorSessionAuthoriza
         # ValueError here denotes an invalid/untrusted configured gRPC target.
         raise ApiError(code=SERVICE_DEGRADED, message="auth unavailable") from exc
 
+
+def _authorization_from_validated(claims: ValidatedSession) -> OperatorSessionAuthorization:
     try:
         org_id = UUID(claims.org_id)
     except (TypeError, ValueError) as exc:

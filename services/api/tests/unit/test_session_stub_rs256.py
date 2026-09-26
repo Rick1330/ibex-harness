@@ -93,17 +93,15 @@ def test_verify_rejects_malformed_nbf_claim() -> None:
     payload = _access_payload(org)
     payload["nbf"] = "not-a-number"
     tok = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, payload)
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
     with pytest.raises(SessionStubError, match="invalid not-before claim"):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=pub,
-            ),
-        )
+        verify_token_opts(tok, opts)
 
 
 @pytest.mark.parametrize(
@@ -139,17 +137,17 @@ def test_verify_rejects_non_object_header() -> None:
 
 
 def test_session_token_and_jwt_parts_have_bounded_size() -> None:
+    oversized_token_opts = TokenVerifyOpts(
+        secret="s" * 32, issuer="i", audience="a", expect_kind="access"
+    )
     with pytest.raises(SessionStubError, match="token too large"):
-        verify_token_opts(
-            "x" * (MAX_SESSION_TOKEN_LEN + 1),
-            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
-        )
+        verify_token_opts("x" * (MAX_SESSION_TOKEN_LEN + 1), oversized_token_opts)
     oversized_part = "x" * (MAX_JWT_PART_LEN + 1)
+    oversized_part_opts = TokenVerifyOpts(
+        secret="s" * 32, issuer="i", audience="a", expect_kind="access"
+    )
     with pytest.raises(SessionStubError, match="token too large"):
-        verify_token_opts(
-            f"{oversized_part}.payload.signature",
-            TokenVerifyOpts(secret="s" * 32, issuer="i", audience="a", expect_kind="access"),
-        )
+        verify_token_opts(f"{oversized_part}.payload.signature", oversized_part_opts)
 
 
 def test_rsa_loader_rejects_non_rsa_public_key() -> None:
@@ -171,10 +169,12 @@ def test_rsa_loader_stops_on_malformed_trailing_pem() -> None:
 
 
 def test_header_kid_rejects_malformed_and_non_object_headers() -> None:
+    malformed = _b64url(b"not-json")
     with pytest.raises(SessionStubError, match="bad header"):
-        _header_kid(_b64url(b"not-json"))
+        _header_kid(malformed)
+    non_object = _b64url(b"[]")
     with pytest.raises(SessionStubError, match="bad header"):
-        _header_kid(_b64url(b"[]"))
+        _header_kid(non_object)
 
 
 def test_verify_rejects_missing_material() -> None:
@@ -203,17 +203,15 @@ def test_verify_rejects_alg_none_even_with_rs256_keys() -> None:
     org = str(uuid4())
     key, pub = _rsa_keypair()
     tok = _sign_rs256(key, {"alg": "none", "typ": "JWT"}, _access_payload(org))
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
     with pytest.raises(SessionStubError, match="alg mismatch"):
-        verify_token_opts(
-            tok,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=pub,
-            ),
-        )
+        verify_token_opts(tok, opts)
 
 
 def test_verify_rejects_alg_none_hs256_fallback() -> None:
@@ -244,17 +242,15 @@ def test_verify_rejects_alg_none_hs256_fallback() -> None:
     secret = "s" * 32
     sig = _b64url(hmac.new(secret.encode(), body.encode("ascii"), hashlib.sha256).digest())
     _, wrong_pub = _rsa_keypair()
+    opts = TokenVerifyOpts(
+        secret=secret,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=wrong_pub,
+    )
     with pytest.raises(SessionStubError, match="alg mismatch"):
-        verify_token_opts(
-            f"{body}.{sig}",
-            TokenVerifyOpts(
-                secret=secret,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=wrong_pub,
-            ),
-        )
+        verify_token_opts(f"{body}.{sig}", opts)
 
 
 def test_verify_accepts_token_kind_alias() -> None:
@@ -327,17 +323,15 @@ def test_verify_rs256_rejects_each_missing_required_claim(claim: str, message: s
     payload = _access_payload(str(uuid4()))
     payload.pop(claim)
     token = _sign_rs256(key, {"alg": "RS256", "typ": "JWT"}, payload)
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
     with pytest.raises(SessionStubError, match=message):
-        verify_token_opts(
-            token,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=pub,
-            ),
-        )
+        verify_token_opts(token, opts)
 
 
 def test_verify_rejects_future_not_before() -> None:
@@ -362,29 +356,18 @@ def test_verify_rejects_missing_or_wrong_rs256_key_id() -> None:
     key, pub = _rsa_keypair()
     payload = _access_payload(str(uuid4()))
     missing = _sign_rs256(key, {"alg": "RS256", "typ": "JWT", "kid": ""}, payload)
+    opts = TokenVerifyOpts(
+        secret=None,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+        public_keys_pem=pub,
+    )
     with pytest.raises(SessionStubError, match="key id"):
-        verify_token_opts(
-            missing,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=pub,
-            ),
-        )
+        verify_token_opts(missing, opts)
     wrong = _sign_rs256(key, {"alg": "RS256", "typ": "JWT", "kid": "old"}, payload)
     with pytest.raises(SessionStubError, match="key id"):
-        verify_token_opts(
-            wrong,
-            TokenVerifyOpts(
-                secret=None,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-                public_keys_pem=pub,
-            ),
-        )
+        verify_token_opts(wrong, opts)
 
 
 def test_verify_rejects_missing_rs256_session_id() -> None:
@@ -426,16 +409,14 @@ def test_hs256_verifier_rejects_non_jwt_typ() -> None:
     payload = _b64url(json.dumps({"iss": "ibex-harness"}).encode())
     body = f"{header}.{payload}"
     signature = _b64url(hmac.new(secret.encode(), body.encode("ascii"), hashlib.sha256).digest())
+    opts = TokenVerifyOpts(
+        secret=secret,
+        issuer="ibex-harness",
+        audience="ibex-dashboard",
+        expect_kind=SESSION_KIND_ACCESS,
+    )
     with pytest.raises(SessionStubError, match="typ mismatch"):
-        verify_token_opts(
-            f"{body}.{signature}",
-            TokenVerifyOpts(
-                secret=secret,
-                issuer="ibex-harness",
-                audience="ibex-dashboard",
-                expect_kind=SESSION_KIND_ACCESS,
-            ),
-        )
+        verify_token_opts(f"{body}.{signature}", opts)
 
 
 def test_private_header_type_reader_rejects_invalid_and_non_object_json() -> None:
@@ -443,5 +424,6 @@ def test_private_header_type_reader_rejects_invalid_and_non_object_json() -> Non
 
     with pytest.raises(SessionStubError, match="bad header"):
         _header_typ("not-base64!")
+    non_object = _b64url(b"[]")
     with pytest.raises(SessionStubError, match="bad header"):
-        _header_typ(_b64url(b"[]"))
+        _header_typ(non_object)

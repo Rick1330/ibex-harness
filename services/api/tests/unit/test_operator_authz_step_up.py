@@ -112,9 +112,7 @@ def test_assert_operator_permission_denies(settings_kw: dict, want_code: str | N
     settings = _settings(**settings_kw)
     if want_code is None:
         with pytest.raises(ApiError) as exc:
-            assert_operator_permission(
-                settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ
-            )
+            assert_operator_permission(settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ)
         assert "Step-up" in exc.value.message
         return
     with pytest.raises(ApiError) as exc:
@@ -123,18 +121,15 @@ def test_assert_operator_permission_denies(settings_kw: dict, want_code: str | N
 
 
 def test_assert_operator_permission_cannot_replace_step_up_dependency() -> None:
+    settings = _settings()
     with pytest.raises(ApiError, match="Step-up"):
-        assert_operator_permission(_settings(), OPERATOR_RAW_READ, OPERATOR_RAW_READ)
+        assert_operator_permission(settings, OPERATOR_RAW_READ, OPERATOR_RAW_READ)
 
 
 def test_assert_operator_permission_bitmap_missing() -> None:
     settings = _settings()
     with pytest.raises(ApiError) as exc:
-        assert_operator_permission(
-            settings,
-            0,
-            OPERATOR_RAW_READ,
-        )
+        assert_operator_permission(settings, 0, OPERATOR_RAW_READ)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert "Insufficient permissions" in exc.value.message
 
@@ -159,11 +154,10 @@ def test_require_operator_permission_denial_does_not_consume_step_up(
     token = ValidateResult(org_id=uuid4(), permissions=permissions, user_id="u1")
     dep = require_operator_permission(SECRET_USE)
     req = _request_with_settings(_settings(**settings_kw))
-    with (
-        patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce,
-        pytest.raises(ApiError) as exc,
-    ):
-        asyncio.run(dep(req, token))
+    pending = dep(req, token)
+    with patch("app.authz.enforce_step_up", new=AsyncMock()) as enforce:
+        with pytest.raises(ApiError) as exc:
+            asyncio.run(pending)
     assert exc.value.code == expected_code
     enforce.assert_not_awaited()
 
@@ -292,17 +286,21 @@ def test_enforce_step_up_rejects_missing_header_and_missing_identity() -> None:
 
     req = _request_with_settings(_settings())
     caller = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
+    missing_header = enforce_step_up(
+        req, caller, required_permission=SECRET_USE, action="op"
+    )
     with pytest.raises(ApiError) as exc:
-        asyncio.run(enforce_step_up(req, caller, required_permission=SECRET_USE, action="op"))
+        asyncio.run(missing_header)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert exc.value.message == "Step-up authentication required"
 
     req = _request_with_settings(_settings(), headers=[(b"x-ibex-step-up", b"untrusted")])
     missing_identity = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
+    unbound = enforce_step_up(
+        req, missing_identity, required_permission=SECRET_USE, action="op"
+    )
     with pytest.raises(ApiError) as exc:
-        asyncio.run(
-            enforce_step_up(req, missing_identity, required_permission=SECRET_USE, action="op")
-        )
+        asyncio.run(unbound)
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
 
 
@@ -352,8 +350,9 @@ def test_enforce_step_up_uses_authservice_in_non_development(
             asyncio.run(enforce())
             assert req.state.ibex_step_up_ok is True
         else:
+            pending = enforce()
             with pytest.raises(ApiError) as exc:
-                asyncio.run(enforce())
+                asyncio.run(pending)
             assert exc.value.code == expected_code
     assert consume.await_count == 1
     assert consume.await_args.kwargs["subject"] == "user-1"

@@ -1,4 +1,4 @@
-"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""
+"""Generated mounted route policy rows; regenerate with services/api/scripts/generate_route_policy.py."""
 
 from __future__ import annotations
 
