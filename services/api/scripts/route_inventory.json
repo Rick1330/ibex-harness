@@ -8,7 +8,7 @@
     "path": "/docs",
     "response_model": "None",
     "security": [],
-    "source": "services/api/.venv/lib/python3.12/site-packages/fastapi/applications.py"
+    "source": null
   },
   {
     "endpoint": "fastapi.applications.FastAPI.setup.<locals>.swagger_ui_redirect",
@@ -19,7 +19,7 @@
     "path": "/docs/oauth2-redirect",
     "response_model": "None",
     "security": [],
-    "source": "services/api/.venv/lib/python3.12/site-packages/fastapi/applications.py"
+    "source": null
   },
   {
     "endpoint": "app.probes.health",
@@ -52,7 +52,7 @@
     "path": "/openapi.json",
     "response_model": "None",
     "security": [],
-    "source": "services/api/.venv/lib/python3.12/site-packages/fastapi/applications.py"
+    "source": null
   },
   {
     "endpoint": "app.probes.ready",
@@ -74,7 +74,7 @@
     "path": "/redoc",
     "response_model": "None",
     "security": [],
-    "source": "services/api/.venv/lib/python3.12/site-packages/fastapi/applications.py"
+    "source": null
   },
   {
     "endpoint": "app.routers.agents.list_agents",

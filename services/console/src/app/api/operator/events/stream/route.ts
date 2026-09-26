@@ -29,13 +29,14 @@ async function requireAccessCookie(): Promise<{ cookieName: string; accessCookie
   return { cookieName, accessCookie }
 }
 
-function resolveEventsTarget(): URL | NextResponse {
+function resolveEventsHref(): string | NextResponse {
   try {
     const target = operatorApiUrl("events")
     if (target.protocol !== "https:") {
       return jsonError(503, "API_ORIGIN_INSECURE", "Operator API requires HTTPS")
     }
-    return target
+    // Rebuild from validated origin + fixed path so fetch never takes a tainted URL object.
+    return new URL("/v1/operator/events/stream", target.origin).href
   } catch (error) {
     if (error instanceof OperatorApiError) {
       return jsonError(503, error.code, error.message)
@@ -79,11 +80,11 @@ export async function GET(request: Request) {
   const session = await requireAccessCookie()
   if (session instanceof NextResponse) return session
 
-  const target = resolveEventsTarget()
-  if (target instanceof NextResponse) return target
+  const targetHref = resolveEventsHref()
+  if (typeof targetHref !== "string") return targetHref
 
   try {
-    const upstream = await fetch(target, {
+    const upstream = await fetch(targetHref, {
       method: "GET",
       headers: upstreamHeaders(session.cookieName, session.accessCookie, request),
       cache: "no-store",

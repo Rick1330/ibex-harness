@@ -32,12 +32,27 @@ function invalidOrigin(): never {
   throw new OperatorApiError(503, "API_ORIGIN_INVALID", "Operator API origin is invalid")
 }
 
+function assertHttpOriginProtocol(origin: URL): void {
+  if (origin.protocol === "http:") return
+  if (origin.protocol === "https:") return
+  throw new Error("unsafe protocol")
+}
+
+function assertNoUserinfo(origin: URL): void {
+  if (origin.username) throw new Error("userinfo not allowed")
+  if (origin.password) throw new Error("userinfo not allowed")
+}
+
+function assertOriginHasNoPath(origin: URL): void {
+  if (origin.pathname !== "/") throw new Error("API configuration must be an origin without a path")
+  if (origin.search) throw new Error("API configuration must be an origin without a path")
+  if (origin.hash) throw new Error("API configuration must be an origin without a path")
+}
+
 function assertSafeOperatorOrigin(origin: URL): void {
-  if (!["http:", "https:"].includes(origin.protocol)) throw new Error("unsafe protocol")
-  if (origin.username || origin.password) throw new Error("userinfo not allowed")
-  if (origin.pathname !== "/" || origin.search || origin.hash) {
-    throw new Error("API configuration must be an origin without a path")
-  }
+  assertHttpOriginProtocol(origin)
+  assertNoUserinfo(origin)
+  assertOriginHasNoPath(origin)
 }
 
 export function operatorApiUrl(path: OperatorApiPath): URL {

@@ -171,8 +171,9 @@ async def test_read_model_maps_sqlalchemy_errors_to_service_degraded() -> None:
     session.execute = AsyncMock(
         side_effect=OperationalError("stmt", {}, Exception("db down"))
     )
+    authorization = _authorization()
     with pytest.raises(ApiError) as error:
-        await get_operator_d1_read_model(session, _authorization())
+        await get_operator_d1_read_model(session, authorization)
     assert error.value.code == SERVICE_DEGRADED
 
 
@@ -182,8 +183,9 @@ async def test_read_model_rejects_missing_org_row() -> None:
     result.mappings.return_value.first.return_value = None
     session = AsyncMock()
     session.execute = AsyncMock(return_value=result)
+    authorization = _authorization()
     with pytest.raises(ApiError) as error:
-        await get_operator_d1_read_model(session, _authorization())
+        await get_operator_d1_read_model(session, authorization)
     assert error.value.code == NOT_FOUND
 
 

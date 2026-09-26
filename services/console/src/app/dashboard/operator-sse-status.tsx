@@ -2,22 +2,31 @@
 
 import * as React from "react"
 
-import { FRESHNESS_TONE } from "@/lib/shell-health"
-
 type StreamState = "connecting" | "connected" | "reconnecting" | "unavailable"
 
-const DOT_BY_STATE: Record<StreamState, string> = {
-  connected: "bg-emerald-500",
-  connecting: FRESHNESS_TONE.reconnecting.dot,
-  reconnecting: FRESHNESS_TONE.reconnecting.dot,
-  unavailable: FRESHNESS_TONE.stale.dot,
+function streamDotClass(state: StreamState): string {
+  switch (state) {
+    case "connected":
+      return "bg-emerald-500"
+    case "connecting":
+    case "reconnecting":
+      return "bg-amber-500"
+    case "unavailable":
+      return "bg-destructive"
+  }
 }
 
-const LABEL_BY_STATE: Record<StreamState, string> = {
-  connected: "SSE connected",
-  connecting: "SSE connecting",
-  reconnecting: "SSE reconnecting",
-  unavailable: "SSE unavailable",
+function streamLabel(state: StreamState): string {
+  switch (state) {
+    case "connected":
+      return "SSE connected"
+    case "connecting":
+      return "SSE connecting"
+    case "reconnecting":
+      return "SSE reconnecting"
+    case "unavailable":
+      return "SSE unavailable"
+  }
 }
 
 function attachOperatorEventSource(onState: (state: StreamState) => void): () => void {
@@ -53,9 +62,9 @@ export function OperatorSseStatus() {
 
   return (
     <output aria-live="polite" className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      <span className={`size-1.5 rounded-full ${DOT_BY_STATE[state]}`} aria-hidden />
+      <span className={`size-1.5 rounded-full ${streamDotClass(state)}`} aria-hidden />
       <span className="font-mono">operator events</span>
-      <span>{LABEL_BY_STATE[state]}</span>
+      <span>{streamLabel(state)}</span>
     </output>
   )
 }

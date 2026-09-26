@@ -1996,7 +1996,8 @@ jobs:
           fi
 
       - name: Prepare Chromium for Console browser gates
-        run: pnpm --filter @ibex/console exec playwright install --with-deps chromium
+        working-directory: services/console
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Test Console route boundaries and WCAG 2.2 AA
         timeout-minutes: 8

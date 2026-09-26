@@ -159,6 +159,18 @@ type OverviewLoad = {
   overviewError: unknown
 }
 
+function settledValue<T>(result: PromiseSettledResult<T>): T | null {
+  return result.status === "fulfilled" ? result.value : null
+}
+
+function settledReason(result: PromiseSettledResult<unknown>): unknown {
+  return result.status === "rejected" ? result.reason : null
+}
+
+function isAuthUnavailable(reason: unknown): boolean {
+  return reason instanceof OperatorApiError && (reason.status === 401 || reason.status === 403)
+}
+
 async function loadOverviewSnapshot(): Promise<OverviewLoad> {
   const cookieStore = await cookies()
   const sessionName = process.env.IBEX_OPERATOR_SESSION_COOKIE_NAME || "ibex_session"
@@ -169,14 +181,13 @@ async function loadOverviewSnapshot(): Promise<OverviewLoad> {
     fetchOperatorOverview(cookieHeader),
     fetchOperatorPlatformHealth(cookieHeader),
   ])
-  const context = contextResult.status === "fulfilled" ? contextResult.value : null
-  const overview = overviewResult.status === "fulfilled" ? overviewResult.value : null
-  const health = healthResult.status === "fulfilled" ? healthResult.value : null
-  const contextError = contextResult.status === "rejected" ? contextResult.reason : null
-  const overviewError = overviewResult.status === "rejected" ? overviewResult.reason : null
-  const authUnavailable =
-    contextError instanceof OperatorApiError && [401, 403].includes(contextError.status)
-  return { context, overview, health, authUnavailable, overviewError }
+  return {
+    context: settledValue(contextResult),
+    overview: settledValue(overviewResult),
+    health: settledValue(healthResult),
+    authUnavailable: isAuthUnavailable(settledReason(contextResult)),
+    overviewError: settledReason(overviewResult),
+  }
 }
 
 function OverviewStatusBanners({
@@ -209,7 +220,16 @@ function OverviewStatusBanners({
 }
 
 export async function LiveOverview() {
-  const { context, overview, health, authUnavailable, overviewError } = await loadOverviewSnapshot()
+  const snapshot = await loadOverviewSnapshot()
+  return <LiveOverviewBody snapshot={snapshot} />
+}
+
+function LiveOverviewBody({
+  snapshot,
+}: Readonly<{
+  snapshot: OverviewLoad
+}>) {
+  const { context, overview, health, authUnavailable, overviewError } = snapshot
   const rolePrefix = context?.role ? `${context.role} · ` : ""
   const subtitle = context ? context.org_slug : "Verified organization context is unavailable."
 
