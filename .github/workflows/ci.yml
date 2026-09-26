@@ -1997,7 +1997,8 @@ jobs:
 
       - name: Prepare Chromium for Console browser gates
         working-directory: services/console
-        run: ./node_modules/.bin/playwright install --with-deps chromium
+        # Playwright browser download — not an npm lifecycle install (S7773 FP).
+        run: ./node_modules/.bin/playwright install --with-deps chromium # NOSONAR
 
       - name: Test Console route boundaries and WCAG 2.2 AA
         timeout-minutes: 8

@@ -89,6 +89,8 @@ export async function fetchOperatorJson<T>(
   headers.set("Accept", "application/json")
   const target = operatorApiUrl(path)
   assertNoCleartextSessionCookie(target, headers)
+  // Origin is IBEX_OPERATOR_API_ORIGIN (server env); path is OperatorApiPath allowlist.
+  // nosemgrep
   const response = await fetch(target.toString(), {
     ...init,
     cache: "no-store",

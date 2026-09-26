@@ -1,159 +1,47 @@
 export type PageMeta = { section: string; page: string; search: string }
 
-const pageMeta: Record<
-  string,
-  { section: string; page: string; search: string }
-> = {
-  "/dashboard": {
-    section: "Overview",
-    page: "Overview",
-    search: "Search metrics, agents, sessions...",
-  },
-  "/dashboard/explore": {
-    section: "Investigate",
-    page: "Explore",
-    search: "Jump to trace, request, session, agent...",
-  },
+type MetaRow = readonly [prefix: string, exactDetail: boolean, section: string, page: string, search: string]
+
+const DEFAULT_META: PageMeta = {
+  section: "Overview",
+  page: "Overview",
+  search: "Search metrics, agents, sessions...",
+}
+
+/** Longest-prefix first. exactDetail requires `/…/{id}` rather than the list route. */
+const META_ROWS: readonly MetaRow[] = [
+  ["/dashboard/explore/t/", false, "Investigate", "Trace Inspector", "Jump to span, memory, request..."],
+  ["/dashboard/agents/", true, "Investigate", "Agent Detail", "Jump to sessions, directive..."],
+  ["/dashboard/agents", false, "Investigate", "Agents", "Search agent name, directive..."],
+  ["/dashboard/sessions/", true, "Investigate", "Session Timeline", "Jump to turn, memory, checkpoint..."],
+  ["/dashboard/sessions", false, "Investigate", "Sessions", "Search session_id, agent, tag..."],
+  ["/dashboard/memories/", true, "Investigate", "Memory Detail", "Jump to lineage, session..."],
+  ["/dashboard/memories", false, "Investigate", "Memories", "Search memory_id, category..."],
+  ["/dashboard/directives/", true, "Govern", "Directive Detail", "Jump to version, scenario, ledger..."],
+  ["/dashboard/directives", false, "Govern", "Directives", "Search directive name, agent..."],
+  ["/dashboard/incidents/", true, "Govern", "Incident Detail", "Jump to evidence, timeline..."],
+  ["/dashboard/incidents", false, "Govern", "Incidents", "Search incident_id, dedupe_key, owner..."],
+  ["/dashboard/drift/", true, "Govern", "Drift Alert", "Jump to evidence, fingerprint, traces..."],
+  ["/dashboard/drift", false, "Govern", "Drift Alerts", "Search alert_id, agent, feature class..."],
+  ["/dashboard/analytics", false, "Operate", "Analytics", "Jump to agent, trace, memory..."],
+  ["/dashboard/billing", false, "Operate", "Billing", "Search rate card, request_id, agent..."],
+  ["/dashboard/settings", false, "Operate", "Settings / Org", "Search member, token, provider..."],
+  ["/dashboard/explore", false, "Investigate", "Explore", "Jump to trace, request, session, agent..."],
+]
+
+function rowMatches(pathname: string, prefix: string, exactDetail: boolean): boolean {
+  if (!pathname.startsWith(prefix)) return false
+  if (!exactDetail) return true
+  return pathname !== prefix.slice(0, -1)
+}
+
+function metaFromRow(row: MetaRow): PageMeta {
+  return { section: row[2], page: row[3], search: row[4] }
 }
 
 export function resolvePageMeta(pathname: string): PageMeta {
-  if (pathname.startsWith("/dashboard/explore/t/")) {
-    return {
-      section: "Investigate",
-      page: "Trace Inspector",
-      search: "Jump to span, memory, request...",
-    }
+  for (const row of META_ROWS) {
+    if (rowMatches(pathname, row[0], row[1])) return metaFromRow(row)
   }
-  if (
-    pathname.startsWith("/dashboard/agents/") &&
-    pathname !== "/dashboard/agents"
-  ) {
-    return {
-      section: "Investigate",
-      page: "Agent Detail",
-      search: "Jump to sessions, directive...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/agents")) {
-    return {
-      section: "Investigate",
-      page: "Agents",
-      search: "Search agent name, directive...",
-    }
-  }
-  if (
-    pathname.startsWith("/dashboard/sessions/") &&
-    pathname !== "/dashboard/sessions"
-  ) {
-    return {
-      section: "Investigate",
-      page: "Session Timeline",
-      search: "Jump to turn, memory, checkpoint...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/sessions")) {
-    return {
-      section: "Investigate",
-      page: "Sessions",
-      search: "Search session_id, agent, tag...",
-    }
-  }
-  if (
-    pathname.startsWith("/dashboard/memories/") &&
-    pathname !== "/dashboard/memories"
-  ) {
-    return {
-      section: "Investigate",
-      page: "Memory Detail",
-      search: "Jump to lineage, session...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/memories")) {
-    return {
-      section: "Investigate",
-      page: "Memories",
-      search: "Search memory_id, category...",
-    }
-  }
-  if (
-    pathname.startsWith("/dashboard/directives/") &&
-    pathname !== "/dashboard/directives"
-  ) {
-    return {
-      section: "Govern",
-      page: "Directive Detail",
-      search: "Jump to version, scenario, ledger...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/directives")) {
-    return {
-      section: "Govern",
-      page: "Directives",
-      search: "Search directive name, agent...",
-    }
-  }
-  if (
-    pathname.startsWith("/dashboard/incidents/") &&
-    pathname !== "/dashboard/incidents"
-  ) {
-    return {
-      section: "Govern",
-      page: "Incident Detail",
-      search: "Jump to evidence, timeline...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/incidents")) {
-    return {
-      section: "Govern",
-      page: "Incidents",
-      search: "Search incident_id, dedupe_key, owner...",
-    }
-  }
-  if (
-    pathname.startsWith("/dashboard/drift/") &&
-    pathname !== "/dashboard/drift"
-  ) {
-    return {
-      section: "Govern",
-      page: "Drift Alert",
-      search: "Jump to evidence, fingerprint, traces...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/drift")) {
-    return {
-      section: "Govern",
-      page: "Drift Alerts",
-      search: "Search alert_id, agent, feature class...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/analytics")) {
-    return {
-      section: "Operate",
-      page: "Analytics",
-      search: "Jump to agent, trace, memory...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/billing")) {
-    return {
-      section: "Operate",
-      page: "Billing",
-      search: "Search rate card, request_id, agent...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/settings")) {
-    return {
-      section: "Operate",
-      page: "Settings / Org",
-      search: "Search member, token, provider...",
-    }
-  }
-  if (pathname.startsWith("/dashboard/explore")) {
-    return pageMeta["/dashboard/explore"]
-  }
-  if (pathname === "/dashboard") {
-    return pageMeta["/dashboard"]
-  }
-  return pageMeta["/dashboard"]
+  return DEFAULT_META
 }
-
-

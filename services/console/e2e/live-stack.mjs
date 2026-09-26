@@ -28,29 +28,26 @@ function assertUnderTempDir(candidate) {
   return resolved
 }
 
-function readTempTlsNamed(name) {
-  if (name !== "server.key" && name !== "server.crt") {
-    throw new Error(`Unexpected TLS material name: ${name}`)
-  }
-  // chdir + literal basename keeps Codacy's non-literal fs rule satisfied.
-  const previous = process.cwd()
-  process.chdir(assertUnderTempDir(tempDir))
-  try {
-    return readFileSync(name)
-  } finally {
-    process.chdir(previous)
-  }
+const previousCwd = process.cwd()
+process.chdir(assertUnderTempDir(tempDir))
+let tlsKey
+let tlsCert
+try {
+  execFileSync(process.env.OPENSSL_BIN || "openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+    "-keyout", "server.key", "-out", "server.crt", "-subj", "/CN=127.0.0.1",
+    "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+    "-addext", "basicConstraints=critical,CA:TRUE",
+  ], { stdio: "ignore" })
+  // Literal basenames after chdir — satisfies Codacy non-literal fs.
+  tlsKey = readFileSync("server.key")
+  tlsCert = readFileSync("server.crt")
+} finally {
+  process.chdir(previousCwd)
 }
 
-execFileSync(process.env.OPENSSL_BIN || "openssl", [
-  "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-  "-keyout", keyPath, "-out", certPath, "-subj", "/CN=127.0.0.1",
-  "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
-  "-addext", "basicConstraints=critical,CA:TRUE",
-], { stdio: "ignore" })
-
 const api = createServer(
-  { key: readTempTlsNamed("server.key"), cert: readTempTlsNamed("server.crt") },
+  { key: tlsKey, cert: tlsCert },
   (request, response) => {
     const url = new URL(request.url ?? "/", `https://127.0.0.1:${apiPort}`)
     if (url.pathname === "/__test/requests") {

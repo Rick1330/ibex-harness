@@ -84,6 +84,9 @@ export async function GET(request: Request) {
   if (typeof targetHref !== "string") return targetHref
 
   try {
+    // Origin is IBEX_OPERATOR_API_ORIGIN (server env); path is a fixed allowlist
+    // (/v1/operator/events/stream). Not request-controlled — Opengrep SSRF FP.
+    // nosemgrep
     const upstream = await fetch(targetHref, {
       method: "GET",
       headers: upstreamHeaders(session.cookieName, session.accessCookie, request),
