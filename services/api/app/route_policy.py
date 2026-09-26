@@ -49,6 +49,8 @@ def _mounted_routes(application: object) -> Iterable[object]:
     seen_containers: set[int] = set()
 
     def visit(routes: object) -> Iterable[object]:
+        if not isinstance(routes, Iterable):
+            return
         if id(routes) in seen_containers:
             return
         seen_containers.add(id(routes))
@@ -68,10 +70,7 @@ def _mounted_routes(application: object) -> Iterable[object]:
 
 def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
     """Return policy rows whose concrete endpoint or authorization guard is missing."""
-    rows = {
-        (str(row["method"]), str(row["path"])): row
-        for row in ROUTE_POLICY
-    }
+    rows = {(str(row["method"]), str(row["path"])): row for row in ROUTE_POLICY}
     gaps: set[tuple[str, str]] = set()
 
     for route in _mounted_routes(app):
@@ -97,8 +96,11 @@ def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
                 continue
 
             calls = _dependency_calls(getattr(route, "dependant", None))
-            if auth_source == "bearer_pat" and require_token not in calls or auth_source == "pat_exchange" and (
-                key != ("POST", "/v1/operator/session/login") or get_validator not in calls
+            if (
+                auth_source == "bearer_pat"
+                and require_token not in calls
+                or auth_source == "pat_exchange"
+                and (key != ("POST", "/v1/operator/session/login") or get_validator not in calls)
             ):
                 gaps.add(key)
             elif auth_source == "operator_session":
@@ -126,8 +128,6 @@ def mounted_route_keys(application: object) -> frozenset[tuple[str, str]]:
         path = getattr(route, "path", None)
         if path is not None:
             keys.update(
-                (str(method), str(path))
-                for method in methods
-                if method not in {"HEAD", "OPTIONS"}
+                (str(method), str(path)) for method in methods if method not in {"HEAD", "OPTIONS"}
             )
     return frozenset(keys)

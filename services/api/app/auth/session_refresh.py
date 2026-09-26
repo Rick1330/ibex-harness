@@ -76,6 +76,10 @@ async def validate_operator_session(
         payload=encode_string_fields({1: access_token}),
         timeout_seconds=timeout_seconds,
     )
+    return _parse_validated_session(raw)
+
+
+def _parse_validated_session(raw: bytes) -> ValidatedSession:
     try:
         strings = decode_string_fields(raw, {1, 2, 4, 5})
         permissions = decode_int64_field(raw, 3)
@@ -155,6 +159,7 @@ def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
 async def issue_operator_session(
     *,
     auth_grpc_addr: str,
+    service_token: str = "",
     pat: str,
     timeout_seconds: float = 5.0,
 ) -> RefreshedSession:
@@ -168,7 +173,13 @@ async def issue_operator_session(
                 response_deserializer=lambda b: b,
             )
             raw = await asyncio.wait_for(
-                stub(b"", metadata=(("authorization", f"Bearer {pat}"),)),
+                stub(
+                    b"",
+                    metadata=(
+                        ("authorization", f"Bearer {pat}"),
+                        ("x-ibex-service-token", service_token),
+                    ),
+                ),
                 timeout=timeout_seconds,
             )
     except TimeoutError as exc:

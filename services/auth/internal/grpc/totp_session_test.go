@@ -47,6 +47,8 @@ type fakeSessionIssuer struct {
 	revokedFamily   string
 	revokedAccess   string
 	revokeCalls     int
+	consumeClaims   sessionjwt.Claims
+	consumeErr      error
 }
 
 func (f *fakeSessionIssuer) IssuePair(sessionjwt.IssuePairParams) (string, string, time.Time, time.Time, error) {
@@ -81,7 +83,7 @@ func (f *fakeSessionIssuer) RevokeSession(_ context.Context, sessionID, familyID
 }
 
 func (f *fakeSessionIssuer) ConsumeStepUp(context.Context, sessionjwt.RawToken, sessionjwt.StepUpExpectations) (sessionjwt.Claims, error) {
-	return sessionjwt.Claims{}, nil
+	return f.consumeClaims, f.consumeErr
 }
 
 func totpServer(t *testing.T, totp totpPort, sess sessionIssuerPort) *Server {
@@ -288,4 +290,34 @@ func TestRevokeOperatorSession_RefreshOnlyProofAndFailureCases(t *testing.T) {
 		SessionId: "sid-refresh", RefreshToken: "refresh-proof",
 	})
 	requireCode(t, err, codes.Unavailable, "revocation store unavailable")
+}
+
+func TestLifecycleHandlers_ValidateAndConsumeStepUp(t *testing.T) {
+	t.Parallel()
+	issuer := &fakeSessionIssuer{
+		accessProof:   sessionjwt.Claims{Subject: "user", OrgID: "org", SessionID: "sid", JTI: "jti", Permissions: 8},
+		consumeClaims: sessionjwt.Claims{Subject: "user", OrgID: "org", SessionID: "sid", Permissions: 8},
+	}
+	srv := totpServer(t, nil, issuer)
+	validated, err := srv.ValidateOperatorSession(context.Background(), &authv1.ValidateOperatorSessionRequest{AccessToken: "access"})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if validated.GetSubject() != "user" || validated.GetJti() != "jti" {
+		t.Fatalf("validated claims: %+v", validated)
+	}
+	issuer.accessProofErr = sessionjwt.ErrExpired
+	_, err = srv.ValidateOperatorSession(context.Background(), &authv1.ValidateOperatorSessionRequest{AccessToken: "expired"})
+	requireCode(t, err, codes.Unauthenticated, "expired access")
+	issuer.accessProofErr = nil
+	consumed, err := srv.ConsumeStepUp(context.Background(), &authv1.ConsumeStepUpRequest{
+		StepUpToken: "step", ExpectedSubject: "user", ExpectedOrgId: "org", ExpectedSessionId: "sid",
+		RequiredPermission: 8,
+	})
+	if err != nil || consumed.GetSubject() != "user" {
+		t.Fatalf("consume: %+v err=%v", consumed, err)
+	}
+	issuer.consumeErr = sessionjwt.ErrInvalidToken
+	_, err = srv.ConsumeStepUp(context.Background(), &authv1.ConsumeStepUpRequest{StepUpToken: "step"})
+	requireCode(t, err, codes.Unauthenticated, "invalid step-up")
 }

@@ -266,18 +266,11 @@ func (i *Issuer) ConsumeStepUp(ctx context.Context, token RawToken, expect StepU
 	if err != nil {
 		return Claims{}, err
 	}
-	if claims.Subject != expect.Subject || claims.OrgID != expect.OrgID || claims.SessionID != expect.SessionID || claims.Action != expect.Action {
+	if !matchesStepUpExpectations(claims, expect) {
 		return Claims{}, ErrInvalidToken
 	}
-	if expect.RequiredPermission != 0 && claims.Permissions&expect.RequiredPermission != expect.RequiredPermission {
-		return Claims{}, ErrInvalidToken
-	}
-	revoked, err := i.jtiStore.SessionRevoked(ctx, claims.SessionID)
-	if err != nil {
+	if err := requireActiveStepUpSession(ctx, i.jtiStore, claims.SessionID); err != nil {
 		return Claims{}, err
-	}
-	if revoked {
-		return Claims{}, ErrInvalidToken
 	}
 	first, err := i.jtiStore.ConsumeStepUp(ctx, claims.JTI, refreshRemainingTTL(claims))
 	if err != nil {
@@ -287,6 +280,26 @@ func (i *Issuer) ConsumeStepUp(ctx context.Context, token RawToken, expect StepU
 		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil
+}
+
+func matchesStepUpExpectations(claims Claims, expect StepUpExpectations) bool {
+	if claims.Subject != expect.Subject || claims.OrgID != expect.OrgID ||
+		claims.SessionID != expect.SessionID || claims.Action != expect.Action {
+		return false
+	}
+	return expect.RequiredPermission == 0 ||
+		claims.Permissions&expect.RequiredPermission == expect.RequiredPermission
+}
+
+func requireActiveStepUpSession(ctx context.Context, store JTIStore, sessionID string) error {
+	revoked, err := store.SessionRevoked(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return ErrInvalidToken
+	}
+	return nil
 }
 
 func (i *Issuer) verifyToken(token RawToken, kind SessionKind) (Claims, error) {

@@ -364,16 +364,21 @@ async def test_consume_step_up_omits_zero_permission_wire_field() -> None:
 
 
 @pytest.mark.asyncio
-async def test_issue_operator_session_sends_pat_only_as_authorization_metadata() -> None:
+async def test_issue_operator_session_sends_pat_and_service_metadata() -> None:
     stub = AsyncMock(return_value=_proto_string(1, "access") + _proto_string(2, "refresh"))
     with _patch_channel(stub):
         pair = await issue_operator_session(
-            auth_grpc_addr="127.0.0.1:50051", pat="ibex_pat_private"
+            auth_grpc_addr="127.0.0.1:50051",
+            service_token="service-token",
+            pat="ibex_pat_private",
         )
     assert pair.access_token == "access"
     assert pair.refresh_token == "refresh"
     assert stub.await_args.args == (b"",)
-    assert stub.await_args.kwargs["metadata"] == (("authorization", "Bearer ibex_pat_private"),)
+    assert stub.await_args.kwargs["metadata"] == (
+        ("authorization", "Bearer ibex_pat_private"),
+        ("x-ibex-service-token", "service-token"),
+    )
 
 
 @pytest.mark.asyncio

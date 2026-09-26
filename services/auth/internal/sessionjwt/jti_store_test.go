@@ -271,6 +271,62 @@ func TestIssuer_ConcurrentRefreshReplayRevokesSessionAndReturnedAccess(t *testin
 	}
 }
 
+func TestMemoryJTIStore_RevocationAndEmptyInputs(t *testing.T) {
+	store := &sessionjwt.MemoryJTIStore{}
+	ctx := context.Background()
+	if revoked, err := store.FamilyRevoked(ctx, ""); err != nil || revoked {
+		t.Fatalf("empty family: revoked=%v err=%v", revoked, err)
+	}
+	if revoked, err := store.SessionRevoked(ctx, ""); err != nil || revoked {
+		t.Fatalf("empty session: revoked=%v err=%v", revoked, err)
+	}
+	if revoked, err := store.AccessRevoked(ctx, ""); err != nil || revoked {
+		t.Fatalf("empty access: revoked=%v err=%v", revoked, err)
+	}
+	if err := store.RevokeFamily(ctx, "family", time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err := store.FamilyRevoked(ctx, "family"); err != nil || !revoked {
+		t.Fatalf("family marker: revoked=%v err=%v", revoked, err)
+	}
+	if err := store.RevokeAccess(ctx, "access", time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err := store.AccessRevoked(ctx, "access"); err != nil || !revoked {
+		t.Fatalf("access marker: revoked=%v err=%v", revoked, err)
+	}
+	if err := store.RevokeSessionAndFamily(ctx, "", "family", time.Minute); err == nil {
+		t.Fatal("expected empty session error")
+	}
+}
+
+func TestRedisJTIStore_RevocationAndStepUp(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store, err := sessionjwt.NewRedisJTIStore(rdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := store.RevokeAccess(ctx, "access", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err := store.AccessRevoked(ctx, "access"); err != nil || !revoked {
+		t.Fatalf("access marker: revoked=%v err=%v", revoked, err)
+	}
+	if err := store.RevokeSession(ctx, "session", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if revoked, err := store.SessionRevoked(ctx, "session"); err != nil || !revoked {
+		t.Fatalf("session marker: revoked=%v err=%v", revoked, err)
+	}
+	first, err := store.ConsumeStepUp(ctx, "step", time.Minute)
+	requireConsume(t, consumeResult{first, err}, true, "step-up first")
+	second, err := store.ConsumeStepUp(ctx, "step", time.Minute)
+	requireConsume(t, consumeResult{second, err}, false, "step-up replay")
+}
+
 func BenchmarkMemoryJTIStore_ConsumeOnce(b *testing.B) {
 	store := &sessionjwt.MemoryJTIStore{}
 	ctx := context.Background()
