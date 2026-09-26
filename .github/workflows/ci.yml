@@ -1086,10 +1086,10 @@ jobs:
           enable-cache: true
       - name: Check API OpenAPI snapshot freshness
         run: bash .github/scripts/check-openapi-snapshot.sh
-      - name: Check API mounted-route inventory freshness
-        run: uv run --project services/api python services/api/scripts/route_inventory.py --check
       - name: API unit tests (pytest + ruff)
         run: bash infra/scripts/api-test-ci.sh
+      - name: Check API mounted-route inventory freshness
+        run: services/api/.venv/bin/python services/api/scripts/route_inventory.py --check
 
   api-integration:
     name: api-integration
@@ -1986,8 +1986,8 @@ jobs:
           ! grep -Fq "1,284,092" /tmp/console-d1.html
           ! grep -Fq "Acme Corp" /tmp/console-d1.html
 
-      - name: Install Chromium for Console browser gates
-        run: pnpm --filter @ibex/console exec playwright install --with-deps chromium
+      - name: Prepare Chromium for Console browser gates
+        run: node node_modules/playwright/cli.js install --with-deps chromium
 
       - name: Test Console route boundaries and WCAG 2.2 AA
         timeout-minutes: 8

@@ -1,6 +1,5 @@
-import { spawn } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:https"
-import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -20,7 +19,7 @@ let eventStreams = 0
 let closing = false
 let consoleProcess
 
-execFileSync("openssl", [
+execFileSync("/usr/bin/openssl", [
   "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
   "-keyout", keyPath, "-out", certPath, "-subj", "/CN=127.0.0.1",
   "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
