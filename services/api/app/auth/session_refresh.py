@@ -45,18 +45,44 @@ class ValidatedSession:
     jti: str
 
 
-async def _call_lifecycle(
-    *, auth_grpc_addr: str, service_token: str, method: str, payload: bytes, timeout_seconds: float
-) -> bytes:
-    assert_trusted_insecure_auth_target(auth_grpc_addr)
+@dataclass(frozen=True, slots=True)
+class AuthRPC:
+    """Shared Auth gRPC target + timeout for lifecycle calls."""
+
+    auth_grpc_addr: str
+    service_token: str = ""
+    timeout_seconds: float = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class RevokeSessionParams:
+    session_id: str
+    family_id: str = ""
+    access_jti: str = ""
+    access_token: str = ""
+    refresh_token: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsumeStepUpParams:
+    token: str
+    subject: str
+    org_id: str
+    session_id: str
+    action: str
+    permission: int = 0
+
+
+async def _call_lifecycle(rpc: AuthRPC, *, method: str, payload: bytes) -> bytes:
+    assert_trusted_insecure_auth_target(rpc.auth_grpc_addr)
     try:
-        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
+        async with grpc.aio.insecure_channel(rpc.auth_grpc_addr) as channel:
             stub = channel.unary_unary(
                 method, request_serializer=lambda b: b, response_deserializer=lambda b: b
             )
             return await asyncio.wait_for(
-                stub(payload, metadata=(("x-ibex-service-token", service_token),)),
-                timeout=timeout_seconds,
+                stub(payload, metadata=(("x-ibex-service-token", rpc.service_token),)),
+                timeout=rpc.timeout_seconds,
             )
     except TimeoutError as exc:
         raise AuthUnavailableError("auth lifecycle timeout") from exc
@@ -67,16 +93,19 @@ async def _call_lifecycle(
 
 
 async def validate_operator_session(
-    *, auth_grpc_addr: str, service_token: str = "", access_token: str, timeout_seconds: float = 5.0
+    rpc: AuthRPC, *, access_token: str
 ) -> ValidatedSession:
     raw = await _call_lifecycle(
-        auth_grpc_addr=auth_grpc_addr,
-        service_token=service_token,
-        method=_VALIDATE_METHOD,
-        payload=encode_string_fields({1: access_token}),
-        timeout_seconds=timeout_seconds,
+        rpc, method=_VALIDATE_METHOD, payload=encode_string_fields({1: access_token})
     )
     return _parse_validated_session(raw)
+
+
+def _required_claim(strings: dict[int, str], field: int) -> str:
+    value = strings.get(field) or ""
+    if value:
+        return value
+    raise AuthUnavailableError("auth session validation returned incomplete claims")
 
 
 def _parse_validated_session(raw: bytes) -> ValidatedSession:
@@ -85,55 +114,44 @@ def _parse_validated_session(raw: bytes) -> ValidatedSession:
         permissions = decode_int64_field(raw, 3)
     except AuthCodecError as exc:
         raise AuthUnavailableError("auth session validation codec error") from exc
-    if not strings.get(1) or not strings.get(2) or not strings.get(4) or not strings.get(5):
-        raise AuthUnavailableError("auth session validation returned incomplete claims")
-    return ValidatedSession(strings[1], strings[2], permissions or 0, strings[4], strings[5])
+    return ValidatedSession(
+        _required_claim(strings, 1),
+        _required_claim(strings, 2),
+        permissions or 0,
+        _required_claim(strings, 4),
+        _required_claim(strings, 5),
+    )
 
 
-async def revoke_operator_session(
-    *,
-    auth_grpc_addr: str,
-    service_token: str = "",
-    session_id: str,
-    family_id: str = "",
-    access_jti: str = "",
-    access_token: str = "",
-    refresh_token: str = "",
-    timeout_seconds: float = 5.0,
-) -> None:
+async def revoke_operator_session(rpc: AuthRPC, params: RevokeSessionParams) -> None:
     await _call_lifecycle(
-        auth_grpc_addr=auth_grpc_addr,
-        service_token=service_token,
+        rpc,
         method=_REVOKE_METHOD,
         payload=encode_string_fields(
-            {1: session_id, 2: family_id, 3: access_jti, 4: access_token, 5: refresh_token}
+            {
+                1: params.session_id,
+                2: params.family_id,
+                3: params.access_jti,
+                4: params.access_token,
+                5: params.refresh_token,
+            }
         ),
-        timeout_seconds=timeout_seconds,
     )
 
 
-async def consume_step_up(
-    *,
-    auth_grpc_addr: str,
-    service_token: str = "",
-    token: str,
-    subject: str,
-    org_id: str,
-    session_id: str,
-    action: str,
-    permission: int,
-    timeout_seconds: float = 5.0,
-) -> None:
-    payload = encode_string_fields({1: token, 2: subject, 3: org_id, 4: session_id, 5: action})
-    if permission:
-        payload += b"\x30" + encode_varint(permission)
-    await _call_lifecycle(
-        auth_grpc_addr=auth_grpc_addr,
-        service_token=service_token,
-        method=_CONSUME_STEP_UP_METHOD,
-        payload=payload,
-        timeout_seconds=timeout_seconds,
+async def consume_step_up(rpc: AuthRPC, params: ConsumeStepUpParams) -> None:
+    payload = encode_string_fields(
+        {
+            1: params.token,
+            2: params.subject,
+            3: params.org_id,
+            4: params.session_id,
+            5: params.action,
+        }
     )
+    if params.permission:
+        payload += b"\x30" + encode_varint(params.permission)
+    await _call_lifecycle(rpc, method=_CONSUME_STEP_UP_METHOD, payload=payload)
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:
@@ -156,17 +174,11 @@ def _parse_refreshed_session(raw: bytes) -> RefreshedSession:
     return RefreshedSession(access_token=access, refresh_token=refresh)
 
 
-async def issue_operator_session(
-    *,
-    auth_grpc_addr: str,
-    service_token: str = "",
-    pat: str,
-    timeout_seconds: float = 5.0,
-) -> RefreshedSession:
+async def issue_operator_session(rpc: AuthRPC, *, pat: str) -> RefreshedSession:
     """Issue an Auth-owned session pair for a validated PAT caller."""
-    assert_trusted_insecure_auth_target(auth_grpc_addr)
+    assert_trusted_insecure_auth_target(rpc.auth_grpc_addr)
     try:
-        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
+        async with grpc.aio.insecure_channel(rpc.auth_grpc_addr) as channel:
             stub = channel.unary_unary(
                 _ISSUE_METHOD,
                 request_serializer=lambda b: b,
@@ -177,10 +189,10 @@ async def issue_operator_session(
                     b"",
                     metadata=(
                         ("authorization", f"Bearer {pat}"),
-                        ("x-ibex-service-token", service_token),
+                        ("x-ibex-service-token", rpc.service_token),
                     ),
                 ),
-                timeout=timeout_seconds,
+                timeout=rpc.timeout_seconds,
             )
     except TimeoutError as exc:
         raise AuthUnavailableError("auth session issue timeout") from exc
@@ -192,24 +204,18 @@ async def issue_operator_session(
     return _parse_refreshed_session(raw)
 
 
-async def _call_issue_operator_session(
-    *,
-    auth_grpc_addr: str,
-    service_token: str,
-    refresh_token: str,
-    timeout_seconds: float,
-) -> bytes:
+async def _call_issue_operator_session(rpc: AuthRPC, *, refresh_token: str) -> bytes:
     payload = encode_issue_with_refresh(refresh_token)
     try:
-        async with grpc.aio.insecure_channel(auth_grpc_addr) as channel:
+        async with grpc.aio.insecure_channel(rpc.auth_grpc_addr) as channel:
             stub = channel.unary_unary(
                 _ISSUE_METHOD,
                 request_serializer=lambda b: b,
                 response_deserializer=lambda b: b,
             )
             return await asyncio.wait_for(
-                stub(payload, metadata=(("x-ibex-service-token", service_token),)),
-                timeout=timeout_seconds,
+                stub(payload, metadata=(("x-ibex-service-token", rpc.service_token),)),
+                timeout=rpc.timeout_seconds,
             )
     except TimeoutError as exc:
         raise AuthUnavailableError("auth refresh timeout") from exc
@@ -219,19 +225,8 @@ async def _call_issue_operator_session(
         raise AuthUnavailableError("auth refresh codec error") from exc
 
 
-async def refresh_operator_session(
-    *,
-    auth_grpc_addr: str,
-    service_token: str = "",
-    refresh_token: str,
-    timeout_seconds: float = 5.0,
-) -> RefreshedSession:
+async def refresh_operator_session(rpc: AuthRPC, *, refresh_token: str) -> RefreshedSession:
     """Call Auth IssueOperatorSession with refresh_token (no PAT bearer)."""
-    assert_trusted_insecure_auth_target(auth_grpc_addr)
-    raw = await _call_issue_operator_session(
-        auth_grpc_addr=auth_grpc_addr,
-        service_token=service_token,
-        refresh_token=refresh_token,
-        timeout_seconds=timeout_seconds,
-    )
+    assert_trusted_insecure_auth_target(rpc.auth_grpc_addr)
+    raw = await _call_issue_operator_session(rpc, refresh_token=refresh_token)
     return _parse_refreshed_session(raw)

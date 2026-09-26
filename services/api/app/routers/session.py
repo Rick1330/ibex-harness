@@ -19,6 +19,8 @@ from app.auth.client import (
     parse_authorization_header,
 )
 from app.auth.session_refresh import (
+    AuthRPC,
+    RevokeSessionParams,
     issue_operator_session,
     refresh_operator_session,
     revoke_operator_session,
@@ -79,22 +81,30 @@ def _require_operator_enabled(settings: Settings) -> None:
 
 
 def _require_me_verify_material(settings: Settings) -> None:
-    if settings.environment != "development" and not settings.jwt_public_keys_pem:
+    if _non_dev_missing_public_keys(settings):
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="session public keys not configured",
             detail="set DASHBOARD_JWT_PUBLIC_KEYS_PEM",
         )
-    if (
-        settings.environment == "development"
-        and not settings.jwt_hmac_secret
-        and not settings.jwt_public_keys_pem
-    ):
+    if _dev_missing_all_verify_material(settings):
         raise ApiError(
             code=SERVICE_DEGRADED,
             message="session signing secret not configured",
             detail="set JWT_HMAC_SECRET and/or DASHBOARD_JWT_PUBLIC_KEYS_PEM",
         )
+
+
+def _non_dev_missing_public_keys(settings: Settings) -> bool:
+    return settings.environment != "development" and not settings.jwt_public_keys_pem
+
+
+def _dev_missing_all_verify_material(settings: Settings) -> bool:
+    return (
+        settings.environment == "development"
+        and not settings.jwt_hmac_secret
+        and not settings.jwt_public_keys_pem
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,10 +319,12 @@ async def _login_via_auth(
 ) -> dict[str, object]:
     try:
         pair = await issue_operator_session(
-            auth_grpc_addr=settings.auth_grpc_addr,
-            service_token=settings.auth_service_token or "",
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
             pat=pat,
-            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
         )
     except AuthFailedError as exc:
         raise ApiError(code=INVALID_TOKEN, message=_INVALID_TOKEN_MESSAGE) from exc
@@ -372,28 +384,32 @@ async def _refresh_via_auth(
 ) -> dict[str, object]:
     if not settings.jwt_public_keys_pem:
         raise ApiError(code=SERVICE_DEGRADED, message="session public keys not configured")
+    pair = await _refresh_pair_from_auth(settings, refresh_token)
+    _apply_session_cookies(
+        response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
+    )
+    csrf = _maybe_mint_csrf(response, settings)
+    return {"status": "ok", "provisional": False, "csrf_token": csrf}
+
+
+async def _refresh_pair_from_auth(settings: Settings, refresh_token: str):
     try:
-        pair = await refresh_operator_session(
-            auth_grpc_addr=settings.auth_grpc_addr,
-            service_token=settings.auth_service_token or "",
+        return await refresh_operator_session(
+            AuthRPC(settings.auth_grpc_addr, settings.auth_service_token or ""),
             refresh_token=refresh_token,
         )
     except AuthFailedError as exc:
         raise ApiError(code=INVALID_TOKEN, message="invalid refresh token") from exc
     except AuthUnavailableError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_AUTH_UNAVAILABLE) from exc
-    _apply_session_cookies(
-        response, settings=settings, access=pair.access_token, refresh=pair.refresh_token
-    )
-    csrf = ""
-    if settings.dashboard_csrf_secret:
-        csrf = mint_csrf_token(secret=settings.dashboard_csrf_secret)
-        _set_csrf_cookie(response, csrf=csrf, settings=settings)
-    return {
-        "status": "ok",
-        "provisional": False,
-        "csrf_token": csrf,
-    }
+
+
+def _maybe_mint_csrf(response: Response, settings: Settings) -> str:
+    if not settings.dashboard_csrf_secret:
+        return ""
+    csrf = mint_csrf_token(secret=settings.dashboard_csrf_secret)
+    _set_csrf_cookie(response, csrf=csrf, settings=settings)
+    return csrf
 
 
 def _refresh_via_hmac(
@@ -475,6 +491,24 @@ async def _logout_via_auth(request: Request, settings: Settings) -> Response | N
     raw_refresh = request.cookies.get(settings.dashboard_refresh_cookie_name)
     access_claims = _logout_claims(raw_access, settings=settings, kind=SESSION_KIND_ACCESS)
     refresh_claims = _logout_claims(raw_refresh, settings=settings, kind=SESSION_KIND_REFRESH)
+    claims = _select_logout_claims(access_claims, refresh_claims, settings)
+    if isinstance(claims, Response):
+        return claims
+    return await _revoke_logout_session(
+        settings,
+        claims=claims,
+        access_claims=access_claims,
+        refresh_claims=refresh_claims,
+        raw_access=raw_access,
+        raw_refresh=raw_refresh,
+    )
+
+
+def _select_logout_claims(
+    access_claims: SessionClaims | None,
+    refresh_claims: SessionClaims | None,
+    settings: Settings,
+) -> SessionClaims | Response:
     if access_claims is None and refresh_claims is None:
         return _logout_error(settings, INVALID_TOKEN, "no valid session proof")
     if _logout_proofs_mismatch(access_claims, refresh_claims):
@@ -482,16 +516,32 @@ async def _logout_via_auth(request: Request, settings: Settings) -> Response | N
     claims = access_claims if access_claims is not None else refresh_claims
     if claims is None:
         return _logout_error(settings, INVALID_TOKEN, "no valid session proof")
+    return claims
+
+
+async def _revoke_logout_session(
+    settings: Settings,
+    *,
+    claims: SessionClaims,
+    access_claims: SessionClaims | None,
+    refresh_claims: SessionClaims | None,
+    raw_access: str | None,
+    raw_refresh: str | None,
+) -> Response | None:
     try:
         await revoke_operator_session(
-            auth_grpc_addr=settings.auth_grpc_addr,
-            service_token=settings.auth_service_token or "",
-            session_id=claims.session_id,
-            family_id=claims.family_id or "",
-            access_jti=access_claims.jti if access_claims else "",
-            access_token=raw_access if access_claims else "",
-            refresh_token=raw_refresh if refresh_claims else "",
-            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
+            RevokeSessionParams(
+                session_id=claims.session_id,
+                family_id=claims.family_id or "",
+                access_jti=access_claims.jti if access_claims else "",
+                access_token=raw_access if access_claims else "",
+                refresh_token=raw_refresh if refresh_claims else "",
+            ),
         )
     except AuthFailedError:
         return _logout_error(settings, INVALID_TOKEN, "invalid session")
@@ -576,10 +626,12 @@ async def me(
 async def _me_auth(raw: str, settings: Settings) -> dict[str, object]:
     try:
         claims = await validate_operator_session(
-            auth_grpc_addr=settings.auth_grpc_addr,
-            service_token=settings.auth_service_token or "",
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
             access_token=raw,
-            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
         )
     except AuthFailedError as exc:
         raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc

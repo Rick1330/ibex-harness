@@ -283,10 +283,20 @@ func (i *Issuer) ConsumeStepUp(ctx context.Context, token RawToken, expect StepU
 }
 
 func matchesStepUpExpectations(claims Claims, expect StepUpExpectations) bool {
-	if claims.Subject != expect.Subject || claims.OrgID != expect.OrgID ||
-		claims.SessionID != expect.SessionID || claims.Action != expect.Action {
+	if !stepUpIdentityMatches(claims, expect) {
 		return false
 	}
+	return stepUpPermissionMatches(claims, expect)
+}
+
+func stepUpIdentityMatches(claims Claims, expect StepUpExpectations) bool {
+	return claims.Subject == expect.Subject &&
+		claims.OrgID == expect.OrgID &&
+		claims.SessionID == expect.SessionID &&
+		claims.Action == expect.Action
+}
+
+func stepUpPermissionMatches(claims Claims, expect StepUpExpectations) bool {
 	return expect.RequiredPermission == 0 ||
 		claims.Permissions&expect.RequiredPermission == expect.RequiredPermission
 }
@@ -326,19 +336,8 @@ func (i *Issuer) verifyRefreshToken(refreshToken RefreshToken) (Claims, error) {
 
 func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) error {
 	ttl := refreshRemainingTTL(claims)
-	sessionRevoked, err := i.jtiStore.SessionRevoked(ctx, claims.SessionID)
-	if err != nil {
+	if err := assertRefreshNotRevoked(ctx, i.jtiStore, claims); err != nil {
 		return err
-	}
-	if sessionRevoked {
-		return ErrInvalidToken
-	}
-	revoked, err := i.jtiStore.FamilyRevoked(ctx, claims.FamilyID)
-	if err != nil {
-		return err
-	}
-	if revoked {
-		return ErrInvalidToken
 	}
 	first, err := i.jtiStore.ConsumeOnce(ctx, claims.JTI, ttl)
 	if err != nil {
@@ -347,11 +346,33 @@ func (i *Issuer) consumeRefreshOrRevoke(ctx context.Context, claims Claims) erro
 	if first {
 		return nil
 	}
-	revokeTTL := i.refreshTTL
+	return revokeRefreshReplay(ctx, i.jtiStore, claims, ttl, i.refreshTTL)
+}
+
+func assertRefreshNotRevoked(ctx context.Context, store JTIStore, claims Claims) error {
+	sessionRevoked, err := store.SessionRevoked(ctx, claims.SessionID)
+	if err != nil {
+		return err
+	}
+	if sessionRevoked {
+		return ErrInvalidToken
+	}
+	revoked, err := store.FamilyRevoked(ctx, claims.FamilyID)
+	if err != nil {
+		return err
+	}
+	if revoked {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func revokeRefreshReplay(ctx context.Context, store JTIStore, claims Claims, ttl, refreshTTL time.Duration) error {
+	revokeTTL := refreshTTL
 	if ttl > revokeTTL {
 		revokeTTL = ttl
 	}
-	if err := i.jtiStore.RevokeSessionAndFamily(ctx, claims.SessionID, claims.FamilyID, revokeTTL); err != nil {
+	if err := store.RevokeSessionAndFamily(ctx, claims.SessionID, claims.FamilyID, revokeTTL); err != nil {
 		return err
 	}
 	return ErrInvalidToken

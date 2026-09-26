@@ -207,6 +207,12 @@ func assertRefreshReplayRevokesAccess(t *testing.T, issuer *sessionjwt.Issuer) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	descendants := raceRefreshDescendants(t, issuer, string(refresh))
+	assertAllAccessRevoked(t, issuer, append([]string{access}, descendants...))
+}
+
+func raceRefreshDescendants(t *testing.T, issuer *sessionjwt.Issuer, refresh string) []string {
+	t.Helper()
 	const workers = 16
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -236,7 +242,12 @@ func assertRefreshReplayRevokesAccess(t *testing.T, issuer *sessionjwt.Issuer) {
 	if len(descendants) == 0 {
 		t.Fatal("expected one initial refresh to win")
 	}
-	for _, candidate := range append([]string{access}, descendants...) {
+	return descendants
+}
+
+func assertAllAccessRevoked(t *testing.T, issuer *sessionjwt.Issuer, tokens []string) {
+	t.Helper()
+	for _, candidate := range tokens {
 		if _, err := issuer.ValidateAccess(context.Background(), sessionjwt.RawToken(candidate)); !errors.Is(err, sessionjwt.ErrInvalidToken) {
 			t.Fatalf("access token survived concurrent refresh replay: %v", err)
 		}
@@ -271,31 +282,52 @@ func TestIssuer_ConcurrentRefreshReplayRevokesSessionAndReturnedAccess(t *testin
 	}
 }
 
-func TestMemoryJTIStore_RevocationAndEmptyInputs(t *testing.T) {
+func TestMemoryJTIStore_EmptyFamilyRevokedIsFalse(t *testing.T) {
 	store := &sessionjwt.MemoryJTIStore{}
-	ctx := context.Background()
-	if revoked, err := store.FamilyRevoked(ctx, ""); err != nil || revoked {
+	if revoked, err := store.FamilyRevoked(context.Background(), ""); err != nil || revoked {
 		t.Fatalf("empty family: revoked=%v err=%v", revoked, err)
 	}
-	if revoked, err := store.SessionRevoked(ctx, ""); err != nil || revoked {
+}
+
+func TestMemoryJTIStore_EmptySessionRevokedIsFalse(t *testing.T) {
+	store := &sessionjwt.MemoryJTIStore{}
+	if revoked, err := store.SessionRevoked(context.Background(), ""); err != nil || revoked {
 		t.Fatalf("empty session: revoked=%v err=%v", revoked, err)
 	}
-	if revoked, err := store.AccessRevoked(ctx, ""); err != nil || revoked {
+}
+
+func TestMemoryJTIStore_EmptyAccessRevokedIsFalse(t *testing.T) {
+	store := &sessionjwt.MemoryJTIStore{}
+	if revoked, err := store.AccessRevoked(context.Background(), ""); err != nil || revoked {
 		t.Fatalf("empty access: revoked=%v err=%v", revoked, err)
 	}
+}
+
+func TestMemoryJTIStore_FamilyRevokeMarkerIsReadable(t *testing.T) {
+	store := &sessionjwt.MemoryJTIStore{}
+	ctx := context.Background()
 	if err := store.RevokeFamily(ctx, "family", time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if revoked, err := store.FamilyRevoked(ctx, "family"); err != nil || !revoked {
 		t.Fatalf("family marker: revoked=%v err=%v", revoked, err)
 	}
+}
+
+func TestMemoryJTIStore_AccessRevokeMarkerIsReadable(t *testing.T) {
+	store := &sessionjwt.MemoryJTIStore{}
+	ctx := context.Background()
 	if err := store.RevokeAccess(ctx, "access", time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if revoked, err := store.AccessRevoked(ctx, "access"); err != nil || !revoked {
 		t.Fatalf("access marker: revoked=%v err=%v", revoked, err)
 	}
-	if err := store.RevokeSessionAndFamily(ctx, "", "family", time.Minute); err == nil {
+}
+
+func TestMemoryJTIStore_RevokeSessionAndFamilyRejectsEmptySession(t *testing.T) {
+	store := &sessionjwt.MemoryJTIStore{}
+	if err := store.RevokeSessionAndFamily(context.Background(), "", "family", time.Minute); err == nil {
 		t.Fatal("expected empty session error")
 	}
 }

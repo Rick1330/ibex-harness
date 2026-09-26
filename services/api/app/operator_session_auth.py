@@ -9,7 +9,7 @@ from apierror_py import INVALID_TOKEN, SERVICE_DEGRADED
 from fastapi import Request
 
 from app.auth.client import AuthFailedError, AuthUnavailableError
-from app.auth.session_refresh import ValidatedSession, validate_operator_session
+from app.auth.session_refresh import AuthRPC, ValidatedSession, validate_operator_session
 from app.config import Settings
 from app.errors import ApiError
 from app.session_stub import (
@@ -90,10 +90,12 @@ async def require_operator_session(request: Request) -> OperatorSessionAuthoriza
 async def _validate_remote_session(raw: str, settings: Settings) -> ValidatedSession:
     try:
         return await validate_operator_session(
-            auth_grpc_addr=settings.auth_grpc_addr,
-            service_token=settings.auth_service_token or "",
+            AuthRPC(
+                settings.auth_grpc_addr,
+                settings.auth_service_token or "",
+                max(settings.auth_timeout_ms / 1000.0, 0.2),
+            ),
             access_token=raw,
-            timeout_seconds=max(settings.auth_timeout_ms / 1000.0, 0.2),
         )
     except AuthFailedError as exc:
         raise ApiError(code=INVALID_TOKEN, message="invalid session") from exc

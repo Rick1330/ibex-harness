@@ -29,7 +29,7 @@ from app.config import Settings
 from app.deps import org_session, require_token
 from app.errors import ApiError
 from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
-from app.step_up import enforce_step_up
+from app.step_up import StepUpAction, enforce_step_up
 
 AdminRoles = frozenset({"owner", "admin"})
 OwnerRoles = frozenset({"owner"})
@@ -127,9 +127,11 @@ def require_legal_hold_manage() -> Callable[..., ValidateResult]:
             await enforce_step_up(
                 request,
                 token,
-                required_permission=LEGAL_HOLD_MANAGE,
-                action="legal_hold.manage",
-                session_id=operator_session.session_id if operator_session else None,
+                action=StepUpAction(
+                    required_permission=LEGAL_HOLD_MANAGE,
+                    action="legal_hold.manage",
+                    session_id=operator_session.session_id if operator_session else None,
+                ),
             )
         return token
 
@@ -196,9 +198,11 @@ def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
             await enforce_step_up(
                 request,
                 token,
-                required_permission=required,
-                action=f"operator.permission.{required}",
-                session_id=operator_session.session_id if operator_session else None,
+                action=StepUpAction(
+                    required_permission=required,
+                    action=f"operator.permission.{required}",
+                    session_id=operator_session.session_id if operator_session else None,
+                ),
             )
         return token
 

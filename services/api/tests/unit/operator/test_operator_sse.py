@@ -158,44 +158,11 @@ async def test_write_sse_chunk_deadline() -> None:
 
 @pytest.mark.asyncio
 async def test_redis_fan_in_publishes_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
-
-    class FakePubSub:
-        def __init__(self) -> None:
-            self._n = 0
-
-        async def subscribe(self, *_a, **_k) -> None:
-            return None
-
-        async def unsubscribe(self, *_a, **_k) -> None:
-            return None
-
-        async def aclose(self) -> None:
-            return None
-
-        async def get_message(self, **_k):
-            self._n += 1
-            if self._n == 1:
-                return {"data": f'{{"k":1,"org_id":"{ORG_A}"}}'}
-            stop.set()
-            return None
-
-    class FakeRedis:
-        def pubsub(self) -> FakePubSub:
-            return FakePubSub()
-
-        async def aclose(self) -> None:
-            return None
-
-    class FakeRedisMod:
-        @staticmethod
-        def from_url(*_a, **_k) -> FakeRedis:
-            return FakeRedis()
-
-    monkeypatch.setattr("app.sse.operator_events.Redis", FakeRedisMod)
+    hub, stop = _fan_in_hub()
+    monkeypatch.setattr(
+        "app.sse.operator_events.Redis",
+        _fake_redis_mod([{"data": f'{{"k":1,"org_id":"{ORG_A}"}}'}], stop),
+    )
     await asyncio.wait_for(
         redis_fan_in_loop(hub, redis_url="redis://x", channel="c", stop=stop),
         timeout=2.0,
@@ -206,11 +173,24 @@ async def test_redis_fan_in_publishes_json(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.asyncio
 async def test_redis_fan_in_invalid_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
+    hub, stop = _fan_in_hub()
+    monkeypatch.setattr(
+        "app.sse.operator_events.Redis",
+        _fake_redis_mod([{"data": "not-json"}], stop),
+    )
+    await asyncio.wait_for(
+        redis_fan_in_loop(hub, redis_url="redis://x", channel="c", stop=stop),
+        timeout=2.0,
+    )
+    # Fan-in without org_id is dropped (never delivered cross-tenant / unscoped).
+    assert hub._history == []
 
+
+def _fan_in_hub() -> tuple[OperatorSSEHub, asyncio.Event]:
+    return OperatorSSEHub(settings=operator_settings(), drain=DrainState()), asyncio.Event()
+
+
+def _fake_redis_mod(messages: list[dict | None], stop: asyncio.Event):
     class FakePubSub:
         def __init__(self) -> None:
             self._n = 0
@@ -225,9 +205,10 @@ async def test_redis_fan_in_invalid_json(monkeypatch: pytest.MonkeyPatch) -> Non
             return None
 
         async def get_message(self, **_k):
-            self._n += 1
-            if self._n == 1:
-                return {"data": "not-json"}
+            if self._n < len(messages):
+                msg = messages[self._n]
+                self._n += 1
+                return msg
             stop.set()
             return None
 
@@ -243,13 +224,7 @@ async def test_redis_fan_in_invalid_json(monkeypatch: pytest.MonkeyPatch) -> Non
         def from_url(*_a, **_k) -> FakeRedis:
             return FakeRedis()
 
-    monkeypatch.setattr("app.sse.operator_events.Redis", FakeRedisMod)
-    await asyncio.wait_for(
-        redis_fan_in_loop(hub, redis_url="redis://x", channel="c", stop=stop),
-        timeout=2.0,
-    )
-    # Fan-in without org_id is dropped (never delivered cross-tenant / unscoped).
-    assert hub._history == []
+    return FakeRedisMod
 
 
 def test_sse_stream_requires_session_cookie(app_client) -> None:
@@ -390,10 +365,7 @@ async def test_decode_and_backoff_helpers() -> None:
 async def test_redis_fan_in_auth_error_stops(monkeypatch: pytest.MonkeyPatch) -> None:
     from redis.exceptions import AuthenticationError
 
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
+    hub, stop = _fan_in_hub()
 
     class Boom:
         @staticmethod
@@ -411,10 +383,7 @@ async def test_redis_fan_in_auth_error_stops(monkeypatch: pytest.MonkeyPatch) ->
 async def test_redis_fan_in_retry_then_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     from redis.exceptions import RedisError
 
-    settings = operator_settings()
-    drain = DrainState()
-    hub = OperatorSSEHub(settings=settings, drain=drain)
-    stop = asyncio.Event()
+    hub, stop = _fan_in_hub()
     calls = {"n": 0}
 
     class Boom:
@@ -570,37 +539,40 @@ def test_staging_sse_rejects_invalid_tenant_claim_before_subscribe() -> None:
     subscribe.assert_not_awaited()
 
 
+def _assert_staging_platform_health(cookie: str, validate_mock, expected_status: int) -> None:
+    from tests.unit.operator.conftest import create_operator_app
+
+    with create_operator_app(settings=_staging_operator_settings()) as (_, client):
+        client.cookies.set("ibex_session", cookie)
+        with patch(
+            "app.operator_session_auth.validate_operator_session",
+            new=validate_mock,
+        ) as validate:
+            response = client.get("/v1/operator/platform/health")
+    assert response.status_code == expected_status
+    validate.assert_awaited_once()
+
+
 def test_staging_platform_health_rejects_revoked_session() -> None:
     from unittest.mock import AsyncMock
 
     from app.auth.client import AuthFailedError
-    from tests.unit.operator.conftest import create_operator_app
 
-    with create_operator_app(settings=_staging_operator_settings()) as (_, client):
-        client.cookies.set("ibex_session", "revoked-session-cookie")
-        with patch(
-            "app.operator_session_auth.validate_operator_session",
-            new=AsyncMock(side_effect=AuthFailedError("revoked")),
-        ) as validate:
-            response = client.get("/v1/operator/platform/health")
-    assert response.status_code == 401
-    validate.assert_awaited_once()
+    _assert_staging_platform_health(
+        "revoked-session-cookie",
+        AsyncMock(side_effect=AuthFailedError("revoked")),
+        401,
+    )
 
 
 def test_staging_platform_health_rejects_missing_metadata_permission() -> None:
     from unittest.mock import AsyncMock
 
-    from tests.unit.operator.conftest import create_operator_app
-
-    with create_operator_app(settings=_staging_operator_settings()) as (_, client):
-        client.cookies.set("ibex_session", "valid-session-without-metadata-grant")
-        with patch(
-            "app.operator_session_auth.validate_operator_session",
-            new=AsyncMock(return_value=_validated_session(permissions=0)),
-        ) as validate:
-            response = client.get("/v1/operator/platform/health")
-    assert response.status_code == 403
-    validate.assert_awaited_once()
+    _assert_staging_platform_health(
+        "valid-session-without-metadata-grant",
+        AsyncMock(return_value=_validated_session(permissions=0)),
+        403,
+    )
 
 
 def test_sse_stream_write_deadline_and_disconnect(app_client) -> None:

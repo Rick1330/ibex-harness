@@ -74,7 +74,46 @@ func (s *MemoryJTIStore) ConsumeOnce(_ context.Context, jti string, ttl time.Dur
 }
 
 func (s *MemoryJTIStore) liveEntry(jti string, now time.Time) bool {
-	v, ok := s.m.Load(jti)
+	return entryLive(&s.m, jti, now)
+}
+
+func (s *MemoryJTIStore) RevokeSession(_ context.Context, sessionID string, ttl time.Duration) error {
+	return s.storeRevoked("session:"+sessionID, sessionID == "", ttl)
+}
+
+func (s *MemoryJTIStore) RevokeAccess(_ context.Context, jti string, ttl time.Duration) error {
+	return s.storeRevoked("access:"+jti, jti == "", ttl)
+}
+
+func (s *MemoryJTIStore) storeRevoked(key string, emptyID bool, ttl time.Duration) error {
+	if emptyID {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	s.revoked.Store(key, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
+	return nil
+}
+
+func (s *MemoryJTIStore) SessionRevoked(_ context.Context, sessionID string) (bool, error) {
+	return s.revokedLive("session:" + sessionID), nil
+}
+
+func (s *MemoryJTIStore) AccessRevoked(_ context.Context, jti string) (bool, error) {
+	return s.revokedLive("access:" + jti), nil
+}
+
+func (s *MemoryJTIStore) ConsumeStepUp(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
+	return s.ConsumeOnce(ctx, "step-up:"+jti, ttl)
+}
+
+func (s *MemoryJTIStore) revokedLive(key string) bool {
+	return entryLive(&s.revoked, key, time.Now().UTC())
+}
+
+func entryLive(m *sync.Map, key string, now time.Time) bool {
+	v, ok := m.Load(key)
 	if !ok {
 		return false
 	}
@@ -82,7 +121,7 @@ func (s *MemoryJTIStore) liveEntry(jti string, now time.Time) bool {
 	if now.Before(ent.expiresAt) {
 		return true
 	}
-	_ = s.m.CompareAndDelete(jti, v)
+	_ = m.CompareAndDelete(key, v)
 	return false
 }
 
@@ -137,28 +176,7 @@ func (s *MemoryJTIStore) FamilyRevoked(_ context.Context, familyID string) (bool
 	if familyID == "" {
 		return false, nil
 	}
-	now := time.Now().UTC()
-	v, ok := s.revoked.Load(familyID)
-	if !ok {
-		return false, nil
-	}
-	ent := v.(memoryJTIEntry)
-	if now.Before(ent.expiresAt) {
-		return true, nil
-	}
-	_ = s.revoked.CompareAndDelete(familyID, v)
-	return false, nil
-}
-
-func (s *MemoryJTIStore) RevokeSession(_ context.Context, sessionID string, ttl time.Duration) error {
-	if sessionID == "" {
-		return nil
-	}
-	if ttl <= 0 {
-		ttl = time.Second
-	}
-	s.revoked.Store("session:"+sessionID, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
-	return nil
+	return entryLive(&s.revoked, familyID, time.Now().UTC()), nil
 }
 
 // RevokeSessionAndFamily marks both session and refresh-family state for the same TTL.
@@ -173,43 +191,6 @@ func (s *MemoryJTIStore) RevokeSessionAndFamily(ctx context.Context, sessionID, 
 		return err
 	}
 	return s.RevokeFamily(ctx, familyID, ttl)
-}
-
-func (s *MemoryJTIStore) SessionRevoked(_ context.Context, sessionID string) (bool, error) {
-	return s.revokedLive("session:" + sessionID), nil
-}
-
-func (s *MemoryJTIStore) RevokeAccess(_ context.Context, jti string, ttl time.Duration) error {
-	if jti == "" {
-		return nil
-	}
-	if ttl <= 0 {
-		ttl = time.Second
-	}
-	s.revoked.Store("access:"+jti, memoryJTIEntry{expiresAt: time.Now().UTC().Add(ttl)})
-	return nil
-}
-
-func (s *MemoryJTIStore) AccessRevoked(_ context.Context, jti string) (bool, error) {
-	return s.revokedLive("access:" + jti), nil
-}
-
-func (s *MemoryJTIStore) ConsumeStepUp(ctx context.Context, jti string, ttl time.Duration) (bool, error) {
-	return s.ConsumeOnce(ctx, "step-up:"+jti, ttl)
-}
-
-func (s *MemoryJTIStore) revokedLive(key string) bool {
-	now := time.Now().UTC()
-	v, ok := s.revoked.Load(key)
-	if !ok {
-		return false
-	}
-	ent := v.(memoryJTIEntry)
-	if now.Before(ent.expiresAt) {
-		return true
-	}
-	_ = s.revoked.CompareAndDelete(key, v)
-	return false
 }
 
 // RedisJTIStore persists refresh JTI consumption with TTL = remaining token life.

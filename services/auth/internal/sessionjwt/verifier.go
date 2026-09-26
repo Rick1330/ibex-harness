@@ -142,19 +142,38 @@ func (v *Verifier) parseAndValidateClaims(payloadB64 string, expectKind SessionK
 }
 
 func validateClaims(claims Claims, issuer TokenIssuer, audience TokenAudience, expectKind SessionKind) error {
+	if err := validateIssuerAudience(claims, issuer, audience); err != nil {
+		return err
+	}
+	if err := validateKindAndIdentity(claims, expectKind); err != nil {
+		return err
+	}
+	return validateClaimTimestamps(claims, expectKind)
+}
+
+func validateIssuerAudience(claims Claims, issuer TokenIssuer, audience TokenAudience) error {
 	if claims.Issuer != string(issuer) || claims.Audience != string(audience) {
 		return ErrInvalidToken
 	}
+	return nil
+}
+
+func validateKindAndIdentity(claims Claims, expectKind SessionKind) error {
 	if claims.SessionKind != string(expectKind) {
 		return ErrInvalidToken
 	}
 	if !hasRequiredIdentityClaims(claims) || claims.SessionID == "" {
 		return ErrInvalidToken
 	}
-	if claims.ExpiresAt < time.Now().UTC().Unix() {
+	return nil
+}
+
+func validateClaimTimestamps(claims Claims, expectKind SessionKind) error {
+	now := time.Now().UTC().Unix()
+	if claims.ExpiresAt < now {
 		return ErrExpired
 	}
-	if claims.NotBefore > time.Now().UTC().Unix() {
+	if claims.NotBefore > now {
 		return ErrInvalidToken
 	}
 	if expectKind == KindRefresh && claims.FamilyID == "" {

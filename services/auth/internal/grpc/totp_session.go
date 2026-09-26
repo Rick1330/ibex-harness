@@ -220,14 +220,21 @@ func selectRevokeProofs(accessClaims, refreshClaims *sessionjwt.Claims) (session
 	if accessClaims == nil && refreshClaims == nil {
 		return sessionjwt.Claims{}, errors.New("valid session proof required")
 	}
-	if accessClaims != nil && refreshClaims != nil &&
-		(accessClaims.SessionID != refreshClaims.SessionID || accessClaims.FamilyID != refreshClaims.FamilyID) {
+	if revokeProofsMismatch(accessClaims, refreshClaims) {
 		return sessionjwt.Claims{}, errors.New("session proofs do not match")
 	}
 	if accessClaims != nil {
 		return *accessClaims, nil
 	}
 	return *refreshClaims, nil
+}
+
+func revokeProofsMismatch(accessClaims, refreshClaims *sessionjwt.Claims) bool {
+	if accessClaims == nil || refreshClaims == nil {
+		return false
+	}
+	return accessClaims.SessionID != refreshClaims.SessionID ||
+		accessClaims.FamilyID != refreshClaims.FamilyID
 }
 
 func validateRevokeRequest(req *authv1.RevokeOperatorSessionRequest, claims sessionjwt.Claims) error {

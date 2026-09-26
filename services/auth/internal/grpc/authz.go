@@ -144,28 +144,40 @@ func bearerFromMetadata(ctx context.Context) (string, error) {
 	return bearer, nil
 }
 
+// OrgPermissionCheck scopes RequireOrgAndPermission.
+type OrgPermissionCheck struct {
+	OrgID    string
+	Required int64
+}
+
+// RevokeTarget scopes CanRevoke.
+type RevokeTarget struct {
+	OrgID   string
+	TokenID string
+}
+
 // RequireOrgAndPermission checks caller org and permission bit.
-func RequireOrgAndPermission(ctx context.Context, orgID string, required int64) error {
+func RequireOrgAndPermission(ctx context.Context, check OrgPermissionCheck) error {
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
-	if caller.OrgID != orgID {
+	if caller.OrgID != check.OrgID {
 		return status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
-	if !permissions.Has(caller.Permissions, required) {
+	if !permissions.Has(caller.Permissions, check.Required) {
 		return status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
 	return nil
 }
 
 // CanRevoke reports whether caller may revoke the target token.
-func CanRevoke(caller CallerContext, orgID, targetTokenID string) bool {
-	if caller.OrgID != orgID {
+func CanRevoke(caller CallerContext, target RevokeTarget) bool {
+	if caller.OrgID != target.OrgID {
 		return false
 	}
 	if permissions.Has(caller.Permissions, permissions.TokenRevoke) {
 		return true
 	}
-	return caller.TokenID != "" && caller.TokenID == targetTokenID
+	return caller.TokenID != "" && caller.TokenID == target.TokenID
 }

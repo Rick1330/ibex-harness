@@ -243,36 +243,32 @@ func TestValidate_TOTPSessionConfig(t *testing.T) {
 
 func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
 	t.Parallel()
-	cfg := validAuthConfig()
-	cfg.Environment = "staging"
-	cfg.TOTPEnabled = true
-	cfg.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	cfg.JWTPrivateKeyPEM = "configured"
-	cfg.JWTIssuer = "ibex"
-	cfg.JWTAudience = "dash"
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected missing AuthService token error")
+	cases := []struct {
+		name        string
+		environment string
+		totpEnabled bool
+	}{
+		{name: "totp-staging", environment: "staging", totpEnabled: true},
+		{name: "rs256-production", environment: "production", totpEnabled: false},
 	}
-	cfg.AuthServiceToken = "service-secret"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("configured service token should validate: %v", err)
-	}
-}
-
-func TestValidate_AuthServiceTokenRequiredForRS256OutsideDevelopmentWithoutTOTP(t *testing.T) {
-	t.Parallel()
-	cfg := validAuthConfig()
-	cfg.Environment = "production"
-	cfg.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	cfg.JWTPrivateKeyPEM = "configured"
-	cfg.JWTIssuer = "ibex"
-	cfg.JWTAudience = "dash"
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected missing AuthService token error for RS256 sessions")
-	}
-	cfg.AuthServiceToken = "service-secret"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("configured service token should validate: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := validAuthConfig()
+			cfg.Environment = tc.environment
+			cfg.TOTPEnabled = tc.totpEnabled
+			cfg.CredentialsMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+			cfg.JWTPrivateKeyPEM = "configured"
+			cfg.JWTIssuer = "ibex"
+			cfg.JWTAudience = "dash"
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("expected missing AuthService token error")
+			}
+			cfg.AuthServiceToken = "service-secret"
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("configured service token should validate: %v", err)
+			}
+		})
 	}
 }
 

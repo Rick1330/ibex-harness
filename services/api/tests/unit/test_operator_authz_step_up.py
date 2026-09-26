@@ -19,7 +19,7 @@ from app.session_stub import (
     TokenIssueOpts,
     issue_token_opts,
 )
-from app.step_up import require_step_up_header
+from app.step_up import StepUpAction, require_step_up_header
 
 
 def _settings(**overrides: object) -> Settings:
@@ -239,7 +239,7 @@ async def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     token_kwargs: dict[str, object], identity_kwargs: dict[str, object]
 ) -> None:
     from app.auth.client import ValidateResult
-    from app.step_up import enforce_step_up
+    from app.step_up import StepUpAction, enforce_step_up
 
     org = uuid4()
     action = f"operator.permission.{SECRET_USE}"
@@ -278,7 +278,7 @@ async def test_enforce_step_up_rejects_unbound_or_underprivileged_local_tokens(
     caller = ValidateResult(**identity)
 
     with pytest.raises(ApiError) as exc:
-        await enforce_step_up(req, caller, required_permission=SECRET_USE, action=action)
+        await enforce_step_up(req, caller, action=StepUpAction(required_permission=SECRET_USE, action=action))
     assert exc.value.code == INSUFFICIENT_PERMISSIONS
     assert exc.value.message == "Step-up authentication required"
 
@@ -287,12 +287,12 @@ def test_enforce_step_up_rejects_missing_header_and_missing_identity() -> None:
     import asyncio
 
     from app.auth.client import ValidateResult
-    from app.step_up import enforce_step_up
+    from app.step_up import StepUpAction, enforce_step_up
 
     req = _request_with_settings(_settings())
     caller = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
     missing_header = enforce_step_up(
-        req, caller, required_permission=SECRET_USE, action="op"
+        req, caller, action=StepUpAction(required_permission=SECRET_USE, action="op")
     )
     with pytest.raises(ApiError) as exc:
         asyncio.run(missing_header)
@@ -302,7 +302,7 @@ def test_enforce_step_up_rejects_missing_header_and_missing_identity() -> None:
     req = _request_with_settings(_settings(), headers=[(b"x-ibex-step-up", b"untrusted")])
     missing_identity = ValidateResult(org_id=uuid4(), permissions=SECRET_USE)
     unbound = enforce_step_up(
-        req, missing_identity, required_permission=SECRET_USE, action="op"
+        req, missing_identity, action=StepUpAction(required_permission=SECRET_USE, action="op")
     )
     with pytest.raises(ApiError) as exc:
         asyncio.run(unbound)
@@ -325,7 +325,7 @@ def test_enforce_step_up_uses_authservice_in_non_development(
 
     from app.auth.client import ValidateResult
     from app.auth.errors import AuthFailedError, AuthUnavailableError
-    from app.step_up import enforce_step_up
+    from app.step_up import StepUpAction, enforce_step_up
 
     error = {
         "invalid": AuthFailedError("invalid"),
@@ -346,8 +346,10 @@ def test_enforce_step_up_uses_authservice_in_non_development(
         await enforce_step_up(
             req,
             caller,
-            required_permission=SECRET_USE,
-            action=f"operator.permission.{SECRET_USE}",
+            action=StepUpAction(
+                required_permission=SECRET_USE,
+                action=f"operator.permission.{SECRET_USE}",
+            ),
         )
 
     with patch("app.step_up.consume_step_up", new=consume):
@@ -360,7 +362,8 @@ def test_enforce_step_up_uses_authservice_in_non_development(
                 asyncio.run(pending)
             assert exc.value.code == expected_code
     assert consume.await_count == 1
-    assert consume.await_args.kwargs["subject"] == "user-1"
-    assert consume.await_args.kwargs["session_id"] == "sid-1"
-    assert consume.await_args.kwargs["action"] == f"operator.permission.{SECRET_USE}"
-    assert consume.await_args.kwargs["permission"] == SECRET_USE
+    _rpc, params = consume.await_args.args
+    assert params.subject == "user-1"
+    assert params.session_id == "sid-1"
+    assert params.action == f"operator.permission.{SECRET_USE}"
+    assert params.permission == SECRET_USE

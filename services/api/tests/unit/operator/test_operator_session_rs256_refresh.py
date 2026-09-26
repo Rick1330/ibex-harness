@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import base64
 import json
 import time
@@ -52,15 +54,16 @@ def _logout_settings(public_key: str):
     )
 
 
-def _signed_session_token(
-    key,
-    *,
-    kind: str,
-    session_id: str,
-    family_id: str,
-    jti: str,
-    expires_in: int,
-) -> str:
+@dataclass(frozen=True, slots=True)
+class _SignedTokenSpec:
+    kind: str
+    session_id: str
+    family_id: str
+    jti: str
+    expires_in: int
+
+
+def _signed_session_token(key, spec: _SignedTokenSpec) -> str:
     now = int(time.time())
     header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT", "kid": "v1"}).encode())
     payload = _b64url(
@@ -71,12 +74,12 @@ def _signed_session_token(
                 "sub": "user-1",
                 "org_id": str(uuid4()),
                 "permissions": 1,
-                "session_kind": kind,
+                "session_kind": spec.kind,
                 "iat": now - 1,
-                "exp": now + expires_in,
-                "jti": jti,
-                "sid": session_id,
-                "fid": family_id,
+                "exp": now + spec.expires_in,
+                "jti": spec.jti,
+                "sid": spec.session_id,
+                "fid": spec.family_id,
             }
         ).encode()
     )
@@ -223,67 +226,88 @@ def test_me_cookie_rs256_is_not_provisional() -> None:
     assert body_json["org_id"] == org
 
 
-def test_logout_uses_valid_refresh_when_access_is_expired_and_clears_all_cookies() -> None:
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pub_pem = key.public_key().public_bytes(
+def _rsa_pub_pem(key) -> str:
+    return key.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode("ascii")
+
+
+def _post_logout(client, *, access: str | None = None, refresh: str | None = None):
+    csrf = _csrf_headers(client)
+    if access is not None:
+        client.cookies.set("ibex_session", access)
+    if refresh is not None:
+        client.cookies.set("ibex_refresh", refresh)
+    return client.post(
+        "/v1/operator/session/logout",
+        headers={**csrf, "Origin": "https://operator.ibexharness.com"},
+    )
+
+
+def test_logout_uses_valid_refresh_when_access_is_expired_and_clears_all_cookies() -> None:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     access = _signed_session_token(
-        key, kind="access", session_id="sid-expired", family_id="fid-expired", jti="jti-expired", expires_in=-1
+        key,
+        _SignedTokenSpec(
+            kind="access",
+            session_id="sid-expired",
+            family_id="fid-expired",
+            jti="jti-expired",
+            expires_in=-1,
+        ),
     )
     refresh = _signed_session_token(
-        key, kind="refresh", session_id="sid-expired", family_id="fid-expired", jti="rjti-valid", expires_in=3600
+        key,
+        _SignedTokenSpec(
+            kind="refresh",
+            session_id="sid-expired",
+            family_id="fid-expired",
+            jti="rjti-valid",
+            expires_in=3600,
+        ),
     )
     with (
-        create_operator_app(settings=_logout_settings(pub_pem), validator=StaticTokenValidator({})) as (
-            _, client
-        ),
+        create_operator_app(
+            settings=_logout_settings(_rsa_pub_pem(key)), validator=StaticTokenValidator({})
+        ) as (_, client),
         patch("app.routers.session.revoke_operator_session", new=AsyncMock()) as revoke,
     ):
-        csrf = _csrf_headers(client)
-        client.cookies.set("ibex_session", access)
-        client.cookies.set("ibex_refresh", refresh)
-        response = client.post(
-            "/v1/operator/session/logout",
-            headers={**csrf, "Origin": "https://operator.ibexharness.com"},
-        )
+        response = _post_logout(client, access=access, refresh=refresh)
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
     revoke.assert_awaited_once()
-    kwargs = revoke.await_args.kwargs
-    assert kwargs["session_id"] == "sid-expired"
-    assert kwargs["family_id"] == "fid-expired"
-    assert kwargs["access_token"] == ""
-    assert kwargs["access_jti"] == ""
-    assert kwargs["refresh_token"] == refresh
+    params = revoke.await_args.args[1]
+    assert params.session_id == "sid-expired"
+    assert params.family_id == "fid-expired"
+    assert params.access_token == ""
+    assert params.access_jti == ""
+    assert params.refresh_token == refresh
     _assert_session_cookies_deleted(response)
 
 
 def test_logout_refresh_only_survives_authservice_outage_as_degraded_but_clears_cookies() -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pub_pem = key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("ascii")
     refresh = _signed_session_token(
-        key, kind="refresh", session_id="sid-only", family_id="fid-only", jti="rjti-only", expires_in=3600
+        key,
+        _SignedTokenSpec(
+            kind="refresh",
+            session_id="sid-only",
+            family_id="fid-only",
+            jti="rjti-only",
+            expires_in=3600,
+        ),
     )
     with (
-        create_operator_app(settings=_logout_settings(pub_pem), validator=StaticTokenValidator({})) as (
-            _, client
-        ),
+        create_operator_app(
+            settings=_logout_settings(_rsa_pub_pem(key)), validator=StaticTokenValidator({})
+        ) as (_, client),
         patch(
             "app.routers.session.revoke_operator_session",
             new=AsyncMock(side_effect=AuthUnavailableError("down")),
         ),
     ):
-        csrf = _csrf_headers(client)
-        client.cookies.set("ibex_refresh", refresh)
-        response = client.post(
-            "/v1/operator/session/logout",
-            headers={**csrf, "Origin": "https://operator.ibexharness.com"},
-        )
+        response = _post_logout(client, refresh=refresh)
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "SERVICE_DEGRADED"
     _assert_session_cookies_deleted(response)
@@ -291,29 +315,25 @@ def test_logout_refresh_only_survives_authservice_outage_as_degraded_but_clears_
 
 def test_logout_mismatched_valid_proofs_are_rejected_without_rpc_and_cleared() -> None:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    pub_pem = key.public_key().public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    ).decode("ascii")
     access = _signed_session_token(
-        key, kind="access", session_id="sid-a", family_id="fid-a", jti="jti-a", expires_in=3600
+        key,
+        _SignedTokenSpec(
+            kind="access", session_id="sid-a", family_id="fid-a", jti="jti-a", expires_in=3600
+        ),
     )
     refresh = _signed_session_token(
-        key, kind="refresh", session_id="sid-b", family_id="fid-b", jti="jti-b", expires_in=3600
+        key,
+        _SignedTokenSpec(
+            kind="refresh", session_id="sid-b", family_id="fid-b", jti="jti-b", expires_in=3600
+        ),
     )
     with (
-        create_operator_app(settings=_logout_settings(pub_pem), validator=StaticTokenValidator({})) as (
-            _, client
-        ),
+        create_operator_app(
+            settings=_logout_settings(_rsa_pub_pem(key)), validator=StaticTokenValidator({})
+        ) as (_, client),
         patch("app.routers.session.revoke_operator_session", new=AsyncMock()) as revoke,
     ):
-        csrf = _csrf_headers(client)
-        client.cookies.set("ibex_session", access)
-        client.cookies.set("ibex_refresh", refresh)
-        response = client.post(
-            "/v1/operator/session/logout",
-            headers={**csrf, "Origin": "https://operator.ibexharness.com"},
-        )
+        response = _post_logout(client, access=access, refresh=refresh)
     assert response.status_code == 401
     revoke.assert_not_awaited()
     _assert_session_cookies_deleted(response)
@@ -401,9 +421,7 @@ def test_production_logout_authservice_rejection_clears_all_cookies() -> None:
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode("ascii")
-    access = _signed_session_token(
-        key, kind="access", session_id="sid-1", family_id="fid-1", jti="jti-1", expires_in=300
-    )
+    access = _signed_session_token(key, _SignedTokenSpec(kind="access", session_id="sid-1", family_id="fid-1", jti="jti-1", expires_in=300))
     with (
         create_operator_app(
             settings=_logout_settings(pub_pem), validator=StaticTokenValidator({})

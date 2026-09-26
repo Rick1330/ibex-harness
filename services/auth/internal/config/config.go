@@ -73,12 +73,20 @@ func (c Config) Validate() error {
 }
 
 func validateAuthServiceToken(c Config) error {
-	if c.Environment != "development" &&
-		(c.TOTPEnabled || strings.TrimSpace(c.JWTPrivateKeyPEM) != "") &&
-		strings.TrimSpace(c.AuthServiceToken) == "" {
+	if !requiresAuthServiceToken(c) {
+		return nil
+	}
+	if strings.TrimSpace(c.AuthServiceToken) == "" {
 		return fmt.Errorf("IBEX_AUTH_SERVICE_TOKEN is required when operator sessions are enabled outside development")
 	}
 	return nil
+}
+
+func requiresAuthServiceToken(c Config) bool {
+	if c.Environment == "development" {
+		return false
+	}
+	return c.TOTPEnabled || strings.TrimSpace(c.JWTPrivateKeyPEM) != ""
 }
 
 func validateServiceName(name string) error {

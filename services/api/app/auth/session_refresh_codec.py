@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from authclient.codec import AuthCodecError, encode_varint
 
 _WIRE_VARINT = 0
@@ -85,58 +87,71 @@ def _utf8_string(val: bytes) -> str:
         raise AuthCodecError("invalid utf-8 string field") from exc
 
 
-def _take_matching_string(fn: int, field_num: int, val: bytes) -> str | None:
-    if fn != field_num:
-        return None
-    return _utf8_string(val)
+def _ensure_message_size(buf: bytes, *, too_large: str) -> None:
+    if len(buf) > _MAX_MESSAGE:
+        raise AuthCodecError(too_large)
+
+
+def _walk_fields(
+    buf: bytes,
+    *,
+    too_large: str,
+    visit: Callable[[int, int, int], int | None],
+) -> None:
+    """Invoke visit(fn, wire, idx)->next_idx; stop early when visit returns None."""
+    _ensure_message_size(buf, too_large=too_large)
+    idx = 0
+    while idx < len(buf):
+        key, idx = _decode_varint(buf, idx)
+        nxt = visit(key >> 3, key & 7, idx)
+        if nxt is None:
+            return
+        idx = nxt
 
 
 def decode_string_field(buf: bytes, field_num: int) -> str | None:
     """Bounded protobuf string scan; raises AuthCodecError on malformed input."""
-    if len(buf) > _MAX_MESSAGE:
-        raise AuthCodecError("auth refresh response too large")
-    idx = 0
-    while idx < len(buf):
-        key, idx = _decode_varint(buf, idx)
-        fn, wt = key >> 3, key & 7
+    found: list[str] = []
+
+    def visit(fn: int, wt: int, idx: int) -> int | None:
         if wt != _WIRE_LEN:
-            idx = _skip_unknown(buf, idx, wt)
-            continue
+            return _skip_unknown(buf, idx, wt)
         val, idx = _read_bytes(buf, idx, max_len=_MAX_TOKEN_FIELD)
-        matched = _take_matching_string(fn, field_num, val)
-        if matched is not None:
-            return matched
-    return None
+        if fn == field_num:
+            found.append(_utf8_string(val))
+            return None
+        return idx
+
+    _walk_fields(buf, too_large="auth refresh response too large", visit=visit)
+    return found[0] if found else None
 
 
 def decode_string_fields(buf: bytes, field_nums: set[int]) -> dict[int, str]:
     values: dict[int, str] = {}
-    if len(buf) > _MAX_MESSAGE:
-        raise AuthCodecError("auth lifecycle response too large")
-    idx = 0
-    while idx < len(buf):
-        key, idx = _decode_varint(buf, idx)
-        fn, wt = key >> 3, key & 7
+
+    def visit(fn: int, wt: int, idx: int) -> int | None:
         if wt == _WIRE_LEN:
             val, idx = _read_bytes(buf, idx, max_len=_MAX_TOKEN_FIELD)
             if fn in field_nums:
                 values[fn] = _utf8_string(val)
-        else:
-            idx = _skip_unknown(buf, idx, wt)
+            return idx
+        return _skip_unknown(buf, idx, wt)
+
+    _walk_fields(buf, too_large="auth lifecycle response too large", visit=visit)
     return values
 
 
 def decode_int64_field(buf: bytes, field_num: int) -> int | None:
-    if len(buf) > _MAX_MESSAGE:
-        raise AuthCodecError("auth lifecycle response too large")
-    idx = 0
-    while idx < len(buf):
-        key, idx = _decode_varint(buf, idx)
-        fn, wt = key >> 3, key & 7
+    found: list[int] = []
+
+    def visit(fn: int, wt: int, idx: int) -> int | None:
         if wt == _WIRE_VARINT:
             val, idx = _decode_varint(buf, idx)
             if fn == field_num:
-                return val
-        else:
-            idx = _skip_unknown(buf, idx, wt)
-    return None
+                found.append(val)
+                return None
+            return idx
+        return _skip_unknown(buf, idx, wt)
+
+    _walk_fields(buf, too_large="auth lifecycle response too large", visit=visit)
+    return found[0] if found else None

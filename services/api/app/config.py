@@ -304,10 +304,18 @@ def _validate_operator_session_boundary(settings: Settings) -> None:
         raise ValueError("IBEX_ENV must be explicitly set when operator sessions are enabled")
     if settings.environment == "development":
         return
-    if settings.jwt_hmac_secret is not None:
-        raise ValueError("JWT_HMAC_SECRET is permitted only in development")
+    _reject_hmac_outside_development(settings)
     if not settings.operator_feature_enabled:
         return
+    _require_non_dev_operator_material(settings)
+
+
+def _reject_hmac_outside_development(settings: Settings) -> None:
+    if settings.jwt_hmac_secret is not None:
+        raise ValueError("JWT_HMAC_SECRET is permitted only in development")
+
+
+def _require_non_dev_operator_material(settings: Settings) -> None:
     required = (
         (
             settings.auth_service_token,

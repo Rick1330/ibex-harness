@@ -260,24 +260,33 @@ def _to_claims(payload: dict[str, Any], *, verify_method: str) -> SessionClaims:
 def _validate_claims(
     payload: dict[str, Any], opts: TokenVerifyOpts, *, verify_method: str
 ) -> SessionClaims:
-    if payload.get("iss") != opts.issuer or payload.get("aud") != opts.audience:
-        raise SessionStubError("issuer/audience mismatch")
+    _assert_issuer_audience(payload, opts)
     if _session_kind_of(payload) != opts.expect_kind:
         raise SessionStubError("wrong token kind")
-    now = int(time.time())
-    if int(payload.get("exp", 0)) < now:
-        raise SessionStubError("expired")
-    if "nbf" in payload:
-        try:
-            not_before = int(payload["nbf"])
-        except (TypeError, ValueError) as exc:
-            raise SessionStubError("invalid not-before claim") from exc
-        if not_before > now:
-            raise SessionStubError("not yet valid")
+    _assert_temporal_claims(payload)
     claims = _to_claims(payload, verify_method=verify_method)
     if verify_method == "RS256" and not claims.session_id:
         raise SessionStubError("missing session claim")
     return claims
+
+
+def _assert_issuer_audience(payload: dict[str, Any], opts: TokenVerifyOpts) -> None:
+    if payload.get("iss") != opts.issuer or payload.get("aud") != opts.audience:
+        raise SessionStubError("issuer/audience mismatch")
+
+
+def _assert_temporal_claims(payload: dict[str, Any]) -> None:
+    now = int(time.time())
+    if int(payload.get("exp", 0)) < now:
+        raise SessionStubError("expired")
+    if "nbf" not in payload:
+        return
+    try:
+        not_before = int(payload["nbf"])
+    except (TypeError, ValueError) as exc:
+        raise SessionStubError("invalid not-before claim") from exc
+    if not_before > now:
+        raise SessionStubError("not yet valid")
 
 
 def verify_token_opts(token: str, opts: TokenVerifyOpts) -> SessionClaims:
