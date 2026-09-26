@@ -11,7 +11,6 @@ from app.route_policy_data import ROUTE_POLICY
 SUPPORTED_AUTH_SOURCES: Final[frozenset[str]] = frozenset(
     {"public", "bearer_pat", "pat_exchange", "operator_session", "operator_permission"}
 )
-
 _INLINE_SESSION_ENDPOINTS: Final[dict[tuple[str, str], str]] = {
     ("POST", "/v1/operator/session/refresh"): "app.routers.session.refresh_session",
     ("POST", "/v1/operator/session/logout"): "app.routers.session.logout",
@@ -52,14 +51,13 @@ def _mounted_routes(application: object) -> Iterable[object]:
         seen_containers.add(id(routes))
         for route in routes:
             original = getattr(route, "original_router", None)
+            nested = getattr(route, "routes", None)
             if original is not None:
                 yield from visit(original.routes)
-                continue
-            nested = getattr(route, "routes", None)
-            if nested is not None:
+            elif nested is not None:
                 yield from visit(nested)
-                continue
-            yield route
+            else:
+                yield route
 
     yield from visit(getattr(application, "routes", ()))
 
@@ -75,10 +73,7 @@ def _operator_permission_dependencies() -> dict[tuple[str, str], object]:
 
 
 def _has_expected_guard(
-    key: tuple[str, str],
-    auth_source: str,
-    endpoint_identity: str,
-    calls: list[object],
+    key: tuple[str, str], auth_source: str, endpoint_identity: str, calls: list[object]
 ) -> bool:
     if auth_source == "public":
         return True
@@ -93,26 +88,43 @@ def _has_expected_guard(
     return False
 
 
+def _row_gap(
+    route: object, row: dict[str, object], method: str, path: str
+) -> tuple[str, str] | None:
+    key = (method, path)
+    endpoint_identity = _endpoint_identity(getattr(route, "endpoint", None))
+    if endpoint_identity != str(row.get("endpoint", "")):
+        return key
+    calls = _dependency_calls(getattr(route, "dependant", None))
+    if not _has_expected_guard(key, str(row.get("auth_source", "")), endpoint_identity, calls):
+        return key
+    return None
+
+
+def _route_gaps(
+    route: object, rows: dict[tuple[str, str], dict[str, object]]
+) -> set[tuple[str, str]]:
+    path = getattr(route, "path", None)
+    if path is None:
+        return set()
+    methods = (getattr(route, "methods", None) or set()) - {"HEAD", "OPTIONS"}
+    gaps: set[tuple[str, str]] = set()
+    for method in methods:
+        key = (str(method), str(path))
+        row = rows.get(key)
+        if row is None:
+            gaps.add(key)
+        else:
+            gap = _row_gap(route, row, *key)
+            if gap is not None:
+                gaps.add(gap)
+    return gaps
+
+
 def executable_dependency_gaps(app: object) -> tuple[tuple[str, str], ...]:
     """Return policy rows whose concrete endpoint or authorization guard is missing."""
     rows = {(str(row["method"]), str(row["path"])): row for row in ROUTE_POLICY}
-    gaps: set[tuple[str, str]] = set()
-    for route in _mounted_routes(app):
-        methods = getattr(route, "methods", None) or set()
-        path = getattr(route, "path", None)
-        if path is None:
-            continue
-        endpoint_identity = _endpoint_identity(getattr(route, "endpoint", None))
-        calls = _dependency_calls(getattr(route, "dependant", None))
-        for method in methods - {"HEAD", "OPTIONS"}:
-            key = (str(method), str(path))
-            row = rows.get(key)
-            if row is None or endpoint_identity != str(row.get("endpoint", "")):
-                gaps.add(key)
-                continue
-            auth_source = str(row.get("auth_source", ""))
-            if not _has_expected_guard(key, auth_source, endpoint_identity, calls):
-                gaps.add(key)
+    gaps = {gap for route in _mounted_routes(app) for gap in _route_gaps(route, rows)}
     return tuple(sorted(gaps))
 
 

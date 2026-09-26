@@ -11,77 +11,6 @@ def source_constant_name(source: str) -> str:
     return f"ROUTE_SOURCE_{suffix}"
 
 
-def generate() -> None:
-    root = Path(__file__).resolve().parents[1]
-    rows = json.loads((root / ".pr2-evidence" / "route_inventory.json").read_text(encoding="utf-8"))
-    public_prefixes = ("/docs", "/redoc", "/openapi.json", "/health", "/ready", "/metrics")
-    source_constants = {
-        "services/api/app/routers/organizations.py": "ORGANIZATIONS_ROUTER_SOURCE",
-        "services/api/app/routers/providers.py": "PROVIDERS_ROUTER_SOURCE",
-    }
-    policy: list[dict[str, object]] = []
-    for row in rows:
-        method = row["methods"][0]
-        path = row["path"]
-        auth = _auth_source(path, public_prefixes)
-        mutation = method in {"POST", "PATCH", "PUT", "DELETE"}
-        source_path = Path(row["source"]).resolve() if row["source"] else None
-        source = (
-            str(source_path.relative_to(root))
-            if source_path is not None and str(source_path).startswith(str(root / "services" / "api" / "app"))
-            else None
-        )
-        policy.append(
-            {
-                "method": method,
-                "path": path,
-                "auth_source": auth,
-                "role": "explicit_route_dependency",
-                "permission": "declared_by_endpoint_dependency",
-                "organization_source": "verified_token_or_session",
-                "action": None,
-                "anti_enumeration": "route_dependency_contract",
-                "unavailable_result": "503_without_side_effect",
-                "csrf_origin_required": mutation and auth == "operator_session",
-                "cache_control": "no-store" if auth != "public" else "default",
-                "evidence": "inventory_only",
-                "endpoint": row["endpoint"],
-                "source": source,
-            }
-        )
-
-    for item in policy:
-        source = item["source"]
-        if source is not None:
-            source_constants.setdefault(source, source_constant_name(source))
-    path_counts = Counter(item["path"] for item in policy)
-    path_constants = {
-        path: f"ROUTE_PATH_{re.sub(r'[^A-Za-z0-9]+', '_', path).strip('_').upper()}"
-        for path, count in path_counts.items()
-        if count >= 3
-    }
-
-    out = root / "services" / "api" / "app" / "route_policy_data.py"
-    body = '''"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\n'''
-    for source_path, constant in source_constants.items():
-        body += f"{constant}: Final = {source_path!r}\n"
-    for path, constant in path_constants.items():
-        body += f"{constant}: Final = {path!r}\n"
-    body += "\nROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (\n"
-    for item in policy:
-        row = repr(item)
-        source_constant = source_constants.get(item["source"])
-        if source_constant:
-            row = row.replace(f"'source': {item['source']!r}", f"'source': {source_constant}")
-        path_constant = path_constants.get(item["path"])
-        if path_constant:
-            row = row.replace(f"'path': {item['path']!r}", f"'path': {path_constant}")
-        body += f"    {row},\n"
-    body += ")\n\n\ndef policy_keys() -> frozenset[tuple[str, str]]:\n    return frozenset((str(row['method']), str(row['path'])) for row in ROUTE_POLICY)\n"
-    out.write_text(body, encoding="utf-8")
-    print(f"wrote {len(policy)} policy rows to {out}")
-
-
 def _auth_source(path: str, public_prefixes: tuple[str, ...]) -> str:
     if path.startswith(public_prefixes):
         return "public"
@@ -92,6 +21,112 @@ def _auth_source(path: str, public_prefixes: tuple[str, ...]) -> str:
     if path in {"/v1/operator/platform/health", "/v1/operator/events/stream"}:
         return "operator_permission"
     return "bearer_pat"
+
+
+def _source_path(root: Path, raw_source: str | None) -> str | None:
+    if not raw_source:
+        return None
+    source_path = Path(raw_source).resolve()
+    app_root = root / "services" / "api" / "app"
+    if not str(source_path).startswith(str(app_root)):
+        return None
+    return str(source_path.relative_to(root))
+
+
+def _policy_row(
+    root: Path, row: dict[str, object], public_prefixes: tuple[str, ...]
+) -> dict[str, object]:
+    method = str(row["methods"][0])
+    path = str(row["path"])
+    auth = _auth_source(path, public_prefixes)
+    source = _source_path(root, row.get("source"))
+    return {
+        "method": method,
+        "path": path,
+        "auth_source": auth,
+        "role": "explicit_route_dependency",
+        "permission": "declared_by_endpoint_dependency",
+        "organization_source": "verified_token_or_session",
+        "action": None,
+        "anti_enumeration": "route_dependency_contract",
+        "unavailable_result": "503_without_side_effect",
+        "csrf_origin_required": method in {"POST", "PATCH", "PUT", "DELETE"}
+        and auth == "operator_session",
+        "cache_control": "no-store" if auth != "public" else "default",
+        "evidence": "inventory_only",
+        "endpoint": row["endpoint"],
+        "source": source,
+    }
+
+
+def _constants(
+    policy: list[dict[str, object]],
+) -> tuple[dict[str, str], dict[str, str]]:
+    sources = {
+        "services/api/app/routers/organizations.py": "ORGANIZATIONS_ROUTER_SOURCE",
+        "services/api/app/routers/providers.py": "PROVIDERS_ROUTER_SOURCE",
+    }
+    for item in policy:
+        if item["source"] is not None:
+            sources.setdefault(
+                str(item["source"]), source_constant_name(str(item["source"]))
+            )
+    counts = Counter(str(item["path"]) for item in policy)
+    paths = {
+        path: f"ROUTE_PATH_{re.sub(r'[^A-Za-z0-9]+', '_', path).strip('_').upper()}"
+        for path, count in counts.items()
+        if count >= 3
+    }
+    return sources, paths
+
+
+def _render(
+    root: Path,
+    policy: list[dict[str, object]],
+    sources: dict[str, str],
+    paths: dict[str, str],
+) -> None:
+    out = root / "services" / "api" / "app" / "route_policy_data.py"
+    body = '''"""Generated mounted route policy rows; regenerate with .pr2-evidence/generate_route_policy.py."""\n\nfrom __future__ import annotations\n\nfrom typing import Final\n\n'''
+    body += "".join(
+        f"{constant}: Final = {value!r}\n" for value, constant in sources.items()
+    )
+    body += "".join(
+        f"{constant}: Final = {value!r}\n" for value, constant in paths.items()
+    )
+    body += "\nROUTE_POLICY: Final[tuple[dict[str, object], ...]] = (\n"
+    for item in policy:
+        row = repr(item)
+        if item["source"] in sources:
+            row = row.replace(
+                f"'source': {item['source']!r}", f"'source': {sources[item['source']]}"
+            )
+        if item["path"] in paths:
+            row = row.replace(
+                f"'path': {item['path']!r}", f"'path': {paths[item['path']]}"
+            )
+        body += f"    {row},\n"
+    body += ")\n\n\ndef policy_keys() -> frozenset[tuple[str, str]]:\n    return frozenset((str(row['method']), str(row['path'])) for row in ROUTE_POLICY)\n"
+    out.write_text(body, encoding="utf-8")
+    print(f"wrote {len(policy)} policy rows to {out}")
+
+
+def generate() -> None:
+    root = Path(__file__).resolve().parents[1]
+    rows = json.loads(
+        (root / ".pr2-evidence" / "route_inventory.json").read_text(encoding="utf-8")
+    )
+    public_prefixes = (
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/health",
+        "/ready",
+        "/metrics",
+    )
+    policy = [_policy_row(root, row, public_prefixes) for row in rows]
+    sources, paths = _constants(policy)
+    _render(root, policy, sources, paths)
 
 
 if __name__ == "__main__":
