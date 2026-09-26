@@ -170,36 +170,83 @@ func TestRedisJTIStore_ZeroTTLHappyPaths(t *testing.T) {
 	}
 }
 
-func TestRedisJTIStore_ErrorsAfterClose(t *testing.T) {
+func TestRedisJTIStore_ConsumeOnceErrorsAfterClose(t *testing.T) {
 	t.Parallel()
 	store, mr := redisStore(t)
-	ctx := context.Background()
 	mr.Close()
-	if _, err := store.ConsumeOnce(ctx, "j", time.Minute); err == nil {
-		t.Fatal("ConsumeOnce")
+	if _, err := store.ConsumeOnce(context.Background(), "j", time.Minute); err == nil {
+		t.Fatal("expected error")
 	}
-	if err := store.RevokeFamily(ctx, "f", time.Minute); err == nil {
-		t.Fatal("RevokeFamily")
+}
+
+func TestRedisJTIStore_RevokeFamilyErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if err := store.RevokeFamily(context.Background(), "f", time.Minute); err == nil {
+		t.Fatal("expected error")
 	}
-	if _, err := store.FamilyRevoked(ctx, "f"); err == nil {
-		t.Fatal("FamilyRevoked")
+}
+
+func TestRedisJTIStore_FamilyRevokedErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if _, err := store.FamilyRevoked(context.Background(), "f"); err == nil {
+		t.Fatal("expected error")
 	}
-	if err := store.RevokeSession(ctx, "s", time.Minute); err == nil {
-		t.Fatal("RevokeSession")
+}
+
+func TestRedisJTIStore_RevokeSessionErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if err := store.RevokeSession(context.Background(), "s", time.Minute); err == nil {
+		t.Fatal("expected error")
 	}
-	if err := store.RevokeSessionAndFamily(ctx, "s", "f", time.Minute); err == nil {
-		t.Fatal("RevokeSessionAndFamily")
+}
+
+func TestRedisJTIStore_RevokeSessionAndFamilyErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if err := store.RevokeSessionAndFamily(context.Background(), "s", "f", time.Minute); err == nil {
+		t.Fatal("expected error")
 	}
-	if _, err := store.SessionRevoked(ctx, "s"); err == nil {
-		t.Fatal("SessionRevoked")
+}
+
+func TestRedisJTIStore_SessionRevokedErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if _, err := store.SessionRevoked(context.Background(), "s"); err == nil {
+		t.Fatal("expected error")
 	}
-	if err := store.RevokeAccess(ctx, "j", time.Minute); err == nil {
-		t.Fatal("RevokeAccess")
+}
+
+func TestRedisJTIStore_RevokeAccessErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if err := store.RevokeAccess(context.Background(), "j", time.Minute); err == nil {
+		t.Fatal("expected error")
 	}
-	if _, err := store.AccessRevoked(ctx, "j"); err == nil {
-		t.Fatal("AccessRevoked")
+}
+
+func TestRedisJTIStore_AccessRevokedErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if _, err := store.AccessRevoked(context.Background(), "j"); err == nil {
+		t.Fatal("expected error")
 	}
-	if _, err := store.ConsumeStepUp(ctx, "s", time.Minute); err == nil {
-		t.Fatal("ConsumeStepUp")
+}
+
+func TestRedisJTIStore_ConsumeStepUpErrorsAfterClose(t *testing.T) {
+	t.Parallel()
+	store, mr := redisStore(t)
+	mr.Close()
+	if _, err := store.ConsumeStepUp(context.Background(), "s", time.Minute); err == nil {
+		t.Fatal("expected error")
 	}
 }
