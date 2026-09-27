@@ -29,7 +29,11 @@ describe("Console route classification inventory", () => {
     const routes = inventory.routes as Record<string, { status: string; data_mode: string }>
     expect(routes["/dashboard"]).toMatchObject({ status: "preview-only", data_mode: "fixture" })
     for (const [path, entry] of Object.entries(routes)) {
-      if (path === "/dashboard/explore" || path === "/dashboard/explore/t/:traceId") {
+      if (
+        path === "/dashboard/explore" ||
+        path === "/dashboard/explore/t/:traceId" ||
+        path === "/dashboard/explore/r/:runId"
+      ) {
         expect(entry, path).toMatchObject({ status: "implemented", data_mode: "none" })
       } else if (path.startsWith("/dashboard/") && path !== "/dashboard") {
         expect(entry, path).toMatchObject({ status: "deferred", data_mode: "none" })

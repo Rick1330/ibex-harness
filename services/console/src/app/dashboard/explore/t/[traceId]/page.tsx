@@ -4,9 +4,15 @@ import { isDashboardPreviewEnabled, isLiveD1Enabled } from "@/lib/classification
 
 export const dynamic = "force-dynamic"
 
-export default async function TraceInspectorPage({ params }: Readonly<{ params: Promise<{ traceId: string }> }>) {
+export default async function TraceInspectorPage({
+  params,
+  searchParams,
+}: Readonly<{
+  params: Promise<{ traceId: string }>
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}>) {
   const { traceId } = await params
-  if (isLiveD1Enabled()) return <LiveTracePage traceId={traceId} />
+  if (isLiveD1Enabled()) return <LiveTracePage traceId={traceId} searchParams={searchParams} />
   if (isDashboardPreviewEnabled()) return <PreviewTraceInspectorPage />
   return null
 }

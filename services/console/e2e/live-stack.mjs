@@ -105,7 +105,60 @@ const api = createServer(
       return
     }
 
-    const body = {
+    const runId = "11111111-1111-4111-8111-111111111111"
+    const traceItem = {
+      trace_id: "trace-live-1",
+      run_id: runId,
+      request_id: "request-live-1",
+      agent_id: null,
+      session_id: null,
+      checkpoint_id: null,
+      status: "ok",
+      error_code: null,
+      started_at: observedAt,
+      ended_at: observedAt,
+      duration_ms: 12,
+      evidence: {
+        schema_version: "evidence.v1",
+        capture_mode: "metadata",
+        completeness: "partial",
+        sample_decision: "kept",
+        freshness: "unknown",
+        retention: "unknown",
+        source: "postgres.evidence_runs",
+        source_watermark: "outbox:1",
+        publication_state: "published",
+        ingestion_lag_ms: 0,
+        policy_version: "operator.trace-read.v1",
+        observed_at: observedAt,
+      },
+    }
+    const traceList = {
+      schema_version: "operator.trace-list.v1",
+      query_grammar_version: "operator.trace-query.v1",
+      items: [traceItem],
+      next_cursor: null,
+      truncated: false,
+      matched_count: 1,
+      returned_count: 1,
+      observed_at: observedAt,
+      query_start: observedAt,
+      query_end: observedAt,
+      limit: 50,
+    }
+    const traceDetail = {
+      ...traceItem,
+      schema_version: "operator.trace-detail.v1",
+      unavailable_sections: ["content", "events", "spans", "assembly", "candidates", "score_explanation", "directives", "tools"],
+      spans: [],
+      assembly: null,
+      candidates: [],
+      directive: null,
+      tools: [],
+      score_schema_note: null,
+    }
+
+    let body = {
       "/v1/operator/context": {
         schema_version: "operator.context.v1",
         org_id: orgId,
@@ -137,7 +190,20 @@ const api = createServer(
         deploy_image_digest: null,
         observed_at: observedAt,
       },
+      "/v1/operator/traces": traceList,
     }[url.pathname]
+
+    if (!body && url.pathname === `/v1/operator/traces/runs/${runId}`) {
+      body = traceDetail
+    }
+    if (!body && url.pathname === "/v1/operator/traces/trace-live-1") {
+      body = traceList
+    }
+    if (!body && url.pathname.startsWith("/v1/operator/traces/")) {
+      response.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" })
+      response.end(JSON.stringify({ error: { code: "NOT_FOUND", message: "Trace not found" } }))
+      return
+    }
 
     if (!body) {
       response.writeHead(404, { "content-type": "application/json" })

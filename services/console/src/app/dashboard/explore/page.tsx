@@ -4,8 +4,12 @@ import { isDashboardPreviewEnabled, isLiveD1Enabled } from "@/lib/classification
 
 export const dynamic = "force-dynamic"
 
-export default function ExplorePage() {
-  if (isLiveD1Enabled()) return <LiveExplorePage />
+export default async function ExplorePage({
+  searchParams,
+}: Readonly<{
+  searchParams?: Promise<Record<string, string | string[] | undefined>>
+}>) {
+  if (isLiveD1Enabled()) return <LiveExplorePage searchParams={searchParams} />
   if (isDashboardPreviewEnabled()) return <PreviewExplorePage />
   return null
 }

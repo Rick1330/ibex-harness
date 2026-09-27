@@ -57,11 +57,20 @@ export async function fetchOperatorTraces(
   )
 }
 
-export async function fetchOperatorTraceDetail(cookieHeader: string | undefined, traceId: string) {
+export async function fetchOperatorTraceRuns(cookieHeader: string | undefined, traceId: string) {
   return fetchOperatorJson(
     "traceDetail",
-    (value) => OperatorTraceDetailSchema.parse(value),
+    (value) => OperatorTraceListSchema.parse(value),
     { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
     traceId,
+  )
+}
+
+export async function fetchOperatorTraceDetail(cookieHeader: string | undefined, runId: string) {
+  return fetchOperatorJson(
+    "runDetail",
+    (value) => OperatorTraceDetailSchema.parse(value),
+    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    runId,
   )
 }
