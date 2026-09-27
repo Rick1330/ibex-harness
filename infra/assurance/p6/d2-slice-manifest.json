@@ -1,7 +1,7 @@
 {
   "manifest_version": "p6-bootstrap.v1",
-  "run_id": "d2-local-1d02cc6d98d7",
-  "commit_sha": "1d02cc6d98d7193372861838815efc1d8c68dd2c",
+  "run_id": "d2-local-1ba5ef4e983a",
+  "commit_sha": "1ba5ef4e983af6929de305f6624895bb5c28d39c",
   "environment": "local",
   "topology": {
     "ui_origin": "https://127.0.0.1:3282",
@@ -33,29 +33,29 @@
     },
     {
       "name": "d2-api-unit-operator-traces-report",
-      "sha256": "9828c6b815a43bbeb85b02c14b28a94278bdd613c83623212b3f4e1d5b60910b",
+      "sha256": "3dd3f1badb7066b1fd45381a01bacf89dd927e3054edddeae78c68c7d58c8bb4",
       "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
-      "name": "d2-api-unit-operator-traces-log",
+      "name": "d2-api-unit-operator-traces-transcript",
       "sha256": "bef15fadaddc7cc6a7c76273238f8e09fa24a19edd07c09b0725c1ed9e761a84",
-      "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.log",
+      "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
       "name": "d2-console-contract-and-query-codec-report",
-      "sha256": "18fe62dc253f752930c99244320280d2872558d64c4d763ca57c1f049f8dd337",
+      "sha256": "f4d6a9bfcb77840b9e12e0f343c5c2572f1c561aceea739c58524264752de634",
       "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
-      "name": "d2-console-contract-and-query-codec-log",
+      "name": "d2-console-contract-and-query-codec-transcript",
       "sha256": "d66b380284e6c1ada35cd3383d66a9ad83559f7bcc43974972ada4be5001d114",
-      "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.log",
+      "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     }
@@ -75,7 +75,7 @@
       "artifact_uris": [
         "file://infra/assurance/p6/d2-residual-register.json",
         "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
-        "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.log"
+        "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt"
       ]
     },
     {
@@ -88,7 +88,7 @@
         "file://infra/assurance/p6/d2-residual-register.json",
         "file://web/engineering/pr3-evidence/d2-performance-notes.md",
         "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
-        "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.log"
+        "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt"
       ]
     },
     {
