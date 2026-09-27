@@ -1,7 +1,7 @@
 {
   "manifest_version": "p6-bootstrap.v1",
-  "run_id": "d2-local-1ba5ef4e983a",
-  "commit_sha": "1ba5ef4e983af6929de305f6624895bb5c28d39c",
+  "run_id": "d2-local-e321bf43684b",
+  "commit_sha": "e321bf43684b84e45ca71f72eeb56eaac152d504",
   "environment": "local",
   "topology": {
     "ui_origin": "https://127.0.0.1:3282",
@@ -33,28 +33,28 @@
     },
     {
       "name": "d2-api-unit-operator-traces-report",
-      "sha256": "3dd3f1badb7066b1fd45381a01bacf89dd927e3054edddeae78c68c7d58c8bb4",
+      "sha256": "45f7b4f4de2b47f87ea8647b8dc8eaf825ba7af4428eeebb0d38fd978efaf41b",
       "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
       "name": "d2-api-unit-operator-traces-transcript",
-      "sha256": "bef15fadaddc7cc6a7c76273238f8e09fa24a19edd07c09b0725c1ed9e761a84",
+      "sha256": "4fe32b5b15a8242a01afc03e5c74f07c9cc16c353384ae8b54aa6750e0a931a7",
       "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
       "name": "d2-console-contract-and-query-codec-report",
-      "sha256": "f4d6a9bfcb77840b9e12e0f343c5c2572f1c561aceea739c58524264752de634",
+      "sha256": "03e20c541ee9f2d5c256b8859e74628c4e101f18df7b615d7eb654e3b6dfaf7b",
       "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
       "name": "d2-console-contract-and-query-codec-transcript",
-      "sha256": "d66b380284e6c1ada35cd3383d66a9ad83559f7bcc43974972ada4be5001d114",
+      "sha256": "82e567f34376fae30c152c1119d3cd272c680ea5fbe5832c980692914719943c",
       "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt",
       "evidence_state": "contract-tested",
       "producer": "pr-911"

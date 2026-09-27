@@ -1,6 +1,6 @@
 {
   "check": "d2-api-unit-operator-traces",
-  "commit_sha": "1ba5ef4e983af6929de305f6624895bb5c28d39c",
+  "commit_sha": "e321bf43684b84e45ca71f72eeb56eaac152d504",
   "recorded_at": "2026-09-27T15:19:10Z",
   "command": "services/api/.venv/bin/python -m pytest tests/unit/test_operator_traces.py -q",
   "cwd": "services/api",

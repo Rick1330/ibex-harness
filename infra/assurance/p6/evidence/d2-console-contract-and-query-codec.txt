@@ -1,9 +1,4 @@
-
- RUN  v4.1.11 /home/rick/dev/ibex-harness/services/console
-
-
- Test Files  2 passed (2)
-      Tests  7 passed (7)
-   Start at  18:19:09
-   Duration  548ms (transform 241ms, setup 0ms, import 411ms, tests 42ms, environment 0ms)
-
+d2-console-contract-and-query-codec
+command: pnpm exec vitest run tests/live-query.test.ts tests/api-contracts.test.ts
+result: passed
+summary: 2 files / 7 tests passed
