@@ -104,9 +104,13 @@ function optionalBoundedString(value: string | null | undefined, max: number, la
   return value
 }
 
-function parseLimit(raw: string | null): number {
-  if (raw == null || raw === "") return 50
-  const limit = Number(raw)
+function limitOrDefault(raw: string | null): number | null {
+  if (raw == null) return 50
+  if (raw === "") return 50
+  return null
+}
+
+function assertLimitInRange(limit: number): void {
   if (!Number.isInteger(limit)) {
     throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
   }
@@ -116,6 +120,13 @@ function parseLimit(raw: string | null): number {
   if (limit > 100) {
     throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
   }
+}
+
+function parseLimit(raw: string | null): number {
+  const fallback = limitOrDefault(raw)
+  if (fallback != null) return fallback
+  const limit = Number(raw)
+  assertLimitInRange(limit)
   return limit
 }
 

@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 from collections.abc import Awaitable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -81,63 +82,57 @@ def outbox_row(
     }
 
 
-def session_for(
-    *rows: dict[str, object],
-    outbox: list[dict[str, object]] | None = None,
-    count: int | None = None,
-    spans: list[dict[str, object]] | None = None,
-    assembly: dict[str, object] | None = None,
-    candidates: list[dict[str, object]] | None = None,
-    directive: dict[str, object] | None = None,
-    tools: list[dict[str, object]] | None = None,
-) -> AsyncMock:
-    """Route mock execute results by SQL shape (list / count / outbox / child)."""
+@dataclass(frozen=True)
+class SessionFixtures:
+    outbox: list[dict[str, object]] | None = None
+    count: int | None = None
+    spans: list[dict[str, object]] | None = None
+    assembly: dict[str, object] | None = None
+    candidates: list[dict[str, object]] | None = None
+    directive: dict[str, object] | None = None
+    tools: list[dict[str, object]] | None = None
 
+
+def _mapping_result(rows: list[dict[str, object]], *, scalar: object | None = None) -> MagicMock:
+    result = MagicMock()
+    result.mappings.return_value.all.return_value = rows
+    result.mappings.return_value.first.return_value = rows[0] if rows else None
+    if scalar is not None:
+        result.scalar_one.return_value = scalar
+    return result
+
+
+def session_for(*rows: dict[str, object], fixtures: SessionFixtures | None = None) -> AsyncMock:
+    """Route mock execute results by SQL shape (list / count / outbox / child)."""
+    seed = fixtures or SessionFixtures()
     run_rows = list(rows)
-    outbox_rows = list(outbox) if outbox is not None else []
-    span_rows = list(spans) if spans is not None else []
-    candidate_rows = list(candidates) if candidates is not None else []
-    tool_rows = list(tools) if tools is not None else []
-    matched = count if count is not None else len(run_rows)
+    outbox_rows = list(seed.outbox or ())
+    span_rows = list(seed.spans or ())
+    candidate_rows = list(seed.candidates or ())
+    tool_rows = list(seed.tools or ())
+    matched = seed.count if seed.count is not None else len(run_rows)
+    assembly_rows = [seed.assembly] if seed.assembly is not None else []
+    directive_rows = [seed.directive] if seed.directive is not None else []
+
+    table_rows = {
+        "evidence_outbox": outbox_rows,
+        "evidence_spans": span_rows,
+        "evidence_assembly": assembly_rows,
+        "evidence_score": candidate_rows,
+        "evidence_directive": directive_rows,
+        "evidence_tool": tool_rows,
+    }
 
     async def _execute(query, params=None):
         sql = str(query).lower()
-        result = MagicMock()
         if "set_config" in sql:
-            result.scalar_one.return_value = "ok"
-            result.mappings.return_value.all.return_value = []
-            result.mappings.return_value.first.return_value = None
-            return result
+            return _mapping_result([], scalar="ok")
         if "count(" in sql.replace(" ", ""):
-            result.scalar_one.return_value = matched
-            result.mappings.return_value.all.return_value = []
-            return result
-        if "evidence_outbox" in sql:
-            result.mappings.return_value.all.return_value = outbox_rows
-            result.mappings.return_value.first.return_value = outbox_rows[0] if outbox_rows else None
-            return result
-        if "evidence_spans" in sql:
-            result.mappings.return_value.all.return_value = span_rows
-            return result
-        if "evidence_assembly" in sql:
-            assembly_rows = [assembly] if assembly is not None else []
-            result.mappings.return_value.all.return_value = assembly_rows
-            result.mappings.return_value.first.return_value = assembly_rows[0] if assembly_rows else None
-            return result
-        if "evidence_score" in sql:
-            result.mappings.return_value.all.return_value = candidate_rows
-            return result
-        if "evidence_directive" in sql:
-            directive_rows = [directive] if directive is not None else []
-            result.mappings.return_value.all.return_value = directive_rows
-            return result
-        if "evidence_tool" in sql:
-            result.mappings.return_value.all.return_value = tool_rows
-            return result
-        result.mappings.return_value.all.return_value = run_rows
-        result.mappings.return_value.first.return_value = run_rows[0] if run_rows else None
-        result.scalar_one.return_value = matched
-        return result
+            return _mapping_result([], scalar=matched)
+        for marker, marker_rows in table_rows.items():
+            if marker in sql:
+                return _mapping_result(marker_rows)
+        return _mapping_result(run_rows, scalar=matched)
 
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=_execute)
@@ -200,7 +195,7 @@ async def first_page_with_cursor(
 
 @pytest.mark.asyncio
 async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
-    session = session_for(row(), outbox=[outbox_row()])
+    session = session_for(row(), fixtures=SessionFixtures(outbox=[outbox_row()]))
     result = await list_call(
         session,
         cursor_settings(),
@@ -243,7 +238,7 @@ async def test_list_publication_unavailable_without_outbox() -> None:
 )
 async def test_list_maps_outbox_publication_states(status: str, expected: str) -> None:
     result = await list_call(
-        session_for(row(), outbox=[outbox_row(status=status)]),
+        session_for(row(), fixtures=SessionFixtures(outbox=[outbox_row(status=status)])),
         cursor_settings(),
         auth(),
         limit=10,
@@ -256,10 +251,12 @@ async def test_list_maps_partial_publication_when_delivered_and_pending_mix() ->
     result = await list_call(
         session_for(
             row(),
-            outbox=[
-                outbox_row(status="delivered", seq=2),
-                outbox_row(status="pending", seq=1),
-            ],
+            fixtures=SessionFixtures(
+                outbox=[
+                    outbox_row(status="delivered", seq=2),
+                    outbox_row(status="pending", seq=1),
+                ],
+            ),
         ),
         cursor_settings(),
         auth(),
@@ -275,10 +272,12 @@ async def test_list_maps_partial_when_failed_mixes_with_pending() -> None:
     result = await list_call(
         session_for(
             row(),
-            outbox=[
-                outbox_row(status="failed", seq=2),
-                outbox_row(status="pending", seq=1),
-            ],
+            fixtures=SessionFixtures(
+                outbox=[
+                    outbox_row(status="failed", seq=2),
+                    outbox_row(status="pending", seq=1),
+                ],
+            ),
         ),
         cursor_settings(),
         auth(),
@@ -293,55 +292,57 @@ async def test_run_detail_hydrates_child_sections_and_interim_score_note() -> No
     directive_id = uuid4()
     session = session_for(
         row(),
-        outbox=[outbox_row()],
-        spans=[
-            {
-                "span_id": "span-1",
-                "parent_span_id": None,
-                "operation_kind": "llm",
-                "status": "ok",
-                "error_code": None,
-                "started_at": START,
-                "ended_at": END,
-            }
-        ],
-        assembly={
-            "budget_calculation_ms": 1,
-            "directive_load_ms": 2,
-            "hot_memory_retrieval_ms": 3,
-            "cold_memory_retrieval_ms": 4,
-            "ranking_ms": 5,
-            "packing_ms": 6,
-            "formatting_ms": 7,
-            "total_ms": 28,
-            "candidates_evaluated": 9,
-        },
-        candidates=[
-            {
-                "memory_id": memory_id,
-                "retrieval_rank": 1,
-                "final_rank": 1,
-                "delta_rank": 0,
-                "category": "fact",
-                "token_estimate": 12,
-                "exclusion": "kept",
-                "score_schema": "interim_v1",
-                "composite_score": 0.9,
-            }
-        ],
-        directive={
-            "directive_version_id": directive_id,
-            "content_hash": "abc",
-            "schema_version": "directive.v1",
-        },
-        tools=[
-            {
-                "tool_name": "search",
-                "status": "ok",
-                "error_code": None,
-                "created_at": START,
-            }
-        ],
+        fixtures=SessionFixtures(
+            outbox=[outbox_row()],
+            spans=[
+                {
+                    "span_id": "span-1",
+                    "parent_span_id": None,
+                    "operation_kind": "llm",
+                    "status": "ok",
+                    "error_code": None,
+                    "started_at": START,
+                    "ended_at": END,
+                }
+            ],
+            assembly={
+                "budget_calculation_ms": 1,
+                "directive_load_ms": 2,
+                "hot_memory_retrieval_ms": 3,
+                "cold_memory_retrieval_ms": 4,
+                "ranking_ms": 5,
+                "packing_ms": 6,
+                "formatting_ms": 7,
+                "total_ms": 28,
+                "candidates_evaluated": 9,
+            },
+            candidates=[
+                {
+                    "memory_id": memory_id,
+                    "retrieval_rank": 1,
+                    "final_rank": 1,
+                    "delta_rank": 0,
+                    "category": "fact",
+                    "token_estimate": 12,
+                    "exclusion": "kept",
+                    "score_schema": "interim_v1",
+                    "composite_score": 0.9,
+                }
+            ],
+            directive={
+                "directive_version_id": directive_id,
+                "content_hash": "abc",
+                "schema_version": "directive.v1",
+            },
+            tools=[
+                {
+                    "tool_name": "search",
+                    "status": "ok",
+                    "error_code": None,
+                    "created_at": START,
+                }
+            ],
+        ),
     )
     detail = await get_operator_trace_run(session, auth(), run_id=RUN)
     assert len(detail.spans) == 1
@@ -456,7 +457,7 @@ async def test_list_rejects_invalid_status_and_naive_datetimes() -> None:
 
 @pytest.mark.asyncio
 async def test_matched_count_failure_returns_null_and_alias_works() -> None:
-    session = session_for(row(), outbox=[outbox_row()])
+    session = session_for(row(), fixtures=SessionFixtures(outbox=[outbox_row()]))
     original = session.execute
 
     async def _execute(query, params=None):
@@ -476,19 +477,21 @@ async def test_matched_count_failure_returns_null_and_alias_works() -> None:
 async def test_run_detail_with_candidates_without_interim_note() -> None:
     session = session_for(
         row(),
-        candidates=[
-            {
-                "memory_id": uuid4(),
-                "retrieval_rank": 1,
-                "final_rank": None,
-                "delta_rank": None,
-                "category": None,
-                "token_estimate": None,
-                "exclusion": "kept",
-                "score_schema": "stable_v1",
-                "composite_score": None,
-            }
-        ],
+        fixtures=SessionFixtures(
+            candidates=[
+                {
+                    "memory_id": uuid4(),
+                    "retrieval_rank": 1,
+                    "final_rank": None,
+                    "delta_rank": None,
+                    "category": None,
+                    "token_estimate": None,
+                    "exclusion": "kept",
+                    "score_schema": "stable_v1",
+                    "composite_score": None,
+                }
+            ],
+        ),
     )
     detail = await get_operator_trace_run(session, auth(), run_id=RUN)
     assert detail.score_schema_note is None

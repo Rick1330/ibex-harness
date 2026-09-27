@@ -94,14 +94,20 @@ export async function LiveExplorePage({
             <span className="rounded-full border px-2 py-1 font-mono text-[12px] text-muted-foreground">read-only · live</span>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Explore result types">
-            <span className="inline-flex min-h-6 items-center rounded-md border bg-muted px-3 py-1 text-sm" role="tab" aria-selected="true">
+          <div className="mt-4 flex flex-wrap gap-2" aria-label="Explore result types">
+            <span className="inline-flex min-h-6 items-center rounded-md border bg-muted px-3 text-sm">
               Traces
             </span>
-            <span className="inline-flex min-h-6 items-center rounded-md border border-dashed px-3 py-1 text-sm text-muted-foreground" role="tab" aria-disabled="true" title="Deferred until canonical session result types exist">
+            <span
+              className="inline-flex min-h-6 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground"
+              title="Deferred until canonical session result types exist"
+            >
               Sessions (deferred)
             </span>
-            <span className="inline-flex min-h-6 items-center rounded-md border border-dashed px-3 py-1 text-sm text-muted-foreground" role="tab" aria-disabled="true" title="Deferred until canonical failure result types exist">
+            <span
+              className="inline-flex min-h-6 items-center rounded-md border border-dashed px-3 text-sm text-muted-foreground"
+              title="Deferred until canonical failure result types exist"
+            >
               Failures (deferred)
             </span>
           </div>
@@ -192,7 +198,7 @@ function TraceTable({ data, query }: Readonly<{ data: OperatorTraceList; query: 
         ) : null}
         {nextHref ? (
           <div className="border-t px-4 py-3">
-            <Link className="text-sm underline-offset-4 hover:underline" href={nextHref}>
+            <Link className="inline-flex min-h-6 items-center text-sm underline-offset-4 hover:underline" href={nextHref}>
               Load more
             </Link>
           </div>

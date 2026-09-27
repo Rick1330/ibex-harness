@@ -43,7 +43,7 @@ export function CopyId({
             type="button"
             size="icon-xs"
             variant="ghost"
-            className="size-6 shrink-0"
+            className="h-6 w-6 min-h-6 min-w-6 shrink-0"
             onClick={(e) => {
               e.stopPropagation()
               void copy()
