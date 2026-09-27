@@ -52,9 +52,20 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 
 ---
 
-## Current package directories not covered by the historical role table
+## Complete current package coverage
 
-The following current directories are also shipped shared contracts or service support packages and must not be mistaken for planned work: `apierror`, `billing`, `modelpolicy`, `objectstore`, `privacyaudit`, `ssrf`, and `usagequery` (Go); `apierror_py`, `authclient`, and `ibex_async_db` (Python). Their owning package READMEs, tests, and import graph are the authority for detailed behavior.
+Every current package directory has a package-level README with ownership, contract boundary, source entry points, and verification guidance. The following directories were previously omitted from the historical role table and are **implemented shared contracts**, not planned work:
+
+| Package family | Directories |
+| --- | --- |
+| Python support | `apierror_py`, `authclient`, `ibex_async_db` |
+| API/domain contracts | `apierror`, `billing`, `modelpolicy`, `objectstore`, `usagequery` |
+| Privacy and security | `privacyaudit`, `ssrf`, `crypto`, `permissions`, `authcache`, `revocation` |
+| Runtime infrastructure | `config`, `healthcheck`, `logger`, `metrics`, `telemetry`, `shutdown`, `reqid`, `redissub` |
+| Provider/context pipeline | `provider`, `embedder`, `tokenizer`, `contextclient`, `responsepipeline`, `circuitbreaker`, `directive`, `injection` |
+| Data and evidence | `clickhouse`, `chdsn`, `evidenceoutbox`, `idempotency`, `ratelimit`, `session` |
+
+The owning package README, tests, import graph, and consuming service are the authority for detailed behavior. Package presence is not hosted production evidence.
 
 ## Planned (redesigned roadmap)
 

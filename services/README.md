@@ -1,48 +1,32 @@
-# services/
+# Runtime services
 
-Deployable runtime components for IBEX Harness (anything that runs as a process).
+Deployable runtime components for IBEX Harness. This inventory describes the current repository, not a promise that every mounted route is production-certified. Use these status terms consistently:
 
-Directory names and phase assignments below are the **current planning baseline** from the redesigned roadmap (Phases 2.5–5). Exact layouts may change during implementation when live constraints and research say so — see [Changing this inventory](#changing-this-inventory).
+- **Shipped:** implementation and local tests exist in the current source.
+- **Mounted-but-provisional:** implementation is present, but hosted identity, deployment, rollout, or acceptance evidence is still open.
+- **Deferred:** no current implementation should be assumed.
 
-The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not under `services/`. Current shipped status: [roadmap current state](https://ibexharness.com/roadmap/current-state). Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md).
+The public documentation site lives in [`web/`](../web/). The current phase snapshot is the [roadmap current state](https://ibexharness.com/roadmap/current-state).
 
----
+## Current services
 
-## Shipped
-
-| Directory | Role | Status |
+| Directory | Runtime role | Current status |
 | --- | --- | --- |
-| `proxy/` | Go — LLM proxy (latency-critical): auth middleware, agent verification, rate limiting, provider forwarding (OpenAI + Anthropic + self-hosted), auth cache, directives + injection, sessions, ClickHouse traces, idempotency, health/metrics | **Shipped (Phase 2 + 2.5)** |
-| `auth/` | Go — authentication and token validation: gRPC `ValidateToken` / `ValidateAgent` / PAT lifecycle, Argon2id, Postgres stores, revoke pub/sub | **Shipped (Phase 2)** — extends in Phase 4 (e.g. provider-credential RPCs) |
-| `embedder/` | Python FastAPI — embedding contract + backends (stub / TEI / hosted profiles), `/health`/`/ready` | **Shipped (Phase 2.5 / ADR-0046)** |
-| `mcp-memory/` | Python — MCP resource server: Streamable HTTP, Auth gRPC fail-closed boundary, stub `search_memory`/`write_memory`, `mcp_tool_calls` audit | **Partial (2.5.G6.M1 / ADR-0050)** — real tool bodies in 3.5 |
-| `memory/` | Python FastAPI — memory substrate: probes, scoring v2, VectorStore/PgVectorStore, embedder HTTP client, full write pipeline (`POST /v1/memories`: PII → dedup → conflict → persist → cache/index, multi-label `labels[]`) | **In progress (Phase 3)** — Tracks A–B + C complete; Track D read path next |
-| `worker/` | Python Celery — extraction, embedding, maintenance, mcp_audit queues; beat skeleton; `IbexTask` retry base | **In progress (Phase 3.5)** — A/B tracks shipping; context library under `context/` (C.1 budget + C.2 retrieval) |
-| `context/` | Python library — token budget calculator, generate-and-diff capability catalog, parallel retrieval HTTP/Redis clients (gRPC assembly deferred to 3.5.C.6) | **In progress (Phase 3.5.C)** — C.1 / [ADR-0067](../web/content/docs/adr/0067-context-capability-catalog-generate-and-diff.mdx) + C.2 shipped; gRPC façade deferred to 3.5.C.6 |
-| `api/` | Python FastAPI — management plane: auth gRPC ValidateToken, IBEX error envelope, request IDs, org GUC sessions, tenant ping | **Shipped (4.A.1 skeleton)** — resource CRUD in 4.A.2+ |
+| [`auth/`](auth/README.md) | Go AuthService: token validation, agent validation, PAT lifecycle, provider-credential metadata, session/TOTP primitives, health and metrics | **Shipped**, with production topology and key-management gates |
+| [`proxy/`](proxy/README.md) | Go LLM proxy: auth, rate limits, provider forwarding, context injection, streaming, traces, and health/metrics | **Shipped**, with provider/deployment evidence tracked separately |
+| [`api/`](api/README.md) | Python FastAPI management plane: tenant resources, tokens, providers, policies, billing/usage, legal holds, and operator reads/events | **Mounted and tested**; operator D1/D2 surfaces are provisional |
+| [`memory/`](memory/README.md) | Python FastAPI memory write, semantic search, hot-cache, feedback, PII, deduplication, conflict, labels, and vector persistence | **Shipped locally**; hosted rollout and later retrieval capabilities remain gated |
+| [`context/`](context/README.md) | Python context assembly library/gRPC service: budgets, retrieval, ranking, packing, and degradation behavior | **Shipped for trusted-boundary use**; current gRPC caller authentication limitation is explicit |
+| [`embedder/`](embedder/README.md) | Python embedding service with deterministic CPU stub, TEI GPU backend, hosted backend, probes, and cache | **Shipped/experimental by profile**; backend readiness depends on external service configuration |
+| [`mcp-memory/`](mcp-memory/README.md) | Python MCP memory resource server with AuthService boundary, memory tools, metrics, and optional audit sink | **Shipped/partial**; default audit is logging-only unless ClickHouse is configured |
+| [`worker/`](worker/README.md) | Python Celery extraction, organization deletion, billing reconciliation/rollups, dead-letter handling, maintenance, and scheduled tasks | **Mixed:** several task families are shipped; explicit no-op tasks remain |
+| [`console/`](console/README.md) | Canonical Next.js operator application and server-only DAL/BFF boundary | **Mounted-but-provisional:** D1/D2 metadata reads only; production identity and broader product surfaces are gated |
+| [`dashboard/`](dashboard/README.md) | Legacy static connection/session/SSE shell | **Compatibility-only (4.P.0)**; do not expand as a second Track D product |
 
----
+## Planned or intentionally absent services
 
-## Planned (redesigned roadmap)
+No separate intelligence, search, tokenizer, or graph service is currently required. Intelligence extends `worker/`, `api/`, and `console/`; retrieval extends `memory/`, `context/`, and `mcp-memory/`. A new service requires measured evidence, a tenancy/security review, and an ADR.
 
-| Directory | Role | Preferred phase | Notes |
-| --- | --- | --- | --- |
-| `tokenizer-service/` | Python FastAPI — accurate token counts via Hugging Face `tokenizers` (optional dual-path with in-process Go/CGo in the proxy) | **2.5** | Situational: may be deferred if proxy-side counting alone proves sufficient for early budgets |
-| `dashboard/` | Static operator connection/session/SSE shell | **Compatibility-only (4.P.0)** | Retain during migration; do not expand into a second Track D product. `services/console/` is canonical. |
+## Ownership and evidence
 
-Intelligence (fingerprinting, drift, directive regression) primarily extends `worker/`, `api/`, and `console/` rather than introducing a separate “intelligence” process by default. Advanced retrieval (Phase 5) primarily extends `memory/` / `context/` / `mcp-memory/` rather than a new search service by default.
-
----
-
-## Changing this inventory
-
-The service list is **open to change** as the product and constraints evolve. Adding, removing, renaming, merging, or splitting services (or moving work between services and packages) is allowed when there is **strong evidence** — for example measured latency/cost, tenancy or security needs, deploy topology, or a clearer ownership boundary after reading the live code.
-
-Changes should not be casual renames or speculative scaffolding. Prefer:
-
-1. **Evidence** — what failed or what was measured, and why the current boundary is wrong
-2. **Reasoning** — tradeoffs vs keeping or extending an existing service
-3. **An ADR** — record the decision under `web/content/docs/adr/` and update this README + roadmap milestones that reference the old name
-4. **Roadmap alignment** — update the relevant phase index/tracks so planning docs stay honest
-
-Situational examples that may justify a change later: folding `tokenizer-service/` into another Python service; renaming the MCP surface; introducing a dedicated regression runner process if Celery proves the wrong fit; or keeping embedding inference as an external TEI sidecar only (with a thinner IBEX client). Those remain options — they are not commitments until evidence and an ADR say so.
+Every service README must link its source entry points, tests, configuration, and known limitations. A route, schema, fixture, or README is not deployment evidence. Preserve explicit `org_id` filtering even when PostgreSQL RLS is enabled, and prefer 404 anti-enumeration behavior for cross-tenant resources.

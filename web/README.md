@@ -1,69 +1,46 @@
-# Public docs site (Fumadocs)
+# Public web site (Fumadocs)
 
-Next.js + Fumadocs application for [ibexharness.com](https://ibexharness.com) (docs at `/docs`).
+Next.js + Fumadocs application for [ibexharness.com](https://ibexharness.com). The public site and docs live under `web/`; engineering research and roadmap sources live under `web/engineering/` and `web/content/roadmap/`.
 
 | Path | Purpose |
 | --- | --- |
-| `content/docs/` | Public MDX pages (created in D.2.1+) |
-| `src/` | App Router, components, layout (D.2.1+) |
+| `content/docs/` | Public MDX documentation (intentionally maintained in its own documentation scope) |
+| `content/roadmap/` | Public roadmap and current-state source |
+| `src/` | App Router, components, layout, and route behavior |
+| `engineering/` | Contributor-facing architecture, contracts, operations, and research |
 
-Engineering documentation (ADRs, roadmap, audits) lives in `web/engineering/` in this repo (not in the published docs routes from this app).
+## Run and verify
 
-## Run
-
-From repo root:
+From the repository root:
 
 ```bash
-pnpm install
-pnpm docs:dev          # content authoring — http://localhost:3000
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm docs:dev
 ```
 
-Open `http://localhost:3000` (redirects to introduction).
+The root route `/` renders the landing page directly; it does not redirect to an introduction page. The docs home is `/docs`, and the roadmap is `/roadmap`.
 
-## Performance
-
-**Do not judge navigation speed on `pnpm docs:dev`.** Dev mode compiles each MDX page on first visit (~200 pages with Shiki highlighting). That can take 5–30 seconds per page with no console output — this is normal for `next dev`, not a production bug.
-
-For realistic navigation speed (sub-second between pages):
+For production-like navigation and Mermaid output:
 
 ```bash
 pnpm docs:build:clean
 pnpm docs:start
+pnpm --filter web typecheck
+pnpm --filter web test
+pnpm --filter web test:e2e
 ```
 
-Then browse `http://localhost:3000`. Docs and roadmap route segments set `export const dynamic = "force-static"`, so pages are pre-rendered at build time.
+Do not judge performance from `next dev`: MDX/Shiki compilation is intentionally on-demand. Never run dev, build, and start concurrently on the same port.
 
-### Windows tips
+## Contribution boundary
 
-- Stop stale servers before rebuilding: `pnpm --filter web stop:next`
-- Prefer `pnpm docs:dev:clean` or `pnpm docs:build:clean` over raw `next` commands
-- Never run `dev`, `build`, and `start` concurrently on the same port
-- **Wait for build to fully exit** before `pnpm start` — the last phases (`Collecting build traces`, `Finishing writing to cache`) can take 1–5 minutes with no output on Windows
-- If cache write appears stuck, try `pnpm --filter web build:fast` (disables webpack disk cache)
-- Add a Windows Defender exclusion for `web/.next` if builds are consistently slow
+Public docs content and engineering documentation are separate corpora. Do not infer current implementation status from historical milestone pages; link to the [current-state snapshot](content/roadmap/current-state.mdx) and verified source/tests. For contribution rules, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Build phases (what to expect)
-
-```text
-[MDX] updated map file                    ~30ms
-Creating an optimized production build    45–90s (silent)
-Linting and checking validity of types
-Generating static pages (276)             progress shown
-Collecting build traces                   30s–3min (silent)
-Finishing writing to cache                1–5min (silent on Windows)
-```
-
-`pnpm docs:build:clean` prints build phase hints at startup. Do not open a second terminal with `pnpm start` until you see the shell prompt return.
-
-### After MDX / Mermaid changes
-
-Mermaid ASCII is baked in at build time. Always run `pnpm docs:build:clean` before checking diagram output — restarting `docs:dev` alone will not fix already-compiled pages.
-
-## Build
+## Build and deployment
 
 ```bash
-pnpm docs:build        # from repo root
-pnpm docs:build:clean  # stop stale processes, clean .next, then build
+pnpm docs:build
+pnpm docs:build:clean
 ```
 
-See [roadmap current state](content/roadmap/current-state.mdx) and [ADR-0023](content/docs/adr/0023-docs-site-architecture.mdx).
+Deployment is performed by the tracked web workflow after required checks. The local Cloudflare/hosting runbook is intentionally external to this repository; a successful local build is not a deployment or production-origin proof.

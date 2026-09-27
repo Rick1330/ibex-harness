@@ -1,10 +1,10 @@
 # ibex-harness Helm chart (4.P.5)
 
-Umbrella chart for proxy, auth, api, worker, memory, embedder, mcp-memory.
+Umbrella chart scaffolding for proxy, auth, api, worker, memory, embedder, and mcp-memory.
 
 ## Conventions
 
-Matches `infra/helm/observability`: digest-pinned `images.*`, per-component resources, namespace via release.
+Matches `infra/helm/observability`: digest-shaped `images.*`, per-component resources, namespace via release. The checked-in values are render/lint scaffolding, not deployable artifacts.
 
 ## Render
 
@@ -20,7 +20,7 @@ helm template ibex infra/helm/ibex-harness -f infra/helm/ibex-harness/values.yam
 
 The Proxy profile is explicit in all values: `deployment.profile` must match `proxy.environment`, so changing only the Proxy setting cannot downgrade a staging or production overlay. Staging and production require an out-of-band Kubernetes Secret named `ibex-redis` with key `redis-url`. The chart marks this Secret reference required in those profiles; it does not create or provision credentials. Local development keeps the Secret optional.
 
-The checked-in staging and production overlays intentionally contain sentinel image digests and are **not deployable**. Before any staging or production release, run `.github/scripts/check-helm-deployable.sh <overlay>` with the final artifact-pinned overlay; it renders the chart and rejects missing, malformed, or sentinel digests. Direct `helm upgrade` that bypasses the release preflight is not an approved deployment path. The repository currently has no automated Helm deployment workflow, so the overlay alone is not evidence of a production release.
+The checked-in default, staging, and production values intentionally contain sentinel image digests; the migration image is disabled and the chart has no Postgres/Redis/ClickHouse/MinIO data-plane templates. They are **not deployable defaults**. Before any staging or production release, provide real artifact digests, external Secrets, data-plane provisioning, and migration execution, then run `.github/scripts/check-helm-deployable.sh <overlay>`. Direct `helm upgrade` that bypasses release preflight is not approved. The repository currently has no automated Helm deployment workflow, so an overlay is not production-release evidence.
 
 ## Rollback by digest
 

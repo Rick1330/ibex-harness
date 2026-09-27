@@ -330,7 +330,7 @@ Every service must publish these metrics:
 - `ibex_api_cache_hit_total{cache}`
 - `ibex_api_cache_miss_total{cache}`
 
-### 7.8 Dashboard (Next.js)
+### 7.8 Console (Next.js)
 
 Client metrics are optional, but recommended via RUM:
 

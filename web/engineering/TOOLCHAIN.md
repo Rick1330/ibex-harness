@@ -50,7 +50,7 @@ winget install --id Git.Git -e
 winget install --id Docker.DockerDesktop -e
 winget install --id GoLang.Go -e
 winget install --id OpenJS.NodeJS.LTS -e
-winget install --id Python.Python.3.11 -e
+winget install --id Python.Python.3.12 -e
 winget install --id Bufbuild.Buf -e
 winget install --id Gitleaks.Gitleaks -e
 corepack enable
@@ -60,7 +60,7 @@ corepack prepare pnpm@9.15.9 --activate
 If `winget` does not provide a package in your environment, Chocolatey equivalents are:
 
 ```powershell
-choco install git docker-desktop golang nodejs-lts python311 buf gitleaks -y
+choco install git docker-desktop golang nodejs-lts python312 buf gitleaks -y
 corepack enable
 corepack prepare pnpm@9.15.9 --activate
 ```
@@ -117,7 +117,7 @@ curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitlea
 Fedora/RHEL:
 
 ```bash
-sudo dnf install -y git make curl python3.11 nodejs npm golang
+sudo dnf install -y git make curl python3.12 nodejs npm golang
 ```
 
 Install Docker, Buf, and Gitleaks with the official upstream packages or release binaries for your architecture.

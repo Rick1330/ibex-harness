@@ -27,10 +27,10 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 | Deliverable | Location | Notes |
 | --- | --- | --- |
-| `web-build` CI job | [`.github/workflows/ci.yml`](../../../../../../.github/workflows/ci.yml) | typecheck, Vitest, `build:clean` |
+| `web-build` CI job | [`.github/workflows/ci.yml`](../../../../../.github/workflows/ci.yml) | typecheck, Vitest, `build:clean` |
 | Path filter (`detect-changes`) | same | Skips web-build on Go-only PRs |
-| pnpm + Next.js cache | [`.github/actions/setup-pnpm-web`](../../../../../../.github/actions/setup-pnpm-web) | Shared composite action |
-| Production deploy | [`.github/workflows/web-deploy.yml`](../../../../../../.github/workflows/web-deploy.yml) | OpenNext build + Cloudflare deploy + smoke test |
+| pnpm + Next.js cache | [`.github/actions/setup-pnpm-web`](../../../../../.github/actions/setup-pnpm-web) | Shared composite action |
+| Production deploy | [`.github/workflows/web-deploy.yml`](../../../../../.github/workflows/web-deploy.yml) | OpenNext build + Cloudflare deploy + smoke test |
 
 ---
 
