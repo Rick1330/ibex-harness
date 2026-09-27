@@ -102,6 +102,12 @@ function parseTab(v: string | null): ExploreTab {
   return "traces"
 }
 
+function sessionStatusTone(status: string): "ok" | "error" | "warn" {
+  if (status === "success") return "ok"
+  if (status === "error") return "error"
+  return "warn"
+}
+
 function ExploreWorkbench() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -175,13 +181,14 @@ function ExploreWorkbench() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-4 py-4 md:py-5 lg:px-6">
-      {view === "loading" ? (
+      {view === "loading" && (
         <div className="flex flex-col gap-3">
           <Skeleton className="h-12 w-full rounded-lg" />
           <Skeleton className="h-9 w-64 rounded-lg" />
           <Skeleton className="h-[280px] w-full rounded-lg" />
         </div>
-      ) : view === "error" ? (
+      )}
+      {view === "error" && (
         <Card className={`${panelClass} gap-0 py-0`}>
           <CardContent className="px-4 py-8 text-center">
             <div className="text-[13px] font-medium">
@@ -205,7 +212,8 @@ function ExploreWorkbench() {
             </Button>
           </CardContent>
         </Card>
-      ) : (
+      )}
+      {view !== "loading" && view !== "error" && (
         <>
           <ListPageHeader
             title="Explore"
@@ -269,15 +277,17 @@ function ExploreWorkbench() {
             </TabsList>
 
             <TabsContent value="traces" className="mt-3">
-              {view === "empty" ? (
+              {view === "empty" && (
                 <PageEmptyState page="explore" />
-              ) : traces.length === 0 ? (
+              )}
+              {view !== "empty" && traces.length === 0 && (
                 <div className="px-1 py-10 text-center text-[13px] text-muted-foreground">
                   No traces match this query. Cross-tenant{" "}
                   <span className="font-mono">trace_id</span> lookups return
                   empty / 404 — never &quot;found but forbidden&quot;.
                 </div>
-              ) : (
+              )}
+              {view !== "empty" && traces.length > 0 && (
                 <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]">
                   <TracesTable
                     rows={traces}
@@ -332,13 +342,7 @@ function SessionsTable() {
               </TableCell>
               <TableCell className={listTable.cell}>
                 <StatusDot
-                  tone={
-                    s.status === "success"
-                      ? "ok"
-                      : s.status === "error"
-                        ? "error"
-                        : "warn"
-                  }
+                  tone={sessionStatusTone(s.status)}
                   label={s.status}
                 />
               </TableCell>

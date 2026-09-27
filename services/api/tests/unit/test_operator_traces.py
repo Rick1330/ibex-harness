@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -58,6 +59,13 @@ def session_for(*rows: dict[str, object]) -> AsyncMock:
     return session
 
 
+async def assert_api_error(operation: Awaitable[object], code: str) -> ApiError:
+    with pytest.raises(ApiError) as error:
+        await operation
+    assert error.value.code == code
+    return error.value
+
+
 @pytest.mark.asyncio
 async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
     session = session_for(row())
@@ -84,18 +92,22 @@ async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
 @pytest.mark.asyncio
 async def test_list_rejects_bad_bounds_and_cursor() -> None:
     settings = operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!")
-    with pytest.raises(ApiError) as invalid_range:
-        await list_operator_traces(session_for(), settings, auth(), query_start=END, query_end=START, status=None, limit=1, cursor=None)
-    assert invalid_range.value.code == VALIDATION_ERROR
-    with pytest.raises(ApiError) as oversized_range:
-        await list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=START + timedelta(days=8), status=None, limit=1, cursor=None)
-    assert oversized_range.value.code == VALIDATION_ERROR
-    with pytest.raises(ApiError) as invalid_limit:
-        await list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=END, status=None, limit=101, cursor=None)
-    assert invalid_limit.value.code == VALIDATION_ERROR
-    with pytest.raises(ApiError) as invalid_cursor:
-        await list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=END, status=None, limit=1, cursor="tampered")
-    assert invalid_cursor.value.code == VALIDATION_ERROR
+    await assert_api_error(
+        list_operator_traces(session_for(), settings, auth(), query_start=END, query_end=START, status=None, limit=1, cursor=None),
+        VALIDATION_ERROR,
+    )
+    await assert_api_error(
+        list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=START + timedelta(days=8), status=None, limit=1, cursor=None),
+        VALIDATION_ERROR,
+    )
+    await assert_api_error(
+        list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=END, status=None, limit=101, cursor=None),
+        VALIDATION_ERROR,
+    )
+    await assert_api_error(
+        list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=END, status=None, limit=1, cursor="tampered"),
+        VALIDATION_ERROR,
+    )
 
 
 @pytest.mark.asyncio
@@ -106,25 +118,29 @@ async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
     assert first_result.next_cursor
     second = session_for(row("trace-c"))
     await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor)
-    with pytest.raises(ApiError) as replay:
-        await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="error", limit=1, cursor=first_result.next_cursor)
-    assert replay.value.code == VALIDATION_ERROR
-    with pytest.raises(ApiError) as tenant_replay:
-        await list_operator_traces(second, settings, OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="s", subject="u"), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor)
-    assert tenant_replay.value.code == VALIDATION_ERROR
+    await assert_api_error(
+        list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="error", limit=1, cursor=first_result.next_cursor),
+        VALIDATION_ERROR,
+    )
+    await assert_api_error(
+        list_operator_traces(second, settings, OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="s", subject="u"), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor),
+        VALIDATION_ERROR,
+    )
     encoded, signature = first_result.next_cursor.split(".", 1)
     assert signature
     tampered = f"{encoded}.{'0' * 64}"
-    with pytest.raises(ApiError) as bad_signature:
-        await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=tampered)
-    assert bad_signature.value.code == VALIDATION_ERROR
+    await assert_api_error(
+        list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=tampered),
+        VALIDATION_ERROR,
+    )
     payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
     payload["expires_at"] = "2020-01-01T00:00:00+00:00"
     expired_encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
     expired_signature = hmac.new(settings.operator_cursor_secret.encode(), expired_encoded.encode(), hashlib.sha256).hexdigest()
-    with pytest.raises(ApiError) as expired:
-        await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=f"{expired_encoded}.{expired_signature}")
-    assert expired.value.code == VALIDATION_ERROR
+    await assert_api_error(
+        list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=f"{expired_encoded}.{expired_signature}"),
+        VALIDATION_ERROR,
+    )
 
 
 @pytest.mark.asyncio
@@ -145,14 +161,16 @@ async def test_default_cursor_reuses_signed_bounds() -> None:
 
 @pytest.mark.asyncio
 async def test_list_fails_closed_when_cursor_key_or_database_is_unavailable() -> None:
-    with pytest.raises(ApiError) as no_key:
-        await list_operator_traces(session_for(row("trace-a"), row("trace-b")), operator_settings(operator_cursor_secret=None), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None)
-    assert no_key.value.code == SERVICE_DEGRADED
+    await assert_api_error(
+        list_operator_traces(session_for(row("trace-a"), row("trace-b")), operator_settings(operator_cursor_secret=None), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None),
+        SERVICE_DEGRADED,
+    )
     session = AsyncMock()
     session.execute.side_effect = SQLAlchemyError("db")
-    with pytest.raises(ApiError) as db_error:
-        await list_operator_traces(session, operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None)
-    assert db_error.value.code == SERVICE_DEGRADED
+    await assert_api_error(
+        list_operator_traces(session, operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None),
+        SERVICE_DEGRADED,
+    )
 
 
 @pytest.mark.asyncio
@@ -161,18 +179,12 @@ async def test_detail_is_snapshot_and_foreign_or_missing_is_404() -> None:
     assert detail.schema_version == "operator.trace-detail.v1"
     assert "content" in detail.unavailable_sections
     missing = session_for()
-    with pytest.raises(ApiError) as not_found:
-        await get_operator_trace(missing, auth(), trace_id="foreign")
-    assert not_found.value.code == NOT_FOUND
-    assert not_found.value.message == "Trace not found"
-    with pytest.raises(ApiError) as invalid_id:
-        await get_operator_trace(missing, auth(), trace_id="")
-    assert invalid_id.value.code == NOT_FOUND
+    not_found = await assert_api_error(get_operator_trace(missing, auth(), trace_id="foreign"), NOT_FOUND)
+    assert not_found.message == "Trace not found"
+    await assert_api_error(get_operator_trace(missing, auth(), trace_id=""), NOT_FOUND)
     failed = AsyncMock()
     failed.execute.side_effect = SQLAlchemyError("db")
-    with pytest.raises(ApiError) as degraded:
-        await get_operator_trace(failed, auth(), trace_id="trace-a")
-    assert degraded.value.code == SERVICE_DEGRADED
+    await assert_api_error(get_operator_trace(failed, auth(), trace_id="trace-a"), SERVICE_DEGRADED)
 
 
 @pytest.mark.asyncio

@@ -157,7 +157,7 @@ def _decode_cursor(
         if expires_at <= datetime.now(UTC):
             raise ValueError("expired")
         return datetime.fromisoformat(payload["started_at"]), str(payload["trace_id"])
-    except (ApiError, ValueError, KeyError, TypeError, json.JSONDecodeError, UnicodeError) as exc:
+    except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
 
 
@@ -179,7 +179,7 @@ def cursor_query_bounds(
         if expires_at <= datetime.now(UTC):
             raise ValueError("expired")
         return _normalize_datetime(datetime.fromisoformat(payload["query_start"])), _normalize_datetime(datetime.fromisoformat(payload["query_end"]))
-    except (ApiError, ValueError, KeyError, TypeError, json.JSONDecodeError, UnicodeError) as exc:
+    except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
 
 
@@ -226,6 +226,25 @@ def _validate_range(query_start: datetime, query_end: datetime) -> None:
         raise ApiError(code=VALIDATION_ERROR, message="Trace time range exceeds maximum")
 
 
+def _resolve_query_bounds(
+    settings: Settings,
+    authorization: OperatorSessionAuthorization,
+    cursor: str | None,
+    query_start: datetime | None,
+    query_end: datetime | None,
+) -> tuple[datetime, datetime]:
+    if cursor:
+        cursor_start, cursor_end = cursor_query_bounds(settings, authorization, cursor)
+        query_start = cursor_start if query_start is None else query_start
+        query_end = cursor_end if query_end is None else query_end
+    resolved_end = query_end or datetime.now(UTC)
+    resolved_start = query_start or resolved_end - timedelta(hours=24)
+    normalized_start = _normalize_datetime(resolved_start)
+    normalized_end = _normalize_datetime(resolved_end)
+    _validate_range(normalized_start, normalized_end)
+    return normalized_start, normalized_end
+
+
 async def list_operator_traces(
     session: AsyncSession,
     settings: Settings,
@@ -239,17 +258,9 @@ async def list_operator_traces(
 ) -> OperatorTraceListResponse:
     if limit < 1 or limit > _MAX_PAGE_SIZE:
         raise ApiError(code=VALIDATION_ERROR, message="Trace limit must be between 1 and 100")
-    if cursor:
-        cursor_start, cursor_end = cursor_query_bounds(settings, authorization, cursor)
-        query_start = cursor_start if query_start is None else query_start
-        query_end = cursor_end if query_end is None else query_end
-    if query_end is None:
-        query_end = datetime.now(UTC)
-    if query_start is None:
-        query_start = query_end - timedelta(hours=24)
-    query_start = _normalize_datetime(query_start)
-    query_end = _normalize_datetime(query_end)
-    _validate_range(query_start, query_end)
+    query_start, query_end = _resolve_query_bounds(
+        settings, authorization, cursor, query_start, query_end
+    )
     params: dict[str, object] = {
         "org_id": str(authorization.org_id),
         "query_start": query_start,
