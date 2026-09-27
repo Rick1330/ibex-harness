@@ -1,6 +1,6 @@
 # Security CI gates — required controls and evidence boundary
 
-Reference for the DevSecOps hardening work associated with PR #18 and [ADR-0008](adr/ADR-0008-security-ci-gates.md). The inventory below describes required controls; it is not, by itself, evidence that every workflow or branch-protection check is enabled in the current baseline.
+Reference for the DevSecOps hardening work associated with PR #18 and [ADR-0008](../content/docs/adr/0008-security-ci-gates.mdx). The inventory below describes required controls; it is not, by itself, evidence that every workflow or branch-protection check is enabled in the current baseline.
 
 ## Referenced controls (verify before relying on them)
 

@@ -71,7 +71,7 @@ IBEX Harness is a distributed system designed for high performance, reliability,
                           │
    ┌──────────────────────▼─────────────────────┐
    │         Operator + MCP surfaces            │
-   │  Dashboard (Next.js) │ API (FastAPI)       │
+   │  Console (Next.js) │ API (FastAPI)         │
    │  MCP memory server (tools over Auth gRPC)  │
    └────────────────────────────────────────────┘
 ```
@@ -102,7 +102,7 @@ Agent Request → Proxy → Context Assembly → LLM Provider → Proxy → Agen
 
 Every component has explicit fallback behavior:
 
-- Auth service down → **Fail closed** (HTTP 503); no cached-permission bypass in Phase 1 ([SECURITY.md](SECURITY.md) §15, [ADR-0011](adr/ADR-0011-proxy-auth-client.md)). Phase 2 optional cache may degrade with audit flag after 2.2.1.
+- Auth service down → **Fail closed** (HTTP 503); no cached-permission bypass in Phase 1 ([SECURITY.md](SECURITY.md) §15, [ADR-0011](../content/docs/adr/0011-proxy-auth-client.mdx)). Phase 2 optional cache may degrade with audit flag after 2.2.1.
 - Context assembly timeout → Return directive-only context
 - Memory service slow → Serve from hot cache only
 - Embedding service down → Queue writes, succeed synchronously with placeholder
@@ -132,7 +132,7 @@ Every operation emits:
 
 **Purpose**: Intercept every LLM request, inject context and memory, forward to provider
 
-**Technology**: Go 1.21+
+**Technology**: Go 1.25.13+ (`go.mod`)
 
 - Chosen for: Low latency, excellent concurrency, single-binary deployment
 - Package layout: Standard Go project layout (cmd/, internal/, pkg/)
@@ -140,7 +140,7 @@ Every operation emits:
 **Key Responsibilities**:
 
 - Parse and validate incoming LLM requests
-- Authenticate requests via gRPC `ValidateToken` on every protected request in Phase 1; optional bloom → LRU → gRPC pipeline in Phase 2 ([2.2.1](roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.md))
+- Authenticate requests via gRPC `ValidateToken` on every protected request in Phase 1; optional bloom → LRU → gRPC pipeline in Phase 2 ([2.2.1](../content/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.mdx))
 - Rate limit enforcement (Redis Lua scripts, hierarchical: agent/org/global)
 - Parallel context retrieval (40ms deadline):
   - Directive from Redis
@@ -258,7 +258,7 @@ Memory:
 
 - `idx_memories_org_agent` on (org_id, agent_id) WHERE status='active'
 - `idx_memories_content_hash` on (content_hash)
-- `idx_memories_embedding` USING ivfflat (embedding vector_cosine_ops)
+- `idx_memories_embedding_hnsw` USING hnsw (embedding vector_cosine_ops), as defined by `infra/migrations/postgres/000017_memory_schema_v2_expand.up.sql`; IVFFlat references are historical.
 - `idx_memories_search` USING gin(to_tsvector('english', content))
 
 **Performance Characteristics**:
@@ -333,7 +333,7 @@ Process:
    - Use lightweight compression model (7B local)
    - Trade verbosity for coverage
 
-7. Format and inject ([ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)):
+7. Format and inject ([ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce.mdx)):
    - Order: Directive → Conversation history → Memories by category (procedural → factual → preference → behavioral → episodic) → Tool schemas
    - Wrap memories in structured delimiters (XML-style `<ibex_memory nonce="...">` with per-assembly nonce)
    - History as native `role: content` lines (not XML-wrapped)
@@ -421,7 +421,7 @@ When upgrading embedding model (e.g., to larger, better model):
 
 **Purpose**: Centralized authentication and authorization
 
-**Technology**: Go 1.21+
+**Technology**: Go 1.25.13+
 
 - Chosen for: High throughput, low latency, security-critical path
 
@@ -430,7 +430,7 @@ When upgrading embedding model (e.g., to larger, better model):
 1. **Personal Access Token (PAT)**:
    - Long-lived (no expiry unless revoked)
    - Created by users for SDK usage
-   - Hashed with Argon2id before storage via `packages/crypto` ([ADR-0010](adr/ADR-0010-cryptography-policy.md))
+   - Hashed with Argon2id before storage via `packages/crypto` ([ADR-0010](../content/docs/adr/0010-cryptography-policy.mdx))
    - Never stored in plaintext after creation
 
 2. **Organization Token**:
@@ -464,7 +464,7 @@ When upgrading embedding model (e.g., to larger, better model):
 3. Attach org_id + permissions to request context
 ```
 
-**Target — Phase 2 optional [2.2.1-auth-cache-bloom](roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.md):**
+**Target — Phase 2 optional [2.2.1-auth-cache-bloom](../content/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.mdx):**
 
 ```text
 1. Bloom Filter Check (Redis):
@@ -500,7 +500,7 @@ Bit Position | Permission
 56-63        | Reserved for future use
 ```
 
-**Canonical implementation:** Go constants and predefined sets live in `packages/permissions` ([ADR-0009](adr/ADR-0009-permission-bitmap.md)). Use `permissions.Has(bitmap, required)` for checks — do not invent ad-hoc bit values in services.
+**Canonical implementation:** Go constants and predefined sets live in `packages/permissions` ([ADR-0009](../content/docs/adr/0009-permission-bitmap.mdx)). Use `permissions.Has(bitmap, required)` for checks — do not invent ad-hoc bit values in services.
 
 | Constant | Bit | Notes |
 | --- | --- | --- |

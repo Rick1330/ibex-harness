@@ -23,46 +23,26 @@ Modern AI agents suffer from critical limitations:
 
 ## ✨ What IBEX Harness Provides
 
-### Core Capabilities
+This section separates repository evidence from product ambition. A route, schema, fixture, or design proposal is not by itself hosted production evidence.
 
-**1. Persistent Memory System**
-- Agents can write, store, and retrieve memories across sessions
-- Semantic search over memory using vector embeddings
-- Automatic memory extraction from agent interactions
-- Memory deduplication and conflict resolution
-- Multi-tenant isolation with enterprise-grade security
+### Implemented in the current repository
 
-**2. Intelligent Context Assembly**
-- Automatic retrieval of relevant memories for each agent interaction
-- Smart ranking algorithm that balances recency, relevance, and usefulness
-- Context budget management that fits within LLM token limits
-- Performance-optimized assembly pipeline (<50ms overhead)
+- **Proxy and AuthService:** authenticated provider forwarding, rate limiting, token/agent validation, PAT lifecycle, and fail-closed authorization paths.
+- **Memory:** tenant-scoped write, PII/quarantine, deduplication, conflict/supersession, labels, semantic search, hot-cache reads, and feedback routes.
+- **Context and extraction:** token-budget calculation, parallel retrieval, ranking/packing, degradation behavior, Celery extraction/provider adapters, and evaluation fixtures.
+- **MCP memory:** AuthService-bounded resource/tool transport with `search_memory`, `write_memory`, and feedback behavior; audit persistence is optional.
+- **Management/operator slices:** mounted tenant-scoped API routes plus provisional D1 context/overview/event and D2 metadata-only trace list/detail contracts.
+- **Operator Console:** presentation shell and server-only, read-only D2 live seam; production identity, MFA, mutations, raw provenance, and hosted acceptance remain gated.
 
-**3. Behavioral Fingerprinting & Drift Detection**
-- Statistical tracking of agent behavior patterns
-- Automatic detection when behavior drifts from expected patterns
-- Alerting system for behavioral anomalies
-- Baseline establishment and evolution over time
+### Contract, target, or provisional
 
-**4. Session Management**
-- Robust session lifecycle management
-- Crash recovery with checkpoint/resume capability
-- Agent Transaction Protocol (ATP) for reliable multi-step operations
-- Loop detection to prevent runaway agents
+- Production AuthService/session integration, deployment origins, two-tenant acceptance, and release evidence for the operator slices.
+- Broader management actions, replay/raw trace content, drift/fingerprint workflows, full SDK/CLI contracts, and durable audit/observability guarantees.
+- Performance, scale, availability, SLO, compliance, and cost numbers below are targets until a dated benchmark or operational evidence artifact links them to a verified run.
 
-**5. Directive Versioning System**
-- Version control for agent instructions and system prompts
-- A/B testing of directive changes
-- Behavioral regression testing before directive promotion
-- Live session transition during directive updates
-- Emergency revocation capability
+### Future goals
 
-**6. Developer Experience**
-- SDKs for Python, TypeScript, and Go
-- CLI for memory management and session inspection
-- Web dashboard for visualization and management
-- Integrations with LangChain, AutoGen, CrewAI, LlamaIndex
-- VS Code and Cursor extensions for development workflow
+- Hybrid dense/sparse retrieval, graph lineage, behavioral drift detection, directive regression, hosted SaaS, self-hosted Kubernetes, hybrid deployment, and ecosystem integrations.
 
 ## 🎪 Target Users
 
@@ -203,7 +183,7 @@ Modern AI agents suffer from critical limitations:
 
 ## 📅 Project Phases (redesigned roadmap)
 
-Phases **0–2.5 are complete**. **Phase 3** is in progress. The public source of truth for milestones is
+Phases **0–3.5 are shipped**. **Phase 4** is in progress. The public source of truth for milestones is
 [`web/content/roadmap/`](../content/roadmap/) ([overview](https://ibexharness.com/roadmap/overview),
 [current state](https://ibexharness.com/roadmap/current-state)). Calendar “months” below are
 planning orientation only — not commitments.
@@ -215,9 +195,9 @@ planning orientation only — not commitments.
 | 1.5 | Public Web Product | **Complete** | Unified site at ibexharness.com |
 | 2 | Single Provider E2E | **Complete** | Authenticated OpenAI-compatible chat through the proxy |
 | **2.5** | Provider Generalization & Foundation | **Complete** | Anthropic + self-hosted adapters, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton, LGTM |
-| **3** | Core Memory Substrate | **In progress** | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
-| **3.5** | Extraction & Context Assembly | Planned | Celery extraction worker, context assembly on the proxy hot path, MCP memory tools |
-| **4** | Operator Platform & Multi-Provider | Planned | Management API, dashboard, multi-provider routing, hierarchical rate limiting |
+| **3** | Core Memory Substrate | **Complete** | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
+| **3.5** | Extraction & Context Assembly | **Complete** | Celery extraction worker, context assembly on the proxy hot path, MCP memory tools |
+| **4** | Operator Platform & Multi-Provider | **In progress / provisional** | Mounted management/operator slices; production identity, broader actions, and release evidence remain gated |
 | **4.5** | Intelligence Layer | Planned | Behavioral fingerprinting, drift detection, directive regression testing |
 | **5** | Advanced Retrieval & Graph Memory | Planned | Hybrid search (dense+sparse+reranking), graph traversal, evaluation harness |
 
@@ -235,7 +215,7 @@ planning orientation only — not commitments.
 | Multi-provider adapters, tokenizer, embedder, MCP skeleton | 2.5 |
 | Memory schema, vector store, write/read pipelines | 3 |
 | Extraction workers, context assembly gRPC, MCP tools | 3.5 |
-| Management API, dashboard, BYO keys, circuit breakers | 4 |
+| Mounted management API, canonical Console, BYO keys, circuit breakers | 4 |
 | Fingerprints, drift, directive regression | 4.5 |
 | Hybrid retrieval, graph lineage at query time | 5 |
 

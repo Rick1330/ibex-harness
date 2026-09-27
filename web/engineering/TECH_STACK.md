@@ -22,7 +22,7 @@ Every technology choice in IBEX Harness is made based on these criteria:
 
 ## 🔧 Core Services Technology Choices
 
-### LLM Proxy Service: **Go 1.21+**
+### LLM Proxy Service: **Go 1.25.13+**
 
 **Why Go:**
 
@@ -30,7 +30,7 @@ Every technology choice in IBEX Harness is made based on these criteria:
 
 - Goroutines: 8KB memory per concurrent connection vs. MB-per-thread in Python
 - At 10,000 concurrent connections: ~80MB in Go vs. ~10GB in Python/Node
-- Garbage collection pauses: <1ms (sub-millisecond GC in Go 1.21+)
+- Garbage collection pauses: <1ms (sub-millisecond GC in Go 1.25.13+)
 - Native HTTP/2 support with excellent performance
 - Compiled binary: ~15MB, starts in <50ms, no runtime dependencies
 
@@ -411,7 +411,7 @@ Plot.plot({
 
 ---
 
-### CLI Tool: **Go 1.21+**
+### CLI Tool: **Go 1.25.13+**
 
 **Why Go for CLI:**
 
@@ -1389,10 +1389,10 @@ resource "aws_eks_cluster" "ibex" {
 
 | Layer | Technology | Why This Choice |
 |-------|-----------|-----------------|
-| **Proxy** | Go 1.21+ | Low latency, high concurrency, single binary |
+| **Proxy** | Go 1.25.13+ | Low latency, high concurrency, single binary |
 | **API/Workers** | Python 3.11+, FastAPI, Celery | ML ecosystem, async support, rapid development |
 | **Dashboard** | Next.js 14, TypeScript, Tailwind | Server components, type safety, fast development |
-| **CLI** | Go 1.21+, Cobra | Single binary, fast startup, cross-platform |
+| **CLI** | Go 1.25.13+, Cobra | Single binary, fast startup, cross-platform |
 | **SDKs** | Python, TypeScript, Go | Cover 90%+ of agent use cases |
 | **Primary DB** | PostgreSQL 16, pgvector | ACID, RLS, vector search, mature |
 | **Cache** | Redis 7.x Stack | Speed, data structures, Lua scripting |
