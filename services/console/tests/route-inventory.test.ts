@@ -25,11 +25,13 @@ describe("Console route classification inventory", () => {
     expect(classified).toEqual(actual)
   })
 
-  it("keeps only the Overview fixture-previewable and all nested domain pages deferred", () => {
+  it("keeps only Overview fixture-previewable and D2 metadata routes live-backed", () => {
     const routes = inventory.routes as Record<string, { status: string; data_mode: string }>
     expect(routes["/dashboard"]).toMatchObject({ status: "preview-only", data_mode: "fixture" })
     for (const [path, entry] of Object.entries(routes)) {
-      if (path.startsWith("/dashboard/") && path !== "/dashboard") {
+      if (path === "/dashboard/explore" || path === "/dashboard/explore/t/:traceId") {
+        expect(entry, path).toMatchObject({ status: "implemented", data_mode: "none" })
+      } else if (path.startsWith("/dashboard/") && path !== "/dashboard") {
         expect(entry, path).toMatchObject({ status: "deferred", data_mode: "none" })
       }
     }

@@ -295,6 +295,34 @@
     "source": "services/api/app/routers/session.py"
   },
   {
+    "endpoint": "app.routers.operator_traces.operator_trace_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_trace_list",
+    "path": "/v1/operator/traces",
+    "response_model": "<class 'app.schemas.operator_traces.OperatorTraceListResponse'>",
+    "security": [
+      "app.deps.operator_org_session",
+      "app.routers.operator_traces.require_trace_read_session"
+    ],
+    "source": "services/api/app/routers/operator_traces.py"
+  },
+  {
+    "endpoint": "app.routers.operator_traces.operator_trace_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_trace_detail",
+    "path": "/v1/operator/traces/{trace_id}",
+    "response_model": "<class 'app.schemas.operator_traces.OperatorTraceDetailResponse'>",
+    "security": [
+      "app.deps.operator_org_session",
+      "app.routers.operator_traces.require_trace_read_session"
+    ],
+    "source": "services/api/app/routers/operator_traces.py"
+  },
+  {
     "endpoint": "app.routers.organizations.delete_org",
     "methods": [
       "DELETE"
