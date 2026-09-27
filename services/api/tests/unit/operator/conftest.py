@@ -23,6 +23,7 @@ def operator_settings(**kwargs: object) -> Settings:
         "allowed_origins": "http://localhost:3100,https://operator.ibexharness.com",
         "auth_service_token": "test-auth-service-token",
         "jwt_hmac_secret": HMAC_SECRET,
+        "operator_cursor_secret": "cursor-secret-for-tests-32-bytes-min!!",
         "dashboard_csrf_secret": CSRF_SECRET,
         "cookie_secure": False,
         "cookie_samesite": "lax",

@@ -104,12 +104,12 @@ describe("console data boundary", () => {
 })
 
 describe("console route classification", () => {
-  it("keeps D0 overview preview-only and later surfaces deferred", () => {
+  it("keeps D0 overview preview-only and only D2 metadata routes implemented", () => {
     expect(classifyPath("/dashboard").status).toBe("preview-only")
-    expect(classifyPath("/dashboard/explore").status).toBe("deferred")
+    expect(classifyPath("/dashboard/explore").status).toBe("implemented")
     expect(classifyPath("/dashboard/analytics").status).toBe("deferred")
     expect(classifyPath("/dashboard/settings").status).toBe("deferred")
-    expect(classifyPath("/dashboard/explore/t/trace-1").status).toBe("deferred")
+    expect(classifyPath("/dashboard/explore/t/trace-1").status).toBe("implemented")
     expect(classifyPath("/dashboard/unknown").status).toBe("deferred")
     expect(classifyPath("/login").status).toBe("unavailable")
     expect(classifyPath("/onboarding").status).toBe("unavailable")

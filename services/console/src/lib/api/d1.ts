@@ -3,6 +3,8 @@ import "server-only"
 import {
   OperatorContextSchema,
   OperatorOverviewSchema,
+  OperatorTraceDetailSchema,
+  OperatorTraceListSchema,
   PlatformHealthSchema,
 } from "./contracts"
 import { fetchOperatorJson } from "./transport"
@@ -39,5 +41,27 @@ export async function fetchOperatorPlatformHealth(cookieHeader?: string) {
     "platformHealth",
     (value) => PlatformHealthSchema.parse(value),
     { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+  )
+}
+
+export async function fetchOperatorTraces(
+  cookieHeader: string | undefined,
+  query: URLSearchParams,
+) {
+  return fetchOperatorJson(
+    "traces",
+    (value) => OperatorTraceListSchema.parse(value),
+    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    "",
+    query,
+  )
+}
+
+export async function fetchOperatorTraceDetail(cookieHeader: string | undefined, traceId: string) {
+  return fetchOperatorJson(
+    "traceDetail",
+    (value) => OperatorTraceDetailSchema.parse(value),
+    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    traceId,
   )
 }

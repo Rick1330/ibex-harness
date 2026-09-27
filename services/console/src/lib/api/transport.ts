@@ -21,6 +21,8 @@ const OPERATOR_API_PATHS = {
   overview: "/v1/operator/overview",
   platformHealth: "/v1/operator/platform/health",
   events: "/v1/operator/events/stream",
+  traces: "/v1/operator/traces",
+  traceDetail: "/v1/operator/traces/",
 } as const
 type OperatorApiPath = keyof typeof OPERATOR_API_PATHS
 
@@ -55,15 +57,41 @@ function assertSafeOperatorOrigin(origin: URL): void {
   assertOriginHasNoPath(origin)
 }
 
-export function operatorApiUrl(path: OperatorApiPath): URL {
+function isValidTraceSuffix(suffix: string): boolean {
+  if (suffix === "." || suffix === "..") return false
+  return /^[A-Za-z0-9._~-]{1,256}$/.test(suffix)
+}
+
+function assertAllowedSuffix(path: OperatorApiPath, suffix: string): void {
+  if (path === "traceDetail") {
+    if (!isValidTraceSuffix(suffix)) {
+      throw new OperatorApiError(404, "NOT_FOUND", "Trace not found")
+    }
+    return
+  }
+  if (suffix) throw new Error("unexpected path suffix")
+}
+
+function buildOperatorTarget(
+  origin: URL,
+  path: OperatorApiPath,
+  suffix: string,
+  query?: URLSearchParams,
+): URL {
+  assertAllowedSuffix(path, suffix)
+  const target = new URL(`${OPERATOR_API_PATHS[path]}${encodeURIComponent(suffix)}`, origin)
+  if (query) target.search = query.toString()
+  if (target.origin !== origin.origin) throw new Error("path changed origin")
+  return target
+}
+
+export function operatorApiUrl(path: OperatorApiPath, suffix = "", query?: URLSearchParams): URL {
   const rawOrigin = process.env.IBEX_OPERATOR_API_ORIGIN
   if (!rawOrigin) unavailableOrigin()
   try {
     const origin = new URL(rawOrigin)
     assertSafeOperatorOrigin(origin)
-    const target = new URL(OPERATOR_API_PATHS[path], origin)
-    if (target.origin !== origin.origin) throw new Error("path changed origin")
-    return target
+    return buildOperatorTarget(origin, path, suffix, query)
   } catch (error) {
     if (error instanceof OperatorApiError) throw error
     invalidOrigin()
@@ -84,10 +112,12 @@ export async function fetchOperatorJson<T>(
   path: OperatorApiPath,
   parse: (value: unknown) => T,
   init: RequestInit = {},
+  suffix = "",
+  query?: URLSearchParams,
 ): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set("Accept", "application/json")
-  const target = operatorApiUrl(path)
+  const target = operatorApiUrl(path, suffix, query)
   assertNoCleartextSessionCookie(target, headers)
   // Origin is IBEX_OPERATOR_API_ORIGIN (server env); path is OperatorApiPath allowlist.
   // nosemgrep

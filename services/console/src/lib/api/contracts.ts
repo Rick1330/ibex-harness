@@ -68,10 +68,60 @@ export const OperatorOverviewSchema = z
   })
   .strict()
 
+const TraceEvidenceSchema = z
+  .object({
+    completeness: z.enum(["complete", "partial", "sampled", "late", "redacted", "expired", "deleted", "simulated"]),
+    sample_decision: z.string().min(1).max(32),
+    freshness: z.enum(["fresh", "stale", "unknown"]),
+    retention: z.enum(["expired", "deleted", "unknown"]),
+    source: z.literal("postgres.evidence_runs"),
+    source_watermark: z.literal("not_provided"),
+    observed_at: z.string().datetime({ offset: true }),
+  })
+  .strict()
+
+export const OperatorTraceSchema = z
+  .object({
+    trace_id: z.string().min(1).max(256),
+    run_id: z.string().uuid(),
+    request_id: z.string().min(1).max(256),
+    agent_id: z.string().uuid().nullable(),
+    session_id: z.string().uuid().nullable(),
+    checkpoint_id: z.string().uuid().nullable(),
+    status: z.enum(["ok", "error"]),
+    error_code: z.string().max(128).nullable(),
+    started_at: z.string().datetime({ offset: true }),
+    ended_at: z.string().datetime({ offset: true }).nullable(),
+    duration_ms: z.number().int().nonnegative().nullable(),
+    evidence: TraceEvidenceSchema,
+  })
+  .strict()
+
+export const OperatorTraceListSchema = z
+  .object({
+    schema_version: z.literal("operator.trace-list.v1"),
+    items: z.array(OperatorTraceSchema).max(100),
+    next_cursor: z.string().max(2048).nullable(),
+    truncated: z.boolean(),
+    observed_at: z.string().datetime({ offset: true }),
+    query_start: z.string().datetime({ offset: true }),
+    query_end: z.string().datetime({ offset: true }),
+    limit: z.number().int().min(1).max(100),
+  })
+  .strict()
+
+export const OperatorTraceDetailSchema = OperatorTraceSchema.extend({
+  schema_version: z.literal("operator.trace-detail.v1"),
+  unavailable_sections: z.array(z.enum(["spans", "candidates", "score_explanation", "directives", "tools", "content"])),
+}).strict()
+
 export type OperatorSession = z.infer<typeof OperatorSessionSchema>
 export type PlatformHealth = z.infer<typeof PlatformHealthSchema>
 export type OperatorContext = z.infer<typeof OperatorContextSchema>
 export type OperatorOverview = z.infer<typeof OperatorOverviewSchema>
+export type OperatorTrace = z.infer<typeof OperatorTraceSchema>
+export type OperatorTraceList = z.infer<typeof OperatorTraceListSchema>
+export type OperatorTraceDetail = z.infer<typeof OperatorTraceDetailSchema>
 
 export function parseOperatorSession(value: unknown): OperatorSession {
   return OperatorSessionSchema.parse(value)

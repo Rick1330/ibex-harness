@@ -21,6 +21,7 @@ def test_non_development_operator_sessions_require_auth_service_token() -> None:
         "jwt_public_keys_pem": "configured",
         "redis_url": "redis://localhost",
         "dashboard_csrf_secret": "configured",
+        "operator_cursor_secret": "cursor-secret-for-tests-32-bytes-min!!",
         "cookie_secure": True,
     }
     try:

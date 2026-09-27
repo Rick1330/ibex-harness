@@ -1,0 +1,37 @@
+---
+title: "D2 metadata-only trace read contract"
+description: "Fail-closed, tenant-bound metadata reads for the first 4.D.2 vertical slice."
+---
+
+# ADR-0082: D2 metadata-only trace read contract
+
+- **Status:** accepted for the first implementation slice; full D2 remains planned
+- **Date:** 2026-09-27
+- **Issue:** [#907](https://github.com/Rick1330/ibex-harness/issues/907)
+
+## Decision
+
+The first 4.D.2 vertical slice reads only the canonical PostgreSQL `ibex_core.evidence_runs` envelope. The API is a versioned, read-only operator surface under `/v1/operator/traces`, protected by the existing AuthService-verified operator session and `OPERATOR_METADATA_READ`. The server derives `org_id` from verified session claims, binds the request transaction to PostgreSQL RLS, and repeats the tenant predicate in every trace query.
+
+The DTO exposes only fields proven by `evidence_runs`: trace/request/run/session/checkpoint identity, agent ID when persisted, status/error code, measured start/end/duration, schema/capture/completeness/sample state, and explicit source/freshness/retention state. Because this source does not expose an authoritative retention/deletion field, retention is `unknown` rather than inferred from completeness. Agent names, model/provider, token counts, stage timings, spans, candidates, score contributions, directives, tools, prompts, completions, raw JSON, replay, and actions remain unavailable. No join is inferred from timestamps, session, or aggregate projections.
+
+List queries accept an allowlisted status and bounded UTC time range, stable `(started_at, trace_id)` descending order, and a maximum page size of 100. Cursors are opaque, expire, and are HMAC-bound to the verified tenant, normalized filters, sort, and cursor position. Missing cursor key material fails closed. Point lookups return the same anti-enumerating 404 for missing or foreign trace IDs. Responses are `no-store`.
+
+The canonical publication watermark and projection-lag policy are not invented here: the response reports the observation time and a `not_provided` watermark until P2 owners publish an authoritative watermark. The exact five-term score vocabulary and weights remain deferred; `interim_v1` is not rendered as an explanation.
+
+## Consequences
+
+- Live Console Explore can replace fixture rows with a truthful metadata table while retaining the existing visual language.
+- Detail is a frozen metadata snapshot with explicit unavailable sections; it cannot imply full provenance.
+- P2/P3/P4/P6 and hosted D1 #905 remain external gates. This slice makes no streaming claim, so C5 soak is not a dependency for this snapshot contract.
+- A future richer read model must add a new versioned contract and prove producer, storage, authorization, redaction, retention/deletion, freshness, and browser evidence before enabling content or explanations.
+
+## Evidence basis
+
+- `infra/migrations/postgres/000036_evidence_plane.up.sql:122-163` defines the tenant-scoped `evidence_runs` envelope, lifecycle states, capture mode, sample decision, and RLS.
+- `packages/evidenceoutbox/types.go:95-122` traces the writer's run identity and metadata inputs.
+- `web/content/roadmap/phase-4-multi-provider/milestones/4.d.2-explore-provenance-trace-inspector.mdx:24-26,66-88` requires degraded labels and forbids inferred/full-detail claims.
+- `web/content/roadmap/phase-4-multi-provider/milestones/4.p.2-canonical-evidence-durable-publication.mdx:25-41` requires typed reads, watermarks, and explicit completeness.
+- `web/content/roadmap/phase-4-multi-provider/milestones/4.p.3-privacy-retention-deletion-audit.mdx:25-41` keeps lifecycle state in the DTO and content off by default.
+- `web/content/roadmap/phase-4-multi-provider/milestones/4.p.4-query-usage-cost-data-platform.mdx:25-43` requires bounded, tenant-scoped queries and visible unavailable states.
+- `web/content/roadmap/phase-4-multi-provider/milestones/4.p.6-contract-assurance-harness.mdx:29-56` distinguishes local contract evidence from hosted slice certification.
