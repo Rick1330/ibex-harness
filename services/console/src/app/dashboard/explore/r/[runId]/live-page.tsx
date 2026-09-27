@@ -3,7 +3,7 @@ import { cookies } from "next/headers"
 
 import { DashboardShell, pagePad, panelClass } from "@/components/sessions/dashboard-shell"
 import { Card, CardContent } from "@/components/ui/card"
-import { fetchOperatorContext, fetchOperatorTraceDetail } from "@/lib/api/d1"
+import { fetchOperatorContext, fetchOperatorTraceResource } from "@/lib/api/d1"
 import type { OperatorContext, OperatorTraceDetail } from "@/lib/api/contracts"
 import { OperatorApiError } from "@/lib/api/transport"
 
@@ -25,7 +25,7 @@ async function load(
   const cookie = value ? `${name}=${value}` : undefined
   const [contextResult, traceResult] = await Promise.allSettled([
     fetchOperatorContext(cookie),
-    fetchOperatorTraceDetail(cookie, runId),
+    fetchOperatorTraceResource("detail", cookie, runId),
   ])
   const context = contextResult.status === "fulfilled" ? contextResult.value : null
   if (traceResult.status === "fulfilled") {

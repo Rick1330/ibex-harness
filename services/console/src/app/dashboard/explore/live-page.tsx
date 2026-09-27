@@ -4,7 +4,7 @@ import { cookies } from "next/headers"
 import { DashboardShell, pagePad, panelClass } from "@/components/sessions/dashboard-shell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { fetchOperatorContext, fetchOperatorTraces } from "@/lib/api/d1"
+import { fetchOperatorContext, fetchOperatorTraceResource } from "@/lib/api/d1"
 import type { OperatorContext, OperatorTraceList } from "@/lib/api/contracts"
 import { OperatorApiError } from "@/lib/api/transport"
 import {
@@ -66,7 +66,7 @@ async function load(searchParams: SearchParams): Promise<{
   const cookie = await readSessionCookie()
   const [contextResult, tracesResult] = await Promise.allSettled([
     fetchOperatorContext(cookie),
-    fetchOperatorTraces(cookie, serializeLiveExploreQuery(query)),
+    fetchOperatorTraceResource("list", cookie, serializeLiveExploreQuery(query)),
   ])
 
   const { context, contextError } = settleContext(contextResult)
@@ -95,13 +95,13 @@ export async function LiveExplorePage({
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="Explore result types">
-            <span className="rounded-md border bg-muted px-3 py-1 text-sm" role="tab" aria-selected="true">
+            <span className="inline-flex min-h-6 items-center rounded-md border bg-muted px-3 py-1 text-sm" role="tab" aria-selected="true">
               Traces
             </span>
-            <span className="rounded-md border border-dashed px-3 py-1 text-sm text-muted-foreground" role="tab" aria-disabled="true" title="Deferred until canonical session result types exist">
+            <span className="inline-flex min-h-6 items-center rounded-md border border-dashed px-3 py-1 text-sm text-muted-foreground" role="tab" aria-disabled="true" title="Deferred until canonical session result types exist">
               Sessions (deferred)
             </span>
-            <span className="rounded-md border border-dashed px-3 py-1 text-sm text-muted-foreground" role="tab" aria-disabled="true" title="Deferred until canonical failure result types exist">
+            <span className="inline-flex min-h-6 items-center rounded-md border border-dashed px-3 py-1 text-sm text-muted-foreground" role="tab" aria-disabled="true" title="Deferred until canonical failure result types exist">
               Failures (deferred)
             </span>
           </div>
@@ -157,7 +157,7 @@ function TraceTable({ data, query }: Readonly<{ data: OperatorTraceList; query: 
               <TableRow key={trace.run_id}>
                 <TableCell className="font-mono text-xs">
                   <Link
-                    className="underline-offset-4 hover:underline focus-visible:underline"
+                    className="inline-flex min-h-6 items-center underline-offset-4 hover:underline focus-visible:underline"
                     href={`/dashboard/explore/r/${encodeURIComponent(trace.run_id)}?return=${encodeURIComponent(returnHref)}`}
                   >
                     {trace.run_id}
@@ -165,7 +165,7 @@ function TraceTable({ data, query }: Readonly<{ data: OperatorTraceList; query: 
                 </TableCell>
                 <TableCell className="font-mono text-xs">
                   <Link
-                    className="underline-offset-4 hover:underline focus-visible:underline"
+                    className="inline-flex min-h-6 items-center underline-offset-4 hover:underline focus-visible:underline"
                     href={`/dashboard/explore/t/${encodeURIComponent(trace.trace_id)}?return=${encodeURIComponent(returnHref)}`}
                   >
                     {trace.trace_id}

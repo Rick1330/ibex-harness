@@ -43,7 +43,7 @@ export function CopyId({
             type="button"
             size="icon-xs"
             variant="ghost"
-            className="size-5 shrink-0"
+            className="size-6 shrink-0"
             onClick={(e) => {
               e.stopPropagation()
               void copy()
@@ -51,9 +51,9 @@ export function CopyId({
             aria-label={`Copy ${label ?? value}`}
           >
             {copied ? (
-              <IconCheck className="size-3" />
+              <IconCheck className="size-3.5" />
             ) : (
-              <IconCopy className="size-3" />
+              <IconCopy className="size-3.5" />
             )}
           </Button>
         </TooltipTrigger>

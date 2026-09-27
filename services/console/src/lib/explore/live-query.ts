@@ -46,7 +46,10 @@ const COMPLETENESS = new Set([
   "simulated",
 ])
 
-const OPTIONAL_STRING_FIELDS: ReadonlyArray<{ key: keyof Omit<LiveExploreQuery, "limit" | "status" | "cursor" | "completeness">; max: number }> = [
+const OPTIONAL_STRING_FIELDS: ReadonlyArray<{
+  key: keyof Omit<LiveExploreQuery, "limit" | "status" | "cursor" | "completeness">
+  max: number
+}> = [
   { key: "started_after", max: 64 },
   { key: "started_before", max: 64 },
   { key: "trace_id", max: 256 },
@@ -57,7 +60,10 @@ const OPTIONAL_STRING_FIELDS: ReadonlyArray<{ key: keyof Omit<LiveExploreQuery, 
   { key: "capture_mode", max: 32 },
 ]
 
-const SERIALIZE_FIELDS: ReadonlyArray<{ key: Exclude<keyof LiveExploreQuery, "limit">; omitWhenDropCursor?: boolean }> = [
+const SERIALIZE_FIELDS: ReadonlyArray<{
+  key: Exclude<keyof LiveExploreQuery, "limit">
+  omitWhenDropCursor?: boolean
+}> = [
   { key: "status" },
   { key: "started_after" },
   { key: "started_before" },
@@ -99,8 +105,15 @@ function optionalBoundedString(value: string | null | undefined, max: number, la
 }
 
 function parseLimit(raw: string | null): number {
-  const limit = raw == null || raw === "" ? 50 : Number(raw)
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+  if (raw == null || raw === "") return 50
+  const limit = Number(raw)
+  if (!Number.isInteger(limit)) {
+    throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
+  }
+  if (limit < 1) {
+    throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
+  }
+  if (limit > 100) {
     throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
   }
   return limit
@@ -108,13 +121,19 @@ function parseLimit(raw: string | null): number {
 
 function parseStatus(raw: string | null): LiveExploreQuery["status"] {
   if (raw === "ok" || raw === "error") return raw
-  if (raw != null && raw !== "") throw new LiveExploreQueryError("status must be ok or error")
-  return null
+  if (raw == null || raw === "") return null
+  throw new LiveExploreQueryError("status must be ok or error")
+}
+
+function cursorHasIllegalWhitespace(cursor: string): boolean {
+  if (cursor.includes(" ")) return true
+  return cursor.includes("\n")
 }
 
 function parseCursor(raw: string | null): string | null {
   const cursor = optionalBoundedString(raw, 2048, "cursor")
-  if (cursor && (cursor.includes(" ") || cursor.includes("\n"))) {
+  if (!cursor) return null
+  if (cursorHasIllegalWhitespace(cursor)) {
     throw new LiveExploreQueryError("invalid cursor")
   }
   return cursor
@@ -122,7 +141,8 @@ function parseCursor(raw: string | null): string | null {
 
 function parseCompleteness(raw: string | null): string | null {
   const completeness = optionalBoundedString(raw, 32, "completeness")
-  if (completeness && !COMPLETENESS.has(completeness)) {
+  if (!completeness) return null
+  if (!COMPLETENESS.has(completeness)) {
     throw new LiveExploreQueryError("invalid completeness")
   }
   return completeness
@@ -153,7 +173,10 @@ export function parseLiveExploreQuery(params: QueryParams): LiveExploreQuery {
   return query
 }
 
-export function serializeLiveExploreQuery(query: LiveExploreQuery, options?: { dropCursor?: boolean }): URLSearchParams {
+export function serializeLiveExploreQuery(
+  query: LiveExploreQuery,
+  options?: { dropCursor?: boolean },
+): URLSearchParams {
   const params = new URLSearchParams()
   params.set("limit", String(query.limit))
   for (const { key, omitWhenDropCursor } of SERIALIZE_FIELDS) {

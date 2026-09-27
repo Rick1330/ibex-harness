@@ -6,6 +6,11 @@ import {
   OperatorTraceDetailSchema,
   OperatorTraceListSchema,
   PlatformHealthSchema,
+  type OperatorContext,
+  type OperatorOverview,
+  type OperatorTraceDetail,
+  type OperatorTraceList,
+  type PlatformHealth,
 } from "./contracts"
 import { fetchOperatorJson } from "./transport"
 
@@ -22,61 +27,89 @@ function sessionCookieHeader(cookieHeader: string | undefined): string {
 
 type OperatorFetchPath = Parameters<typeof fetchOperatorJson>[0]
 
-async function fetchOperatorWithSession<T>(
-  path: OperatorFetchPath,
-  parse: (value: unknown) => T,
-  cookieHeader: string | undefined,
-  suffix = "",
-  query?: URLSearchParams,
-): Promise<T> {
+type SessionFetch<T> = {
+  path: OperatorFetchPath
+  parse: (value: unknown) => T
+  cookieHeader?: string
+  suffix?: string
+  query?: URLSearchParams
+}
+
+async function fetchOperatorWithSession<T>(call: SessionFetch<T>): Promise<T> {
   return fetchOperatorJson(
-    path,
-    parse,
-    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
-    suffix,
-    query,
+    call.path,
+    call.parse,
+    { headers: { Cookie: sessionCookieHeader(call.cookieHeader) } },
+    call.suffix ?? "",
+    call.query,
   )
 }
 
-export async function fetchOperatorContext(cookieHeader?: string) {
-  return fetchOperatorWithSession("context", (value) => OperatorContextSchema.parse(value), cookieHeader)
+export async function fetchOperatorContext(cookieHeader?: string): Promise<OperatorContext> {
+  return fetchOperatorWithSession({
+    path: "context",
+    parse: (value) => OperatorContextSchema.parse(value),
+    cookieHeader,
+  })
 }
 
-export async function fetchOperatorOverview(cookieHeader?: string) {
-  return fetchOperatorWithSession("overview", (value) => OperatorOverviewSchema.parse(value), cookieHeader)
+export async function fetchOperatorOverview(cookieHeader?: string): Promise<OperatorOverview> {
+  return fetchOperatorWithSession({
+    path: "overview",
+    parse: (value) => OperatorOverviewSchema.parse(value),
+    cookieHeader,
+  })
 }
 
-export async function fetchOperatorPlatformHealth(cookieHeader?: string) {
-  return fetchOperatorWithSession("platformHealth", (value) => PlatformHealthSchema.parse(value), cookieHeader)
+export async function fetchOperatorPlatformHealth(cookieHeader?: string): Promise<PlatformHealth> {
+  return fetchOperatorWithSession({
+    path: "platformHealth",
+    parse: (value) => PlatformHealthSchema.parse(value),
+    cookieHeader,
+  })
 }
 
-export async function fetchOperatorTraces(
+/** Unified D2 trace read: list (query), runs-by-traceId, or run detail. */
+export async function fetchOperatorTraceResource(
+  kind: "list",
   cookieHeader: string | undefined,
   query: URLSearchParams,
-) {
-  return fetchOperatorWithSession(
-    "traces",
-    (value) => OperatorTraceListSchema.parse(value),
+): Promise<OperatorTraceList>
+export async function fetchOperatorTraceResource(
+  kind: "runs",
+  cookieHeader: string | undefined,
+  traceId: string,
+): Promise<OperatorTraceList>
+export async function fetchOperatorTraceResource(
+  kind: "detail",
+  cookieHeader: string | undefined,
+  runId: string,
+): Promise<OperatorTraceDetail>
+export async function fetchOperatorTraceResource(
+  kind: "list" | "runs" | "detail",
+  cookieHeader: string | undefined,
+  arg: string | URLSearchParams,
+): Promise<OperatorTraceList | OperatorTraceDetail> {
+  if (kind === "list") {
+    return fetchOperatorWithSession({
+      path: "traces",
+      parse: (value) => OperatorTraceListSchema.parse(value),
+      cookieHeader,
+      query: arg as URLSearchParams,
+    })
+  }
+  if (kind === "runs") {
+    return fetchOperatorWithSession({
+      path: "traceDetail",
+      parse: (value) => OperatorTraceListSchema.parse(value),
+      cookieHeader,
+      suffix: arg as string,
+    })
+  }
+  return fetchOperatorWithSession({
+    path: "runDetail",
+    parse: (value) => OperatorTraceDetailSchema.parse(value),
     cookieHeader,
-    "",
-    query,
-  )
-}
-
-export async function fetchOperatorTraceRuns(cookieHeader: string | undefined, traceId: string) {
-  return fetchOperatorWithSession(
-    "traceDetail",
-    (value) => OperatorTraceListSchema.parse(value),
-    cookieHeader,
-    traceId,
-  )
-}
-
-export async function fetchOperatorTraceDetail(cookieHeader: string | undefined, runId: string) {
-  return fetchOperatorWithSession(
-    "runDetail",
-    (value) => OperatorTraceDetailSchema.parse(value),
-    cookieHeader,
-    runId,
-  )
+    suffix: arg as string,
+  })
 }

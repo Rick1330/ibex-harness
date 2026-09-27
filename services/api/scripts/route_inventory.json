@@ -331,8 +331,7 @@
     "path": "/v1/operator/traces/{trace_id}",
     "response_model": "<class 'app.schemas.operator_traces.OperatorTraceListResponse'>",
     "security": [
-      "app.deps.operator_org_session",
-      "app.routers.operator_traces.require_trace_read_session"
+      "app.routers.operator_traces.trace_runs_context"
     ],
     "source": "services/api/app/routers/operator_traces.py"
   },

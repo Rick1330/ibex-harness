@@ -169,7 +169,7 @@ async def test_operator_traces_are_tenant_scoped_with_publication_and_404_bounda
             await _seed_outbox(admin, SeedOutbox(org_b, "req-b", delivery_status="pending", seq=1))
 
         settings = _settings()
-        async with session_with_org(session_factory, org_a) as session:
+        async with session_with_org(session_factory, str(org_a)) as session:
             listed = await list_operator_traces(
                 session,
                 settings,
@@ -193,7 +193,7 @@ async def test_operator_traces_are_tenant_scoped_with_publication_and_404_bounda
                 await get_operator_trace_run(session, _auth(org_a), run_id=run_b)
             assert err.value.code == NOT_FOUND
 
-        async with session_with_org(session_factory, org_b) as session:
+        async with session_with_org(session_factory, str(org_b)) as session:
             listed_b = await list_operator_traces(
                 session,
                 settings,

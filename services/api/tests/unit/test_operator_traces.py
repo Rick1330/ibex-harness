@@ -22,10 +22,12 @@ from app.errors import ApiError
 from app.operator_session_auth import OperatorSessionAuthorization
 from app.schemas.operator_traces import OperatorTraceListQuery
 from app.services.operator_traces import (
+    get_operator_trace,
     get_operator_trace_run,
     list_operator_trace_runs,
     list_operator_traces,
 )
+from app.services.operator_traces_publication import map_publication, publication_for_requests
 from tests.unit.operator.conftest import create_operator_app, operator_settings
 
 ORG = uuid4()
@@ -83,11 +85,19 @@ def session_for(
     *rows: dict[str, object],
     outbox: list[dict[str, object]] | None = None,
     count: int | None = None,
+    spans: list[dict[str, object]] | None = None,
+    assembly: dict[str, object] | None = None,
+    candidates: list[dict[str, object]] | None = None,
+    directive: dict[str, object] | None = None,
+    tools: list[dict[str, object]] | None = None,
 ) -> AsyncMock:
     """Route mock execute results by SQL shape (list / count / outbox / child)."""
 
     run_rows = list(rows)
     outbox_rows = list(outbox) if outbox is not None else []
+    span_rows = list(spans) if spans is not None else []
+    candidate_rows = list(candidates) if candidates is not None else []
+    tool_rows = list(tools) if tools is not None else []
     matched = count if count is not None else len(run_rows)
 
     async def _execute(query, params=None):
@@ -106,9 +116,23 @@ def session_for(
             result.mappings.return_value.all.return_value = outbox_rows
             result.mappings.return_value.first.return_value = outbox_rows[0] if outbox_rows else None
             return result
-        if any(name in sql for name in ("evidence_spans", "evidence_assembly", "evidence_score", "evidence_directive", "evidence_tool")):
-            result.mappings.return_value.all.return_value = []
-            result.mappings.return_value.first.return_value = None
+        if "evidence_spans" in sql:
+            result.mappings.return_value.all.return_value = span_rows
+            return result
+        if "evidence_assembly" in sql:
+            assembly_rows = [assembly] if assembly is not None else []
+            result.mappings.return_value.all.return_value = assembly_rows
+            result.mappings.return_value.first.return_value = assembly_rows[0] if assembly_rows else None
+            return result
+        if "evidence_score" in sql:
+            result.mappings.return_value.all.return_value = candidate_rows
+            return result
+        if "evidence_directive" in sql:
+            directive_rows = [directive] if directive is not None else []
+            result.mappings.return_value.all.return_value = directive_rows
+            return result
+        if "evidence_tool" in sql:
+            result.mappings.return_value.all.return_value = tool_rows
             return result
         result.mappings.return_value.all.return_value = run_rows
         result.mappings.return_value.first.return_value = run_rows[0] if run_rows else None
@@ -212,6 +236,7 @@ async def test_list_publication_unavailable_without_outbox() -> None:
     ("status", "expected"),
     [
         ("pending", "pending"),
+        ("in_flight", "pending"),
         ("failed", "failed"),
         ("poison", "poison"),
     ],
@@ -224,6 +249,253 @@ async def test_list_maps_outbox_publication_states(status: str, expected: str) -
         limit=10,
     )
     assert result.items[0].evidence.publication_state == expected
+
+
+@pytest.mark.asyncio
+async def test_list_maps_partial_publication_when_delivered_and_pending_mix() -> None:
+    result = await list_call(
+        session_for(
+            row(),
+            outbox=[
+                outbox_row(status="delivered", seq=2),
+                outbox_row(status="pending", seq=1),
+            ],
+        ),
+        cursor_settings(),
+        auth(),
+        limit=10,
+    )
+    assert result.items[0].evidence.publication_state == "partial"
+    assert result.items[0].evidence.source_watermark == "outbox:2"
+    assert result.items[0].evidence.ingestion_lag_ms is not None
+
+
+@pytest.mark.asyncio
+async def test_list_maps_partial_when_failed_mixes_with_pending() -> None:
+    result = await list_call(
+        session_for(
+            row(),
+            outbox=[
+                outbox_row(status="failed", seq=2),
+                outbox_row(status="pending", seq=1),
+            ],
+        ),
+        cursor_settings(),
+        auth(),
+        limit=10,
+    )
+    assert result.items[0].evidence.publication_state == "partial"
+
+
+@pytest.mark.asyncio
+async def test_run_detail_hydrates_child_sections_and_interim_score_note() -> None:
+    memory_id = uuid4()
+    directive_id = uuid4()
+    session = session_for(
+        row(),
+        outbox=[outbox_row()],
+        spans=[
+            {
+                "span_id": "span-1",
+                "parent_span_id": None,
+                "operation_kind": "llm",
+                "status": "ok",
+                "error_code": None,
+                "started_at": START,
+                "ended_at": END,
+            }
+        ],
+        assembly={
+            "budget_calculation_ms": 1,
+            "directive_load_ms": 2,
+            "hot_memory_retrieval_ms": 3,
+            "cold_memory_retrieval_ms": 4,
+            "ranking_ms": 5,
+            "packing_ms": 6,
+            "formatting_ms": 7,
+            "total_ms": 28,
+            "candidates_evaluated": 9,
+        },
+        candidates=[
+            {
+                "memory_id": memory_id,
+                "retrieval_rank": 1,
+                "final_rank": 1,
+                "delta_rank": 0,
+                "category": "fact",
+                "token_estimate": 12,
+                "exclusion": "kept",
+                "score_schema": "interim_v1",
+                "composite_score": 0.9,
+            }
+        ],
+        directive={
+            "directive_version_id": directive_id,
+            "content_hash": "abc",
+            "schema_version": "directive.v1",
+        },
+        tools=[
+            {
+                "tool_name": "search",
+                "status": "ok",
+                "error_code": None,
+                "created_at": START,
+            }
+        ],
+    )
+    detail = await get_operator_trace_run(session, auth(), run_id=RUN)
+    assert len(detail.spans) == 1
+    assert detail.assembly is not None
+    assert detail.assembly.total_ms == 28
+    assert len(detail.candidates) == 1
+    assert detail.score_schema_note is not None
+    assert "interim_v1" in detail.score_schema_note
+    assert "score_explanation" in detail.unavailable_sections
+    assert detail.directive is not None
+    assert detail.directive.content_hash == "abc"
+    assert len(detail.tools) == 1
+    assert "content" in detail.unavailable_sections
+    assert "spans" not in detail.unavailable_sections
+
+
+@pytest.mark.asyncio
+async def test_run_detail_marks_missing_children_unavailable() -> None:
+    detail = await get_operator_trace_run(session_for(row()), auth(), run_id=RUN)
+    for section in ("spans", "assembly", "candidates", "score_explanation", "directives", "tools"):
+        assert section in detail.unavailable_sections
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_empty_and_overlong_trace_id_for_runs() -> None:
+    await assert_api_error(list_operator_trace_runs(session_for(), auth(), trace_id=""), NOT_FOUND)
+    await assert_api_error(
+        list_operator_trace_runs(session_for(), auth(), trace_id="x" * 257),
+        NOT_FOUND,
+    )
+    await assert_api_error(
+        list_operator_trace_runs(session_for(row()), auth(), trace_id="trace-a", limit=0),
+        VALIDATION_ERROR,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_applies_equality_filters_without_error() -> None:
+    session = session_for(row())
+    result = await list_call(
+        session,
+        cursor_settings(),
+        auth(),
+        limit=10,
+        trace_id="trace-a",
+        request_id="request-a",
+        run_id=RUN,
+        session_id=uuid4(),
+        error_code="E_TIMEOUT",
+        completeness="partial",
+        capture_mode="metadata",
+    )
+    assert result.returned_count == 1
+
+
+@pytest.mark.asyncio
+async def test_publication_query_failure_fails_closed() -> None:
+    session = session_for(row())
+
+    async def _execute(query, params=None):
+        sql = str(query).lower()
+        if "evidence_outbox" in sql:
+            raise SQLAlchemyError("outbox down")
+        result = MagicMock()
+        if "set_config" in sql:
+            result.scalar_one.return_value = "ok"
+            result.mappings.return_value.all.return_value = []
+            return result
+        if "count(" in sql.replace(" ", ""):
+            result.scalar_one.return_value = 1
+            result.mappings.return_value.all.return_value = []
+            return result
+        result.mappings.return_value.all.return_value = [row()]
+        return result
+
+    session.execute = AsyncMock(side_effect=_execute)
+    await assert_list_error(SERVICE_DEGRADED, session=session, limit=10)
+
+
+@pytest.mark.asyncio
+async def test_map_publication_and_direct_publication_helpers() -> None:
+    assert map_publication([], None, None).publication_state == "unavailable"
+    assert map_publication(["unknown-status"], 3, None).publication_state == "unavailable"
+    assert map_publication(["delivered"], None, 10).source_watermark == "not_provided"
+    empty = await publication_for_requests(session_for(), ORG, [], datetime.now(UTC))
+    assert empty == {}
+    failed = AsyncMock()
+    failed.execute.side_effect = SQLAlchemyError("outbox")
+    await assert_api_error(
+        publication_for_requests(failed, ORG, ["req-a"], datetime.now(UTC)),
+        SERVICE_DEGRADED,
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_invalid_status_and_naive_datetimes() -> None:
+    await assert_list_error(
+        VALIDATION_ERROR,
+        settings=cursor_settings(),
+        status="weird",
+        limit=1,
+    )
+    naive = END.replace(tzinfo=None)
+    await assert_list_error(
+        VALIDATION_ERROR,
+        settings=cursor_settings(),
+        started_after=naive,
+        started_before=END,
+        limit=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_matched_count_failure_returns_null_and_alias_works() -> None:
+    session = session_for(row(), outbox=[outbox_row()])
+    original = session.execute
+
+    async def _execute(query, params=None):
+        sql = str(query).lower()
+        if "count(" in sql.replace(" ", ""):
+            raise SQLAlchemyError("count failed")
+        return await original(query, params)
+
+    session.execute = AsyncMock(side_effect=_execute)
+    result = await list_call(session, cursor_settings(), auth(), limit=10)
+    assert result.matched_count is None
+    aliased = await get_operator_trace(session_for(row()), auth(), trace_id="trace-a")
+    assert aliased.returned_count == 1
+
+
+@pytest.mark.asyncio
+async def test_run_detail_with_candidates_without_interim_note() -> None:
+    session = session_for(
+        row(),
+        candidates=[
+            {
+                "memory_id": uuid4(),
+                "retrieval_rank": 1,
+                "final_rank": None,
+                "delta_rank": None,
+                "category": None,
+                "token_estimate": None,
+                "exclusion": "kept",
+                "score_schema": "stable_v1",
+                "composite_score": None,
+            }
+        ],
+    )
+    detail = await get_operator_trace_run(session, auth(), run_id=RUN)
+    assert detail.score_schema_note is None
+    assert "score_explanation" not in detail.unavailable_sections
+    assert "candidates" not in detail.unavailable_sections
+    assert len(detail.candidates) == 1
+    assert detail.candidates[0].final_rank is None
 
 
 @pytest.mark.asyncio
