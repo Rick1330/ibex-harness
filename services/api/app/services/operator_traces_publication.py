@@ -83,16 +83,26 @@ def map_publication(statuses: list[str], max_seq: int | None, lag_ms: int | None
 
 
 def _lag_ms(entries: list[Any], observed_at: datetime) -> int | None:
-    delivered = [entry for entry in entries if entry["delivered_at"] is not None]
-    if not delivered:
+    lags: list[float] = []
+    for entry in entries:
+        created = entry["created_at"]
+        if created is None:
+            continue
+        end = entry["delivered_at"] or observed_at
+        lags.append((end - created).total_seconds() * 1000)
+    if not lags:
         return None
-    latest = max(delivered, key=lambda entry: entry["delivered_at"])
-    return max(0, round((observed_at - latest["delivered_at"]).total_seconds() * 1000))
+    return max(0, round(max(lags)))
 
 
 def _meta_for_entries(entries: list[Any], observed_at: datetime) -> PublicationMeta:
     statuses = [str(entry["delivery_status"]) for entry in entries]
-    max_seq = max((int(entry["aggregate_seq"]) for entry in entries), default=None)
+    delivered_seqs = (
+        int(entry["aggregate_seq"])
+        for entry in entries
+        if str(entry["delivery_status"]) == "delivered"
+    )
+    max_seq = max(delivered_seqs, default=None)
     return map_publication(statuses, max_seq, _lag_ms(entries, observed_at))
 
 

@@ -136,8 +136,13 @@ def session_for(*rows: dict[str, object], fixtures: SessionFixtures | None = Non
     async def _execute(query, params=None):
         return _route_sql(str(query).lower(), run_rows=run_rows, matched=matched, table_rows=table_rows)
 
+    nested = MagicMock()
+    nested.__aenter__ = AsyncMock(return_value=None)
+    nested.__aexit__ = AsyncMock(return_value=None)
+
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=_execute)
+    session.begin_nested = MagicMock(return_value=nested)
     return session
 
 
@@ -246,6 +251,7 @@ async def test_list_maps_outbox_publication_states(status: str, expected: str) -
         limit=10,
     )
     assert result.items[0].evidence.publication_state == expected
+    assert result.items[0].evidence.source_watermark == "not_provided"
 
 
 @pytest.mark.asyncio
@@ -266,6 +272,28 @@ async def test_list_maps_partial_publication_when_delivered_and_pending_mix() ->
     )
     assert result.items[0].evidence.publication_state == "partial"
     assert result.items[0].evidence.source_watermark == "outbox:2"
+    assert result.items[0].evidence.ingestion_lag_ms is not None
+    assert result.items[0].evidence.ingestion_lag_ms >= 120_000
+
+
+@pytest.mark.asyncio
+async def test_watermark_uses_delivered_seq_only_when_pending_is_higher() -> None:
+    result = await list_call(
+        session_for(
+            row(),
+            fixtures=SessionFixtures(
+                outbox=[
+                    outbox_row(status="delivered", seq=1),
+                    outbox_row(status="pending", seq=2),
+                ],
+            ),
+        ),
+        cursor_settings(),
+        auth(),
+        limit=10,
+    )
+    assert result.items[0].evidence.publication_state == "partial"
+    assert result.items[0].evidence.source_watermark == "outbox:1"
     assert result.items[0].evidence.ingestion_lag_ms is not None
 
 

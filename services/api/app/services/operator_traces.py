@@ -376,8 +376,9 @@ async def _fetch_matched_count(session: AsyncSession, page: _ResolvedListPage) -
         **_filter_params(page.query),
     }
     try:
-        result = await session.execute(_count_query(page.query), params)
-        return int(result.scalar_one())
+        async with session.begin_nested():
+            result = await session.execute(_count_query(page.query), params)
+            return int(result.scalar_one())
     except SQLAlchemyError:
         return None
 

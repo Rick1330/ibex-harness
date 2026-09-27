@@ -1,7 +1,7 @@
 {
   "manifest_version": "p6-bootstrap.v1",
-  "run_id": "d2-local-a4ce6ff61455",
-  "commit_sha": "a4ce6ff614552cb66d71b275ef360f5eb3b48d99",
+  "run_id": "d2-local-1d02cc6d98d7",
+  "commit_sha": "1d02cc6d98d7193372861838815efc1d8c68dd2c",
   "environment": "local",
   "topology": {
     "ui_origin": "https://127.0.0.1:3282",
@@ -30,6 +30,34 @@
       "uri": "file://infra/assurance/p6/manifest.schema.json",
       "evidence_state": "contract-tested",
       "producer": "check-p6-bootstrap"
+    },
+    {
+      "name": "d2-api-unit-operator-traces-report",
+      "sha256": "9828c6b815a43bbeb85b02c14b28a94278bdd613c83623212b3f4e1d5b60910b",
+      "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-api-unit-operator-traces-log",
+      "sha256": "bef15fadaddc7cc6a7c76273238f8e09fa24a19edd07c09b0725c1ed9e761a84",
+      "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.log",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-console-contract-and-query-codec-report",
+      "sha256": "18fe62dc253f752930c99244320280d2872558d64c4d763ca57c1f049f8dd337",
+      "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-console-contract-and-query-codec-log",
+      "sha256": "d66b380284e6c1ada35cd3383d66a9ad83559f7bcc43974972ada4be5001d114",
+      "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.log",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
     }
   ],
   "versions": {
@@ -45,7 +73,9 @@
       "result": "passed",
       "evidence_state": "contract-tested",
       "artifact_uris": [
-        "file://infra/assurance/p6/d2-residual-register.json"
+        "file://infra/assurance/p6/d2-residual-register.json",
+        "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
+        "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.log"
       ]
     },
     {
@@ -56,7 +86,9 @@
       "evidence_state": "contract-tested",
       "artifact_uris": [
         "file://infra/assurance/p6/d2-residual-register.json",
-        "file://web/engineering/pr3-evidence/d2-performance-notes.md"
+        "file://web/engineering/pr3-evidence/d2-performance-notes.md",
+        "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
+        "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.log"
       ]
     },
     {

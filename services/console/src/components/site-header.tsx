@@ -221,12 +221,12 @@ function HeaderBreadcrumb({
   meta: { section: string; page: string; search: string }
 }>) {
   return (
-    <div className="flex flex-1 items-center gap-2">
-      <SidebarTrigger className="size-8 md:hidden" />
-      <Breadcrumb className="hidden md:block">
+    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+      <SidebarTrigger className="size-8 shrink-0 md:hidden" />
+      <Breadcrumb className="hidden min-w-0 md:block">
         <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink href="/dashboard">
+          <BreadcrumbItem className="min-w-0">
+            <BreadcrumbLink href="/dashboard" className="truncate">
               {orgBreadcrumbLabel(liveMode, operatorContext)}
             </BreadcrumbLink>
           </BreadcrumbItem>
@@ -235,12 +235,12 @@ function HeaderBreadcrumb({
             <BreadcrumbLink href="/dashboard">{meta.section}</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
-          <BreadcrumbItem>
+          <BreadcrumbItem className="min-w-0">
             <BreadcrumbPage>{meta.page}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
-      <span className="text-sm font-medium md:hidden">{meta.page}</span>
+      <span className="truncate text-sm font-medium md:hidden">{meta.page}</span>
     </div>
   )
 }
