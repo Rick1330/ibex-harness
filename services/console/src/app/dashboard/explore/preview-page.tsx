@@ -120,7 +120,9 @@ function ExploreWorkbench() {
     const t = window.setTimeout(() => {
       if (!locked.current) setView("success")
     }, 700)
-    return () => window.clearTimeout(t)
+    return () => {
+      window.clearTimeout(t)
+    }
   }, [])
 
   const syncUrl = React.useCallback(
@@ -194,7 +196,9 @@ function ExploreWorkbench() {
               onClick={() => {
                 locked.current = true
                 setView("loading")
-                window.setTimeout(() => setView("success"), 800)
+                window.setTimeout(() => {
+                  setView("success")
+                }, 800)
               }}
             >
               Retry
@@ -215,7 +219,9 @@ function ExploreWorkbench() {
                       size="sm"
                       variant={view === v ? "default" : "ghost"}
                       className="h-7 px-2 text-[12px] capitalize"
-                      onClick={() => preview(v)}
+                      onClick={() => {
+                        preview(v)
+                      }}
                     >
                       {v}
                     </Button>
@@ -228,14 +234,18 @@ function ExploreWorkbench() {
           <div className="min-w-0">
             <ExploreQueryBar
               chips={chips}
-              onChipsChange={(next) => syncUrl({ chips: next })}
+              onChipsChange={(next) => {
+                syncUrl({ chips: next })
+              }}
               onSaveView={saveView}
             />
           </div>
 
           <Tabs
             value={tab}
-            onValueChange={(v) => syncUrl({ tab: v as ExploreTab })}
+            onValueChange={(v) => {
+              syncUrl({ tab: v as ExploreTab })
+            }}
           >
             <TabsList variant="line">
               <TabsTrigger value="traces" className="text-[13px]">
@@ -389,7 +399,9 @@ function FailuresTable() {
             <TableRow
               key={f.trace_id}
               className={cn(listTable.row, "cursor-pointer")}
-              onClick={() => router.push(`/dashboard/explore/t/${f.trace_id}`)}
+              onClick={() => {
+                router.push(`/dashboard/explore/t/${f.trace_id}`)
+              }}
             >
               <TableCell className={cn(listTable.cell, "max-w-[280px]")}>
                 <div className={listTable.primary}>{f.trace_id}</div>

@@ -11,7 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from apierror_py import NOT_FOUND, SERVICE_DEGRADED, VALIDATION_ERROR
-from sqlalchemy import text
+from sqlalchemy import bindparam, column, func, select, table, tuple_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,19 +31,66 @@ _CURSOR_TTL = timedelta(minutes=15)
 _TRACE_NOT_FOUND = "Trace not found"
 _TRACE_UNAVAILABLE = "Trace data is temporarily unavailable"
 
-_BASE_SELECT = """
-    SELECT id AS run_id, trace_id, request_id, agent_id, session_id, checkpoint_id,
-           status, error_code, started_at, ended_at, completeness, sample_decision
-    FROM ibex_core.evidence_runs
-    WHERE org_id = :org_id
-      AND started_at >= :query_start
-      AND started_at <= :query_end
-"""
-_LIST_QUERY = text(_BASE_SELECT + " ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
-_LIST_STATUS_QUERY = text(_BASE_SELECT + " AND status = :status ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
-_LIST_CURSOR_QUERY = text(_BASE_SELECT + " AND (started_at, trace_id) < (:cursor_started, :cursor_trace) ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
-_LIST_STATUS_CURSOR_QUERY = text(_BASE_SELECT + " AND status = :status AND (started_at, trace_id) < (:cursor_started, :cursor_trace) ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
-_DETAIL_QUERY = text(_BASE_SELECT + " AND trace_id = :trace_id ORDER BY started_at DESC LIMIT 1")
+_EVIDENCE_RUNS = table(
+    "ibex_core.evidence_runs",
+    column("id"),
+    column("trace_id"),
+    column("request_id"),
+    column("agent_id"),
+    column("session_id"),
+    column("checkpoint_id"),
+    column("status"),
+    column("error_code"),
+    column("started_at"),
+    column("ended_at"),
+    column("completeness"),
+    column("sample_decision"),
+    column("org_id"),
+)
+
+
+def _trace_columns() -> tuple[Any, ...]:
+    return (
+        _EVIDENCE_RUNS.c.id.label("run_id"),
+        _EVIDENCE_RUNS.c.trace_id,
+        _EVIDENCE_RUNS.c.request_id,
+        _EVIDENCE_RUNS.c.agent_id,
+        _EVIDENCE_RUNS.c.session_id,
+        _EVIDENCE_RUNS.c.checkpoint_id,
+        _EVIDENCE_RUNS.c.status,
+        _EVIDENCE_RUNS.c.error_code,
+        _EVIDENCE_RUNS.c.started_at,
+        _EVIDENCE_RUNS.c.ended_at,
+        _EVIDENCE_RUNS.c.completeness,
+        _EVIDENCE_RUNS.c.sample_decision,
+    )
+
+
+def _list_query(*, status: bool, cursor: bool):
+    query = select(*_trace_columns()).where(
+        _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
+        _EVIDENCE_RUNS.c.started_at >= bindparam("query_start"),
+        _EVIDENCE_RUNS.c.started_at <= bindparam("query_end"),
+    )
+    if status:
+        query = query.where(_EVIDENCE_RUNS.c.status == bindparam("status"))
+    if cursor:
+        query = query.where(
+            tuple_(_EVIDENCE_RUNS.c.started_at, _EVIDENCE_RUNS.c.trace_id)
+            < tuple_(bindparam("cursor_started"), bindparam("cursor_trace"))
+        )
+    return query.order_by(
+        _EVIDENCE_RUNS.c.started_at.desc(), _EVIDENCE_RUNS.c.trace_id.desc()
+    ).limit(bindparam("limit"))
+
+
+def _detail_query():
+    return select(*_trace_columns()).where(
+        _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
+        _EVIDENCE_RUNS.c.started_at >= bindparam("query_start"),
+        _EVIDENCE_RUNS.c.started_at <= bindparam("query_end"),
+        _EVIDENCE_RUNS.c.trace_id == bindparam("trace_id"),
+    ).order_by(_EVIDENCE_RUNS.c.started_at.desc()).limit(1)
 
 
 def _cursor_key(settings: Settings) -> bytes:
@@ -215,16 +262,9 @@ async def list_operator_traces(
         params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
     if status:
         params["status"] = status
-    if status and has_cursor:
-        query = _LIST_STATUS_CURSOR_QUERY
-    elif has_cursor:
-        query = _LIST_CURSOR_QUERY
-    elif status:
-        query = _LIST_STATUS_QUERY
-    else:
-        query = _LIST_QUERY
+    query = _list_query(status=bool(status), cursor=has_cursor)
     try:
-        await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
+        await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
         result = await session.execute(query, params)
         rows = list(result.mappings().all())
     except SQLAlchemyError as exc:
@@ -252,10 +292,18 @@ async def get_operator_trace(
 ) -> OperatorTraceDetailResponse:
     if not trace_id or len(trace_id) > 256:
         raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
-    query = _DETAIL_QUERY
+    query = _detail_query()
     try:
-        await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
-        result = await session.execute(query, {"org_id": str(authorization.org_id), "query_start": datetime.min.replace(tzinfo=UTC), "query_end": datetime.max.replace(tzinfo=UTC), "trace_id": trace_id})
+        await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
+        result = await session.execute(
+            query,
+            {
+                "org_id": str(authorization.org_id),
+                "trace_id": trace_id,
+                "query_start": datetime.min.replace(tzinfo=UTC),
+                "query_end": datetime.max.replace(tzinfo=UTC),
+            },
+        )
         row = result.mappings().first()
     except SQLAlchemyError as exc:
         raise ApiError(code=SERVICE_DEGRADED, message=_TRACE_UNAVAILABLE) from exc

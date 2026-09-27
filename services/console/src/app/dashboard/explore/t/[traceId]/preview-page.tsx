@@ -11,9 +11,7 @@ import { TRACE_BY_ID } from "@/lib/explore/fixtures"
 export default function PreviewTraceInspectorPage() {
   const params = useParams<{ traceId: string }>()
   const traceId = params.traceId
-  const trace = Object.prototype.hasOwnProperty.call(TRACE_BY_ID, traceId)
-    ? TRACE_BY_ID[traceId]
-    : undefined
+  const trace = Object.entries(TRACE_BY_ID).find(([id]) => id === traceId)?.[1]
 
   return (
     <DashboardShell>
