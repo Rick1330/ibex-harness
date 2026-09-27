@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -26,12 +27,24 @@ from app.schemas.operator_traces import (
     OperatorTraceListResponse,
     TraceEvidenceState,
 )
+from app.services.operator_traces_children import (
+    fetch_rows,
+    load_run_children,
+    unavailable_sections,
+)
+from app.services.operator_traces_publication import (
+    PublicationMeta,
+    publication_for_requests,
+    unavailable_publication,
+)
 
+_LOG = logging.getLogger("ibex.api.operator_traces")
 _MAX_PAGE_SIZE = 100
 _MAX_RANGE = timedelta(days=7)
 _CURSOR_TTL = timedelta(minutes=15)
 _TRACE_NOT_FOUND = "Trace not found"
 _TRACE_UNAVAILABLE = "Trace data is temporarily unavailable"
+_QUERY_SORT = "started_at.desc,trace_id.desc,run_id.desc"
 
 _EVIDENCE_RUNS = table(
     "evidence_runs",
@@ -41,14 +54,26 @@ _EVIDENCE_RUNS = table(
     column("agent_id"),
     column("session_id"),
     column("checkpoint_id"),
+    column("schema_version"),
     column("status"),
     column("error_code"),
+    column("capture_mode"),
     column("started_at"),
     column("ended_at"),
     column("completeness"),
     column("sample_decision"),
     column("org_id"),
     schema="ibex_core",
+)
+
+_EQUAL_FILTERS: tuple[tuple[str, Any, str], ...] = (
+    ("trace_id", _EVIDENCE_RUNS.c.trace_id, "filter_trace_id"),
+    ("request_id", _EVIDENCE_RUNS.c.request_id, "filter_request_id"),
+    ("run_id", _EVIDENCE_RUNS.c.id, "filter_run_id"),
+    ("session_id", _EVIDENCE_RUNS.c.session_id, "filter_session_id"),
+    ("error_code", _EVIDENCE_RUNS.c.error_code, "filter_error_code"),
+    ("completeness", _EVIDENCE_RUNS.c.completeness, "filter_completeness"),
+    ("capture_mode", _EVIDENCE_RUNS.c.capture_mode, "filter_capture_mode"),
 )
 
 
@@ -58,11 +83,9 @@ class _ResolvedListPage:
 
     settings: Settings
     authorization: OperatorSessionAuthorization
-    status: str | None
+    query: OperatorTraceListQuery
     query_start: datetime
     query_end: datetime
-    limit: int
-    cursor: str | None
 
 
 def _trace_columns() -> tuple[Any, ...]:
@@ -73,8 +96,10 @@ def _trace_columns() -> tuple[Any, ...]:
         _EVIDENCE_RUNS.c.agent_id,
         _EVIDENCE_RUNS.c.session_id,
         _EVIDENCE_RUNS.c.checkpoint_id,
+        _EVIDENCE_RUNS.c.schema_version,
         _EVIDENCE_RUNS.c.status,
         _EVIDENCE_RUNS.c.error_code,
+        _EVIDENCE_RUNS.c.capture_mode,
         _EVIDENCE_RUNS.c.started_at,
         _EVIDENCE_RUNS.c.ended_at,
         _EVIDENCE_RUNS.c.completeness,
@@ -83,7 +108,6 @@ def _trace_columns() -> tuple[Any, ...]:
 
 
 def _status_predicate(status: str):
-    # Public TraceStatus maps any persisted non-ok run to "error" in _item.
     if status == "ok":
         return _EVIDENCE_RUNS.c.status == "ok"
     if status == "error":
@@ -91,31 +115,91 @@ def _status_predicate(status: str):
     raise ApiError(code=VALIDATION_ERROR, message="Invalid trace status filter")
 
 
-def _list_query(*, status: str | None, cursor: bool):
-    query = select(*_trace_columns()).where(
+def _normalized_query_fingerprint(query: OperatorTraceListQuery, query_start: datetime, query_end: datetime) -> str:
+    parts = [
+        f"status={query.status or ''}",
+        f"start={_normalize_datetime(query_start).isoformat()}",
+        f"end={_normalize_datetime(query_end).isoformat()}",
+        f"trace_id={query.trace_id or ''}",
+        f"request_id={query.request_id or ''}",
+        f"run_id={query.run_id or ''}",
+        f"session_id={query.session_id or ''}",
+        f"error_code={query.error_code or ''}",
+        f"completeness={query.completeness or ''}",
+        f"capture_mode={query.capture_mode or ''}",
+        f"sort={_QUERY_SORT}",
+    ]
+    return "&".join(parts)
+
+
+def _apply_list_filters(sql: Any, query: OperatorTraceListQuery) -> Any:
+    if query.status is not None:
+        sql = sql.where(_status_predicate(query.status))
+    for attr, col, param in _EQUAL_FILTERS:
+        if getattr(query, attr) is not None:
+            sql = sql.where(col == bindparam(param))
+    return sql
+
+
+def _filter_params(query: OperatorTraceListQuery) -> dict[str, object]:
+    params: dict[str, object] = {}
+    for attr, _col, param in _EQUAL_FILTERS:
+        value = getattr(query, attr)
+        if value is None:
+            continue
+        params[param] = str(value) if attr in {"run_id", "session_id"} else value
+    return params
+
+
+def _list_query(query: OperatorTraceListQuery, *, cursor: bool):
+    sql = select(*_trace_columns()).where(
         _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
         _EVIDENCE_RUNS.c.started_at >= bindparam("query_start"),
         _EVIDENCE_RUNS.c.started_at <= bindparam("query_end"),
     )
-    if status is not None:
-        query = query.where(_status_predicate(status))
+    sql = _apply_list_filters(sql, query)
     if cursor:
-        query = query.where(
-            tuple_(_EVIDENCE_RUNS.c.started_at, _EVIDENCE_RUNS.c.trace_id)
-            < tuple_(bindparam("cursor_started"), bindparam("cursor_trace"))
+        sql = sql.where(
+            tuple_(_EVIDENCE_RUNS.c.started_at, _EVIDENCE_RUNS.c.trace_id, _EVIDENCE_RUNS.c.id)
+            < tuple_(
+                bindparam("cursor_started"),
+                bindparam("cursor_trace"),
+                bindparam("cursor_run"),
+            )
         )
-    return query.order_by(
-        _EVIDENCE_RUNS.c.started_at.desc(), _EVIDENCE_RUNS.c.trace_id.desc()
+    return sql.order_by(
+        _EVIDENCE_RUNS.c.started_at.desc(),
+        _EVIDENCE_RUNS.c.trace_id.desc(),
+        _EVIDENCE_RUNS.c.id.desc(),
     ).limit(bindparam("limit"))
 
 
-def _detail_query():
-    return select(*_trace_columns()).where(
+def _count_query(query: OperatorTraceListQuery):
+    sql = select(func.count()).select_from(_EVIDENCE_RUNS).where(
         _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
         _EVIDENCE_RUNS.c.started_at >= bindparam("query_start"),
         _EVIDENCE_RUNS.c.started_at <= bindparam("query_end"),
-        _EVIDENCE_RUNS.c.trace_id == bindparam("trace_id"),
-    ).order_by(_EVIDENCE_RUNS.c.started_at.desc()).limit(1)
+    )
+    return _apply_list_filters(sql, query)
+
+
+def _run_detail_query():
+    return select(*_trace_columns()).where(
+        _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
+        _EVIDENCE_RUNS.c.id == bindparam("run_id"),
+    ).limit(1)
+
+
+def _trace_runs_query():
+    return (
+        select(*_trace_columns())
+        .where(
+            _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
+            _EVIDENCE_RUNS.c.trace_id == bindparam("trace_id"),
+        )
+        .order_by(_EVIDENCE_RUNS.c.started_at.desc(), _EVIDENCE_RUNS.c.id.desc())
+        .limit(bindparam("limit"))
+    )
 
 
 def _cursor_key(settings: Settings) -> bytes:
@@ -131,21 +215,16 @@ def _normalize_datetime(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _query_fingerprint(status: str | None, query_start: datetime, query_end: datetime) -> str:
-    start = _normalize_datetime(query_start).isoformat()
-    end = _normalize_datetime(query_end).isoformat()
-    return f"status={status or ''}&start={start}&end={end}&sort=started_at.desc,trace_id.desc"
-
-
 def _encode_cursor(page: _ResolvedListPage, row: Any) -> str:
     expires_at = datetime.now(UTC) + _CURSOR_TTL
     payload = {
         "org_id": str(page.authorization.org_id),
-        "query": _query_fingerprint(page.status, page.query_start, page.query_end),
+        "query": _normalized_query_fingerprint(page.query, page.query_start, page.query_end),
         "query_start": _normalize_datetime(page.query_start).isoformat(),
         "query_end": _normalize_datetime(page.query_end).isoformat(),
         "started_at": row["started_at"].isoformat(),
         "trace_id": row["trace_id"],
+        "run_id": str(row["run_id"]),
         "expires_at": expires_at.isoformat(),
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
@@ -171,13 +250,17 @@ def _decode_signed_cursor_payload(
     return payload
 
 
-def _decode_cursor(page: _ResolvedListPage, cursor: str) -> tuple[datetime, str]:
+def _decode_cursor(page: _ResolvedListPage, cursor: str) -> tuple[datetime, str, str]:
     try:
         payload = _decode_signed_cursor_payload(page.settings, page.authorization, cursor)
-        expected = _query_fingerprint(page.status, page.query_start, page.query_end)
+        expected = _normalized_query_fingerprint(page.query, page.query_start, page.query_end)
         if payload["query"] != expected:
             raise ValueError("query")
-        return datetime.fromisoformat(payload["started_at"]), str(payload["trace_id"])
+        return (
+            datetime.fromisoformat(payload["started_at"]),
+            str(payload["trace_id"]),
+            str(payload["run_id"]),
+        )
     except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
 
@@ -204,20 +287,25 @@ def _duration_ms(started_at: datetime, ended_at: datetime | None) -> int | None:
     return max(0, round((ended_at - started_at).total_seconds() * 1000))
 
 
-def _evidence(row: Any, observed_at: datetime) -> TraceEvidenceState:
+def _evidence(row: Any, observed_at: datetime, publication: PublicationMeta) -> TraceEvidenceState:
     completeness = str(row["completeness"])
     freshness = "stale" if completeness == "late" else "unknown"
     return TraceEvidenceState(
+        schema_version=str(row["schema_version"]),
+        capture_mode=str(row["capture_mode"]),
         completeness=completeness,
         sample_decision=str(row["sample_decision"]),
         freshness=freshness,
         retention="unknown",
         source="postgres.evidence_runs",
+        source_watermark=publication.source_watermark,
+        publication_state=publication.publication_state,  # type: ignore[arg-type]
+        ingestion_lag_ms=publication.ingestion_lag_ms,
         observed_at=observed_at,
     )
 
 
-def _item(row: Any, observed_at: datetime) -> OperatorTraceListItem:
+def _item(row: Any, observed_at: datetime, publication: PublicationMeta) -> OperatorTraceListItem:
     return OperatorTraceListItem(
         trace_id=str(row["trace_id"]),
         run_id=UUID(str(row["run_id"])),
@@ -230,29 +318,17 @@ def _item(row: Any, observed_at: datetime) -> OperatorTraceListItem:
         started_at=row["started_at"],
         ended_at=row["ended_at"],
         duration_ms=_duration_ms(row["started_at"], row["ended_at"]),
-        evidence=_evidence(row, observed_at),
+        evidence=_evidence(row, observed_at, publication),
     )
 
 
-def _validate_range_timezone(*values: datetime) -> None:
-    if any(value.tzinfo is None for value in values):
+def _validate_range(query_start: datetime, query_end: datetime) -> None:
+    if any(value.tzinfo is None for value in (query_start, query_end)):
         raise ApiError(code=VALIDATION_ERROR, message="Invalid trace time range")
-
-
-def _validate_range_order(query_start: datetime, query_end: datetime) -> None:
     if query_end <= query_start:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid trace time range")
-
-
-def _validate_range_size(query_start: datetime, query_end: datetime) -> None:
     if query_end - query_start > _MAX_RANGE:
         raise ApiError(code=VALIDATION_ERROR, message="Trace time range exceeds maximum")
-
-
-def _validate_range(query_start: datetime, query_end: datetime) -> None:
-    _validate_range_timezone(query_start, query_end)
-    _validate_range_order(query_start, query_end)
-    _validate_range_size(query_start, query_end)
 
 
 def _resolve_query_bounds(
@@ -279,40 +355,51 @@ def _prepare_list_query(page: _ResolvedListPage) -> tuple[Any, dict[str, object]
         "org_id": str(page.authorization.org_id),
         "query_start": page.query_start,
         "query_end": page.query_end,
-        "limit": page.limit + 1,
+        "limit": page.query.limit + 1,
+        **_filter_params(page.query),
     }
-    if page.cursor:
-        cursor_started, cursor_trace = _decode_cursor(page, page.cursor)
-        params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
-    return _list_query(status=page.status, cursor=bool(page.cursor)), params
+    if page.query.cursor:
+        cursor_started, cursor_trace, cursor_run = _decode_cursor(page, page.query.cursor)
+        params.update(
+            cursor_started=cursor_started,
+            cursor_trace=cursor_trace,
+            cursor_run=cursor_run,
+        )
+    return _list_query(page.query, cursor=bool(page.query.cursor)), params
 
 
-async def _fetch_list_rows(
-    session: AsyncSession,
-    query: Any,
-    params: dict[str, object],
-) -> list[Any]:
+async def _fetch_matched_count(session: AsyncSession, page: _ResolvedListPage) -> int | None:
+    params = {
+        "org_id": str(page.authorization.org_id),
+        "query_start": page.query_start,
+        "query_end": page.query_end,
+        **_filter_params(page.query),
+    }
     try:
-        await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
-        result = await session.execute(query, params)
-        return list(result.mappings().all())
-    except SQLAlchemyError as exc:
-        raise ApiError(code=SERVICE_DEGRADED, message=_TRACE_UNAVAILABLE) from exc
+        async with session.begin_nested():
+            result = await session.execute(_count_query(page.query), params)
+            return int(result.scalar_one())
+    except SQLAlchemyError:
+        return None
 
 
-def _list_response(rows: list[Any], page: _ResolvedListPage) -> OperatorTraceListResponse:
-    observed_at = datetime.now(UTC)
-    truncated = len(rows) > page.limit
-    page_rows = rows[: page.limit]
-    next_cursor = _encode_cursor(page, page_rows[-1]) if truncated else None
-    return OperatorTraceListResponse(
-        items=[_item(row, observed_at) for row in page_rows],
-        next_cursor=next_cursor,
-        truncated=truncated,
-        observed_at=observed_at,
-        query_start=page.query_start,
-        query_end=page.query_end,
-        limit=page.limit,
+def _audit_read(
+    authorization: OperatorSessionAuthorization,
+    *,
+    purpose: str,
+    object_id: str,
+    outcome: str,
+) -> None:
+    _LOG.info(
+        "operator_trace_read",
+        extra={
+            "org_id": str(authorization.org_id),
+            "subject": authorization.subject,
+            "session_id": authorization.session_id,
+            "purpose": purpose,
+            "object_id": object_id,
+            "outcome": outcome,
+        },
     )
 
 
@@ -327,12 +414,30 @@ def _resolved_list_page(
     return _ResolvedListPage(
         settings=settings,
         authorization=authorization,
-        status=query.status,
+        query=query,
         query_start=query_start,
         query_end=query_end,
-        limit=query.limit,
-        cursor=query.cursor,
     )
+
+
+async def _items_for_rows(
+    session: AsyncSession,
+    authorization: OperatorSessionAuthorization,
+    rows: list[Any],
+    observed_at: datetime,
+) -> list[OperatorTraceListItem]:
+    request_ids = [str(row["request_id"]) for row in rows]
+    publications = await publication_for_requests(
+        session, authorization.org_id, request_ids, observed_at
+    )
+    return [
+        _item(
+            row,
+            observed_at,
+            publications.get(str(row["request_id"]), unavailable_publication),
+        )
+        for row in rows
+    ]
 
 
 async def list_operator_traces(
@@ -343,37 +448,104 @@ async def list_operator_traces(
 ) -> OperatorTraceListResponse:
     page = _resolved_list_page(settings, authorization, query)
     sql, params = _prepare_list_query(page)
-    rows = await _fetch_list_rows(session, sql, params)
-    return _list_response(rows, page)
+    rows = await fetch_rows(session, sql, params)
+    matched_count = await _fetch_matched_count(session, page)
+    observed_at = datetime.now(UTC)
+    truncated = len(rows) > page.query.limit
+    page_rows = rows[: page.query.limit]
+    items = await _items_for_rows(session, authorization, page_rows, observed_at)
+    next_cursor = _encode_cursor(page, page_rows[-1]) if truncated else None
+    _audit_read(authorization, purpose="list", object_id="traces", outcome="ok")
+    return OperatorTraceListResponse(
+        items=items,
+        next_cursor=next_cursor,
+        truncated=truncated,
+        matched_count=matched_count,
+        returned_count=len(items),
+        observed_at=observed_at,
+        query_start=page.query_start,
+        query_end=page.query_end,
+        limit=page.query.limit,
+    )
 
 
+def _validate_trace_runs_args(trace_id: str, limit: int) -> None:
+    if not trace_id or len(trace_id) > 256:
+        raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
+    if limit < 1 or limit > _MAX_PAGE_SIZE:
+        raise ApiError(code=VALIDATION_ERROR, message="Trace limit must be between 1 and 100")
+
+
+async def list_operator_trace_runs(
+    session: AsyncSession,
+    authorization: OperatorSessionAuthorization,
+    *,
+    trace_id: str,
+    limit: int = 100,
+) -> OperatorTraceListResponse:
+    _validate_trace_runs_args(trace_id, limit)
+    observed_at = datetime.now(UTC)
+    rows = await fetch_rows(
+        session,
+        _trace_runs_query(),
+        {"org_id": str(authorization.org_id), "trace_id": trace_id, "limit": limit + 1},
+    )
+    if not rows:
+        _audit_read(authorization, purpose="trace_runs", object_id=trace_id, outcome="not_found")
+        raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
+    truncated = len(rows) > limit
+    page_rows = rows[:limit]
+    items = await _items_for_rows(session, authorization, page_rows, observed_at)
+    _audit_read(authorization, purpose="trace_runs", object_id=trace_id, outcome="ok")
+    return OperatorTraceListResponse(
+        items=items,
+        next_cursor=None,
+        truncated=truncated,
+        matched_count=len(items) if not truncated else None,
+        returned_count=len(items),
+        observed_at=observed_at,
+        query_start=datetime.min.replace(tzinfo=UTC),
+        query_end=datetime.max.replace(tzinfo=UTC),
+        limit=limit,
+    )
+
+
+async def get_operator_trace_run(
+    session: AsyncSession,
+    authorization: OperatorSessionAuthorization,
+    *,
+    run_id: UUID,
+) -> OperatorTraceDetailResponse:
+    rows = await fetch_rows(
+        session,
+        _run_detail_query(),
+        {"org_id": str(authorization.org_id), "run_id": str(run_id)},
+    )
+    if not rows:
+        _audit_read(authorization, purpose="run_detail", object_id=str(run_id), outcome="not_found")
+        raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
+    observed_at = datetime.now(UTC)
+    item = (await _items_for_rows(session, authorization, rows, observed_at))[0]
+    children = await load_run_children(session, authorization.org_id, run_id)
+    spans, assembly, candidates, score_note, directive, tools = children
+    _audit_read(authorization, purpose="run_detail", object_id=str(run_id), outcome="ok")
+    return OperatorTraceDetailResponse(
+        **item.model_dump(),
+        unavailable_sections=tuple(unavailable_sections(children)),
+        spans=spans,
+        assembly=assembly,
+        candidates=candidates,
+        directive=directive,
+        tools=tools,
+        score_schema_note=score_note,
+    )
+
+
+# Back-compat alias used by older unit tests / imports until callers migrate.
 async def get_operator_trace(
     session: AsyncSession,
     authorization: OperatorSessionAuthorization,
     *,
     trace_id: str,
-) -> OperatorTraceDetailResponse:
-    if not trace_id or len(trace_id) > 256:
-        raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
-    sql = _detail_query()
-    try:
-        await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
-        result = await session.execute(
-            sql,
-            {
-                "org_id": str(authorization.org_id),
-                "trace_id": trace_id,
-                "query_start": datetime.min.replace(tzinfo=UTC),
-                "query_end": datetime.max.replace(tzinfo=UTC),
-            },
-        )
-        row = result.mappings().first()
-    except SQLAlchemyError as exc:
-        raise ApiError(code=SERVICE_DEGRADED, message=_TRACE_UNAVAILABLE) from exc
-    if row is None:
-        raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
-    item = _item(row, datetime.now(UTC))
-    return OperatorTraceDetailResponse(
-        **item.model_dump(),
-        unavailable_sections=("spans", "candidates", "score_explanation", "directives", "tools", "content"),
-    )
+) -> OperatorTraceListResponse:
+    return await list_operator_trace_runs(session, authorization, trace_id=trace_id)

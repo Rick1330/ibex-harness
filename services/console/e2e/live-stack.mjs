@@ -14,6 +14,7 @@ const consolePort = 3282
 const sessionCookie = "ibex_session=fixture-access-secret"
 const orgId = "bfc3f97b-7a61-498d-9faa-96f34fbd4f2f"
 const observedAt = "2026-09-26T17:00:00Z"
+const runId = "11111111-1111-4111-8111-111111111111"
 const requests = []
 let eventStreams = 0
 let closing = false
@@ -26,6 +27,206 @@ function assertUnderTempDir(candidate) {
     throw new Error(`TLS material path escaped temp dir: ${candidate}`)
   }
   return resolved
+}
+
+function writeJson(response, status, body, extraHeaders = {}) {
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    ...extraHeaders,
+  })
+  response.end(JSON.stringify(body))
+}
+
+function writeUnauthorized(response) {
+  writeJson(response, 401, { error: { code: "INVALID_SESSION", message: "Session required" } })
+}
+
+function handleTestRoute(url, request, response) {
+  if (url.pathname === "/__test/requests") {
+    writeJson(response, 200, requests)
+    return true
+  }
+  if (url.pathname === "/__test/reset" && request.method === "POST") {
+    requests.length = 0
+    response.writeHead(204, { "cache-control": "no-store" })
+    response.end()
+    return true
+  }
+  return false
+}
+
+function recordRequest(request, pathname) {
+  const cookie = request.headers.cookie ?? ""
+  const cookieNames = cookie
+    .split(";")
+    .map((part) => part.trim().split("=", 1)[0])
+    .filter(Boolean)
+  requests.push({
+    method: request.method,
+    path: pathname,
+    cookieNames,
+    lastEventId: request.headers["last-event-id"] ?? null,
+  })
+  return cookie
+}
+
+function handleEventStream(cookie, response) {
+  if (cookie !== sessionCookie) {
+    writeUnauthorized(response)
+    return
+  }
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  })
+  eventStreams += 1
+  response.write(
+    'retry: 1000\nid: 42\nevent: operator.evidence\ndata: {"payload":"EVENT_PAYLOAD_SHOULD_NOT_RENDER"}\n\n',
+  )
+  if (eventStreams === 1) {
+    const disconnect = setTimeout(() => response.end(), 1000)
+    response.on("close", () => clearTimeout(disconnect))
+    return
+  }
+  const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 15_000)
+  response.on("close", () => clearInterval(heartbeat))
+}
+
+function fixtureBodies() {
+  const traceItem = {
+    trace_id: "trace-live-1",
+    run_id: runId,
+    request_id: "request-live-1",
+    agent_id: null,
+    session_id: null,
+    checkpoint_id: null,
+    status: "ok",
+    error_code: null,
+    started_at: observedAt,
+    ended_at: observedAt,
+    duration_ms: 12,
+    evidence: {
+      schema_version: "evidence.v1",
+      capture_mode: "metadata",
+      completeness: "partial",
+      sample_decision: "kept",
+      freshness: "unknown",
+      retention: "unknown",
+      source: "postgres.evidence_runs",
+      source_watermark: "outbox:1",
+      publication_state: "published",
+      ingestion_lag_ms: 0,
+      policy_version: "operator.trace-read.v1",
+      observed_at: observedAt,
+    },
+  }
+  const traceList = {
+    schema_version: "operator.trace-list.v1",
+    query_grammar_version: "operator.trace-query.v1",
+    items: [traceItem],
+    next_cursor: null,
+    truncated: false,
+    matched_count: 1,
+    returned_count: 1,
+    observed_at: observedAt,
+    query_start: observedAt,
+    query_end: observedAt,
+    limit: 50,
+  }
+  const traceDetail = {
+    ...traceItem,
+    schema_version: "operator.trace-detail.v1",
+    unavailable_sections: [
+      "content",
+      "events",
+      "spans",
+      "assembly",
+      "candidates",
+      "score_explanation",
+      "directives",
+      "tools",
+    ],
+    spans: [],
+    assembly: null,
+    candidates: [],
+    directive: null,
+    tools: [],
+    score_schema_note: null,
+  }
+  return {
+    context: {
+      schema_version: "operator.context.v1",
+      org_id: orgId,
+      role: "admin",
+      org_name: "Live Workspace",
+      org_slug: "live-workspace",
+      org_status: "active",
+      observed_at: observedAt,
+    },
+    overview: {
+      schema_version: "operator.overview.v1",
+      org_id: orgId,
+      org_name: "Live Workspace",
+      org_slug: "live-workspace",
+      org_status: "active",
+      counts: { active_users: 7, agents: 3, active_agents: 2 },
+      observed_at: observedAt,
+      completeness: "complete",
+    },
+    health: {
+      dependency_health: { database: "ok", redis: "degraded" },
+      last_backup_at: null,
+      last_restore_drill: null,
+      retention_horizon_days: 30,
+      ingestion_lag_seconds: null,
+      dlq_depth: null,
+      degraded_mode: false,
+      outbox_max_aggregate_seq: null,
+      deploy_image_digest: null,
+      observed_at: observedAt,
+    },
+    traces: traceList,
+    traceDetail,
+  }
+}
+
+function resolveFixtureBody(pathname) {
+  const bodies = fixtureBodies()
+  if (pathname === "/v1/operator/context") return { status: 200, payload: bodies.context }
+  if (pathname === "/v1/operator/overview") return { status: 200, payload: bodies.overview }
+  if (pathname === "/v1/operator/platform/health") return { status: 200, payload: bodies.health }
+  if (pathname === "/v1/operator/traces") return { status: 200, payload: bodies.traces }
+  if (pathname === `/v1/operator/traces/runs/${runId}`) {
+    return { status: 200, payload: bodies.traceDetail }
+  }
+  if (pathname === "/v1/operator/traces/trace-live-1") return { status: 200, payload: bodies.traces }
+  if (pathname.startsWith("/v1/operator/traces/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Trace not found" } } }
+  }
+  return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Not found" } } }
+}
+
+function handleAuthenticatedJson(pathname, response) {
+  const resolved = resolveFixtureBody(pathname)
+  writeJson(response, resolved.status, resolved.payload)
+}
+
+function handleApiRequest(request, response) {
+  const url = new URL(request.url ?? "/", `https://127.0.0.1:${apiPort}`)
+  if (handleTestRoute(url, request, response)) return
+
+  const cookie = recordRequest(request, url.pathname)
+  if (url.pathname === "/v1/operator/events/stream") {
+    handleEventStream(cookie, response)
+    return
+  }
+  if (cookie !== sessionCookie) {
+    writeUnauthorized(response)
+    return
+  }
+  handleAuthenticatedJson(url.pathname, response)
 }
 
 const previousCwd = process.cwd()
@@ -46,109 +247,7 @@ try {
   process.chdir(previousCwd)
 }
 
-const api = createServer(
-  { key: tlsKey, cert: tlsCert },
-  (request, response) => {
-    const url = new URL(request.url ?? "/", `https://127.0.0.1:${apiPort}`)
-    if (url.pathname === "/__test/requests") {
-      response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" })
-      response.end(JSON.stringify(requests))
-      return
-    }
-    if (url.pathname === "/__test/reset" && request.method === "POST") {
-      requests.length = 0
-      response.writeHead(204, { "cache-control": "no-store" })
-      response.end()
-      return
-    }
-
-    const cookie = request.headers.cookie ?? ""
-    const cookieNames = cookie
-      .split(";")
-      .map((part) => part.trim().split("=", 1)[0])
-      .filter(Boolean)
-    requests.push({
-      method: request.method,
-      path: url.pathname,
-      cookieNames,
-      lastEventId: request.headers["last-event-id"] ?? null,
-    })
-
-    if (url.pathname === "/v1/operator/events/stream") {
-      if (cookie !== sessionCookie) {
-        response.writeHead(401, { "content-type": "application/json" })
-        response.end(JSON.stringify({ error: { code: "INVALID_SESSION", message: "Session required" } }))
-        return
-      }
-      response.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      })
-      eventStreams += 1
-      response.write(
-        'retry: 1000\nid: 42\nevent: operator.evidence\ndata: {"payload":"EVENT_PAYLOAD_SHOULD_NOT_RENDER"}\n\n',
-      )
-      if (eventStreams === 1) {
-        const disconnect = setTimeout(() => response.end(), 1000)
-        response.on("close", () => clearTimeout(disconnect))
-      } else {
-        const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 15_000)
-        response.on("close", () => clearInterval(heartbeat))
-      }
-      return
-    }
-
-    if (cookie !== sessionCookie) {
-      response.writeHead(401, { "content-type": "application/json", "cache-control": "no-store" })
-      response.end(JSON.stringify({ error: { code: "INVALID_SESSION", message: "Session required" } }))
-      return
-    }
-
-    const body = {
-      "/v1/operator/context": {
-        schema_version: "operator.context.v1",
-        org_id: orgId,
-        role: "admin",
-        org_name: "Live Workspace",
-        org_slug: "live-workspace",
-        org_status: "active",
-        observed_at: observedAt,
-      },
-      "/v1/operator/overview": {
-        schema_version: "operator.overview.v1",
-        org_id: orgId,
-        org_name: "Live Workspace",
-        org_slug: "live-workspace",
-        org_status: "active",
-        counts: { active_users: 7, agents: 3, active_agents: 2 },
-        observed_at: observedAt,
-        completeness: "complete",
-      },
-      "/v1/operator/platform/health": {
-        dependency_health: { database: "ok", redis: "degraded" },
-        last_backup_at: null,
-        last_restore_drill: null,
-        retention_horizon_days: 30,
-        ingestion_lag_seconds: null,
-        dlq_depth: null,
-        degraded_mode: false,
-        outbox_max_aggregate_seq: null,
-        deploy_image_digest: null,
-        observed_at: observedAt,
-      },
-    }[url.pathname]
-
-    if (!body) {
-      response.writeHead(404, { "content-type": "application/json" })
-      response.end(JSON.stringify({ error: { code: "NOT_FOUND", message: "Not found" } }))
-      return
-    }
-    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" })
-    response.end(JSON.stringify(body))
-  },
-)
-
+const api = createServer({ key: tlsKey, cert: tlsCert }, handleApiRequest)
 api.listen(apiPort, "127.0.0.1")
 
 consoleProcess = spawn(

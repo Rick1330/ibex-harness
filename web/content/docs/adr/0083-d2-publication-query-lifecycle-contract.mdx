@@ -1,0 +1,80 @@
+---
+title: "D2 publication, identity, query, and lifecycle contract"
+description: "Canonical run identity, outbox publication watermarks, P3 field tiers, P4 query grammar, and interim score boundary for 4.D.2."
+---
+
+# ADR-0083: D2 publication, identity, query, and lifecycle contract
+
+- **Status:** accepted for in-repo 4.D.2 contract assurance on PR #911
+- **Date:** 2026-09-27
+- **Issues:** [#910](https://github.com/Rick1330/ibex-harness/issues/910), [#911](https://github.com/Rick1330/ibex-harness/pull/911)
+- **Supersedes in part:** [ADR-0082](/docs/adr/0082-d2-metadata-trace-read-contract) watermark/`LIMIT 1` detail ambiguity
+
+## Decision
+
+### Canonical read source
+
+The initial D2 read plane is PostgreSQL `ibex_core.evidence_*` (runs, spans, events, assembly metrics, score candidates, directive snapshots, tool audits, outbox). ClickHouse and object storage are not authoritative for this slice.
+
+### Identity and cardinality
+
+- **`run_id`** (`evidence_runs.id`) is the immutable detail identity.
+- **`trace_id`** is a display/grouping field. Multiple requests under one trace are allowed (`UNIQUE (org_id, trace_id, request_id)`).
+- Canonical detail route: `GET /v1/operator/traces/runs/{run_id}`.
+- Trace-level route `GET /v1/operator/traces/{trace_id}` returns a **deterministic multi-run listing** (stable `(started_at DESC, run_id DESC)`), never a silent single arbitrary run.
+- No join by session, timestamp proximity, row position, or “current” directive.
+
+### Publication watermark and visibility
+
+- Outbox aggregate identity is **`request_id`** (`evidence_outbox.aggregate_id`).
+- Read DTOs expose:
+  - `publication_state`: `published` | `partial` | `pending` | `failed` | `poison` | `unavailable`
+  - `source_watermark`: persisted aggregate sequence string when known; otherwise honest `not_provided` / unavailable — never `observed_at` as a watermark
+  - `ingestion_lag_ms` when both `delivered_at`/`created_at` and observation time allow measurement
+  - `matched_count`, `returned_count`, `truncated` on list envelopes
+- Mapping from outbox `delivery_status`:
+  - all relevant rows `delivered` → `published`
+  - any `pending`/`in_flight` with some delivered → `partial`
+  - only pending/in_flight → `pending`
+  - `failed` → `failed`
+  - `poison` → `poison`
+  - no outbox row → `unavailable` (not empty-success “complete”)
+- Duplicate/delayed/reordered outbox records must not invent completeness; missing publication stays `partial`/`unavailable`.
+
+### P3 metadata / content field tiers
+
+| Tier | Examples | Gate |
+|---|---|---|
+| Metadata | identity, status, schema/capture/sample/completeness, publication, badges | `OPERATOR_METADATA_READ` |
+| Redacted content | future sanitized payloads | P3 redaction + audit + step-up |
+| Restricted content | raw prompts/completions/tool args | Disabled in D2 |
+
+Lifecycle fields (`retention`, legal hold, redaction version, deletion/tombstone) are authoritative only when a canonical source exists. Otherwise the DTO keeps `unknown` / unavailable and the residual register records the gap. Never derive retention from `completeness` or ClickHouse TTL.
+
+### P4 query grammar
+
+- Versioned allowlist (`operator.trace-query.v1`): status, time range, `trace_id` / `request_id` / `run_id` / `session_id`, error class, completeness, capture mode.
+- Filter-before-pagination; sort `(started_at DESC, trace_id DESC, run_id DESC)`; max range 7 days; max page 100; statement timeout; HMAC cursor binds tenant, normalized query, bounds, sort, expiry.
+- Sessions/failures Explore tabs remain deferred until backed by canonical result types.
+- Autocomplete/facets: only allowlisted bounded metadata facets with budgets; otherwise unavailable.
+
+### Score schema / `interim_v1`
+
+Persisted score rows may be read when present. `interim_v1` is labelled interim and must not render a five-term waterfall. Weights `0.40/0.25/0.20/0.10/0.05` stay deferred until writer, payload, API, and UI agree on one versioned formula.
+
+### C5 conditionality
+
+This D2 slice is **snapshot-only**. It makes no streaming claim; C5 soak is not a dependency for metadata/publication contract assurance.
+
+## Consequences
+
+- Console live Explore links by `run_id` for detail; trace pages list related runs.
+- P6/hosted AuthService topology remains residual until staging artifacts exist; local tests are `contract-tested` only.
+- Raw/replay/actions stay disabled with explicit unavailable reasons.
+
+## Evidence basis
+
+- `infra/migrations/postgres/000036_evidence_plane.up.sql` evidence tables + outbox.
+- `packages/evidenceoutbox/store.go` aggregate_id = request_id.
+- Residual register: `infra/assurance/p6/d2-residual-register.json`.
+- Milestone: `web/content/roadmap/phase-4-multi-provider/milestones/4.d.2-explore-provenance-trace-inspector.mdx`.

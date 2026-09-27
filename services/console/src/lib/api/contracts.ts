@@ -70,12 +70,23 @@ export const OperatorOverviewSchema = z
 
 const TraceEvidenceSchema = z
   .object({
+    schema_version: z.string().min(1).max(64),
+    capture_mode: z.string().min(1).max(32),
     completeness: z.enum(["complete", "partial", "sampled", "late", "redacted", "expired", "deleted", "simulated"]),
     sample_decision: z.string().min(1).max(32),
     freshness: z.enum(["fresh", "stale", "unknown"]),
     retention: z.enum(["expired", "deleted", "unknown"]),
     source: z.literal("postgres.evidence_runs"),
-    source_watermark: z.literal("not_provided"),
+    source_watermark: z
+      .string()
+      .min(1)
+      .max(128)
+      .refine((value) => value === "not_provided" || /^outbox:\d+$/.test(value), {
+        message: "source_watermark must be not_provided or outbox:<seq>",
+      }),
+    publication_state: z.enum(["published", "partial", "pending", "failed", "poison", "unavailable"]),
+    ingestion_lag_ms: z.number().int().nonnegative().nullable(),
+    policy_version: z.literal("operator.trace-read.v1"),
     observed_at: z.string().datetime({ offset: true }),
   })
   .strict()
@@ -100,9 +111,12 @@ export const OperatorTraceSchema = z
 export const OperatorTraceListSchema = z
   .object({
     schema_version: z.literal("operator.trace-list.v1"),
+    query_grammar_version: z.literal("operator.trace-query.v1"),
     items: z.array(OperatorTraceSchema).max(100),
     next_cursor: z.string().max(2048).nullable(),
     truncated: z.boolean(),
+    matched_count: z.number().int().nonnegative().nullable(),
+    returned_count: z.number().int().min(0).max(100),
     observed_at: z.string().datetime({ offset: true }),
     query_start: z.string().datetime({ offset: true }),
     query_end: z.string().datetime({ offset: true }),
@@ -110,9 +124,84 @@ export const OperatorTraceListSchema = z
   })
   .strict()
 
+const UnavailableSectionSchema = z.enum([
+  "spans",
+  "candidates",
+  "score_explanation",
+  "directives",
+  "tools",
+  "content",
+  "events",
+  "assembly",
+])
+
+const TraceSpanSchema = z
+  .object({
+    span_id: z.string().min(1).max(64),
+    parent_span_id: z.string().max(64).nullable(),
+    operation_kind: z.string().min(1).max(128),
+    status: z.string().min(1).max(32),
+    error_code: z.string().max(128).nullable(),
+    started_at: z.string().datetime({ offset: true }),
+    ended_at: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
+const TraceAssemblySchema = z
+  .object({
+    budget_calculation_ms: z.number().int().nonnegative(),
+    directive_load_ms: z.number().int().nonnegative(),
+    hot_memory_retrieval_ms: z.number().int().nonnegative(),
+    cold_memory_retrieval_ms: z.number().int().nonnegative(),
+    ranking_ms: z.number().int().nonnegative(),
+    packing_ms: z.number().int().nonnegative(),
+    formatting_ms: z.number().int().nonnegative(),
+    total_ms: z.number().int().nonnegative(),
+    candidates_evaluated: z.number().int().nonnegative(),
+  })
+  .strict()
+
+const TraceCandidateSchema = z
+  .object({
+    memory_id: z.string().uuid(),
+    retrieval_rank: z.number().int().nonnegative(),
+    final_rank: z.number().int().nonnegative().nullable(),
+    delta_rank: z.number().int().nullable(),
+    category: z.string().max(64).nullable(),
+    token_estimate: z.number().int().nonnegative().nullable(),
+    exclusion: z.string().min(1).max(32),
+    score_schema: z.string().min(1).max(64),
+    composite_score: z.number().nullable(),
+  })
+  .strict()
+
+const TraceDirectiveSchema = z
+  .object({
+    directive_version_id: z.string().uuid().nullable(),
+    content_hash: z.string().max(128).nullable(),
+    schema_version: z.string().min(1).max(64),
+  })
+  .strict()
+
+const TraceToolSchema = z
+  .object({
+    tool_name: z.string().min(1).max(128),
+    status: z.string().min(1).max(32),
+    error_code: z.string().max(128).nullable(),
+    started_at: z.string().datetime({ offset: true }).nullable(),
+    ended_at: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
 export const OperatorTraceDetailSchema = OperatorTraceSchema.extend({
   schema_version: z.literal("operator.trace-detail.v1"),
-  unavailable_sections: z.array(z.enum(["spans", "candidates", "score_explanation", "directives", "tools", "content"])),
+  unavailable_sections: z.array(UnavailableSectionSchema),
+  spans: z.array(TraceSpanSchema).max(500).default([]),
+  assembly: TraceAssemblySchema.nullable().default(null),
+  candidates: z.array(TraceCandidateSchema).max(500).default([]),
+  directive: TraceDirectiveSchema.nullable().default(null),
+  tools: z.array(TraceToolSchema).max(200).default([]),
+  score_schema_note: z.string().max(256).nullable().default(null),
 }).strict()
 
 export type OperatorSession = z.infer<typeof OperatorSessionSchema>

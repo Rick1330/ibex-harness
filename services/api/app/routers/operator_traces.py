@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Annotated
+from uuid import UUID
 
 from authclient.permissions import OPERATOR_METADATA_READ
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -18,7 +19,11 @@ from app.schemas.operator_traces import (
     OperatorTraceListQuery,
     OperatorTraceListResponse,
 )
-from app.services.operator_traces import get_operator_trace, list_operator_traces
+from app.services.operator_traces import (
+    get_operator_trace_run,
+    list_operator_trace_runs,
+    list_operator_traces,
+)
 
 router = APIRouter(prefix="/v1/operator/traces", tags=["operator-traces"])
 OperatorSession = Annotated[OperatorSessionAuthorization, Depends(require_operator_session)]
@@ -29,6 +34,13 @@ OperatorSessionDatabase = Annotated[AsyncSession, Depends(operator_org_session)]
 class TraceListContext:
     session: AsyncSession
     settings: Settings
+
+
+@dataclass(frozen=True)
+class TraceRunsContext:
+    session: AsyncSession
+    operator: OperatorSessionAuthorization
+    limit: int
 
 
 def require_trace_read_session(request: Request, operator: OperatorSession) -> OperatorSessionAuthorization:
@@ -50,6 +62,18 @@ def trace_list_context(
 trace_list_context.__route_inventory_security__ = False
 
 
+def trace_runs_context(
+    request: Request,
+    operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
+    session: OperatorSessionDatabase,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+) -> TraceRunsContext:
+    return TraceRunsContext(session=session, operator=operator, limit=limit)
+
+
+trace_runs_context.__route_inventory_security__ = False
+
+
 @router.get("")
 async def operator_trace_list(
     response: Response,
@@ -67,13 +91,30 @@ async def operator_trace_list(
     return result
 
 
-@router.get("/{trace_id}")
-async def operator_trace_detail(
-    trace_id: str,
+@router.get("/runs/{run_id}")
+async def operator_trace_run_detail(
+    run_id: UUID,
     response: Response,
     operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
     session: OperatorSessionDatabase,
 ) -> OperatorTraceDetailResponse:
-    result = await get_operator_trace(session, operator, trace_id=trace_id)
+    result = await get_operator_trace_run(session, operator, run_id=run_id)
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@router.get("/{trace_id}")
+async def operator_trace_runs(
+    trace_id: str,
+    response: Response,
+    context: Annotated[TraceRunsContext, Depends(trace_runs_context)],
+) -> OperatorTraceListResponse:
+    """Deterministic multi-run listing for a trace_id (not a silent single-run pick)."""
+    result = await list_operator_trace_runs(
+        context.session,
+        context.operator,
+        trace_id=trace_id,
+        limit=context.limit,
+    )
     response.headers["Cache-Control"] = "no-store"
     return result

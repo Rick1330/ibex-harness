@@ -1,0 +1,132 @@
+{
+  "register_version": "d2-residual.v1",
+  "milestone": "4.D.2",
+  "issue": 910,
+  "pr": 911,
+  "updated_at": "2026-09-27",
+  "owner": "Elshaday Mengesha <elishum8@gmail.com>",
+  "items": [
+    {
+      "id": "P2-identity-run-detail",
+      "area": "P2",
+      "title": "run_id canonical detail and multi-run trace listing",
+      "state": "closed",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "services/api/app/services/operator_traces.py",
+      "next_gate": "Hosted AuthService route matrix"
+    },
+    {
+      "id": "P2-publication-watermark",
+      "area": "P2",
+      "title": "Outbox-backed publication_state and source_watermark",
+      "state": "closed",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "services/api/app/services/operator_traces.py",
+      "next_gate": "Hosted watermark/lag soak"
+    },
+    {
+      "id": "P3-lifecycle-authoritative",
+      "area": "P3",
+      "title": "Retention/legal-hold/redaction/deletion authoritative sources",
+      "state": "open",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "infra/assurance/p6/d2-residual-register.json",
+      "next_gate": "Keep unknown until P3 canonical columns/joins exist",
+      "notes": "Do not derive retention from completeness"
+    },
+    {
+      "id": "P3-content-disabled",
+      "area": "P3",
+      "title": "Raw/replay/actions remain disabled",
+      "state": "accepted_residual",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "web/content/docs/adr/0083-d2-publication-query-lifecycle-contract.mdx",
+      "next_gate": "Independent P3 gates before any content enablement"
+    },
+    {
+      "id": "P4-query-grammar",
+      "area": "P4",
+      "title": "Shared API/Console versioned Explore query grammar",
+      "state": "closed",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "services/console/src/lib/explore/live-query.ts",
+      "next_gate": "Hosted URL round-trip budgets"
+    },
+    {
+      "id": "P4-sessions-failures-tabs",
+      "area": "P4",
+      "title": "Live sessions/failures Explore tabs",
+      "state": "deferred",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "services/console/src/app/dashboard/explore/live-page.tsx",
+      "next_gate": "Canonical session/failure result types"
+    },
+    {
+      "id": "P6-two-tenant-rls-routes",
+      "area": "P6",
+      "title": "Disposable Postgres two-org operator trace route tests",
+      "state": "closed",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "services/api/tests/integration/test_operator_traces_rls.py",
+      "next_gate": "Run with POSTGRES_TEST_DSN / compose-test-up"
+    },
+    {
+      "id": "P6-browser-a11y-hostile",
+      "area": "P6",
+      "title": "Playwright Explore/detail a11y and hostile-content",
+      "state": "closed",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "services/console/e2e/live-d1.spec.ts",
+      "next_gate": "Hosted browser report against live API"
+    },
+    {
+      "id": "P6-hosted-authservice-matrix",
+      "area": "P6",
+      "title": "Four-role two-tenant matrix on canonical AuthService topology",
+      "state": "blocked_external",
+      "blocking": true,
+      "owner": "platform",
+      "evidence_path": "infra/assurance/p6/d2-slice-manifest.json",
+      "next_gate": "Staging topology + AuthService revocation evidence",
+      "notes": "Cannot be fabricated locally"
+    },
+    {
+      "id": "P6-hosted-rollback-transcript",
+      "area": "P6",
+      "title": "Immutable promotion/rollback transcript and post-rollback tenant smoke",
+      "state": "blocked_external",
+      "blocking": true,
+      "owner": "platform",
+      "evidence_path": "infra/assurance/p6/d2-slice-manifest.json",
+      "next_gate": "Controlled staging promotion"
+    },
+    {
+      "id": "D2-score-five-term",
+      "area": "P2",
+      "title": "Versioned five-term score vocabulary and weights",
+      "state": "deferred",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "web/content/docs/adr/0083-d2-publication-query-lifecycle-contract.mdx",
+      "next_gate": "Writer+DTO+UI agreement; interim_v1 stays labelled"
+    },
+    {
+      "id": "D2-c5-streaming",
+      "area": "C5",
+      "title": "Streaming soak for D2",
+      "state": "inapplicable",
+      "blocking": false,
+      "owner": "platform",
+      "evidence_path": "web/content/docs/adr/0083-d2-publication-query-lifecycle-contract.mdx",
+      "next_gate": "Snapshot-only; no streaming claim"
+    }
+  ]
+}

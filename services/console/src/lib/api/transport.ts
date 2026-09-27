@@ -23,6 +23,7 @@ const OPERATOR_API_PATHS = {
   events: "/v1/operator/events/stream",
   traces: "/v1/operator/traces",
   traceDetail: "/v1/operator/traces/",
+  runDetail: "/v1/operator/traces/runs/",
 } as const
 type OperatorApiPath = keyof typeof OPERATOR_API_PATHS
 
@@ -63,7 +64,7 @@ function isValidTraceSuffix(suffix: string): boolean {
 }
 
 function assertAllowedSuffix(path: OperatorApiPath, suffix: string): void {
-  if (path === "traceDetail") {
+  if (path === "traceDetail" || path === "runDetail") {
     if (!isValidTraceSuffix(suffix)) {
       throw new OperatorApiError(404, "NOT_FOUND", "Trace not found")
     }

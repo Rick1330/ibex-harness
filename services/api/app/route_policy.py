@@ -80,6 +80,7 @@ def _operator_session_dependencies() -> dict[tuple[str, str], object]:
         ("GET", "/v1/operator/context"): require_operator_metadata_session,
         ("GET", "/v1/operator/overview"): require_operator_metadata_session,
         ("GET", "/v1/operator/traces"): require_trace_read_session,
+        ("GET", "/v1/operator/traces/runs/{run_id}"): require_trace_read_session,
         ("GET", "/v1/operator/traces/{trace_id}"): require_trace_read_session,
         ("GET", "/v1/operator/session/me"): require_session_me,
         ("POST", "/v1/operator/session/refresh"): require_session_refresh,

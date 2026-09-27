@@ -35,15 +35,15 @@ export function CopyId({
   }
 
   return (
-    <span className={cn("inline-flex items-center gap-1 font-mono", className)}>
+    <span className={cn("inline-flex items-center gap-2 font-mono", className)}>
       <span className="truncate">{value}</span>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             type="button"
-            size="icon-xs"
-            variant="ghost"
-            className="size-5 shrink-0"
+            size="icon-sm"
+            variant="outline"
+            className="h-8 w-8 min-h-8 min-w-8 shrink-0"
             onClick={(e) => {
               e.stopPropagation()
               void copy()
@@ -51,9 +51,9 @@ export function CopyId({
             aria-label={`Copy ${label ?? value}`}
           >
             {copied ? (
-              <IconCheck className="size-3" />
+              <IconCheck className="size-4" />
             ) : (
-              <IconCopy className="size-3" />
+              <IconCopy className="size-4" />
             )}
           </Button>
         </TooltipTrigger>
