@@ -49,8 +49,10 @@ def row(trace_id: str = "trace-a") -> dict[str, object]:
         "agent_id": None,
         "session_id": None,
         "checkpoint_id": None,
+        "schema_version": "evidence.v1",
         "status": "ok",
         "error_code": None,
+        "capture_mode": "metadata",
         "started_at": START,
         "ended_at": END,
         "completeness": "partial",
@@ -138,6 +140,8 @@ async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
     assert result.items[0].trace_id == "trace-a"
     assert result.items[0].duration_ms == 120000
     assert result.items[0].evidence.source == "postgres.evidence_runs"
+    assert result.items[0].evidence.schema_version == "evidence.v1"
+    assert result.items[0].evidence.capture_mode == "metadata"
     assert result.items[0].evidence.source_watermark == "not_provided"
     assert result.items[0].evidence.retention == "unknown"
     query_call = session.execute.await_args_list[-1]

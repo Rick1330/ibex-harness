@@ -70,6 +70,8 @@ export const OperatorOverviewSchema = z
 
 const TraceEvidenceSchema = z
   .object({
+    schema_version: z.string().min(1).max(64),
+    capture_mode: z.string().min(1).max(32),
     completeness: z.enum(["complete", "partial", "sampled", "late", "redacted", "expired", "deleted", "simulated"]),
     sample_decision: z.string().min(1).max(32),
     freshness: z.enum(["fresh", "stale", "unknown"]),

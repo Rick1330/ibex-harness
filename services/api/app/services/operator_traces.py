@@ -41,8 +41,10 @@ _EVIDENCE_RUNS = table(
     column("agent_id"),
     column("session_id"),
     column("checkpoint_id"),
+    column("schema_version"),
     column("status"),
     column("error_code"),
+    column("capture_mode"),
     column("started_at"),
     column("ended_at"),
     column("completeness"),
@@ -73,8 +75,10 @@ def _trace_columns() -> tuple[Any, ...]:
         _EVIDENCE_RUNS.c.agent_id,
         _EVIDENCE_RUNS.c.session_id,
         _EVIDENCE_RUNS.c.checkpoint_id,
+        _EVIDENCE_RUNS.c.schema_version,
         _EVIDENCE_RUNS.c.status,
         _EVIDENCE_RUNS.c.error_code,
+        _EVIDENCE_RUNS.c.capture_mode,
         _EVIDENCE_RUNS.c.started_at,
         _EVIDENCE_RUNS.c.ended_at,
         _EVIDENCE_RUNS.c.completeness,
@@ -208,6 +212,8 @@ def _evidence(row: Any, observed_at: datetime) -> TraceEvidenceState:
     completeness = str(row["completeness"])
     freshness = "stale" if completeness == "late" else "unknown"
     return TraceEvidenceState(
+        schema_version=str(row["schema_version"]),
+        capture_mode=str(row["capture_mode"]),
         completeness=completeness,
         sample_decision=str(row["sample_decision"]),
         freshness=freshness,

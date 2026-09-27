@@ -64,6 +64,8 @@ const traceList = {
     ended_at: "2026-09-26T12:00:01.000Z",
     duration_ms: 1000,
     evidence: {
+      schema_version: "evidence.v1",
+      capture_mode: "metadata",
       completeness: "partial",
       sample_decision: "kept",
       freshness: "unknown",

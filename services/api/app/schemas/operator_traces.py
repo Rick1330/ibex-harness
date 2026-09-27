@@ -18,6 +18,8 @@ TraceStatus = Literal["ok", "error"]
 class TraceEvidenceState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    schema_version: str = Field(min_length=1, max_length=64)
+    capture_mode: str = Field(min_length=1, max_length=32)
     completeness: EvidenceState
     sample_decision: str = Field(min_length=1, max_length=32)
     freshness: FreshnessState

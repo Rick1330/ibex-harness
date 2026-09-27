@@ -2347,6 +2347,12 @@
       "TraceEvidenceState": {
         "additionalProperties": false,
         "properties": {
+          "capture_mode": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Capture Mode",
+            "type": "string"
+          },
           "completeness": {
             "enum": [
               "complete",
@@ -2390,6 +2396,12 @@
             "title": "Sample Decision",
             "type": "string"
           },
+          "schema_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Schema Version",
+            "type": "string"
+          },
           "source": {
             "const": "postgres.evidence_runs",
             "title": "Source",
@@ -2403,6 +2415,8 @@
           }
         },
         "required": [
+          "schema_version",
+          "capture_mode",
           "completeness",
           "sample_decision",
           "freshness",
