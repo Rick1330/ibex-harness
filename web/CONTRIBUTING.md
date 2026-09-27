@@ -1,59 +1,50 @@
-# Contributing to the public docs site
+# Contributing to the public web site
 
-Next.js + Fumadocs app in `web/` for [ibexharness.com](https://ibexharness.com) (docs at `/docs`; legacy `docs.ibexharness.com` 301s to apex).
+The `web/` workspace is the Next.js + Fumadocs public site at [ibexharness.com](https://ibexharness.com). Engineering docs, roadmap sources, and ADR content are maintained in this repository but are distinct from the public-docs content corpus.
 
-Engineering documentation (ADRs, roadmap) lives in [`web/engineering/`](./engineering/) — do not mix corpora.
+## Development loop
 
-## Dev loop
-
-From repo root:
+From the repository root:
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm docs:dev
 ```
 
-Open `http://localhost:3000` (redirects to introduction after D.2.1).
-
-### Performance testing
-
-`pnpm docs:dev` compiles MDX on demand — navigation will feel slow. Before reviewing nav speed or Mermaid diagrams, run:
+`/` renders the landing page directly, `/docs` is the docs home, and `/roadmap` is the roadmap. For production-like navigation:
 
 ```bash
 pnpm docs:build:clean
 pnpm docs:start
 ```
 
-See [README.md](./README.md#performance) for details.
+## Branch and tracking policy
 
-## Branch naming (Phase 1.5)
+Use the repository-wide ticket/milestone policy and conventional commit format. Keep one coherent change per PR, link the tracking issue in both directions, and use `git commit --signoff` with the contributor’s verified GitHub identity. Historical Phase 1.5 branch examples are not current naming requirements.
 
-| Pattern | Example |
+| Change | Primary area |
 | --- | --- |
-| `feat/d{N}-{slug}` | `feat/d2-2-matte-graphite` |
-| `docs/phase-1-5-*` | roadmap-only PRs |
+| Public docs page | `web/content/docs/` |
+| Roadmap/current state | `web/content/roadmap/` |
+| Engineering contract/runbook | `web/engineering/` |
+| Public app route/component | `web/src/` |
 
-One milestone per PR. See [Phase 1.5 README](../roadmap/phase-1-5-docs-site/README.md).
+Read the root [CONTRIBUTING.md](../CONTRIBUTING.md), [AGENTS.md](../AGENTS.md), [engineering index](engineering/README.md), and [current state](content/roadmap/current-state.mdx) before editing.
 
-## Design anti-patterns (reject in review)
+## Design and accessibility review
 
-- Gradients, blur, colored glow shadows
-- `rounded-full` buttons, `framer-motion`, scroll reveals
-- Hex colors in components (use CSS variables / Tailwind tokens)
-- Default exports in components (except Next.js routes)
+Preserve the established console/site typography, spacing, color, theme, navigation, and responsive behavior. Check keyboard navigation, focus visibility, semantic headings, reduced motion, color contrast, and WCAG 2.2 AA expectations. Do not turn fixture content or untrusted Markdown/HTML into executable UI.
 
-Full rules: [MASTER_BRIEF §0.1](../content/roadmap/phase-1-5-docs-site/master-brief.mdx) and [AGENTS.md](../../AGENTS.md).
+## PR checks
 
-## PR checklist
+- [ ] `pnpm --filter web typecheck`
+- [ ] `pnpm --filter web test`
+- [ ] `pnpm --filter web test:e2e` when routes/navigation change
+- [ ] `pnpm docs:build:clean`
+- [ ] Dark and light themes checked on touched pages
+- [ ] Production server checked with `build:clean` + `start`
+- [ ] Mermaid output checked after rebuild when MDX/diagrams change
+- [ ] Repository [PR template](../.github/pull_request_template.md) completed
+- [ ] No `web/content/docs/**` changes unless explicitly in scope
 
-- [ ] Diff scoped to `web/**` (or milestone docs)
-- [ ] `pnpm docs:build` passes
-- [ ] `pnpm --filter docs test` passes (Vitest)
-- [ ] Dark + light checked on touched pages
-- [ ] Navigation tested on **production server** (`build:clean` + `start`), not only `docs:dev`
-- [ ] Mermaid pages visually checked after rebuild (if MDX/mermaid touched)
-- [ ] PR body uses [.github/pull_request_template.md](../../.github/pull_request_template.md)
-
-## Cloudflare deploy
-
-See `ibex-harness-workspace/ops/cloudflare/README.md` for the Cloudflare deploy runbook (local-only; not in git).
+Cloud/host deployment runbooks may exist outside git; do not document local credentials or claim a deployment from a local build.

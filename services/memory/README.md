@@ -1,8 +1,25 @@
-# Memory service (Phase 3 Tracks B–C)
+# Memory service
 
-Python FastAPI substrate for vector store, composite scoring, embedder client, PII
-write stage, and (later) full write/read pipelines. **Not** the place for extraction
-workers (`services/worker/`).
+Python FastAPI service for tenant-scoped memory writes, semantic reads, hot-cache assembly,
+feedback, vector persistence, PII/quarantine, deduplication, conflict/supersession, and
+labels. Extraction workers remain in [`services/worker/`](../worker/). The milestone sections
+below are historical evidence pointers; they are not a statement that the service is still a
+Track B–C skeleton.
+
+## Current HTTP surface
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| POST | `/v1/memories` | Idempotent write pipeline; PII/quarantine, dedup, conflict, labels, persistence, and after-commit cache/index effects |
+| POST | `/v1/memories/search` | Tenant/agent-scoped semantic search with HNSW and optional full-text fallback |
+| GET | `/v1/memories/hot` | Tenant/agent hot-cache reads for context assembly |
+| POST | `/v1/memories/{memory_id}/feedback` | Positive/negative/neutral feedback with scope validation |
+
+All reads/writes require the appropriate permission and explicit `org_id`/agent scope. Active
+rows only are returned; cross-tenant identifiers do not become existence oracles. Redis is
+required for idempotency/hot-cache behavior, Postgres/pgvector for durable reads, and the
+embedder for vector writes. Quarantine, conflict, deduplication, and cache failures use the
+documented error envelopes rather than silently widening scope.
 
 ## Status
 

@@ -1,8 +1,20 @@
-# IBEX Worker service (Phase 3.5 Track A)
+# IBEX Worker service
 
-Python Celery worker for async extraction, embedding jobs, maintenance sweeps, and MCP
-audit tasks. **Skeleton in m3.5.A.1**; **observability + dead-letter in m3.5.A.2** —
-business logic lands in Tracks B–E.
+Python Celery worker for async extraction, provider adapters, embedding jobs, organization
+deletion, billing reconciliation/rollups, maintenance, and MCP audit tasks. The current
+implementation is mixed rather than a skeleton:
+
+| Capability | Status | Evidence |
+| --- | --- | --- |
+| Session extraction and OpenAI/vLLM providers | **Shipped/verified by cassettes and unit tests** | `app/tasks/extraction.py`, `app/extraction/`, `eval/` |
+| Memory writes from extraction | **Shipped** | `app/tasks/extraction.py`, memory client and contract tests |
+| Organization deletion orchestration | **Shipped** | `app/tasks/org_deletion.py`, receipts/store modules |
+| Billing reconciliation and budget rollups | **Shipped** | `app/tasks/billing_reconcile.py` and task routes |
+| Dead-letter persistence, metrics, and OTel | **Shipped** | `app/observability.py`, failed-task repository, Prometheus rules |
+| Scheduled maintenance sweep and entries in `app/tasks/stubs.py` | **No-op/deferred** | Intentionally do not describe these as completed business logic |
+
+Queue names and beat registration do not imply that every task is production-ready; use the
+capability table and the tests/source links above when enabling a task.
 
 ## Redis layout (shared instance)
 

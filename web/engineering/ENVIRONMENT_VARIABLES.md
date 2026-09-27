@@ -225,13 +225,13 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs (env seed; DB overrides from m4.B.2 win when present) | |
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
-| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](adr/ADR-0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
+| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](../content/docs/adr/0011-proxy-auth-client.mdx); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
 | `IBEX_AUTH_CACHE_ENABLED` | No | `true` | Request bloom + LRU wrap for ValidateToken ([ADR-0028](/docs/adr/0028-auth-cache-design)). Wrap is **skipped** (WARN) when `REDIS_URL` is empty or Redis Ping fails — revoke must not rely on LRU TTL alone without the pub/sub channel ([ADR-0029](/docs/adr/0029-token-revocation-propagation)). | Set `false` to force every request through gRPC |
 | `IBEX_AUTH_CACHE_LRU_CAPACITY` | No | `5000` | Max claims entries per proxy process | |
 | `IBEX_AUTH_CACHE_LRU_MAX_TTL` | No | `30s` | Max cache TTL (also max revoke lag if a pub/sub message is missed) | Requires Redis + healthy Ping for cache wrap |
 | `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS` | No | `10000` | Bloom sizing for invalid token hashes | |
 | `IBEX_AUTH_CACHE_BLOOM_FP_RATE` | No | `0.001` | Target false-positive rate (0.1%) | |
-| `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
+| `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](../content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx) |
 | `POSTGRES_DSN` | Conditional | (empty) | Postgres for directive reads and session store. When set, enables chat hot-path session lifecycle (GetOrCreate + async checkpoints). Empty → session features disabled; with Redis enables cached directive resolver | Secret; must match migrated schema |
 | `IBEX_DIRECTIVE_CACHE_TTL` | No | `60s` | Redis TTL for `{org_id}:directive:{agent_id}` cache entries | Requires `POSTGRES_DSN` + `REDIS_URL` |
 | `IBEX_SESSION_CACHE_TTL` | No | `60s` | Redis TTL for `session:{org_id}:{agent_id}:{external_id}` hot-path cache | Requires `REDIS_URL`; fail-open to Postgres |
@@ -277,9 +277,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_CONTEXT_GRPC_TARGET` | No (**3.5.D.1**) | `127.0.0.1:9092` | Proxy dial target for ContextAssemblyService (distinct from server bind `IBEX_CONTEXT_GRPC_ADDR`) | Empty skips dial (nil client); host:port when set |
 | `IBEX_CONTEXT_ASSEMBLE_TIMEOUT` | No (**3.5.D.1**) | `45ms` | Per-call AssembleContext budget on the proxy client | Independent of server `IBEX_CONTEXT_TIMEOUT` / `IBEX_CONTEXT_DEADLINE_MS` |
 | `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
-| `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) | Safety valve for pathological DP table sizes |
+| `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack.mdx)) | Safety valve for pathological DP table sizes |
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No (**3.5.C.4**) | `5` | Greedy fallback consecutive-skip limit before stopping | Used only on greedy path |
-| `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No (**3.5.C.5**) | `16` | Byte length for `secrets.token_urlsafe` **per-assembly** nonce on `<ibex_memory>` delimiters (range 1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)) | One nonce per `ContextFormatter.format()` call; not a secret to log |
+| `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No (**3.5.C.5**) | `16` | Byte length for `secrets.token_urlsafe` **per-assembly** nonce on `<ibex_memory>` delimiters (range 1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce.mdx)) | One nonce per `ContextFormatter.format()` call; not a secret to log |
 | `IBEX_CONTEXT_EMBED_METADATA` | No (**3.5.D.3**) | `false` | Embed top-level `ibex` JSON in non-streaming chat responses via `IBEXMetadataStage` | Off by default; no-op per request when Assemble was not attempted |
 | `IBEX_EXTRACTION_REDIS_URL` | No (**3.5.D.4** / worker) | falls back to `REDIS_URL` | Worker-only alias for shared Redis base (Celery broker + results). **Proxy does not read this** — turn-buffer uses `REDIS_URL` | Secret if password present; see §11 Worker |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
@@ -322,7 +322,7 @@ Used by: **auth** (`services/auth`)
 | `IBEX_TOKEN_HASH_ALGO` | No | `argon2id` | Hash algorithm for stored tokens | Must stay argon2id |
 | `IBEX_ARGON2_MEMORY_KIB` | No | `65536` | Argon2 memory | Tune for security |
 | `IBEX_ARGON2_TIME` | No | `3` | Argon2 iterations | |
-| `IBEX_ARGON2_PARALLELISM` | No | `4` | Argon2 parallelism | See [ADR-0010](adr/ADR-0010-cryptography-policy.md) |
+| `IBEX_ARGON2_PARALLELISM` | No | `4` | Argon2 parallelism | See [ADR-0010](../content/docs/adr/0010-cryptography-policy.mdx) |
 
 ### Provider credential envelope (KEK)
 
@@ -504,13 +504,13 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_DIRECTIVE_TIMEOUT_MS` | No | `5` | Directive Redis GET branch budget |
 | `IBEX_CONTEXT_HOT_TIMEOUT_MS` | No | `15` | Hot-memory HTTP branch budget |
 | `IBEX_CONTEXT_COLD_TIMEOUT_MS` | No | `45` | Cold search HTTP branch budget (embeds server-side) |
-| `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No | `437570` | DP→greedy fallback when `n×(buckets+1)` exceeds ceiling ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) |
+| `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No | `437570` | DP→greedy fallback when `n×(buckets+1)` exceeds ceiling ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack.mdx)) |
 | `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No | `5` | Greedy consecutive-skip stop (also in §9) |
-| `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No | `16` | `secrets.token_urlsafe` nbytes for **per-assembly** memory delimiter nonce (1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce)) |
+| `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` | No | `16` | `secrets.token_urlsafe` nbytes for **per-assembly** memory delimiter nonce (1..64; [ADR-0070](../content/docs/adr/0070-context-formatter-ordering-nonce.mdx)) |
 | `IBEX_CONTEXT_MEMORY_BASE_URL` | Conditional | (none) | Memory service base URL for hot/cold HTTP |
 | `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
 | `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
-| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side retrieval wall for AssembleContext; effective wait `min(IBEX_CONTEXT_TIMEOUT, deadline)` ([ADR-0071](../content/docs/adr/0071-context-grpc-degradation-deadline)) |
+| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side retrieval wall for AssembleContext; effective wait `min(IBEX_CONTEXT_TIMEOUT, deadline)` ([ADR-0071](../content/docs/adr/0071-context-grpc-degradation-deadline.mdx)) |
 | `IBEX_CONTEXT_GRPC_ADDR` | No | `127.0.0.1:9092` | ContextAssemblyService bind address (`python -m app`) |
 | `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
 | `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
@@ -528,7 +528,7 @@ Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CO
 | `IBEX_RANK_WEIGHT_USEFULNESS` | No | `0.20` | Usefulness / feedback weight |
 | `IBEX_RANK_WEIGHT_CONFIDENCE` | No | `0.10` | Confidence weight |
 | `IBEX_RANK_WEIGHT_FREQUENCY` | No | `0.05` | Access frequency weight |
-| `IBEX_COMPOSITE_RELEVANCE_FLOOR` | No | `0.15` | Scoring-time floor on the composite relevance component; candidates below are excluded before `composite_score` ([ADR-0068](../content/docs/adr/0068-composite-relevance-gate)). Distinct from retrieval `min_similarity` ([ADR-0053](../content/docs/adr/0053-vector-store-abstraction)). Alias: `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`. Must be &lt; `0.5` (settings); values &gt; `0.5` would exclude FTS hits. |
+| `IBEX_COMPOSITE_RELEVANCE_FLOOR` | No | `0.15` | Scoring-time floor on the composite relevance component; candidates below are excluded before `composite_score` ([ADR-0068](../content/docs/adr/0068-composite-relevance-gate.mdx)). Distinct from retrieval `min_similarity` ([ADR-0053](../content/docs/adr/0053-vector-store-abstraction.mdx)). Alias: `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`. Must be &lt; `0.5` (settings); values &gt; `0.5` would exclude FTS hits. |
 
 **Rule:** weights must sum to 1.0; validate at startup.
 

@@ -1,55 +1,50 @@
-# IBEX Console Service (`@ibex/console`)
+# IBEX Console (`@ibex/console`)
 
-This directory contains the IBEX operator web **service**. Its JavaScript manifest (`package.json`) exists to build and run the service; the architectural boundary is the service, not a reusable library package. Its presentation layer is a **faithful transplant of the supplied dashboard mock** at `/home/ubuntu/dash-board-mock/dash-board-mock`: the same Geist/mono/serif typography, neutral surface tokens, sidebar/header chrome, responsive spacing, cards, charts, tables, dialogs, navigation, auth atmosphere, onboarding composition, and domain route structure are kept directly rather than re-created as a simplified shell.
+`services/console` is the **canonical operator application**. `services/dashboard` is a temporary compatibility shell and must not become a second Track D product. The Console presentation layer preserves the supplied dashboard mock’s navigation, typography, themes, responsive layout, and domain route structure; the data boundary remains server-owned.
 
-## Local use
+## Local commands
 
 From the repository root:
 
 ```bash
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm --filter @ibex/console dev
-pnpm --filter @ibex/console typecheck
 pnpm --filter @ibex/console test
 pnpm --filter @ibex/console lint
+pnpm --filter @ibex/console typecheck
 pnpm --filter @ibex/console build
 ```
 
-For the visual dashboard shell, start the service and open `/dashboard` directly:
+Open `/dashboard` for the presentation shell. Preview/fixture mode is explicitly opt-in and is disabled in production.
 
-```bash
-pnpm --filter @ibex/console dev
-```
+## Surface status
 
-The current shell intentionally has no login route or demo credentials. AuthService, tenant authority, session cookies, MFA, and authenticated mutations are deferred; the dashboard is directly reachable so the presentation can be inspected independently.
+| Surface | Status | Evidence and boundary |
+| --- | --- | --- |
+| Shell, navigation, themes, responsive layout, cards, charts, tables, dialogs, and route presentation | **Implemented presentation** | Transplanted from the supplied mock; see `src/app`, `src/components`, and `src/lib`. |
+| Server-only DAL/BFF transport, request-time `no-store`, and opt-in live mode | **Mounted-but-provisional** | The server boundary may call only the configured `IBEX_OPERATOR_API_ORIGIN`; browser code never receives upstream credentials or tenant authority. |
+| D1 context/overview and platform/event transport | **Mounted-but-provisional** | API ownership and local tests exist; hosted AuthService/session, origin, deployment, reconnect, and two-tenant evidence remain open. |
+| D2 Explore trace metadata list/detail | **Mounted-but-provisional** | `CONSOLE_DATA_MODE=live` plus `CONSOLE_READ_ONLY=1` reads the tenant-scoped metadata-only contract. Unavailable sections are explicit; no content or provenance is fabricated. |
+| Login, signup, TOTP enrollment, token issuance, invites, and authenticated mutations | **Deferred** | AuthService owns these flows; this shell does not expose fake credentials or demo passwords. |
+| Sessions, memories, directives, incidents, drift, analytics, billing, settings, raw trace content, replay, export, and operator actions | **Preview/deferred** | Fixture presentation may exist, but owning APIs, permissions, redaction, audit, and acceptance evidence are not claimed. |
 
-## Surface classification
+## Configuration boundary
 
-| Surface                                                                                                               | Status                        | Boundary                                                                                                                                                                                  |
-| --------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Transplanted sidebar, header, theme system, responsive layout, cards, charts, tables, dialogs, and route presentation | **Implemented presentation**  | Directly adapted from the supplied mock; only import, root-layout, route, and safety boundaries changed.                                                                                  |
-| Overview and mock domain fixtures                                                                                     | **Preview-only**              | The mock fixture modules remain presentation fixtures. They are reachable only through an explicit preview build/runtime flag; production has no fixture adapter.                         |
-| Login, signup, and TOTP credential flows                                                                               | **Removed/deferred**          | No credential entry, demo password, token minting, or MFA enrollment is exposed in this shell. AuthService owns the future implementation.                                               |
-| Dashboard shell                                                                                                       | **Presentation-only**         | The shell is directly reachable for inspection; it has no tenant authority and authenticated mutations remain disabled.                                                             |
-| Explore, sessions, memories, directives, incidents, drift, analytics, billing, settings data                          | **Deferred/live integration** | The mock route and visual states are retained. Live reads, authorization, mutations, evidence contracts, and upstream fetches are not claimed until owning APIs are connected.            |
-
-## Preview configuration migration
-
-The internal preview flags use the Console names. Migrate local configuration as follows; these flags are not production authentication or tenant-authority controls.
-
-| Legacy variable | Console variable |
+| Variable | Meaning |
 | --- | --- |
-| `OPERATOR_WEB_DATA_MODE` | `CONSOLE_DATA_MODE` |
-| `OPERATOR_WEB_PREVIEW` | `CONSOLE_PREVIEW` |
-| `NEXT_PUBLIC_OPERATOR_WEB_PREVIEW` | `NEXT_PUBLIC_CONSOLE_PREVIEW` |
+| `CONSOLE_DATA_MODE` | `preview` or opt-in `live` data mode; not authentication |
+| `CONSOLE_READ_ONLY` | Must remain `1` for the current D2 live slice |
+| `IBEX_OPERATOR_API_ORIGIN` | Server-only, approved upstream origin for operator reads |
+| `CONSOLE_PREVIEW` / `NEXT_PUBLIC_CONSOLE_PREVIEW` | Presentation preview flags; never tenant authority or credential controls |
 
-Preview remains enabled only when the server-side mode and preview flags are set together with the public presentation flag, and it is always disabled when `NODE_ENV=production`.
+Legacy `OPERATOR_WEB_*` names are migration aliases only. Never put a bearer token, AuthService secret, organization ID, or upstream URL authority in browser-exposed configuration.
 
-## Security posture
+## Security and readiness
 
-There is no browser-side arbitrary upstream fetch, bearer credential, client-supplied organization authority, fake login, or browser secret. The auth context is credential-free and exists only to preserve future step-up integration seams; it never loads, manufactures, or stores a session. Token issuance, bearer-curl generation, and TOTP enrollment are not exposed.
+The current shell has no login route or demo credentials. AuthService-backed sessions, secure-cookie policy, MFA, CSRF-protected mutations, exact credentialed CORS, deployment origin, and rollback evidence remain required before production promotion. The D2 live seam forwards only the configured access-session cookie, enforces server-side tenant scope, validates responses with runtime schemas, and uses `Cache-Control: no-store`.
 
-The copied mock code is intentionally classified as presentation-only. Theme/sidebar/onboarding preferences may use browser `localStorage`, the sidebar uses a non-auth layout cookie, and the drift banner uses `sessionStorage`; none is a credential or tenant-authority store. Authenticated API reads, mutations, token issuance, invites, and first-trace traffic must be replaced by validated tenant-scoped contracts before production integration.
+Browser preferences may use `localStorage`, a non-auth layout cookie, or `sessionStorage`; none is a credential or tenant-authority store. Untrusted memory, Markdown, HTML, links, prompts, and tool content must remain inert or sanitized.
 
 ## Verification and handoff
 
-The supplied mock source is intentionally kept recognizable in `src/app`, `src/components`, and `src/lib`; unused failed custom shell components were removed by replacing the old source tree. Before live integration, connect AuthService and tenant-scoped API contracts at the server boundary, then replace fixture-only domain reads with validated, authorized responses while retaining the same presentation states.
+Tests cover route inventory, response contracts, classification boundaries, and the metadata-only D2 state. Any expansion beyond the current slice must add an owning API contract, tenant-negative tests, redaction/hostile-content tests, accessibility checks, performance evidence, and a rollback plan before changing this README’s status.

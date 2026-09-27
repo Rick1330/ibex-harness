@@ -1,6 +1,6 @@
 # Operator platform research archive
 
-These audits informed the Phase 4 Track P / D / E redesign. **Published roadmap and engineering pages are the source of truth.** This folder is provenance only.
+These audits informed the Phase 4 Track P / D / E redesign. **Published roadmap and engineering pages are the source of truth.** This folder is historical provenance and design research, not proof that every proposed surface is implemented.
 
 | File | Summary | Maps to |
 |---|---|---|
@@ -17,4 +17,6 @@ Related published pages:
 
 - [Phase 4 findings](../../../content/roadmap/phase-4-multi-provider/findings.mdx)
 - [Phase 4 risks](../../../content/roadmap/phase-4-multi-provider/risks.mdx)
-- [Operator platform architecture](../OPERATOR_PLATFORM_ARCHITECTURE.md)
+- [Operator platform architecture](../../OPERATOR_PLATFORM_ARCHITECTURE.md)
+
+For current implementation status, use the [roadmap current state](../../../content/roadmap/current-state.mdx) and [engineering index](../../README.md).

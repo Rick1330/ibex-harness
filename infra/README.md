@@ -1,52 +1,34 @@
-# infra/
+# Infrastructure
 
-Deployment, local development infrastructure, migrations, and (planned) observability / cloud IaC.
+Local development, migrations, observability, test environments, and deployment scaffolding for IBEX Harness. This tree documents checked-in topology; it does not imply production deployment, HA, or recovery evidence.
 
-Inventories and phase timing: [`services/README.md`](../services/README.md),
-[`web/content/roadmap/`](../web/content/roadmap/). Layout conventions:
-[`web/engineering/FILE_STRUCTURE.md`](../web/engineering/FILE_STRUCTURE.md).
+## Current components
 
-This tree is a **planning baseline**. Adding compose profiles (e.g. TEI, vLLM), Helm charts, or
-monitoring stacks should land with evidence and, for boundary changes, an ADR.
-
----
-
-## Available now
-
-| Path | Role |
-| --- | --- |
-| `compose/dev/` | Local dependencies — [compose/dev/README.md](compose/dev/README.md) (Postgres + pgvector, Redis Stack, ClickHouse, MinIO) |
-| `compose/test/` | Minimal Postgres + Redis for Go integration tests (`make compose-test-up`, port 5433) |
-| `compose/observability/` | Local LGTM stack — Prometheus, Grafana, Tempo, Loki, OTel Collector, Alertmanager |
-| `monitoring/` | Scrape configs, alert rules, Grafana provisioning, collector/Tempo/Loki configs |
-| `helm/observability/` | Thin K8s chart mirroring the local observability stack (kind/minikube) |
-| `migrations/` | Postgres (`golang-migrate`) and ClickHouse migrations |
-| `scripts/` | Operational / repo-guard helpers used by `Makefile` |
-| `testing/` | Shared testing helpers (as present) |
-| `tools/` | Small infra tooling (as present) |
-
----
-
-## Planned / situational (roadmap-aligned)
-
-| Concern | Preferred timing | Notes |
+| Path | Role | Status |
 | --- | --- | --- |
-| TEI (or equivalent) embedding sidecar | Phase **2.5** | Often an external image (`text-embeddings-inference`) next to `services/embedder/` — may be compose profile, not a new IBEX service |
-| Self-hosted LLM reference manifests (vLLM / OpenAI-compatible) | Phase **2.5** | Reference only; applying GPU pools is environmental |
-| Tokenizer model asset caching | Phase **2.5** | Bundle or bake `tokenizer.json` for air-gapped deploys |
-| Helm / raw k8s charts for proxy, auth, Python services | Phase **4+** (earlier if needed) | Prefer Helm over unchecked raw manifests |
-| Terraform modules / envs | Later | Cloud SaaS / enterprise self-host |
-| Local Prometheus / Grafana / Loki / Tempo / OTel Collector | **Phase 2.5 exit** (ADR-0051) | `infra/compose/observability/` + `infra/monitoring/`; `make observability-up` |
-| Org-wide HA observability (multi-AZ, long retention, full exporters) | **Deferred beyond Phase 5** | Local LGTM does not claim production HA |
-| Chaos / load environments | Future hardening | Phase exit gates already demand targeted load/isolation tests |
+| `compose/dev/` | Postgres/pgvector, Redis Stack, ClickHouse, MinIO, worker, and worker-beat local stack | **Shipped local topology** |
+| `compose/test/` | Minimal Postgres + Redis integration stack on port 5433 | **Shipped test topology** |
+| `compose/observability/` | Local Prometheus, Grafana, Tempo, Loki, OTel Collector, Alertmanager | **Shipped local observability** |
+| `monitoring/` | Compose scrape/rules/provisioning/configuration files | **Shipped for local stack**; not automatically consumed by Helm |
+| `helm/observability/` | Thin Kubernetes packaging for selected observability components | **Render/lint scaffolding**; no Alertmanager, dashboard/rule ConfigMap parity, or Compose logs-to-Loki parity |
+| `helm/ibex-harness/` | Application chart templates and values | **Render/lint scaffolding**; sentinel digests, disabled migration image, and no bundled data plane |
+| `migrations/` | Postgres and ClickHouse migrations | **Shipped/tested; apply only through approved environment workflow** |
+| `scripts/` | Makefile, health, verification, evidence, and guard helpers | **Shipped tooling** |
 
----
+## Local operations
 
-## Changing this inventory
+```bash
+make compose-dev-up
+make db-migrate
+make db-seed # local-only seed data; never use against production
+make observability-up
+make compose-test-up
+```
 
-Infra layout may grow or shrink as deploy reality changes. Prefer:
+The local stack is not a production HA claim. Organization-wide HA, multi-AZ retention, complete Helm deployment, GPU sidecars, chaos, and measured recovery remain gated or deferred beyond the current phase.
 
-1. Evidence (what broke locally or in CI without the change)
-2. Reasoning (why not extend an existing compose/migration path)
-3. ADR when introducing a new class of dependency (new datastore, new GPU runtime contract, new multi-cluster topology)
-4. Updates to this README and any roadmap milestones that assume the old layout
+## Change policy
+
+A new datastore, network boundary, GPU runtime, chart, or migration path requires source/test evidence, tenant/security review, and an ADR. Update this inventory and the affected service/package README in the same change.
+
+See [services inventory](../services/README.md), [package inventory](../packages/README.md), and [current roadmap state](../web/content/roadmap/current-state.mdx).

@@ -31,10 +31,10 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-09-14  
-**Branch:** `feature/IBEX-9001-world-class-operator-roadmap` (roadmap redesign)  
+**Last updated:** 2026-09-27
+**Branch:** `main` at `e4525e3` (current public implementation baseline)
 **Current focus:** [Phase 4](/roadmap/phase-4-multi-provider)  
-**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e; 4.C.5 streaming hardening baseline
+**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e; 4.C.5 streaming hardening baseline; 4.D.1 metadata overview (`fc8735c`); 4.D.2 metadata trace read slice (`e4525e3`)
 
 <QuickLinks
   links={[
@@ -61,7 +61,7 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with
     {
       title: "Architecture decisions",
       href: "/docs/adr",
-      description: "Accepted ADRs through ADR-0072.",
+      description: "Accepted ADRs through ADR-0082; verify source and status before relying on a proposal.",
     },
     {
       title: "Roadmap hub",
@@ -87,14 +87,16 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with
   (`search_memory` / `write_memory` / `record_feedback`), learning-loop e2e (`e2e-smoke-p3.5`),
   ISO-MCP isolation (`security-integration-p35`), and memory/extraction quality benchmark CI gates.
 **Not yet:** Dedicated published suites for context-assembly / MCP tool p95 / extraction
-  throughput (contract columns reserved; see Phase 3.5 exit audit P2); management API/dashboard
-  (Phase 4).
+  throughput (contract columns reserved; see Phase 3.5 exit audit P2). Phase 4 now has a mounted
+  D1 context/overview slice and a D2 metadata-only trace list/detail slice; hosted acceptance,
+  broader operator actions, and richer provenance panels remain gated by the Track P/D evidence
+  contracts.
 </Callout>
 
 ## Next
 
-1. Begin **Track P** — [Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane).  
-2. Then deliver the redesigned [Track D capability slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices).  
-3. Optionally close Phase 3.5 P2 suite-publish debt in follow-up bench PRs.
+1. Certify the mounted **Track P** readiness gates — [Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane).
+2. Extend the redesigned [Track D capability slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices) only when contract, tenant, privacy, browser, performance, and rollback evidence is complete.
+3. Close Phase 3.5 P2 suite-publication debt in follow-up benchmark PRs.
 
 See [Phase 3.5](/roadmap/phase-3-5-extraction-assembly) and [Phase 4](/roadmap/phase-4-multi-provider).
