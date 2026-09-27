@@ -66,6 +66,33 @@ async def assert_api_error(operation: Awaitable[object], code: str) -> ApiError:
     return error.value
 
 
+async def assert_list_error(
+    code: str,
+    *,
+    settings=None,
+    operator=None,
+    session=None,
+    **overrides: object,
+) -> ApiError:
+    values: dict[str, object] = {
+        "query_start": START,
+        "query_end": END,
+        "status": None,
+        "limit": 1,
+        "cursor": None,
+    }
+    values.update(overrides)
+    return await assert_api_error(
+        list_operator_traces(
+            session or session_for(),
+            settings or operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"),
+            operator or auth(),
+            **values,
+        ),
+        code,
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
     session = session_for(row())
@@ -92,22 +119,12 @@ async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
 @pytest.mark.asyncio
 async def test_list_rejects_bad_bounds_and_cursor() -> None:
     settings = operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!")
-    await assert_api_error(
-        list_operator_traces(session_for(), settings, auth(), query_start=END, query_end=START, status=None, limit=1, cursor=None),
-        VALIDATION_ERROR,
+    await assert_list_error(VALIDATION_ERROR, settings=settings, query_start=END, query_end=START)
+    await assert_list_error(
+        VALIDATION_ERROR, settings=settings, query_end=START + timedelta(days=8)
     )
-    await assert_api_error(
-        list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=START + timedelta(days=8), status=None, limit=1, cursor=None),
-        VALIDATION_ERROR,
-    )
-    await assert_api_error(
-        list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=END, status=None, limit=101, cursor=None),
-        VALIDATION_ERROR,
-    )
-    await assert_api_error(
-        list_operator_traces(session_for(), settings, auth(), query_start=START, query_end=END, status=None, limit=1, cursor="tampered"),
-        VALIDATION_ERROR,
-    )
+    await assert_list_error(VALIDATION_ERROR, settings=settings, limit=101)
+    await assert_list_error(VALIDATION_ERROR, settings=settings, cursor="tampered")
 
 
 @pytest.mark.asyncio
@@ -118,28 +135,31 @@ async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
     assert first_result.next_cursor
     second = session_for(row("trace-c"))
     await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor)
-    await assert_api_error(
-        list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="error", limit=1, cursor=first_result.next_cursor),
-        VALIDATION_ERROR,
+    await assert_list_error(
+        VALIDATION_ERROR, settings=settings, session=second, status="error", cursor=first_result.next_cursor
     )
-    await assert_api_error(
-        list_operator_traces(second, settings, OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="s", subject="u"), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor),
+    await assert_list_error(
         VALIDATION_ERROR,
+        settings=settings,
+        session=second,
+        operator=OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="s", subject="u"),
+        status="ok",
+        cursor=first_result.next_cursor,
     )
     encoded, signature = first_result.next_cursor.split(".", 1)
     assert signature
     tampered = f"{encoded}.{'0' * 64}"
-    await assert_api_error(
-        list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=tampered),
-        VALIDATION_ERROR,
-    )
+    await assert_list_error(VALIDATION_ERROR, settings=settings, session=second, status="ok", cursor=tampered)
     payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
     payload["expires_at"] = "2020-01-01T00:00:00+00:00"
     expired_encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
     expired_signature = hmac.new(settings.operator_cursor_secret.encode(), expired_encoded.encode(), hashlib.sha256).hexdigest()
-    await assert_api_error(
-        list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=f"{expired_encoded}.{expired_signature}"),
+    await assert_list_error(
         VALIDATION_ERROR,
+        settings=settings,
+        session=second,
+        status="ok",
+        cursor=f"{expired_encoded}.{expired_signature}",
     )
 
 
@@ -161,16 +181,14 @@ async def test_default_cursor_reuses_signed_bounds() -> None:
 
 @pytest.mark.asyncio
 async def test_list_fails_closed_when_cursor_key_or_database_is_unavailable() -> None:
-    await assert_api_error(
-        list_operator_traces(session_for(row("trace-a"), row("trace-b")), operator_settings(operator_cursor_secret=None), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None),
+    await assert_list_error(
         SERVICE_DEGRADED,
+        session=session_for(row("trace-a"), row("trace-b")),
+        settings=operator_settings(operator_cursor_secret=None),
     )
     session = AsyncMock()
     session.execute.side_effect = SQLAlchemyError("db")
-    await assert_api_error(
-        list_operator_traces(session, operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None),
-        SERVICE_DEGRADED,
-    )
+    await assert_list_error(SERVICE_DEGRADED, session=session)
 
 
 @pytest.mark.asyncio

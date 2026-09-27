@@ -57,20 +57,37 @@ function assertSafeOperatorOrigin(origin: URL): void {
   assertOriginHasNoPath(origin)
 }
 
+function assertAllowedSuffix(path: OperatorApiPath, suffix: string): void {
+  if (path === "traceDetail") {
+    const valid = /^[A-Za-z0-9._~-]{1,256}$/.test(suffix)
+    if (suffix === "." || suffix === ".." || !valid) {
+      throw new OperatorApiError(404, "NOT_FOUND", "Trace not found")
+    }
+    return
+  }
+  if (suffix) throw new Error("unexpected path suffix")
+}
+
+function buildOperatorTarget(
+  origin: URL,
+  path: OperatorApiPath,
+  suffix: string,
+  query?: URLSearchParams,
+): URL {
+  assertAllowedSuffix(path, suffix)
+  const target = new URL(`${OPERATOR_API_PATHS[path]}${encodeURIComponent(suffix)}`, origin)
+  if (query) target.search = query.toString()
+  if (target.origin !== origin.origin) throw new Error("path changed origin")
+  return target
+}
+
 export function operatorApiUrl(path: OperatorApiPath, suffix = "", query?: URLSearchParams): URL {
   const rawOrigin = process.env.IBEX_OPERATOR_API_ORIGIN
   if (!rawOrigin) unavailableOrigin()
   try {
     const origin = new URL(rawOrigin)
     assertSafeOperatorOrigin(origin)
-    if (path === "traceDetail" && (suffix === "." || suffix === ".." || !/^[A-Za-z0-9._~-]{1,256}$/.test(suffix))) {
-      throw new OperatorApiError(404, "NOT_FOUND", "Trace not found")
-    }
-    if (path !== "traceDetail" && suffix) throw new Error("unexpected path suffix")
-    const target = new URL(`${OPERATOR_API_PATHS[path]}${encodeURIComponent(suffix)}`, origin)
-    if (query) target.search = query.toString()
-    if (target.origin !== origin.origin) throw new Error("path changed origin")
-    return target
+    return buildOperatorTarget(origin, path, suffix, query)
   } catch (error) {
     if (error instanceof OperatorApiError) throw error
     invalidOrigin()

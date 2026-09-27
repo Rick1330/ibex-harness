@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated
 
 from authclient.permissions import OPERATOR_METADATA_READ
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.authz import assert_operator_permission
 from app.config import Settings
 from app.deps import operator_org_session
 from app.operator_session_auth import OperatorSessionAuthorization, require_operator_session
-from app.schemas.operator_traces import OperatorTraceDetailResponse, OperatorTraceListResponse
+from app.schemas.operator_traces import (
+    OperatorTraceDetailResponse,
+    OperatorTraceListQuery,
+    OperatorTraceListResponse,
+)
 from app.services.operator_traces import get_operator_trace, list_operator_traces
 
 router = APIRouter(prefix="/v1/operator/traces", tags=["operator-traces"])
@@ -36,21 +39,17 @@ async def operator_trace_list(
     operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
     session: OperatorSessionDatabase,
     request: Request,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
-    status: Annotated[Literal["ok", "error"] | None, Query()] = None,
-    started_after: Annotated[datetime | None, Query()] = None,
-    started_before: Annotated[datetime | None, Query()] = None,
-    cursor: Annotated[str | None, Query(max_length=2048)] = None,
+    query: Annotated[OperatorTraceListQuery, Depends()],
 ) -> OperatorTraceListResponse:
     result = await list_operator_traces(
         session,
         _settings(request),
         operator,
-        query_start=started_after,
-        query_end=started_before,
-        status=status,
-        limit=limit,
-        cursor=cursor,
+        query_start=query.started_after,
+        query_end=query.started_before,
+        status=query.status,
+        limit=query.limit,
+        cursor=query.cursor,
     )
     response.headers["Cache-Control"] = "no-store"
     return result

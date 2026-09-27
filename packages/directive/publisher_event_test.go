@@ -88,6 +88,9 @@ func TestUnit_PublisherClosedRedis(t *testing.T) {
 		t.Fatalf("publisher: %v", err)
 	}
 	mr.Close()
+	if err := client.Close(); err != nil {
+		t.Fatalf("close redis client: %v", err)
+	}
 	err = pub.Publish(context.Background(), directive.UpdateEvent{
 		Version: 1, OrgID: uuid.New().String(), AgentID: uuid.New().String(),
 	})

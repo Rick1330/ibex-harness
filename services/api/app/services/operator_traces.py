@@ -135,6 +135,24 @@ def _encode_cursor(
     return f"{encoded}.{signature}"
 
 
+def _decode_signed_cursor_payload(
+    settings: Settings,
+    authorization: OperatorSessionAuthorization,
+    cursor: str,
+) -> dict[str, Any]:
+    encoded, signature = cursor.split(".", 1)
+    expected = hmac.new(_cursor_key(settings), encoded.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError("signature")
+    payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
+    if payload["org_id"] != str(authorization.org_id):
+        raise ValueError("tenant")
+    expires_at = datetime.fromisoformat(payload["expires_at"])
+    if expires_at <= datetime.now(UTC):
+        raise ValueError("expired")
+    return payload
+
+
 def _decode_cursor(
     settings: Settings,
     authorization: OperatorSessionAuthorization,
@@ -144,18 +162,9 @@ def _decode_cursor(
     query_end: datetime,
 ) -> tuple[datetime, str]:
     try:
-        encoded, signature = cursor.split(".", 1)
-        expected = hmac.new(_cursor_key(settings), encoded.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("signature")
-        payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
-        if payload["org_id"] != str(authorization.org_id):
-            raise ValueError("tenant")
+        payload = _decode_signed_cursor_payload(settings, authorization, cursor)
         if payload["query"] != _query_fingerprint(status, query_start, query_end):
             raise ValueError("query")
-        expires_at = datetime.fromisoformat(payload["expires_at"])
-        if expires_at <= datetime.now(UTC):
-            raise ValueError("expired")
         return datetime.fromisoformat(payload["started_at"]), str(payload["trace_id"])
     except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
@@ -168,16 +177,7 @@ def cursor_query_bounds(
 ) -> tuple[datetime, datetime]:
     """Return the signed normalized bounds carried by a cursor."""
     try:
-        encoded, signature = cursor.split(".", 1)
-        expected = hmac.new(_cursor_key(settings), encoded.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise ValueError("signature")
-        payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
-        if payload["org_id"] != str(authorization.org_id):
-            raise ValueError("tenant")
-        expires_at = datetime.fromisoformat(payload["expires_at"])
-        if expires_at <= datetime.now(UTC):
-            raise ValueError("expired")
+        payload = _decode_signed_cursor_payload(settings, authorization, cursor)
         return _normalize_datetime(datetime.fromisoformat(payload["query_start"])), _normalize_datetime(datetime.fromisoformat(payload["query_end"]))
     except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc

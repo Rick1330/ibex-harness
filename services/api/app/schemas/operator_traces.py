@@ -57,6 +57,16 @@ class OperatorTraceListResponse(BaseModel):
     limit: int = Field(ge=1, le=100)
 
 
+class OperatorTraceListQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=50, ge=1, le=100)
+    status: TraceStatus | None = None
+    started_after: AwareDatetime | None = None
+    started_before: AwareDatetime | None = None
+    cursor: str | None = Field(default=None, max_length=2048)
+
+
 class OperatorTraceDetailResponse(OperatorTraceListItem):
     schema_version: Literal["operator.trace-detail.v1"] = "operator.trace-detail.v1"
     unavailable_sections: tuple[
