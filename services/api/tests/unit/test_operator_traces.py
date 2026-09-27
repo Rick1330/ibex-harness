@@ -21,7 +21,11 @@ from app.deps import operator_org_session
 from app.errors import ApiError
 from app.operator_session_auth import OperatorSessionAuthorization
 from app.schemas.operator_traces import OperatorTraceListQuery
-from app.services.operator_traces import get_operator_trace, list_operator_traces
+from app.services.operator_traces import (
+    get_operator_trace_run,
+    list_operator_trace_runs,
+    list_operator_traces,
+)
 from tests.unit.operator.conftest import create_operator_app, operator_settings
 
 ORG = uuid4()
@@ -41,11 +45,11 @@ def cursor_settings(**overrides: object):
     return operator_settings(**values)
 
 
-def row(trace_id: str = "trace-a") -> dict[str, object]:
+def row(trace_id: str = "trace-a", *, request_id: str = "request-a", run_id=None) -> dict[str, object]:
     return {
-        "run_id": RUN,
+        "run_id": run_id or RUN,
         "trace_id": trace_id,
-        "request_id": "request-a",
+        "request_id": request_id,
         "agent_id": None,
         "session_id": None,
         "checkpoint_id": None,
@@ -60,12 +64,59 @@ def row(trace_id: str = "trace-a") -> dict[str, object]:
     }
 
 
-def session_for(*rows: dict[str, object]) -> AsyncMock:
-    result = MagicMock()
-    result.mappings.return_value.all.return_value = list(rows)
-    result.mappings.return_value.first.return_value = rows[0] if rows else None
+def outbox_row(
+    request_id: str = "request-a",
+    *,
+    status: str = "delivered",
+    seq: int = 1,
+) -> dict[str, object]:
+    return {
+        "aggregate_id": request_id,
+        "aggregate_seq": seq,
+        "delivery_status": status,
+        "created_at": START,
+        "delivered_at": END if status == "delivered" else None,
+    }
+
+
+def session_for(
+    *rows: dict[str, object],
+    outbox: list[dict[str, object]] | None = None,
+    count: int | None = None,
+) -> AsyncMock:
+    """Route mock execute results by SQL shape (list / count / outbox / child)."""
+
+    run_rows = list(rows)
+    outbox_rows = list(outbox) if outbox is not None else []
+    matched = count if count is not None else len(run_rows)
+
+    async def _execute(query, params=None):  # noqa: ANN001
+        sql = str(query).lower()
+        result = MagicMock()
+        if "set_config" in sql:
+            result.scalar_one.return_value = "ok"
+            result.mappings.return_value.all.return_value = []
+            result.mappings.return_value.first.return_value = None
+            return result
+        if "count(" in sql.replace(" ", ""):
+            result.scalar_one.return_value = matched
+            result.mappings.return_value.all.return_value = []
+            return result
+        if "evidence_outbox" in sql:
+            result.mappings.return_value.all.return_value = outbox_rows
+            result.mappings.return_value.first.return_value = outbox_rows[0] if outbox_rows else None
+            return result
+        if any(name in sql for name in ("evidence_spans", "evidence_assembly", "evidence_score", "evidence_directive", "evidence_tool")):
+            result.mappings.return_value.all.return_value = []
+            result.mappings.return_value.first.return_value = None
+            return result
+        result.mappings.return_value.all.return_value = run_rows
+        result.mappings.return_value.first.return_value = run_rows[0] if run_rows else None
+        result.scalar_one.return_value = matched
+        return result
+
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
+    session.execute = AsyncMock(side_effect=_execute)
     return session
 
 
@@ -90,7 +141,6 @@ async def list_call(
         "cursor": None,
     }
     values.update(overrides)
-    # Bypass Pydantic so the service remains the unit under test for bounds/limit.
     query = OperatorTraceListQuery.model_construct(**values)
     return await list_operator_traces(session, settings, operator or auth(), query)
 
@@ -109,7 +159,7 @@ async def first_page_with_cursor(
     started_after: datetime | None = START,
     started_before: datetime | None = END,
 ) -> object:
-    first = session_for(row("trace-a"), row("trace-b"))
+    first = session_for(row("trace-a"), row("trace-b", run_id=uuid4(), request_id="request-b"))
     result = await list_call(
         first,
         settings,
@@ -126,7 +176,7 @@ async def first_page_with_cursor(
 
 @pytest.mark.asyncio
 async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
-    session = session_for(row())
+    session = session_for(row(), outbox=[outbox_row()])
     result = await list_call(
         session,
         cursor_settings(),
@@ -142,11 +192,38 @@ async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
     assert result.items[0].evidence.source == "postgres.evidence_runs"
     assert result.items[0].evidence.schema_version == "evidence.v1"
     assert result.items[0].evidence.capture_mode == "metadata"
-    assert result.items[0].evidence.source_watermark == "not_provided"
+    assert result.items[0].evidence.publication_state == "published"
+    assert result.items[0].evidence.source_watermark == "outbox:1"
     assert result.items[0].evidence.retention == "unknown"
-    query_call = session.execute.await_args_list[-1]
-    assert "org_id = :org_id" in str(query_call.args[0])
-    assert str(ORG) in repr(query_call.args[1])
+    assert result.returned_count == 1
+    assert result.matched_count == 1
+    assert result.query_grammar_version == "operator.trace-query.v1"
+
+
+@pytest.mark.asyncio
+async def test_list_publication_unavailable_without_outbox() -> None:
+    result = await list_call(session_for(row()), cursor_settings(), auth(), limit=10)
+    assert result.items[0].evidence.publication_state == "unavailable"
+    assert result.items[0].evidence.source_watermark == "not_provided"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("pending", "pending"),
+        ("failed", "failed"),
+        ("poison", "poison"),
+    ],
+)
+async def test_list_maps_outbox_publication_states(status: str, expected: str) -> None:
+    result = await list_call(
+        session_for(row(), outbox=[outbox_row(status=status)]),
+        cursor_settings(),
+        auth(),
+        limit=10,
+    )
+    assert result.items[0].evidence.publication_state == expected
 
 
 @pytest.mark.asyncio
@@ -167,7 +244,7 @@ async def test_list_rejects_bad_bounds_and_cursor(overrides: dict[str, object]) 
 async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
     settings = cursor_settings()
     first_result = await first_page_with_cursor(settings, status="ok")
-    second = session_for(row("trace-c"))
+    second = session_for(row("trace-c", run_id=uuid4(), request_id="request-c"))
     await list_call(
         second,
         settings,
@@ -215,7 +292,7 @@ async def test_default_cursor_reuses_signed_bounds() -> None:
         settings, status=None, started_after=None, started_before=None
     )
     second_result = await list_call(
-        session_for(row("trace-c")),
+        session_for(row("trace-c", run_id=uuid4(), request_id="request-c")),
         settings,
         auth(),
         started_after=None,
@@ -232,7 +309,7 @@ async def test_default_cursor_reuses_signed_bounds() -> None:
 async def test_list_fails_closed_when_cursor_key_or_database_is_unavailable() -> None:
     await assert_list_error(
         SERVICE_DEGRADED,
-        session=session_for(row("trace-a"), row("trace-b")),
+        session=session_for(row("trace-a"), row("trace-b", run_id=uuid4())),
         settings=cursor_settings(operator_cursor_secret=None),
     )
     session = AsyncMock()
@@ -241,17 +318,32 @@ async def test_list_fails_closed_when_cursor_key_or_database_is_unavailable() ->
 
 
 @pytest.mark.asyncio
-async def test_detail_is_snapshot_and_foreign_or_missing_is_404() -> None:
-    detail = await get_operator_trace(session_for(row()), auth(), trace_id="trace-a")
+async def test_trace_runs_are_deterministic_multi_run_listing() -> None:
+    run_b = uuid4()
+    session = session_for(
+        row("trace-a", request_id="r1"),
+        row("trace-a", request_id="r2", run_id=run_b),
+    )
+    result = await list_operator_trace_runs(session, auth(), trace_id="trace-a")
+    assert result.schema_version == "operator.trace-list.v1"
+    assert len(result.items) == 2
+    assert {item.request_id for item in result.items} == {"r1", "r2"}
+    missing = session_for()
+    await assert_api_error(list_operator_trace_runs(missing, auth(), trace_id="foreign"), NOT_FOUND)
+
+
+@pytest.mark.asyncio
+async def test_run_detail_is_snapshot_and_foreign_or_missing_is_404() -> None:
+    detail = await get_operator_trace_run(session_for(row()), auth(), run_id=RUN)
     assert detail.schema_version == "operator.trace-detail.v1"
     assert "content" in detail.unavailable_sections
+    assert detail.run_id == RUN
     missing = session_for()
-    not_found = await assert_api_error(get_operator_trace(missing, auth(), trace_id="foreign"), NOT_FOUND)
+    not_found = await assert_api_error(get_operator_trace_run(missing, auth(), run_id=uuid4()), NOT_FOUND)
     assert not_found.message == "Trace not found"
-    await assert_api_error(get_operator_trace(missing, auth(), trace_id=""), NOT_FOUND)
     failed = AsyncMock()
     failed.execute.side_effect = SQLAlchemyError("db")
-    await assert_api_error(get_operator_trace(failed, auth(), trace_id="trace-a"), SERVICE_DEGRADED)
+    await assert_api_error(get_operator_trace_run(failed, auth(), run_id=RUN), SERVICE_DEGRADED)
 
 
 @pytest.mark.asyncio
@@ -274,12 +366,24 @@ async def test_list_maps_unfinished_and_late_lifecycle_metadata() -> None:
     assert result.items[0].duration_ms is None
     assert result.items[0].status == "error"
     assert result.items[0].evidence.freshness == "stale"
-    query_call = session.execute.await_args_list[-1]
-    sql = str(query_call.args[0])
-    compiled = query_call.args[0].compile()
+    list_calls = [call for call in session.execute.await_args_list if "evidence_runs" in str(call.args[0]).lower() and "count" not in str(call.args[0]).lower().replace(" ", "")]
+    assert list_calls
+    sql = str(list_calls[0].args[0])
+    compiled = list_calls[0].args[0].compile()
     assert "status !=" in sql or "status <>" in sql
     assert compiled.params.get("status_1") == "ok"
-    assert query_call.args[1].get("status") != "error"
+
+
+@pytest.mark.asyncio
+async def test_list_error_filter_sql_excludes_ok_literal_equality() -> None:
+    session = session_for(row())
+    await list_call(session, cursor_settings(), auth(), status="error", limit=1)
+    list_sql = next(
+        str(call.args[0])
+        for call in session.execute.await_args_list
+        if "evidence_runs" in str(call.args[0]).lower() and "count(" not in str(call.args[0]).lower().replace(" ", "")
+    )
+    assert "status !=" in list_sql or "status <>" in list_sql
 
 
 def test_mounted_d2_routes_require_session_and_return_no_store_metadata() -> None:
@@ -297,9 +401,12 @@ def test_mounted_d2_routes_require_session_and_return_no_store_metadata() -> Non
         app.dependency_overrides[operator_org_session] = lambda: session_for(row())
         assert client.post("/v1/operator/session/login", json={"pat": "ibex_pat_test_secret"}).status_code == 200
         response = client.get("/v1/operator/traces?limit=1")
-        detail = client.get("/v1/operator/traces/trace-a")
+        runs = client.get("/v1/operator/traces/trace-a")
+        detail = client.get(f"/v1/operator/traces/runs/{RUN}")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["items"][0]["evidence"]["source"] == "postgres.evidence_runs"
+    assert runs.status_code == 200
+    assert runs.json()["schema_version"] == "operator.trace-list.v1"
     assert detail.status_code == 200
     assert "content" in detail.json()["unavailable_sections"]

@@ -1153,6 +1153,162 @@
         "title": "OperatorOverviewResponse",
         "type": "object"
       },
+      "OperatorTraceAssemblyMetrics": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_calculation_ms": {
+            "minimum": 0.0,
+            "title": "Budget Calculation Ms",
+            "type": "integer"
+          },
+          "candidates_evaluated": {
+            "minimum": 0.0,
+            "title": "Candidates Evaluated",
+            "type": "integer"
+          },
+          "cold_memory_retrieval_ms": {
+            "minimum": 0.0,
+            "title": "Cold Memory Retrieval Ms",
+            "type": "integer"
+          },
+          "directive_load_ms": {
+            "minimum": 0.0,
+            "title": "Directive Load Ms",
+            "type": "integer"
+          },
+          "formatting_ms": {
+            "minimum": 0.0,
+            "title": "Formatting Ms",
+            "type": "integer"
+          },
+          "hot_memory_retrieval_ms": {
+            "minimum": 0.0,
+            "title": "Hot Memory Retrieval Ms",
+            "type": "integer"
+          },
+          "packing_ms": {
+            "minimum": 0.0,
+            "title": "Packing Ms",
+            "type": "integer"
+          },
+          "ranking_ms": {
+            "minimum": 0.0,
+            "title": "Ranking Ms",
+            "type": "integer"
+          },
+          "total_ms": {
+            "minimum": 0.0,
+            "title": "Total Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "budget_calculation_ms",
+          "directive_load_ms",
+          "hot_memory_retrieval_ms",
+          "cold_memory_retrieval_ms",
+          "ranking_ms",
+          "packing_ms",
+          "formatting_ms",
+          "total_ms",
+          "candidates_evaluated"
+        ],
+        "title": "OperatorTraceAssemblyMetrics",
+        "type": "object"
+      },
+      "OperatorTraceCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "composite_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composite Score"
+          },
+          "delta_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Rank"
+          },
+          "exclusion": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Exclusion",
+            "type": "string"
+          },
+          "final_rank": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Rank"
+          },
+          "memory_id": {
+            "format": "uuid",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "retrieval_rank": {
+            "minimum": 0.0,
+            "title": "Retrieval Rank",
+            "type": "integer"
+          },
+          "score_schema": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Score Schema",
+            "type": "string"
+          },
+          "token_estimate": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Estimate"
+          }
+        },
+        "required": [
+          "memory_id",
+          "retrieval_rank",
+          "exclusion",
+          "score_schema"
+        ],
+        "title": "OperatorTraceCandidate",
+        "type": "object"
+      },
       "OperatorTraceDetailResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1168,6 +1324,24 @@
             ],
             "title": "Agent Id"
           },
+          "assembly": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorTraceAssemblyMetrics"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorTraceCandidate"
+            },
+            "maxItems": 500,
+            "title": "Candidates",
+            "type": "array"
+          },
           "checkpoint_id": {
             "anyOf": [
               {
@@ -1179,6 +1353,16 @@
               }
             ],
             "title": "Checkpoint Id"
+          },
+          "directive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OperatorTraceDirectiveSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "duration_ms": {
             "anyOf": [
@@ -1236,6 +1420,19 @@
             "title": "Schema Version",
             "type": "string"
           },
+          "score_schema_note": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present when score rows exist but interim_v1 forbids waterfall rendering.",
+            "title": "Score Schema Note"
+          },
           "session_id": {
             "anyOf": [
               {
@@ -1247,6 +1444,14 @@
               }
             ],
             "title": "Session Id"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorTraceSpan"
+            },
+            "maxItems": 500,
+            "title": "Spans",
+            "type": "array"
           },
           "started_at": {
             "format": "date-time",
@@ -1260,6 +1465,14 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorTraceToolAudit"
+            },
+            "maxItems": 200,
+            "title": "Tools",
+            "type": "array"
           },
           "trace_id": {
             "maxLength": 256,
@@ -1275,7 +1488,9 @@
                 "score_explanation",
                 "directives",
                 "tools",
-                "content"
+                "content",
+                "events",
+                "assembly"
               ],
               "type": "string"
             },
@@ -1297,6 +1512,46 @@
           "unavailable_sections"
         ],
         "title": "OperatorTraceDetailResponse",
+        "type": "object"
+      },
+      "OperatorTraceDirectiveSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "directive_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directive Version Id"
+          },
+          "schema_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version"
+        ],
+        "title": "OperatorTraceDirectiveSnapshot",
         "type": "object"
       },
       "OperatorTraceListItem": {
@@ -1440,6 +1695,18 @@
             "title": "Limit",
             "type": "integer"
           },
+          "matched_count": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched Count"
+          },
           "next_cursor": {
             "anyOf": [
               {
@@ -1462,10 +1729,22 @@
             "title": "Query End",
             "type": "string"
           },
+          "query_grammar_version": {
+            "const": "operator.trace-query.v1",
+            "default": "operator.trace-query.v1",
+            "title": "Query Grammar Version",
+            "type": "string"
+          },
           "query_start": {
             "format": "date-time",
             "title": "Query Start",
             "type": "string"
+          },
+          "returned_count": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Returned Count",
+            "type": "integer"
           },
           "schema_version": {
             "const": "operator.trace-list.v1",
@@ -1481,12 +1760,145 @@
         "required": [
           "items",
           "truncated",
+          "returned_count",
           "observed_at",
           "query_start",
           "query_end",
           "limit"
         ],
         "title": "OperatorTraceListResponse",
+        "type": "object"
+      },
+      "OperatorTraceSpan": {
+        "additionalProperties": false,
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "operation_kind": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Operation Kind",
+            "type": "string"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
+          },
+          "span_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Span Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "span_id",
+          "operation_kind",
+          "status",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "OperatorTraceSpan",
+        "type": "object"
+      },
+      "OperatorTraceToolAudit": {
+        "additionalProperties": false,
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Tool Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_name",
+          "status"
+        ],
+        "title": "OperatorTraceToolAudit",
         "type": "object"
       },
       "OrgDeletionJobResponse": {
@@ -2376,9 +2788,39 @@
             "title": "Freshness",
             "type": "string"
           },
+          "ingestion_lag_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingestion Lag Ms"
+          },
           "observed_at": {
             "format": "date-time",
             "title": "Observed At",
+            "type": "string"
+          },
+          "policy_version": {
+            "const": "operator.trace-read.v1",
+            "default": "operator.trace-read.v1",
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "publication_state": {
+            "enum": [
+              "published",
+              "partial",
+              "pending",
+              "failed",
+              "poison",
+              "unavailable"
+            ],
+            "title": "Publication State",
             "type": "string"
           },
           "retention": {
@@ -2408,8 +2850,8 @@
             "type": "string"
           },
           "source_watermark": {
-            "const": "not_provided",
-            "default": "not_provided",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Source Watermark",
             "type": "string"
           }
@@ -2422,6 +2864,8 @@
           "freshness",
           "retention",
           "source",
+          "source_watermark",
+          "publication_state",
           "observed_at"
         ],
         "title": "TraceEvidenceState",
@@ -3633,6 +4077,138 @@
               ],
               "title": "Cursor"
             }
+          },
+          {
+            "in": "query",
+            "name": "trace_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Trace Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Request Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error_code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "completeness",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "complete",
+                    "partial",
+                    "sampled",
+                    "late",
+                    "redacted",
+                    "expired",
+                    "deleted",
+                    "simulated"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Completeness"
+            }
+          },
+          {
+            "in": "query",
+            "name": "capture_mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Capture Mode"
+            }
           }
         ],
         "responses": {
@@ -3663,16 +4239,17 @@
         ]
       }
     },
-    "/v1/operator/traces/{trace_id}": {
+    "/v1/operator/traces/runs/{run_id}": {
       "get": {
-        "operationId": "operator_trace_detail_v1_operator_traces__trace_id__get",
+        "operationId": "operator_trace_run_detail_v1_operator_traces_runs__run_id__get",
         "parameters": [
           {
             "in": "path",
-            "name": "trace_id",
+            "name": "run_id",
             "required": true,
             "schema": {
-              "title": "Trace Id",
+              "format": "uuid",
+              "title": "Run Id",
               "type": "string"
             }
           }
@@ -3699,7 +4276,62 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Operator Trace Detail",
+        "summary": "Operator Trace Run Detail",
+        "tags": [
+          "operator-traces"
+        ]
+      }
+    },
+    "/v1/operator/traces/{trace_id}": {
+      "get": {
+        "description": "Deterministic multi-run listing for a trace_id (not a silent single-run pick).",
+        "operationId": "operator_trace_runs_v1_operator_traces__trace_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trace_id",
+            "required": true,
+            "schema": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorTraceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Trace Runs",
         "tags": [
           "operator-traces"
         ]
