@@ -117,14 +117,18 @@ async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_rejects_bad_bounds_and_cursor() -> None:
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"query_start": END, "query_end": START},
+        {"query_end": START + timedelta(days=8)},
+        {"limit": 101},
+        {"cursor": "tampered"},
+    ],
+)
+async def test_list_rejects_bad_bounds_and_cursor(overrides: dict[str, object]) -> None:
     settings = operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!")
-    await assert_list_error(VALIDATION_ERROR, settings=settings, query_start=END, query_end=START)
-    await assert_list_error(
-        VALIDATION_ERROR, settings=settings, query_end=START + timedelta(days=8)
-    )
-    await assert_list_error(VALIDATION_ERROR, settings=settings, limit=101)
-    await assert_list_error(VALIDATION_ERROR, settings=settings, cursor="tampered")
+    await assert_list_error(VALIDATION_ERROR, settings=settings, **overrides)
 
 
 @pytest.mark.asyncio
@@ -135,32 +139,28 @@ async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
     assert first_result.next_cursor
     second = session_for(row("trace-c"))
     await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor)
-    await assert_list_error(
-        VALIDATION_ERROR, settings=settings, session=second, status="error", cursor=first_result.next_cursor
-    )
-    await assert_list_error(
-        VALIDATION_ERROR,
-        settings=settings,
-        session=second,
-        operator=OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="s", subject="u"),
-        status="ok",
-        cursor=first_result.next_cursor,
-    )
     encoded, signature = first_result.next_cursor.split(".", 1)
     assert signature
     tampered = f"{encoded}.{'0' * 64}"
-    await assert_list_error(VALIDATION_ERROR, settings=settings, session=second, status="ok", cursor=tampered)
     payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
     payload["expires_at"] = "2020-01-01T00:00:00+00:00"
     expired_encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
     expired_signature = hmac.new(settings.operator_cursor_secret.encode(), expired_encoded.encode(), hashlib.sha256).hexdigest()
-    await assert_list_error(
-        VALIDATION_ERROR,
-        settings=settings,
-        session=second,
-        status="ok",
-        cursor=f"{expired_encoded}.{expired_signature}",
-    )
+    invalid_cursors = [
+        (auth(), "error", first_result.next_cursor),
+        (OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="s", subject="u"), "ok", first_result.next_cursor),
+        (auth(), "ok", tampered),
+        (auth(), "ok", f"{expired_encoded}.{expired_signature}"),
+    ]
+    for operator, status, cursor in invalid_cursors:
+        await assert_list_error(
+            VALIDATION_ERROR,
+            settings=settings,
+            session=second,
+            operator=operator,
+            status=status,
+            cursor=cursor,
+        )
 
 
 @pytest.mark.asyncio

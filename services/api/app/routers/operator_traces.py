@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from authclient.permissions import OPERATOR_METADATA_READ
@@ -24,6 +25,12 @@ OperatorSession = Annotated[OperatorSessionAuthorization, Depends(require_operat
 OperatorSessionDatabase = Annotated[AsyncSession, Depends(operator_org_session)]
 
 
+@dataclass(frozen=True)
+class TraceListContext:
+    session: AsyncSession
+    settings: Settings
+
+
 def require_trace_read_session(request: Request, operator: OperatorSession) -> OperatorSessionAuthorization:
     assert_operator_permission(request.app.state.settings, operator.permissions, OPERATOR_METADATA_READ)
     return operator
@@ -33,17 +40,26 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def trace_list_context(
+    request: Request,
+    session: OperatorSessionDatabase,
+) -> TraceListContext:
+    return TraceListContext(session=session, settings=_settings(request))
+
+
+trace_list_context.__route_inventory_security__ = False
+
+
 @router.get("")
 async def operator_trace_list(
     response: Response,
     operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
-    session: OperatorSessionDatabase,
-    request: Request,
+    context: Annotated[TraceListContext, Depends(trace_list_context)],
     query: Annotated[OperatorTraceListQuery, Query()],
 ) -> OperatorTraceListResponse:
     result = await list_operator_traces(
-        session,
-        _settings(request),
+        context.session,
+        context.settings,
         operator,
         query_start=query.started_after,
         query_end=query.started_before,

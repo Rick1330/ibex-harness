@@ -220,7 +220,11 @@ def _item(row: Any, observed_at: datetime) -> OperatorTraceListItem:
 
 
 def _validate_range(query_start: datetime, query_end: datetime) -> None:
-    if query_start.tzinfo is None or query_end.tzinfo is None or query_end <= query_start:
+    if query_start.tzinfo is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid trace time range")
+    if query_end.tzinfo is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid trace time range")
+    if query_end <= query_start:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid trace time range")
     if query_end - query_start > _MAX_RANGE:
         raise ApiError(code=VALIDATION_ERROR, message="Trace time range exceeds maximum")
