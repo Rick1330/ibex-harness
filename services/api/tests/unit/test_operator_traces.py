@@ -102,37 +102,39 @@ def _mapping_result(rows: list[dict[str, object]], *, scalar: object | None = No
     return result
 
 
+def _route_sql(
+    sql: str,
+    *,
+    run_rows: list[dict[str, object]],
+    matched: int,
+    table_rows: dict[str, list[dict[str, object]]],
+) -> MagicMock:
+    if "set_config" in sql:
+        return _mapping_result([], scalar="ok")
+    if "count(" in sql.replace(" ", ""):
+        return _mapping_result([], scalar=matched)
+    for marker, marker_rows in table_rows.items():
+        if marker in sql:
+            return _mapping_result(marker_rows)
+    return _mapping_result(run_rows, scalar=matched)
+
+
 def session_for(*rows: dict[str, object], fixtures: SessionFixtures | None = None) -> AsyncMock:
     """Route mock execute results by SQL shape (list / count / outbox / child)."""
     seed = fixtures or SessionFixtures()
     run_rows = list(rows)
-    outbox_rows = list(seed.outbox or ())
-    span_rows = list(seed.spans or ())
-    candidate_rows = list(seed.candidates or ())
-    tool_rows = list(seed.tools or ())
     matched = seed.count if seed.count is not None else len(run_rows)
-    assembly_rows = [seed.assembly] if seed.assembly is not None else []
-    directive_rows = [seed.directive] if seed.directive is not None else []
-
     table_rows = {
-        "evidence_outbox": outbox_rows,
-        "evidence_spans": span_rows,
-        "evidence_assembly": assembly_rows,
-        "evidence_score": candidate_rows,
-        "evidence_directive": directive_rows,
-        "evidence_tool": tool_rows,
+        "evidence_outbox": list(seed.outbox or ()),
+        "evidence_spans": list(seed.spans or ()),
+        "evidence_assembly": [seed.assembly] if seed.assembly is not None else [],
+        "evidence_score": list(seed.candidates or ()),
+        "evidence_directive": [seed.directive] if seed.directive is not None else [],
+        "evidence_tool": list(seed.tools or ()),
     }
 
     async def _execute(query, params=None):
-        sql = str(query).lower()
-        if "set_config" in sql:
-            return _mapping_result([], scalar="ok")
-        if "count(" in sql.replace(" ", ""):
-            return _mapping_result([], scalar=matched)
-        for marker, marker_rows in table_rows.items():
-            if marker in sql:
-                return _mapping_result(marker_rows)
-        return _mapping_result(run_rows, scalar=matched)
+        return _route_sql(str(query).lower(), run_rows=run_rows, matched=matched, table_rows=table_rows)
 
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=_execute)

@@ -189,8 +189,9 @@ async def test_operator_traces_are_tenant_scoped_with_publication_and_404_bounda
             assert detail.run_id == run_a
             assert "content" in detail.unavailable_sections
 
+            operator_a = _auth(org_a)
             with pytest.raises(ApiError) as err:
-                await get_operator_trace_run(session, _auth(org_a), run_id=run_b)
+                await get_operator_trace_run(session, operator_a, run_id=run_b)
             assert err.value.code == NOT_FOUND
 
         async with session_with_org(session_factory, str(org_b)) as session:

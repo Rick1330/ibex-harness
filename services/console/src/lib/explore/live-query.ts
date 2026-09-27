@@ -110,24 +110,18 @@ function limitOrDefault(raw: string | null): number | null {
   return null
 }
 
-function assertLimitInRange(limit: number): void {
-  if (!Number.isInteger(limit)) {
-    throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
-  }
-  if (limit < 1) {
-    throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
-  }
-  if (limit > 100) {
-    throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
-  }
+function isValidLimit(limit: number): boolean {
+  if (!Number.isInteger(limit)) return false
+  if (limit < 1) return false
+  return limit <= 100
 }
 
 function parseLimit(raw: string | null): number {
   const fallback = limitOrDefault(raw)
   if (fallback != null) return fallback
   const limit = Number(raw)
-  assertLimitInRange(limit)
-  return limit
+  if (isValidLimit(limit)) return limit
+  throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
 }
 
 function parseStatus(raw: string | null): LiveExploreQuery["status"] {

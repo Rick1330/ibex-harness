@@ -6,15 +6,9 @@ import { Card, CardContent } from "@/components/ui/card"
 import { fetchOperatorContext, fetchOperatorTraceResource } from "@/lib/api/d1"
 import type { OperatorContext, OperatorTraceDetail } from "@/lib/api/contracts"
 import { OperatorApiError } from "@/lib/api/transport"
+import { safeExploreReturnHref } from "@/lib/explore/safe-return"
 
 import { RunInspector } from "./run-inspector"
-
-function safeReturnHref(raw: string | string[] | undefined): string {
-  const value = Array.isArray(raw) ? raw[0] : raw
-  if (!value || !value.startsWith("/dashboard/explore")) return "/dashboard/explore"
-  if (value.includes("//") || value.includes("\\")) return "/dashboard/explore"
-  return value
-}
 
 async function load(
   runId: string,
@@ -47,13 +41,16 @@ export async function LiveRunPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>
 }>) {
   const resolved = searchParams instanceof Promise ? await searchParams : (searchParams ?? {})
-  const returnHref = safeReturnHref(resolved.return)
+  const returnHref = safeExploreReturnHref(resolved.return)
   const { context, trace, error } = await load(runId)
   return (
     <DashboardShell liveMode operatorContext={context} showPreviewBanner={false}>
       <main className="@container/main flex flex-1 flex-col gap-2">
         <div className={`${pagePad} md:gap-4`}>
-          <Link className="text-sm text-muted-foreground underline-offset-4 hover:underline" href={returnHref}>
+          <Link
+            className="inline-flex min-h-6 items-center text-sm text-muted-foreground underline-offset-4 hover:underline"
+            href={returnHref}
+          >
             ← Back to Explore
           </Link>
           <div className="sr-only" aria-live="polite">
