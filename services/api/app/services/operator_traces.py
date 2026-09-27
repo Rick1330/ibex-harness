@@ -34,7 +34,7 @@ _TRACE_NOT_FOUND = "Trace not found"
 _TRACE_UNAVAILABLE = "Trace data is temporarily unavailable"
 
 _EVIDENCE_RUNS = table(
-    "ibex_core.evidence_runs",
+    "evidence_runs",
     column("id"),
     column("trace_id"),
     column("request_id"),
@@ -48,6 +48,7 @@ _EVIDENCE_RUNS = table(
     column("completeness"),
     column("sample_decision"),
     column("org_id"),
+    schema="ibex_core",
 )
 
 
