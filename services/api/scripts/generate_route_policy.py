@@ -39,7 +39,8 @@ def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -
 def _source_path(root: Path, raw_source: str | None) -> str | None:
     if not raw_source:
         return None
-    source_path = Path(raw_source).resolve()
+    raw_path = Path(raw_source)
+    source_path = (root / raw_path).resolve() if not raw_path.is_absolute() else raw_path.resolve()
     app_root = root / "services" / "api" / "app"
     if not str(source_path).startswith(str(app_root)):
         return None

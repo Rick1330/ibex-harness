@@ -49,7 +49,7 @@ export async function LiveExplorePage() {
   )
 }
 
-function TraceTable({ data }: { data: OperatorTraceList }) {
+function TraceTable({ data }: Readonly<{ data: OperatorTraceList }>) {
   return (
     <Card className={`${panelClass} mt-4`}>
       <CardHeader>

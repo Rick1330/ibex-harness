@@ -273,7 +273,9 @@ function ExploreWorkbench() {
                     rows={traces}
                     hoveredId={hoveredId}
                     onHover={setHoveredId}
-                    onSelect={(id) => router.push(`/dashboard/explore/t/${id}`)}
+                    onSelect={(id) => {
+                      router.push(`/dashboard/explore/t/${id}`)
+                    }}
                   />
                   <TracePreviewPanel trace={hovered} />
                 </div>

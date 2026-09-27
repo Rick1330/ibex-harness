@@ -63,8 +63,8 @@ export function operatorApiUrl(path: OperatorApiPath, suffix = "", query?: URLSe
   try {
     const origin = new URL(rawOrigin)
     assertSafeOperatorOrigin(origin)
-    if (path === "traceDetail" && !/^[A-Za-z0-9._~-]{1,256}$/.test(suffix)) {
-      throw new Error("unsafe trace identifier")
+    if (path === "traceDetail" && (suffix === "." || suffix === ".." || !/^[A-Za-z0-9._~-]{1,256}$/.test(suffix))) {
+      throw new OperatorApiError(404, "NOT_FOUND", "Trace not found")
     }
     if (path !== "traceDetail" && suffix) throw new Error("unexpected path suffix")
     const target = new URL(`${OPERATOR_API_PATHS[path]}${encodeURIComponent(suffix)}`, origin)

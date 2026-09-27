@@ -84,11 +84,11 @@ test("mobile shell has no horizontal overflow and exposes the existing navigatio
   expect(accessibility).toEqual([])
 })
 
-test("nested D2 route rewrites to its safe deferred state with no fixture detail", async ({ page }) => {
-  await page.goto("/dashboard/explore/t/trace_a91f7c")
+test("nested D2 route shows safe unknown-trace state with no fixture detail", async ({ page }) => {
+  await page.goto("/dashboard/explore/t/trace_unknown_boundary")
   // Next Proxy rewrites internally; the user's requested URL remains stable.
-  await expect(page).toHaveURL(/\/dashboard\/explore\/t\/trace_a91f7c$/)
-  await expect(page.getByRole("heading", { name: "This Console surface is deferred" })).toBeVisible()
-  await expect(page.getByText(/No domain fixtures or live data are served/)).toBeVisible()
-  await expect(page.getByText("Directive support-refund")).toHaveCount(0)
+  await expect(page).toHaveURL(/\/dashboard\/explore\/t\/trace_unknown_boundary$/)
+  await expect(page.getByRole("heading", { name: "Trace not found" })).toBeVisible()
+  await expect(page.getByText(/Cross-tenant guarantee: unknown or out-of-org/)).toBeVisible()
+  await expect(page.locator("main").getByText("Directive support-refund")).toHaveCount(0)
 })

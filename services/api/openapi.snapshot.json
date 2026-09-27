@@ -1153,6 +1153,342 @@
         "title": "OperatorOverviewResponse",
         "type": "object"
       },
+      "OperatorTraceDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "checkpoint_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Id"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/TraceEvidenceState"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "operator.trace-detail.v1",
+            "default": "operator.trace-detail.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "unavailable_sections": {
+            "items": {
+              "enum": [
+                "spans",
+                "candidates",
+                "score_explanation",
+                "directives",
+                "tools",
+                "content"
+              ],
+              "type": "string"
+            },
+            "title": "Unavailable Sections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "trace_id",
+          "run_id",
+          "request_id",
+          "agent_id",
+          "session_id",
+          "checkpoint_id",
+          "status",
+          "started_at",
+          "ended_at",
+          "evidence",
+          "unavailable_sections"
+        ],
+        "title": "OperatorTraceDetailResponse",
+        "type": "object"
+      },
+      "OperatorTraceListItem": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "checkpoint_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint Id"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/TraceEvidenceState"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "run_id",
+          "request_id",
+          "agent_id",
+          "session_id",
+          "checkpoint_id",
+          "status",
+          "started_at",
+          "ended_at",
+          "evidence"
+        ],
+        "title": "OperatorTraceListItem",
+        "type": "object"
+      },
+      "OperatorTraceListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorTraceListItem"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "query_end": {
+            "format": "date-time",
+            "title": "Query End",
+            "type": "string"
+          },
+          "query_start": {
+            "format": "date-time",
+            "title": "Query Start",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "operator.trace-list.v1",
+            "default": "operator.trace-list.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "truncated",
+          "observed_at",
+          "query_start",
+          "query_end",
+          "limit"
+        ],
+        "title": "OperatorTraceListResponse",
+        "type": "object"
+      },
       "OrgDeletionJobResponse": {
         "properties": {
           "created_at": {
@@ -2006,6 +2342,75 @@
           "created_at"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "TraceEvidenceState": {
+        "additionalProperties": false,
+        "properties": {
+          "completeness": {
+            "enum": [
+              "complete",
+              "partial",
+              "sampled",
+              "late",
+              "redacted",
+              "expired",
+              "deleted",
+              "simulated"
+            ],
+            "title": "Completeness",
+            "type": "string"
+          },
+          "freshness": {
+            "enum": [
+              "fresh",
+              "stale",
+              "unknown"
+            ],
+            "title": "Freshness",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "retention": {
+            "enum": [
+              "expired",
+              "deleted",
+              "unknown"
+            ],
+            "title": "Retention",
+            "type": "string"
+          },
+          "sample_decision": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Sample Decision",
+            "type": "string"
+          },
+          "source": {
+            "const": "postgres.evidence_runs",
+            "title": "Source",
+            "type": "string"
+          },
+          "source_watermark": {
+            "const": "not_provided",
+            "default": "not_provided",
+            "title": "Source Watermark",
+            "type": "string"
+          }
+        },
+        "required": [
+          "completeness",
+          "sample_decision",
+          "freshness",
+          "retention",
+          "source",
+          "observed_at"
+        ],
+        "title": "TraceEvidenceState",
         "type": "object"
       },
       "UsageQueryRequest": {
@@ -3125,6 +3530,164 @@
         "summary": "Refresh Session",
         "tags": [
           "operator-session-provisional"
+        ]
+      }
+    },
+    "/v1/operator/traces": {
+      "get": {
+        "operationId": "operator_trace_list_v1_operator_traces_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ok",
+                    "error"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "started_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Started After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "started_before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Started Before"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorTraceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Trace List",
+        "tags": [
+          "operator-traces"
+        ]
+      }
+    },
+    "/v1/operator/traces/{trace_id}": {
+      "get": {
+        "operationId": "operator_trace_detail_v1_operator_traces__trace_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trace_id",
+            "required": true,
+            "schema": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorTraceDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Trace Detail",
+        "tags": [
+          "operator-traces"
         ]
       }
     },

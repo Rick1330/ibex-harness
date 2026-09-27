@@ -73,9 +73,9 @@ const TraceEvidenceSchema = z
     completeness: z.enum(["complete", "partial", "sampled", "late", "redacted", "expired", "deleted", "simulated"]),
     sample_decision: z.string().min(1).max(32),
     freshness: z.enum(["fresh", "stale", "unknown"]),
-    retention: z.enum(["active", "expired", "deleted", "unknown"]),
+    retention: z.enum(["expired", "deleted", "unknown"]),
     source: z.literal("postgres.evidence_runs"),
-    source_watermark: z.null(),
+    source_watermark: z.literal("not_provided"),
     observed_at: z.string().datetime({ offset: true }),
   })
   .strict()

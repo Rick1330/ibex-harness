@@ -39,6 +39,11 @@ _BASE_SELECT = """
       AND started_at >= :query_start
       AND started_at <= :query_end
 """
+_LIST_QUERY = text(_BASE_SELECT + " ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
+_LIST_STATUS_QUERY = text(_BASE_SELECT + " AND status = :status ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
+_LIST_CURSOR_QUERY = text(_BASE_SELECT + " AND (started_at, trace_id) < (:cursor_started, :cursor_trace) ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
+_LIST_STATUS_CURSOR_QUERY = text(_BASE_SELECT + " AND status = :status AND (started_at, trace_id) < (:cursor_started, :cursor_trace) ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
+_DETAIL_QUERY = text(_BASE_SELECT + " AND trace_id = :trace_id ORDER BY started_at DESC LIMIT 1")
 
 
 def _cursor_key(settings: Settings) -> bytes:
@@ -48,8 +53,16 @@ def _cursor_key(settings: Settings) -> bytes:
     return value.encode("utf-8")
 
 
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Trace time range must include a timezone")
+    return value.astimezone(UTC)
+
+
 def _query_fingerprint(status: str | None, query_start: datetime, query_end: datetime) -> str:
-    return f"status={status or ''}&start={query_start.isoformat()}&end={query_end.isoformat()}&sort=started_at.desc,trace_id.desc"
+    start = _normalize_datetime(query_start).isoformat()
+    end = _normalize_datetime(query_end).isoformat()
+    return f"status={status or ''}&start={start}&end={end}&sort=started_at.desc,trace_id.desc"
 
 
 def _encode_cursor(
@@ -64,6 +77,8 @@ def _encode_cursor(
     payload = {
         "org_id": str(authorization.org_id),
         "query": _query_fingerprint(status, query_start, query_end),
+        "query_start": _normalize_datetime(query_start).isoformat(),
+        "query_end": _normalize_datetime(query_end).isoformat(),
         "started_at": row["started_at"].isoformat(),
         "trace_id": row["trace_id"],
         "expires_at": expires_at.isoformat(),
@@ -99,6 +114,28 @@ def _decode_cursor(
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
 
 
+def cursor_query_bounds(
+    settings: Settings,
+    authorization: OperatorSessionAuthorization,
+    cursor: str,
+) -> tuple[datetime, datetime]:
+    """Return the signed normalized bounds carried by a cursor."""
+    try:
+        encoded, signature = cursor.split(".", 1)
+        expected = hmac.new(_cursor_key(settings), encoded.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError("signature")
+        payload = json.loads(base64.urlsafe_b64decode(encoded.encode()))
+        if payload["org_id"] != str(authorization.org_id):
+            raise ValueError("tenant")
+        expires_at = datetime.fromisoformat(payload["expires_at"])
+        if expires_at <= datetime.now(UTC):
+            raise ValueError("expired")
+        return _normalize_datetime(datetime.fromisoformat(payload["query_start"])), _normalize_datetime(datetime.fromisoformat(payload["query_end"]))
+    except (ApiError, ValueError, KeyError, TypeError, json.JSONDecodeError, UnicodeError) as exc:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
+
+
 def _duration_ms(started_at: datetime, ended_at: datetime | None) -> int | None:
     if ended_at is None:
         return None
@@ -107,13 +144,12 @@ def _duration_ms(started_at: datetime, ended_at: datetime | None) -> int | None:
 
 def _evidence(row: Any, observed_at: datetime) -> TraceEvidenceState:
     completeness = str(row["completeness"])
-    retention = "expired" if completeness == "expired" else "deleted" if completeness == "deleted" else "active"
     freshness = "stale" if completeness == "late" else "unknown"
     return TraceEvidenceState(
         completeness=completeness,
         sample_decision=str(row["sample_decision"]),
         freshness=freshness,
-        retention=retention,
+        retention="unknown",
         source="postgres.evidence_runs",
         observed_at=observed_at,
     )
@@ -148,14 +184,24 @@ async def list_operator_traces(
     settings: Settings,
     authorization: OperatorSessionAuthorization,
     *,
-    query_start: datetime,
-    query_end: datetime,
+    query_start: datetime | None,
+    query_end: datetime | None,
     status: str | None,
     limit: int,
     cursor: str | None,
 ) -> OperatorTraceListResponse:
     if limit < 1 or limit > _MAX_PAGE_SIZE:
         raise ApiError(code=VALIDATION_ERROR, message="Trace limit must be between 1 and 100")
+    if cursor:
+        cursor_start, cursor_end = cursor_query_bounds(settings, authorization, cursor)
+        query_start = cursor_start if query_start is None else query_start
+        query_end = cursor_end if query_end is None else query_end
+    if query_end is None:
+        query_end = datetime.now(UTC)
+    if query_start is None:
+        query_start = query_end - timedelta(hours=24)
+    query_start = _normalize_datetime(query_start)
+    query_end = _normalize_datetime(query_end)
     _validate_range(query_start, query_end)
     params: dict[str, object] = {
         "org_id": str(authorization.org_id),
@@ -163,15 +209,20 @@ async def list_operator_traces(
         "query_end": query_end,
         "limit": limit + 1,
     }
-    cursor_clause = ""
+    has_cursor = bool(cursor)
     if cursor:
         cursor_started, cursor_trace = _decode_cursor(settings, authorization, cursor, status, query_start, query_end)
-        cursor_clause = " AND (started_at, trace_id) < (:cursor_started, :cursor_trace)"
         params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
-    status_clause = " AND status = :status" if status else ""
     if status:
         params["status"] = status
-    query = text(_BASE_SELECT + status_clause + cursor_clause + " ORDER BY started_at DESC, trace_id DESC LIMIT :limit")
+    if status and has_cursor:
+        query = _LIST_STATUS_CURSOR_QUERY
+    elif has_cursor:
+        query = _LIST_CURSOR_QUERY
+    elif status:
+        query = _LIST_STATUS_QUERY
+    else:
+        query = _LIST_QUERY
     try:
         await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
         result = await session.execute(query, params)
@@ -201,10 +252,7 @@ async def get_operator_trace(
 ) -> OperatorTraceDetailResponse:
     if not trace_id or len(trace_id) > 256:
         raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
-    query = text(
-        _BASE_SELECT
-        + " AND trace_id = :trace_id ORDER BY started_at DESC LIMIT 1"
-    )
+    query = _DETAIL_QUERY
     try:
         await session.execute(text("SET LOCAL statement_timeout = '3000ms'"))
         result = await session.execute(query, {"org_id": str(authorization.org_id), "query_start": datetime.min.replace(tzinfo=UTC), "query_end": datetime.max.replace(tzinfo=UTC), "trace_id": trace_id})

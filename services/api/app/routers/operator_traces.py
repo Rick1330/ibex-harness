@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Annotated, Literal
 
 from authclient.permissions import OPERATOR_METADATA_READ
@@ -42,14 +42,12 @@ async def operator_trace_list(
     started_before: Annotated[datetime | None, Query()] = None,
     cursor: Annotated[str | None, Query(max_length=2048)] = None,
 ) -> OperatorTraceListResponse:
-    end = started_before or datetime.now(UTC)
-    start = started_after or end - timedelta(hours=24)
     result = await list_operator_traces(
         session,
         _settings(request),
         operator,
-        query_start=start,
-        query_end=end,
+        query_start=started_after,
+        query_end=started_before,
         status=status,
         limit=limit,
         cursor=cursor,

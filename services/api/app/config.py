@@ -338,6 +338,10 @@ def _require_non_dev_operator_material(settings: Settings) -> None:
             "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled",
         ),
         (
+            settings.operator_cursor_secret,
+            "IBEX_OPERATOR_CURSOR_SECRET is required outside development when operator sessions are enabled",
+        ),
+        (
             settings.jwt_public_keys_pem,
             "DASHBOARD_JWT_PUBLIC_KEYS_PEM is required outside development",
         ),

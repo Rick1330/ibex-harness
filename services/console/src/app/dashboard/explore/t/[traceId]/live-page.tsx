@@ -21,7 +21,7 @@ async function load(traceId: string): Promise<{ context: OperatorContext | null;
   }
 }
 
-export async function LiveTracePage({ traceId }: { traceId: string }) {
+export async function LiveTracePage({ traceId }: Readonly<{ traceId: string }>) {
   const { context, trace, error } = await load(traceId)
   return (
     <DashboardShell liveMode operatorContext={context} showPreviewBanner={false}>
@@ -36,7 +36,7 @@ export async function LiveTracePage({ traceId }: { traceId: string }) {
   )
 }
 
-function TraceSnapshot({ trace }: { trace: OperatorTraceDetail }) {
+function TraceSnapshot({ trace }: Readonly<{ trace: OperatorTraceDetail }>) {
   return (
     <Card className={`${panelClass} mt-4`}>
       <CardHeader>
@@ -44,15 +44,17 @@ function TraceSnapshot({ trace }: { trace: OperatorTraceDetail }) {
         <CardTitle className="mt-2 break-all font-mono text-xl">{trace.trace_id}</CardTitle>
         <p className="text-sm text-muted-foreground">Source {trace.evidence.source} · observed {new Date(trace.evidence.observed_at).toISOString()} · watermark unavailable</p>
       </CardHeader>
-      <CardContent className="grid gap-4 md:grid-cols-2">
-        <Metadata label="Request" value={trace.request_id} />
-        <Metadata label="Run" value={trace.run_id} />
-        <Metadata label="Status" value={trace.status} />
-        <Metadata label="Started" value={new Date(trace.started_at).toISOString()} />
-        <Metadata label="Ended" value={trace.ended_at ? new Date(trace.ended_at).toISOString() : "unavailable"} />
-        <Metadata label="Measured duration" value={trace.duration_ms === null ? "unavailable" : `${trace.duration_ms} ms`} />
-        <Metadata label="Completeness" value={trace.evidence.completeness} />
-        <Metadata label="Retention" value={trace.evidence.retention} />
+      <CardContent>
+        <dl className="grid gap-4 md:grid-cols-2">
+          <Metadata label="Request" value={trace.request_id} />
+          <Metadata label="Run" value={trace.run_id} />
+          <Metadata label="Status" value={trace.status} />
+          <Metadata label="Started" value={new Date(trace.started_at).toISOString()} />
+          <Metadata label="Ended" value={trace.ended_at ? new Date(trace.ended_at).toISOString() : "unavailable"} />
+          <Metadata label="Measured duration" value={trace.duration_ms === null ? "unavailable" : `${trace.duration_ms} ms`} />
+          <Metadata label="Completeness" value={trace.evidence.completeness} />
+          <Metadata label="Retention" value={trace.evidence.retention} />
+        </dl>
         <div className="md:col-span-2 rounded-md border border-dashed p-4">
           <h2 className="font-medium">Provenance sections unavailable</h2>
           <p className="mt-1 text-sm text-muted-foreground">P2 joins, P3 field policy, score schema, and content authorization are not complete for these sections. No transcript, tool arguments, raw JSON, score waterfall, replay, or actions are exposed.</p>
@@ -63,6 +65,6 @@ function TraceSnapshot({ trace }: { trace: OperatorTraceDetail }) {
   )
 }
 
-function Metadata({ label, value }: { label: string; value: string }) {
+function Metadata({ label, value }: Readonly<{ label: string; value: string }>) {
   return <div className="min-w-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 break-all font-mono text-sm">{value}</dd></div>
 }

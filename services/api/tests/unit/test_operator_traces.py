@@ -74,8 +74,8 @@ async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
     assert result.items[0].trace_id == "trace-a"
     assert result.items[0].duration_ms == 120000
     assert result.items[0].evidence.source == "postgres.evidence_runs"
-    assert result.items[0].evidence.source_watermark is None
-    assert result.items[0].evidence.retention == "active"
+    assert result.items[0].evidence.source_watermark == "not_provided"
+    assert result.items[0].evidence.retention == "unknown"
     query_call = session.execute.await_args_list[-1]
     assert "org_id = :org_id" in str(query_call.args[0])
     assert str(ORG) in repr(query_call.args[1])
@@ -128,9 +128,25 @@ async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
 
 
 @pytest.mark.asyncio
+async def test_default_cursor_reuses_signed_bounds() -> None:
+    settings = operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!")
+    first = session_for(row("trace-a"), row("trace-b"))
+    first_result = await list_operator_traces(
+        first, settings, auth(), query_start=None, query_end=None, status=None, limit=1, cursor=None
+    )
+    assert first_result.next_cursor
+    second = session_for(row("trace-c"))
+    second_result = await list_operator_traces(
+        second, settings, auth(), query_start=None, query_end=None, status=None, limit=1, cursor=first_result.next_cursor
+    )
+    assert second_result.query_start == first_result.query_start
+    assert second_result.query_end == first_result.query_end
+
+
+@pytest.mark.asyncio
 async def test_list_fails_closed_when_cursor_key_or_database_is_unavailable() -> None:
     with pytest.raises(ApiError) as no_key:
-        await list_operator_traces(session_for(row("trace-a"), row("trace-b")), operator_settings(), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None)
+        await list_operator_traces(session_for(row("trace-a"), row("trace-b")), operator_settings(operator_cursor_secret=None), auth(), query_start=START, query_end=END, status=None, limit=1, cursor=None)
     assert no_key.value.code == SERVICE_DEGRADED
     session = AsyncMock()
     session.execute.side_effect = SQLAlchemyError("db")

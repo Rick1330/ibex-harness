@@ -4,7 +4,7 @@ import { isDashboardPreviewEnabled, isLiveD1Enabled } from "@/lib/classification
 
 export const dynamic = "force-dynamic"
 
-export default async function TraceInspectorPage({ params }: { params: Promise<{ traceId: string }> }) {
+export default async function TraceInspectorPage({ params }: Readonly<{ params: Promise<{ traceId: string }> }>) {
   const { traceId } = await params
   if (isLiveD1Enabled()) return <LiveTracePage traceId={traceId} />
   if (isDashboardPreviewEnabled()) return <PreviewTraceInspectorPage />

@@ -11,7 +11,7 @@ EvidenceState = Literal[
     "complete", "partial", "sampled", "late", "redacted", "expired", "deleted", "simulated"
 ]
 FreshnessState = Literal["fresh", "stale", "unknown"]
-RetentionState = Literal["active", "expired", "deleted", "unknown"]
+RetentionState = Literal["expired", "deleted", "unknown"]
 TraceStatus = Literal["ok", "error"]
 
 
@@ -23,7 +23,7 @@ class TraceEvidenceState(BaseModel):
     freshness: FreshnessState
     retention: RetentionState
     source: Literal["postgres.evidence_runs"]
-    source_watermark: None = None
+    source_watermark: Literal["not_provided"] = "not_provided"
     observed_at: AwareDatetime
 
 
