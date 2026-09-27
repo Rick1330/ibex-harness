@@ -82,14 +82,23 @@ def _trace_columns() -> tuple[Any, ...]:
     )
 
 
-def _list_query(*, status: bool, cursor: bool):
+def _status_predicate(status: str):
+    # Public TraceStatus maps any persisted non-ok run to "error" in _item.
+    if status == "ok":
+        return _EVIDENCE_RUNS.c.status == "ok"
+    if status == "error":
+        return _EVIDENCE_RUNS.c.status != "ok"
+    raise ApiError(code=VALIDATION_ERROR, message="Invalid trace status filter")
+
+
+def _list_query(*, status: str | None, cursor: bool):
     query = select(*_trace_columns()).where(
         _EVIDENCE_RUNS.c.org_id == bindparam("org_id"),
         _EVIDENCE_RUNS.c.started_at >= bindparam("query_start"),
         _EVIDENCE_RUNS.c.started_at <= bindparam("query_end"),
     )
-    if status:
-        query = query.where(_EVIDENCE_RUNS.c.status == bindparam("status"))
+    if status is not None:
+        query = query.where(_status_predicate(status))
     if cursor:
         query = query.where(
             tuple_(_EVIDENCE_RUNS.c.started_at, _EVIDENCE_RUNS.c.trace_id)
@@ -275,9 +284,7 @@ def _prepare_list_query(page: _ResolvedListPage) -> tuple[Any, dict[str, object]
     if page.cursor:
         cursor_started, cursor_trace = _decode_cursor(page, page.cursor)
         params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
-    if page.status:
-        params["status"] = page.status
-    return _list_query(status=bool(page.status), cursor=bool(page.cursor)), params
+    return _list_query(status=page.status, cursor=bool(page.cursor)), params
 
 
 async def _fetch_list_rows(

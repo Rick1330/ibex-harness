@@ -256,8 +256,9 @@ async def test_list_maps_unfinished_and_late_lifecycle_metadata() -> None:
     unfinished["ended_at"] = None
     unfinished["completeness"] = "late"
     unfinished["status"] = "failed"
+    session = session_for(unfinished)
     result = await list_call(
-        session_for(unfinished),
+        session,
         cursor_settings(),
         auth(),
         started_after=START,
@@ -269,6 +270,12 @@ async def test_list_maps_unfinished_and_late_lifecycle_metadata() -> None:
     assert result.items[0].duration_ms is None
     assert result.items[0].status == "error"
     assert result.items[0].evidence.freshness == "stale"
+    query_call = session.execute.await_args_list[-1]
+    sql = str(query_call.args[0])
+    compiled = query_call.args[0].compile()
+    assert "status !=" in sql or "status <>" in sql
+    assert compiled.params.get("status_1") == "ok"
+    assert query_call.args[1].get("status") != "error"
 
 
 def test_mounted_d2_routes_require_session_and_return_no_store_metadata() -> None:
