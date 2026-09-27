@@ -43,7 +43,7 @@ function BreadcrumbLink({
     <Comp
       data-slot="breadcrumb-link"
       className={cn(
-        "inline-flex min-h-8 min-w-8 items-center px-1.5 transition-colors hover:text-foreground",
+        "inline-flex min-h-8 items-center px-1.5 transition-colors hover:text-foreground",
         className,
       )}
       {...props}

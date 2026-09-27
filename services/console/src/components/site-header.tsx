@@ -221,7 +221,7 @@ function HeaderBreadcrumb({
   meta: { section: string; page: string; search: string }
 }>) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden md:min-w-[14rem]">
       <SidebarTrigger className="size-8 shrink-0 md:hidden" />
       <Breadcrumb className="hidden min-w-0 md:block">
         <BreadcrumbList>
@@ -230,17 +230,17 @@ function HeaderBreadcrumb({
               {orgBreadcrumbLabel(liveMode, operatorContext)}
             </BreadcrumbLink>
           </BreadcrumbItem>
-          <BreadcrumbSeparator />
+          <BreadcrumbSeparator className="shrink-0" />
           <BreadcrumbItem className="shrink-0">
             <BreadcrumbLink href="/dashboard">{meta.section}</BreadcrumbLink>
           </BreadcrumbItem>
-          <BreadcrumbSeparator />
+          <BreadcrumbSeparator className="shrink-0" />
           <BreadcrumbItem className="min-w-0">
             <BreadcrumbPage>{meta.page}</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>
-      <span className="truncate text-sm font-medium md:hidden">{meta.page}</span>
+      <span className="min-w-0 truncate text-sm font-medium md:hidden">{meta.page}</span>
     </div>
   )
 }
@@ -251,7 +251,7 @@ function HeaderSearch({ search }: Readonly<{ search: string }>) {
       <button
         type="button"
         title="Search or jump to anything (Ctrl/⌘+K) — command palette not wired yet"
-        className="hidden h-8 w-60 min-w-0 items-center gap-2 rounded-md border border-input bg-muted/50 px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted md:flex lg:w-72 xl:w-80"
+        className="hidden h-8 w-48 max-w-60 min-w-0 shrink items-center gap-2 rounded-md border border-input bg-muted/50 px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted md:flex lg:w-60 xl:w-72"
       >
         <IconSearch className="size-4 shrink-0" />
         <span className="truncate">{search}</span>
@@ -459,7 +459,7 @@ function HeaderRightActions({
   platformHealth: PlatformHealth | null
 }>) {
   return (
-    <div className="flex flex-1 items-center justify-end gap-1">
+    <div className="flex min-w-0 shrink items-center justify-end gap-1 md:shrink-0">
       <TimeRangeSlot liveMode={liveMode} />
       <PageFreshness liveMode={liveMode} platformHealth={platformHealth} />
       <NotificationsMenu liveMode={liveMode} />
