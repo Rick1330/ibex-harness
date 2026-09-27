@@ -194,27 +194,23 @@ function fixtureBodies() {
 
 function resolveFixtureBody(pathname) {
   const bodies = fixtureBodies()
-  if (pathname === "/v1/operator/context") return bodies.context
-  if (pathname === "/v1/operator/overview") return bodies.overview
-  if (pathname === "/v1/operator/platform/health") return bodies.health
-  if (pathname === "/v1/operator/traces") return bodies.traces
-  if (pathname === `/v1/operator/traces/runs/${runId}`) return bodies.traceDetail
-  if (pathname === "/v1/operator/traces/trace-live-1") return bodies.traces
-  if (pathname.startsWith("/v1/operator/traces/")) return "trace-missing"
-  return null
+  if (pathname === "/v1/operator/context") return { status: 200, payload: bodies.context }
+  if (pathname === "/v1/operator/overview") return { status: 200, payload: bodies.overview }
+  if (pathname === "/v1/operator/platform/health") return { status: 200, payload: bodies.health }
+  if (pathname === "/v1/operator/traces") return { status: 200, payload: bodies.traces }
+  if (pathname === `/v1/operator/traces/runs/${runId}`) {
+    return { status: 200, payload: bodies.traceDetail }
+  }
+  if (pathname === "/v1/operator/traces/trace-live-1") return { status: 200, payload: bodies.traces }
+  if (pathname.startsWith("/v1/operator/traces/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Trace not found" } } }
+  }
+  return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Not found" } } }
 }
 
 function handleAuthenticatedJson(pathname, response) {
-  const body = resolveFixtureBody(pathname)
-  if (body === "trace-missing") {
-    writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Trace not found" } })
-    return
-  }
-  if (!body) {
-    writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Not found" } })
-    return
-  }
-  writeJson(response, 200, body)
+  const resolved = resolveFixtureBody(pathname)
+  writeJson(response, resolved.status, resolved.payload)
 }
 
 function handleApiRequest(request, response) {

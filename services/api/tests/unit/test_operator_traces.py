@@ -379,11 +379,14 @@ async def test_run_detail_hydrates_child_sections_and_interim_score_note() -> No
         run_id=RUN,
     )
     assert len(detail.spans) == 1
-    assert detail.assembly is not None and detail.assembly.total_ms == 28
+    assert detail.assembly is not None
+    assert detail.assembly.total_ms == 28
     assert len(detail.candidates) == 1
-    assert detail.score_schema_note is not None and "interim_v1" in detail.score_schema_note
+    assert detail.score_schema_note is not None
+    assert "interim_v1" in detail.score_schema_note
     assert "score_explanation" in detail.unavailable_sections
-    assert detail.directive is not None and detail.directive.content_hash == "abc"
+    assert detail.directive is not None
+    assert detail.directive.content_hash == "abc"
     assert len(detail.tools) == 1
     assert "content" in detail.unavailable_sections
     assert "spans" not in detail.unavailable_sections

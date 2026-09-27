@@ -1,4 +1,4 @@
 d2-api-unit-operator-traces
-command: services/api/.venv/bin/python -m pytest tests/unit/test_operator_traces.py -q
+command: .venv/bin/python -m pytest tests/unit/test_operator_traces.py -q
 result: passed
 summary: 30 passed

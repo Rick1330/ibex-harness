@@ -231,7 +231,7 @@ function HeaderBreadcrumb({
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
-          <BreadcrumbItem>
+          <BreadcrumbItem className="shrink-0">
             <BreadcrumbLink href="/dashboard">{meta.section}</BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />

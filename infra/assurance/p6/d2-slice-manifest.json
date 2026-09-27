@@ -1,7 +1,7 @@
 {
   "manifest_version": "p6-bootstrap.v1",
-  "run_id": "d2-local-e321bf43684b",
-  "commit_sha": "e321bf43684b84e45ca71f72eeb56eaac152d504",
+  "run_id": "d2-local-4d9c1967ac0b",
+  "commit_sha": "4d9c1967ac0b32fc93742a7c830ca731c01a9e91",
   "environment": "local",
   "topology": {
     "ui_origin": "https://127.0.0.1:3282",
@@ -33,14 +33,14 @@
     },
     {
       "name": "d2-api-unit-operator-traces-report",
-      "sha256": "45f7b4f4de2b47f87ea8647b8dc8eaf825ba7af4428eeebb0d38fd978efaf41b",
+      "sha256": "3deb638129b41f877d0d5fc6e6ce2ec715f68afdfaf73b5cde4ed7d13ec22b9f",
       "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
     },
     {
       "name": "d2-api-unit-operator-traces-transcript",
-      "sha256": "4fe32b5b15a8242a01afc03e5c74f07c9cc16c353384ae8b54aa6750e0a931a7",
+      "sha256": "7e5b4484ddfe2aa9aead4ffe43f50c15e188fee9ac5c3831661bfa6d64540e93",
       "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt",
       "evidence_state": "contract-tested",
       "producer": "pr-911"
