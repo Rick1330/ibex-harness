@@ -51,17 +51,23 @@ function BreadcrumbLink({
   )
 }
 
-function BreadcrumbPage({ className, ...props }: React.ComponentProps<"span">) {
+function BreadcrumbPage({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="breadcrumb-page"
       aria-current="page"
       className={cn(
-        "inline-flex min-h-8 items-center truncate px-1.5 font-normal text-foreground",
+        "inline-flex min-h-8 items-center px-1.5 font-normal text-foreground",
         className,
       )}
       {...props}
-    />
+    >
+      <span className="truncate">{children}</span>
+    </span>
   )
 }
 
