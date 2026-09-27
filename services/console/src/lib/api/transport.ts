@@ -57,10 +57,14 @@ function assertSafeOperatorOrigin(origin: URL): void {
   assertOriginHasNoPath(origin)
 }
 
+function isValidTraceSuffix(suffix: string): boolean {
+  if (suffix === "." || suffix === "..") return false
+  return /^[A-Za-z0-9._~-]{1,256}$/.test(suffix)
+}
+
 function assertAllowedSuffix(path: OperatorApiPath, suffix: string): void {
   if (path === "traceDetail") {
-    const valid = /^[A-Za-z0-9._~-]{1,256}$/.test(suffix)
-    if (suffix === "." || suffix === ".." || !valid) {
+    if (!isValidTraceSuffix(suffix)) {
       throw new OperatorApiError(404, "NOT_FOUND", "Trace not found")
     }
     return

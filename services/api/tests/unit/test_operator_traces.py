@@ -66,14 +66,12 @@ async def assert_api_error(operation: Awaitable[object], code: str) -> ApiError:
     return error.value
 
 
-async def assert_list_error(
-    code: str,
-    *,
-    settings=None,
-    operator=None,
-    session=None,
+async def list_call(
+    session: AsyncMock,
+    settings,
+    operator: OperatorSessionAuthorization | None = None,
     **overrides: object,
-) -> ApiError:
+) -> object:
     values: dict[str, object] = {
         "query_start": START,
         "query_end": END,
@@ -82,12 +80,23 @@ async def assert_list_error(
         "cursor": None,
     }
     values.update(overrides)
+    return await list_operator_traces(session, settings, operator or auth(), **values)
+
+
+async def assert_list_error(
+    code: str,
+    *,
+    settings=None,
+    operator=None,
+    session=None,
+    **overrides: object,
+) -> ApiError:
     return await assert_api_error(
-        list_operator_traces(
+        list_call(
             session or session_for(),
             settings or operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"),
-            operator or auth(),
-            **values,
+            operator,
+            **overrides,
         ),
         code,
     )
@@ -96,7 +105,7 @@ async def assert_list_error(
 @pytest.mark.asyncio
 async def test_list_is_metadata_only_and_binds_org_and_query() -> None:
     session = session_for(row())
-    result = await list_operator_traces(
+    result = await list_call(
         session,
         operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"),
         auth(),
@@ -135,10 +144,10 @@ async def test_list_rejects_bad_bounds_and_cursor(overrides: dict[str, object]) 
 async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
     settings = operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!")
     first = session_for(row("trace-a"), row("trace-b"))
-    first_result = await list_operator_traces(first, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=None)
+    first_result = await list_call(first, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=None)
     assert first_result.next_cursor
     second = session_for(row("trace-c"))
-    await list_operator_traces(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor)
+    await list_call(second, settings, auth(), query_start=START, query_end=END, status="ok", limit=1, cursor=first_result.next_cursor)
     encoded, signature = first_result.next_cursor.split(".", 1)
     assert signature
     tampered = f"{encoded}.{'0' * 64}"
@@ -167,12 +176,12 @@ async def test_list_uses_signed_cursor_and_rejects_query_replay() -> None:
 async def test_default_cursor_reuses_signed_bounds() -> None:
     settings = operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!")
     first = session_for(row("trace-a"), row("trace-b"))
-    first_result = await list_operator_traces(
+    first_result = await list_call(
         first, settings, auth(), query_start=None, query_end=None, status=None, limit=1, cursor=None
     )
     assert first_result.next_cursor
     second = session_for(row("trace-c"))
-    second_result = await list_operator_traces(
+    second_result = await list_call(
         second, settings, auth(), query_start=None, query_end=None, status=None, limit=1, cursor=first_result.next_cursor
     )
     assert second_result.query_start == first_result.query_start
@@ -211,7 +220,7 @@ async def test_list_maps_unfinished_and_late_lifecycle_metadata() -> None:
     unfinished["ended_at"] = None
     unfinished["completeness"] = "late"
     unfinished["status"] = "failed"
-    result = await list_operator_traces(session_for(unfinished), operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"), auth(), query_start=START, query_end=END, status="error", limit=1, cursor=None)
+    result = await list_call(session_for(unfinished), operator_settings(operator_cursor_secret="cursor-secret-32-bytes-minimum!!"), auth(), query_start=START, query_end=END, status="error", limit=1, cursor=None)
     assert result.items[0].duration_ms is None
     assert result.items[0].status == "error"
     assert result.items[0].evidence.freshness == "stale"
