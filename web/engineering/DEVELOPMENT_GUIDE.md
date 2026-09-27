@@ -56,18 +56,19 @@ ibex-harness/
     proxy/                  # Go — shipped (Phase 2); grows in 2.5+
     auth/                   # Go — shipped (Phase 2); grows in 4
     embedder/               # Python — shipped (Phase 2.5)
-    tokenizer-service/      # Python — planned 2.5 (situational)
-    mcp-memory/             # Python — MCP tools (2.5 → 3.5)
-    memory/                 # Python — in progress (Phase 3; write path shipped)
-    worker/                 # Python Celery — planned 3.5+
-    context/                # Python gRPC — planned 3.5
-    api/                    # Python FastAPI — planned 4
-    dashboard/              # Next.js — planned 4
+    mcp-memory/             # Python — shipped/partial MCP resource server
+    memory/                 # Python — active Phase 3 memory substrate
+    worker/                 # Python Celery — active Phase 3.5 worker
+    context/                # Python — active Phase 3.5 context clients
+    api/                    # Python FastAPI — shipped 4.A.1 foundations; D1/D2 reads mounted
+    console/                # Next.js — canonical operator UI; D2 metadata live slice
+    dashboard/              # compatibility-only 4.P.0 shell
 
   packages/                 # shared libraries + contracts
     proto/                  # protobuf source of truth
     provider/               # LLM providers (extends in 2.5+)
-    # planned: embedder/, contextclient/, circuitbreaker/
+    evidenceoutbox/         # durable evidence writers and transactional outbox
+    # additional shared packages are listed in packages/README.md
     # planned SDKs/CLI: sdk-python/, sdk-typescript/, sdk-go/, cli/
 
   infra/
@@ -99,9 +100,9 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 
 - Docker + Docker Compose
 - GNU Make
-- Go 1.22+
-- Python 3.11+
-- Node.js 18+
+- Go 1.25.13 (from `go.mod`)
+- Python 3.12+ (from service/package manifests)
+- Node.js 22 (from `.nvmrc`)
 - Buf CLI
 - Bash (Git Bash on Windows)
 
@@ -837,7 +838,7 @@ make format              # gofmt + ruff format + prettier
 
 - Set env vars with `$env:NAME = "value"` then run the command on the next line — do **not** paste bash `VAR=value cmd` or `\` line continuations.
 - Integration tests with `compose-dev-up` only: `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` before `go test -tags=integration ./...`
-- Service runbooks: [services/auth/README.md](../services/auth/README.md), [services/proxy/README.md](../services/proxy/README.md)
+- Service runbooks: [services/auth/README.md](../../services/auth/README.md), [services/proxy/README.md](../../services/proxy/README.md)
 
 ---
 

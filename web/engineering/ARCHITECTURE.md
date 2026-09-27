@@ -258,7 +258,7 @@ Memory:
 
 - `idx_memories_org_agent` on (org_id, agent_id) WHERE status='active'
 - `idx_memories_content_hash` on (content_hash)
-- `idx_memories_embedding` USING ivfflat (embedding vector_cosine_ops)
+- `idx_memories_embedding_hnsw` USING hnsw (embedding vector_cosine_ops), as defined by `infra/migrations/postgres/000017_memory_schema_v2_expand.up.sql`; IVFFlat references are historical.
 - `idx_memories_search` USING gin(to_tsvector('english', content))
 
 **Performance Characteristics**:

@@ -31,10 +31,10 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-09-14  
-**Branch:** `feature/IBEX-9001-world-class-operator-roadmap` (roadmap redesign)  
+**Last updated:** 2026-09-27
+**Branch:** `main` at `e4525e3` (D1/D2 implementation baseline)
 **Current focus:** [Phase 4](/roadmap/phase-4-multi-provider)  
-**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e; 4.C.5 streaming hardening baseline
+**Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e; 4.C.5 streaming hardening baseline; 4.D.1 metadata overview (`fc8735c`); D2 metadata trace read slice (`e4525e3`)
 
 <QuickLinks
   links={[
@@ -87,8 +87,10 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with
   (`search_memory` / `write_memory` / `record_feedback`), learning-loop e2e (`e2e-smoke-p3.5`),
   ISO-MCP isolation (`security-integration-p35`), and memory/extraction quality benchmark CI gates.
 **Not yet:** Dedicated published suites for context-assembly / MCP tool p95 / extraction
-  throughput (contract columns reserved; see Phase 3.5 exit audit P2); management API/dashboard
-  (Phase 4).
+  throughput (contract columns reserved; see Phase 3.5 exit audit P2). Phase 4 now has a mounted
+  D1 context/overview slice and a D2 metadata-only trace list/detail slice; hosted acceptance,
+  the full operator management API, and richer provenance panels remain gated by the Track P/D
+  evidence contracts.
 </Callout>
 
 ## Next

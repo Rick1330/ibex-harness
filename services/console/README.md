@@ -20,7 +20,7 @@ For the visual dashboard shell, start the service and open `/dashboard` directly
 pnpm --filter @ibex/console dev
 ```
 
-The current shell intentionally has no login route or demo credentials. AuthService, tenant authority, session cookies, MFA, and authenticated mutations are deferred; the dashboard is directly reachable so the presentation can be inspected independently.
+The presentation shell intentionally has no login route or demo credentials. AuthService-backed sessions, tenant authority, MFA, and authenticated mutations remain deferred. A guarded live mode supports the D2 metadata-only Explore list/detail slice through the server-only DAL; it is not a substitute for hosted AuthService or two-tenant acceptance evidence.
 
 ## Surface classification
 
@@ -30,7 +30,8 @@ The current shell intentionally has no login route or demo credentials. AuthServ
 | Overview and mock domain fixtures                                                                                     | **Preview-only**              | The mock fixture modules remain presentation fixtures. They are reachable only through an explicit preview build/runtime flag; production has no fixture adapter.                         |
 | Login, signup, and TOTP credential flows                                                                               | **Removed/deferred**          | No credential entry, demo password, token minting, or MFA enrollment is exposed in this shell. AuthService owns the future implementation.                                               |
 | Dashboard shell                                                                                                       | **Presentation-only**         | The shell is directly reachable for inspection; it has no tenant authority and authenticated mutations remain disabled.                                                             |
-| Explore, sessions, memories, directives, incidents, drift, analytics, billing, settings data                          | **Deferred/live integration** | The mock route and visual states are retained. Live reads, authorization, mutations, evidence contracts, and upstream fetches are not claimed until owning APIs are connected.            |
+| Explore metadata list/detail                                                                                           | **Mounted-but-provisional**  | With `CONSOLE_DATA_MODE=live`, `CONSOLE_READ_ONLY=1`, and server-only `IBEX_OPERATOR_API_ORIGIN`, the live pages read the tenant-scoped D2 metadata contract. No raw content or unavailable sections are synthesized. |
+| Sessions, memories, directives, incidents, drift, analytics, billing, settings data                                  | **Deferred/live integration** | Mock routes remain preview-only; richer reads, authorization, mutations, evidence contracts, and upstream fetches require separate owning APIs and acceptance gates. |
 
 ## Preview configuration migration
 
@@ -48,7 +49,7 @@ Preview remains enabled only when the server-side mode and preview flags are set
 
 There is no browser-side arbitrary upstream fetch, bearer credential, client-supplied organization authority, fake login, or browser secret. The auth context is credential-free and exists only to preserve future step-up integration seams; it never loads, manufactures, or stores a session. Token issuance, bearer-curl generation, and TOTP enrollment are not exposed.
 
-The copied mock code is intentionally classified as presentation-only. Theme/sidebar/onboarding preferences may use browser `localStorage`, the sidebar uses a non-auth layout cookie, and the drift banner uses `sessionStorage`; none is a credential or tenant-authority store. Authenticated API reads, mutations, token issuance, invites, and first-trace traffic must be replaced by validated tenant-scoped contracts before production integration.
+The copied mock code is intentionally classified as presentation-only. Theme/sidebar/onboarding preferences may use browser `localStorage`, the sidebar uses a non-auth layout cookie, and the drift banner uses `sessionStorage`; none is a credential or tenant-authority store. Authenticated API reads beyond the D2 metadata slice, mutations, token issuance, invites, and richer trace traffic require validated tenant-scoped contracts before production integration. The D2 live seam is opt-in and fail-closed; it forwards only the configured access-session cookie and uses request-time `no-store` responses.
 
 ## Verification and handoff
 

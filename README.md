@@ -29,7 +29,7 @@
 
 ## Current status
 
-Phases **0–2.5 are complete** (auth, multi-provider proxy, tokenizer, response pipeline, embedder, MCP skeleton, local LGTM). **Phase 3** (Core Memory Substrate) is in progress: schema v2 / HNSW, VectorStore, and the full write pipeline (`POST /v1/memories` — PII, dedup, conflict, orchestration, multi-label `labels[]`). **Next:** Track D read path (semantic search, hot cache). Extraction/context assembly are Phase **3.5**; operator platform is Phase **4**; intelligence is Phase **4.5**; advanced retrieval is Phase **5**. See [roadmap current state](https://ibexharness.com/roadmap/current-state).
+Phases **0–3.5 are complete** and **Phase 4 is in progress**. Track P operator readiness is the prerequisite for the redesigned Track D capability slices. D1 merged in `fc8735c` and D2 currently has a mounted, read-only, tenant-scoped **metadata-only** trace list/detail slice from `e4525e3`; full 4.D.2 acceptance and hosted production evidence remain open. See [`web/engineering/OPERATOR_PLATFORM_ARCHITECTURE.md`](web/engineering/OPERATOR_PLATFORM_ARCHITECTURE.md) and the [roadmap current state](https://ibexharness.com/roadmap/current-state).
 
 ## Quick start
 

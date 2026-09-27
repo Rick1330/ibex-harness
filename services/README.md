@@ -28,9 +28,9 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | Directory | Role | Preferred phase | Notes |
 | --- | --- | --- | --- |
 | `tokenizer-service/` | Python FastAPI — accurate token counts via Hugging Face `tokenizers` (optional dual-path with in-process Go/CGo in the proxy) | **2.5** | Situational: may be deferred if proxy-side counting alone proves sufficient for early budgets |
-| `dashboard/` | Next.js — operator UI (agents, memories, traces, drift, directives, analytics, cost governance) | **4** | Separate from the public `web/` site |
+| `dashboard/` | Static operator connection/session/SSE shell | **Compatibility-only (4.P.0)** | Retain during migration; do not expand into a second Track D product. `services/console/` is canonical. |
 
-Intelligence (fingerprinting, drift, directive regression) primarily extends `worker/`, `api/`, and `dashboard/` rather than introducing a separate “intelligence” process by default. Advanced retrieval (Phase 5) primarily extends `memory/` / `context/` / `mcp-memory/` rather than a new search service by default.
+Intelligence (fingerprinting, drift, directive regression) primarily extends `worker/`, `api/`, and `console/` rather than introducing a separate “intelligence” process by default. Advanced retrieval (Phase 5) primarily extends `memory/` / `context/` / `mcp-memory/` rather than a new search service by default.
 
 ---
 

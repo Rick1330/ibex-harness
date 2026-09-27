@@ -11,12 +11,24 @@
 | API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | D1 context and Overview reads enforce the metadata-read permission and RLS-bound session scope. Verify canonical secure-cookie/origin policy, real AuthService-backed sessions, and staging evidence before production use. |
 | D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
 | Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
-| Memories, sessions, agents, directives, analytics, incidents, Explore, Trace Inspector, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| D2 metadata trace list/detail | **Mounted-but-provisional** | `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` are read-only, tenant-scoped, no-store metadata routes. Full provenance panels, content, score explanations, replay, and actions remain planned and unaccepted. |
+| Memories, sessions, agents, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
 | Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
 
 ### Contract ownership and validation
 
 The owning backend service is authoritative for each REST/gRPC/SSE contract. The console server-only DAL/BFF must authorize the session and organization, call the owner, validate responses at runtime, redact fields, and return minimal DTOs. CI must snapshot OpenAPI, generate the TypeScript client from the snapshot, fail on snapshot/client drift, and validate SSE envelopes including version, event ID, sequence, and `Last-Event-ID` resume semantics. Hand-maintained UI types and fixture routes are not API implementations.
+
+### D2 metadata trace reads (mounted, provisional)
+
+The current D2 slice exposes only metadata from the canonical evidence read model:
+
+| Method | Path | Query / response boundary |
+| --- | --- | --- |
+| `GET` | `/v1/operator/traces` | `limit`, `status`, `started_after`, `started_before`, and signed `cursor`; maximum seven-day range and 100 rows. |
+| `GET` | `/v1/operator/traces/{trace_id}` | Tenant-scoped metadata detail; cross-tenant and missing records use the same not-found boundary. |
+
+Both routes require an AuthService-backed operator session outside development, `OPERATOR_METADATA_READ`, an organization-bound database transaction, and `Cache-Control: no-store`. The response source is `postgres.evidence_runs`; `source_watermark` is currently `not_provided`, retention is `unknown`, and unavailable spans, candidates, score explanation, directives, tools, and content are explicit rather than fabricated. The contract is maintained by `services/api/openapi.snapshot.json`, `services/api/scripts/route_inventory.json`, and the Console runtime schemas. Local route/contract evidence is not hosted deployment or milestone acceptance evidence; see ADR-0082 and issue #905.
 
 ### Operator contract boundary
 
@@ -28,10 +40,10 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 
 ---
 
-> **Operator platform contract (specification-only):** The historical Phase 4 dashboard work is gated by Track P. The planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
+> **Operator platform contract:** The historical Phase 4 dashboard work is gated by Track P. The current D2 slice mounts only a versioned metadata trace list/detail read; the planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
 > **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
 >
-> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented**. See [CURRENT_STATE.md](roadmap/CURRENT_STATE.md).
+> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented** unless a mounted implementation record is called out above. See the [roadmap current state](../content/roadmap/current-state.mdx).
 
 ## 🎯 API Design Philosophy
 

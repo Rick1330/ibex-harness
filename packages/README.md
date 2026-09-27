@@ -2,7 +2,7 @@
 
 Shared libraries and contract artifacts (not deployable as standalone processes). Deployable runtimes live under [`services/`](../services/README.md).
 
-Names below mix **shipped** packages with **planned** libraries from the redesigned roadmap (Phases 2.5–5). Planned rows are orientation only — exact package boundaries may change during implementation. See [Changing this inventory](#changing-this-inventory).
+This inventory reflects the directories present at commit `e4525e3`. Existing packages are current/shipped unless explicitly marked otherwise; the separate planned section contains only packages that do not yet exist. Exact boundaries may change only with evidence and an ADR. See [Changing this inventory](#changing-this-inventory).
 
 Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md). Package boundary rules: [ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx).
 
@@ -51,6 +51,10 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `evidenceoutbox/` | 4.P.2 evidence-scoped transactional outbox + durable evidence writers (runs/spans/metrics/scores/directive/tool/session_events); relay with crash/replay; does **not** absorb model-policy or org-deletion publication |
 
 ---
+
+## Current package directories not covered by the historical role table
+
+The following current directories are also shipped shared contracts or service support packages and must not be mistaken for planned work: `apierror`, `billing`, `modelpolicy`, `objectstore`, `privacyaudit`, `ssrf`, and `usagequery` (Go); `apierror_py`, `authclient`, and `ibex_async_db` (Python). Their owning package READMEs, tests, and import graph are the authority for detailed behavior.
 
 ## Planned (redesigned roadmap)
 

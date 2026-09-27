@@ -23,8 +23,10 @@ make help
 | GNU Make | any POSIX `make` implementation | Canonical command surface (`Makefile`) used by developers and CI; on Windows prefer running via Git Bash or install a compatible `make` implementation |
 | Node.js | 22 (see `.nvmrc`) | Docs site (`web/`), markdownlint, pnpm workspace |
 | pnpm | 9.15.9 (see root `packageManager`) | Workspace installs for `web/` and `@ibex-harness/proto` |
-| Python | 3.11+ | Future Python services and optional tooling |
+| Python | 3.12+ | Python services and locked `uv` environments |
 | Buf CLI | 1.47+ | Protobuf linting and breaking-change checks |
+| Gitleaks | 8.24.3 | Required repository secret scan; CI always runs it |
+| golangci-lint | 2.8.0 | Required Go lint and depguard checks |
 | Bash | Git Bash, macOS bash, or Linux shell | Root `Makefile` targets and repo guards |
 
 ## 3) Optional tools
@@ -82,7 +84,7 @@ Ubuntu/Debian:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git make curl ca-certificates gnupg python3.11 python3-pip
+sudo apt-get install -y git make curl ca-certificates gnupg python3.12 python3-pip
 # Node 22: use nvm/fnm or NodeSource; then:
 corepack enable
 corepack prepare pnpm@9.15.9 --activate
@@ -104,11 +106,12 @@ curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.47.2/buf-Linux-x
 sudo install -m 0755 /tmp/buf /usr/local/bin/buf
 ```
 
-Install Gitleaks:
+Install Gitleaks (and golangci-lint for Go checks):
 
 ```bash
 curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
   | sudo tar -xz -C /usr/local/bin gitleaks
+# Follow the checksum-verified install block in .github/workflows/ci.yml for golangci-lint 2.8.0.
 ```
 
 Fedora/RHEL:
@@ -144,10 +147,12 @@ Expected:
 - `go version` prints `go1.25.13` or newer (must match `go.mod`).
 - `node --version` prints `v22...` (`.nvmrc`; web app and `pnpm` workspace).
 - `pnpm --version` prints `9.15.9` (root `packageManager` in `package.json`).
-- `python --version` prints `3.11...` or newer.
+- `python --version` prints `3.12...` or newer.
 - `buf --version` prints `1.47...` or newer.
 
-The docs app (`web/`) currently uses Next.js 16 and Fumadocs 14.
+The docs app (`web/`) currently uses Next.js 16 and Fumadocs 14. The frozen workspace install is `pnpm install --frozen-lockfile --ignore-scripts`; Python services use `uv sync --frozen --all-groups` from their checked-in `uv.lock` files.
+
+If Corepack rejects pnpm metadata because its bundled signature keys are stale, do not disable integrity checks; install the pinned package manager directly with `npm install --global pnpm@9.15.9` and verify `pnpm --version`.
 
 **Note:** CI `markdownlint` runs on Node 20 (`.github/markdownlint` isolated install); the web workspace and `@ibex-harness/proto` typecheck use Node 22 via `.github/actions/setup-pnpm-web`.
 
