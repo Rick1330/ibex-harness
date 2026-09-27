@@ -245,6 +245,72 @@ def _resolve_query_bounds(
     return normalized_start, normalized_end
 
 
+def _prepare_list_query(
+    settings: Settings,
+    authorization: OperatorSessionAuthorization,
+    status: str | None,
+    query_start: datetime,
+    query_end: datetime,
+    limit: int,
+    cursor: str | None,
+) -> tuple[Any, dict[str, object]]:
+    params: dict[str, object] = {
+        "org_id": str(authorization.org_id),
+        "query_start": query_start,
+        "query_end": query_end,
+        "limit": limit + 1,
+    }
+    if cursor:
+        cursor_started, cursor_trace = _decode_cursor(
+            settings, authorization, cursor, status, query_start, query_end
+        )
+        params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
+    if status:
+        params["status"] = status
+    return _list_query(status=bool(status), cursor=bool(cursor)), params
+
+
+async def _fetch_list_rows(
+    session: AsyncSession,
+    query: Any,
+    params: dict[str, object],
+) -> list[Any]:
+    try:
+        await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
+        result = await session.execute(query, params)
+        return list(result.mappings().all())
+    except SQLAlchemyError as exc:
+        raise ApiError(code=SERVICE_DEGRADED, message=_TRACE_UNAVAILABLE) from exc
+
+
+def _list_response(
+    rows: list[Any],
+    limit: int,
+    settings: Settings,
+    authorization: OperatorSessionAuthorization,
+    status: str | None,
+    query_start: datetime,
+    query_end: datetime,
+) -> OperatorTraceListResponse:
+    observed_at = datetime.now(UTC)
+    truncated = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = (
+        _encode_cursor(settings, authorization, status, query_start, query_end, page[-1])
+        if truncated
+        else None
+    )
+    return OperatorTraceListResponse(
+        items=[_item(row, observed_at) for row in page],
+        next_cursor=next_cursor,
+        truncated=truncated,
+        observed_at=observed_at,
+        query_start=query_start,
+        query_end=query_end,
+        limit=limit,
+    )
+
+
 async def list_operator_traces(
     session: AsyncSession,
     settings: Settings,
@@ -261,37 +327,12 @@ async def list_operator_traces(
     query_start, query_end = _resolve_query_bounds(
         settings, authorization, cursor, query_start, query_end
     )
-    params: dict[str, object] = {
-        "org_id": str(authorization.org_id),
-        "query_start": query_start,
-        "query_end": query_end,
-        "limit": limit + 1,
-    }
-    has_cursor = bool(cursor)
-    if cursor:
-        cursor_started, cursor_trace = _decode_cursor(settings, authorization, cursor, status, query_start, query_end)
-        params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
-    if status:
-        params["status"] = status
-    query = _list_query(status=bool(status), cursor=has_cursor)
-    try:
-        await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
-        result = await session.execute(query, params)
-        rows = list(result.mappings().all())
-    except SQLAlchemyError as exc:
-        raise ApiError(code=SERVICE_DEGRADED, message=_TRACE_UNAVAILABLE) from exc
-    observed_at = datetime.now(UTC)
-    truncated = len(rows) > limit
-    rows = rows[:limit]
-    next_cursor = _encode_cursor(settings, authorization, status, query_start, query_end, rows[-1]) if truncated else None
-    return OperatorTraceListResponse(
-        items=[_item(row, observed_at) for row in rows],
-        next_cursor=next_cursor,
-        truncated=truncated,
-        observed_at=observed_at,
-        query_start=query_start,
-        query_end=query_end,
-        limit=limit,
+    query, params = _prepare_list_query(
+        settings, authorization, status, query_start, query_end, limit, cursor
+    )
+    rows = await _fetch_list_rows(session, query, params)
+    return _list_response(
+        rows, limit, settings, authorization, status, query_start, query_end
     )
 
 

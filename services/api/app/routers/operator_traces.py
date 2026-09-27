@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from authclient.permissions import OPERATOR_METADATA_READ
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.authz import assert_operator_permission
@@ -39,7 +39,7 @@ async def operator_trace_list(
     operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
     session: OperatorSessionDatabase,
     request: Request,
-    query: Annotated[OperatorTraceListQuery, Depends()],
+    query: Annotated[OperatorTraceListQuery, Query()],
 ) -> OperatorTraceListResponse:
     result = await list_operator_traces(
         session,
