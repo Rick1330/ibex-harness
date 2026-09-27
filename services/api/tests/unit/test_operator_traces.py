@@ -288,74 +288,74 @@ async def test_list_maps_partial_when_failed_mixes_with_pending() -> None:
     assert result.items[0].evidence.publication_state == "partial"
 
 
+def _hydrated_child_fixtures() -> SessionFixtures:
+    memory_id = uuid4()
+    return SessionFixtures(
+        outbox=[outbox_row()],
+        spans=[
+            {
+                "span_id": "span-1",
+                "parent_span_id": None,
+                "operation_kind": "llm",
+                "status": "ok",
+                "error_code": None,
+                "started_at": START,
+                "ended_at": END,
+            }
+        ],
+        assembly={
+            "budget_calculation_ms": 1,
+            "directive_load_ms": 2,
+            "hot_memory_retrieval_ms": 3,
+            "cold_memory_retrieval_ms": 4,
+            "ranking_ms": 5,
+            "packing_ms": 6,
+            "formatting_ms": 7,
+            "total_ms": 28,
+            "candidates_evaluated": 9,
+        },
+        candidates=[
+            {
+                "memory_id": memory_id,
+                "retrieval_rank": 1,
+                "final_rank": 1,
+                "delta_rank": 0,
+                "category": "fact",
+                "token_estimate": 12,
+                "exclusion": "kept",
+                "score_schema": "interim_v1",
+                "composite_score": 0.9,
+            }
+        ],
+        directive={
+            "directive_version_id": uuid4(),
+            "content_hash": "abc",
+            "schema_version": "directive.v1",
+        },
+        tools=[
+            {
+                "tool_name": "search",
+                "status": "ok",
+                "error_code": None,
+                "created_at": START,
+            }
+        ],
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_detail_hydrates_child_sections_and_interim_score_note() -> None:
-    memory_id = uuid4()
-    directive_id = uuid4()
-    session = session_for(
-        row(),
-        fixtures=SessionFixtures(
-            outbox=[outbox_row()],
-            spans=[
-                {
-                    "span_id": "span-1",
-                    "parent_span_id": None,
-                    "operation_kind": "llm",
-                    "status": "ok",
-                    "error_code": None,
-                    "started_at": START,
-                    "ended_at": END,
-                }
-            ],
-            assembly={
-                "budget_calculation_ms": 1,
-                "directive_load_ms": 2,
-                "hot_memory_retrieval_ms": 3,
-                "cold_memory_retrieval_ms": 4,
-                "ranking_ms": 5,
-                "packing_ms": 6,
-                "formatting_ms": 7,
-                "total_ms": 28,
-                "candidates_evaluated": 9,
-            },
-            candidates=[
-                {
-                    "memory_id": memory_id,
-                    "retrieval_rank": 1,
-                    "final_rank": 1,
-                    "delta_rank": 0,
-                    "category": "fact",
-                    "token_estimate": 12,
-                    "exclusion": "kept",
-                    "score_schema": "interim_v1",
-                    "composite_score": 0.9,
-                }
-            ],
-            directive={
-                "directive_version_id": directive_id,
-                "content_hash": "abc",
-                "schema_version": "directive.v1",
-            },
-            tools=[
-                {
-                    "tool_name": "search",
-                    "status": "ok",
-                    "error_code": None,
-                    "created_at": START,
-                }
-            ],
-        ),
+    detail = await get_operator_trace_run(
+        session_for(row(), fixtures=_hydrated_child_fixtures()),
+        auth(),
+        run_id=RUN,
     )
-    detail = await get_operator_trace_run(session, auth(), run_id=RUN)
     assert len(detail.spans) == 1
-    assert detail.assembly is not None
-    assert detail.assembly.total_ms == 28
+    assert detail.assembly is not None and detail.assembly.total_ms == 28
     assert len(detail.candidates) == 1
-    assert detail.score_schema_note is not None
-    assert "interim_v1" in detail.score_schema_note
+    assert detail.score_schema_note is not None and "interim_v1" in detail.score_schema_note
     assert "score_explanation" in detail.unavailable_sections
-    assert detail.directive is not None
-    assert detail.directive.content_hash == "abc"
+    assert detail.directive is not None and detail.directive.content_hash == "abc"
     assert len(detail.tools) == 1
     assert "content" in detail.unavailable_sections
     assert "spans" not in detail.unavailable_sections

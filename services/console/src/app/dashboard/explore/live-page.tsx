@@ -163,7 +163,7 @@ function TraceTable({ data, query }: Readonly<{ data: OperatorTraceList; query: 
               <TableRow key={trace.run_id}>
                 <TableCell className="font-mono text-xs">
                   <Link
-                    className="inline-flex min-h-6 items-center underline-offset-4 hover:underline focus-visible:underline"
+                    className="inline-flex min-h-8 items-center underline-offset-4 hover:underline focus-visible:underline"
                     href={`/dashboard/explore/r/${encodeURIComponent(trace.run_id)}?return=${encodeURIComponent(returnHref)}`}
                   >
                     {trace.run_id}
@@ -171,7 +171,7 @@ function TraceTable({ data, query }: Readonly<{ data: OperatorTraceList; query: 
                 </TableCell>
                 <TableCell className="font-mono text-xs">
                   <Link
-                    className="inline-flex min-h-6 items-center underline-offset-4 hover:underline focus-visible:underline"
+                    className="inline-flex min-h-8 items-center underline-offset-4 hover:underline focus-visible:underline"
                     href={`/dashboard/explore/t/${encodeURIComponent(trace.trace_id)}?return=${encodeURIComponent(returnHref)}`}
                   >
                     {trace.trace_id}
@@ -198,7 +198,7 @@ function TraceTable({ data, query }: Readonly<{ data: OperatorTraceList; query: 
         ) : null}
         {nextHref ? (
           <div className="border-t px-4 py-3">
-            <Link className="inline-flex min-h-6 items-center text-sm underline-offset-4 hover:underline" href={nextHref}>
+            <Link className="inline-flex min-h-8 items-center text-sm underline-offset-4 hover:underline" href={nextHref}>
               Load more
             </Link>
           </div>

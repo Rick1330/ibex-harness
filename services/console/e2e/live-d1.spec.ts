@@ -64,14 +64,26 @@ async function expectNoAxeViolations(page: Page): Promise<void> {
         run: (
           context: Document,
           options: object,
-        ) => Promise<{ violations: Array<{ id: string; impact: string | null; help: string }> }>
+        ) => Promise<{
+          violations: Array<{
+            id: string
+            impact: string | null
+            help: string
+            nodes: Array<{ target: string[] }>
+          }>
+        }>
       }
     }).axe
     if (!axe) throw new Error("axe-core did not load")
     const result = await axe.run(document, {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
     })
-    return result.violations.map(({ id, impact, help }) => ({ id, impact, help }))
+    return result.violations.map(({ id, impact, help, nodes }) => ({
+      id,
+      impact,
+      help,
+      targets: nodes.flatMap((node) => node.target),
+    }))
   })
   expect(accessibility).toEqual([])
 }

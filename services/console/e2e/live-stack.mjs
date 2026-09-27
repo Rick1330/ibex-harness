@@ -94,7 +94,7 @@ function handleEventStream(cookie, response) {
   response.on("close", () => clearInterval(heartbeat))
 }
 
-function fixtureCatalog() {
+function fixtureBodies() {
   const traceItem = {
     trace_id: "trace-live-1",
     run_id: runId,
@@ -156,7 +156,7 @@ function fixtureCatalog() {
     score_schema_note: null,
   }
   return {
-    "/v1/operator/context": {
+    context: {
       schema_version: "operator.context.v1",
       org_id: orgId,
       role: "admin",
@@ -165,7 +165,7 @@ function fixtureCatalog() {
       org_status: "active",
       observed_at: observedAt,
     },
-    "/v1/operator/overview": {
+    overview: {
       schema_version: "operator.overview.v1",
       org_id: orgId,
       org_name: "Live Workspace",
@@ -175,7 +175,7 @@ function fixtureCatalog() {
       observed_at: observedAt,
       completeness: "complete",
     },
-    "/v1/operator/platform/health": {
+    health: {
       dependency_health: { database: "ok", redis: "degraded" },
       last_backup_at: null,
       last_restore_drill: null,
@@ -187,26 +187,31 @@ function fixtureCatalog() {
       deploy_image_digest: null,
       observed_at: observedAt,
     },
-    "/v1/operator/traces": traceList,
-    [`/v1/operator/traces/runs/${runId}`]: traceDetail,
-    "/v1/operator/traces/trace-live-1": traceList,
+    traces: traceList,
+    traceDetail,
   }
 }
 
-function resolveFixtureBody(pathname, catalog) {
-  if (catalog[pathname]) return catalog[pathname]
+function resolveFixtureBody(pathname) {
+  const bodies = fixtureBodies()
+  if (pathname === "/v1/operator/context") return bodies.context
+  if (pathname === "/v1/operator/overview") return bodies.overview
+  if (pathname === "/v1/operator/platform/health") return bodies.health
+  if (pathname === "/v1/operator/traces") return bodies.traces
+  if (pathname === `/v1/operator/traces/runs/${runId}`) return bodies.traceDetail
+  if (pathname === "/v1/operator/traces/trace-live-1") return bodies.traces
   if (pathname.startsWith("/v1/operator/traces/")) return "trace-missing"
   return null
 }
 
 function handleAuthenticatedJson(pathname, response) {
-  const body = resolveFixtureBody(pathname, fixtureCatalog())
+  const body = resolveFixtureBody(pathname)
   if (body === "trace-missing") {
     writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Trace not found" } })
     return
   }
   if (!body) {
-    writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Not found" } }, {})
+    writeJson(response, 404, { error: { code: "NOT_FOUND", message: "Not found" } })
     return
   }
   writeJson(response, 200, body)
