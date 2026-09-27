@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -21,6 +22,7 @@ from app.operator_session_auth import OperatorSessionAuthorization
 from app.schemas.operator_traces import (
     OperatorTraceDetailResponse,
     OperatorTraceListItem,
+    OperatorTraceListQuery,
     OperatorTraceListResponse,
     TraceEvidenceState,
 )
@@ -47,6 +49,19 @@ _EVIDENCE_RUNS = table(
     column("sample_decision"),
     column("org_id"),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedListPage:
+    """Signed-query page inputs after bounds validation."""
+
+    settings: Settings
+    authorization: OperatorSessionAuthorization
+    status: str | None
+    query_start: datetime
+    query_end: datetime
+    limit: int
+    cursor: str | None
 
 
 def _trace_columns() -> tuple[Any, ...]:
@@ -112,26 +127,19 @@ def _query_fingerprint(status: str | None, query_start: datetime, query_end: dat
     return f"status={status or ''}&start={start}&end={end}&sort=started_at.desc,trace_id.desc"
 
 
-def _encode_cursor(
-    settings: Settings,
-    authorization: OperatorSessionAuthorization,
-    status: str | None,
-    query_start: datetime,
-    query_end: datetime,
-    row: Any,
-) -> str:
+def _encode_cursor(page: _ResolvedListPage, row: Any) -> str:
     expires_at = datetime.now(UTC) + _CURSOR_TTL
     payload = {
-        "org_id": str(authorization.org_id),
-        "query": _query_fingerprint(status, query_start, query_end),
-        "query_start": _normalize_datetime(query_start).isoformat(),
-        "query_end": _normalize_datetime(query_end).isoformat(),
+        "org_id": str(page.authorization.org_id),
+        "query": _query_fingerprint(page.status, page.query_start, page.query_end),
+        "query_start": _normalize_datetime(page.query_start).isoformat(),
+        "query_end": _normalize_datetime(page.query_end).isoformat(),
         "started_at": row["started_at"].isoformat(),
         "trace_id": row["trace_id"],
         "expires_at": expires_at.isoformat(),
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
-    signature = hmac.new(_cursor_key(settings), encoded.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(_cursor_key(page.settings), encoded.encode(), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
 
 
@@ -153,17 +161,11 @@ def _decode_signed_cursor_payload(
     return payload
 
 
-def _decode_cursor(
-    settings: Settings,
-    authorization: OperatorSessionAuthorization,
-    cursor: str,
-    status: str | None,
-    query_start: datetime,
-    query_end: datetime,
-) -> tuple[datetime, str]:
+def _decode_cursor(page: _ResolvedListPage, cursor: str) -> tuple[datetime, str]:
     try:
-        payload = _decode_signed_cursor_payload(settings, authorization, cursor)
-        if payload["query"] != _query_fingerprint(status, query_start, query_end):
+        payload = _decode_signed_cursor_payload(page.settings, page.authorization, cursor)
+        expected = _query_fingerprint(page.status, page.query_start, page.query_end)
+        if payload["query"] != expected:
             raise ValueError("query")
         return datetime.fromisoformat(payload["started_at"]), str(payload["trace_id"])
     except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
@@ -178,7 +180,10 @@ def cursor_query_bounds(
     """Return the signed normalized bounds carried by a cursor."""
     try:
         payload = _decode_signed_cursor_payload(settings, authorization, cursor)
-        return _normalize_datetime(datetime.fromisoformat(payload["query_start"])), _normalize_datetime(datetime.fromisoformat(payload["query_end"]))
+        return (
+            _normalize_datetime(datetime.fromisoformat(payload["query_start"])),
+            _normalize_datetime(datetime.fromisoformat(payload["query_end"])),
+        )
     except (ApiError, ValueError, KeyError, TypeError, UnicodeError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
 
@@ -243,12 +248,12 @@ def _validate_range(query_start: datetime, query_end: datetime) -> None:
 def _resolve_query_bounds(
     settings: Settings,
     authorization: OperatorSessionAuthorization,
-    cursor: str | None,
-    query_start: datetime | None,
-    query_end: datetime | None,
+    query: OperatorTraceListQuery,
 ) -> tuple[datetime, datetime]:
-    if cursor:
-        cursor_start, cursor_end = cursor_query_bounds(settings, authorization, cursor)
+    query_start = query.started_after
+    query_end = query.started_before
+    if query.cursor:
+        cursor_start, cursor_end = cursor_query_bounds(settings, authorization, query.cursor)
         query_start = cursor_start if query_start is None else query_start
         query_end = cursor_end if query_end is None else query_end
     resolved_end = query_end or datetime.now(UTC)
@@ -259,29 +264,19 @@ def _resolve_query_bounds(
     return normalized_start, normalized_end
 
 
-def _prepare_list_query(
-    settings: Settings,
-    authorization: OperatorSessionAuthorization,
-    status: str | None,
-    query_start: datetime,
-    query_end: datetime,
-    limit: int,
-    cursor: str | None,
-) -> tuple[Any, dict[str, object]]:
+def _prepare_list_query(page: _ResolvedListPage) -> tuple[Any, dict[str, object]]:
     params: dict[str, object] = {
-        "org_id": str(authorization.org_id),
-        "query_start": query_start,
-        "query_end": query_end,
-        "limit": limit + 1,
+        "org_id": str(page.authorization.org_id),
+        "query_start": page.query_start,
+        "query_end": page.query_end,
+        "limit": page.limit + 1,
     }
-    if cursor:
-        cursor_started, cursor_trace = _decode_cursor(
-            settings, authorization, cursor, status, query_start, query_end
-        )
+    if page.cursor:
+        cursor_started, cursor_trace = _decode_cursor(page, page.cursor)
         params.update(cursor_started=cursor_started, cursor_trace=cursor_trace)
-    if status:
-        params["status"] = status
-    return _list_query(status=bool(status), cursor=bool(cursor)), params
+    if page.status:
+        params["status"] = page.status
+    return _list_query(status=bool(page.status), cursor=bool(page.cursor)), params
 
 
 async def _fetch_list_rows(
@@ -297,31 +292,38 @@ async def _fetch_list_rows(
         raise ApiError(code=SERVICE_DEGRADED, message=_TRACE_UNAVAILABLE) from exc
 
 
-def _list_response(
-    rows: list[Any],
-    limit: int,
-    settings: Settings,
-    authorization: OperatorSessionAuthorization,
-    status: str | None,
-    query_start: datetime,
-    query_end: datetime,
-) -> OperatorTraceListResponse:
+def _list_response(rows: list[Any], page: _ResolvedListPage) -> OperatorTraceListResponse:
     observed_at = datetime.now(UTC)
-    truncated = len(rows) > limit
-    page = rows[:limit]
-    next_cursor = (
-        _encode_cursor(settings, authorization, status, query_start, query_end, page[-1])
-        if truncated
-        else None
-    )
+    truncated = len(rows) > page.limit
+    page_rows = rows[: page.limit]
+    next_cursor = _encode_cursor(page, page_rows[-1]) if truncated else None
     return OperatorTraceListResponse(
-        items=[_item(row, observed_at) for row in page],
+        items=[_item(row, observed_at) for row in page_rows],
         next_cursor=next_cursor,
         truncated=truncated,
         observed_at=observed_at,
+        query_start=page.query_start,
+        query_end=page.query_end,
+        limit=page.limit,
+    )
+
+
+def _resolved_list_page(
+    settings: Settings,
+    authorization: OperatorSessionAuthorization,
+    query: OperatorTraceListQuery,
+) -> _ResolvedListPage:
+    if query.limit < 1 or query.limit > _MAX_PAGE_SIZE:
+        raise ApiError(code=VALIDATION_ERROR, message="Trace limit must be between 1 and 100")
+    query_start, query_end = _resolve_query_bounds(settings, authorization, query)
+    return _ResolvedListPage(
+        settings=settings,
+        authorization=authorization,
+        status=query.status,
         query_start=query_start,
         query_end=query_end,
-        limit=limit,
+        limit=query.limit,
+        cursor=query.cursor,
     )
 
 
@@ -329,25 +331,12 @@ async def list_operator_traces(
     session: AsyncSession,
     settings: Settings,
     authorization: OperatorSessionAuthorization,
-    *,
-    query_start: datetime | None,
-    query_end: datetime | None,
-    status: str | None,
-    limit: int,
-    cursor: str | None,
+    query: OperatorTraceListQuery,
 ) -> OperatorTraceListResponse:
-    if limit < 1 or limit > _MAX_PAGE_SIZE:
-        raise ApiError(code=VALIDATION_ERROR, message="Trace limit must be between 1 and 100")
-    query_start, query_end = _resolve_query_bounds(
-        settings, authorization, cursor, query_start, query_end
-    )
-    query, params = _prepare_list_query(
-        settings, authorization, status, query_start, query_end, limit, cursor
-    )
-    rows = await _fetch_list_rows(session, query, params)
-    return _list_response(
-        rows, limit, settings, authorization, status, query_start, query_end
-    )
+    page = _resolved_list_page(settings, authorization, query)
+    sql, params = _prepare_list_query(page)
+    rows = await _fetch_list_rows(session, sql, params)
+    return _list_response(rows, page)
 
 
 async def get_operator_trace(
@@ -358,11 +347,11 @@ async def get_operator_trace(
 ) -> OperatorTraceDetailResponse:
     if not trace_id or len(trace_id) > 256:
         raise ApiError(code=NOT_FOUND, message=_TRACE_NOT_FOUND)
-    query = _detail_query()
+    sql = _detail_query()
     try:
         await session.execute(select(func.set_config("statement_timeout", "3000ms", True)))
         result = await session.execute(
-            query,
+            sql,
             {
                 "org_id": str(authorization.org_id),
                 "trace_id": trace_id,

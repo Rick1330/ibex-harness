@@ -61,11 +61,7 @@ async def operator_trace_list(
         context.session,
         context.settings,
         operator,
-        query_start=query.started_after,
-        query_end=query.started_before,
-        status=query.status,
-        limit=query.limit,
-        cursor=query.cursor,
+        query,
     )
     response.headers["Cache-Control"] = "no-store"
     return result
