@@ -36,6 +36,13 @@ class TraceListContext:
     settings: Settings
 
 
+@dataclass(frozen=True)
+class TraceRunsContext:
+    session: AsyncSession
+    operator: OperatorSessionAuthorization
+    limit: int
+
+
 def require_trace_read_session(request: Request, operator: OperatorSession) -> OperatorSessionAuthorization:
     assert_operator_permission(request.app.state.settings, operator.permissions, OPERATOR_METADATA_READ)
     return operator
@@ -53,6 +60,18 @@ def trace_list_context(
 
 
 trace_list_context.__route_inventory_security__ = False
+
+
+def trace_runs_context(
+    request: Request,
+    operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
+    session: OperatorSessionDatabase,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+) -> TraceRunsContext:
+    return TraceRunsContext(session=session, operator=operator, limit=limit)
+
+
+trace_runs_context.__route_inventory_security__ = False
 
 
 @router.get("")
@@ -88,11 +107,14 @@ async def operator_trace_run_detail(
 async def operator_trace_runs(
     trace_id: str,
     response: Response,
-    operator: Annotated[OperatorSessionAuthorization, Depends(require_trace_read_session)],
-    session: OperatorSessionDatabase,
-    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    context: Annotated[TraceRunsContext, Depends(trace_runs_context)],
 ) -> OperatorTraceListResponse:
     """Deterministic multi-run listing for a trace_id (not a silent single-run pick)."""
-    result = await list_operator_trace_runs(session, operator, trace_id=trace_id, limit=limit)
+    result = await list_operator_trace_runs(
+        context.session,
+        context.operator,
+        trace_id=trace_id,
+        limit=context.limit,
+    )
     response.headers["Cache-Control"] = "no-store"
     return result

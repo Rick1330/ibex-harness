@@ -90,7 +90,7 @@ def session_for(
     outbox_rows = list(outbox) if outbox is not None else []
     matched = count if count is not None else len(run_rows)
 
-    async def _execute(query, params=None):  # noqa: ANN001
+    async def _execute(query, params=None):
         sql = str(query).lower()
         result = MagicMock()
         if "set_config" in sql:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -60,15 +61,24 @@ async def _seed_org(session: AsyncSession, org_id: UUID, name: str) -> None:
     )
 
 
-async def _seed_run(
-    session: AsyncSession,
-    *,
-    org_id: UUID,
-    run_id: UUID,
-    trace_id: str,
-    request_id: str,
-    status: str = "ok",
-) -> None:
+@dataclass(frozen=True)
+class SeedRun:
+    org_id: UUID
+    run_id: UUID
+    trace_id: str
+    request_id: str
+    status: str = "ok"
+
+
+@dataclass(frozen=True)
+class SeedOutbox:
+    org_id: UUID
+    request_id: str
+    delivery_status: str = "delivered"
+    seq: int = 1
+
+
+async def _seed_run(session: AsyncSession, seed: SeedRun) -> None:
     await session.execute(
         text(
             """
@@ -82,25 +92,19 @@ async def _seed_run(
             """
         ),
         {
-            "id": str(run_id),
-            "org_id": str(org_id),
-            "request_id": request_id,
-            "trace_id": trace_id,
-            "status": status,
+            "id": str(seed.run_id),
+            "org_id": str(seed.org_id),
+            "request_id": seed.request_id,
+            "trace_id": seed.trace_id,
+            "status": seed.status,
             "started_at": START,
             "ended_at": END,
         },
     )
 
 
-async def _seed_outbox(
-    session: AsyncSession,
-    *,
-    org_id: UUID,
-    request_id: str,
-    delivery_status: str = "delivered",
-    seq: int = 1,
-) -> None:
+async def _seed_outbox(session: AsyncSession, seed: SeedOutbox) -> None:
+    delivered_at = END if seed.delivery_status == "delivered" else None
     await session.execute(
         text(
             """
@@ -110,16 +114,16 @@ async def _seed_outbox(
             ) VALUES (
               gen_random_uuid(), CAST(:org_id AS uuid), gen_random_uuid(), :aggregate_id, :seq,
               'evidence.v1', 'run.persisted', '{}'::jsonb, 'digest', :status,
-              CASE WHEN :status = 'delivered' THEN :delivered_at ELSE NULL END
+              CAST(:delivered_at AS timestamptz)
             )
             """
         ),
         {
-            "org_id": str(org_id),
-            "aggregate_id": request_id,
-            "seq": seq,
-            "status": delivery_status,
-            "delivered_at": END,
+            "org_id": str(seed.org_id),
+            "aggregate_id": seed.request_id,
+            "seq": seed.seq,
+            "status": seed.delivery_status,
+            "delivered_at": delivered_at,
         },
     )
 
@@ -159,10 +163,10 @@ async def test_operator_traces_are_tenant_scoped_with_publication_and_404_bounda
             await admin.execute(text("SELECT set_config('app.is_service_account', 'true', true)"))
             await _seed_org(admin, org_a, "D2 RLS A")
             await _seed_org(admin, org_b, "D2 RLS B")
-            await _seed_run(admin, org_id=org_a, run_id=run_a, trace_id="trace-a", request_id="req-a")
-            await _seed_run(admin, org_id=org_b, run_id=run_b, trace_id="trace-b", request_id="req-b")
-            await _seed_outbox(admin, org_id=org_a, request_id="req-a", delivery_status="delivered", seq=3)
-            await _seed_outbox(admin, org_id=org_b, request_id="req-b", delivery_status="pending", seq=1)
+            await _seed_run(admin, SeedRun(org_a, run_a, "trace-a", "req-a"))
+            await _seed_run(admin, SeedRun(org_b, run_b, "trace-b", "req-b"))
+            await _seed_outbox(admin, SeedOutbox(org_a, "req-a", delivery_status="delivered", seq=3))
+            await _seed_outbox(admin, SeedOutbox(org_b, "req-b", delivery_status="pending", seq=1))
 
         settings = _settings()
         async with session_with_org(session_factory, org_a) as session:

@@ -17,6 +17,37 @@ import {
 
 type SearchParams = Record<string, string | string[] | undefined>
 
+async function readSessionCookie(): Promise<string | undefined> {
+  const store = await cookies()
+  const name = process.env.IBEX_OPERATOR_SESSION_COOKIE_NAME || "ibex_session"
+  const value = store.get(name)?.value
+  return value ? `${name}=${value}` : undefined
+}
+
+function settleContext(
+  result: PromiseSettledResult<OperatorContext>,
+): { context: OperatorContext | null; contextError: string | null } {
+  if (result.status === "fulfilled") return { context: result.value, contextError: null }
+  const err = result.reason
+  const contextError =
+    err instanceof OperatorApiError && (err.status === 401 || err.status === 403)
+      ? "Operator context unavailable (session or permission)."
+      : "Operator context unavailable."
+  return { context: null, contextError }
+}
+
+function settleTraces(
+  result: PromiseSettledResult<OperatorTraceList>,
+): { traces: OperatorTraceList | null; error: string | null } {
+  if (result.status === "fulfilled") return { traces: result.value, error: null }
+  const err = result.reason
+  const error =
+    err instanceof OperatorApiError && (err.status === 401 || err.status === 403)
+      ? "Operator session is missing, expired, or lacks metadata-read permission. No preview data is shown."
+      : "Trace metadata is unavailable. No mock values are substituted."
+  return { traces: null, error }
+}
+
 async function load(searchParams: SearchParams): Promise<{
   context: OperatorContext | null
   traces: OperatorTraceList | null
@@ -32,37 +63,15 @@ async function load(searchParams: SearchParams): Promise<{
     return { context: null, traces: null, query: null, error: message, contextError: null }
   }
 
-  const store = await cookies()
-  const name = process.env.IBEX_OPERATOR_SESSION_COOKIE_NAME || "ibex_session"
-  const value = store.get(name)?.value
-  const cookie = value ? `${name}=${value}` : undefined
-  const apiQuery = serializeLiveExploreQuery(query)
-
+  const cookie = await readSessionCookie()
   const [contextResult, tracesResult] = await Promise.allSettled([
     fetchOperatorContext(cookie),
-    fetchOperatorTraces(cookie, apiQuery),
+    fetchOperatorTraces(cookie, serializeLiveExploreQuery(query)),
   ])
 
-  let context: OperatorContext | null = null
-  let contextError: string | null = null
-  if (contextResult.status === "fulfilled") context = contextResult.value
-  else {
-    const err = contextResult.reason
-    contextError =
-      err instanceof OperatorApiError && (err.status === 401 || err.status === 403)
-        ? "Operator context unavailable (session or permission)."
-        : "Operator context unavailable."
-  }
-
-  if (tracesResult.status === "fulfilled") {
-    return { context, traces: tracesResult.value, query, error: null, contextError }
-  }
-  const err = tracesResult.reason
-  const message =
-    err instanceof OperatorApiError && (err.status === 401 || err.status === 403)
-      ? "Operator session is missing, expired, or lacks metadata-read permission. No preview data is shown."
-      : "Trace metadata is unavailable. No mock values are substituted."
-  return { context, traces: null, query, error: message, contextError }
+  const { context, contextError } = settleContext(contextResult)
+  const { traces, error } = settleTraces(tracesResult)
+  return { context, traces, query, error, contextError }
 }
 
 export async function LiveExplorePage({

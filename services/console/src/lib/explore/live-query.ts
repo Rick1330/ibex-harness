@@ -18,6 +18,8 @@ export type LiveExploreQuery = {
   capture_mode: string | null
 }
 
+type QueryParams = URLSearchParams | Record<string, string | string[] | undefined>
+
 const ALLOWED = new Set([
   "limit",
   "status",
@@ -44,6 +46,31 @@ const COMPLETENESS = new Set([
   "simulated",
 ])
 
+const OPTIONAL_STRING_FIELDS: ReadonlyArray<{ key: keyof Omit<LiveExploreQuery, "limit" | "status" | "cursor" | "completeness">; max: number }> = [
+  { key: "started_after", max: 64 },
+  { key: "started_before", max: 64 },
+  { key: "trace_id", max: 256 },
+  { key: "request_id", max: 256 },
+  { key: "run_id", max: 36 },
+  { key: "session_id", max: 36 },
+  { key: "error_code", max: 128 },
+  { key: "capture_mode", max: 32 },
+]
+
+const SERIALIZE_FIELDS: ReadonlyArray<{ key: Exclude<keyof LiveExploreQuery, "limit">; omitWhenDropCursor?: boolean }> = [
+  { key: "status" },
+  { key: "started_after" },
+  { key: "started_before" },
+  { key: "cursor", omitWhenDropCursor: true },
+  { key: "trace_id" },
+  { key: "request_id" },
+  { key: "run_id" },
+  { key: "session_id" },
+  { key: "error_code" },
+  { key: "completeness" },
+  { key: "capture_mode" },
+]
+
 export class LiveExploreQueryError extends Error {
   constructor(message: string) {
     super(message)
@@ -51,77 +78,89 @@ export class LiveExploreQueryError extends Error {
   }
 }
 
-function optionalString(value: string | null | undefined, max: number, label: string): string | null {
+function paramGet(params: QueryParams, key: string): string | null {
+  if (params instanceof URLSearchParams) return params.get(key)
+  const raw = params[key]
+  if (Array.isArray(raw)) return raw[0] ?? null
+  return raw ?? null
+}
+
+function assertAllowedKeys(params: QueryParams): void {
+  const keys = params instanceof URLSearchParams ? params.keys() : Object.keys(params)
+  for (const key of keys) {
+    if (!ALLOWED.has(key)) throw new LiveExploreQueryError(`Unknown query field: ${key}`)
+  }
+}
+
+function optionalBoundedString(value: string | null | undefined, max: number, label: string): string | null {
   if (value == null || value === "") return null
   if (value.length > max) throw new LiveExploreQueryError(`${label} exceeds maximum length`)
   return value
 }
 
-export function parseLiveExploreQuery(
-  params: URLSearchParams | Record<string, string | string[] | undefined>,
-): LiveExploreQuery {
-  const get = (key: string): string | null => {
-    if (params instanceof URLSearchParams) return params.get(key)
-    const raw = params[key]
-    if (Array.isArray(raw)) return raw[0] ?? null
-    return raw ?? null
-  }
-
-  for (const key of params instanceof URLSearchParams ? params.keys() : Object.keys(params)) {
-    if (!ALLOWED.has(key)) throw new LiveExploreQueryError(`Unknown query field: ${key}`)
-  }
-
-  const limitRaw = get("limit")
-  const limit = limitRaw == null || limitRaw === "" ? 50 : Number(limitRaw)
+function parseLimit(raw: string | null): number {
+  const limit = raw == null || raw === "" ? 50 : Number(raw)
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new LiveExploreQueryError("limit must be an integer between 1 and 100")
   }
+  return limit
+}
 
-  const statusRaw = get("status")
-  let status: LiveExploreQuery["status"] = null
-  if (statusRaw === "ok" || statusRaw === "error") status = statusRaw
-  else if (statusRaw != null && statusRaw !== "") throw new LiveExploreQueryError("status must be ok or error")
+function parseStatus(raw: string | null): LiveExploreQuery["status"] {
+  if (raw === "ok" || raw === "error") return raw
+  if (raw != null && raw !== "") throw new LiveExploreQueryError("status must be ok or error")
+  return null
+}
 
-  const completeness = optionalString(get("completeness"), 32, "completeness")
-  if (completeness && !COMPLETENESS.has(completeness)) {
-    throw new LiveExploreQueryError("invalid completeness")
-  }
-
-  const cursor = optionalString(get("cursor"), 2048, "cursor")
+function parseCursor(raw: string | null): string | null {
+  const cursor = optionalBoundedString(raw, 2048, "cursor")
   if (cursor && (cursor.includes(" ") || cursor.includes("\n"))) {
     throw new LiveExploreQueryError("invalid cursor")
   }
+  return cursor
+}
 
-  return {
-    limit,
-    status,
-    started_after: optionalString(get("started_after"), 64, "started_after"),
-    started_before: optionalString(get("started_before"), 64, "started_before"),
-    cursor,
-    trace_id: optionalString(get("trace_id"), 256, "trace_id"),
-    request_id: optionalString(get("request_id"), 256, "request_id"),
-    run_id: optionalString(get("run_id"), 36, "run_id"),
-    session_id: optionalString(get("session_id"), 36, "session_id"),
-    error_code: optionalString(get("error_code"), 128, "error_code"),
-    completeness,
-    capture_mode: optionalString(get("capture_mode"), 32, "capture_mode"),
+function parseCompleteness(raw: string | null): string | null {
+  const completeness = optionalBoundedString(raw, 32, "completeness")
+  if (completeness && !COMPLETENESS.has(completeness)) {
+    throw new LiveExploreQueryError("invalid completeness")
   }
+  return completeness
+}
+
+export function parseLiveExploreQuery(params: QueryParams): LiveExploreQuery {
+  assertAllowedKeys(params)
+
+  const query: LiveExploreQuery = {
+    limit: parseLimit(paramGet(params, "limit")),
+    status: parseStatus(paramGet(params, "status")),
+    started_after: null,
+    started_before: null,
+    cursor: parseCursor(paramGet(params, "cursor")),
+    trace_id: null,
+    request_id: null,
+    run_id: null,
+    session_id: null,
+    error_code: null,
+    completeness: parseCompleteness(paramGet(params, "completeness")),
+    capture_mode: null,
+  }
+
+  for (const { key, max } of OPTIONAL_STRING_FIELDS) {
+    query[key] = optionalBoundedString(paramGet(params, key), max, key)
+  }
+
+  return query
 }
 
 export function serializeLiveExploreQuery(query: LiveExploreQuery, options?: { dropCursor?: boolean }): URLSearchParams {
   const params = new URLSearchParams()
   params.set("limit", String(query.limit))
-  if (query.status) params.set("status", query.status)
-  if (query.started_after) params.set("started_after", query.started_after)
-  if (query.started_before) params.set("started_before", query.started_before)
-  if (!options?.dropCursor && query.cursor) params.set("cursor", query.cursor)
-  if (query.trace_id) params.set("trace_id", query.trace_id)
-  if (query.request_id) params.set("request_id", query.request_id)
-  if (query.run_id) params.set("run_id", query.run_id)
-  if (query.session_id) params.set("session_id", query.session_id)
-  if (query.error_code) params.set("error_code", query.error_code)
-  if (query.completeness) params.set("completeness", query.completeness)
-  if (query.capture_mode) params.set("capture_mode", query.capture_mode)
+  for (const { key, omitWhenDropCursor } of SERIALIZE_FIELDS) {
+    if (omitWhenDropCursor && options?.dropCursor) continue
+    const value = query[key]
+    if (value) params.set(key, value)
+  }
   return params
 }
 

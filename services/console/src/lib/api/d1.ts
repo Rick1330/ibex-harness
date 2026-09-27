@@ -20,57 +20,63 @@ function sessionCookieHeader(cookieHeader: string | undefined): string {
   return wanted ?? ""
 }
 
-export async function fetchOperatorContext(cookieHeader?: string) {
+type OperatorFetchPath = Parameters<typeof fetchOperatorJson>[0]
+
+async function fetchOperatorWithSession<T>(
+  path: OperatorFetchPath,
+  parse: (value: unknown) => T,
+  cookieHeader: string | undefined,
+  suffix = "",
+  query?: URLSearchParams,
+): Promise<T> {
   return fetchOperatorJson(
-    "context",
-    (value) => OperatorContextSchema.parse(value),
+    path,
+    parse,
     { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    suffix,
+    query,
   )
+}
+
+export async function fetchOperatorContext(cookieHeader?: string) {
+  return fetchOperatorWithSession("context", (value) => OperatorContextSchema.parse(value), cookieHeader)
 }
 
 export async function fetchOperatorOverview(cookieHeader?: string) {
-  return fetchOperatorJson(
-    "overview",
-    (value) => OperatorOverviewSchema.parse(value),
-    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
-  )
+  return fetchOperatorWithSession("overview", (value) => OperatorOverviewSchema.parse(value), cookieHeader)
 }
 
 export async function fetchOperatorPlatformHealth(cookieHeader?: string) {
-  return fetchOperatorJson(
-    "platformHealth",
-    (value) => PlatformHealthSchema.parse(value),
-    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
-  )
+  return fetchOperatorWithSession("platformHealth", (value) => PlatformHealthSchema.parse(value), cookieHeader)
 }
 
 export async function fetchOperatorTraces(
   cookieHeader: string | undefined,
   query: URLSearchParams,
 ) {
-  return fetchOperatorJson(
+  return fetchOperatorWithSession(
     "traces",
     (value) => OperatorTraceListSchema.parse(value),
-    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    cookieHeader,
     "",
     query,
   )
 }
 
 export async function fetchOperatorTraceRuns(cookieHeader: string | undefined, traceId: string) {
-  return fetchOperatorJson(
+  return fetchOperatorWithSession(
     "traceDetail",
     (value) => OperatorTraceListSchema.parse(value),
-    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    cookieHeader,
     traceId,
   )
 }
 
 export async function fetchOperatorTraceDetail(cookieHeader: string | undefined, runId: string) {
-  return fetchOperatorJson(
+  return fetchOperatorWithSession(
     "runDetail",
     (value) => OperatorTraceDetailSchema.parse(value),
-    { headers: { Cookie: sessionCookieHeader(cookieHeader) } },
+    cookieHeader,
     runId,
   )
 }
