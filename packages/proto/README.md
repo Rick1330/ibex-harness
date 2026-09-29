@@ -23,7 +23,7 @@ From this directory (`packages/proto`):
 # Lint
 buf lint
 
-# Breaking changes vs main (after packages/proto exists on main; skipped on initial import PR)
+# Breaking changes vs the repository main contract
 buf breaking --against "https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto"
 
 # Generate stubs (local only; output under gen/)
@@ -59,7 +59,7 @@ CI runs both in the `proto-contract` job (ephemeral `buf generate`; `gen/` must 
 | Package | Status | Service | Source |
 |---------|--------|---------|--------|
 | `ibex.auth.v1` | **Shipped** | AuthService (`ValidateToken`, `ValidateAgent`, PAT lifecycle) | [ADR-0006](../../web/content/docs/adr/0006-auth-proto-contract.mdx) |
-| `ibex.context.v1` | Planned **3.5** | ContextAssemblyService | [API_DOCUMENTATION.md](../../web/engineering/API_DOCUMENTATION.md), Phase 3.5 milestones |
+| `ibex.context.v1` | **Implemented; rollout/auth coverage pending** | ContextAssemblyService | `proto/ibex/context/v1/context.proto`, `context_contract_test.go`, `services/context/app/server.py` |
 | Memory / other domains | Planned **3+** | As milestones require | Add under `proto/ibex/<domain>/v1/` with ADR when inventing a new domain |
 
 Contract inventory may grow with the redesigned roadmap. Prefer extending existing packages over inventing parallel RPCs; record breaking changes with `buf breaking` + ADR.

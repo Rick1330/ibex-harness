@@ -1,0 +1,10 @@
+{
+  "check": "d2-console-contract-and-query-codec",
+  "commit_sha": "e321bf43684b84e45ca71f72eeb56eaac152d504",
+  "recorded_at": "2026-09-27T15:19:10Z",
+  "command": "pnpm exec vitest run tests/live-query.test.ts tests/api-contracts.test.ts",
+  "cwd": "services/console",
+  "result": "passed",
+  "summary": "2 files / 7 tests passed",
+  "log_uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt"
+}

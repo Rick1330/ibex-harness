@@ -4,7 +4,7 @@
 
 This document defines the target architecture and evidence boundary for the operator product. The canonical authenticated application name is **`services/console`**. `web/` remains the public documentation site. `services/dashboard/` is only the temporary 4.P.0 compatibility shell and is not a second production product.
 
-The repository baseline is commit `8f8e130` plus pre-existing review documents. Statements below distinguish four states: **implemented** means verified in the baseline; **mounted-but-provisional** means code is present but not production-ready; **specified-not-implemented** means a contract or design exists without a verified implementation; **deferred** means intentionally outside the current slice. A design contract is not deployment evidence.
+The current repository baseline is `e4525e3` (D2 metadata-only trace slice, following D1 `fc8735c`). Statements below distinguish four states: **implemented** means verified in the current source; **mounted-but-provisional** means code is present but not production-ready; **specified-not-implemented** means a contract or design exists without a verified implementation; **deferred** means intentionally outside the current slice. A design contract is not deployment evidence.
 
 ## Product boundary
 
@@ -16,9 +16,10 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 |---|---|---|
 | `web/` | Implemented public site | Public docs, roadmap, benchmark, and marketing content only. Do not place authenticated operator routes here. |
 | `services/dashboard/` | Mounted-but-provisional | Static 4.P.0 connection/session/SSE compatibility shell. Retain while migration proceeds; do not expand it into Track D. |
-| `services/console/` | Specified-not-implemented | Canonical Next.js operator application. Its package, workload, origin, and promotion evidence must be established before claiming implementation. |
+| `services/console/` | Mounted-but-provisional | Canonical Next.js operator application. D2 metadata Explore list/detail is live-mode opt-in and server-only; hosted AuthService, two-tenant, deployment, and promotion evidence remain open. |
 | Overview/context/health/events contract | Mounted backend foundations, operator composition not fully verified | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
-| Explore, Trace Inspector, Sessions, Memories, Incidents, Directives, Drift, Billing, Analytics, Agents, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Enable one vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
+| Explore / Trace Inspector metadata slice | Mounted-but-provisional | D2 list/detail metadata is mounted with explicit unavailable sections; full query, provenance joins, content, score, replay, and actions remain unaccepted. |
+| Sessions, Memories, Incidents, Directives, Drift, Billing, Analytics, Agents, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Enable one vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
 | Full production operator deployment and shell retirement | Deferred | Requires approved runtime ownership, staging browser promotion, rollback evidence, and parity decision. |
 
 ## Contract layers

@@ -125,11 +125,9 @@ For dependency: **`<name>`** (version **`<x.y.z>`**)
 
 ### 4.3 TypeScript
 
-- We must choose and standardize one package manager.
-  - Default: **npm** + `package-lock.json` (consistent with early docs).
-  - If switching to pnpm for monorepo performance, create an ADR and migrate fully.
-- Lockfile must be committed.
-- Use `npm audit` (or `pnpm audit`) plus OSV scanning in CI.
+- The repository standard is **pnpm 9.15.9** with the root `pnpm-lock.yaml` and workspace manifests.
+- Use `pnpm install --frozen-lockfile --ignore-scripts`; do not introduce a competing `package-lock.json`.
+- Use `pnpm audit` plus OSV scanning where the workflow supports it.
 
 ### 4.4 Docker base images
 
@@ -213,7 +211,7 @@ Targets:
 - avoid heavy logging libraries (use stdlib `slog`)
 - keep concurrency and HTTP stack explicit
 
-### 7.3 Dashboard
+### 7.3 Console
 
 Targets:
 
@@ -340,7 +338,7 @@ Avoid:
 - ORMs for ClickHouse (raw SQL preferred)
 - inventing a second auth stack for MCP (reuse Auth gRPC)
 
-### 8.4 TypeScript — Dashboard (services/dashboard)
+### 8.4 TypeScript — Canonical Console (`services/console`)
 
 Required:
 
@@ -390,7 +388,7 @@ Avoid:
 | Ecosystem | Directory | Status |
 |-----------|-----------|--------|
 | `pip` | `/services/memory` | **Enabled** (`pyproject.toml` + `uv.lock`) |
-| `npm` | `/services/dashboard` | Pending `package-lock.json` |
+| `pnpm` | `/` | **Enabled** via root `pnpm-lock.yaml`; canonical workspace package is `@ibex/console` |
 
 Also extend golangci-lint paths for new Go services (see [AGENTS.md](../../AGENTS.md) and this guide). Bandit already covers `services/memory/app`.
 

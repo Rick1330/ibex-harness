@@ -26,7 +26,7 @@ As of PR #206, branch protection requires **area gate jobs** (always run; auto-p
 | `gitleaks` | Secret scan | Always runs |
 | `semantic-pr-title` | Conventional PR title | PRs only |
 
-Path filtering: [`.github/path-filters.yml`](../../../.github/path-filters.yml) via [`.github/actions/detect-changes`](../../../.github/actions/detect-changes/action.yml). Cross-cutting `workflows` or `deps` changes force full matrix.
+Path filtering: [`.github/path-filters.yml`](../../../../.github/path-filters.yml) via [`.github/actions/detect-changes`](../../../../.github/actions/detect-changes/action.yml). Cross-cutting `workflows` or `deps` changes force full matrix.
 
 ## Individual CI jobs (under gates)
 
@@ -79,11 +79,11 @@ Path filtering: [`.github/path-filters.yml`](../../../.github/path-filters.yml) 
 | Web-only push to `main` | `run_web=true`, `run_go=false` | `repo-guards`, `web-build` |
 | Web + Go push to `main` | `run_web=true`, `run_go=true` | `repo-guards`, `web-build`, `web-go-quality-gate` |
 
-`web-deploy` runs only on push to `main` after merge (never on pull requests). Workflow: [`.github/workflows/web-deploy.yml`](../../../.github/workflows/web-deploy.yml).
+`web-deploy` runs only on push to `main` after merge (never on pull requests). Workflow: [`.github/workflows/web-deploy.yml`](../../../../.github/workflows/web-deploy.yml).
 
 ## Docker image publish
 
-[`docker-publish.yml`](../../../.github/workflows/docker-publish.yml) uses a **scan-before-push** pipeline: build amd64 OCI artifact → Trivy scan → multi-arch push → provenance attestation.
+[`docker-publish.yml`](../../../../.github/workflows/docker-publish.yml) uses a **scan-before-push** pipeline: build amd64 OCI artifact → Trivy scan → multi-arch push → provenance attestation.
 
 | Trigger | Tag | `:latest` pushed |
 |---------|-----|-------------------|
@@ -93,7 +93,7 @@ Path filtering: [`.github/path-filters.yml`](../../../.github/path-filters.yml) 
 
 ## Nightly integration
 
-The weekly `schedule` on `ci.yml` was removed (jobs skipped on schedule). [`nightly.yml`](../../../.github/workflows/nightly.yml) dispatches `ci.yml` via `workflow_dispatch` every Sunday 03:00 UTC.
+The weekly `schedule` on `ci.yml` was removed (jobs skipped on schedule). [`nightly.yml`](../../../../.github/workflows/nightly.yml) dispatches `ci.yml` via `workflow_dispatch` every Sunday 03:00 UTC.
 
 ## Known deferrals
 
@@ -129,4 +129,4 @@ bash infra/scripts/trunk-validate-junit.sh test-results/junit/local-validate.xml
 
 ## Manual ops
 
-After promoting checks, apply [`.github/branch-protection-main.json`](../../../.github/branch-protection-main.json) on GitHub repository settings.
+After promoting checks, apply [`.github/branch-protection-main.json`](../../../../.github/branch-protection-main.json) on GitHub repository settings.

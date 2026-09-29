@@ -518,7 +518,7 @@ CI: required `security-integration` job (M1.5.1 SEC matrix in `proxy_security_se
 
 ---
 
-### 6.7 Dashboard (Next.js) — UX + Error Discipline
+### 6.7 Console (Next.js) — UX + Error Discipline
 
 **Primary risks:**
 
@@ -678,7 +678,7 @@ Coverage is a signal, not a goal — but we still enforce minimums:
 - Python: ≥ 85% for algorithms and security-related code
 - TypeScript: ≥ 70% for core UI logic; E2E covers critical flows
 
-See [TEST_ARCHITECTURE.md](roadmap/phase-1-core-platform/TEST_ARCHITECTURE.md) for layout, fixture inventory, and tier policy.
+See [TEST_ARCHITECTURE.md](../content/roadmap/phase-1-core-platform/test-architecture.mdx) for layout, fixture inventory, and tier policy.
 
 ### Codecov (CI)
 
@@ -690,7 +690,7 @@ The `coverage` job uploads Go coverage to [Codecov](https://codecov.io/gh/Rick13
 | Python | Phase 2+ (`services/memory`) | `pytest --cov --cov-report=xml` | `python` | `coverage-python.xml` |
 | TypeScript | Phase 4 (`services/console`) | package-defined lint/typecheck/unit/contract/browser commands | `typescript` | package-defined artifacts |
 
-Repo root [`codecov.yml`](../codecov.yml) ignores `packages/proto/gen/go/**`, sets patch target 80%, and project target **80%** on meaningful code. The `coverage` job runs `infra/scripts/coverage-gate.sh` on the merged profile and **fails CI** when hand-written coverage is below 80%.
+Repo root [`codecov.yml`](../../codecov.yml) ignores `packages/proto/gen/go/**`, sets patch target 80%, and project target **80%** on meaningful code. The `coverage` job runs `infra/scripts/coverage-gate.sh` on the merged profile and **fails CI** when hand-written coverage is below 80%.
 
 More important than line coverage:
 
@@ -760,7 +760,7 @@ This testing strategy is the enforcement mechanism that makes IBEX Harness safe 
 
 ## 16) IBEX Console assurance gates
 
-`services/console` is the only canonical operator product. `services/dashboard` tests remain compatibility-shell tests and do not satisfy console product evidence. The console package is not present in the baseline, so the commands below are the required command interface for that package, not a claim that they currently run:
+`services/console` is the only canonical operator product. `services/console (canonical; services/dashboard is compatibility-only)` tests remain compatibility-shell tests and do not satisfy console product evidence. The console package is not present in the baseline, so the commands below are the required command interface for that package, not a claim that they currently run:
 
 ```bash
 pnpm --filter console lint

@@ -127,7 +127,7 @@ IBEX Harness supports multiple token types (each with different risk profiles):
 
 ### 4.2 Password Storage and MFA
 
-- Passwords (if enabled) stored using **Argon2id** with parameters defined in [ADR-0010](adr/ADR-0010-cryptography-policy.md) (`packages/crypto`; production: 64 MiB, t=3, p=4).
+- Passwords (if enabled) stored using **Argon2id** with parameters defined in [ADR-0010](../content/docs/adr/0010-cryptography-policy.mdx) (`packages/crypto`; production: 64 MiB, t=3, p=4).
 - API token bearers hashed with the same Argon2id policy (PHC string in `ibex_core.tokens.hash`).
 - MFA implemented via **TOTP**:
   - Required for privileged actions: directive promotion, directive revoke, token create, bulk export, org deletion
@@ -137,7 +137,7 @@ IBEX Harness supports multiple token types (each with different risk profiles):
 ### 4.3 Authorization Model
 
 - Permissions are represented as:
-  - a 64-bit bitmap (efficient checks) — canonical layout in [ADR-0009](adr/ADR-0009-permission-bitmap.md); Go constants in `packages/permissions`
+  - a 64-bit bitmap (efficient checks) — canonical layout in [ADR-0009](../content/docs/adr/0009-permission-bitmap.mdx); Go constants in `packages/permissions`
   - plus explicit role checks (owner/admin/member/viewer)
 - Phase 2 proxy chat completion minimum: `MemoryRead | SessionCreate | SessionRead` (`permissions.ProxyChatCompletion`)
 - Token management (create/revoke/list): requires `TokenCreate` / `TokenRevoke` bits (see milestone 1.1.4)
@@ -332,13 +332,13 @@ Write-path PII detection and redaction run in the memory pipeline ([ADR-0054](/d
 
 **Proxy protected routes — auth pipeline (milestones 1.2.1–1.2.5):**
 
-1. **Token validation** — gRPC `ValidateToken`; fail closed → **503** `SERVICE_DEGRADED` ([ADR-0011](adr/ADR-0011-proxy-auth-client.md))
-2. **Agent identity verification** — gRPC `ValidateAgent(agent_id, org_id_from_token)`; requires `X-IBEX-Agent-ID`; cross-org or inactive agent → **403** (`AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`, never **404**); auth outage → **503** `AUTH_UNAVAILABLE` ([ADR-0016](adr/ADR-0016-agent-identity-verification.md))
-3. **Rate limit** — org-level Redis RPM; configured Redis errors fail closed → **503** `SERVICE_DEGRADED` before provider work ([ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx); Phase 1 behavior in [ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md) is superseded)
+1. **Token validation** — gRPC `ValidateToken`; fail closed → **503** `SERVICE_DEGRADED` ([ADR-0011](../content/docs/adr/0011-proxy-auth-client.mdx))
+2. **Agent identity verification** — gRPC `ValidateAgent(agent_id, org_id_from_token)`; requires `X-IBEX-Agent-ID`; cross-org or inactive agent → **403** (`AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`, never **404**); auth outage → **503** `AUTH_UNAVAILABLE` ([ADR-0016](../content/docs/adr/0016-agent-identity-verification.mdx))
+3. **Rate limit** — org-level Redis RPM; configured Redis errors fail closed → **503** `SERVICE_DEGRADED` before provider work ([ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx); Phase 1 behavior in [ADR-0015](../content/docs/adr/0015-proxy-rate-limit-skeleton.mdx) is superseded)
 
 Middleware order: `auth → agentVerify → rateLimit → handler`.
 
-**Proxy chat (`POST /v1/chat/completions`) — input limits enforced in milestone 1.2.3 ([ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md)):**
+**Proxy chat (`POST /v1/chat/completions`) — input limits enforced in milestone 1.2.3 ([ADR-0013](../content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx)):**
 
 | Limit | Value |
 | --- | --- |
@@ -360,7 +360,7 @@ Protected Proxy routes enforce the shared rate limiter before provider work. The
 - If a configured rate-limit dependency errors, the Proxy returns **503** `SERVICE_DEGRADED` with `Retry-After: 5`; it does not call downstream route or provider work.
 - Quota exhaustion remains **429** `RATE_LIMITED` with the quota-derived `Retry-After` and rate-limit headers.
 
-[ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md) records the historical Phase 1 design. Its fail-open behavior and empty-URL Noop default are superseded by [ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx). Development readiness remains degraded when its critical Redis readiness checker is configured but Redis is absent; the request-path Noop exception does not imply a healthy `/ready` response.
+[ADR-0015](../content/docs/adr/0015-proxy-rate-limit-skeleton.mdx) records the historical Phase 1 design. Its fail-open behavior and empty-URL Noop default are superseded by [ADR-0081](../content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx). Development readiness remains degraded when its critical Redis readiness checker is configured but Redis is absent; the request-path Noop exception does not imply a healthy `/ready` response.
 
 ### 8.3 SSRF / External Calls
 
@@ -474,7 +474,7 @@ Before adding a dependency:
 | OSSF Scorecard | `.github/workflows/scorecard.yml` | No (main + schedule) | Yes |
 | Dependabot | `.github/dependabot.yml` | N/A (automated PRs) | N/A |
 
-Required status-check inventory: `.github/branch-protection-main.json` (see [ADR-0008](adr/ADR-0008-security-ci-gates.md)). The file and its CI guard do not configure GitHub settings. A repository administrator must apply the complete context set to live `main` protection and verify the required contexts through GitHub after every policy change. The latest Stage 1 review found that live protection did not yet include `ci-gate-python` or `ci-gate-semgrep`; treat that external configuration as an open merge-readiness action until it is applied and verified.
+Required status-check inventory: `.github/branch-protection-main.json` (see [ADR-0008](../content/docs/adr/0008-security-ci-gates.mdx)). The file and its CI guard do not configure GitHub settings. A repository administrator must apply the complete context set to live `main` protection and verify the required contexts through GitHub after every policy change. The latest Stage 1 review found that live protection did not yet include `ci-gate-python` or `ci-gate-semgrep`; treat that external configuration as an open merge-readiness action until it is applied and verified.
 
 ### 12.3 Build integrity
 
@@ -609,7 +609,7 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 - `ValidateToken` peer rate limit when `REDIS_URL` is set (`IBEX_AUTH_VALIDATE_RPM`, default 6000): **per proxy host aggregate** (not per attacker token); size to peak legitimate ValidateToken RPS from each proxy; Redis errors fail-open with WARN
 - Same-org missing token on revoke → `NOT_FOUND`
 
-Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).
+Full matrix: [M1.5.1 milestone](../content/roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.mdx). Exit audit: [PHASE1_EXIT_AUDIT.md](../content/roadmap/phase-1-core-platform/phase1-exit-audit.mdx).
 
 ---
 

@@ -67,6 +67,7 @@ def test_operator_sessions_accept_explicit_api_environment_alias(
         ({"jwt_public_keys_pem": None}, "DASHBOARD_JWT_PUBLIC_KEYS_PEM"),
         ({"redis_url": None}, "REDIS_URL"),
         ({"dashboard_csrf_secret": None}, "DASHBOARD_CSRF_SECRET"),
+        ({"operator_cursor_secret": None}, "IBEX_OPERATOR_CURSOR_SECRET"),
         ({"cookie_secure": False}, "DASHBOARD_COOKIE_SECURE"),
     ],
 )
@@ -79,6 +80,7 @@ def test_non_development_operator_profile_rejects_each_missing_security_control(
         "jwt_public_keys_pem": "configured-public-key-set",
         "redis_url": "redis://127.0.0.1:6379/0",
         "dashboard_csrf_secret": "csrf-secret-for-staging-32-bytes",
+        "operator_cursor_secret": "cursor-secret-for-staging-32-bytes",
         "cookie_secure": True,
     }
     settings_kwargs.update(overrides)
@@ -128,4 +130,8 @@ def test_non_development_rejects_hmac_operator_sessions() -> None:
 
 def test_non_development_operator_profile_requires_rs256_browser_config() -> None:
     with pytest.raises(ValidationError, match="DASHBOARD_JWT_PUBLIC_KEYS_PEM"):
-        operator_settings(environment="staging", jwt_hmac_secret=None)
+        operator_settings(
+            environment="staging",
+            jwt_hmac_secret=None,
+            operator_cursor_secret="cursor-secret-for-staging-32-bytes",
+        )

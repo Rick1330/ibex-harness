@@ -11,11 +11,11 @@ Engineering docs, `services/README.md`, `packages/README.md`, and `web/content/r
 - a latency or tenancy invariant changes,
 - an ADR lands that alters architecture.
 
-Prefer updating these in the same PR as the code/roadmap change (or an immediate follow-up docs PR). Inventories are **planning baselines** — they may change with evidence and an ADR.
+Prefer updating these in the same PR as the code/roadmap change (or an immediate follow-up docs PR). Inventories are **living implementation indexes** with explicit shipped/provisional/deferred status; planned additions require evidence and an ADR.
 
 ## Start here
 
-1. [web/content/roadmap/current-state.mdx](../content/roadmap/current-state.mdx) — living implementation snapshot (`/roadmap/current-state`)
+1. [Current state](../content/roadmap/current-state.mdx) — living implementation snapshot (`/roadmap/current-state`)
 2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — vision, problem, capabilities, and **redesigned phases**
 3. [ARCHITECTURE.md](ARCHITECTURE.md) — services, data flows, security, deployment topology
 4. [FILE_STRUCTURE.md](FILE_STRUCTURE.md) — monorepo layout (current + planned)

@@ -19,6 +19,9 @@ def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -
     if path in {
         "/v1/operator/context",
         "/v1/operator/overview",
+        "/v1/operator/traces",
+        "/v1/operator/traces/runs/{run_id}",
+        "/v1/operator/traces/{trace_id}",
         "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
     }:
         return "operator_session"
@@ -37,7 +40,8 @@ def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -
 def _source_path(root: Path, raw_source: str | None) -> str | None:
     if not raw_source:
         return None
-    source_path = Path(raw_source).resolve()
+    raw_path = Path(raw_source)
+    source_path = (root / raw_path).resolve() if not raw_path.is_absolute() else raw_path.resolve()
     app_root = root / "services" / "api" / "app"
     if not str(source_path).startswith(str(app_root)):
         return None

@@ -11,7 +11,7 @@ Env registry: [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md). Deployment t
 
 ## Health endpoints
 
-Contract: [ADR-0022](adr/ADR-0022-health-check-contract.md) (public: `/docs/adr/0022-health-check-contract`).
+Contract: [ADR-0022](../content/docs/adr/0022-health-check-contract.mdx) (public: `/docs/adr/0022-health-check-contract`).
 
 | Endpoint | Probe type | Checks external deps | On failure |
 | --- | --- | --- | --- |

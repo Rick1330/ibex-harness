@@ -64,14 +64,26 @@ async function expectNoAxeViolations(page: Page): Promise<void> {
         run: (
           context: Document,
           options: object,
-        ) => Promise<{ violations: Array<{ id: string; impact: string | null; help: string }> }>
+        ) => Promise<{
+          violations: Array<{
+            id: string
+            impact: string | null
+            help: string
+            nodes: Array<{ target: string[] }>
+          }>
+        }>
       }
     }).axe
     if (!axe) throw new Error("axe-core did not load")
     const result = await axe.run(document, {
       runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
     })
-    return result.violations.map(({ id, impact, help }) => ({ id, impact, help }))
+    return result.violations.map(({ id, impact, help, nodes }) => ({
+      id,
+      impact,
+      help,
+      targets: nodes.flatMap((node) => node.target),
+    }))
   })
   expect(accessibility).toEqual([])
 }
@@ -148,4 +160,25 @@ test("live D1 renders tenant-scoped API data and forwards only the access cookie
   await expectSseResumeWithLastEventId(page)
   await expectEventPayloadNotRetained(page)
   await expectForwardedCookiesAreAccessOnly(page)
+})
+
+test("live D2 Explore and run inspector stay fixture-free with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+  await page.goto("/dashboard/explore?limit=50&status=ok")
+  await expect(page.getByRole("heading", { name: "Trace metadata" })).toBeVisible()
+  await expect(page.getByText("Sessions (deferred)")).toBeVisible()
+  await expect(page.getByText("trace-live-1")).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expect(page.getByText("No mock values are substituted")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  await page.goto("/dashboard/explore/r/11111111-1111-4111-8111-111111111111?return=%2Fdashboard%2Fexplore")
+  await expect(page.getByText("Trace Inspector · frozen metadata snapshot")).toBeVisible()
+  await expect(page.getByText("publication published")).toBeVisible()
+  await expect(page.getByText("Raw content, replay")).toBeVisible()
+  await expectNoAxeViolations(page)
+
+  await page.goto("/dashboard/explore/r/22222222-2222-4222-8222-222222222222")
+  await expect(page.getByRole("heading", { name: "Trace not found" })).toBeVisible()
 })

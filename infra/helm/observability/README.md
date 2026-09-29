@@ -1,6 +1,6 @@
 # IBEX Observability Helm chart (ADR-0051)
 
-Thin Kubernetes packaging of the local LGTM stack used by Phase 2.5 exit.
+Thin Kubernetes packaging for selected local-LGTM-like components. It is not a complete production observability deployment and does not mirror every Compose component.
 **Out of scope:** full `ibex-harness` application Helm (proxy/auth/memory/…) — Phase 4+.
 
 ## kind / minikube
@@ -52,6 +52,7 @@ Prefer **`make observability-up`** for day-to-day local graphs (host-scrape of a
 Use this chart to validate Kubernetes packaging and future ServiceMonitor wiring
 (`values.yaml` → `serviceMonitor.enabled: true` when app charts exist).
 
-Config parity for dashboards/rules: ship via ConfigMaps from [`infra/monitoring/`](../../monitoring/)
-in a follow-up if operators need identical Grafana JSON inside the cluster; compose remains
-the source of truth for Phase 2.5 exit dashboards.
+The chart currently does **not** bundle Alertmanager, the Compose dashboard/rule/scrape ConfigMaps,
+or the Compose logs-to-Loki pipeline. Config parity from [`infra/monitoring/`](../../monitoring/)
+is a follow-up, and Compose remains the source of truth for local dashboards. Treat this chart as
+render/lint and packaging scaffolding until those components and acceptance tests are implemented.

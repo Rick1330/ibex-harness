@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest"
 import {
   OperatorContextSchema,
   OperatorOverviewSchema,
+  OperatorTraceDetailSchema,
+  OperatorTraceListSchema,
   parseOperatorSession,
   parsePlatformHealth,
 } from "../src/lib/api/contracts"
@@ -48,6 +50,58 @@ const overview = {
   completeness: "complete",
 }
 
+const traceList = {
+  schema_version: "operator.trace-list.v1",
+  query_grammar_version: "operator.trace-query.v1",
+  items: [{
+    trace_id: "trace-a",
+    run_id: "11111111-1111-4111-8111-111111111111",
+    request_id: "request-a",
+    agent_id: null,
+    session_id: null,
+    checkpoint_id: null,
+    status: "ok",
+    error_code: null,
+    started_at: "2026-09-26T12:00:00.000Z",
+    ended_at: "2026-09-26T12:00:01.000Z",
+    duration_ms: 1000,
+    evidence: {
+      schema_version: "evidence.v1",
+      capture_mode: "metadata",
+      completeness: "partial",
+      sample_decision: "kept",
+      freshness: "unknown",
+      retention: "unknown",
+      source: "postgres.evidence_runs",
+      source_watermark: "not_provided",
+      publication_state: "unavailable",
+      ingestion_lag_ms: null,
+      policy_version: "operator.trace-read.v1",
+      observed_at: "2026-09-26T12:00:02.000Z",
+    },
+  }],
+  next_cursor: null,
+  truncated: false,
+  matched_count: 1,
+  returned_count: 1,
+  observed_at: "2026-09-26T12:00:02.000Z",
+  query_start: "2026-09-26T11:00:00.000Z",
+  query_end: "2026-09-26T12:00:00.000Z",
+  limit: 50,
+}
+
+const traceDetail = {
+  ...traceList.items[0],
+  schema_version: "operator.trace-detail.v1",
+  unavailable_sections: ["spans", "candidates", "score_explanation", "directives", "tools", "content", "events", "assembly"],
+  spans: [],
+  assembly: null,
+  candidates: [],
+  directive: null,
+  tools: [],
+  score_schema_note: null,
+}
+
 describe("operator response contracts", () => {
   it("accepts the stable session and health shapes", () => {
     expect(parseOperatorSession(session).org_id).toBe(session.org_id)
@@ -68,5 +122,28 @@ describe("operator response contracts", () => {
   it("rejects malformed tenant identity and health timestamps", () => {
     expect(() => parseOperatorSession({ ...session, org_id: "org-a" })).toThrow()
     expect(() => parsePlatformHealth({ ...health, observed_at: "not-a-time" })).toThrow()
+  })
+
+  it("accepts metadata-only D2 state and rejects content-bearing or unknown fields", () => {
+    expect(OperatorTraceListSchema.parse(traceList).items[0]?.evidence.source).toBe("postgres.evidence_runs")
+    expect(OperatorTraceDetailSchema.parse(traceDetail).unavailable_sections).toContain("content")
+    expect(() => OperatorTraceListSchema.parse({ ...traceList, prompt: "<script>alert(1)</script>" })).toThrow()
+    expect(() =>
+      OperatorTraceListSchema.parse({
+        ...traceList,
+        items: [{ ...traceList.items[0], evidence: { ...traceList.items[0].evidence, source_watermark: "guess" } }],
+      }),
+    ).toThrow()
+    expect(
+      OperatorTraceListSchema.parse({
+        ...traceList,
+        items: [
+          {
+            ...traceList.items[0],
+            evidence: { ...traceList.items[0].evidence, source_watermark: "outbox:12", publication_state: "published" },
+          },
+        ],
+      }).items[0]?.evidence.source_watermark,
+    ).toBe("outbox:12")
   })
 })
