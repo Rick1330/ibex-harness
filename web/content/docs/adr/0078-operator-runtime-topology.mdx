@@ -40,7 +40,7 @@ No BFF / API gateway. CORS and CSRF are owned by **`services/api` only**.
 
 ### 2) Origins matrix (verified against live repo infra)
 
-**Ingress verification (2026-09-14):** `web/content/docs/deployment/kubernetes.mdx` and `infra/` contain **no** production Ingress/Gateway for `services/api`. Staging/production API hostnames below are **planned DNS targets**, not currently provisioned endpoints. Local uses host-process bind on `IBEX_API_PORT` default **8010**.
+**Ingress verification (2026-09-14; rechecked for PR 3):** `web/content/docs/deployment/kubernetes.mdx` and `infra/` contain no provisioned staging/production Ingress/Gateway for `services/api`. The chart now contains an optional API/SSE Ingress contract, disabled until an owner supplies a real host and TLS Secret. Staging/production API hostnames below remain **planned DNS targets**, not currently provisioned endpoints. Local uses host-process bind on `IBEX_API_PORT` default **8010**.
 
 | Environment | Operator UI origin | API / SSE origin | TLS termination | Cookie `SameSite` | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -81,6 +81,8 @@ Contract:
 ### 7) 4.P.5 scope note
 
 Operator **UI hosting stays Cloudflare-Pages-only** and is **exempt** from the Helm/K8s buildout. Only API / workers / data plane need K8s overlays in 4.P.5.
+
+The optional Helm Ingress fronts only the API and operator-event SSE service. It must remain disabled while the host, TLS Secret, forwarded-header policy, and proxy buffering/timeout behavior are not provisioned and verified. The console artifact, API artifact, schema, fixture, and rollback owner must share one evidence-manifest identity during staging verification.
 
 ### 8) Kill switch / rollback
 

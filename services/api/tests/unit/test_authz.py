@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -47,6 +47,93 @@ async def test_load_caller_role_ok() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=_RoleResult("admin"))
     assert await load_caller_role(token, session) == "admin"
+
+
+@pytest.mark.asyncio
+async def test_operator_legal_hold_role_session_closes_before_step_up() -> None:
+    from authclient.permissions import LEGAL_HOLD_MANAGE, bitmap_for_role
+
+    from app.authz import require_operator_legal_hold_manage
+    from app.operator_session_auth import OperatorSessionAuthorization
+
+    class _RoleSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.closed = True
+
+        async def execute(self, *_args: object):
+            return _RoleResult("admin")
+
+    session = _RoleSession()
+    operator = OperatorSessionAuthorization(
+        org_id=uuid4(),
+        permissions=bitmap_for_role("admin"),
+        session_id="session-1",
+        subject="user-1",
+    )
+    step_up = AsyncMock()
+    request = MagicMock()
+    dep = require_operator_legal_hold_manage()
+    with (
+        patch("app.authz.session_with_org", return_value=session) as bind,
+        patch("app.authz.enforce_step_up", new=step_up) as enforce,
+    ):
+        result = await dep(request, operator, object())
+    assert result is operator
+    bind.assert_called_once()
+    assert session.closed is True
+    enforce.assert_awaited_once()
+    action = enforce.await_args.kwargs["action"]
+    assert action.required_permission == LEGAL_HOLD_MANAGE
+    assert action.session_id == "session-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("role", "permissions"),
+    [("member", "admin"), ("admin", "member")],
+)
+async def test_operator_legal_hold_denies_before_step_up(role: str, permissions: str) -> None:
+    from authclient.permissions import bitmap_for_role
+
+    from app.authz import require_operator_legal_hold_manage
+    from app.operator_session_auth import OperatorSessionAuthorization
+
+    class _RoleSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def execute(self, *_args: object):
+            return _RoleResult(role)
+
+    operator = OperatorSessionAuthorization(
+        org_id=uuid4(),
+        permissions=bitmap_for_role(permissions),
+        session_id="session-1",
+        subject="user-1",
+    )
+    pending = require_operator_legal_hold_manage()(MagicMock(), operator, object())
+    session_patch = patch("app.authz.session_with_org", return_value=_RoleSession())
+    step_up = AsyncMock()
+    enforce_patch = patch("app.authz.enforce_step_up", new=step_up)
+    session_patch.start()
+    enforce_patch.start()
+    try:
+        with pytest.raises(ApiError) as exc:
+            await pending
+    finally:
+        enforce_patch.stop()
+        session_patch.stop()
+    assert exc.value.code == INSUFFICIENT_PERMISSIONS
+    step_up.assert_not_awaited()
 
 
 def test_require_roles_permission_gate() -> None:
@@ -166,7 +253,9 @@ def test_maybe_operator_session_delegates_when_step_up_header_present() -> None:
     request = MagicMock()
     request.headers.get.return_value = "proof"
     expected = OperatorSessionAuthorization(org_id=uuid4(), permissions=1, session_id="sid")
-    with patch("app.authz.require_operator_session", new=AsyncMock(return_value=expected)) as require:
+    with patch(
+        "app.authz.require_operator_session", new=AsyncMock(return_value=expected)
+    ) as require:
         got = asyncio.run(_maybe_operator_session(request))
     assert got is expected
     require.assert_awaited_once_with(request)

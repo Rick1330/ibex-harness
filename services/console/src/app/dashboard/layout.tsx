@@ -8,12 +8,15 @@ export const dynamic = "force-dynamic"
  * entire dashboard subtree on the explicit, server-validated preview pair.
  */
 import { UnavailableDashboard } from "@/app/dashboard/unavailable-dashboard"
-import { isDashboardPreviewEnabled } from "@/lib/classification"
+import {
+  isDashboardPreviewEnabled,
+  isLiveD1Enabled,
+} from "@/lib/classification"
 
 export default function DashboardLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  if (!isDashboardPreviewEnabled()) {
+  if (!isDashboardPreviewEnabled() && !isLiveD1Enabled()) {
     return <UnavailableDashboard />
   }
 

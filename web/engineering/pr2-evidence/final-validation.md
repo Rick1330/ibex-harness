@@ -48,3 +48,7 @@ SonarCloud and CodeScene must rerun on the pushed head. Their earlier review com
 
 [1]: https://github.com/Rick1330/ibex-harness/actions/runs/36142078428 "Previous exact-head PR #900 CI run"
 [2]: https://github.com/Rick1330/ibex-harness/pull/900 "Pull request 900"
+
+## Current-main re-baseline
+
+The PR-2 implementation is present on `main` at `0f087d2`, followed by benchmark-only commit `1a1b89f`. The local validation above remains valid for the tested PR head, but it does not establish AuthService/Redis/PostgreSQL runtime behavior, browser cookie/CSRF/Origin/SSE behavior, staging rollout, hosted analyzers, or live branch-protection parity. The P1 route matrix and unresolved legal-hold/high-impact browser decision are tracked in `web/engineering/pr3-evidence/p1-route-policy-matrix.md`.

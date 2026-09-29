@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/p6-evidence-manifest.v1.json",
+  "title": "IBEX P6 evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "run_id",
+    "commit_sha",
+    "environment",
+    "topology",
+    "artifacts",
+    "versions",
+    "checks",
+    "rollback",
+    "owner"
+  ],
+  "properties": {
+    "manifest_version": { "const": "p6-bootstrap.v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "environment": { "type": "string", "enum": ["local", "preview", "staging", "production"] },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ui_origin", "api_origin", "sse_origin"],
+      "properties": {
+        "ui_origin": { "type": "string", "minLength": 1 },
+        "api_origin": { "type": "string", "minLength": 1 },
+        "sse_origin": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "sha256", "uri", "evidence_state"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "uri": { "type": "string", "pattern": "^(https://|s3://|gs://|file://).+" },
+          "evidence_state": { "type": "string", "enum": ["declared", "mounted", "contract-tested", "runtime-tested", "staging-verified", "blocked"] },
+          "producer": { "type": "string", "minLength": 1 },
+          "content_type": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture", "schema", "migration"],
+      "properties": {
+        "fixture": { "type": "string", "minLength": 1 },
+        "schema": { "type": "string", "minLength": 1 },
+        "migration": { "type": "string", "minLength": 1 }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "expected", "applicability", "result", "evidence_state"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "expected": { "type": "boolean" },
+          "applicability": { "type": "string", "enum": ["applicable", "inapplicable"] },
+          "reason": { "type": "string" },
+          "result": { "type": "string", "enum": ["passed", "failed", "skipped", "missing", "unknown", "cancelled"] },
+          "evidence_state": { "type": "string", "enum": ["declared", "mounted", "contract-tested", "runtime-tested", "staging-verified", "blocked"] },
+          "artifact_uris": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^(https://|s3://|gs://|file://).+" }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "applicability": { "const": "applicable" },
+                "expected": { "const": true }
+              }
+            },
+            "then": {
+              "required": ["artifact_uris"],
+              "properties": {
+                "artifact_uris": { "minItems": 1 }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prior_digest", "current_digest", "schema_compatible", "command", "verified"],
+      "properties": {
+        "prior_digest": { "type": "string", "minLength": 1 },
+        "current_digest": { "type": "string", "minLength": 1 },
+        "schema_compatible": { "type": "boolean" },
+        "command": { "type": "string", "minLength": 1 },
+        "verified": { "type": "boolean" }
+      }
+    },
+    "owner": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

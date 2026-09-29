@@ -291,5 +291,5 @@ See [.github/SECURITY.md](.github/SECURITY.md) for vulnerability reporting.
 - [web/engineering/GOVERNANCE.md](web/engineering/GOVERNANCE.md) — maintainers, roles, access review
 - [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
 - [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) — style and quality bar
-- [docs/adr/ADR-0003-branch-protection-and-merge-policy.md](docs/adr/ADR-0003-branch-protection-and-merge-policy.md) — branch protection policy
-- [docs/adr/ADR-0008-security-ci-gates.md](docs/adr/ADR-0008-security-ci-gates.md) — security scanning CI gates
+- [web/content/docs/adr/0003-branch-protection-and-merge-policy.mdx](web/content/docs/adr/0003-branch-protection-and-merge-policy.mdx) — branch protection policy
+- [web/content/docs/adr/0008-security-ci-gates.mdx](web/content/docs/adr/0008-security-ci-gates.mdx) — security scanning CI gates

@@ -11,22 +11,37 @@ def source_constant_name(source: str) -> str:
     return f"ROUTE_SOURCE_{suffix}"
 
 
-def _auth_source(path: str, public_paths: frozenset[str]) -> str:
+def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -> str:
     if path in public_paths:
         return "public"
     if path == "/v1/operator/session/login":
         return "pat_exchange"
+    if path in {
+        "/v1/operator/context",
+        "/v1/operator/overview",
+        "/v1/operator/traces",
+        "/v1/operator/traces/runs/{run_id}",
+        "/v1/operator/traces/{trace_id}",
+        "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
+    }:
+        return "operator_session"
     if path.startswith("/v1/operator/session"):
         return "operator_session"
     if path in {"/v1/operator/platform/health", "/v1/operator/events/stream"}:
         return "operator_permission"
+    if method == "POST" and path in {
+        "/v1/organizations/{org_id}/legal-holds",
+        "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear",
+    }:
+        return "operator_session"
     return "bearer_pat"
 
 
 def _source_path(root: Path, raw_source: str | None) -> str | None:
     if not raw_source:
         return None
-    source_path = Path(raw_source).resolve()
+    raw_path = Path(raw_source)
+    source_path = (root / raw_path).resolve() if not raw_path.is_absolute() else raw_path.resolve()
     app_root = root / "services" / "api" / "app"
     if not str(source_path).startswith(str(app_root)):
         return None
@@ -38,7 +53,7 @@ def _policy_row(
 ) -> dict[str, object]:
     method = str(row["methods"][0])
     path = str(row["path"])
-    auth = _auth_source(path, public_paths)
+    auth = _auth_source(path, public_paths, method)
     source = _source_path(root, row.get("source"))
     return {
         "method": method,

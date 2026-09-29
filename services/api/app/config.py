@@ -180,6 +180,13 @@ class Settings(BaseSettings):
         ),
         description="Redis pub/sub channel for operator-event fan-in",
     )
+    operator_cursor_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_API_OPERATOR_CURSOR_SECRET", "IBEX_OPERATOR_CURSOR_SECRET"
+        ),
+        description="Server-only HMAC key for tenant-bound operator read cursors",
+    )
     # Default off until 4.P.1 RS256 issuer/verifier; enable explicitly for local smoke.
     operator_feature_enabled: bool = Field(
         default=False,
@@ -227,6 +234,15 @@ class Settings(BaseSettings):
         if len(value.encode("utf-8")) < _MIN_HMAC_SECRET_BYTES:
             raise ValueError(
                 f"JWT_HMAC_SECRET must be at least {_MIN_HMAC_SECRET_BYTES} bytes when set"
+            )
+        return value
+
+    @field_validator("operator_cursor_secret", mode="after")
+    @classmethod
+    def _require_cursor_hmac_length(cls, value: str | None) -> str | None:
+        if value is not None and len(value.encode("utf-8")) < _MIN_HMAC_SECRET_BYTES:
+            raise ValueError(
+                f"IBEX_OPERATOR_CURSOR_SECRET must be at least {_MIN_HMAC_SECRET_BYTES} bytes when set"
             )
         return value
 
@@ -320,6 +336,10 @@ def _require_non_dev_operator_material(settings: Settings) -> None:
         (
             settings.auth_service_token,
             "IBEX_AUTH_SERVICE_TOKEN is required outside development when operator sessions are enabled",
+        ),
+        (
+            settings.operator_cursor_secret,
+            "IBEX_OPERATOR_CURSOR_SECRET is required outside development when operator sessions are enabled",
         ),
         (
             settings.jwt_public_keys_pem,

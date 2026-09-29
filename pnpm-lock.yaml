@@ -33,8 +33,6 @@ importers:
         specifier: ^2.14.0
         version: 2.14.0
 
-  services/dashboard: {}
-
   services/console:
     dependencies:
       '@base-ui/react':
@@ -110,6 +108,9 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@playwright/test':
+        specifier: 1.62.1
+        version: 1.62.1
       '@types/node':
         specifier: ^26.4.1
         version: 26.4.1
@@ -125,6 +126,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^6.1.1
         version: 6.1.1(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+      axe-core:
+        specifier: 4.13.0
+        version: 4.13.0
       eslint:
         specifier: ^9
         version: 9.39.5(jiti@2.7.0)
@@ -149,6 +153,8 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.4.1)(jsdom@30.0.1)(vite@8.2.2(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+
+  services/dashboard: {}
 
   web:
     dependencies:

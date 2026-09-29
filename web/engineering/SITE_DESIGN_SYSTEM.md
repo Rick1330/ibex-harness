@@ -1,7 +1,7 @@
 # Ibex Harness — Design System & Landing Page Specification
 
 > A complete, implementation-ready design spec for `ibexharness.com`.
-> Target stack: **Next.js 15 (App Router) + React 19 + Tailwind CSS v4 + shadcn/ui + Framer Motion**.
+> Target/implemented stack boundary: **Next.js 16 (App Router) + React 19 + Tailwind CSS v4 + shadcn/ui**. This document is a design proposal, not evidence of a released product surface.
 > Aesthetic bar: **Stripe · Anthropic · Vercel · Linear · Resend**. Editorial, technical, quiet, expensive.
 > Deliverable: a single source of truth for the landing page, the docs site, the blog, benchmarks, and changelog — light + dark, fully themed, fully animated.
 
@@ -172,7 +172,7 @@ The register is **documentation-first**: mono §-numerals live in the left rail;
 ### §00 · Header (sticky, translucent, bottom-hairline)
 - Left: wordmark `ibex` in Instrument Serif italic + `harness` in Inter 500, `20px`. Small ember dot between.
 - Center (desktop only): nav — `Docs · Benchmarks · Changelog · Blog · GitHub`. Inter 500, 14px, `--foreground-muted` → `--foreground` on hover with L→R underline.
-- Right: **`v0.4.2`** mono badge · Theme toggle · `★ 2.3k` GitHub star count (live via GitHub API, ISR cached 1h) · Primary CTA `Get started →`.
+- Right: **`proposal version; not a released package version`** mono badge · Theme toggle · `★ 2.3k` GitHub star count (live via GitHub API, ISR cached 1h) · Primary CTA `Get started →`.
 - Backdrop: `background/70` + `backdrop-blur-md` + `border-b border-border`.
 - Shrinks by 8px on scroll (subtle).
 
@@ -235,7 +235,7 @@ Editorial section: three pull-quotes from the docs in Instrument Serif italic, `
 Latest 3 changelog entries, pulled from `/changelog` MDX at build time. Format: mono date (`2026.07.14`), Instrument Serif title, one-line summary, `+N/-N` diff pill. Link: `Full changelog →`.
 
 ### §08 · Closing CTA
-Full-bleed dark band (uses `--foreground` bg, `--background` text — inverted, both themes). Instrument Serif headline: *"Put agent memory at the proxy."* Two CTAs. Mono footnote: `MIT · v0.4.2 · Built for teams shipping agents.`
+Full-bleed dark band (uses `--foreground` bg, `--background` text — inverted, both themes). Instrument Serif headline: *"Put agent memory at the proxy."* Two CTAs. Mono footnote: `MIT · proposal version; not a released package version · Built for teams shipping agents.`
 
 ### §09 · Footer
 Four columns: **Product** (Docs, Benchmarks, Changelog, Roadmap) · **Community** (GitHub, Discord, X) · **Company** (Blog, About, Contact) · **Legal** (License, Security, Privacy). Bottom strip: mono copyright · commit SHA · `● All systems operational` (live status dot from `/api/status`).
@@ -359,7 +359,7 @@ Dedicated `/benchmarks` route:
 
 ---
 
-## 16. File Structure (Next.js 15 App Router)
+## 16. File Structure (Next.js 16 App Router)
 
 ```text
 app/

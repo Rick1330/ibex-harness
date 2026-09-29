@@ -11,6 +11,7 @@ import time
 from typing import Any
 from uuid import UUID
 
+from redis.exceptions import RedisError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -86,11 +87,51 @@ def health(_request: Request) -> Response:
     return JSONResponse({"status": "ok"})
 
 
+async def ready(request: Request) -> Response:
+    """Report readiness only when enqueue auth and Celery broker Redis are available."""
+    settings: Settings = request.app.state.settings
+    if not _enqueue_auth_ready(settings):
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    broker_url = _broker_url(settings)
+    if not broker_url:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    return await _ping_broker(broker_url)
+
+
+def _enqueue_auth_ready(settings: Settings) -> bool:
+    token = getattr(settings, "enqueue_api_token", None)
+    if token is None:
+        return False
+    return bool(token.get_secret_value().strip())
+
+
+def _broker_url(settings: Settings) -> str | None:
+    resolved = getattr(settings, "resolved_broker_url", None)
+    if isinstance(resolved, str) and resolved.strip():
+        return resolved
+    redis_url = getattr(settings, "redis_url", None)
+    if isinstance(redis_url, str) and redis_url.strip():
+        return redis_url
+    return None
+
+
+async def _ping_broker(broker_url: str) -> Response:
+    client = None
+    try:
+        from redis.asyncio import Redis
+
+        client = Redis.from_url(broker_url, socket_timeout=0.5)
+        await asyncio.wait_for(client.ping(), timeout=0.5)
+    except (RedisError, OSError):
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    finally:
+        if client is not None:
+            await client.aclose()
+    return JSONResponse({"status": "ready", "service": "worker"})
+
+
 def _turns_kwargs(turns: list[TurnPayload]) -> list[dict[str, Any]]:
-    return [
-        {"turn_index": t.turn_index, "role": t.role, "content": t.content}
-        for t in turns
-    ]
+    return [{"turn_index": t.turn_index, "role": t.role, "content": t.content} for t in turns]
 
 
 def _parse_enqueue_body(payload: object) -> dict[str, Any]:
@@ -328,6 +369,7 @@ def create_enqueue_app(
     app = Starlette(
         routes=[
             Route("/health", health, methods=["GET"]),
+            Route("/ready", ready, methods=["GET"]),
             Route("/internal/extraction/enqueue", enqueue_extraction, methods=["POST"]),
         ]
     )

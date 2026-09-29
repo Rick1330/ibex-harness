@@ -68,6 +68,8 @@ def _operator_permission_dependencies() -> dict[tuple[str, str], object]:
 
 
 def _operator_session_dependencies() -> dict[tuple[str, str], object]:
+    from app.routers.operator_overview import require_operator_metadata_session
+    from app.routers.operator_traces import require_trace_read_session
     from app.routers.session import (
         require_session_logout,
         require_session_me,
@@ -75,10 +77,39 @@ def _operator_session_dependencies() -> dict[tuple[str, str], object]:
     )
 
     return {
+        ("GET", "/v1/operator/context"): require_operator_metadata_session,
+        ("GET", "/v1/operator/overview"): require_operator_metadata_session,
+        ("GET", "/v1/operator/traces"): require_trace_read_session,
+        ("GET", "/v1/operator/traces/runs/{run_id}"): require_trace_read_session,
+        ("GET", "/v1/operator/traces/{trace_id}"): require_trace_read_session,
         ("GET", "/v1/operator/session/me"): require_session_me,
         ("POST", "/v1/operator/session/refresh"): require_session_refresh,
         ("POST", "/v1/operator/session/logout"): require_session_logout,
     }
+
+
+_LEGAL_HOLD_SESSION_KEYS: Final[frozenset[tuple[str, str]]] = frozenset(
+    {
+        ("POST", "/v1/organizations/{org_id}/legal-holds"),
+        ("POST", "/v1/organizations/{org_id}/legal-holds/{hold_id}/clear"),
+    }
+)
+
+
+def _is_operator_legal_hold_guard(call: object) -> bool:
+    if getattr(call, "__module__", "") != "app.authz":
+        return False
+    qualname = str(getattr(call, "__qualname__", ""))
+    return qualname.startswith("require_operator_legal_hold_manage.<locals>")
+
+
+def _has_operator_session_guard(key: tuple[str, str], calls: list[object]) -> bool:
+    expected = _operator_session_dependencies().get(key)
+    if expected is not None and expected in calls:
+        return True
+    if key not in _LEGAL_HOLD_SESSION_KEYS:
+        return False
+    return any(_is_operator_legal_hold_guard(call) for call in calls)
 
 
 def _has_expected_guard(key: tuple[str, str], auth_source: str, calls: list[object]) -> bool:
@@ -87,10 +118,11 @@ def _has_expected_guard(key: tuple[str, str], auth_source: str, calls: list[obje
     if auth_source == "bearer_pat":
         return require_token in calls
     if auth_source == "pat_exchange":
-        return key == ("POST", "/v1/operator/session/login") and get_validator in calls
+        if key != ("POST", "/v1/operator/session/login"):
+            return False
+        return get_validator in calls
     if auth_source == "operator_session":
-        expected = _operator_session_dependencies().get(key)
-        return expected is not None and expected in calls
+        return _has_operator_session_guard(key, calls)
     if auth_source == "operator_permission":
         return _operator_permission_dependencies().get(key) in calls
     return False

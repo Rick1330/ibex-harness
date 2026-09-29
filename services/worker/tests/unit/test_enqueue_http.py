@@ -23,12 +23,20 @@ def _reset_enqueue_flag() -> None:
     reset_enqueue_http_for_tests()
 
 
-def _settings(*, token: str | None = "sekrit", host: str = "127.0.0.1", port: int = 18007) -> SimpleNamespace:
-    tok = SecretStr(token) if token else None
+def _settings(**overrides: object) -> SimpleNamespace:
+    token = overrides.get("token", "sekrit")
+    host = overrides.get("host", "127.0.0.1")
+    port = overrides.get("port", 18007)
+    redis_url = overrides.get("redis_url")
+    broker_url = overrides.get("broker_url")
+    tok = SecretStr(str(token)) if token else None
+    resolved = broker_url if broker_url is not None else redis_url
     return SimpleNamespace(
         enqueue_api_token=tok,
         enqueue_host=host,
         enqueue_port=port,
+        redis_url=redis_url,
+        resolved_broker_url=resolved,
     )
 
 
@@ -43,7 +51,9 @@ def _valid_body(**overrides: object) -> dict:
     return body
 
 
-def _post_enqueue(client: TestClient, body: dict | bytes, *, token: str = "sekrit", raw: bool = False):
+def _post_enqueue(
+    client: TestClient, body: dict | bytes, *, token: str = "sekrit", raw: bool = False
+):
     headers = {"Authorization": f"Bearer {token}"}
     if raw:
         headers["Content-Type"] = "application/json"
@@ -207,11 +217,15 @@ def test_idempo_expired_entry_is_ignored(monkeypatch: pytest.MonkeyPatch) -> Non
     client = _client(apply_async=capture)
     body = _valid_body()
     headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "expire-me"}
-    assert client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
+    assert (
+        client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
+    )
     import time
 
     time.sleep(0.05)
-    assert client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
+    assert (
+        client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
+    )
     assert len(calls) == 2
 
 
@@ -289,7 +303,9 @@ def test_enqueue_dispatch_fail_clears_idempo_reservation() -> None:
     client = _client(apply_async=boom)
     body = _valid_body()
     headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "fail-clear"}
-    assert client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 503
+    assert (
+        client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 503
+    )
 
     def ok(kwargs: dict) -> SimpleNamespace:
         calls["n"] += 1
@@ -314,7 +330,12 @@ def test_run_uvicorn_builds_server(monkeypatch: pytest.MonkeyPatch) -> None:
         def run(self) -> None:
             return None
 
-    monkeypatch.setattr(mod, "uvicorn", SimpleNamespace(Config=lambda *a, **k: object(), Server=_FakeServer), raising=False)
+    monkeypatch.setattr(
+        mod,
+        "uvicorn",
+        SimpleNamespace(Config=lambda *a, **k: object(), Server=_FakeServer),
+        raising=False,
+    )
     # Patch inside function via module after import uvicorn — call with stubbed import.
     import types
 
@@ -336,7 +357,9 @@ def test_bearer_length_mismatch_and_empty_expected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_json_limited_stream_cap_and_no_content_length(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_read_json_limited_stream_cap_and_no_content_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from starlette.requests import Request
 
     from app import enqueue_http as mod
@@ -344,11 +367,21 @@ async def test_read_json_limited_stream_cap_and_no_content_length(monkeypatch: p
     monkeypatch.setattr(mod, "MAX_ENQUEUE_BODY_BYTES", 8)
 
     async def receive():
-        return {"type": "http.request", "body": b"{\"a\":1,\"pad\":true}", "more_body": False}
+        return {"type": "http.request", "body": b'{"a":1,"pad":true}', "more_body": False}
 
-    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST", "scheme": "http",
-             "path": "/", "raw_path": b"/", "query_string": b"", "headers": [], "client": ("127.0.0.1", 1),
-             "server": ("127.0.0.1", 80)}
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 1),
+        "server": ("127.0.0.1", 80),
+    }
     req = Request(scope, receive)
     mod._check_content_length(req)
     with pytest.raises(ValueError, match="payload_too_large"):
@@ -381,6 +414,86 @@ def test_enqueue_uses_celery_when_no_inject() -> None:
 
 def test_health() -> None:
     assert _client().get("/health").status_code == 200
+
+
+def test_ready_requires_enqueue_token_and_redis_url() -> None:
+    assert _client().get("/ready").status_code == 503
+    assert (
+        TestClient(create_enqueue_app(_settings(token=None, redis_url="redis://redis")))
+        .get("/ready")
+        .status_code
+        == 503
+    )
+    assert TestClient(create_enqueue_app(_settings(redis_url=""))).get("/ready").status_code == 503
+
+
+def test_broker_url_falls_back_to_redis_url_when_resolved_missing() -> None:
+    from app.enqueue_http import _broker_url
+
+    settings = SimpleNamespace(redis_url="redis://fallback:6379/1")
+    assert _broker_url(settings) == "redis://fallback:6379/1"
+    assert (
+        _broker_url(SimpleNamespace(resolved_broker_url="  ", redis_url="redis://x")) == "redis://x"
+    )
+    assert _broker_url(SimpleNamespace(resolved_broker_url=None, redis_url=None)) is None
+
+
+def test_ready_uses_redis_url_fallback_when_resolved_broker_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Redis:
+        async def ping(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_a, **_k: _Redis())
+    settings = SimpleNamespace(
+        enqueue_api_token=SecretStr("sekrit"),
+        enqueue_host="127.0.0.1",
+        enqueue_port=18007,
+        redis_url="redis://fallback",
+    )
+    response = TestClient(create_enqueue_app(settings)).get("/ready")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
+
+
+def test_ready_returns_ready_after_redis_ping(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Redis:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def ping(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    client = _Redis()
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_args, **_kwargs: client)
+    response = TestClient(create_enqueue_app(_settings(redis_url="redis://redis"))).get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "service": "worker"}
+    assert client.closed is True
+
+
+@pytest.mark.parametrize("error", [OSError("connection refused"), TimeoutError("slow")])
+def test_ready_returns_not_ready_when_redis_fails(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    class _Redis:
+        async def ping(self) -> bool:
+            raise error
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_args, **_kwargs: _Redis())
+    response = TestClient(create_enqueue_app(_settings(redis_url="redis://redis"))).get("/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
 
 
 def test_start_enqueue_server_disabled_without_token(caplog: pytest.LogCaptureFixture) -> None:

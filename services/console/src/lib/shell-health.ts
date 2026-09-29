@@ -1,6 +1,6 @@
 /**
- * Global freshness / connection health (sidebar → top bar).
- * Fixture-backed stand-in for SSE drain + ClickHouse lag measurement.
+ * Preview-only freshness/connection design tokens (sidebar → top bar).
+ * They are not health telemetry; live health comes from the D1 API contract.
  */
 
 export type FreshnessState =
@@ -19,13 +19,13 @@ export type ShellHealth = {
   detail: string
 }
 
-/** Default live fixture — fixed sync time so SSR/client hydration matches. */
+/** Preview-only fixture — never implies a live API, SSE, or ClickHouse connection. */
 export const SHELL_HEALTH: ShellHealth = {
-  freshness: "live",
-  connection: "ready",
+  freshness: "historical",
+  connection: "unreachable",
   last_successful_sync: "2026-02-11T14:22:00.000Z",
-  lag_ms: 180,
-  detail: "/ready ok · SSE drain healthy · CH lag 180ms",
+  lag_ms: null,
+  detail: "Preview fixture only — no live /ready, SSE, or ClickHouse connection.",
 }
 
 export const FRESHNESS_TONE: Record<

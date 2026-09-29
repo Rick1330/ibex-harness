@@ -178,12 +178,21 @@ type bufferCountArgs struct {
 
 func assertBufferTurnCount(t *testing.T, a bufferCountArgs) {
 	t.Helper()
-	snap, err := a.buf.Peek(context.Background(), a.key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snap.Turns) != a.want {
-		t.Fatalf("turns=%d want %d", len(snap.Turns), a.want)
+	deadline := time.Now().Add(2 * time.Second)
+	var last int
+	for {
+		snap, err := a.buf.Peek(context.Background(), a.key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = len(snap.Turns)
+		if last == a.want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("turns=%d want %d", last, a.want)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

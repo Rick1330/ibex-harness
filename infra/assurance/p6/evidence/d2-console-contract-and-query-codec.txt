@@ -1,0 +1,4 @@
+d2-console-contract-and-query-codec
+command: pnpm exec vitest run tests/live-query.test.ts tests/api-contracts.test.ts
+result: passed
+summary: 2 files / 7 tests passed

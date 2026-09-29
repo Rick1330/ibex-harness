@@ -1,0 +1,10 @@
+{
+  "check": "d2-api-unit-operator-traces",
+  "commit_sha": "4d9c1967ac0b32fc93742a7c830ca731c01a9e91",
+  "recorded_at": "2026-09-27T15:19:10Z",
+  "command": ".venv/bin/python -m pytest tests/unit/test_operator_traces.py -q",
+  "cwd": "services/api",
+  "result": "passed",
+  "summary": "30 passed",
+  "log_uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt"
+}

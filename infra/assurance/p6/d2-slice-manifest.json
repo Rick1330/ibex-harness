@@ -1,0 +1,125 @@
+{
+  "manifest_version": "p6-bootstrap.v1",
+  "run_id": "d2-local-4d9c1967ac0b",
+  "commit_sha": "4d9c1967ac0b32fc93742a7c830ca731c01a9e91",
+  "environment": "local",
+  "topology": {
+    "ui_origin": "https://127.0.0.1:3282",
+    "api_origin": "https://127.0.0.1:3283",
+    "sse_origin": "https://127.0.0.1:3283",
+    "notes": "Local/contract-tested only. Hosted AuthService topology not claimed."
+  },
+  "artifacts": [
+    {
+      "name": "d2-residual-register",
+      "sha256": "5795119873330336a792cbaaadf04c9099bce56febe313fca615b48d4323b032",
+      "uri": "file://infra/assurance/p6/d2-residual-register.json",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-performance-notes",
+      "sha256": "0f5c4be6c78a6ded5c0ff140fcb90b8e2de741a5ea8390b67d7f065ff0cac69a",
+      "uri": "file://web/engineering/pr3-evidence/d2-performance-notes.md",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "manifest-schema",
+      "sha256": "5df55e6b655c2369cca83d52a2ff96cf3e811b811318d4d2539e9778bcd191ef",
+      "uri": "file://infra/assurance/p6/manifest.schema.json",
+      "evidence_state": "contract-tested",
+      "producer": "check-p6-bootstrap"
+    },
+    {
+      "name": "d2-api-unit-operator-traces-report",
+      "sha256": "3deb638129b41f877d0d5fc6e6ce2ec715f68afdfaf73b5cde4ed7d13ec22b9f",
+      "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-api-unit-operator-traces-transcript",
+      "sha256": "7e5b4484ddfe2aa9aead4ffe43f50c15e188fee9ac5c3831661bfa6d64540e93",
+      "uri": "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-console-contract-and-query-codec-report",
+      "sha256": "03e20c541ee9f2d5c256b8859e74628c4e101f18df7b615d7eb654e3b6dfaf7b",
+      "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    },
+    {
+      "name": "d2-console-contract-and-query-codec-transcript",
+      "sha256": "82e567f34376fae30c152c1119d3cd272c680ea5fbe5832c980692914719943c",
+      "uri": "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt",
+      "evidence_state": "contract-tested",
+      "producer": "pr-911"
+    }
+  ],
+  "versions": {
+    "fixture": "console-live-stack-d2",
+    "schema": "operator.trace-query.v1",
+    "migration": "000036_evidence_plane"
+  },
+  "checks": [
+    {
+      "name": "d2-api-unit-operator-traces",
+      "expected": true,
+      "applicability": "applicable",
+      "result": "passed",
+      "evidence_state": "contract-tested",
+      "artifact_uris": [
+        "file://infra/assurance/p6/d2-residual-register.json",
+        "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.json",
+        "file://infra/assurance/p6/evidence/d2-api-unit-operator-traces.txt"
+      ]
+    },
+    {
+      "name": "d2-console-contract-and-query-codec",
+      "expected": true,
+      "applicability": "applicable",
+      "result": "passed",
+      "evidence_state": "contract-tested",
+      "artifact_uris": [
+        "file://infra/assurance/p6/d2-residual-register.json",
+        "file://web/engineering/pr3-evidence/d2-performance-notes.md",
+        "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.json",
+        "file://infra/assurance/p6/evidence/d2-console-contract-and-query-codec.txt"
+      ]
+    },
+    {
+      "name": "d2-hosted-authservice-four-role-matrix",
+      "expected": false,
+      "applicability": "inapplicable",
+      "result": "skipped",
+      "evidence_state": "blocked",
+      "reason": "Requires canonical staging AuthService topology; tracked in residual register",
+      "artifact_uris": [
+        "file://infra/assurance/p6/d2-residual-register.json"
+      ]
+    },
+    {
+      "name": "d2-hosted-rollback-transcript",
+      "expected": false,
+      "applicability": "inapplicable",
+      "result": "skipped",
+      "evidence_state": "blocked",
+      "reason": "Requires controlled staging promotion; tracked in residual register",
+      "artifact_uris": [
+        "file://infra/assurance/p6/d2-residual-register.json"
+      ]
+    }
+  ],
+  "rollback": {
+    "prior_digest": "unverified",
+    "current_digest": "unverified",
+    "schema_compatible": true,
+    "command": "feature-flag opt-in metadata-only; disable rich expansion",
+    "verified": false
+  },
+  "owner": "Elshaday Mengesha <elishum8@gmail.com>"
+}

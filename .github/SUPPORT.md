@@ -16,7 +16,7 @@ Do **not** open a public issue. Follow [.github/SECURITY.md](SECURITY.md).
 
 ## Documentation
 
-Start at [docs/README.md](../docs/README.md) for architecture, security, APIs, and runbooks.
+Start at [engineering architecture](../web/engineering/ARCHITECTURE.md) for architecture, security, APIs, and runbooks.
 
 ## Code of conduct
 

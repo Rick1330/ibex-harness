@@ -95,3 +95,7 @@ coverage/
 *.db
 *.sqlite
 *.dump
+
+# Next.js auto-generated agent rule stubs (layout guard allows only root AGENTS/CLAUDE)
+services/console/AGENTS.md
+services/console/CLAUDE.md

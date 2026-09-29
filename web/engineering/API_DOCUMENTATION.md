@@ -8,14 +8,27 @@
 |---|---|---|
 | Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`) | **Implemented** in the documented Phase 1 baseline | Auth service owns authentication and revocation. |
 | Proxy HTTP auth probes, health/readiness/metrics, and chat stub | **Implemented** only where verified by the Phase 1 service tests; the chat stub returns `501` | Do not infer operator product APIs from proxy routes. |
-| API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | Verify permission boundary, secure-cookie configuration, tenant scope, no-store behavior, and staging evidence before production use. |
-| `context`, `overview`, `platform/health`, `events` operator composition | **Specified-not-implemented as a complete operator contract** | Owning API service must publish the OpenAPI/SSE contract and evidence. |
-| Memories, sessions, agents, directives, analytics, incidents, Explore, Trace Inspector, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | D1 context and Overview reads enforce the metadata-read permission and RLS-bound session scope. Verify canonical secure-cookie/origin policy, real AuthService-backed sessions, and staging evidence before production use. |
+| D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
+| Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
+| D2 metadata trace list/detail | **Mounted-but-provisional** | `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` are read-only, tenant-scoped, no-store metadata routes. Full provenance panels, content, score explanations, replay, and actions remain planned and unaccepted. |
+| Memories, sessions, agents, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
 | Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
 
 ### Contract ownership and validation
 
 The owning backend service is authoritative for each REST/gRPC/SSE contract. The console server-only DAL/BFF must authorize the session and organization, call the owner, validate responses at runtime, redact fields, and return minimal DTOs. CI must snapshot OpenAPI, generate the TypeScript client from the snapshot, fail on snapshot/client drift, and validate SSE envelopes including version, event ID, sequence, and `Last-Event-ID` resume semantics. Hand-maintained UI types and fixture routes are not API implementations.
+
+### D2 metadata trace reads (mounted, provisional)
+
+The current D2 slice exposes only metadata from the canonical evidence read model:
+
+| Method | Path | Query / response boundary |
+| --- | --- | --- |
+| `GET` | `/v1/operator/traces` | `limit`, `status`, `started_after`, `started_before`, and signed `cursor`; maximum seven-day range and 100 rows. |
+| `GET` | `/v1/operator/traces/{trace_id}` | Tenant-scoped metadata detail; cross-tenant and missing records use the same not-found boundary. |
+
+Both routes require an AuthService-backed operator session outside development, `OPERATOR_METADATA_READ`, an organization-bound database transaction, and `Cache-Control: no-store`. The response source is `postgres.evidence_runs`; `source_watermark` is currently `not_provided`, retention is `unknown`, and unavailable spans, candidates, score explanation, directives, tools, and content are explicit rather than fabricated. The contract is maintained by `services/api/openapi.snapshot.json`, `services/api/scripts/route_inventory.json`, and the Console runtime schemas. Local route/contract evidence is not hosted deployment or milestone acceptance evidence; see ADR-0082 and issue #905.
 
 ### Operator contract boundary
 
@@ -27,10 +40,10 @@ Every operator request, stream, export, deletion, replay, and asynchronous job d
 
 ---
 
-> **Operator platform contract (specification-only):** The historical Phase 4 dashboard work is gated by Track P. The planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
+> **Operator platform contract:** The historical Phase 4 dashboard work is gated by Track P. The current D2 slice mounts only a versioned metadata trace list/detail read; the planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
 > **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
 >
-> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented**. See [CURRENT_STATE.md](roadmap/CURRENT_STATE.md).
+> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented** unless a mounted implementation record is called out above. See the [roadmap current state](../content/roadmap/current-state.mdx).
 
 ## 🎯 API Design Philosophy
 
@@ -340,6 +353,24 @@ X-Idempotency-Replayed: false  -- true if returning cached result
 ### API Version: v1
 
 All endpoints prefixed with `/v1/`
+
+---
+
+## Operator Shell API (4.D.1 — mounted, staging-provisional)
+
+The first D1 read routes use the authenticated operator access cookie. The API verifies the session, requires `operator:metadata:read`, derives the organization from verified session claims, and reads through the organization-bound PostgreSQL session/RLS policy. Clients must not supply an authoritative `org_id`. Responses are request-time and non-cacheable. Missing or out-of-scope organizations are returned as the same not-found result; database/read-budget failures fail closed as service-degraded responses.
+
+The development environment may verify its process-local signed session. Staging and production must use AuthService validation; local fixture/browser tests are not evidence of that external identity gate.
+
+### GET /v1/operator/context
+
+Returns the minimal server-derived organization and operator context: `schema_version` (`operator.context.v1`), `org_id`, `role` (`owner`, `admin`, `member`, `viewer`, or `null` if no current non-deleted membership row maps to the subject), `org_name`, `org_slug`, `org_status`, and timezone-aware `observed_at`.
+
+### GET /v1/operator/overview
+
+Returns `schema_version` (`operator.overview.v1`), organization identity/status, `observed_at`, `completeness: "complete"`, and `counts`: `active_users` (non-deleted users whose status is `active`), `agents` (non-deleted agents), and `active_agents` (non-deleted agents whose status is `active`). These are all-time organization counts, not filtered by the Console time-range control. The aggregate is bounded by a transaction-local 3-second statement timeout. The response intentionally excludes organization settings, credentials, and user/agent records.
+
+The canonical response models and path inventory are maintained in [`services/api/openapi.snapshot.json`](../../services/api/openapi.snapshot.json) and generated route inventory. Local two-tenant RLS and Console browser evidence is recorded in [`D1_READINESS.md`](console/D1_READINESS.md); hosted AuthService, canonical-origin, four-role/two-tenant, performance, SSE drain, and rollback evidence is still required before 4.D.1 acceptance.
 
 ---
 
@@ -2648,18 +2679,18 @@ Content-Type: application/json
 
 ## gRPC API
 
-Internal gRPC contracts live under [packages/proto/proto/ibex/](../packages/proto/proto/ibex/). Generated stubs are produced locally (`make proto-gen`) and are not committed to git — see [ADR-0004](adr/ADR-0004-protobuf-and-codegen-policy.md).
+Internal gRPC contracts live under [packages/proto/proto/ibex/](../../packages/proto/proto/ibex/). Generated stubs are produced locally (`make proto-gen`) and are not committed to git — see [ADR-0004](../content/docs/adr/0004-protobuf-and-codegen-policy.mdx).
 
 ### Auth Service (`ibex.auth.v1`)
 
-The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g. the LLM proxy). Source of truth: [packages/proto/proto/ibex/auth/v1/auth.proto](../packages/proto/proto/ibex/auth/v1/auth.proto). Contract policy: [ADR-0006](adr/ADR-0006-auth-proto-contract.md).
+The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g. the LLM proxy). Source of truth: [packages/proto/proto/ibex/auth/v1/auth.proto](../../packages/proto/proto/ibex/auth/v1/auth.proto). Contract policy: [ADR-0006](../content/docs/adr/0006-auth-proto-contract.mdx).
 
 - **ValidateToken** — no caller metadata required (proxy hot path)
   - **Request:** `access_token` — full `Authorization: Bearer ...` value
   - **Response (success):** `org_id`, `permissions` (int64 bitmap), optional `agent_id`, `user_id`, `token_id`, `expires_at`
   - **Errors:** `Unauthenticated` for invalid/revoked/expired tokens
 
-**Permission bitmap:** [ADR-0009](adr/ADR-0009-permission-bitmap.md), `packages/permissions`. Admin bits: `TokenCreate` (36), `TokenRevoke` (37). Phase 2 proxy minimum: `ProxyChatCompletion`.
+**Permission bitmap:** [ADR-0009](../content/docs/adr/0009-permission-bitmap.mdx), `packages/permissions`. Admin bits: `TokenCreate` (36), `TokenRevoke` (37). Phase 2 proxy minimum: `ProxyChatCompletion`.
 
 **Management RPCs** (internal; milestone 1.1.4):
 
@@ -2669,9 +2700,9 @@ The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g
 | `RevokeToken` | Bearer + `TokenRevoke` or own token | Cross-org → `NotFound` |
 | `ListTokens` | Bearer + `TokenCreate` | Metadata only; no hash/plaintext |
 
-Additional errors: `InvalidArgument`, `PermissionDenied`, `NotFound` per [ADR-0006](adr/ADR-0006-auth-proto-contract.md).
+Additional errors: `InvalidArgument`, `PermissionDenied`, `NotFound` per [ADR-0006](../content/docs/adr/0006-auth-proto-contract.mdx).
 
-**Permission bitmap:** 64-bit `permissions` field per [ADR-0009](adr/ADR-0009-permission-bitmap.md). Go source of truth: `packages/permissions`. Key admin bits for token management:
+**Permission bitmap:** 64-bit `permissions` field per [ADR-0009](../content/docs/adr/0009-permission-bitmap.mdx). Go source of truth: `packages/permissions`. Key admin bits for token management:
 
 | Bit | Constant | Required for |
 | --- | --- | --- |

@@ -1,4 +1,4 @@
-wrote 60 routes to /home/ubuntu/ibex-harness/.pr2-evidence/route_inventory.json
+wrote 60 routes to /home/ubuntu/ibex-harness/services/api/scripts/route_inventory.json
 GET                  /docs                                                             fastapi.applications.FastAPI.setup.<locals>.swagger_ui_html
 GET                  /docs/oauth2-redirect                                             fastapi.applications.FastAPI.setup.<locals>.swagger_ui_redirect
 GET                  /health                                                           app.probes.health

@@ -47,7 +47,7 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Context Assembly Engine (Python, gRPC)**: budget calculation + memory retrieval + ranking + packing + context formatting with strict latency budgets.
 - **Auth Service (Go)**: token validation, permission bitmap enforcement, JWT issuance/verification flows, revocation propagation.
 - **Workers (Python/Celery)**: memory extraction, embeddings, conflict resolution, fingerprinting, drift detection, notifications, garbage collection.
-- **Dashboard (Next.js/TypeScript)**: sessions, traces, memories, directives, drift alerts, billing/usage views.
+- **Console (Next.js/TypeScript)**: the canonical operator application for sessions, traces, memories, directives, drift alerts, and billing/usage views. `services/dashboard/` is a temporary 4.P.0 compatibility shell, not a second Track D product.
 - **Data layer**: PostgreSQL + pgvector (OLTP), Redis (cache/streams/rate limits), ClickHouse (analytics/billing events), MinIO/S3 (archives).
 
 **Critical path latency requirement:** Proxy overhead must remain minimal; context assembly must be bounded with deadlines and fallbacks.

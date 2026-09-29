@@ -90,3 +90,25 @@ Start the Trace Inspector after the P.2 checklist is closed or residual risk is 
 ## Bottom line
 
 **We can continue, but the correct interpretation of “ready” is: ready to close the final Track P/D1 contracts and build 4.D.1—not ready to build all of Track D or to claim Phase 4 operator readiness.** The highest-value next implementation is the D1 vertical slice with contract-first tests, while keeping D2–D6 sequenced behind their stated evidence dependencies.
+
+## Implementation delta — 2026-09-26
+
+Implementation is on branch `feature/IBEX-904-m4-d1-operator-shell-foundation` from prerequisite baseline `671b219`; this does **not** change Track D roadmap milestone status. The D1 source slice now includes:
+
+- Read-only, versioned API endpoints for operator context and Overview, mounted under `/v1/operator`, protected by the verified operator cookie session plus `OPERATOR_METADATA_READ`, and served through the org-bound database session.
+- A bounded tenant query for organization identity, database-verified role, active-user/agent counts, explicit DTOs, anti-enumerating tenant mismatch handling, and no serialization of subject/session/permission bitmaps.
+- Updated route-policy and OpenAPI inventories, plus strict browser-side schemas and server-only Console transport for context, Overview, platform health and SSE. Upstream cookies are not forwarded wholesale; redirects are rejected; reads are no-store; D1 is opt-in behind live + read-only + API-origin flags.
+- The existing Console shell is retained. Fixture-only surfaces are classified/fail-closed; live mode suppresses mock identity, notifications, organization switching and localStorage-backed onboarding. Unavailable data is labeled rather than backfilled from fixtures.
+- A same-origin SSE proxy and connection-only status indicator; event payloads are not rendered. A Playwright boundary/accessibility harness was added, with production no-fixture smoke coverage wired into CI.
+
+Final local verification on 2026-09-26: API unit suite **742 passed**; API/PostgreSQL integration suite **11 passed**, including a new two-tenant RLS test for tenant-bound D1 counts and cross-tenant denial; Ruff **passed**; OpenAPI snapshot and mounted-route inventory **fresh**; Console lint, TypeScript, Vitest (**17 passed**), and production build **passed**; preview/deferred Playwright suite **3 passed** with desktop and mobile axe WCAG 2.2 AA checks; live D1 Playwright journey **1 passed** with access-cookie-only forwarding, no-fixture checks, health state, SSE reconnect, and axe. The browser work fixed an 8px desktop overflow and restored the mobile sidebar affordance while keeping the desktop design unchanged. The database run used an isolated local PostgreSQL test instance; the live-browser API and AuthService identity were fixtures. These checks do not constitute hosted, canonical operator-origin, real AuthService, four-role/two-tenant browser, or production evidence.
+
+### Still required before D1 can be accepted
+
+1. Close and evidence P0/P1/P6 gates: approved runtime/operator origin and cookie/CSRF topology, action/tenant policy, generated-contract/assurance pipeline, and hosted smoke/rollback proof.
+2. Run real authenticated shell journeys for all four roles and at least two tenants, including cross-tenant denial; verify role semantics against authoritative identity records.
+3. Exercise real health and SSE endpoints through the canonical Console, including reconnect, resume, drain, stale/degraded, and failure cases; attach browser traces/reports and measure initial-read/reconnect budgets.
+4. Prove route-level disable/rollback, production no-fixture behavior, and the approved origin/cookie policy. Keep organization switching explicitly disabled unless its separate gate passes.
+5. Finish URL-state, keyboard/accessibility, responsive, and CI evidence against the actual live D1 flow. The current fixture-mode accessibility check is not a substitute for those journeys.
+
+D1 currently exposes an honest organizational snapshot only. Request/latency/model/activity/cost/agent details remain explicitly unavailable and must wait for their later authoritative contracts; no D2–D6 scope or design redesign is implied. Do not mark 4.D.1 complete or begin D2 based on this source implementation alone.

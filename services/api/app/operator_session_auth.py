@@ -27,6 +27,7 @@ class OperatorSessionAuthorization:
     org_id: UUID
     permissions: int
     session_id: str
+    subject: str = ""
 
 
 def _settings(request: Request) -> Settings:
@@ -68,6 +69,7 @@ def _verified_local_session(raw: str, settings: Settings) -> OperatorSessionAuth
         org_id=claims.org_id,
         permissions=claims.permissions,
         session_id=claims.session_id,
+        subject=claims.sub,
     )
 
 
@@ -82,9 +84,16 @@ async def require_operator_session(request: Request) -> OperatorSessionAuthoriza
     _require_operator_feature(settings)
     raw = _access_cookie(request, settings)
     if settings.environment == "development":
-        return _verified_local_session(raw, settings)
-    claims = await _validate_remote_session(raw, settings)
-    return _authorization_from_validated(claims)
+        authorization = _verified_local_session(raw, settings)
+    else:
+        claims = await _validate_remote_session(raw, settings)
+        authorization = _authorization_from_validated(claims)
+    if not authorization.subject:
+        raise ApiError(code=INVALID_TOKEN, message="missing session subject")
+    request.state.ibex_session_org_id = str(authorization.org_id)
+    request.state.ibex_session_sub = authorization.subject
+    request.state.ibex_session_id = authorization.session_id
+    return authorization
 
 
 async def _validate_remote_session(raw: str, settings: Settings) -> ValidatedSession:
@@ -123,4 +132,5 @@ def _authorization_from_validated(claims: ValidatedSession) -> OperatorSessionAu
         org_id=_parse_session_org_id(claims.org_id),
         permissions=claims.permissions,
         session_id=claims.session_id,
+        subject=claims.subject,
     )

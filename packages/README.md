@@ -2,7 +2,7 @@
 
 Shared libraries and contract artifacts (not deployable as standalone processes). Deployable runtimes live under [`services/`](../services/README.md).
 
-Names below mix **shipped** packages with **planned** libraries from the redesigned roadmap (Phases 2.5–5). Planned rows are orientation only — exact package boundaries may change during implementation. See [Changing this inventory](#changing-this-inventory).
+This inventory reflects the directories present at commit `e4525e3`. Existing packages are current/shipped unless explicitly marked otherwise; the separate planned section contains only packages that do not yet exist. Exact boundaries may change only with evidence and an ADR. See [Changing this inventory](#changing-this-inventory).
 
 Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md). Package boundary rules: [ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx).
 
@@ -51,6 +51,21 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `evidenceoutbox/` | 4.P.2 evidence-scoped transactional outbox + durable evidence writers (runs/spans/metrics/scores/directive/tool/session_events); relay with crash/replay; does **not** absorb model-policy or org-deletion publication |
 
 ---
+
+## Complete current package coverage
+
+Every current package directory has a package-level README with ownership, contract boundary, source entry points, and verification guidance. The following directories were previously omitted from the historical role table and are **implemented shared contracts**, not planned work:
+
+| Package family | Directories |
+| --- | --- |
+| Python support | `apierror_py`, `authclient`, `ibex_async_db` |
+| API/domain contracts | `apierror`, `billing`, `modelpolicy`, `objectstore`, `usagequery` |
+| Privacy and security | `privacyaudit`, `ssrf`, `crypto`, `permissions`, `authcache`, `revocation` |
+| Runtime infrastructure | `config`, `healthcheck`, `logger`, `metrics`, `telemetry`, `shutdown`, `reqid`, `redissub` |
+| Provider/context pipeline | `provider`, `embedder`, `tokenizer`, `contextclient`, `responsepipeline`, `circuitbreaker`, `directive`, `injection` |
+| Data and evidence | `clickhouse`, `chdsn`, `evidenceoutbox`, `idempotency`, `ratelimit`, `session` |
+
+The owning package README, tests, import graph, and consuming service are the authority for detailed behavior. Package presence is not hosted production evidence.
 
 ## Planned (redesigned roadmap)
 

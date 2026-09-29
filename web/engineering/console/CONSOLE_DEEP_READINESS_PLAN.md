@@ -1,13 +1,17 @@
 # IBEX IBEX Console — Deep Readiness and Implementation Plan
 
-**Status:** Research and architecture plan; no implementation changes made by this review.
-**Repository baseline:** `ibex-harness` at `8f8e130`.
+**Status:** Research and architecture plan, amended for the current mounted slices; it is not hosted acceptance evidence.
+**Repository baseline:** `ibex-harness` at `e4525e3` (D1 `fc8735c`, D2 metadata-only trace read `e4525e3`).
 **Design baseline:** `/home/ubuntu/dash-board-mock/dash-board-mock`.
 **Review scope:** repository architecture, mock transplant strategy, API contracts, security, evidence/data readiness, deployment, testing, and Next.js App Router quality.
 
 ## Documentation status taxonomy
 
-This plan is a readiness proposal, not implementation evidence. Use **implemented** only for behavior verified in the baseline; **mounted-but-provisional** for present shell/backend foundations that still require production gates; **specified-not-implemented** for contracts, routes, packages, or workloads described here but not verified; and **deferred** for intentionally later work. The canonical name is `services/console`; `web/` is public docs; `services/dashboard/` is a temporary compatibility shell. Do not infer hostnames, workflows, routes, deployment artifacts, or retirement from this plan.
+This plan is a readiness proposal, not implementation evidence. Use **implemented** only for behavior verified in the current source; **mounted-but-provisional** for present shell/backend foundations that still require production gates; **specified-not-implemented** for contracts, routes, packages, or workloads described here but not verified; and **deferred** for intentionally later work. The canonical name is `services/console`; `web/` is public docs; `services/dashboard/` is a temporary compatibility shell. Do not infer hostnames, workflows, routes, deployment artifacts, or retirement from this plan.
+
+### Current implementation delta
+
+PR #906 mounted the D1 context/overview slice and PR #908 mounted the D2 metadata-only trace list/detail seam. The current D2 boundary is `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` through the server-only Console DAL, with AuthService-backed sessions outside development, organization-bound database access, signed bounded cursors, `no-store`, and explicit unavailable provenance sections. It does **not** provide the full Explore query grammar, nested provenance panels, raw content, score explanation, replay, export, or operator actions. Hosted AuthService, real two-tenant RLS, accessibility/hostile-content, performance, and rollback evidence remain required by the roadmap and issue #905.
 
 ## Executive conclusion
 
@@ -21,7 +25,7 @@ The correct strategy is to create **one canonical operator Next.js application i
 
 > **The mock should be transplanted before it is integrated. The design must be frozen before milestone implementation begins. The API, security, evidence, and operational truth must remain server-owned.**
 
-The immediate goal is not to make every mock route live. The immediate goal is to establish a production-quality console foundation, integrate the shell and 4.D.1 Overview, and create the contract and quality gates that prevent future design and security drift.
+The immediate goal is not to make every mock route live. The next implementation goal is to certify and extend the metadata-first D2 slice without exposing richer provenance until P2/P3/P4/P6 contracts and evidence are complete.
 
 ## What the research verified
 
