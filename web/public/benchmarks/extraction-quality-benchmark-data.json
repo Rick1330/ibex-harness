@@ -3,12 +3,12 @@
   "benchmark": "extraction_quality",
   "runs": [
     {
-      "sha": "e4525e3e8ee89de68ea156ec06b94190582ccf5b",
-      "short_sha": "e4525e3",
-      "timestamp": "2026-09-27T10:41:57.632707+00:00",
+      "sha": "2411f73910e80cd80aefdf22edfab9b8fcde05c5",
+      "short_sha": "2411f73",
+      "timestamp": "2026-10-04T11:15:30.195962+00:00",
       "branch": "main",
-      "run_number": 101,
-      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/36313334009",
+      "run_number": 110,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/37198076801",
       "gold_set": "v1",
       "conversation_count": 125,
       "provider": "openai",
