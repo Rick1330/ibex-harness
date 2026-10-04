@@ -1,5 +1,7 @@
 # packages/
 
+> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`web/engineering/architecture-v2/README.md`](../web/engineering/architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
+
 Shared libraries and contract artifacts (not deployable as standalone processes). Deployable runtimes live under [`services/`](../services/README.md).
 
 This inventory reflects the directories present at commit `e4525e3`. Existing packages are current/shipped unless explicitly marked otherwise; the separate planned section contains only packages that do not yet exist. Exact boundaries may change only with evidence and an ADR. See [Changing this inventory](#changing-this-inventory).
