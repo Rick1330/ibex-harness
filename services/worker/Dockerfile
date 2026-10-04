@@ -39,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 ibex \
     && useradd -u 10001 -g ibex -r -s /sbin/nologin ibex \
