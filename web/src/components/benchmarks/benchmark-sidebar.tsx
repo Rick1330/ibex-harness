@@ -1,7 +1,7 @@
 "use client";
 
-import type { PageTree } from "fumadocs-core/server";
-import { SidebarItem } from "fumadocs-ui/layouts/docs/sidebar";
+import type * as PageTree from "fumadocs-core/page-tree";
+import { SidebarItem } from "fumadocs-ui/components/sidebar/base";
 import { usePathname } from "next/navigation";
 
 import { docsSidebarItemClassName } from "@/components/layout/docs-sidebar";

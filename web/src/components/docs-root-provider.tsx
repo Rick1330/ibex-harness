@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { RootProvider } from "fumadocs-ui/provider";
+import { RootProvider } from "fumadocs-ui/provider/next";
 import type { ReactNode } from "react";
 
 import { STATIC_SEARCH_INDEX_URL } from "@/lib/search-index-url";
@@ -13,8 +13,8 @@ const StaticSearchDialog = dynamic(
 
 const isProd = process.env.NODE_ENV === "production";
 const searchOptions = isProd
-  ? { type: "static" as const, api: STATIC_SEARCH_INDEX_URL }
-  : { type: "fetch" as const, api: "/api/search" };
+  ? { api: STATIC_SEARCH_INDEX_URL }
+  : { api: "/api/search" };
 
 type DocsRootProviderProps = Readonly<{
   children: ReactNode;

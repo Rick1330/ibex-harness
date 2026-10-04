@@ -1,12 +1,13 @@
 "use client";
 
-import type { PageTree } from "fumadocs-core/server";
+import type * as PageTree from "fumadocs-core/page-tree";
 import {
   SidebarFolder,
   SidebarFolderContent,
   SidebarFolderTrigger,
   SidebarItem,
-} from "fumadocs-ui/layouts/docs/sidebar";
+  useFolderDepth,
+} from "fumadocs-ui/components/sidebar/base";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
@@ -74,14 +75,13 @@ export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
 
 export function DocsSidebarFolder({
   item,
-  level,
   children,
 }: Readonly<{
   item: PageTree.Folder;
-  level: number;
   children: ReactNode;
 }>) {
   const pathname = usePathname();
+  const level = useFolderDepth() ?? 1;
   const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
   const sectionSlug = resolveFolderSectionSlug(item, baseUrl);
   const defaultOpen = resolveFolderDefaultOpen(item, level, pathname);

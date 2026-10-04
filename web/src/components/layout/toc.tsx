@@ -1,17 +1,10 @@
 "use client";
 
 import * as Primitive from "fumadocs-core/toc";
-import type { TOCItemType } from "fumadocs-core/server";
-import {
-  Toc,
-  TocItemsEmpty,
-} from "fumadocs-ui/components/layout/toc";
-import {
-  ScrollArea,
-  ScrollViewport,
-} from "fumadocs-ui/components/ui/scroll-area";
+import type { TOCItemType } from "fumadocs-core/toc";
+import { TOCEmpty } from "fumadocs-ui/components/toc/default";
 import { ListTree } from "lucide-react";
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 
 import { TocHeadingList } from "@/components/layout/toc-heading-list";
 import { filterTocHeadings } from "@/components/layout/toc-headings";
@@ -19,10 +12,18 @@ import {
   TocReadingProgress,
   useReadingProgress,
 } from "@/components/layout/toc-reading-progress";
+import { cn } from "@/lib/cn";
 
 type OnThisPageProps = Readonly<{
   items: TOCItemType[];
 }>;
+
+function Toc({
+  className,
+  children,
+}: Readonly<{ className?: string; children: ReactNode }>) {
+  return <div className={cn("flex min-h-0 flex-col", className)}>{children}</div>;
+}
 
 function TocProgressRail({ count }: Readonly<{ count: number }>) {
   const progress = useReadingProgress();
@@ -54,22 +55,22 @@ export function OnThisPage({ items }: OnThisPageProps) {
         On this page
       </p>
       {headings.length === 0 ? (
-        <TocItemsEmpty />
+        <TOCEmpty />
       ) : (
-        <ScrollArea className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col">
           <Primitive.ScrollProvider containerRef={viewRef}>
-            <ScrollViewport
+            <div
               ref={viewRef}
-              className="relative max-h-[calc(100dvh-16rem)] text-sm"
+              className="relative max-h-[calc(100dvh-16rem)] overflow-y-auto text-sm"
             >
               <div ref={containerRef} className="relative ps-2">
                 <TocProgressRail count={headings.length} />
                 <TocHeadingList items={items} />
               </div>
-            </ScrollViewport>
+            </div>
           </Primitive.ScrollProvider>
           <TocReadingProgress className="mt-4" />
-        </ScrollArea>
+        </div>
       )}
     </Toc>
   );
