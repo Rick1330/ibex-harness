@@ -63,13 +63,27 @@ export const blog = defineDocs({
   },
 });
 
+// Raw status aliases match web/src/lib/roadmap-types.ts STATUS_BY_RAW;
+// normalizeStatus() maps them to completed | in-progress | planned at read time.
 const roadmapDocSchema = frontmatterSchema.extend({
   summary: z.string().optional(),
-  status: z.enum(["completed", "in-progress", "planned"]).optional(),
+  status: z
+    .enum([
+      "completed",
+      "complete",
+      "shipped",
+      "superseded",
+      "in-progress",
+      "in_progress",
+      "partial",
+      "planned",
+    ])
+    .optional(),
   milestoneId: z.string().optional(),
   goal: z.string().optional(),
   estimatedEffort: z.string().optional(),
-  phase: z.string().optional(),
+  // Some legacy milestones used YAML numbers (phase: 2).
+  phase: z.coerce.string().optional(),
   completedDate: z.string().optional(),
   fullTitle: z.string().optional(),
   sidebarTitle: z.string().optional(),
