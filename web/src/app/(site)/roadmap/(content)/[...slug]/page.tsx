@@ -62,7 +62,7 @@ export default async function RoadmapDetailPage(props: PageProps) {
         owner: GITHUB_OWNER,
         repo: GITHUB_REPO,
         sha: GITHUB_BRANCH,
-        path: getRoadmapContentFilePath(page.file.path),
+        path: getRoadmapContentFilePath(page.data.info.path),
         className:
           "inline-flex h-9 items-center gap-1.5 rounded-[4px] border border-border px-3 text-sm text-text-secondary hover:bg-panel-raised hover:text-text-primary",
       }}

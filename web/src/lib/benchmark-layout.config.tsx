@@ -7,7 +7,7 @@ import { DocsSidebarFolder } from "@/components/layout/docs-sidebar";
 
 export function benchmarkBaseOptions(): BaseLayoutProps {
   return {
-    disableThemeSwitch: true,
+    themeSwitch: { enabled: false },
     nav: {
       enabled: false,
     },
@@ -19,7 +19,6 @@ export function benchmarkLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
     sidebar: {
       defaultOpenLevel: 0,
       collapsible: true,
-      hideSearch: true,
       banner: <BenchmarkSidebarBanner />,
       components: {
         Item: BenchmarkSidebarItem,

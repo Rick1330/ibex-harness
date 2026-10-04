@@ -1,7 +1,7 @@
 "use client";
 
 import * as Primitive from "fumadocs-core/toc";
-import type { TOCItemType } from "fumadocs-core/server";
+import type { TOCItemType } from "fumadocs-core/toc";
 
 import { filterTocHeadings } from "@/components/layout/toc-headings";
 import { cn } from "@/lib/cn";

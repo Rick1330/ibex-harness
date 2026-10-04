@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 type KbdProps = Readonly<{
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
 }>;
 

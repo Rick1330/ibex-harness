@@ -1,6 +1,5 @@
 import {
   defineConfig,
-  defineCollections,
   defineDocs,
   frontmatterSchema,
 } from "fumadocs-mdx/config";
@@ -49,18 +48,19 @@ export const docs = defineDocs({
   },
 });
 
-export const blog = defineCollections({
-  type: "doc",
+export const blog = defineDocs({
   dir: "content/blog",
-  schema: frontmatterSchema.extend({
-    date: z.string(),
-    author: z.string().optional(),
-    authorUrl: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    excerpt: z.string().optional(),
-    readingTime: z.string().optional(),
-    featured: z.boolean().optional(),
-  }),
+  docs: {
+    schema: frontmatterSchema.extend({
+      date: z.string(),
+      author: z.string().optional(),
+      authorUrl: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      excerpt: z.string().optional(),
+      readingTime: z.string().optional(),
+      featured: z.boolean().optional(),
+    }),
+  },
 });
 
 const roadmapDocSchema = frontmatterSchema.extend({

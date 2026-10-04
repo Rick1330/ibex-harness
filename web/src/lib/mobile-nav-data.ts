@@ -1,4 +1,4 @@
-import type { PageTree } from "fumadocs-core/server";
+import type * as PageTree from "fumadocs-core/page-tree";
 
 import { BENCHMARK_NAV_PAGES, benchmarkPageTree } from "@/lib/benchmark-page-tree";
 import { pageTreeLabel } from "@/lib/page-tree-label";

@@ -17,7 +17,7 @@ function SidebarSectionLabel() {
 
 export function baseOptions(): BaseLayoutProps {
   return {
-    disableThemeSwitch: true,
+    themeSwitch: { enabled: false },
     nav: {
       enabled: false,
       title: <Wordmark />,
@@ -30,7 +30,6 @@ export function docsLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
     sidebar: {
       defaultOpenLevel: 0,
       collapsible: true,
-      hideSearch: true,
       banner: (
         <div className="sidebar-banner flex flex-col gap-4 border-b border-border px-1 pb-5">
           <SidebarSectionLabel />

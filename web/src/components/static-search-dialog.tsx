@@ -2,6 +2,13 @@
 
 import {
   SearchDialog,
+  SearchDialogClose,
+  SearchDialogContent,
+  SearchDialogHeader,
+  SearchDialogIcon,
+  SearchDialogInput,
+  SearchDialogList,
+  SearchDialogOverlay,
   type SharedProps,
 } from "fumadocs-ui/components/dialog/search";
 
@@ -16,7 +23,7 @@ type StaticSearchDialogProps = SharedProps & {
   delayMs?: number;
 };
 
-/** Static-export search dialog; bypasses fumadocs 14 simple static client bug. */
+/** Static-export search dialog; bypasses fumadocs static client bugs with a local Orama index. */
 export default function StaticSearchDialog({
   api = STATIC_SEARCH_INDEX_URL,
   delayMs,
@@ -30,8 +37,17 @@ export default function StaticSearchDialog({
       search={search}
       onSearchChange={setSearch}
       isLoading={query.isLoading}
-      results={query.data}
       {...props}
-    />
+    >
+      <SearchDialogOverlay />
+      <SearchDialogContent>
+        <SearchDialogHeader>
+          <SearchDialogIcon />
+          <SearchDialogInput />
+          <SearchDialogClose />
+        </SearchDialogHeader>
+        <SearchDialogList items={query.data !== "empty" ? query.data : null} />
+      </SearchDialogContent>
+    </SearchDialog>
   );
 }
