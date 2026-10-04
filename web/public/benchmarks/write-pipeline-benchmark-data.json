@@ -3,6 +3,38 @@
   "benchmark": "write_pipeline",
   "runs": [
     {
+      "sha": "4a9c868fb5b2f0b14c0ca3eb70ca5ec1149dd650",
+      "short_sha": "4a9c868",
+      "timestamp": "2026-10-04T11:45:25.109139+00:00",
+      "branch": "main",
+      "run_number": 313,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/37199712030",
+      "iterations": 40,
+      "metrics": {
+        "latency_ms_p50": 18.899766500013016,
+        "latency_ms_p95": 38.89937954999273,
+        "latency_ms_p99": 131.83555694000114
+      },
+      "status": "pass",
+      "gate_summary": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "p95 SLA (ms)",
+            "value": 38.89937954999273,
+            "limit": 200.0,
+            "ok": true
+          },
+          {
+            "name": "latency_ms_p95 regression (%)",
+            "value": -80.45257309045593,
+            "limit": 20.0,
+            "ok": true
+          }
+        ]
+      }
+    },
+    {
       "sha": "0f087d297dd9a6c1ccfd06ea138e022bb511b69a",
       "short_sha": "0f087d2",
       "timestamp": "2026-09-26T11:26:24.840934+00:00",
