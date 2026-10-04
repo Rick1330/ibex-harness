@@ -1,11 +1,14 @@
 import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:https"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const consoleDir = dirname(dirname(fileURLToPath(import.meta.url)))
+const require = createRequire(import.meta.url)
+const nextBin = require.resolve("next/dist/bin/next")
 const tempDir = mkdtempSync(join(tmpdir(), "ibex-console-live-"))
 const keyPath = join(tempDir, "server.key")
 const certPath = join(tempDir, "server.crt")
@@ -253,7 +256,7 @@ api.listen(apiPort, "127.0.0.1")
 consoleProcess = spawn(
   process.execPath,
   [
-    join(consoleDir, "node_modules/next/dist/bin/next"),
+    nextBin,
     "dev", "--hostname", "127.0.0.1", "--port", String(consolePort),
     "--experimental-https", "--experimental-https-key", keyPath,
     "--experimental-https-cert", certPath,
