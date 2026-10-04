@@ -1,5 +1,7 @@
 # IBEX Harness — Database Schema
 
+> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`web/engineering/architecture-v2/README.md`](architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
+
 PostgreSQL (OLTP + pgvector), Redis key patterns, and ClickHouse analytics schema. For system architecture and service flows, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 **Roadmap note:** Phases **0–2.5** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`, temporal validity, multi-label readiness, relationship graph) is applied. Phase **3** memory schema v2 with **HNSW** (expand migration `000017`), write-path uniqueness (`000018`), conflict escalations (`000019`), and **write-path `memory_labels` population** (3.C.4 / ADR-0048) are shipped. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`web/content/roadmap/`](../content/roadmap/).

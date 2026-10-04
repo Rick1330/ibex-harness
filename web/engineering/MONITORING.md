@@ -1,5 +1,7 @@
 # IBEX Harness — Monitoring & Observability
 
+> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`web/engineering/architecture-v2/README.md`](architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
+
 ## 1) Purpose
 
 IBEX Harness is a distributed system with:

@@ -1,39 +1,34 @@
 ---
 title: "Current State"
-description: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with a redesigned readiness and dashboard roadmap."
-summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with a redesigned readiness and dashboard roadmap."
+description: "Architecture v2 documentation baseline established; implementation status is being reclassified by evidence and gated before new redesign work."
+summary: "Architecture v2 documentation baseline established; implementation status is being reclassified by evidence and gated before new redesign work."
 ---
+> **Architecture v2 documentation baseline:** Before new implementation, read [`web/engineering/architecture-v2/README.md`](../../engineering/architecture-v2/README.md). Phase-level completion statements remain subject to the new status ledger; local implementation presence is not production acceptance.
 
-# Current State
-
-<Callout type="success" title="Phase 3.5 shipped">
-  Phases 0–3.5 are complete. **Phase 3.5 — Extraction & Context Assembly** exit audit signed off
-  ([phase35-exit-audit](/roadmap/phase-3-5-extraction-assembly/phase35-exit-audit)):
-  Celery extraction, context assembly on the proxy hot path, real MCP memory tools,
-  learning-loop e2e, and ISO-MCP isolation.
+<Callout type="warning" title="Phase claims under evidence review">
+  Earlier phase pages describe intended or locally verified behavior. Architecture v2 now requires each claim to be reclassified as shipped-accepted, shipped-local, provisional, specified, target, deferred, or unknown with linked evidence.
 </Callout>
 
-<Callout type="info" title="Phase 4 in progress">
-  **Current focus:** [Phase 4 — Operator Platform & Multi-Provider](/roadmap/phase-4-multi-provider) —
-  Track P operator readiness and evidence contracts, followed by the redesigned Track D capability slices.
+<Callout type="info" title="Architecture v2 G0 in progress">
+  **Current focus:** documentation and contract freeze: status ledger, authority matrix, contract registry, trust labels, failure matrix, and ADR decisions before new implementation boundaries.
 </Callout>
 
 ## Snapshot
 
-<StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
-<StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
-<StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
-<StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
-<StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete  
-<StatusBadge status="stable" /> **Phase 3 — Core Memory Substrate:** complete  
-<StatusBadge status="stable" /> **Phase 3.5 — Extraction & Context Assembly:** complete  
+<StatusBadge status="stable" /> **Phase 0 — Foundation:** complete
+<StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete
+<StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete
+<StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete
+<StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete
+<StatusBadge status="stable" /> **Phase 3 — Core Memory Substrate:** complete
+<StatusBadge status="beta" /> **Phase 3.5 — Extraction & Context Assembly:** under evidence review; provisional until the Architecture v2 ledger and linked exit evidence are reconciled
 <StatusBadge status="beta" /> **Phase 4 — Operator Platform & Multi-Provider:** roadmap redesigned; Track P is the current prerequisite
-<StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
+<StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-09-27
+**Last updated:** 2026-10-03
 **Branch:** `main` at `e4525e3` (current public implementation baseline)
-**Current focus:** [Phase 4](/roadmap/phase-4-multi-provider)  
+**Current focus:** Documentation/contract freeze (Architecture v2 G0) before new implementation
 **Completed (recent):** 3.5.F.3 Phase 3.5 exit audit; 3.5.F.2 ISO-MCP matrix; 3.5.F.1 learning-loop e2e; 4.C.5 streaming hardening baseline; 4.D.1 metadata overview (`fc8735c`); 4.D.2 metadata trace read slice (`e4525e3`)
 
 <QuickLinks
@@ -95,8 +90,8 @@ summary: "Phases 0–3.5 complete. Phase 4 operator platform is in progress with
 
 ## Next
 
-1. Certify the mounted **Track P** readiness gates — [Operator Readiness, Evidence & Control Plane](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane).
-2. Extend the redesigned [Track D capability slices](/roadmap/phase-4-multi-provider/tracks#track-d--operator-capability-slices) only when contract, tenant, privacy, browser, performance, and rollback evidence is complete.
-3. Close Phase 3.5 P2 suite-publication debt in follow-up benchmark PRs.
+1. Accept the Architecture v2 **G0 documentation and contract freeze**: status ledger, authority matrix, contract registry, trust labels, and failure matrix.
+2. Resolve P0 gaps before new service boundaries, provider adapters, write-capable tools, budget changes, or model integration.
+3. Reclassify phase claims using source, test, benchmark, deployment-profile, and recovery evidence; then sequence G1–G11.
 
 See [Phase 3.5](/roadmap/phase-3-5-extraction-assembly) and [Phase 4](/roadmap/phase-4-multi-provider).

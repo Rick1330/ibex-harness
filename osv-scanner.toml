@@ -20,3 +20,13 @@ ecosystem = "npm"
 vulnerability.ignore = true
 effectiveUntil = 2026-12-01
 reason = "No patched image-size npm release (<=2.0.2). Transitive fumadocs-core@14; pnpm patch applies ICNS/JXL loop guards (patches/image-size@1.2.1.patch); docs build does not feed untrusted buffers (Dependabot #24/#25). Revisit when upstream publishes or fumadocs drops the dep."
+
+# braces stack-exhaustion advisory (GHSA-vfj7-8cjw-p6xm): npm has no patched
+# release (OSV reports fixed version "--"). It is reachable only through
+# console development tooling (eslint-config-next and shadcn), not production
+# dependencies. Advisory-scoped ignore keeps other braces findings visible.
+# Revisit when the upstream dependency chain publishes a fix.
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release; reachable only through console devDependencies eslint-config-next/shadcn; excluded from production audit."
