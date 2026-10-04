@@ -42,7 +42,7 @@ It is not primarily for a hobbyist who only wants to call one model, a team seek
 
 ## The correct product shape
 
-IBEX should be organized around four planes.
+IBEX should be organized around four product roll-ups, while implementation follows the canonical six-plane topology in [`web/engineering/architecture-v2/01-target-topology.md`](../../architecture-v2/01-target-topology.md). The roll-up is: **Enforcement** maps to the canonical Enforcement plane and request-time Provider plane; **Context** maps to Context and memory; **Evidence** maps to Evidence and control; and **Operations** maps to Operator/MCP surfaces and Async intelligence. Provider and Async intelligence remain distinct authorities in the canonical topology even when presented as product roll-ups here.
 
 ### 1. Enforcement plane
 
@@ -318,9 +318,9 @@ The proxy must enforce the reservation. It should cap output, tool calls, retrie
 ```json
 {
   "budget_enforcement_mode": "enforced",
-  "reservation_id": "...",
+  "reservation_id": "...",
   "estimated_cost_usd": 0.012,
-  "policy_version": "...",
+  "policy_version": "...",
   "remaining_budget_usd": 12.44
 }
 ```

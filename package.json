@@ -15,7 +15,10 @@
     "docs:start": "pnpm web:start"
   },
   "devDependencies": {
-    "turbo": "^2.10.9"
+    "dompurify": "3.4.16",
+    "sharp": "0.35.5",
+    "turbo": "^2.10.9",
+    "undici": "8.11.2"
   },
   "pnpm": {
     "overrides": {
@@ -26,10 +29,8 @@
       "postcss": ">=8.5.23",
       "sharp": ">=0.35.0",
       "undici": ">=7.29.0 <8",
-      "browserslist": "4.28.7"
-    },
-    "patchedDependencies": {
-      "image-size@1.2.1": "patches/image-size@1.2.1.patch"
+      "browserslist": "4.28.7",
+      "image-size": "2.0.3"
     }
   }
 }

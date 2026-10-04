@@ -164,7 +164,7 @@ Maintain four separate identities:
 3. Immutable artifact SHA-256/signature.
 4. Feature/preprocessing schema hash.
 
-Postgres should own model registry, approval, rollout, and last-known-good state. Object storage should hold immutable model artifacts and evidence. Redis may cache pure, tenant-namespaced features or results, but stale cache output must never grant access.
+Postgres should own model registry, approval, rollout, and last-known-good state. Object storage should hold immutable model artifacts and evidence. Redis may cache only pure, tenant-namespaced features or results whose keys include tenant, policy epoch, model revision/digest, tokenizer, schema, skill versions, and every applicable agent, purpose, feature-snapshot, input, and visibility dimension that can affect the value. Values proven independent of tenant, policy, identity, and visibility—such as immutable model metadata addressed by digest—may be shared; all other values are scope-bound. Stale or cross-scope cache output must never grant access or widen visibility.
 
 ## CPU deployment
 
@@ -200,7 +200,7 @@ A fallback state machine should be explicit:
 - Optional model timeout → last-known-good verified model, deterministic rule, or abstain/review.
 - Memory/context dependency failure → safe directive-only or verified hot-cache context.
 - Low confidence or missing feature → abstain/review.
-- Cache or registry inconsistency → bypass cache, resolve authoritatively, then fail safe if unresolved.
+- Authoritative model-registry lookup unresolved: for provider routing or model selection, return no-route and do not select a deployment; for memory ranking or context enrichment, omit the advisory result and continue only with deterministic authorized ranking or directive-only context; for PII/safety classification, quarantine or conservatively redact; for extraction/learning writes, defer or dead-letter without writing a candidate; for policy-adjacent review, return deny or human review. Never use a stale registry/cache result to authorize, widen visibility, reserve budget, delete data, or execute a tool.
 
 ## References
 

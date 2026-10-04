@@ -34,7 +34,7 @@ Every claim in canonical docs must use one of these classes. A directory, route,
 5. Public roadmap and current-state pages.
 6. Historical reports and exploratory research.
 
-If documents disagree, implementation must stop at the boundary, the conflict must be recorded in `09-gap-register.md`, and an ADR or contract update must resolve it.
+If documents disagree, implementation must stop at the boundary, the conflict must be recorded in [`18-gap-register.md`](18-gap-register.md), and an ADR or contract update must resolve it.
 
 ## Reading order
 
