@@ -1,4 +1,4 @@
-import type { TOCItemType } from "fumadocs-core/server";
+import type { TOCItemType } from "fumadocs-core/toc";
 import type { ReactNode } from "react";
 
 import { BlogToc } from "@/components/blog/blog-toc";

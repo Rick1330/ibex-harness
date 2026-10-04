@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Kbd } from "@/components/mdx/kbd";
 import { cn } from "@/lib/cn";
-import { useSearchContext } from "fumadocs-ui/provider";
+import { useSearchContext } from "fumadocs-ui/contexts/search";
 
 type NavSearchProps = Readonly<{
   className?: string;

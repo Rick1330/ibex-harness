@@ -53,7 +53,7 @@ export default async function Page(props: PageProps) {
         owner: GITHUB_OWNER,
         repo: GITHUB_REPO,
         sha: GITHUB_BRANCH,
-        path: getContentFilePath(page.file.path),
+        path: getContentFilePath(page.data.info.path),
         className:
           "inline-flex h-9 items-center gap-1.5 rounded-[4px] border border-border px-3 text-sm text-text-secondary hover:bg-panel-raised hover:text-text-primary",
       }}
@@ -67,7 +67,7 @@ export default async function Page(props: PageProps) {
       />
       <DocsBody className="docs-prose max-w-none">
         <MdxContent components={getMDXComponents()} />
-        <FeedbackWidget pageId={page.file.path} />
+        <FeedbackWidget pageId={page.data.info.path} />
       </DocsBody>
     </DocsPage>
   );
