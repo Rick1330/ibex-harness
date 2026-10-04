@@ -12,6 +12,25 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.9](https://github.com/Rick1330/ibex-harness/compare/v0.1.8...v0.1.9) (2026-10-04)
+
+
+### Features
+
+* **4.D.2:** certify Explore provenance and metadata Trace Inspector contract ([#911](https://github.com/Rick1330/ibex-harness/issues/911)) ([2411f73](https://github.com/Rick1330/ibex-harness/commit/2411f73910e80cd80aefdf22edfab9b8fcde05c5))
+* **api:** mount operator metadata read authorization ([#893](https://github.com/Rick1330/ibex-harness/issues/893)) ([a041ed3](https://github.com/Rick1330/ibex-harness/commit/a041ed302bfc7966d94b6ce175fec655ced5263c))
+* **auth:** complete 4.P.1 operator session lifecycle and mounted authorization assurance ([#900](https://github.com/Rick1330/ibex-harness/issues/900)) ([0f087d2](https://github.com/Rick1330/ibex-harness/commit/0f087d297dd9a6c1ccfd06ea138e022bb511b69a))
+* **console:** add metadata-only D2 trace inspector ([#908](https://github.com/Rick1330/ibex-harness/issues/908)) ([e4525e3](https://github.com/Rick1330/ibex-harness/commit/e4525e3e8ee89de68ea156ec06b94190582ccf5b))
+* **console:** connect authenticated tenant-scoped D1 overview (4.D.1) ([#906](https://github.com/Rick1330/ibex-harness/issues/906)) ([fc8735c](https://github.com/Rick1330/ibex-harness/commit/fc8735c3494a391dc5ddf9046cdede12bd38c9c0))
+* **console:** enforce fail-closed preview boundary ([#892](https://github.com/Rick1330/ibex-harness/issues/892)) ([dbc82db](https://github.com/Rick1330/ibex-harness/commit/dbc82db9c45604c07f187967b9a083df592bd6d7))
+* **operator-web:** transplant dashboard mock into Track D foundation ([#887](https://github.com/Rick1330/ibex-harness/issues/887)) ([4136bda](https://github.com/Rick1330/ibex-harness/commit/4136bda71c0f10b8faead4420ad02d680cbef348))
+
+
+### Bug Fixes
+
+* **pre-track-d:** close runtime assurance and e2e readiness gaps ([#903](https://github.com/Rick1330/ibex-harness/issues/903)) ([671b219](https://github.com/Rick1330/ibex-harness/commit/671b219fda2c32014e6849c87d7dafaff0ce1ab7))
+* **proxy:** enforce fail-closed pre-track-d readiness controls ([#897](https://github.com/Rick1330/ibex-harness/issues/897)) ([df657fd](https://github.com/Rick1330/ibex-harness/commit/df657fd2436b6d7646b9c491b429a23634d22750))
+
 ## [0.1.8](https://github.com/Rick1330/ibex-harness/compare/v0.1.7...v0.1.8) (2026-09-20)
 
 
