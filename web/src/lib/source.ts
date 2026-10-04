@@ -1,4 +1,4 @@
-import { blog, docs, roadmap } from "../../.source";
+import { blog, docs, roadmap } from "collections/server";
 import { loader } from "fumadocs-core/source";
 
 import {
