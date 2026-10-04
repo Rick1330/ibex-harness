@@ -1,6 +1,6 @@
 "use client";
 
-import type { TOCItemType } from "fumadocs-core/server";
+import type { TOCItemType } from "fumadocs-core/toc";
 import { ListTree } from "lucide-react";
 
 import { TocHeadingList } from "@/components/layout/toc-heading-list";

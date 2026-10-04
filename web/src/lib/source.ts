@@ -1,5 +1,4 @@
-import { blog, docs, roadmap } from "../../.source";
-import { createMDXSource } from "fumadocs-mdx";
+import { blog, docs, roadmap } from "collections/server";
 import { loader } from "fumadocs-core/source";
 
 import {
@@ -15,7 +14,7 @@ export const source = loader({
 
 export const blogSource = loader({
   baseUrl: "/blog",
-  source: createMDXSource(blog),
+  source: blog.toFumadocsSource(),
 });
 
 export const roadmapSource = loader({

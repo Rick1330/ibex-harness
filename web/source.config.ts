@@ -1,6 +1,5 @@
 import {
   defineConfig,
-  defineCollections,
   defineDocs,
   frontmatterSchema,
 } from "fumadocs-mdx/config";
@@ -49,27 +48,42 @@ export const docs = defineDocs({
   },
 });
 
-export const blog = defineCollections({
-  type: "doc",
+export const blog = defineDocs({
   dir: "content/blog",
-  schema: frontmatterSchema.extend({
-    date: z.string(),
-    author: z.string().optional(),
-    authorUrl: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    excerpt: z.string().optional(),
-    readingTime: z.string().optional(),
-    featured: z.boolean().optional(),
-  }),
+  docs: {
+    schema: frontmatterSchema.extend({
+      date: z.string(),
+      author: z.string().optional(),
+      authorUrl: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+      excerpt: z.string().optional(),
+      readingTime: z.string().optional(),
+      featured: z.boolean().optional(),
+    }),
+  },
 });
 
+// Raw status aliases match web/src/lib/roadmap-types.ts STATUS_BY_RAW;
+// normalizeStatus() maps them to completed | in-progress | planned at read time.
 const roadmapDocSchema = frontmatterSchema.extend({
   summary: z.string().optional(),
-  status: z.enum(["completed", "in-progress", "planned"]).optional(),
+  status: z
+    .enum([
+      "completed",
+      "complete",
+      "shipped",
+      "superseded",
+      "in-progress",
+      "in_progress",
+      "partial",
+      "planned",
+    ])
+    .optional(),
   milestoneId: z.string().optional(),
   goal: z.string().optional(),
   estimatedEffort: z.string().optional(),
-  phase: z.string().optional(),
+  // Some legacy milestones used YAML numbers (phase: 2).
+  phase: z.coerce.string().optional(),
   completedDate: z.string().optional(),
   fullTitle: z.string().optional(),
   sidebarTitle: z.string().optional(),

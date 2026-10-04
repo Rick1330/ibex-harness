@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, type ReactNode } from "react";
-import { useTreeContext } from "fumadocs-ui/provider";
+import { useTreeContext } from "fumadocs-ui/contexts/tree";
 
 import { getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
 import {

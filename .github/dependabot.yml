@@ -65,10 +65,15 @@ updates:
   labels:
   - dependencies
   - area/web
-  ignore:
-  # No patched release yet (advisory last-affected <=2.0.2; npm latest still 2.0.2).
-  # Accepted via .trivyignore + osv-scanner.toml; Dependabot alerts 24/25.
-  # Remove this ignore when image-size publishes >2.0.2.
-  - dependency-name: image-size
-    versions:
-    - "<=2.0.2"
+  groups:
+    react:
+      patterns:
+      - react
+      - react-dom
+      - "@types/react"
+      - "@types/react-dom"
+    fumadocs:
+      patterns:
+      - fumadocs-ui
+      - fumadocs-core
+      - fumadocs-mdx

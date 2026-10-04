@@ -25,7 +25,7 @@ function RoadmapSidebarBanner() {
 
 export function roadmapBaseOptions(): BaseLayoutProps {
   return {
-    disableThemeSwitch: true,
+    themeSwitch: { enabled: false },
     nav: {
       enabled: false,
     },
@@ -37,7 +37,6 @@ export function roadmapLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
     sidebar: {
       defaultOpenLevel: 1,
       collapsible: true,
-      hideSearch: true,
       banner: <RoadmapSidebarBanner />,
       components: {
         Item: DocsSidebarItem,
