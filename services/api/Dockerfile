@@ -10,7 +10,7 @@
 
 FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a64d8cfbe55ab34af5e AS uv
 
-FROM python@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS deps
+FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -35,11 +35,13 @@ RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
     && uv pip install --no-cache --force-reinstall --no-index --find-links /wheels \
     "authclient==0.1.5" "ibex-async-db==0.1.0" "apierror-py==0.1.2"
 
-FROM python@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
+FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/services/api/.venv/bin:$PATH"
+
+RUN python -m pip uninstall --yes setuptools wheel || true
 
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
