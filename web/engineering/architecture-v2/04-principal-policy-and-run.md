@@ -1,6 +1,6 @@
 # Principal, Policy, and Run Contracts
 
-**Status:** `specified`; implementation contract must be accepted before boundary expansion.
+**Status:** `specified`; implementation contract must be accepted before boundary expansion. The G0 packet is proposed in ADR-0084 and tracked by issue #933; this file does not claim G0 exit.
 
 ## PrincipalContext
 
@@ -13,6 +13,8 @@ Every request, internal RPC, worker job, MCP call, and evidence event carries a 
 - Idempotency key and operation ID for mutations.
 
 Caller-provided scope is a selector. AuthService and the enforcement plane derive authority from verified claims and policy; they do not trust arbitrary headers.
+
+When a validated bearer token contains an `agent_id`, the selected agent must equal that token-bound identifier. A mismatch is an existence-safe authorization denial before target-agent lookup or downstream work. Organization-scoped tokens without an `agent_id` remain subject to the existing organization ownership and active-status checks. Any future cross-agent grant must be explicit, separately authenticated, resource-scoped, expiring, and auditable; it is not implied by organization membership. ADR-0084 records this proposed G0/G1 decision.
 
 ## PolicySnapshot
 

@@ -46,12 +46,13 @@ func TestAuthzUnaryInterceptor_validBearer(t *testing.T) {
 
 	tokenID := "tok-1"
 	userID := "user-1"
+	agentID := "agent-1"
 	ic := AuthzUnaryInterceptor(&stubTokenValidator{fn: func(_ context.Context, bearer string) (*authv1.ValidateTokenResponse, error) {
 		if bearer != "secret" {
 			t.Fatalf("bearer: %q", bearer)
 		}
 		return &authv1.ValidateTokenResponse{
-			OrgId: "org-1", Permissions: 7, TokenId: &tokenID, UserId: &userID,
+			OrgId: "org-1", Permissions: 7, TokenId: &tokenID, UserId: &userID, AgentId: &agentID,
 		}, nil
 	}})
 
@@ -79,6 +80,9 @@ func TestAuthzUnaryInterceptor_validBearer(t *testing.T) {
 	}
 	if gotCaller.UserID != userID {
 		t.Fatalf("user: %s", gotCaller.UserID)
+	}
+	if gotCaller.AgentID != agentID {
+		t.Fatalf("agent: %s", gotCaller.AgentID)
 	}
 }
 

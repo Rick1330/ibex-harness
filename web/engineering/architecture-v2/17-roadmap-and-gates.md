@@ -20,3 +20,5 @@
 ## Prohibited before G0
 
 No new service/package boundary, database lifecycle, provider adapter, write-capable tool, budget-enforcement change, or model integration may be treated as implementation-ready before the documentation and contract freeze is accepted.
+
+The first review packet is tracked by issue #933 and ADR-0084. It proposes the token-bound agent rule, protected-profile verifier readiness, and initial tenant-bound idempotency semantics. This reference records the packet location only; it is not a G0 exit or an authorization to bypass the remaining gates.

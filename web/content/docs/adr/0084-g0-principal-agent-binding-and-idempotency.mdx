@@ -1,0 +1,94 @@
+---
+title: "G0 principal, agent binding, and idempotency contract"
+description: "Proposed G0 contract packet for verified principal propagation, token-bound agent authorization, and tenant-scoped replay semantics."
+---
+
+<!-- markdownlint-disable MD025 -->
+
+# ADR-0084: G0 principal, agent binding, and idempotency contract
+
+- **Status:** proposed for review; implementation tracked by [#933](https://github.com/Rick1330/ibex-harness/issues/933)
+- **Date:** 2026-10-05
+- **Owners:** Auth/Proxy owners; architecture and security reviewers required
+- **Scope:** G0/G1/G2 foundation only
+- **Supersedes:** none; extends the specified contracts in architecture-v2
+
+## Context
+
+IBEX already validates bearer tokens, derives an organization and permission bitmap, verifies requested agent ownership/status, and carries request/session identifiers through several local paths. These local slices do not yet constitute an accepted cross-boundary principal/run contract. In particular, the token validation response marks `agent_id` as an agent-scoped token field, but the selected agent must be checked against that binding before any agent-specific work is authorized.
+
+The architecture-v2 roadmap makes G0 a hard documentation and contract freeze. New database lifecycles, service/package boundaries, budget enforcement changes, provider adapters, and write-capable effects remain blocked until the freeze is accepted. This ADR is therefore a proposal and implementation anchor, not a claim that G0 has exited.
+
+## Decision
+
+### 1. Verified principal authority
+
+- `org_id`, subject identity, token scope, permissions, and resource ownership are derived from AuthService and policy evaluation.
+- Caller-provided organization, agent, project, session, run, or resource identifiers are selectors only; they never grant authority.
+- A logical run is correlation and lineage only. It is not a permission grant.
+- Missing, stale, forged, mismatched, or unavailable identity/policy state denies or returns a typed dependency failure before provider, context, tool, or mutation work.
+
+### 2. Token-bound agent selection
+
+- When a validated bearer token contains `agent_id`, the request-selected agent must equal that identifier.
+- A mismatch is an existence-safe authorization denial and must not trigger target-agent lookup or downstream work.
+- Organization-scoped tokens without `agent_id` may select an active agent only after the existing organization ownership/status checks succeed.
+- Any future cross-agent grant must be separately authenticated, explicit, resource-scoped, expiring, auditable, and approved through a subsequent ADR. It is not implied by this contract.
+- AuthService enforces the rule authoritatively; the proxy enforces it as defense in depth before calling the agent verifier.
+
+### 3. Protected router readiness
+
+- Staging and production protected routes must not be mounted when `Validator` is present but `AgentVerifier` is absent.
+- Development and test profiles may use explicit fakes or controlled exceptions, but those exceptions must remain visible in test wiring and must not be inherited by protected deployment profiles.
+- A missing verifier is a readiness/configuration failure, not an empty authorization result.
+
+### 4. Initial idempotency and replay contract
+
+This ADR freezes the semantics for the first implementation slice; it does not add a new persistence boundary.
+
+- Idempotency keys are tenant-bound and scoped to an operation/resource class.
+- The server stores or derives a canonical request body hash before accepting a mutation.
+- Same tenant + same operation scope + same key + same body hash returns or resumes the existing operation.
+- Same key with a different body hash returns a stable conflict and never executes a second effect.
+- Cross-tenant key reuse is isolated.
+- Ambiguous completion is resolved by operation ID lookup and reconciliation, never by blind retry.
+- Retry attempts belong to one logical run but receive distinct attempt identity.
+- TTL, retention, crash recovery, cancellation, and deletion behavior must be specified per operation before a durable migration is accepted.
+
+## Failure and privacy semantics
+
+- Identity/policy mismatch: stable existence-safe authorization denial.
+- Auth/policy dependency outage: typed service-unavailable/degraded response; no security fallback.
+- Missing protected-profile verifier: router construction/readiness failure.
+- Idempotency body mismatch: conflict; no downstream side effect.
+- Logs and evidence contain identifiers and outcomes only; never bearer tokens, raw memory, prompts, secrets, or unredacted sensitive content.
+
+## Compatibility and rollout
+
+The agent-binding enforcement is backward-compatible for organization-scoped tokens. Existing agent-scoped tokens continue to work only for their bound agent. The router readiness check applies only to staging and production profiles. Any future protobuf or durable idempotency schema change must be additive, generated, migration-safe, and covered by mixed-version tests.
+
+Rollout order:
+
+1. Review and accept G0 contract packet.
+2. Ship the proxy/AuthService enforcement and regression tests.
+3. Observe denials and configuration failures in development/staging.
+4. Promote only with cross-tenant, anti-enumeration, and zero-downstream-call evidence.
+
+## Evidence and acceptance
+
+This proposal can move to `accepted` only after named owners approve the G0 packet and the status ledger records the profile, commit, test artifacts, dependency assumptions, limitations, and review date. Local unit tests alone do not establish hosted or HA acceptance.
+
+Required evidence for this slice:
+
+- Same-org agent-scoped token selecting another agent is denied before agent lookup/provider/context/tool work.
+- Matching agent selection succeeds.
+- Staging and production router construction rejects a missing verifier.
+- Organization-scoped token behavior remains covered.
+- Idempotency contract tests cover same-body replay, body mismatch, cross-tenant isolation, and uncertain completion semantics as each operation is implemented.
+
+## Consequences
+
+- The proxy and AuthService contain deliberate defense-in-depth checks.
+- Agent-scoped tokens cannot be used to select a different agent in the same organization.
+- A future cross-agent delegation mechanism must be explicit rather than inferred from organization membership.
+- G0 remains proposed until human review and status-ledger evidence are recorded.

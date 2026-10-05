@@ -296,6 +296,10 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 		s.auditCrossTenant(ctx, caller.OrgID, "agent", req.GetAgentId())
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
 	}
+	if caller.AgentID != "" && caller.AgentID != agentID.String() {
+		s.auditTokenBindDenied(ctx, caller.OrgID, agentID.String())
+		return nil, s.agentValidateErr(start, metrics.AgentResultNotFound, codes.PermissionDenied, "forbidden")
+	}
 
 	view, err := s.agentService.ValidateForOrg(ctx, orgID, agentID)
 	if err != nil {

@@ -51,6 +51,16 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAgentHeaderError(w, fe, requestID, docsBase)
 		return
 	}
+	if authRes.AgentID != uuid.Nil && authRes.AgentID.String() != agentHeader {
+		h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{
+			ctx: r.Context(), requestID: requestID, docsBase: docsBase,
+			requestingOrg: authRes.OrgID.String(), agentID: agentHeader,
+		})
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
+			"The agent is not authorized for this organization or is not active.", requestID,
+			apierror.WriteOpts{DocsBase: docsBase})
+		return
+	}
 
 	bearer, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
 	if err != nil {
