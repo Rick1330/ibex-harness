@@ -206,6 +206,22 @@ func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 	}
 }
 
+func TestUnit_CapturingWriter_FirstHeaderWins(t *testing.T) {
+	t.Parallel()
+	inner := httptest.NewRecorder()
+	cw := &CapturingWriter{ResponseWriter: inner}
+	cw.WriteHeader(http.StatusAccepted)
+	cw.WriteHeader(http.StatusInternalServerError)
+	_, _ = cw.Write([]byte(`{"ok":true}`))
+
+	if cw.Status != http.StatusAccepted {
+		t.Fatalf("captured status=%d want %d", cw.Status, http.StatusAccepted)
+	}
+	if inner.Code != http.StatusAccepted {
+		t.Fatalf("forwarded status=%d want %d", inner.Code, http.StatusAccepted)
+	}
+}
+
 func TestUnit_FinishCapture_CappedReleases(t *testing.T) {
 	t.Parallel()
 	mrStore, _ := testRedisStore(t)
