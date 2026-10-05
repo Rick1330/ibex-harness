@@ -166,6 +166,49 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 	}
 }
 
+func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	d := &stubDeliverer{}
+	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := uuid.New()
+	eventID := uuid.New()
+	now := time.Now()
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{
+		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
+		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"last_error", "created_at", "delivered_at",
+	}).AddRow(id, uuid.Nil, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
+		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
+	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`evidence_outbox_mark_failure`).
+		WithArgs(id, 1, StatusPoison, "evidenceoutbox: invalid row: org_id is required", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
+	mock.ExpectCommit()
+
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Delivered != 0 || res.Failed != 0 || res.Poisoned != 1 || d.n != 0 {
+		t.Fatalf("res=%+v deliveries=%d want poisoned=1 and no delivery", res, d.n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnit_MarkDelivered_StaleWorkerErrors(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
