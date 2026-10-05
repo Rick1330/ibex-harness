@@ -19,7 +19,7 @@ type budgetHandler struct {
 }
 
 // BudgetMiddleware enforces org spend hard-caps after rate limiting.
-// On cache/loader failure: fail closed with BUDGET_EXCEEDED (HTTP 402).
+// On cache/loader failure: fail closed with SERVICE_DEGRADED (HTTP 503).
 // A nil cache also fails closed (callers must omit this middleware when budgets are disabled).
 func BudgetMiddleware(cache *billing.Cache, log *logger.Logger, reg *metrics.ProxyRegistry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -31,22 +31,18 @@ func (h *budgetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFromContext(r.Context())
 	docsBase := ErrorDocsBaseFromContext(r.Context())
 	if h.cache == nil {
-		writeBudgetExceeded(w, requestID, docsBase, "Budget enforcement unavailable")
+		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
 		return
 	}
 
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", requestID,
-			apierror.WriteOpts{Detail: "missing auth context", DocsBase: docsBase})
+		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
 		return
 	}
 	orgID := res.OrgID
 	if orgID == uuid.Nil {
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", requestID,
-			apierror.WriteOpts{Detail: "invalid org_id in auth context", DocsBase: docsBase})
+		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
 		return
 	}
 
@@ -58,7 +54,7 @@ func (h *budgetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"error", err,
 			)
 		}
-		writeBudgetExceeded(w, requestID, docsBase, "Budget enforcement unavailable")
+		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
 		return
 	}
 	if !allowed {
@@ -71,5 +67,11 @@ func (h *budgetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func writeBudgetExceeded(w http.ResponseWriter, requestID, docsBase, detail string) {
 	apierror.WriteStatus(w, http.StatusPaymentRequired, apierror.CodeBudgetExceeded,
 		"Budget exceeded for this organization", requestID,
+		apierror.WriteOpts{Detail: detail, DocsBase: docsBase})
+}
+
+func writeBudgetUnavailable(w http.ResponseWriter, requestID, docsBase, detail string) {
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+		"Budget enforcement unavailable", requestID,
 		apierror.WriteOpts{Detail: detail, DocsBase: docsBase})
 }

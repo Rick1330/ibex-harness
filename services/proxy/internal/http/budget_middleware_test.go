@@ -62,11 +62,14 @@ func serveBudget(t *testing.T, cache *billing.Cache, orgID uuid.UUID) *httptest.
 	return rr
 }
 
-func TestBudgetMiddleware_nilCacheFailClosed402(t *testing.T) {
+func TestBudgetMiddleware_nilCacheFailClosed503(t *testing.T) {
 	t.Parallel()
 	rr := serveBudget(t, nil, uuid.New())
-	if rr.Code != http.StatusPaymentRequired {
+	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code=%d", rr.Code)
+	}
+	if !containsCode(rr.Body.String(), string(apierror.CodeServiceDegraded)) {
+		t.Fatalf("body=%s", rr.Body.String())
 	}
 }
 
@@ -87,12 +90,15 @@ func TestBudgetMiddleware_exhaustedReturns402(t *testing.T) {
 	}
 }
 
-func TestBudgetMiddleware_loaderErrorFailClosed402(t *testing.T) {
+func TestBudgetMiddleware_loaderErrorFailClosed503(t *testing.T) {
 	t.Parallel()
 	cache := newBudgetCache(t, stubBudgetLoader{err: errors.New("db down")})
 	rr := serveBudget(t, cache, uuid.New())
-	if rr.Code != http.StatusPaymentRequired {
+	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code=%d", rr.Code)
+	}
+	if !containsCode(rr.Body.String(), string(apierror.CodeServiceDegraded)) {
+		t.Fatalf("body=%s", rr.Body.String())
 	}
 }
 
@@ -135,8 +141,11 @@ func TestBudgetMiddleware_authContextFailClosed(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := tc.ctx(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
 			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusInternalServerError {
+			if rec.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status=%d", rec.Code)
+			}
+			if !containsCode(rec.Body.String(), string(apierror.CodeServiceDegraded)) {
+				t.Fatalf("body=%s", rec.Body.String())
 			}
 		})
 	}
