@@ -107,6 +107,17 @@ func TestUnit_AgentVerification_RejectsMismatchedBoundAgentBeforeVerifier(t *tes
 	}
 }
 
+func TestUnit_AgentVerification_MissingVerifierFailsClosed(t *testing.T) {
+	t.Parallel()
+	rec := runAgentVerification(t, nil, agentTestAgentID(), true)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
+		t.Fatalf("body missing auth-unavailable code: %s", rec.Body.String())
+	}
+}
+
 func TestUnit_AgentVerification(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

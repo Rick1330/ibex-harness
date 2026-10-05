@@ -61,6 +61,12 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			apierror.WriteOpts{DocsBase: docsBase})
 		return
 	}
+	if h.verifier == nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+			"Authentication service unavailable. The request cannot be verified.", requestID,
+			apierror.WriteOpts{DocsBase: docsBase})
+		return
+	}
 
 	bearer, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
 	if err != nil {
@@ -126,12 +132,16 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			"The agent is not authorized for this organization or is not active.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentVerifyUnavailable):
-		h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
+		if h.logger != nil {
+			h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
+		}
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	default:
-		h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
+		if h.logger != nil {
+			h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
+		}
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
