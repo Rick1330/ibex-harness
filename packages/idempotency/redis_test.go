@@ -2,6 +2,7 @@ package idempotency
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -321,6 +322,45 @@ func TestRedisStore_RedisDownErrors(t *testing.T) {
 	}
 	if err := store.Release(context.Background(), tkn, "fp"); err == nil {
 		t.Fatal("expected Release error")
+	}
+}
+
+func TestRedisStore_RejectsUnscopedClaims(t *testing.T) {
+	t.Parallel()
+	store, mr := testStore(t, time.Hour)
+	validOrg := uuid.New()
+	cases := []struct {
+		name string
+		tok  Token
+		fp   Fingerprint
+	}{
+		{name: "missing org", tok: tok(uuid.Nil, "key"), fp: "fp"},
+		{name: "blank key", tok: tok(validOrg, " \t"), fp: "fp"},
+		{name: "missing fingerprint", tok: tok(validOrg, "key"), fp: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := store.Claim(context.Background(), tc.tok, tc.fp); !errors.Is(err, ErrInvalidToken) {
+				t.Fatalf("Claim error=%v, want ErrInvalidToken", err)
+			}
+			if err := store.Commit(context.Background(), tc.tok, Record{Fingerprint: tc.fp, Status: 200}); !errors.Is(err, ErrInvalidToken) {
+				t.Fatalf("Commit error=%v, want ErrInvalidToken", err)
+			}
+			if err := store.Release(context.Background(), tc.tok, tc.fp); !errors.Is(err, ErrInvalidToken) {
+				t.Fatalf("Release error=%v, want ErrInvalidToken", err)
+			}
+		})
+	}
+	if mr.Exists(RedisKey(tok(validOrg, "key"))) {
+		t.Fatal("invalid claims must not create a Redis key")
+	}
+}
+
+func TestNoopStore_RejectsUnscopedClaims(t *testing.T) {
+	t.Parallel()
+	store := Noop()
+	if _, err := store.Claim(context.Background(), Token{OrgID: uuid.Nil, Key: "key"}, "fp"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("Claim error=%v, want ErrInvalidToken", err)
 	}
 }
 
