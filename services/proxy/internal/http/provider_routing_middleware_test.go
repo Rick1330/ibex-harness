@@ -103,6 +103,20 @@ func TestUnit_ProviderRouting_MissingOrg503(t *testing.T) {
 	assertRoutingStatus(t, rec, http.StatusServiceUnavailable, "")
 }
 
+func TestUnit_ProviderRouting_MissingResolver503(t *testing.T) {
+	t.Parallel()
+	called := false
+	rec := serveProviderRouting(t, routingCase{
+		model: "gpt-4o", nilResolver: true, next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called = true
+		}),
+	})
+	if called {
+		t.Fatal("next must not run when provider resolver is unavailable")
+	}
+	assertRoutingStatus(t, rec, http.StatusServiceUnavailable, apierror.CodeServiceDegraded)
+}
+
 func TestUnit_ProviderRouting_AgentOrgMismatchRejects(t *testing.T) {
 	t.Parallel()
 	otherOrg := uuid.MustParse("550e8400-e29b-41d4-a716-446655440099")
@@ -142,13 +156,14 @@ func TestUnit_ChatParse_EmptyModelAllowed(t *testing.T) {
 }
 
 type routingCase struct {
-	model    string
-	orgID    uuid.UUID
-	agentOrg uuid.UUID
-	omitAuth bool
-	resolver ProviderResolver
-	defaults modelpolicy.AgentDefaultLoader
-	next     http.Handler
+	model       string
+	orgID       uuid.UUID
+	agentOrg    uuid.UUID
+	omitAuth    bool
+	resolver    ProviderResolver
+	nilResolver bool
+	defaults    modelpolicy.AgentDefaultLoader
+	next        http.Handler
 }
 
 func serveProviderRouting(t *testing.T, tc routingCase) *httptest.ResponseRecorder {
@@ -158,7 +173,7 @@ func serveProviderRouting(t *testing.T, tc routingCase) *httptest.ResponseRecord
 		org = testOrgID
 	}
 	resolver := tc.resolver
-	if resolver == nil {
+	if resolver == nil && !tc.nilResolver {
 		resolver = testAllowingModelResolver{base: mustOpenAIRegistry(t)}
 	}
 	h := ProviderRoutingMiddleware(providerRoutingOpts{

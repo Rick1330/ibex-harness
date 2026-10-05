@@ -47,7 +47,9 @@ func routeProviderRequest(w http.ResponseWriter, r *http.Request, opts providerR
 	requestID := requestIDFromContext(r.Context())
 	parsed, ok := llm.ChatRequestFromContext(r.Context())
 	if !ok {
-		opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
+		if opts.log != nil {
+			opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
+		}
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
 			msgInternalError, requestID,
 			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: opts.docsBase})
@@ -69,6 +71,12 @@ func routeProviderRequest(w http.ResponseWriter, r *http.Request, opts providerR
 		return
 	}
 	parsed.Model = candidate
+	if opts.resolver == nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "provider resolver unavailable", DocsBase: opts.docsBase})
+		return
+	}
 	prov, err := opts.resolver.ForOrg(r.Context(), authRes.OrgID, candidate)
 	if err != nil {
 		writeRegistryLookupError(w, registryLookupWrite{
