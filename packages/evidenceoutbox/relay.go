@@ -110,32 +110,28 @@ func (r *Relay) claimBatch(ctx context.Context) ([]OutboxRow, error) {
 
 func (r *Relay) deliverOne(ctx context.Context, row OutboxRow, out *RelayBatchResult) error {
 	if err := validateOutboxRow(row); err != nil {
-		if markErr := r.markFailure(ctx, row, err); markErr != nil {
-			return markErr
-		}
-		if row.Attempts >= r.maxAttempts {
-			out.Poisoned++
-		} else {
-			out.Failed++
-		}
-		return nil
+		return r.recordDeliveryFailure(ctx, row, out, err)
 	}
 	if err := r.deliverer.Deliver(ctx, row); err != nil {
-		if markErr := r.markFailure(ctx, row, err); markErr != nil {
-			return markErr
-		}
-		// row.Attempts is already the post-claim count from claimPending.
-		if row.Attempts >= r.maxAttempts {
-			out.Poisoned++
-		} else {
-			out.Failed++
-		}
-		return nil
+		return r.recordDeliveryFailure(ctx, row, out, err)
 	}
 	if err := r.markDelivered(ctx, row); err != nil {
 		return err
 	}
 	out.Delivered++
+	return nil
+}
+
+func (r *Relay) recordDeliveryFailure(ctx context.Context, row OutboxRow, out *RelayBatchResult, err error) error {
+	if markErr := r.markFailure(ctx, row, err); markErr != nil {
+		return markErr
+	}
+	// row.Attempts is already the post-claim count from claimPending.
+	if row.Attempts >= r.maxAttempts {
+		out.Poisoned++
+	} else {
+		out.Failed++
+	}
 	return nil
 }
 
