@@ -44,4 +44,17 @@ Every gap needs an owner, source references, decision date, dependency, evidence
 - **Due / next action:** Before any evidence claim is promoted, add profile-specific sink deduplication, tombstone replay fencing, redaction rejection, and hosted recovery evidence.
 - **Status:** Partial hardening implemented; GAP-005 and GAP-011 remain open and non-accepted.
 
+### Finding — GAP-007 temporal retrieval fence can suppress historical conflict candidates
+
+- **Reproducible steps:** Seed an `active` memory with a closed validity interval, persist its embedding, then write a newer same-subject memory through the HTTP path. Run the Phase 3 memory E2E supersede check.
+- **Expected:** Historical active memory is available to the conflict classifier so a newer non-overlapping claim can supersede it; ordinary user retrieval still excludes expired intervals.
+- **Actual:** The shared vector search query applies the current-time validity fence before write-path near-duplicate detection, so the expired candidate is omitted and remains `active`; CI reports `supersede-check: old memory status='active', want superseded`.
+- **Source:** `services/memory/app/vectorstore/pgvector_store.py`, `services/memory/app/dedup/service.py`, `services/memory/app/conflict/persist.py`, `infra/scripts/verify_phase3_memory_e2e.sh`, remote CI job `e2e-smoke-p3-memory`; current branch commit `c2034bc`.
+- **Impact / severity:** Stale/conflicting memory lifecycle and CI correctness risk; **P1** for memory write semantics.
+- **Profile:** Memory HTTP write path with PostgreSQL/pgvector; local unit coverage exists, hosted integration evidence pending.
+- **Evidence:** Existing E2E failure plus integration tests that expect supersession; no user-read path should be weakened.
+- **Owner:** Memory + Context; **reviewer:** architecture owner to be named in issue #935.
+- **Due / next action:** Add an explicit non-user-retrieval search mode for historical conflict candidates, preserve the default temporal fence, and add focused SQL/request regression tests before rerunning the E2E.
+- **Status:** Finding verified; fix in progress as a scoped GAP-007 hardening slice.
+
 The pending entries are deliberately not `shipped-accepted`. A future acceptance update must replace `Pending owner review` with named owners and dates, link the evidence artifact, and record limitations and review expiry.

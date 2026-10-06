@@ -40,6 +40,7 @@ Until that artifact exists, the following remain blocked as implementation-ready
 |---|---|---|---|---|---|---|---|---|
 | Example: protected proxy auth | `shipped-local` | `services/proxy/...` | integration test link | Compose | Proxy owner | YYYY-MM-DD | no HA evidence | YYYY-MM-DD |
 | PostgreSQL relay digest/replay hardening | `provisional` | `packages/evidenceoutbox/relay.go` and relay tests | unit + integration ack-loss replay evidence | local PostgreSQL integration profile | Evidence/Security + Platform; pending named reviewer | branch follow-up commit | no accepted G0, sink, tombstone, redaction, hosted/HA, or recovery certification | owner review required |
+| Historical conflict candidates | `provisional` | `services/memory/app/dedup/service.py` and vector search contract | focused request/SQL regression tests; E2E rerun pending | memory PostgreSQL/pgvector write profile | Memory + Context; pending named reviewer | branch follow-up commit | default user retrieval fence remains; hosted E2E and lifecycle acceptance pending | owner review required |
 
 ## Rules
 

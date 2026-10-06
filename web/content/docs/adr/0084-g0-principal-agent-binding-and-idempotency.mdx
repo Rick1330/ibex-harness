@@ -86,6 +86,8 @@ This ADR freezes the semantics for the first implementation slice; it does not a
 
 The current bounded implementation evidence validates the outbox payload digest against the payload bytes before delivery and exercises acknowledgement-loss replay against an idempotent test sink keyed by `(event_id, aggregate_seq)`. This is partial hardening only: it does not select a production sink, change acknowledgement timing, prove tombstone fencing, certify hosted recovery, or promote the G0 packet to accepted.
 
+The memory write path also has an explicit historical-candidate search mode for conflict evaluation. It may inspect expired active memories so a newer non-overlapping claim can supersede them; the default user retrieval mode continues to enforce the half-open current-validity fence. This remains provisional until the Phase 3 E2E and profile-specific lifecycle evidence pass.
+
 ### 6. Authority, trust, and profile matrix
 
 | Contract area | Authority | Trusted input | Failure behavior | First bounded seam |

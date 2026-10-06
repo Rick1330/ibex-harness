@@ -10,18 +10,28 @@ _EXPECTED_PREDICATES = (
     "(valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)",
 )
 
+_SEARCH_PREDICATES = (
+    "(:include_expired OR valid_from <= CURRENT_TIMESTAMP)",
+    "(:include_expired OR valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)",
+)
+
 
 def test_all_authoritative_read_paths_enforce_half_open_validity() -> None:
     for sql in (SEARCH_SQL, FTS_SQL, _HYDRATE_SQL, _HYDRATE_HOT_SQL):
         assert any(
             predicate in sql
-            for predicate in (_EXPECTED_PREDICATES[0], "m.valid_from <= CURRENT_TIMESTAMP")
+            for predicate in (
+                _EXPECTED_PREDICATES[0],
+                "m.valid_from <= CURRENT_TIMESTAMP",
+                _SEARCH_PREDICATES[0],
+            )
         )
         assert any(
             predicate in sql
             for predicate in (
                 _EXPECTED_PREDICATES[1],
                 "(m.valid_until IS NULL OR m.valid_until > CURRENT_TIMESTAMP)",
+                _SEARCH_PREDICATES[1],
             )
         )
 

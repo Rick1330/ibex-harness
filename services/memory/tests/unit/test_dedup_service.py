@@ -114,11 +114,27 @@ async def test_near_dup_uses_vector_store_and_strict_gt() -> None:
         Settings(near_duplicate_sim_threshold=0.92, near_duplicate_candidate_limit=10),
         store=store,
     )
-    candidates = await svc.find_near_duplicates(
-        org_id=org, agent_id=agent, embedding=_axis(0)
-    )
+    candidates = await svc.find_near_duplicates(org_id=org, agent_id=agent, embedding=_axis(0))
     assert near_id in candidates
     assert far_id not in candidates
+
+
+@pytest.mark.asyncio
+async def test_near_dup_includes_expired_for_conflict_evaluation() -> None:
+    class _CaptureStore(InMemoryVectorStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.request = None
+
+        async def search(self, request):  # type: ignore[no-untyped-def]
+            self.request = request
+            return []
+
+    store = _CaptureStore()
+    svc = DedupService(Settings(), store=store)
+    await svc.find_near_duplicates(org_id=uuid4(), agent_id=uuid4(), embedding=_axis(0))
+    assert store.request is not None
+    assert store.request.include_expired is True
 
 
 @pytest.mark.asyncio
@@ -157,9 +173,7 @@ async def test_near_requires_store() -> None:
     agent_id = uuid4()
     embedding = _axis(0)
     with pytest.raises(RuntimeError, match="VectorStore required"):
-        await svc.find_near_duplicates(
-            org_id=org_id, agent_id=agent_id, embedding=embedding
-        )
+        await svc.find_near_duplicates(org_id=org_id, agent_id=agent_id, embedding=embedding)
 
     store = InMemoryVectorStore()
     svc = DedupService(Settings(near_duplicate_sim_threshold=0.92), store=store)
@@ -182,7 +196,5 @@ async def test_near_dup_org_scoped() -> None:
         UpsertRequest(memory_id=mem, org_id=org_a, embedding=vec, embedding_model="t")
     )
     svc = DedupService(Settings(near_duplicate_sim_threshold=0.50), store=store)
-    assert await svc.find_near_duplicates(org_id=org_a, agent_id=agent, embedding=vec) == [
-        mem
-    ]
+    assert await svc.find_near_duplicates(org_id=org_a, agent_id=agent, embedding=vec) == [mem]
     assert await svc.find_near_duplicates(org_id=org_b, agent_id=agent, embedding=vec) == []

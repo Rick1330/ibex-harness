@@ -42,7 +42,11 @@ _ITERATIVE_SCAN_VALUES = frozenset({"off", "relaxed_order", "strict_order"})
 
 @dataclass(frozen=True, slots=True)
 class SearchRequest:
-    """Tenant-scoped vector similarity search."""
+    """Tenant-scoped vector similarity search.
+
+    The historical mode is reserved for write-time conflict detection; user
+    retrieval must retain the default current-validity fence.
+    """
 
     org_id: UUID
     agent_id: UUID
@@ -52,6 +56,7 @@ class SearchRequest:
     ef_search: int | None = None
     # pgvector 0.8+: off | relaxed_order | strict_order (None = leave GUC alone)
     iterative_scan: str | None = None
+    include_expired: bool = False
 
     def validate(self, *, embedding_dim: int = _DEFAULT_EMBEDDING_DIM) -> None:
         _require_embedding_length(self.query_embedding, embedding_dim, "query_embedding")
@@ -73,9 +78,7 @@ def _require_default_embedding_dim(embedding_dim: int) -> None:
         raise ValueError(msg)
 
 
-def _require_embedding_length(
-    values: Sequence[float], expected: int, field_name: str
-) -> None:
+def _require_embedding_length(values: Sequence[float], expected: int, field_name: str) -> None:
     if len(values) != expected:
         msg = f"{field_name} length {len(values)} != embedding_dim {expected}"
         raise ValueError(msg)
