@@ -4,7 +4,7 @@
 
 **Audit checkout:** `chore/IBEX-939-g0-gap-audit-docs` at `9fcf725740e027b52f3a30e6b435b12a31000650` (2026-10-06).
 
-**Scope direction:** On 2026-10-06, the task owner expanded the earlier Development Compose-only task scope to include production-readiness infrastructure and setup, while explicitly prohibiting deployment.
+**Scope direction:** On 2026-10-06, the task owner selected provider-neutral Kubernetes/Helm application preparation with external data-plane interfaces; provider-specific IaC is deferred, deployment is prohibited, and no HA/support claim is made until evidence exists. Development Compose remains local-only. This is a preparation direction, not a supported production profile or G0 acceptance.
 
 **Milestone:** [4.P.5 — Production Platform, Recovery & Supply Chain](../../content/roadmap/phase-4-multi-provider/milestones/4.p.5-production-platform-recovery-supply-chain.mdx), still `in-progress` / partial.
 
@@ -14,11 +14,11 @@ IBEX has a meaningful production-oriented foundation: seven application Dockerfi
 
 The production Helm overlay intentionally contains sentinel image digests and says not to deploy it. The chart is application-only; external data planes and Secrets are prerequisites, migration execution is not wired into a verified release path, and the production promotion path is not evidenced. The historical recovery drill is local and explicitly did not measure PostgreSQL RPO, ClickHouse recovery, or object-store recovery. Kyverno admission was not applied in that drill. No production cluster, cloud account, real credentials, or live release was used in this audit.
 
-**Conclusion:** Production-readiness preparation is now in scope; deployment is not. G0 remains `UNKNOWN / NOT ACCEPTED`. Until the formal G0 and relevant later gates are satisfied, permitted work is limited to inventory, documentation, owner-decision preparation, review evidence, and test-matrix preparation. Do not turn this plan into an implementation or support claim by implication.
+**Conclusion:** The owner-selected preparation direction is provider-neutral Kubernetes/Helm application packaging with external data-plane interfaces; provider-specific IaC and deployment are deferred, and no HA/support claim is accepted before evidence. G0 remains `UNKNOWN / NOT ACCEPTED`. Until the formal G0 and relevant later gates are satisfied, permitted work is limited to inventory, documentation, owner-decision preparation, review evidence, and test-matrix preparation. Do not turn this plan into an implementation or support claim by implication.
 
 ## 2. Scope and no-deploy boundary
 
-The earlier user selection of Development Compose remains the choice for the **local integration profile**. It no longer limits the overall task to local-only work: production-readiness infrastructure and setup preparation are now requested as well. This scope update does not select a production provider/profile, supply missing domain-owner approvals, accept G0, or authorize a deployment.
+Development Compose remains the choice for the **local integration profile**. The task owner selected the following production-preparation direction: provider-neutral Kubernetes/Helm application packaging with external data-plane interfaces, provider-specific IaC deferred, no deployment, and no HA/support claim until evidence. This selection does not specify actual external services, select a provider/region or supported topology, supply missing domain-owner approvals, accept G0, or authorize a deployment.
 
 For this work, do **not**:
 
@@ -103,7 +103,7 @@ This sequence is a proposal based on existing repository boundaries. It does not
 
 The following cannot be safely invented from the repository or inferred from a general instruction to proceed:
 
-- Supported deployment topology (single-node self-hosted versus HA production), cluster ownership, provider/account/region/AZ, residency, private networking, and cost envelope.
+- Actual supported deployment topology (single-node self-hosted versus HA production), cluster ownership, provider/account/region/AZ (intentionally deferred under the selected provider-neutral preparation direction), residency, private networking, and cost envelope.
 - Managed versus platform-owned Postgres/pgvector, Redis/queue, ClickHouse, S3-compatible object storage, observability, and KMS/secrets; each needs an owner and recovery boundary.
 - Registry and release authority, immutable promotion model, package visibility/retention, supported CPU architectures, signing identity/issuer, Rekor dependency, and vulnerability-exception policy.
 - Credential storage and rotation; cryptographic-material recovery; certificate issuance and renewal; ingress ownership; default-deny network controls and destination allowlists; workload identity.

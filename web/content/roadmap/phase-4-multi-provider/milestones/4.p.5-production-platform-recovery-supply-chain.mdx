@@ -34,7 +34,7 @@ The console workload, service ownership, Ingress/gateway routing, TLS terminatio
 
 ### Current no-deploy preparation
 
-On 2026-10-06, the task owner expanded the work scope to include production-readiness infrastructure and setup while explicitly prohibiting deployment. The five-area source audit and dependency-ordered preparation plan are recorded in the [architecture-v2 production-readiness audit](../../../../engineering/architecture-v2/22-production-readiness-no-deploy-plan.md). This is review input only: milestone 4.P.5 remains in progress/partial, and no provider, production profile, cluster, or recovery objective is accepted by this note.
+On 2026-10-06, the task owner selected provider-neutral Kubernetes/Helm application preparation with external data-plane interfaces; provider-specific IaC is deferred, deployment is prohibited, and no HA/support claim is made until evidence exists. The five-area source audit and dependency-ordered preparation plan are recorded in the [architecture-v2 production-readiness audit](../../../../engineering/architecture-v2/22-production-readiness-no-deploy-plan.md). This is review input only: milestone 4.P.5 remains in progress/partial, and no supported production profile, provider, cluster, or recovery objective is accepted by this note.
 
 ## Recovery and supply-chain contract
 

@@ -33,6 +33,6 @@ A new datastore, network boundary, GPU runtime, chart, or migration path require
 
 ## Production-readiness preparation
 
-Production infrastructure/setup preparation is in scope, but no deployment is authorized by the current task. The [production-readiness audit and no-deploy workplan](../web/engineering/architecture-v2/22-production-readiness-no-deploy-plan.md) records the existing Helm, image, recovery, monitoring, and supply-chain foundation and its open acceptance gaps. It is not a deployment guide or production-readiness claim.
+The task owner selected provider-neutral Kubernetes/Helm application preparation with external data-plane interfaces; provider-specific IaC is deferred, deployment is prohibited, and no HA/support claim is made until evidence exists. This is not a supported production profile or G0 acceptance. The [production-readiness audit and no-deploy workplan](../web/engineering/architecture-v2/22-production-readiness-no-deploy-plan.md) records the existing Helm, image, recovery, monitoring, and supply-chain foundation and its open acceptance gaps. It is not a deployment guide or production-readiness claim.
 
 See [services inventory](../services/README.md), [package inventory](../packages/README.md), and [current roadmap state](../web/content/roadmap/current-state.mdx).
