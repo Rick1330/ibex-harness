@@ -48,9 +48,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     IBEX_MCP_HOST=0.0.0.0 \
     IBEX_MCP_PORT=8090
 
-RUN python -m pip uninstall --yes setuptools wheel || true
-
-RUN apt-get update \
+RUN python -m pip uninstall --yes setuptools wheel || true \
+    && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
     && rm -rf /var/lib/apt/lists/* \

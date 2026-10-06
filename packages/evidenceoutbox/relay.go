@@ -3,7 +3,9 @@ package evidenceoutbox
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strings"
@@ -155,9 +157,17 @@ func validateOutboxRow(row OutboxRow) error {
 		return fmt.Errorf("evidenceoutbox: invalid row: payload is required")
 	case strings.TrimSpace(row.PayloadDigest) == "":
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest is required")
+	case len(row.PayloadDigest) != hex.EncodedLen(sha256.Size) || !isHexDigest(row.PayloadDigest):
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
 	default:
 		return nil
 	}
+}
+
+func isHexDigest(value string) bool {
+	var decoded [sha256.Size]byte
+	_, err := hex.Decode(decoded[:], []byte(value))
+	return err == nil
 }
 
 // RecoverInFlight returns stale in_flight rows to pending for crash/replay.

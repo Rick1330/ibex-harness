@@ -71,7 +71,7 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
+		[]byte(`{}`), "0000000000000000000000000000000000000000000000000000000000000000", StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(2).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -147,7 +147,7 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, tc.attempts, now, "", now, nil)
+		[]byte(`{}`), "0000000000000000000000000000000000000000000000000000000000000000", StatusInFlight, tc.attempts, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 
@@ -188,7 +188,7 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, uuid.Nil, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
+		[]byte(`{}`), "0000000000000000000000000000000000000000000000000000000000000000", StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -206,6 +206,14 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUnit_ValidateOutboxRow_RejectsMalformedDigest(t *testing.T) {
+	t.Parallel()
+	row := OutboxRow{ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1, SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted, Payload: []byte(`{}`), PayloadDigest: "not-a-sha256-digest"}
+	if err := validateOutboxRow(row); err == nil || !strings.Contains(err.Error(), "payload_digest") {
+		t.Fatalf("err=%v want payload digest validation error", err)
 	}
 }
 

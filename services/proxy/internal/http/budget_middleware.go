@@ -18,6 +18,8 @@ type budgetHandler struct {
 	next   http.Handler
 }
 
+const budgetEnforcementUnavailableMessage = "Budget enforcement unavailable"
+
 // BudgetMiddleware enforces org spend hard-caps after rate limiting.
 // On cache/loader failure: fail closed with SERVICE_DEGRADED (HTTP 503).
 // A nil cache also fails closed (callers must omit this middleware when budgets are disabled).
@@ -31,18 +33,18 @@ func (h *budgetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFromContext(r.Context())
 	docsBase := ErrorDocsBaseFromContext(r.Context())
 	if h.cache == nil {
-		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
+		writeBudgetUnavailable(w, requestID, docsBase, budgetEnforcementUnavailableMessage)
 		return
 	}
 
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
-		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
+		writeBudgetUnavailable(w, requestID, docsBase, budgetEnforcementUnavailableMessage)
 		return
 	}
 	orgID := res.OrgID
 	if orgID == uuid.Nil {
-		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
+		writeBudgetUnavailable(w, requestID, docsBase, budgetEnforcementUnavailableMessage)
 		return
 	}
 
@@ -54,7 +56,7 @@ func (h *budgetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"error", err,
 			)
 		}
-		writeBudgetUnavailable(w, requestID, docsBase, "Budget enforcement unavailable")
+		writeBudgetUnavailable(w, requestID, docsBase, budgetEnforcementUnavailableMessage)
 		return
 	}
 	if !allowed {
@@ -72,6 +74,6 @@ func writeBudgetExceeded(w http.ResponseWriter, requestID, docsBase, detail stri
 
 func writeBudgetUnavailable(w http.ResponseWriter, requestID, docsBase, detail string) {
 	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-		"Budget enforcement unavailable", requestID,
+		budgetEnforcementUnavailableMessage, requestID,
 		apierror.WriteOpts{Detail: detail, DocsBase: docsBase})
 }

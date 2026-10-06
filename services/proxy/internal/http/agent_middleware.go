@@ -19,6 +19,8 @@ type agentVerifyHandler struct {
 	next     http.Handler
 }
 
+const agentVerificationUnavailableMessage = "Authentication service unavailable. The request cannot be verified."
+
 // AgentVerificationMiddleware validates X-IBEX-Agent-ID against the authenticated org.
 // Must run after AuthMiddleware and before RateLimitMiddleware.
 func AgentVerificationMiddleware(
@@ -44,7 +46,7 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.verifier == nil {
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Authentication service unavailable. The request cannot be verified.", requestID,
+			agentVerificationUnavailableMessage, requestID,
 			apierror.WriteOpts{DocsBase: docsBase})
 		return
 	}
@@ -83,7 +85,7 @@ func (h *agentVerifyHandler) prepareAgentRequest(w http.ResponseWriter, r *http.
 		writeAgentHeaderError(w, fe, requestID, docsBase)
 		return nil, "", false
 	}
-	if authRes.AgentID != uuid.Nil && authRes.AgentID.String() != agentHeader {
+	if authRes.AgentID != uuid.Nil && authRes.AgentID != parseAgentIDHeader(r.Header) {
 		h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{
 			ctx: r.Context(), requestID: requestID, docsBase: docsBase,
 			requestingOrg: authRes.OrgID.String(), agentID: agentHeader,
@@ -143,14 +145,14 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
 		}
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
+			agentVerificationUnavailableMessage, opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	default:
 		if h.logger != nil {
 			h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
 		}
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
+			agentVerificationUnavailableMessage, opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	}
 }

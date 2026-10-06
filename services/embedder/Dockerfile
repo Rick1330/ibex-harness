@@ -46,9 +46,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"
 
 # Apply Debian security patches, then drop to a non-root user.
-RUN python -m pip uninstall --yes setuptools wheel || true
-
-RUN apt-get update \
+RUN python -m pip uninstall --yes setuptools wheel || true \
+    && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
     && rm -rf /var/lib/apt/lists/* \

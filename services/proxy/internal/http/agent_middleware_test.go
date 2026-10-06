@@ -107,6 +107,21 @@ func TestUnit_AgentVerification_RejectsMismatchedBoundAgentBeforeVerifier(t *tes
 	}
 }
 
+func TestUnit_AgentVerification_AcceptsUppercaseBoundAgentHeader(t *testing.T) {
+	t.Parallel()
+	verifier := &mockAgentVerifier{}
+	rec := runAgentVerificationCase(t, agentVerifyCase{
+		verifier: verifier, agentID: strings.ToUpper(agentTestAgentID()), withAuth: true,
+		authAgentID: uuid.MustParse(agentTestAgentID()), authorization: "Bearer ibex_pat_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if verifier.calls != 1 {
+		t.Fatalf("verifier calls=%d want 1", verifier.calls)
+	}
+}
+
 func TestUnit_AgentVerification_MissingVerifierFailsClosed(t *testing.T) {
 	t.Parallel()
 	rec := runAgentVerification(t, nil, agentTestAgentID(), true)
