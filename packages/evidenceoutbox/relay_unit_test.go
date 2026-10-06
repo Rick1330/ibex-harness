@@ -201,6 +201,14 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertPoisonedWithoutDelivery(t, res, d)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
+	t.Helper()
 	if res.Delivered != 0 {
 		t.Fatalf("delivered=%d want 0", res.Delivered)
 	}
@@ -212,9 +220,6 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	}
 	if d.n != 0 {
 		t.Fatalf("deliveries=%d want 0", d.n)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
 	}
 }
 
