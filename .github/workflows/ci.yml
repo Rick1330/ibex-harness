@@ -84,6 +84,11 @@ jobs:
       - name: P6 bootstrap manifest contract guard
         run: bash .github/scripts/check-p6-bootstrap.sh
 
+      - name: Offline production-readiness source audit
+        run: |
+          python3 .github/scripts/test-production-readiness-audit.py
+          python3 .github/scripts/audit-production-readiness.py --check
+
       - name: Set up Helm 3 for chart regression checks
         uses: Azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
