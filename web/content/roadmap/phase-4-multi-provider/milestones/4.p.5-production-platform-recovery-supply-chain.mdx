@@ -32,6 +32,10 @@ The intended platform contract covers digest-pinned workloads, probes, PDB/HPA, 
 
 The console workload, service ownership, Ingress/gateway routing, TLS termination and renewal, browser promotion path, and production values must be specified and evidenced before the canonical operator runtime can be promoted. `services/dashboard/` remains compatibility-only and is not a substitute workload.
 
+### Current no-deploy preparation
+
+On 2026-10-06, the task owner expanded the work scope to include production-readiness infrastructure and setup while explicitly prohibiting deployment. The five-area source audit and dependency-ordered preparation plan are recorded in the [architecture-v2 production-readiness audit](../../../../engineering/architecture-v2/22-production-readiness-no-deploy-plan.md). This is review input only: milestone 4.P.5 remains in progress/partial, and no provider, production profile, cluster, or recovery objective is accepted by this note.
+
 ## Recovery and supply-chain contract
 
 Record target RPO/RTO per store only after a measured drill. The working planning targets are Postgres ≤5m/≤30m, ClickHouse ≤24h/≤60m, Redis as cache/no recovery target, MinIO ≤24h/≤60m, and outbox RPO 0 by sequence; these are targets, not evidence. Restore reports must include tenant-isolation queries, data classes, achieved RPO/RTO, image/schema/config digests, and rollback command. Admission reports must show unsigned-image rejection in a real staging cluster.

@@ -36,6 +36,10 @@ The research labels below are not replacements for canonical GAP IDs. Several ar
 
 These reports are independent audit inputs; the workplan records provenance and which repository governance claims the main agent verified. Reported component tests do not imply profile acceptance. G0 remains `UNKNOWN / NOT ACCEPTED` until the canonical ledger contains the required dated owner decision.
 
+## Production-readiness scope update
+
+On 2026-10-06, the task owner superseded the earlier local-only task limit: production-readiness infrastructure and setup are in scope, but deployment is explicitly prohibited. Development Compose remains local-only, the production profile remains unresolved, and G0 is still not accepted. The five-area infrastructure audit is recorded in the [production-readiness audit and no-deploy workplan](22-production-readiness-no-deploy-plan.md). Its findings primarily reinforce GAP-001 (status/profile claims), GAP-005 (security/isolation evidence), and GAP-011 (recovery/operator evidence) and the open 4.P.5 milestone; they do not create new canonical GAP IDs or close any existing gap.
+
 ## Issue #935 historical disposition and issue #939 preparation
 
 | Cluster | Proposed owner | Decision date | Dependency | Evidence artifact | Disposition |

@@ -59,6 +59,7 @@ If documents disagree, implementation must stop at the boundary, the conflict mu
 19. [18-gap-register.md](18-gap-register.md)
 20. [20-pre-g0-gap-synthesis-and-workplan.md](20-pre-g0-gap-synthesis-and-workplan.md)
 21. [21-g0-owner-decision-recommendations.md](21-g0-owner-decision-recommendations.md)
+22. [22-production-readiness-no-deploy-plan.md](22-production-readiness-no-deploy-plan.md)
 
 The eight source-audit reports supporting the pre-G0 synthesis are indexed in [`web/engineering/research/ibex-preflight-2026-10/`](../research/ibex-preflight-2026-10/README.md). These are review inputs, not accepted contracts or production evidence.
 

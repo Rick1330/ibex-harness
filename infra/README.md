@@ -31,4 +31,8 @@ The local stack is not a production HA claim. Organization-wide HA, multi-AZ ret
 
 A new datastore, network boundary, GPU runtime, chart, or migration path requires source/test evidence, tenant/security review, and an ADR. Update this inventory and the affected service/package README in the same change.
 
+## Production-readiness preparation
+
+Production infrastructure/setup preparation is in scope, but no deployment is authorized by the current task. The [production-readiness audit and no-deploy workplan](../web/engineering/architecture-v2/22-production-readiness-no-deploy-plan.md) records the existing Helm, image, recovery, monitoring, and supply-chain foundation and its open acceptance gaps. It is not a deployment guide or production-readiness claim.
+
 See [services inventory](../services/README.md), [package inventory](../packages/README.md), and [current roadmap state](../web/content/roadmap/current-state.mdx).
