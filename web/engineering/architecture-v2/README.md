@@ -2,7 +2,7 @@
 
 **Status:** Documentation baseline / proposed target architecture
 **Owner:** Platform architecture
-**Last reviewed:** 2026-10-03
+**Last reviewed:** 2026-10-06 (G0 status and gap-audit crosswalk; no G0 acceptance implied)
 
 ## Purpose
 
@@ -57,6 +57,9 @@ If documents disagree, implementation must stop at the boundary, the conflict mu
 17. [16-compatibility-and-versioning.md](16-compatibility-and-versioning.md)
 18. [17-roadmap-and-gates.md](17-roadmap-and-gates.md)
 19. [18-gap-register.md](18-gap-register.md)
+20. [20-pre-g0-gap-synthesis-and-workplan.md](20-pre-g0-gap-synthesis-and-workplan.md)
+
+The eight source-audit reports supporting the pre-G0 synthesis are indexed in [`web/engineering/research/ibex-preflight-2026-10/`](../research/ibex-preflight-2026-10/README.md). These are review inputs, not accepted contracts or production evidence.
 
 ## Non-goals
 
