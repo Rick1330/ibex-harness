@@ -169,16 +169,21 @@ func validateOutboxIdentity(row OutboxRow) error {
 }
 
 func validateOutboxPayload(row OutboxRow) error {
+	actualDigest := strings.TrimSpace(row.PayloadDigest)
 	switch {
 	case len(row.Payload) == 0:
 		return fmt.Errorf("evidenceoutbox: invalid row: payload is required")
-	case strings.TrimSpace(row.PayloadDigest) == "":
+	case actualDigest == "":
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest is required")
-	case len(row.PayloadDigest) != hex.EncodedLen(sha256.Size) || !isHexDigest(row.PayloadDigest):
+	case len(actualDigest) != hex.EncodedLen(sha256.Size) || !isHexDigest(actualDigest):
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
-	default:
-		return nil
 	}
+
+	expected := sha256.Sum256(row.Payload)
+	if !strings.EqualFold(actualDigest, hex.EncodeToString(expected[:])) {
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload")
+	}
+	return nil
 }
 
 func isHexDigest(value string) bool {

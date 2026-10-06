@@ -84,6 +84,8 @@ This ADR freezes the semantics for the first implementation slice; it does not a
 - Redaction validation is authoritative before serialization/persistence. Bearer/API tokens, credentials, prompts, memory bodies, embeddings, and unredacted PII are forbidden in ordinary event payloads, logs, and outbox rows. Approved classified references must be deterministic and separately governed.
 - A relay is at-least-once. The selected sink must deduplicate by stable event identity plus aggregate version/sequence, enforce tenant predicates, reject stale or tombstoned replay, and expose retry/poison/checkpoint state.
 
+The current bounded implementation evidence validates the outbox payload digest against the payload bytes before delivery and exercises acknowledgement-loss replay against an idempotent test sink keyed by `(event_id, aggregate_seq)`. This is partial hardening only: it does not select a production sink, change acknowledgement timing, prove tombstone fencing, certify hosted recovery, or promote the G0 packet to accepted.
+
 ### 6. Authority, trust, and profile matrix
 
 | Contract area | Authority | Trusted input | Failure behavior | First bounded seam |

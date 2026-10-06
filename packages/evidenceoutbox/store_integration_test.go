@@ -145,6 +145,42 @@ func (s *recordingDeliverer) unique() int {
 	return len(s.seen)
 }
 
+type ackLossDeliverer struct {
+	db         *sql.DB
+	mu         sync.Mutex
+	deliveries int
+	effects    map[string]int
+	loseAck    atomic.Bool
+}
+
+func (s *ackLossDeliverer) Deliver(ctx context.Context, row evidenceoutbox.OutboxRow) error {
+	key := row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
+	s.mu.Lock()
+	s.deliveries++
+	if s.effects == nil {
+		s.effects = map[string]int{}
+	}
+	if s.effects[key] == 0 {
+		s.effects[key] = 1
+	}
+	s.mu.Unlock()
+
+	if s.loseAck.CompareAndSwap(false, true) {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE ibex_core.evidence_outbox
+			SET attempts = attempts + 1, claimed_at = now() - interval '1 hour'
+			WHERE id = $1 AND delivery_status = 'in_flight'`, row.ID)
+		return err
+	}
+	return nil
+}
+
+func (s *ackLossDeliverer) snapshot() (deliveries, effects int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deliveries, len(s.effects)
+}
+
 func TestIntegration_PersistRun_WritesEvidenceAndOutbox(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -248,6 +284,37 @@ func TestIntegration_OutboxCrashReplay_NoLostOrDupDeliveredSemantics(t *testing.
 	relay := mustRelay(t, db, deliverer)
 	forceStaleInFlight(t, db, orgID, requestID)
 	assertRecoveredAndDeliveredOnce(t, relay, deliverer)
+}
+
+func TestIntegration_OutboxAckLoss_ReplaysWithIdempotentSinkEffect(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	orgID := seedOrg(t, db)
+	store := mustStore(t, db)
+	traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
+	persistMinimalRun(t, store, orgID, traceID)
+
+	deliverer := &ackLossDeliverer{db: db}
+	relay := mustRelay(t, db, deliverer)
+	if _, err := relay.ProcessBatch(context.Background()); err == nil {
+		t.Fatal("expected acknowledgement failure after sink application")
+	}
+	if deliveries, effects := deliverer.snapshot(); deliveries != 1 || effects != 1 {
+		t.Fatalf("first delivery: deliveries=%d effects=%d", deliveries, effects)
+	}
+	if recovered, err := relay.RecoverInFlight(context.Background(), time.Nanosecond); err != nil || recovered == 0 {
+		t.Fatalf("recover: count=%d err=%v", recovered, err)
+	}
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if res.Delivered != 1 {
+		t.Fatalf("replay delivered=%d want 1", res.Delivered)
+	}
+	if deliveries, effects := deliverer.snapshot(); deliveries != 2 || effects != 1 {
+		t.Fatalf("replay effect: deliveries=%d effects=%d", deliveries, effects)
+	}
 }
 
 func assertRecoveredAndDeliveredOnce(t *testing.T, relay *evidenceoutbox.Relay, d *recordingDeliverer) {
