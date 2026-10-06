@@ -9,7 +9,7 @@ import pytest
 
 from app.access_token import set_access_token
 from app.audit import AsyncAuditEmitter, MemoryAuditSink
-from app.errors import RateLimitedError
+from app.errors import RateLimitedError, RateLimitUnavailableError
 from app.permissions import MEMORY_READ, MEMORY_WRITE
 from app.principal import Principal, set_principal
 from app.ratelimit import McpRateLimiter, NoopMcpLimiter, RateLimitResult
@@ -30,6 +30,12 @@ class _FixedLimiter(McpRateLimiter):
             remaining=0 if not self.allow else self.limit,
             reset_unix=0,
         )
+
+
+class _UnavailableLimiter(McpRateLimiter):
+    async def check(self, org_id: UUID) -> RateLimitResult:
+        del org_id
+        raise RateLimitUnavailableError()
 
 
 @pytest.mark.asyncio
@@ -59,6 +65,35 @@ async def test_invoke_rate_limited_audited() -> None:
     assert len(sink.events) == 1
     assert sink.events[0].success is False
     assert sink.events[0].error_code == "rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_invoke_rate_limit_unavailable_is_audited_and_blocks_runner() -> None:
+    sink = MemoryAuditSink()
+    audit = AsyncAuditEmitter(sink, maxsize=8)
+    audit.start()
+    set_principal(Principal(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT))
+    set_access_token("tok")
+    call = _ToolCall(
+        audit=audit,
+        rate_limiter=_UnavailableLimiter(),
+        request=_ToolRequest(
+            tool_name="search_memory",
+            raw={"query": "x"},
+            runner=lambda raw: _never(raw),
+        ),
+    )
+    try:
+        with pytest.raises(RateLimitUnavailableError) as exc_info:
+            await _invoke_tool(call)
+    finally:
+        set_principal(None)
+        set_access_token(None)
+        await audit.aclose()
+    assert exc_info.value.code == "rate_limit_unavailable"
+    assert len(sink.events) == 1
+    assert sink.events[0].success is False
+    assert sink.events[0].error_code == "rate_limit_unavailable"
 
 
 async def _never(_raw: dict) -> dict:

@@ -13,7 +13,9 @@ const appRoot = path.resolve(scriptDir, "..");
 const publicDir = path.join(appRoot, "public");
 const buildIdPath = path.join(appRoot, ".next", "BUILD_ID");
 const EXTRACT_PORT = Number(process.env.SEARCH_EXTRACT_PORT ?? 34567);
-const MAX_INDEX_BYTES = Number(process.env.SEARCH_INDEX_MAX_BYTES ?? 5_000_000);
+// Keep a hard guard, but leave measured headroom for the growing architecture
+// corpus; deployments can still tighten or override this via the environment.
+const MAX_INDEX_BYTES = Number(process.env.SEARCH_INDEX_MAX_BYTES ?? 5_500_000);
 
 const require = createRequire(import.meta.url);
 const nextBin = path.join(

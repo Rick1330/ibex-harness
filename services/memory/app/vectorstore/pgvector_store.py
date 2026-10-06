@@ -22,6 +22,8 @@ FROM (
       AND agent_id = :agent_id
       AND status = 'active'
       AND deleted_at IS NULL
+      AND (:include_expired OR valid_from <= CURRENT_TIMESTAMP)
+      AND (:include_expired OR valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
       AND embedding IS NOT NULL
     ORDER BY embedding <=> CAST(:query AS vector)
     LIMIT :limit
@@ -110,6 +112,7 @@ class PgVectorStore(VectorStore):
                     "agent_id": str(request.agent_id),
                     "min_similarity": threshold,
                     "limit": request.limit,
+                    "include_expired": request.include_expired,
                 },
             )
             rows = result.mappings().all()

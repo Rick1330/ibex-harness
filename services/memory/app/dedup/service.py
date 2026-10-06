@@ -86,6 +86,7 @@ class DedupService:
                 query_embedding=embedding,
                 limit=self._settings.near_duplicate_candidate_limit,
                 min_similarity=threshold,
+                include_expired=True,
             )
         )
         # Milestone gate is strict greater-than; VectorStore.search uses >=.

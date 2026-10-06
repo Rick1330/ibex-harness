@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
@@ -169,16 +170,21 @@ func validateOutboxIdentity(row OutboxRow) error {
 }
 
 func validateOutboxPayload(row OutboxRow) error {
+	actualDigest := strings.TrimSpace(row.PayloadDigest)
 	switch {
 	case len(row.Payload) == 0:
 		return fmt.Errorf("evidenceoutbox: invalid row: payload is required")
-	case strings.TrimSpace(row.PayloadDigest) == "":
+	case actualDigest == "":
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest is required")
-	case len(row.PayloadDigest) != hex.EncodedLen(sha256.Size) || !isHexDigest(row.PayloadDigest):
+	case len(actualDigest) != hex.EncodedLen(sha256.Size) || !isHexDigest(actualDigest):
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
-	default:
-		return nil
 	}
+
+	expected := sha256.Sum256(row.Payload)
+	if !strings.EqualFold(actualDigest, hex.EncodeToString(expected[:])) {
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload")
+	}
+	return nil
 }
 
 func isHexDigest(value string) bool {
@@ -213,9 +219,10 @@ func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (i
 }
 
 func claimPending(ctx context.Context, tx *sql.Tx, limit int) ([]OutboxRow, error) {
+	// Cast payload to text so Scan bytes match the JSONB::text form hashed at enqueue.
 	rs, err := tx.QueryContext(ctx,
 		`SELECT id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
-			event_type, payload, payload_digest, delivery_status, attempts, available_at,
+			event_type, payload::text, payload_digest, delivery_status, attempts, available_at,
 			last_error, created_at, delivered_at
 		FROM ibex_core.evidence_outbox_claim_pending($1)`, limit)
 	if err != nil {
@@ -237,14 +244,16 @@ func claimPending(ctx context.Context, tx *sql.Tx, limit int) ([]OutboxRow, erro
 func scanOutboxRow(rs *sql.Rows) (OutboxRow, error) {
 	var row OutboxRow
 	var delivered sql.NullTime
+	var payload []byte
 	if err := rs.Scan(
 		&row.ID, &row.OrgID, &row.EventID, &row.AggregateID, &row.AggregateSeq,
-		&row.SchemaVersion, &row.EventType, &row.Payload, &row.PayloadDigest,
+		&row.SchemaVersion, &row.EventType, &payload, &row.PayloadDigest,
 		&row.DeliveryStatus, &row.Attempts, &row.AvailableAt, &row.LastError,
 		&row.CreatedAt, &delivered,
 	); err != nil {
 		return OutboxRow{}, fmt.Errorf("evidenceoutbox: claim scan: %w", err)
 	}
+	row.Payload = json.RawMessage(payload)
 	if delivered.Valid {
 		t := delivered.Time
 		row.DeliveredAt = &t

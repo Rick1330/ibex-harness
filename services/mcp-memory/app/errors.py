@@ -49,3 +49,10 @@ class RateLimitedError(MCPServiceError):
 
     def __init__(self, message: str = "MCP rate limit exceeded") -> None:
         super().__init__("rate_limited", message)
+
+
+class RateLimitUnavailableError(MCPServiceError):
+    """The protected-profile rate-limit authority cannot be reached."""
+
+    def __init__(self, message: str = "MCP rate limit service unavailable") -> None:
+        super().__init__("rate_limit_unavailable", message)
