@@ -398,7 +398,10 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 	// Emit assembly headers when Assemble ran (including Fallback); omit otherwise
 	// so Phase 2 failure responses stay header-identical to pre-D.2.
 	setContextAssembleResponseHeaders(p.w, p.r.Context())
-	cw := &capturingWriter{ResponseWriter: p.w, Status: mapped.HTTPStatus}
+	// Leave Status unset so apierror.WriteHTTP owns the first WriteHeader call;
+	// pre-seeding it would make CapturingWriter treat the real error header as a
+	// duplicate and the underlying net/http writer would default to 200.
+	cw := &capturingWriter{ResponseWriter: p.w}
 	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(cw)

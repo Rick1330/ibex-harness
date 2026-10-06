@@ -19,6 +19,8 @@ type agentVerifyHandler struct {
 	next     http.Handler
 }
 
+const agentVerificationUnavailableMessage = "Authentication service unavailable. The request cannot be verified."
+
 // AgentVerificationMiddleware validates X-IBEX-Agent-ID against the authenticated org.
 // Must run after AuthMiddleware and before RateLimitMiddleware.
 func AgentVerificationMiddleware(
@@ -38,17 +40,14 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := RequestIDFromContext(r.Context())
 	docsBase := ErrorDocsBaseFromContext(r.Context())
 
-	authRes, ok := auth.FromContext(r.Context())
-	if !ok || authRes == nil {
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", requestID,
-			apierror.WriteOpts{Detail: "missing auth context", DocsBase: docsBase})
+	authRes, agentHeader, ok := h.prepareAgentRequest(w, r, requestID, docsBase)
+	if !ok {
 		return
 	}
-
-	agentHeader, fe, ok := validatedAgentHeader(r.Header, requestID, docsBase)
-	if !ok {
-		writeAgentHeaderError(w, fe, requestID, docsBase)
+	if h.verifier == nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
+			agentVerificationUnavailableMessage, requestID,
+			apierror.WriteOpts{DocsBase: docsBase})
 		return
 	}
 
@@ -71,6 +70,32 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx := WithAgent(r.Context(), *rec)
 	h.next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func (h *agentVerifyHandler) prepareAgentRequest(w http.ResponseWriter, r *http.Request, requestID, docsBase string) (*auth.ValidateResult, string, bool) {
+	authRes, ok := auth.FromContext(r.Context())
+	if !ok || authRes == nil {
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
+			"Internal error", requestID,
+			apierror.WriteOpts{Detail: "missing auth context", DocsBase: docsBase})
+		return nil, "", false
+	}
+	agentHeader, fe, ok := validatedAgentHeader(r.Header, requestID, docsBase)
+	if !ok {
+		writeAgentHeaderError(w, fe, requestID, docsBase)
+		return nil, "", false
+	}
+	if authRes.AgentID != uuid.Nil && authRes.AgentID != parseAgentIDHeader(r.Header) {
+		h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{
+			ctx: r.Context(), requestID: requestID, docsBase: docsBase,
+			requestingOrg: authRes.OrgID.String(), agentID: agentHeader,
+		})
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
+			"The agent is not authorized for this organization or is not active.", requestID,
+			apierror.WriteOpts{DocsBase: docsBase})
+		return nil, "", false
+	}
+	return authRes, agentHeader, true
 }
 
 func validatedAgentHeader(h http.Header, requestID, docsBase string) (string, *apierror.FieldError, bool) {
@@ -116,14 +141,18 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			"The agent is not authorized for this organization or is not active.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentVerifyUnavailable):
-		h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
+		if h.logger != nil {
+			h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
+		}
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
+			agentVerificationUnavailableMessage, opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	default:
-		h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
+		if h.logger != nil {
+			h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
+		}
 		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
-			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
+			agentVerificationUnavailableMessage, opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	}
 }

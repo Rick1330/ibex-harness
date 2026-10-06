@@ -51,6 +51,30 @@ func TestValidateAgent_ForbiddenOrgMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateAgent_TokenBoundAgentMismatchIsDenied(t *testing.T) {
+	t.Parallel()
+	orgID := uuid.New().String()
+	boundAgentID := uuid.New().String()
+	requestedAgentID := uuid.New().String()
+	callerCtx := ContextWithCaller(context.Background(), CallerContext{
+		OrgID: orgID, AgentID: boundAgentID, TokenID: "t",
+	})
+	s := &Server{
+		metrics: testAuthRegistry(),
+		agentService: &fakeAgentAPI{
+			view: service.AgentView{ID: requestedAgentID, OrgID: orgID, Status: "active"},
+		},
+	}
+
+	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
+		AgentId: requestedAgentID,
+		OrgId:   orgID,
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("code: %v", status.Code(err))
+	}
+}
+
 func TestValidateAgent_InvalidOrgId(t *testing.T) {
 	t.Parallel()
 

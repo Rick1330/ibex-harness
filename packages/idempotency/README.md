@@ -8,6 +8,8 @@ This is a shared package, not a deployable process. Consumers must preserve its 
 
 Status is **implemented in this repository** when source and tests are present; this README does not claim hosted production readiness. Changes that alter a cross-service contract require an ADR, consumer updates, and negative/tenant-isolation tests.
 
+The store rejects claims, commits, and releases without a non-zero `org_id`, non-blank key, or non-blank request fingerprint. This package-level guard is deliberate defense in depth: callers must not rely only on HTTP validation to preserve tenant scope.
+
 ## Verification
 
 From the repository root:

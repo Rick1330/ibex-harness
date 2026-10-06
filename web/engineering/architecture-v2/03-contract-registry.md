@@ -1,6 +1,6 @@
 # Contract Registry and Ownership
 
-**Status:** `specified`; inventory must be completed before new boundary work.
+**Status:** `specified`; inventory must be completed before new boundary work. The initial G0 registry packet is proposed in ADR-0084 and tracked by issue #933; no G0 exit is claimed.
 
 ## Contract hierarchy
 
@@ -24,6 +24,17 @@
 | Idempotency/deadline/cancellation | Where applicable |
 | Tests and evidence link | Yes |
 | Deprecation/support window | Public contracts |
+|---|---|
+
+## Proposed G0 registrations
+
+The following registrations are the first review packet for the principal and replay foundation. They remain `proposed` until G0 owners approve the authority, compatibility, profile, and evidence fields.
+
+| Contract ID and owner | Source path and generated artifacts | Version / status | Scope and failure behavior | Tests and evidence |
+|---|---|---|---|---|
+| `principal-context.v1` — Auth/Proxy | `packages/proto/proto/ibex/auth/v1/auth.proto`; proxy/auth request context | v1 / proposed | Verified org and subject context; token-bound agent mismatch denies before lookup; missing verifier fails staging/production router construction | `agent_middleware_test.go`, `validate_agent_test.go`, `router_must_test.go`; profile evidence pending |
+| `run-envelope.v1` — Architecture/Proxy | Architecture-v2 principal/run contract; additive boundary mapping pending G0 | v1 / specified, not implemented | Correlation and lineage only; resume/retry revalidates principal, policy, resource, and approval state | Cross-boundary contract matrix pending |
+| `idempotency-operation.v1` — Platform/Data | Existing operation-specific idempotency stores; durable schema pending G0 | v1 / proposed | Tenant-bound key and canonical body hash; same body replays, changed body conflicts, ambiguous completion reconciles by operation ID | Operation-specific crash/replay suites pending |
 
 ## Compatibility rules
 

@@ -76,7 +76,8 @@ message ValidateTokenResponse {
   // Permission bitmap (64 bits). See packages/permissions and ADR-0009.
   int64 permissions = 2;
 
-  // Present when the token is scoped to an agent.
+  // Present when the token is scoped to an agent. AuthService callers must
+  // reject a selected agent that does not equal this binding.
   optional string agent_id = 3;
 
   // Present when the token is scoped to a user.
@@ -90,7 +91,8 @@ message ValidateTokenResponse {
 }
 
 message ValidateAgentRequest {
-  // UUID string for the agent being verified.
+  // UUID string for the agent being verified. When the caller token is
+  // agent-scoped, this must equal ValidateTokenResponse.agent_id.
   string agent_id = 1;
 
   // UUID string extracted from caller token claims (tenant scope).

@@ -71,7 +71,7 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, 1, now, "", now, nil)
+		[]byte(`{}`), "0000000000000000000000000000000000000000000000000000000000000000", StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(2).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -147,7 +147,7 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		[]byte(`{}`), "digest", StatusInFlight, tc.attempts, now, "", now, nil)
+		[]byte(`{}`), "0000000000000000000000000000000000000000000000000000000000000000", StatusInFlight, tc.attempts, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 
@@ -163,6 +163,71 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 	}
 	if res.Failed != tc.wantFailed || res.Poisoned != tc.wantPoisoned {
 		t.Fatalf("res=%+v want failed=%d poisoned=%d", res, tc.wantFailed, tc.wantPoisoned)
+	}
+}
+
+func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	d := &stubDeliverer{}
+	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := uuid.New()
+	eventID := uuid.New()
+	now := time.Now()
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{
+		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
+		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"last_error", "created_at", "delivered_at",
+	}).AddRow(id, uuid.Nil, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
+		[]byte(`{}`), "0000000000000000000000000000000000000000000000000000000000000000", StatusInFlight, 1, now, "", now, nil)
+	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`evidence_outbox_mark_failure`).
+		WithArgs(id, 1, StatusPoison, "evidenceoutbox: invalid row: org_id is required", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
+	mock.ExpectCommit()
+
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPoisonedWithoutDelivery(t, res, d)
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
+	t.Helper()
+	if res.Delivered != 0 {
+		t.Fatalf("delivered=%d want 0", res.Delivered)
+	}
+	if res.Failed != 0 {
+		t.Fatalf("failed=%d want 0", res.Failed)
+	}
+	if res.Poisoned != 1 {
+		t.Fatalf("poisoned=%d want 1", res.Poisoned)
+	}
+	if d.n != 0 {
+		t.Fatalf("deliveries=%d want 0", d.n)
+	}
+}
+
+func TestUnit_ValidateOutboxRow_RejectsMalformedDigest(t *testing.T) {
+	t.Parallel()
+	row := OutboxRow{ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1, SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted, Payload: []byte(`{}`), PayloadDigest: "not-a-sha256-digest"}
+	if err := validateOutboxRow(row); err == nil || !strings.Contains(err.Error(), "payload_digest") {
+		t.Fatalf("err=%v want payload digest validation error", err)
 	}
 }
 

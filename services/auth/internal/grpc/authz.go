@@ -33,6 +33,7 @@ type CallerContext struct {
 	OrgID       string
 	TokenID     string
 	UserID      string
+	AgentID     string
 	Permissions int64
 }
 
@@ -90,7 +91,8 @@ func authenticatePAT(ctx context.Context, validator tokenValidator) (context.Con
 	}
 	return ContextWithCaller(ctx, CallerContext{
 		OrgID: resp.GetOrgId(), TokenID: optionalString(resp.TokenId),
-		UserID: optionalString(resp.UserId), Permissions: resp.GetPermissions(),
+		UserID: optionalString(resp.UserId), AgentID: optionalString(resp.AgentId),
+		Permissions: resp.GetPermissions(),
 	}), nil
 }
 

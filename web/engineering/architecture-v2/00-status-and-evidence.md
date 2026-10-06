@@ -26,6 +26,10 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 | DecisionService/GLiNER | `design-intent` | No runtime, contract, benchmark, registry, or acceptance evidence exists. |
 | Graph/A2A/marketplace/sandbox | `deferred` | These are not current dependencies. |
 
+## G0 review packet
+
+ADR-0084 and issue #933 propose the first G0/G1/G2 contract packet for verified principal propagation, token-bound agent selection, protected-profile verifier readiness, and tenant-bound idempotency semantics. The packet is **proposed**, not accepted: no implementation or local test result may be promoted to `shipped-accepted` until named owners approve the contract, profile assumptions, negative-test evidence, limitations, and review date.
+
 ## Ledger template
 
 | Claim | Status | Source | Evidence | Profile | Owner | Verified | Limitations | Review |

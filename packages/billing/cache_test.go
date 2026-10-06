@@ -204,7 +204,9 @@ func setupEvictionFixture(t *testing.T) (
 	orgA = uuid.New()
 	orgB = uuid.New()
 	orgC = uuid.New()
-	block := make(chan struct{})
+	// Buffer the readiness signal so the loader cannot drop it when the test
+	// goroutine has not reached its receive yet under the race detector.
+	block := make(chan struct{}, 1)
 	release = make(chan struct{})
 	loader = &blockingBudgetLoader{
 		snaps: map[uuid.UUID]BudgetSnapshot{

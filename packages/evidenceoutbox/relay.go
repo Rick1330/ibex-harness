@@ -3,12 +3,16 @@ package evidenceoutbox
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 // Deliverer delivers one outbox row to a durable projection (ClickHouse, Redis, etc.).
@@ -107,23 +111,80 @@ func (r *Relay) claimBatch(ctx context.Context) ([]OutboxRow, error) {
 }
 
 func (r *Relay) deliverOne(ctx context.Context, row OutboxRow, out *RelayBatchResult) error {
+	if err := validateOutboxRow(row); err != nil {
+		return r.recordDeliveryFailure(ctx, row, out, err)
+	}
 	if err := r.deliverer.Deliver(ctx, row); err != nil {
-		if markErr := r.markFailure(ctx, row, err); markErr != nil {
-			return markErr
-		}
-		// row.Attempts is already the post-claim count from claimPending.
-		if row.Attempts >= r.maxAttempts {
-			out.Poisoned++
-		} else {
-			out.Failed++
-		}
-		return nil
+		return r.recordDeliveryFailure(ctx, row, out, err)
 	}
 	if err := r.markDelivered(ctx, row); err != nil {
 		return err
 	}
 	out.Delivered++
 	return nil
+}
+
+func (r *Relay) recordDeliveryFailure(ctx context.Context, row OutboxRow, out *RelayBatchResult, err error) error {
+	if markErr := r.markFailure(ctx, row, err); markErr != nil {
+		return markErr
+	}
+	// row.Attempts is already the post-claim count from claimPending.
+	if row.Attempts >= r.maxAttempts {
+		out.Poisoned++
+	} else {
+		out.Failed++
+	}
+	return nil
+}
+
+func validateOutboxRow(row OutboxRow) error {
+	if err := validateOutboxIdentity(row); err != nil {
+		return err
+	}
+	if err := validateOutboxPayload(row); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOutboxIdentity(row OutboxRow) error {
+	switch {
+	case row.ID == uuid.Nil:
+		return fmt.Errorf("evidenceoutbox: invalid row: id is required")
+	case row.OrgID == uuid.Nil:
+		return fmt.Errorf("evidenceoutbox: invalid row: org_id is required")
+	case row.EventID == uuid.Nil:
+		return fmt.Errorf("evidenceoutbox: invalid row: event_id is required")
+	case strings.TrimSpace(row.AggregateID) == "":
+		return fmt.Errorf("evidenceoutbox: invalid row: aggregate_id is required")
+	case row.AggregateSeq <= 0:
+		return fmt.Errorf("evidenceoutbox: invalid row: aggregate_seq must be positive")
+	case strings.TrimSpace(row.SchemaVersion) == "":
+		return fmt.Errorf("evidenceoutbox: invalid row: schema_version is required")
+	case strings.TrimSpace(row.EventType) == "":
+		return fmt.Errorf("evidenceoutbox: invalid row: event_type is required")
+	default:
+		return nil
+	}
+}
+
+func validateOutboxPayload(row OutboxRow) error {
+	switch {
+	case len(row.Payload) == 0:
+		return fmt.Errorf("evidenceoutbox: invalid row: payload is required")
+	case strings.TrimSpace(row.PayloadDigest) == "":
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest is required")
+	case len(row.PayloadDigest) != hex.EncodedLen(sha256.Size) || !isHexDigest(row.PayloadDigest):
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
+	default:
+		return nil
+	}
+}
+
+func isHexDigest(value string) bool {
+	var decoded [sha256.Size]byte
+	_, err := hex.Decode(decoded[:], []byte(value))
+	return err == nil
 }
 
 // RecoverInFlight returns stale in_flight rows to pending for crash/replay.

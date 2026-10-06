@@ -3,7 +3,9 @@ package idempotency
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,7 +75,10 @@ type Store interface {
 
 type noopStore struct{}
 
-func (noopStore) Claim(_ context.Context, _ Token, _ Fingerprint) (Outcome, error) {
+func (noopStore) Claim(_ context.Context, tok Token, fingerprint Fingerprint) (Outcome, error) {
+	if err := validateClaim(tok, fingerprint); err != nil {
+		return Outcome{}, err
+	}
 	return Outcome{Kind: KindMiss}, nil
 }
 
@@ -115,6 +120,24 @@ func (c Config) withDefaults() Config {
 
 // ErrUnsupportedVersion is returned when a Redis value has an unknown schema version.
 var ErrUnsupportedVersion = fmt.Errorf("idempotency: unsupported record version")
+
+// ErrInvalidToken indicates that an idempotency claim is missing its tenant,
+// key, or request fingerprint. Stores fail closed rather than creating an
+// unscoped or ambiguous replay record.
+var ErrInvalidToken = errors.New("idempotency: invalid token")
+
+func validateClaim(tok Token, fingerprint Fingerprint) error {
+	if tok.OrgID == uuid.Nil {
+		return fmt.Errorf("%w: org_id is required", ErrInvalidToken)
+	}
+	if strings.TrimSpace(tok.Key) == "" {
+		return fmt.Errorf("%w: key is required", ErrInvalidToken)
+	}
+	if strings.TrimSpace(string(fingerprint)) == "" {
+		return fmt.Errorf("%w: fingerprint is required", ErrInvalidToken)
+	}
+	return nil
+}
 
 // RedisKey returns the org-scoped Redis key for tok.
 // Format: idempotency:{org_id}:{key}

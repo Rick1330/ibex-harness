@@ -44,6 +44,9 @@ func NewRedisStore(client redis.UniversalClient, cfg Config) (*RedisStore, error
 
 // Claim implements Store.
 func (rs *RedisStore) Claim(ctx context.Context, tok Token, fingerprint Fingerprint) (Outcome, error) {
+	if err := validateClaim(tok, fingerprint); err != nil {
+		return Outcome{}, err
+	}
 	own := pendingOwner{redisKey: RedisKey(tok), fingerprint: fingerprint}
 	out, err := rs.tryClaimPending(ctx, own)
 	if err != nil {
@@ -104,6 +107,9 @@ func (rs *RedisStore) tryClaimPending(ctx context.Context, own pendingOwner) (Ou
 
 // Commit implements Store.
 func (rs *RedisStore) Commit(ctx context.Context, tok Token, rec Record) error {
+	if err := validateClaim(tok, rec.Fingerprint); err != nil {
+		return err
+	}
 	own := pendingOwner{redisKey: RedisKey(tok), fingerprint: rec.Fingerprint}
 	rec.Version = CurrentRecordVersion
 	rec.State = StateCompleted
@@ -123,6 +129,9 @@ func (rs *RedisStore) Commit(ctx context.Context, tok Token, rec Record) error {
 
 // Release implements Store.
 func (rs *RedisStore) Release(ctx context.Context, tok Token, fingerprint Fingerprint) error {
+	if err := validateClaim(tok, fingerprint); err != nil {
+		return err
+	}
 	own := pendingOwner{redisKey: RedisKey(tok), fingerprint: fingerprint}
 	err := rs.casPending(ctx, own, func(pipe redis.Pipeliner) error {
 		pipe.Del(ctx, own.redisKey)
