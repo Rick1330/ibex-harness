@@ -109,4 +109,7 @@ jobs:
           echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test deployed Pages preview
+        env:
+          # Keep in sync with web/scripts/extract-search-index.mjs default (5.5 MiB).
+          SEARCH_INDEX_MAX_BYTES: "5500000"
         run: bash "$GITHUB_WORKSPACE/.github/scripts/web-smoke.sh" "${{ steps.deploy.outputs.base_url }}"
