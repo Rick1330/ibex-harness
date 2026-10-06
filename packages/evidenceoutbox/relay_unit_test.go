@@ -201,8 +201,17 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Delivered != 0 || res.Failed != 0 || res.Poisoned != 1 || d.n != 0 {
-		t.Fatalf("res=%+v deliveries=%d want poisoned=1 and no delivery", res, d.n)
+	if res.Delivered != 0 {
+		t.Fatalf("delivered=%d want 0", res.Delivered)
+	}
+	if res.Failed != 0 {
+		t.Fatalf("failed=%d want 0", res.Failed)
+	}
+	if res.Poisoned != 1 {
+		t.Fatalf("poisoned=%d want 1", res.Poisoned)
+	}
+	if d.n != 0 {
+		t.Fatalf("deliveries=%d want 0", d.n)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

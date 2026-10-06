@@ -1,13 +1,3 @@
-# Scorecard/OSV: golang.org/x/crypto module-level openpgp advisory (GO-2026-5932).
-# This repo imports only argon2 via packages/crypto (ADR-0010). govulncheck
-# confirms no reachable impact; see ADR-0008.
-
-[[IgnoredVulns]]
-id = "GO-2026-5932"
-# Revisit when golang.org/x/crypto publishes a fixed openpgp release or we drop the module.
-ignoreUntil = 2026-12-01
-reason = "Unreachable openpgp subpackage; only golang.org/x/crypto/argon2 is used (ADR-0008, ADR-0010). Verified by govulncheck."
-
 # braces stack-exhaustion advisory (GHSA-vfj7-8cjw-p6xm): npm has no patched
 # release (OSV reports fixed version "--"). It is reachable only through
 # console development tooling (eslint-config-next and shadcn), not production

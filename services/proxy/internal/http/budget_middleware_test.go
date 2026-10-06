@@ -65,6 +65,11 @@ func serveBudget(t *testing.T, cache *billing.Cache, orgID uuid.UUID) *httptest.
 func TestBudgetMiddleware_nilCacheFailClosed503(t *testing.T) {
 	t.Parallel()
 	rr := serveBudget(t, nil, uuid.New())
+	assertBudgetUnavailable(t, rr)
+}
+
+func assertBudgetUnavailable(t *testing.T, rr *httptest.ResponseRecorder) {
+	t.Helper()
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code=%d", rr.Code)
 	}
@@ -94,12 +99,7 @@ func TestBudgetMiddleware_loaderErrorFailClosed503(t *testing.T) {
 	t.Parallel()
 	cache := newBudgetCache(t, stubBudgetLoader{err: errors.New("db down")})
 	rr := serveBudget(t, cache, uuid.New())
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("code=%d", rr.Code)
-	}
-	if !containsCode(rr.Body.String(), string(apierror.CodeServiceDegraded)) {
-		t.Fatalf("body=%s", rr.Body.String())
-	}
+	assertBudgetUnavailable(t, rr)
 }
 
 func TestBudgetMiddleware_allowed(t *testing.T) {

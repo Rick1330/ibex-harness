@@ -138,6 +138,16 @@ func (r *Relay) recordDeliveryFailure(ctx context.Context, row OutboxRow, out *R
 }
 
 func validateOutboxRow(row OutboxRow) error {
+	if err := validateOutboxIdentity(row); err != nil {
+		return err
+	}
+	if err := validateOutboxPayload(row); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOutboxIdentity(row OutboxRow) error {
 	switch {
 	case row.ID == uuid.Nil:
 		return fmt.Errorf("evidenceoutbox: invalid row: id is required")
@@ -153,6 +163,13 @@ func validateOutboxRow(row OutboxRow) error {
 		return fmt.Errorf("evidenceoutbox: invalid row: schema_version is required")
 	case strings.TrimSpace(row.EventType) == "":
 		return fmt.Errorf("evidenceoutbox: invalid row: event_type is required")
+	default:
+		return nil
+	}
+}
+
+func validateOutboxPayload(row OutboxRow) error {
+	switch {
 	case len(row.Payload) == 0:
 		return fmt.Errorf("evidenceoutbox: invalid row: payload is required")
 	case strings.TrimSpace(row.PayloadDigest) == "":
