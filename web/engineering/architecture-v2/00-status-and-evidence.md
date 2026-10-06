@@ -32,7 +32,7 @@ ADR-0084 and issue #935 propose the first G0/G1/G2 contract packet for verified 
 
 The packet's required acceptance artifact is a dated owner decision linked to the exact source commit and evidence bundle. It must identify the supported deployment profile and required dependencies; freeze authority and trust labels; define errors, deadlines, cancellation, retry, idempotency, replay, redaction, retention, tombstone, and recovery semantics; and list the review/expiry date. A PR merge is not an acceptance artifact.
 
-Until that artifact exists, the following remain blocked as implementation-ready: repo-wide `PrincipalContext`/`RunEnvelope` migration, durable budget reservation, provider manifest/adapters, typed memory lifecycle, MCP governance, control-plane effects, and recovery certification.
+Until that artifact exists, the following remain blocked as implementation-ready: repo-wide `PrincipalContext`/`RunEnvelope` migration, durable budget reservation, provider manifest/adapters, typed memory lifecycle, MCP governance, control-plane effects, and recovery certification. This draft may carry bounded safety hardening that does not create a new authority boundary: the temporal memory read fence and protected-profile MCP rate-limit failure mode are partial dispositions only, with focused local tests but no gap-closure or production-acceptance claim.
 
 ## Ledger template
 

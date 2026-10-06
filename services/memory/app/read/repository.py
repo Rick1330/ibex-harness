@@ -45,6 +45,8 @@ WHERE m.org_id = :org_id
   AND m.confidence >= :min_confidence
   AND m.status = 'active'
   AND m.deleted_at IS NULL
+  AND m.valid_from <= CURRENT_TIMESTAMP
+  AND (m.valid_until IS NULL OR m.valid_until > CURRENT_TIMESTAMP)
 """
 
 

@@ -22,6 +22,8 @@ FROM (
       AND agent_id = :agent_id
       AND status = 'active'
       AND deleted_at IS NULL
+      AND valid_from <= CURRENT_TIMESTAMP
+      AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
       AND embedding IS NOT NULL
     ORDER BY embedding <=> CAST(:query AS vector)
     LIMIT :limit

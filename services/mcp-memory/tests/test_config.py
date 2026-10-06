@@ -59,6 +59,7 @@ def test_production_rejects_loopback_auth_server(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://localhost:8080")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="loopback"):
         get_settings()
@@ -68,6 +69,7 @@ def test_production_accepts_public_https(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     get_settings.cache_clear()
     s = get_settings()
     assert s.resource_url.startswith("https://")
@@ -79,6 +81,7 @@ def test_production_allows_empty_memory_http_url(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "")
     get_settings.cache_clear()
     assert get_settings().memory_http_url == ""
@@ -88,6 +91,7 @@ def test_production_rejects_insecure_memory_http_url(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "http://memory.example.com")
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="IBEX_MEMORY_HTTP_URL"):
@@ -98,6 +102,7 @@ def test_production_rejects_loopback_memory_http_url(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "https://127.0.0.1:8080")
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="loopback"):
@@ -108,15 +113,25 @@ def test_production_accepts_public_memory_https(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     monkeypatch.setenv("IBEX_MEMORY_HTTP_URL", "https://memory.example.com")
     get_settings.cache_clear()
     assert get_settings().memory_http_url == "https://memory.example.com"
+
+
+def test_protected_profile_requires_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "staging")
+    monkeypatch.delenv("IBEX_MCP_REDIS_URL", raising=False)
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="REDIS_URL"):
+        get_settings()
 
 
 def test_production_rejects_loopback_ipv4_range(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://127.0.0.2/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="loopback"):
         get_settings()
@@ -126,6 +141,7 @@ def test_production_rejects_localhost_trailing_dot(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
     monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://localhost./")
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "redis://redis.example.com:6379/0")
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="loopback"):
         get_settings()

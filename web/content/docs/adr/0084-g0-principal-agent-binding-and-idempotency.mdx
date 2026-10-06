@@ -33,6 +33,15 @@ The first post-G0 candidate implementation boundary is deliberately narrow, but 
 
 No item in this ADR authorizes a durable `RunEnvelope`, atomic budget reservation, provider manifest, typed memory lifecycle, MCP governance change, control-plane executor, or other new side-effect boundary.
 
+### 0.1 Bounded safety hardening carried by the draft
+
+To accelerate the highest-value risk reduction without creating a new authority boundary, the draft implementation also carries two partial hardening slices:
+
+- Memory vector, full-text, final-hydration, and hot-cache reads enforce the existing half-open `[valid_from, valid_until)` interval in addition to active-status and tombstone predicates.
+- MCP staging/production configuration requires Redis for the org limiter; Redis failures raise a typed `rate_limit_unavailable` result instead of admitting a protected-profile tool call. Development retains the explicit no-Redis exception.
+
+These changes are local safety fences, backed by focused tests. They do not close typed memory provenance/checkpoints, MCP audit durability/operator boundaries, or the broader G0/G1/G2/G4 acceptance gates; the status ledger records them as partial dispositions.
+
 ### 1. Verified principal authority
 
 - `org_id`, subject identity, token scope, permissions, and resource ownership are derived from AuthService and policy evaluation.

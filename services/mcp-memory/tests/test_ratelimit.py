@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from redis.exceptions import RedisError
 
+from app.errors import RateLimitUnavailableError
 from app.ratelimit import (
     INCR_EXPIRE_LUA,
     KEY_TTL_SECONDS,
@@ -104,6 +105,16 @@ async def test_redis_limiter_fail_open_on_error() -> None:
     limiter = RedisMcpLimiter(redis, default_rpm=1, owned=False)
     result = await limiter.check(ORG)
     assert result.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_redis_limiter_fail_closed_on_protected_profile_error() -> None:
+    script = AsyncMock(side_effect=RedisError("down"))
+    redis = MagicMock()
+    redis.register_script.return_value = script
+    limiter = RedisMcpLimiter(redis, default_rpm=1, owned=False, fail_closed=True)
+    with pytest.raises(RateLimitUnavailableError):
+        await limiter.check(ORG)
 
 
 def test_build_noop_when_redis_unset() -> None:
