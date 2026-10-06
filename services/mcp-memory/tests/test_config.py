@@ -121,7 +121,7 @@ def test_production_accepts_public_memory_https(monkeypatch: pytest.MonkeyPatch)
 
 def test_protected_profile_requires_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IBEX_ENV", "staging")
-    monkeypatch.delenv("IBEX_MCP_REDIS_URL", raising=False)
+    monkeypatch.setenv("IBEX_MCP_REDIS_URL", "")
     get_settings.cache_clear()
     with pytest.raises(ValueError, match="REDIS_URL"):
         get_settings()
