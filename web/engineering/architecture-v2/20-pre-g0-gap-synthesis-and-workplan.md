@@ -93,6 +93,8 @@ The following interfaces are the shared seams. They are contract boundaries, not
 
 ### Explicit conflicts and decisions required
 
+Candidate defaults and the owner/evidence fields needed to resolve these conflicts are in the [G0 owner decision recommendations](21-g0-owner-decision-recommendations.md). They are proposals only; none is an accepted decision or implementation authorization.
+
 - **G0 “proposed” versus “accepted”:** ADRs, architecture status, and PR merges conflict only if treated as acceptance. Resolution: status remains unknown/pending until the ledger artifact is owner-approved with evidence and expiry.
 - **Token `agent_id` verified versus advisory:** repository comments and PR #934 support strict binding. Do not weaken it without an explicit product/security decision.
 - **Caller IDs versus verified claims:** context, worker, MCP, and evidence currently carry different scalar subsets. Resolution: selectors remain non-authoritative; only generated/server-bound PrincipalContext is authoritative.

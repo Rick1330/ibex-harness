@@ -21,7 +21,7 @@
 
 No new service/package boundary, database lifecycle, provider adapter, write-capable tool, budget-enforcement change, or model integration may be treated as implementation-ready before the documentation and contract freeze is accepted.
 
-The initial review packet was tracked by issue #935 and ADR-0084. Issue #935 was closed by PR #936; neither that merge nor closure records G0 owner acceptance. The subsequent eight-area source audit and docs-only preparation are tracked by [issue #939](https://github.com/Rick1330/ibex-harness/issues/939), with the complete [pre-G0 synthesis and workplan](20-pre-g0-gap-synthesis-and-workplan.md) and [source-audit index](../research/ibex-preflight-2026-10/README.md). These documents are review inputs only; they do not exit G0 or authorize gated runtime work.
+The initial review packet was tracked by issue #935 and ADR-0084. Issue #935 was closed by PR #936; neither that merge nor closure records G0 owner acceptance. The subsequent eight-area source audit and docs-only preparation are tracked by [issue #939](https://github.com/Rick1330/ibex-harness/issues/939), with the complete [pre-G0 synthesis and workplan](20-pre-g0-gap-synthesis-and-workplan.md), [proposal-only owner decision worksheet](21-g0-owner-decision-recommendations.md), and [source-audit index](../research/ibex-preflight-2026-10/README.md). These documents are review inputs only; they do not exit G0 or authorize gated runtime work.
 
 ## G0 exit criteria
 
