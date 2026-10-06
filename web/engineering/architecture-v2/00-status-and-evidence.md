@@ -28,7 +28,11 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 
 ## G0 review packet
 
-ADR-0084 and issue #933 propose the first G0/G1/G2 contract packet for verified principal propagation, token-bound agent selection, protected-profile verifier readiness, and tenant-bound idempotency semantics. The packet is **proposed**, not accepted: no implementation or local test result may be promoted to `shipped-accepted` until named owners approve the contract, profile assumptions, negative-test evidence, limitations, and review date.
+ADR-0084 and issue #935 propose the first G0/G1/G2 contract packet for verified principal propagation, token-bound agent selection, protected-profile verifier readiness, tenant-bound idempotency, evidence acknowledgement/redaction, and relay/sink profile boundaries. The packet is **proposed**, not accepted: no implementation or local test result may be promoted to `shipped-accepted` until named auth/policy, contract, evidence/security, and deployment owners approve the contract, profile assumptions, negative-test evidence, limitations, and review date.
+
+The packet's required acceptance artifact is a dated owner decision linked to the exact source commit and evidence bundle. It must identify the supported deployment profile and required dependencies; freeze authority and trust labels; define errors, deadlines, cancellation, retry, idempotency, replay, redaction, retention, tombstone, and recovery semantics; and list the review/expiry date. A PR merge is not an acceptance artifact.
+
+Until that artifact exists, the following remain blocked as implementation-ready: repo-wide `PrincipalContext`/`RunEnvelope` migration, durable budget reservation, provider manifest/adapters, typed memory lifecycle, MCP governance, control-plane effects, and recovery certification.
 
 ## Ledger template
 

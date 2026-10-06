@@ -21,4 +21,10 @@
 
 No new service/package boundary, database lifecycle, provider adapter, write-capable tool, budget-enforcement change, or model integration may be treated as implementation-ready before the documentation and contract freeze is accepted.
 
-The first review packet is tracked by issue #933 and ADR-0084. It proposes the token-bound agent rule, protected-profile verifier readiness, and initial tenant-bound idempotency semantics. This reference records the packet location only; it is not a G0 exit or an authorization to bypass the remaining gates.
+The first review packet is tracked by issue #935 and ADR-0084. It proposes the token-bound agent rule, protected-profile verifier readiness, tenant-bound idempotency semantics, evidence acknowledgement/redaction, and a one-sink relay/recovery pilot boundary. This reference records the packet location only; it is not a G0 exit or an authorization to bypass the remaining gates.
+
+## G0 exit criteria for issue #935
+
+G0 exits only when named auth/policy, contract, evidence/security, and deployment owners approve the packet and `00-status-and-evidence.md` records the exact source commit, profile/dependencies, evidence artifact, limitations, owner/date, and review date. The accepted packet must resolve PrincipalContext field requiredness, PolicySnapshot authority/epoch, RunEnvelope lineage, transport trust, idempotency/replay/conflict, redaction, acknowledgement/uncertified behavior, relay/sink dedupe and tombstone fencing, and compatibility/migration rules.
+
+Until then, the only permitted work on issue #935 is documentation, review evidence, and contract/test-matrix preparation. After exit, the first eligible implementation seams are limited to one additive proxy-to-context PrincipalContext mapping, one evidence persistence/idempotency/redaction slice, and one operational relay/sink/recovery pilot; each still requires a separate owner/status-ledger decision and its applicable G1/G2/G4 gate. None of these eligibility statements authorize a durable RunEnvelope, atomic budget reservation, provider expansion, typed memory lifecycle, MCP governance, or control-plane side effects.

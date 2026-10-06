@@ -7,10 +7,10 @@ description: "Proposed G0 contract packet for verified principal propagation, to
 
 # ADR-0084: G0 principal, agent binding, and idempotency contract
 
-- **Status:** proposed for review; implementation tracked by [#933](https://github.com/Rick1330/ibex-harness/issues/933)
+- **Status:** proposed for owner review; implementation tracked by [#935](https://github.com/Rick1330/ibex-harness/issues/935); G0 exit is pending
 - **Date:** 2026-10-05
 - **Owners:** Auth/Proxy owners; architecture and security reviewers required
-- **Scope:** G0/G1/G2 foundation only
+- **Scope:** G0/G1/G2 foundation and the evidence contract required before the first bounded runtime seams
 - **Supersedes:** none; extends the specified contracts in architecture-v2
 
 ## Context
@@ -20,6 +20,18 @@ IBEX already validates bearer tokens, derives an organization and permission bit
 The architecture-v2 roadmap makes G0 a hard documentation and contract freeze. New database lifecycles, service/package boundaries, budget enforcement changes, provider adapters, and write-capable effects remain blocked until the freeze is accepted. This ADR is therefore a proposal and implementation anchor, not a claim that G0 has exited.
 
 ## Decision
+
+### 0. Review state and decision boundary
+
+This document is the **proposed G0 contract packet** for issue #935. It is intentionally not an acceptance record. A merge, green local test, or author statement does not approve G0. Named owners must approve the authority matrix, contract registry, deployment profile, evidence artifact, limitations, and review date; the status ledger must record that decision before any conditional runtime work below is implementation-ready.
+
+The first post-G0 candidate implementation boundary is deliberately narrow, but each seam remains subject to a separate owner/status-ledger decision and its applicable G1/G2/G4 evidence gate:
+
+1. one additive, authenticated proxy-to-context `PrincipalContext v1` mapping;
+2. one operation-specific evidence persistence/idempotency/redaction slice; and
+3. one operational evidence relay with one tenant-filtered idempotent sink and recovery evidence.
+
+No item in this ADR authorizes a durable `RunEnvelope`, atomic budget reservation, provider manifest, typed memory lifecycle, MCP governance change, control-plane executor, or other new side-effect boundary.
 
 ### 1. Verified principal authority
 
@@ -55,6 +67,26 @@ This ADR freezes the semantics for the first implementation slice; it does not a
 - Retry attempts belong to one logical run but receive distinct attempt identity.
 - TTL, retention, crash recovery, cancellation, and deletion behavior must be specified per operation before a durable migration is accepted.
 
+### 5. Evidence acknowledgement and redaction boundary
+
+- PostgreSQL evidence/outbox persistence is the canonical authority for the selected profile. Redis, ClickHouse, object storage, queues, and telemetry exports are not authorization or acknowledgement authorities.
+- Every evidence mutation has a stable operation scope, tenant-bound idempotency key, canonical body hash, operation ID, event ID, aggregate sequence/version, schema version, and payload digest. A same-body retry returns or reconciles the existing identifiers; a body conflict never performs a second effect.
+- The evidence owner must choose one profile-specific acknowledgement policy before runtime work: durable evidence before client acknowledgement, or an explicitly machine-readable `uncertified` outcome with durable retry state. Silent post-response drop is not an accepted outcome for an evidence-required profile.
+- Redaction validation is authoritative before serialization/persistence. Bearer/API tokens, credentials, prompts, memory bodies, embeddings, and unredacted PII are forbidden in ordinary event payloads, logs, and outbox rows. Approved classified references must be deterministic and separately governed.
+- A relay is at-least-once. The selected sink must deduplicate by stable event identity plus aggregate version/sequence, enforce tenant predicates, reject stale or tombstoned replay, and expose retry/poison/checkpoint state.
+
+### 6. Authority, trust, and profile matrix
+
+| Contract area | Authority | Trusted input | Failure behavior | First bounded seam |
+|---|---|---|---|---|
+| Verified principal | AuthService/enforcement plane | Authenticated token validation and policy result | Deny or typed dependency failure; no downstream work | Proxy to context |
+| Policy snapshot | Named policy authority, immutable ID/digest and epoch | Verified server-side snapshot | Deny/503 when missing, stale, or contradictory | Carry linkage only |
+| Run lineage | Enforcement plane | Server-minted run/attempt identifiers | Correlation only; never grants permission | No durable RunEnvelope |
+| Evidence lifecycle | PostgreSQL evidence/outbox authority | Validated, redacted event envelope | Atomic failure or explicit uncertified outcome | PersistRun and relay |
+| Projection/sink | Selected sink with tenant predicates and dedupe | Relay-validated event envelope | Retry/poison; no resurrection after tombstone | One sink pilot |
+
+The accepted profile, owners, dependency assumptions, trust labels, compatibility class, and review/expiry date must be recorded in the architecture-v2 status ledger. Unknown or unavailable authority is not equivalent to an empty result.
+
 ## Failure and privacy semantics
 
 - Identity/policy mismatch: stable existence-safe authorization denial.
@@ -69,14 +101,15 @@ The agent-binding enforcement is backward-compatible for organization-scoped tok
 
 Rollout order:
 
-1. Review and accept G0 contract packet.
-2. Ship the proxy/AuthService enforcement and regression tests.
-3. Observe denials and configuration failures in development/staging.
-4. Promote only with cross-tenant, anti-enumeration, and zero-downstream-call evidence.
+1. Review and accept the G0 contract packet, recording the decision in the status ledger.
+2. Separately approve and implement the proxy-to-context seam and evidence persistence contract as reviewable changes.
+3. Separately approve and wire one relay/sink profile only after event identity, redaction, acknowledgement, and replay semantics pass their gates.
+4. Observe denials, configuration failures, retries, poison rows, and uncertified outcomes in the named profile.
+5. Promote only with cross-tenant, anti-enumeration, zero-downstream-call, crash/replay, redaction, and recovery evidence.
 
 ## Evidence and acceptance
 
-This proposal can move to `accepted` only after named owners approve the G0 packet and the status ledger records the profile, commit, test artifacts, dependency assumptions, limitations, and review date. Local unit tests alone do not establish hosted or HA acceptance.
+This proposal can move to `accepted` only after named owners approve the G0 packet and the status ledger records the profile, commit, test artifacts, dependency assumptions, limitations, and review date. The acceptance record must identify the auth/policy, contract, evidence/security, and deployment owners. Local unit tests alone do not establish hosted or HA acceptance.
 
 Required evidence for this slice:
 
@@ -85,6 +118,7 @@ Required evidence for this slice:
 - Staging and production router construction rejects a missing verifier.
 - Organization-scoped token behavior remains covered.
 - Idempotency contract tests cover same-body replay, body mismatch, cross-tenant isolation, and uncertain completion semantics as each operation is implemented.
+- Evidence tests cover redaction rejection/classified references, atomic run/outbox behavior, sink deduplication, tombstone replay fencing, and non-vacuous recovery accounting before any evidence claim is promoted.
 
 ## Consequences
 
