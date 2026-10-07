@@ -32,14 +32,91 @@ short: sha256:aaaa
         self.assertEqual(_AUDIT._image_sentinels(content), [])
 
 
-class WorkflowBuildDetectionTests(unittest.TestCase):
-    def test_migration_path_comment_does_not_count_as_a_build(self) -> None:
-        workflow = "# file: infra/migrations/Dockerfile\n- uses: docker/build-push-action@v1\n  with:\n    file: services/api/Dockerfile\n"
-        self.assertFalse(_AUDIT._workflow_builds_migration(workflow))
+class WorkflowLifecycleTests(unittest.TestCase):
+    def test_complete_single_image_lifecycle_is_detected(self) -> None:
+        workflow = """\
+jobs:
+  build-api:
+    steps:
+      - uses: docker/build-push-action@v1
+        with:
+          file: services/api/Dockerfile
+          push: false
+  scan-image-api:
+    needs: build-api
+    steps:
+      - run: trivy image --input /tmp/api.tar
+  push-api:
+    needs: [resolve-tag, scan-image-api]
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: docker/build-push-action@v1
+        id: build
+        with:
+          file: services/api/Dockerfile
+          push: true
+          tags: example/api:tag
+  scan-pushed-api:
+    needs: [push-api]
+    steps:
+      - name: Scan pushed image by digest
+        env:
+          IMAGE_DIGEST: ${{ needs.push-api.outputs.digest }}
+        run: |
+          image="ghcr.io/org/api@${IMAGE_DIGEST}"
+          trivy image "${image}"
+  attest-provenance:
+    steps:
+      - name: Attest api image provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ghcr.io/org/api
+          subject-digest: ${{ needs.push-api.outputs.digest }}
+      - name: Sign api image
+        run: cosign sign --yes "${REPO}/api@${{ needs.push-api.outputs.digest }}"
+"""
+        lifecycle = _AUDIT._image_lifecycle(workflow)["api"]
+        self.assertEqual(set(lifecycle.values()), {True})
 
-    def test_migration_build_action_configuration_is_detected(self) -> None:
-        workflow = "- uses: docker/build-push-action@v1\n  with:\n    context: .\n    file: infra/migrations/Dockerfile\n    push: false\n"
-        self.assertTrue(_AUDIT._workflow_builds_migration(workflow))
+        with_push_disabled = workflow.replace("push: true", "push: false")
+        self.assertFalse(_AUDIT._image_lifecycle(with_push_disabled)["api"]["publish"])
+        with_wrong_scan_dependency = workflow.replace(
+            "needs: [resolve-tag, scan-image-api]",
+            "needs: [resolve-tag, scan-image-worker]",
+        )
+        self.assertFalse(_AUDIT._image_lifecycle(with_wrong_scan_dependency)["api"]["publish"])
+        with_echo_only_trivy = workflow.replace(
+            "trivy image --input /tmp/api.tar",
+            "echo 'trivy image --input /tmp/api.tar'",
+        )
+        self.assertFalse(_AUDIT._image_lifecycle(with_echo_only_trivy)["api"]["pre_push_scan"])
+
+    def test_workflow_event_keys_are_not_misread_as_jobs_and_inline_comments_parse(self) -> None:
+        workflow = """\
+on:
+  pull_request:
+  build-api:
+jobs:
+  build-api: # actual job, not an event trigger
+    steps: []
+"""
+        self.assertEqual(set(_AUDIT._workflow_jobs(workflow)), {"build-api"})
+
+    def test_comment_and_unrelated_build_do_not_complete_migration_lifecycle(self) -> None:
+        workflow = """\
+jobs:
+# file: infra/migrations/Dockerfile
+  build-api:
+    steps:
+      - uses: docker/build-push-action@v1
+        with:
+          file: services/api/Dockerfile
+  attest-provenance:
+    steps: []
+"""
+        lifecycle = _AUDIT._image_lifecycle(workflow)["migrate"]
+        self.assertFalse(any(lifecycle.values()))
 
 
 class RecoveryEvidencePredicateTests(unittest.TestCase):
@@ -90,7 +167,7 @@ class SourceAuditTests(unittest.TestCase):
         for finding_id in (
             "CHART-CONSOLE-ABSENT",
             "SERVICE-CONFIG-CHART-WIRING",
-            "MIGRATION-IMAGE-SUPPLY-CHAIN",
+            "ARTIFACT-LIFECYCLE-INCOMPLETE",
             "PRODUCTION-IMAGE-SENTINELS",
             "CHART-SECURITY-BOUNDARY",
             "MIGRATION-JOB-HARDENING",
@@ -103,6 +180,13 @@ class SourceAuditTests(unittest.TestCase):
         evidence = self.findings["SERVICE-CONFIG-CHART-WIRING"]["evidence"]
         self.assertTrue(any("POSTGRES_DSN" in item and "proxy-deployment.yaml" in item for item in evidence))
         self.assertTrue(any("IBEX_MCP_REDIS_URL" in item and "mcp-memory-deployment.yaml" in item for item in evidence))
+
+    def test_lifecycle_finding_names_missing_image_stages(self) -> None:
+        evidence = self.findings["ARTIFACT-LIFECYCLE-INCOMPLETE"]["evidence"]
+        self.assertIn("migrate: missing build", evidence)
+        self.assertIn("migrate: missing publish", evidence)
+        self.assertIn("api: missing post_push_scan", evidence)
+        self.assertNotIn("worker: missing post_push_scan", evidence)
 
     def test_recovery_residuals_are_not_promoted_to_acceptance(self) -> None:
         for finding_id in (

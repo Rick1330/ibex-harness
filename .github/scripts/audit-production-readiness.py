@@ -158,16 +158,188 @@ def _outbox_evidence_accepted(outbox: Any) -> bool:
     )
 
 
-def _workflow_builds_migration(workflow: str) -> bool:
-    """Detect a Docker build-push step whose `file` is the migration Dockerfile."""
-    lines = workflow.splitlines()
-    for index, line in enumerate(lines):
-        if not re.search(r"uses:\s*docker/build-push-action(?:@|\s|$)", line):
-            continue
-        block = "\n".join(lines[index + 1 : index + 15])
-        if re.search(r"(?m)^\s*file:\s*infra/migrations/Dockerfile\s*$", block):
-            return True
-    return False
+def _without_yaml_comments(text: str) -> str:
+    """Strip YAML comments while preserving quoted `#` characters and lines."""
+    output: list[str] = []
+    for line in text.splitlines():
+        quote: str | None = None
+        escaped = False
+        end = len(line)
+        for index, char in enumerate(line):
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\" and quote == '"':
+                escaped = True
+                continue
+            if quote:
+                if char == quote:
+                    quote = None
+                continue
+            if char in {"'", '"'}:
+                quote = char
+            elif char == "#" and (index == 0 or line[index - 1].isspace()):
+                end = index
+                break
+        output.append(line[:end])
+    return "\n".join(output)
+
+
+def _workflow_jobs(workflow: str) -> dict[str, str]:
+    """Split jobs under the `jobs` mapping; event triggers are never job blocks."""
+    clean = _without_yaml_comments(workflow)
+    lines = clean.splitlines(keepends=True)
+    jobs_index = next(
+        (i for i, line in enumerate(lines) if re.match(r"^jobs:\s*$", line.rstrip("\n"))),
+        None,
+    )
+    if jobs_index is None:
+        return {}
+    jobs_indent = len(lines[jobs_index]) - len(lines[jobs_index].lstrip(" "))
+    section_end = len(lines)
+    for i in range(jobs_index + 1, len(lines)):
+        line = lines[i]
+        if line.strip() and not line.lstrip().startswith("#"):
+            indent = len(line) - len(line.lstrip(" "))
+            if indent <= jobs_indent:
+                section_end = i
+                break
+    candidates = [
+        (i, line) for i, line in enumerate(lines[jobs_index + 1 : section_end], jobs_index + 1)
+        if line.strip()
+    ]
+    if not candidates:
+        return {}
+    child_indent = min(len(line) - len(line.lstrip(" ")) for _, line in candidates)
+    matches = [
+        (i, re.match(rf"^ {{{child_indent}}}([A-Za-z0-9_-]+):\s*$", lines[i].rstrip("\n")))
+        for i, _line in candidates
+    ]
+    headers = [(i, match) for i, match in matches if match]
+    jobs: dict[str, str] = {}
+    for index, (start, match) in enumerate(headers):
+        end = headers[index + 1][0] if index + 1 < len(headers) else section_end
+        jobs[match.group(1)] = "".join(lines[start + 1 : end])
+    return jobs
+
+
+def _job_needs(job: str, dependency: str) -> bool:
+    clean = _without_yaml_comments(job)
+    match = re.search(r"(?m)^\s*needs:\s*(.*?)\s*$", clean)
+    if not match:
+        return False
+    value = match.group(1).strip()
+    if value.startswith("[") and value.endswith("]"):
+        dependencies = {item.strip().strip("'\"") for item in value[1:-1].split(",")}
+        return dependency in dependencies
+    if value:
+        return value.strip("'\"") == dependency
+    return bool(re.search(rf"(?m)^\s*-\s*{re.escape(dependency)}\s*$", clean))
+
+
+def _steps(job: str) -> list[str]:
+    clean = _without_yaml_comments(job)
+    marker = re.compile(r"(?m)^(?P<indent> +)-\s+(?:name|uses|run):")
+    matches = list(marker.finditer(clean))
+    if not matches:
+        return []
+    step_indent = min(len(match.group("indent")) for match in matches)
+    matches = [match for match in matches if len(match.group("indent")) == step_indent]
+    return [
+        clean[match.start() : matches[i + 1].start() if i + 1 < len(matches) else len(clean)]
+        for i, match in enumerate(matches)
+    ]
+
+
+def _action_step(job: str, action: str, context: str) -> str:
+    for step in _steps(job):
+        if re.search(rf"(?m)^\s*(?:-\s*)?uses:\s*{re.escape(action)}@", step) and re.search(
+            rf"(?m)^\s*file:\s*['\"]?{re.escape(context)}/Dockerfile['\"]?\s*$", step
+        ):
+            return step
+    return ""
+
+
+def _runs_trivy_image(step: str) -> bool:
+    clean = _without_yaml_comments(step)
+    return re.search(r"(?m)^\s*(?:-\s*run:\s*|run:\s*|)?trivy\s+image\b", clean) is not None
+
+
+def _image_lifecycle(workflow: str) -> dict[str, dict[str, bool]]:
+    """Inspect job/step-bounded source wiring; never claim workflow execution proof."""
+    jobs = _workflow_jobs(workflow)
+    artifacts = {name: f"services/{name}" for name in EXPECTED_WORKLOADS}
+    artifacts["migrate"] = "infra/migrations"
+    lifecycle: dict[str, dict[str, bool]] = {}
+    attest = jobs.get("attest-provenance", "")
+    attest_steps = _steps(attest)
+    for name, context in artifacts.items():
+        slug = name
+        build_job = f"build-{slug}"
+        scan_job = f"scan-image-{slug}"
+        push_job = f"push-{slug}"
+        postscan_job = f"scan-pushed-{slug}"
+        build = jobs.get(build_job, "")
+        scan = jobs.get(f"scan-image-{slug}", "")
+        push = jobs.get(f"push-{slug}", "")
+        pushed_scan = jobs.get(f"scan-pushed-{slug}", "")
+        digest_expression = rf"\$\{{\{{\s*needs\.{re.escape(push_job)}\.outputs\.digest\s*\}}\}}"
+        build_action = _action_step(build, "docker/build-push-action", context)
+        push_action = _action_step(push, "docker/build-push-action", context)
+        pre_scan_ok = (
+            _job_needs(scan, build_job)
+            and any(
+                _runs_trivy_image(step)
+                and re.search(rf"--input\s+[^\s\"']*{re.escape(slug)}\.tar\b", step)
+                for step in _steps(scan)
+            )
+        )
+        push_ok = (
+            bool(push_action)
+            and _job_needs(push, scan_job)
+            and re.search(r"(?m)^\s*id:\s*build\s*$", push_action) is not None
+            and re.search(r"(?m)^\s*push:\s*true\s*$", push_action) is not None
+            and re.search(r"(?m)^\s*tags:\s*\S+", push_action) is not None
+            and re.search(r"(?m)^\s*digest:\s*\$\{\{\s*steps\.build\.outputs\.digest\s*\}\}\s*$", push) is not None
+        )
+        postscan_ok = (
+            _job_needs(pushed_scan, push_job)
+            and any(
+                _runs_trivy_image(step)
+                and any(
+                    re.search(
+                        rf"(?m)^\s*image=['\"]?[^\n]*/{re.escape(slug)}@\$\{{{re.escape(variable)}\}}['\"]?\s*$",
+                        step,
+                    )
+                    for variable in re.findall(
+                        rf"(?m)^\s*([A-Z0-9_]*DIGEST):\s*{digest_expression}\s*$", step
+                    )
+                )
+                for step in _steps(pushed_scan)
+            )
+        )
+        provenance_ok = any(
+            "actions/attest-build-provenance@" in step
+            and re.search(rf"(?m)^\s*subject-name:.*?/{re.escape(name)}\s*$", step)
+            and re.search(rf"(?m)^\s*subject-digest:\s*{digest_expression}\s*$", step)
+            for step in attest_steps
+        )
+        signature_ok = any(
+            re.search(
+                rf"(?m)^\s*(?:run:\s*)?cosign sign[^\n]*\$\{{REPO\}}/{re.escape(name)}@{digest_expression}\s*['\"]?\s*$",
+                step,
+            )
+            for step in attest_steps
+        )
+        lifecycle[name] = {
+            "build": bool(build_action and re.search(r"(?m)^\s*push:\s*false\s*$", build_action)),
+            "pre_push_scan": pre_scan_ok,
+            "publish": push_ok,
+            "post_push_scan": postscan_ok,
+            "provenance": provenance_ok,
+            "signature": signature_ok,
+        }
+    return lifecycle
 
 
 def build_report(root: Path) -> dict[str, Any]:
@@ -182,6 +354,7 @@ def build_report(root: Path) -> dict[str, Any]:
     templates = [(str(path.relative_to(root)), _read(root, str(path.relative_to(root)))) for path in template_paths]
     template_names = {path.name for path in template_paths}
     workflow = _read(root, ".github/workflows/docker-publish.yml")
+    artifact_lifecycle = _image_lifecycle(workflow)
     prod_values = _read(root, "infra/helm/ibex-harness/values-prod.yaml")
     schema = _read(root, "infra/helm/ibex-harness/values.schema.json")
     migrate_dockerfile = _read(root, "infra/migrations/Dockerfile")
@@ -232,11 +405,17 @@ def build_report(root: Path) -> dict[str, Any]:
             missing_wiring,
         ))
 
-    if not _workflow_builds_migration(workflow):
+    incomplete_lifecycle = [
+        f"{image}: missing {stage}"
+        for image, stages in artifact_lifecycle.items()
+        for stage, present in stages.items()
+        if not present
+    ]
+    if incomplete_lifecycle:
         findings.append(_finding(
-            "MIGRATION-IMAGE-SUPPLY-CHAIN", "high",
-            "No Docker Buildx step was found configured to build the migration Dockerfile.",
-            [".github/workflows/docker-publish.yml has no build-push-action step with file: infra/migrations/Dockerfile"],
+            "ARTIFACT-LIFECYCLE-INCOMPLETE", "high",
+            "The workflow source does not wire every image through build, pre-push scan, publish, post-push scan, provenance, and signature stages.",
+            incomplete_lifecycle,
         ))
 
     sentinels = _image_sentinels(prod_values)
@@ -350,12 +529,13 @@ def build_report(root: Path) -> dict[str, Any]:
     return {
         "audit": "ibex-production-readiness-static-source-audit",
         "version": 1,
-        "scope": "read-only source inspection; no rendering, execution, network, registry, cluster, or deployment",
-        "interpretation": "OPEN findings are residuals for review, not deployability results or gate acceptance.",
+        "scope": "read-only source inspection; workflow triggers/conditions/reachability and actual execution are not verified; no rendering, network, registry, cluster, or deployment",
+        "interpretation": "OPEN findings are residuals for review, not deployability results or gate acceptance; source patterns are not execution evidence and do not constitute policy acceptance.",
         "inputs": {
             "chart_template_count": len(template_paths),
             "expected_application_workloads": list(EXPECTED_WORKLOADS),
             "migration_dockerfile_present": bool(migrate_dockerfile.strip()),
+            "image_lifecycle_source_matrix": artifact_lifecycle,
             "schema_present": bool(schema.strip()),
             "production_values_present": bool(prod_values.strip()),
         },
