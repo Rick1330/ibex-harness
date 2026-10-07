@@ -436,6 +436,18 @@ def _client_privileged_gate_state(source: str) -> str:
     )
 
 
+def _client_boolean_export_state(source: str, export_name: str) -> str:
+    """Read one literal exported client flag; uncertain syntax remains unknown."""
+    uncommented = _mask_ts_comments_and_strings(source)
+    declarations = re.findall(
+        rf"(?m)^[ \t]*export[ \t]+const[ \t]+{re.escape(export_name)}[ \t]*=[ \t]*(true|false)[ \t]*;?[ \t]*$",
+        uncommented,
+    )
+    if len(declarations) != 1:
+        return "unknown"
+    return "enabled" if declarations[0] == "true" else "disabled"
+
+
 def build_report(root: Path) -> dict[str, Any]:
     """Build deterministic review findings from repository source only."""
     chart = root / "infra/helm/ibex-harness"
@@ -458,6 +470,7 @@ def build_report(root: Path) -> dict[str, Any]:
     )
     backup_rule = _read(root, "infra/monitoring/prometheus/rules/ibex-platform-backup.yml")
     console_gates = _read(root, "services/console/src/lib/sessions/types.ts")
+    directive_controls = _read(root, "services/console/src/lib/directives/types.ts")
 
     findings: list[dict[str, Any]] = []
 
@@ -488,6 +501,21 @@ def build_report(root: Path) -> dict[str, Any]:
                 "services/console/src/lib/sessions/types.ts describes these as design fixtures gated until safety gates close",
                 "services/console/src/components/sessions/privileged-gate.tsx enables its button when privilegedActionsEnabled() is true",
                 "A client-side gate is not backend authorization or evidence that an external effect occurred",
+            ],
+        ))
+
+    controlled_actions_state = _client_boolean_export_state(
+        directive_controls, "CONTROLLED_ACTIONS_ENABLED"
+    )
+    if controlled_actions_state != "disabled":
+        findings.append(_finding(
+            "CONSOLE-CONTROLLED-ACTIONS-OPEN", "medium",
+            "Directive and experiment controls are not proven disabled by their client-side fail-closed flag.",
+            [
+                f"CONTROLLED_ACTIONS_ENABLED source state: {controlled_actions_state}",
+                "services/console/src/lib/directives/types.ts says setting the flag false makes preview/approval fail closed",
+                "PromotionConsole and ExperimentPanel gate their controls on this client-side constant",
+                "Inspected components update local view state; this does not establish backend authorization or production effects",
             ],
         ))
 
@@ -647,6 +675,7 @@ def build_report(root: Path) -> dict[str, Any]:
             "schema_present": bool(schema.strip()),
             "production_values_present": bool(prod_values.strip()),
             "console_privileged_gate_state": console_gate_state,
+            "console_controlled_actions_state": controlled_actions_state,
         },
         "findings": findings,
         "summary": {

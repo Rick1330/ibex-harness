@@ -217,6 +217,22 @@ export const PRIVILEGED_GATES = { cascade_preview_equals_execution: false, cross
         self.assertEqual(_AUDIT._client_privileged_gate_state(source), "disabled")
 
 
+class ConsoleBooleanExportTests(unittest.TestCase):
+    def test_only_one_literal_exported_boolean_is_classified(self) -> None:
+        cases = (
+            ("export const FLAG = true\n", "enabled"),
+            ("export const FLAG = false;\n", "disabled"),
+            ("export const FLAG = process.env.ENABLED === \"true\"\n", "unknown"),
+            ("const sample = `export const FLAG = false`\n", "unknown"),
+            ("export const FLAG = true\nexport const FLAG = false\n", "unknown"),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    _AUDIT._client_boolean_export_state(source, "FLAG"), expected
+                )
+
+
 class RecoveryEvidencePredicateTests(unittest.TestCase):
     def test_postgres_requires_pitr_verified_flags_and_valid_measurement(self) -> None:
         base = {
@@ -270,6 +286,7 @@ class SourceAuditTests(unittest.TestCase):
             "CHART-SECURITY-BOUNDARY",
             "MIGRATION-JOB-HARDENING",
             "CONSOLE-PRIVILEGED-ACTIONS-OPEN",
+            "CONSOLE-CONTROLLED-ACTIONS-OPEN",
         ):
             with self.subTest(finding=finding_id):
                 self.assertIn(finding_id, self.findings)
@@ -286,6 +303,13 @@ class SourceAuditTests(unittest.TestCase):
         self.assertIn("source state: enabled", finding["evidence"][0])
         self.assertTrue(any("not backend authorization" in item for item in finding["evidence"]))
         self.assertEqual(self.report["inputs"]["console_privileged_gate_state"], "enabled")
+
+    def test_directive_control_flag_is_open_without_claiming_production_effects(self) -> None:
+        finding = self.findings["CONSOLE-CONTROLLED-ACTIONS-OPEN"]
+        self.assertEqual(finding["status"], "OPEN")
+        self.assertIn("source state: enabled", finding["evidence"][0])
+        self.assertTrue(any("local view state" in item for item in finding["evidence"]))
+        self.assertEqual(self.report["inputs"]["console_controlled_actions_state"], "enabled")
 
     def test_lifecycle_finding_names_missing_image_stages(self) -> None:
         evidence = self.findings["ARTIFACT-LIFECYCLE-INCOMPLETE"]["evidence"]
