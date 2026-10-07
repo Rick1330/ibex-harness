@@ -287,6 +287,7 @@ class SourceAuditTests(unittest.TestCase):
             "MIGRATION-JOB-HARDENING",
             "CONSOLE-PRIVILEGED-ACTIONS-OPEN",
             "CONSOLE-CONTROLLED-ACTIONS-OPEN",
+            "CONSOLE-INCIDENT-WRITES-OPEN",
         ):
             with self.subTest(finding=finding_id):
                 self.assertIn(finding_id, self.findings)
@@ -310,6 +311,13 @@ class SourceAuditTests(unittest.TestCase):
         self.assertIn("source state: enabled", finding["evidence"][0])
         self.assertTrue(any("local view state" in item for item in finding["evidence"]))
         self.assertEqual(self.report["inputs"]["console_controlled_actions_state"], "enabled")
+
+    def test_incident_write_flag_is_open_without_claiming_persistent_effects(self) -> None:
+        finding = self.findings["CONSOLE-INCIDENT-WRITES-OPEN"]
+        self.assertEqual(finding["status"], "OPEN")
+        self.assertIn("source state: enabled", finding["evidence"][0])
+        self.assertTrue(any("local React state" in item for item in finding["evidence"]))
+        self.assertEqual(self.report["inputs"]["console_incident_writes_state"], "enabled")
 
     def test_lifecycle_finding_names_missing_image_stages(self) -> None:
         evidence = self.findings["ARTIFACT-LIFECYCLE-INCOMPLETE"]["evidence"]

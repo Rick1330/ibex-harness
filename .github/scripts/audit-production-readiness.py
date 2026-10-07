@@ -471,6 +471,7 @@ def build_report(root: Path) -> dict[str, Any]:
     backup_rule = _read(root, "infra/monitoring/prometheus/rules/ibex-platform-backup.yml")
     console_gates = _read(root, "services/console/src/lib/sessions/types.ts")
     directive_controls = _read(root, "services/console/src/lib/directives/types.ts")
+    incident_controls = _read(root, "services/console/src/lib/incidents/types.ts")
 
     findings: list[dict[str, Any]] = []
 
@@ -516,6 +517,21 @@ def build_report(root: Path) -> dict[str, Any]:
                 "services/console/src/lib/directives/types.ts says setting the flag false makes preview/approval fail closed",
                 "PromotionConsole and ExperimentPanel gate their controls on this client-side constant",
                 "Inspected components update local view state; this does not establish backend authorization or production effects",
+            ],
+        ))
+
+    incident_writes_state = _client_boolean_export_state(
+        incident_controls, "INCIDENT_WRITES_ENABLED"
+    )
+    if incident_writes_state != "disabled":
+        findings.append(_finding(
+            "CONSOLE-INCIDENT-WRITES-OPEN", "medium",
+            "Incident triage mutations are not proven disabled by their client-side read-only rollback flag.",
+            [
+                f"INCIDENT_WRITES_ENABLED source state: {incident_writes_state}",
+                "services/console/src/lib/incidents/types.ts says setting the flag false restores read-only triage",
+                "IncidentDetailView gates status, ownership, severity, and comment controls on this client-side constant",
+                "Inspected component updates local React state; this does not establish backend authorization or production writes",
             ],
         ))
 
@@ -676,6 +692,7 @@ def build_report(root: Path) -> dict[str, Any]:
             "production_values_present": bool(prod_values.strip()),
             "console_privileged_gate_state": console_gate_state,
             "console_controlled_actions_state": controlled_actions_state,
+            "console_incident_writes_state": incident_writes_state,
         },
         "findings": findings,
         "summary": {
