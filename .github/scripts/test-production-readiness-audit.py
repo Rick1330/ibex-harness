@@ -119,6 +119,104 @@ jobs:
         self.assertFalse(any(lifecycle.values()))
 
 
+class ConsolePrivilegedGateTests(unittest.TestCase):
+    def test_all_literal_true_flags_are_reported_enabled(self) -> None:
+        source = """\
+export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: true,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+"""
+        self.assertEqual(_AUDIT._client_privileged_gate_state(source), "enabled")
+
+    def test_any_literal_false_flag_keeps_the_client_gate_disabled(self) -> None:
+        source = """\
+export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: true,
+  cross_store_receipts_wired: false,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+"""
+        self.assertEqual(_AUDIT._client_privileged_gate_state(source), "disabled")
+
+    def test_missing_or_nonliteral_flags_are_unknown(self) -> None:
+        for source in (
+            "export const PRIVILEGED_GATES = {} as const",
+            """\
+export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: true,
+  cross_store_receipts_wired: process.env.RECEIPTS === "true",
+  replay_sandbox_negative_tests_pass: true,
+} as const
+""",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(_AUDIT._client_privileged_gate_state(source), "unknown")
+
+    def test_comments_do_not_turn_disabled_flags_on(self) -> None:
+        source = """\
+export const PRIVILEGED_GATES = {
+  // Keep this true only after review.
+  cascade_preview_equals_execution: false,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+"""
+        self.assertEqual(_AUDIT._client_privileged_gate_state(source), "disabled")
+
+    def test_block_comments_cannot_hide_or_override_the_real_declaration(self) -> None:
+        commented_declaration = """\
+/*
+export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: false,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+*/
+export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: true,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+"""
+        comment_inside_object = """\
+export const PRIVILEGED_GATES = {
+  /* cascade_preview_equals_execution: false, */
+  cascade_preview_equals_execution: true,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+"""
+        self.assertEqual(
+            _AUDIT._client_privileged_gate_state(commented_declaration), "enabled"
+        )
+        self.assertEqual(
+            _AUDIT._client_privileged_gate_state(comment_inside_object), "enabled"
+        )
+
+    def test_string_literals_cannot_supply_a_fake_gate_declaration(self) -> None:
+        source = '''\
+const example = `export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: false,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const`;
+export const PRIVILEGED_GATES = {
+  cascade_preview_equals_execution: true,
+  cross_store_receipts_wired: true,
+  replay_sandbox_negative_tests_pass: true,
+} as const
+'''
+        self.assertEqual(_AUDIT._client_privileged_gate_state(source), "enabled")
+
+    def test_inline_flags_trailing_comments_and_semicolon_parse(self) -> None:
+        source = """\
+export const PRIVILEGED_GATES = { cascade_preview_equals_execution: false, cross_store_receipts_wired: true, replay_sandbox_negative_tests_pass: true } as const; // closed
+"""
+        self.assertEqual(_AUDIT._client_privileged_gate_state(source), "disabled")
+
+
 class RecoveryEvidencePredicateTests(unittest.TestCase):
     def test_postgres_requires_pitr_verified_flags_and_valid_measurement(self) -> None:
         base = {
@@ -171,6 +269,7 @@ class SourceAuditTests(unittest.TestCase):
             "PRODUCTION-IMAGE-SENTINELS",
             "CHART-SECURITY-BOUNDARY",
             "MIGRATION-JOB-HARDENING",
+            "CONSOLE-PRIVILEGED-ACTIONS-OPEN",
         ):
             with self.subTest(finding=finding_id):
                 self.assertIn(finding_id, self.findings)
@@ -180,6 +279,13 @@ class SourceAuditTests(unittest.TestCase):
         evidence = self.findings["SERVICE-CONFIG-CHART-WIRING"]["evidence"]
         self.assertTrue(any("POSTGRES_DSN" in item and "proxy-deployment.yaml" in item for item in evidence))
         self.assertTrue(any("IBEX_MCP_REDIS_URL" in item and "mcp-memory-deployment.yaml" in item for item in evidence))
+
+    def test_privileged_console_gates_are_reported_as_open_without_backend_claims(self) -> None:
+        finding = self.findings["CONSOLE-PRIVILEGED-ACTIONS-OPEN"]
+        self.assertEqual(finding["status"], "OPEN")
+        self.assertIn("source state: enabled", finding["evidence"][0])
+        self.assertTrue(any("not backend authorization" in item for item in finding["evidence"]))
+        self.assertEqual(self.report["inputs"]["console_privileged_gate_state"], "enabled")
 
     def test_lifecycle_finding_names_missing_image_stages(self) -> None:
         evidence = self.findings["ARTIFACT-LIFECYCLE-INCOMPLETE"]["evidence"]

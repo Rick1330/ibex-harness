@@ -342,6 +342,100 @@ def _image_lifecycle(workflow: str) -> dict[str, dict[str, bool]]:
     return lifecycle
 
 
+PRIVILEGED_GATE_KEYS = (
+    "cascade_preview_equals_execution",
+    "cross_store_receipts_wired",
+    "replay_sandbox_negative_tests_pass",
+)
+
+
+def _mask_ts_comments_and_strings(source: str) -> str:
+    """Mask comments and literals so source-pattern checks only inspect code."""
+    output = list(source)
+    state = "code"
+    quote = ""
+    index = 0
+
+    def mask(position: int) -> None:
+        if output[position] != "\n":
+            output[position] = " "
+
+    while index < len(source):
+        char = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "code":
+            if char == "/" and following == "/":
+                mask(index)
+                mask(index + 1)
+                state = "line_comment"
+                index += 2
+                continue
+            if char == "/" and following == "*":
+                mask(index)
+                mask(index + 1)
+                state = "block_comment"
+                index += 2
+                continue
+            if char in {"'", '"', "`"}:
+                quote = char
+                state = "string"
+                mask(index)
+        elif state == "line_comment":
+            if char == "\n":
+                state = "code"
+            else:
+                mask(index)
+        elif state == "block_comment":
+            if char == "*" and following == "/":
+                mask(index)
+                mask(index + 1)
+                state = "code"
+                index += 2
+                continue
+            mask(index)
+        else:
+            if char == "\\":
+                mask(index)
+                if following:
+                    mask(index + 1)
+                    index += 2
+                    continue
+            elif char == quote:
+                state = "code"
+                quote = ""
+            mask(index)
+        index += 1
+    return "".join(output)
+
+
+def _client_privileged_gate_state(source: str) -> str:
+    """Return enabled/disabled/unknown from literal client gate flags only."""
+    uncommented = _mask_ts_comments_and_strings(source)
+    declarations = list(re.finditer(
+        r"\bexport\s+const\s+PRIVILEGED_GATES\s*=\s*\{(?P<body>[^{}]*)\}\s*as\s+const\s*;?",
+        uncommented,
+        re.DOTALL,
+    ))
+    if len(declarations) != 1:
+        return "unknown"
+
+    properties = re.findall(
+        r"\b([a-z_]+)\s*:\s*(true|false)(?=\s*(?:[,}]|$))",
+        declarations[0].group("body"),
+    )
+    values: dict[str, list[str]] = {}
+    for key, value in properties:
+        values.setdefault(key, []).append(value)
+    if any(len(values.get(key, [])) != 1 for key in PRIVILEGED_GATE_KEYS):
+        return "unknown"
+
+    return (
+        "enabled"
+        if all(values[key][0] == "true" for key in PRIVILEGED_GATE_KEYS)
+        else "disabled"
+    )
+
+
 def build_report(root: Path) -> dict[str, Any]:
     """Build deterministic review findings from repository source only."""
     chart = root / "infra/helm/ibex-harness"
@@ -363,6 +457,7 @@ def build_report(root: Path) -> dict[str, Any]:
         _read(root, "infra/scripts/platform/evidence/4p5-restore-drill/restore-drill-report.json")
     )
     backup_rule = _read(root, "infra/monitoring/prometheus/rules/ibex-platform-backup.yml")
+    console_gates = _read(root, "services/console/src/lib/sessions/types.ts")
 
     findings: list[dict[str, Any]] = []
 
@@ -381,6 +476,19 @@ def build_report(root: Path) -> dict[str, Any]:
             "CHART-CONSOLE-ABSENT", "high",
             "The canonical Console workload is not represented in the application chart.",
             ["infra/helm/ibex-harness/templates has no console-deployment.yaml"],
+        ))
+
+    console_gate_state = _client_privileged_gate_state(console_gates)
+    if console_gate_state != "disabled":
+        findings.append(_finding(
+            "CONSOLE-PRIVILEGED-ACTIONS-OPEN", "medium",
+            "Console session export/delete/replay controls are not proven disabled by their client-side readiness gates.",
+            [
+                f"PRIVILEGED_GATES source state: {console_gate_state}",
+                "services/console/src/lib/sessions/types.ts describes these as design fixtures gated until safety gates close",
+                "services/console/src/components/sessions/privileged-gate.tsx enables its button when privilegedActionsEnabled() is true",
+                "A client-side gate is not backend authorization or evidence that an external effect occurred",
+            ],
         ))
 
     missing_wiring: list[str] = []
@@ -538,6 +646,7 @@ def build_report(root: Path) -> dict[str, Any]:
             "image_lifecycle_source_matrix": artifact_lifecycle,
             "schema_present": bool(schema.strip()),
             "production_values_present": bool(prod_values.strip()),
+            "console_privileged_gate_state": console_gate_state,
         },
         "findings": findings,
         "summary": {
