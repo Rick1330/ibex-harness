@@ -363,22 +363,28 @@ func TestIntegration_Relay_PoisonedValidationFailureIsPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process poison row: %v", err)
 	}
-	if res.Claimed != 1 {
-		t.Fatalf("claimed=%d want 1", res.Claimed)
-	}
-	if res.Poisoned != 1 {
-		t.Fatalf("poisoned=%d want 1", res.Poisoned)
-	}
-	if res.Delivered != 0 {
-		t.Fatalf("delivered=%d want 0", res.Delivered)
-	}
-	if res.Failed != 0 {
-		t.Fatalf("failed=%d want 0", res.Failed)
-	}
-	if got := deliverer.count(); got != 0 {
-		t.Fatalf("sink deliveries=%d want 0", got)
-	}
+	assertPoisonedRelayResult(t, res)
+	assertIntegrationCount(t, "sink deliveries", deliverer.count(), 0)
+	assertPersistedPoisonRow(t, db, orgID, requestID)
+}
 
+func assertPoisonedRelayResult(t *testing.T, res evidenceoutbox.RelayBatchResult) {
+	t.Helper()
+	assertIntegrationCount(t, "claimed", res.Claimed, 1)
+	assertIntegrationCount(t, "poisoned", res.Poisoned, 1)
+	assertIntegrationCount(t, "delivered", res.Delivered, 0)
+	assertIntegrationCount(t, "failed", res.Failed, 0)
+}
+
+func assertIntegrationCount(t *testing.T, name string, got, want int) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s=%d want %d", name, got, want)
+	}
+}
+
+func assertPersistedPoisonRow(t *testing.T, db *sql.DB, orgID uuid.UUID, requestID string) {
+	t.Helper()
 	var status, lastError string
 	const query = `
 SELECT delivery_status, last_error
