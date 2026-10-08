@@ -30,7 +30,7 @@ from app.pipeline import (
     ValidateStage,
     WritePipeline,
 )
-from app.vectorstore.base import UpsertRequest
+from app.vectorstore.base import SearchMode, UpsertRequest
 from app.write.orchestrator import MemoryWriteOrchestrator
 from tests.integration.conftest import TimedMemorySeed, insert_timed_memory, zero_embedding
 
@@ -102,14 +102,17 @@ def build_orchestrator(deps: OrchestratorTestDeps) -> MemoryWriteOrchestrator:
             session_factory, RetrievalBump(org_id=org_id, memory_id=memory_id)
         )
 
-    dedup = DedupService(
-        settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump
-    )
+    dedup = DedupService(settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump)
     conflict = ConflictService(settings, subject_extractor=extract)
 
     async def load_candidates(org_id: UUID, ids: tuple[UUID, ...]):
         return await load_candidate_memories(
-            session_factory, CandidateLoad(org_id=org_id, memory_ids=ids)
+            session_factory,
+            CandidateLoad(
+                org_id=org_id,
+                memory_ids=ids,
+                search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+            ),
         )
 
     pipeline = WritePipeline(

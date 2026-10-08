@@ -19,6 +19,7 @@ from app.conflict.persist import (
 )
 from app.conflict.types import SupersedeApply
 from app.dedup.hash import content_hash_sha256
+from app.vectorstore.base import SearchMode
 from tests.integration.conftest import seed_org_agent_memory
 
 pytestmark = pytest.mark.integration
@@ -125,9 +126,7 @@ async def _fetch_supersession_state(
 async def test_apply_supersession_updates_status_and_edge(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    org_id, agent_id, _seed = await seed_org_agent_memory(
-        session_factory, content="seed"
-    )
+    org_id, agent_id, _seed = await seed_org_agent_memory(session_factory, content="seed")
     march = datetime(2026, 3, 1, tzinfo=UTC)
     june = datetime(2026, 6, 1, tzinfo=UTC)
     old_id = await _insert_memory(
@@ -150,7 +149,12 @@ async def test_apply_supersession_updates_status_and_edge(
         ),
     )
     loaded = await load_candidate_memories(
-        session_factory, CandidateLoad(org_id=org_id, memory_ids=(old_id,))
+        session_factory,
+        CandidateLoad(
+            org_id=org_id,
+            memory_ids=(old_id,),
+            search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        ),
     )
     assert len(loaded) == 1
     await apply_supersession(
@@ -177,7 +181,12 @@ async def test_load_candidates_cross_tenant_empty(
     _org_a, _, mem_a = await seed_org_agent_memory(session_factory, content="a")
     org_b, _, _ = await seed_org_agent_memory(session_factory, content="b")
     loaded = await load_candidate_memories(
-        session_factory, CandidateLoad(org_id=org_b, memory_ids=(mem_a,))
+        session_factory,
+        CandidateLoad(
+            org_id=org_b,
+            memory_ids=(mem_a,),
+            search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        ),
     )
     assert loaded == []
 

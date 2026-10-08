@@ -134,7 +134,9 @@ async def test_near_dup_includes_expired_for_conflict_evaluation() -> None:
     svc = DedupService(Settings(), store=store)
     await svc.find_near_duplicates(org_id=uuid4(), agent_id=uuid4(), embedding=_axis(0))
     assert store.request is not None
-    assert store.request.include_expired is True
+    from app.vectorstore.base import SearchMode
+
+    assert store.request.mode is SearchMode.HISTORICAL_CONFLICT_CANDIDATES
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@ package evidenceoutbox
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -30,6 +31,49 @@ func TestUnit_PersistRun_Validation(t *testing.T) {
 	_, err = store.PersistRun(context.Background(), RunInput{})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadAddsTrustedMetadata(t *testing.T) {
+	t.Parallel()
+	fence := &TombstoneFence{
+		ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7,
+	}
+	raw, err := marshalOutboxPayload(
+		map[string]any{"event_id": "evt-1"}, RedactionClassMetadata, fence,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload["redaction_class"]) != `"metadata"` {
+		t.Fatalf("redaction_class=%s", payload["redaction_class"])
+	}
+	var gotFence TombstoneFence
+	if err := json.Unmarshal(payload["tombstone_fence"], &gotFence); err != nil {
+		t.Fatal(err)
+	}
+	if gotFence != *fence {
+		t.Fatalf("tombstone_fence=%+v want %+v", gotFence, *fence)
+	}
+	unclassifiedRaw, err := marshalOutboxPayload(map[string]any{"event_id": "evt-2"}, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unclassified map[string]json.RawMessage
+	if err := json.Unmarshal(unclassifiedRaw, &unclassified); err != nil {
+		t.Fatal(err)
+	}
+	if string(unclassified["redaction_class"]) != `"unclassified"` {
+		t.Fatalf("missing producer classification was upgraded: %s", unclassified["redaction_class"])
+	}
+	if _, err := marshalOutboxPayload(
+		map[string]any{"redaction_class": "metadata"}, RedactionClassMetadata, nil,
+	); err == nil {
+		t.Fatal("expected caller-supplied redaction_class to be rejected")
 	}
 }
 

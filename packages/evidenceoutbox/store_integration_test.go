@@ -119,7 +119,7 @@ func (s *recordingDeliverer) Deliver(_ context.Context, row evidenceoutbox.Outbo
 	if s.failN.Add(-1) >= 0 {
 		return errors.New("injected deliverer failure")
 	}
-	key := row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
+	key := row.OrgID.String() + ":" + row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.seen == nil {
@@ -127,6 +127,15 @@ func (s *recordingDeliverer) Deliver(_ context.Context, row evidenceoutbox.Outbo
 	}
 	s.seen[key]++
 	return nil
+}
+
+func (s *recordingDeliverer) DeliverWithTombstoneFence(
+	ctx context.Context, row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFence,
+) error {
+	if row.TombstoneFence == nil || *row.TombstoneFence != fence {
+		return errors.New("test sink: fence mismatch")
+	}
+	return s.Deliver(ctx, row)
 }
 
 func (s *recordingDeliverer) count() int {
@@ -154,7 +163,7 @@ type ackLossDeliverer struct {
 }
 
 func (s *ackLossDeliverer) Deliver(ctx context.Context, row evidenceoutbox.OutboxRow) error {
-	key := row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
+	key := row.OrgID.String() + ":" + row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
 	s.mu.Lock()
 	s.deliveries++
 	if s.effects == nil {
@@ -173,6 +182,15 @@ func (s *ackLossDeliverer) Deliver(ctx context.Context, row evidenceoutbox.Outbo
 		return err
 	}
 	return nil
+}
+
+func (s *ackLossDeliverer) DeliverWithTombstoneFence(
+	ctx context.Context, row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFence,
+) error {
+	if row.TombstoneFence == nil || *row.TombstoneFence != fence {
+		return errors.New("test sink: fence mismatch")
+	}
+	return s.Deliver(ctx, row)
 }
 
 func (s *ackLossDeliverer) snapshot() (deliveries, effects int) {
@@ -398,11 +416,15 @@ func persistMinimalRun(t *testing.T, store *evidenceoutbox.Store, orgID uuid.UUI
 	t.Helper()
 	requestID := "req-crash-" + uuid.NewString()
 	_, err := store.PersistRun(context.Background(), evidenceoutbox.RunInput{
-		OrgID:     orgID,
-		RequestID: requestID,
-		TraceID:   traceID,
-		Spans:     []evidenceoutbox.SpanInput{{SpanID: "1111111111111111", OperationKind: "proxy.chat"}},
-		Metrics:   &evidenceoutbox.AssemblyMetrics{TotalMs: 1},
+		OrgID:          orgID,
+		RequestID:      requestID,
+		TraceID:        traceID,
+		RedactionClass: evidenceoutbox.RedactionClassMetadata,
+		TombstoneFence: &evidenceoutbox.TombstoneFence{
+			ResourceType: "evidence_run", ResourceID: requestID, ResourceVersion: 1,
+		},
+		Spans:   []evidenceoutbox.SpanInput{{SpanID: "1111111111111111", OperationKind: "proxy.chat"}},
+		Metrics: &evidenceoutbox.AssemblyMetrics{TotalMs: 1},
 	})
 	if err != nil {
 		t.Fatalf("persist: %v", err)

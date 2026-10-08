@@ -24,6 +24,7 @@ from app.pipeline import (
     ValidateStage,
     WritePipeline,
 )
+from app.vectorstore.base import SearchMode
 from app.write.embed_context import get_write_org_id
 from app.write.models import WriteOutcome
 from app.write.orchestrator import MemoryWriteOrchestrator
@@ -45,14 +46,17 @@ def build_write_pipeline(deps: WritePipelineDeps) -> WritePipeline:
             session_factory, RetrievalBump(org_id=org_id, memory_id=memory_id)
         )
 
-    dedup = DedupService(
-        settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump
-    )
+    dedup = DedupService(settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump)
     conflict = ConflictService(settings)
 
     async def load_candidates(org_id: UUID, ids: Sequence[UUID]) -> list:
         return await load_candidate_memories(
-            session_factory, CandidateLoad(org_id=org_id, memory_ids=tuple(ids))
+            session_factory,
+            CandidateLoad(
+                org_id=org_id,
+                memory_ids=tuple(ids),
+                search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+            ),
         )
 
     return WritePipeline(

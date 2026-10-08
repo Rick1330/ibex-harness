@@ -34,7 +34,7 @@ from app.pipeline import (
     WriteContext,
     WritePipeline,
 )
-from app.vectorstore.base import UpsertRequest
+from app.vectorstore.base import SearchMode, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.conftest import seed_org_agent_memory, zero_embedding
 
@@ -102,7 +102,12 @@ def _build_pipeline(deps: SimpleNamespace) -> WritePipeline:
 
     async def load(org_id: UUID, ids: Sequence[UUID]) -> list:
         return await load_candidate_memories(
-            deps.factory, CandidateLoad(org_id=org_id, memory_ids=tuple(ids))
+            deps.factory,
+            CandidateLoad(
+                org_id=org_id,
+                memory_ids=tuple(ids),
+                search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+            ),
         )
 
     return WritePipeline(
@@ -129,16 +134,10 @@ def _make_deps(core: SimpleNamespace) -> SimpleNamespace:
         )
 
     async def bump(o: UUID, mid: UUID) -> int:
-        return await increment_retrieval_count(
-            factory, RetrievalBump(org_id=o, memory_id=mid)
-        )
+        return await increment_retrieval_count(factory, RetrievalBump(org_id=o, memory_id=mid))
 
-    dedup = DedupService(
-        settings, store=store, exact_lookup=lookup, bump_retrieval=bump
-    )
-    conflict = ConflictService(
-        settings, subject_extractor=lambda _: "shared-subject-key"
-    )
+    dedup = DedupService(settings, store=store, exact_lookup=lookup, bump_retrieval=bump)
+    conflict = ConflictService(settings, subject_extractor=lambda _: "shared-subject-key")
     probe = getattr(core, "embed", None) or _EmbedProbe()
     pii = getattr(core, "pii", None) or PiiService(settings)
     return SimpleNamespace(
@@ -165,9 +164,7 @@ async def test_composed_happy_path_novel_clean(
     settings: Settings,
     store: PgVectorStore,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="seed unrelated row"
-    )
+    org_id, agent_id, _ = await seed_org_agent_memory(session_factory, content="seed unrelated row")
     content = "User prefers dark mode in dashboards for focus"
     core = _core(session_factory, settings, store)
     deps = _make_deps(core)
@@ -199,18 +196,14 @@ async def test_composed_pii_quarantine_stops_before_embed(
     settings: Settings,
     store: PgVectorStore,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="quarantine seed"
-    )
+    org_id, agent_id, _ = await seed_org_agent_memory(session_factory, content="quarantine seed")
     probe = _EmbedProbe()
     core = _core(session_factory, settings, store)
     core.pii = _QuarantinePii()
     core.embed = probe
     deps = _make_deps(core)
     pipe = _build_pipeline(deps)
-    ctx = await pipe.run(
-        WriteContext(org_id=org_id, agent_id=agent_id, content="Contact Jordan")
-    )
+    ctx = await pipe.run(WriteContext(org_id=org_id, agent_id=agent_id, content="Contact Jordan"))
     assert ctx.stop is True
     assert ctx.status == "quarantined"
     assert ctx.embedding is None
@@ -227,9 +220,7 @@ async def test_composed_exact_duplicate_stops_before_embed(
 ) -> None:
     content = "Exact duplicate payload for composed pipeline"
     digest = content_hash_sha256(content)
-    org_id, agent_id, memory_id = await seed_org_agent_memory(
-        session_factory, content=content
-    )
+    org_id, agent_id, memory_id = await seed_org_agent_memory(session_factory, content=content)
     await _set_content_hash(
         session_factory, org_id=org_id, memory_id=memory_id, content_hash=digest
     )
@@ -240,9 +231,7 @@ async def test_composed_exact_duplicate_stops_before_embed(
     if hasattr(deps.pii, "ensure_ready"):
         await deps.pii.ensure_ready()
     pipe = _build_pipeline(deps)
-    ctx = await pipe.run(
-        WriteContext(org_id=org_id, agent_id=agent_id, content=content)
-    )
+    ctx = await pipe.run(WriteContext(org_id=org_id, agent_id=agent_id, content=content))
     assert ctx.stop is True
     assert ctx.is_exact_duplicate is True
     assert ctx.existing_memory_id == memory_id
@@ -258,9 +247,7 @@ async def test_composed_missing_agent_id_stops_at_exact_dedup(
     settings: Settings,
     store: PgVectorStore,
 ) -> None:
-    org_id, _, _ = await seed_org_agent_memory(
-        session_factory, content="agent id gate seed"
-    )
+    org_id, _, _ = await seed_org_agent_memory(session_factory, content="agent id gate seed")
     probe = _EmbedProbe()
     core = _core(session_factory, settings, store)
     core.embed = probe
@@ -285,12 +272,8 @@ async def test_composed_cross_tenant_near_dup_isolation(
 ) -> None:
     content_a = "Shared preference wording for tenant A"
     content_b = "Shared preference wording for tenant B"
-    org_a, agent_a, mem_a = await seed_org_agent_memory(
-        session_factory, content=content_a
-    )
-    org_b, agent_b, mem_b = await seed_org_agent_memory(
-        session_factory, content=content_b
-    )
+    org_a, agent_a, mem_a = await seed_org_agent_memory(session_factory, content=content_a)
+    org_b, agent_b, mem_b = await seed_org_agent_memory(session_factory, content=content_b)
     vec = zero_embedding(hotspot=11)
     await store.upsert(
         UpsertRequest(
@@ -343,9 +326,7 @@ async def test_composed_cross_tenant_near_dup_isolation(
 
     # Org B must not bump org A retrieval via exact path with shared wording.
     digest = content_hash_sha256(content_a)
-    await _set_content_hash(
-        session_factory, org_id=org_a, memory_id=mem_a, content_hash=digest
-    )
+    await _set_content_hash(session_factory, org_id=org_a, memory_id=mem_a, content_hash=digest)
     found = await find_active_by_content_hash(
         session_factory,
         ExactHashLookup(org_id=org_b, agent_id=agent_b, content_hash=digest),
