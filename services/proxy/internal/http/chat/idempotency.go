@@ -351,8 +351,13 @@ type CapturingWriter struct {
 	capped bool
 }
 
-// WriteHeader records and forwards the status code.
+// WriteHeader records and forwards only the first status code, matching
+// net/http semantics so a replay cannot advertise a status the client did not
+// receive.
 func (c *CapturingWriter) WriteHeader(status int) {
+	if c.Status != 0 {
+		return
+	}
 	c.Status = status
 	c.ResponseWriter.WriteHeader(status)
 }

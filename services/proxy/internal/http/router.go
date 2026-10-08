@@ -86,6 +86,9 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	if protectedRoutesRequireLimiter(deps) {
 		return nil, fmt.Errorf("proxy %s profile requires a rate limiter when protected routes are mounted", deps.Config.Environment)
 	}
+	if protectedRoutesRequireAgentVerifier(deps) {
+		return nil, fmt.Errorf("proxy %s profile requires an agent verifier when protected routes are mounted", deps.Config.Environment)
+	}
 	mux := http.NewServeMux()
 	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
 	if err != nil {
@@ -106,6 +109,14 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 
 func protectedRoutesRequireLimiter(deps RouterDeps) bool {
 	if deps.Validator == nil || deps.Limiter != nil {
+		return false
+	}
+	_, protectedProfile := map[string]struct{}{"staging": {}, "production": {}}[deps.Config.Environment]
+	return protectedProfile
+}
+
+func protectedRoutesRequireAgentVerifier(deps RouterDeps) bool {
+	if deps.Validator == nil || deps.AgentVerifier != nil {
 		return false
 	}
 	_, protectedProfile := map[string]struct{}{"staging": {}, "production": {}}[deps.Config.Environment]

@@ -210,6 +210,7 @@ def _resolve_rate_limiter(
             redis_url=cfg.redis_url,
             default_rpm=cfg.rate_limit_rpm,
             org_overrides=cfg.rate_limit_org_override_map,
+            fail_closed=cfg.env in {"staging", "production"},
         ),
         True,
     )

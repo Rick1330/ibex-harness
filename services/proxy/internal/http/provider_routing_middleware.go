@@ -45,31 +45,24 @@ func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http
 
 func routeProviderRequest(w http.ResponseWriter, r *http.Request, opts providerRoutingOpts, next http.Handler) {
 	requestID := requestIDFromContext(r.Context())
-	parsed, ok := llm.ChatRequestFromContext(r.Context())
+	parsed, orgID, ok := prepareProviderRequest(w, r, opts, requestID)
 	if !ok {
-		opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
-			msgInternalError, requestID,
-			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: opts.docsBase})
-		return
-	}
-	authRes, ok := auth.FromContext(r.Context())
-	if !ok || authRes.OrgID == uuid.Nil {
-		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			msgInternalError, requestID,
-			apierror.WriteOpts{Detail: "missing org context", DocsBase: opts.docsBase})
 		return
 	}
 	candidate, err := resolveRoutingModel(r.Context(), resolveModelArgs{
-		requestModel: parsed.Model,
-		orgID:        authRes.OrgID,
-		loader:       opts.agentDefaults,
+		requestModel: parsed.Model, orgID: orgID, loader: opts.agentDefaults,
 	})
 	if !writeResolveModelError(w, requestID, opts.docsBase, err) {
 		return
 	}
 	parsed.Model = candidate
-	prov, err := opts.resolver.ForOrg(r.Context(), authRes.OrgID, candidate)
+	if opts.resolver == nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "provider resolver unavailable", DocsBase: opts.docsBase})
+		return
+	}
+	prov, err := opts.resolver.ForOrg(r.Context(), orgID, candidate)
 	if err != nil {
 		writeRegistryLookupError(w, registryLookupWrite{
 			requestID: requestID,
@@ -79,6 +72,27 @@ func routeProviderRequest(w http.ResponseWriter, r *http.Request, opts providerR
 		return
 	}
 	next.ServeHTTP(w, r.WithContext(provider.WithProvider(r.Context(), prov)))
+}
+
+func prepareProviderRequest(w http.ResponseWriter, r *http.Request, opts providerRoutingOpts, requestID string) (*llm.ChatCompletionRequest, uuid.UUID, bool) {
+	parsed, ok := llm.ChatRequestFromContext(r.Context())
+	if !ok {
+		if opts.log != nil {
+			opts.log.ErrorCtx(r.Context(), "chat request missing from context before provider routing")
+		}
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: opts.docsBase})
+		return nil, uuid.Nil, false
+	}
+	authRes, ok := auth.FromContext(r.Context())
+	if !ok || authRes.OrgID == uuid.Nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "missing org context", DocsBase: opts.docsBase})
+		return nil, uuid.Nil, false
+	}
+	return parsed, authRes.OrgID, true
 }
 
 // writeResolveModelError returns false when the request was already answered.

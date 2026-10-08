@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _check_discovery_urls(self) -> Settings:
         """Production must advertise non-loopback HTTPS discovery URLs."""
+        if self.env in {"staging", "production"} and not self.redis_url.strip():
+            raise ValueError("IBEX_MCP_REDIS_URL is required in protected profiles")
         if self.env != "production":
             return self
         self._require_public_https("IBEX_MCP_RESOURCE_URL", self.resource_url)

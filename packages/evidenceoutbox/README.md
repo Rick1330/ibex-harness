@@ -8,6 +8,8 @@ This is a shared package, not a deployable process. Consumers must preserve its 
 
 Status is **implemented in this repository** when source and tests are present; this README does not claim hosted production readiness. Changes that alter a cross-service contract require an ADR, consumer updates, and negative/tenant-isolation tests.
 
+Before a claimed row reaches a projection sink, the relay validates its tenant, event, aggregate, schema, payload, and digest identity. Invalid rows are not delivered; they enter the existing failed/poison path so integrity failures remain observable and recoverable rather than becoming silent sink writes.
+
 ## Verification
 
 From the repository root:

@@ -77,3 +77,17 @@ func TestUnit_NewRouter_ProductionRequiresLimiterForProtectedRoutes(t *testing.T
 		t.Fatal("NewRouter accepted production protected routes without a rate limiter")
 	}
 }
+
+func TestUnit_NewRouter_ProtectedProfilesRequireAgentVerifier(t *testing.T) {
+	t.Parallel()
+	for _, environment := range []string{"staging", "production"} {
+		t.Run(environment, func(t *testing.T) {
+			deps := defaultChatRouterDeps(t)
+			deps.Config.Environment = environment
+			deps.AgentVerifier = nil
+			if _, err := NewRouter(deps); err == nil || !strings.Contains(err.Error(), "requires an agent verifier") {
+				t.Fatalf("NewRouter error=%v, want missing agent verifier failure", err)
+			}
+		})
+	}
+}

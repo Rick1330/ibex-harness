@@ -17,7 +17,7 @@ FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a6
 # --------------------------------------------------------------------------- #
 # Stage 2 — dependency install (wheels only; no sdist setup.py execution)     #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS deps
+FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +40,7 @@ RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-i
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS runtime
+FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -48,7 +48,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     IBEX_MCP_HOST=0.0.0.0 \
     IBEX_MCP_PORT=8090
 
-RUN apt-get update \
+RUN python -m pip uninstall --yes setuptools wheel || true \
+    && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
     && rm -rf /var/lib/apt/lists/* \

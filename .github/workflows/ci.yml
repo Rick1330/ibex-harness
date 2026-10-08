@@ -101,6 +101,9 @@ jobs:
       - name: Provider credential schema leak guard
         run: bash .github/scripts/check-provider-credential-leak.sh
 
+      - name: Search index size-limit sync guard
+        run: bash .github/scripts/check-search-index-limit-sync.sh
+
       - name: Validate action pins
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,7 @@
 """Org-scoped MCP calendar-minute rate limiter (Python twin of packages/ratelimit).
 
 Mirrors packages/ratelimit/window.go semantics: Lua INCR + EXPIRE-on-create (90s),
-key ratelimit:{org_id}:mcp:{unix_minute}. Fail-open on Redis errors.
+key ratelimit:{org_id}:mcp:{unix_minute}. Development may fail open; protected profiles fail closed.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ from uuid import UUID
 from prometheus_client import Counter
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+
+from app.errors import RateLimitUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,7 @@ return n
 
 RATE_LIMIT_ERRORS = Counter(
     "ibex_mcp_rate_limit_errors_total",
-    "MCP rate-limit Redis failures (fail-open admits the request)",
+    "MCP rate-limit Redis failures",
 )
 RATE_LIMIT_REJECTED = Counter(
     "ibex_mcp_rate_limit_rejected_total",
@@ -79,11 +81,13 @@ class RedisMcpLimiter(McpRateLimiter):
         default_rpm: int = 120,
         org_overrides: dict[UUID, int] | None = None,
         owned: bool = True,
+        fail_closed: bool = False,
     ) -> None:
         self._redis = redis
         self._default_rpm = max(1, default_rpm)
         self._org_overrides = org_overrides or {}
         self._owned = owned
+        self._fail_closed = fail_closed
         self._script = self._redis.register_script(INCR_EXPIRE_LUA)
 
     def effective_limit(self, org_id: UUID) -> int:
@@ -109,8 +113,10 @@ class RedisMcpLimiter(McpRateLimiter):
             )
         except (OSError, RedisError) as exc:
             RATE_LIMIT_ERRORS.inc()
+            if self._fail_closed:
+                raise RateLimitUnavailableError() from exc
             logger.warning(
-                "mcp rate limit redis fail-open org_id=%s error_class=%s",
+                "mcp rate limit redis fail-open development exception org_id=%s error_class=%s",
                 org_id,
                 type(exc).__name__,
             )
@@ -146,6 +152,7 @@ def build_mcp_rate_limiter(
     redis_url: str,
     default_rpm: int,
     org_overrides: dict[UUID, int],
+    fail_closed: bool = False,
 ) -> McpRateLimiter:
     url = redis_url.strip()
     if not url:
@@ -156,6 +163,7 @@ def build_mcp_rate_limiter(
         default_rpm=default_rpm,
         org_overrides=org_overrides,
         owned=True,
+        fail_closed=fail_closed,
     )
 
 

@@ -26,11 +26,21 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 | DecisionService/GLiNER | `design-intent` | No runtime, contract, benchmark, registry, or acceptance evidence exists. |
 | Graph/A2A/marketplace/sandbox | `deferred` | These are not current dependencies. |
 
+## G0 review packet
+
+ADR-0084 and issue #935 propose the first G0/G1/G2 contract packet for verified principal propagation, token-bound agent selection, protected-profile verifier readiness, tenant-bound idempotency, evidence acknowledgement/redaction, and relay/sink profile boundaries. The packet is **proposed**, not accepted: no implementation or local test result may be promoted to `shipped-accepted` until named auth/policy, contract, evidence/security, and deployment owners approve the contract, profile assumptions, negative-test evidence, limitations, and review date.
+
+The packet's required acceptance artifact is a dated owner decision linked to the exact source commit and evidence bundle. It must identify the supported deployment profile and required dependencies; freeze authority and trust labels; define errors, deadlines, cancellation, retry, idempotency, replay, redaction, retention, tombstone, and recovery semantics; and list the review/expiry date. A PR merge is not an acceptance artifact.
+
+Until that artifact exists, the following remain blocked as implementation-ready: repo-wide `PrincipalContext`/`RunEnvelope` migration, durable budget reservation, provider manifest/adapters, typed memory lifecycle, MCP governance, control-plane effects, and recovery certification. This draft may carry bounded safety hardening that does not create a new authority boundary: the temporal memory read fence, protected-profile MCP rate-limit failure mode, and PostgreSQL relay payload-integrity/replay evidence are partial dispositions only, with focused local tests but no gap-closure or production-acceptance claim. The relay slice verifies digest equality and deterministic ack-loss replay behavior; it does not establish evidence-required acknowledgement timing, sink deployment, tombstone fencing, hosted recovery, or exactly-once effect outside the test sink.
+
 ## Ledger template
 
 | Claim | Status | Source | Evidence | Profile | Owner | Verified | Limitations | Review |
 |---|---|---|---|---|---|---|---|---|
 | Example: protected proxy auth | `shipped-local` | `services/proxy/...` | integration test link | Compose | Proxy owner | YYYY-MM-DD | no HA evidence | YYYY-MM-DD |
+| PostgreSQL relay digest/replay hardening | `provisional` | `packages/evidenceoutbox/relay.go` and relay tests | unit + integration ack-loss replay evidence | local PostgreSQL integration profile | Evidence/Security + Platform; pending named reviewer | branch follow-up commit | no accepted G0, sink, tombstone, redaction, hosted/HA, or recovery certification | owner review required |
+| Historical conflict candidates | `provisional` | `services/memory/app/dedup/service.py` and vector search contract | focused request/SQL regression tests; E2E rerun pending | memory PostgreSQL/pgvector write profile | Memory + Context; pending named reviewer | branch follow-up commit | default user retrieval fence remains; hosted E2E and lifecycle acceptance pending | owner review required |
 
 ## Rules
 

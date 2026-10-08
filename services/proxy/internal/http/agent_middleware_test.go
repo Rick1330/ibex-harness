@@ -19,11 +19,13 @@ import (
 var agentTestOrgUUID = uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
 
 type mockAgentVerifier struct {
-	rec *auth.AgentRecord
-	err error
+	rec   *auth.AgentRecord
+	err   error
+	calls int
 }
 
 func (m *mockAgentVerifier) Verify(_ context.Context, _, agentID, orgID string) (*auth.AgentRecord, error) {
+	m.calls++
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -46,6 +48,7 @@ func agentTestAgentID() string {
 type agentVerifyCase struct {
 	verifier      AgentVerifier
 	agentID       string
+	authAgentID   uuid.UUID
 	withAuth      bool
 	authorization string
 }
@@ -80,10 +83,54 @@ func runAgentVerificationCase(t *testing.T, tc agentVerifyCase) *httptest.Respon
 		req.Header.Set(validation.HeaderAgentID, tc.agentID)
 	}
 	if tc.withAuth {
-		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgUUID}))
+		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgUUID, AgentID: tc.authAgentID}))
 	}
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestUnit_AgentVerification_RejectsMismatchedBoundAgentBeforeVerifier(t *testing.T) {
+	t.Parallel()
+	verifier := &mockAgentVerifier{}
+	rec := runAgentVerificationCase(t, agentVerifyCase{
+		verifier: verifier, agentID: agentTestAgentID(), withAuth: true,
+		authAgentID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440002"),
+	})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeAgentNotAuthorized)) {
+		t.Fatalf("body missing agent authorization code: %s", rec.Body.String())
+	}
+	if verifier.calls != 0 {
+		t.Fatalf("verifier calls=%d want 0", verifier.calls)
+	}
+}
+
+func TestUnit_AgentVerification_AcceptsUppercaseBoundAgentHeader(t *testing.T) {
+	t.Parallel()
+	verifier := &mockAgentVerifier{}
+	rec := runAgentVerificationCase(t, agentVerifyCase{
+		verifier: verifier, agentID: strings.ToUpper(agentTestAgentID()), withAuth: true,
+		authAgentID: uuid.MustParse(agentTestAgentID()), authorization: "Bearer ibex_pat_test",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if verifier.calls != 1 {
+		t.Fatalf("verifier calls=%d want 1", verifier.calls)
+	}
+}
+
+func TestUnit_AgentVerification_MissingVerifierFailsClosed(t *testing.T) {
+	t.Parallel()
+	rec := runAgentVerification(t, nil, agentTestAgentID(), true)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
+		t.Fatalf("body missing auth-unavailable code: %s", rec.Body.String())
+	}
 }
 
 func TestUnit_AgentVerification(t *testing.T) {
