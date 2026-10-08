@@ -42,7 +42,7 @@ The following registrations are the first review packet for the principal, repla
 
 Each proposed row must be completed before acceptance with: named owner; source path and generated artifacts; version and compatibility class; authenticated scope and trust labels; deployment profile and dependencies; stable error/status mapping; deadline/cancellation and retry behavior; idempotency/body-hash and replay/conflict semantics; redaction/retention/deletion behavior; tests and evidence artifact; migration and rollback/roll-forward plan where applicable; and owner decision/review window.
 
-### Proposed completion matrix for issue #935
+### Proposed completion matrix from original issue #935 (historical context)
 
 The following values include decisions recorded on 2026-10-08 and remain a review baseline, not G0 acceptance. Explicitly marked owner decisions still require confirmation during the 14-day review window.
 
