@@ -339,6 +339,52 @@ func TestIntegration_OutboxAckLoss_ReplaysWithIdempotentSinkEffect(t *testing.T)
 	}
 }
 
+func TestIntegration_Relay_PoisonedValidationFailureIsPersisted(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	orgID := seedOrg(t, db)
+	store := mustStore(t, db)
+	requestID := "req-poison-" + uuid.NewString()
+	traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := store.PersistRun(context.Background(), evidenceoutbox.RunInput{
+		OrgID: orgID, RequestID: requestID, TraceID: traceID,
+	}); err != nil {
+		t.Fatalf("persist unclassified run: %v", err)
+	}
+
+	deliverer := &recordingDeliverer{}
+	relay, err := evidenceoutbox.NewRelay(
+		db, deliverer, evidenceoutbox.RelayConfig{BatchSize: 1, MaxAttempts: 5},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatalf("process poison row: %v", err)
+	}
+	if res.Claimed != 1 || res.Poisoned != 1 || res.Delivered != 0 || res.Failed != 0 {
+		t.Fatalf("result=%+v want one claimed, terminal poison, no delivery", res)
+	}
+	if got := deliverer.count(); got != 0 {
+		t.Fatalf("sink deliveries=%d want 0", got)
+	}
+
+	var status, lastError string
+	const query = `
+SELECT delivery_status, last_error
+FROM ibex_core.evidence_outbox
+WHERE org_id = $1 AND aggregate_id = $2
+ORDER BY aggregate_seq
+LIMIT 1`
+	if err := db.QueryRowContext(context.Background(), query, orgID, requestID).Scan(&status, &lastError); err != nil {
+		t.Fatalf("read poisoned row: %v", err)
+	}
+	if status != string(evidenceoutbox.StatusPoison) || !strings.Contains(lastError, "unclassified") {
+		t.Fatalf("status=%q last_error=%q want persisted poison for unclassified row", status, lastError)
+	}
+}
+
 // keepSinglePendingOutbox deletes sibling pending rows so ack-loss replay cannot
 // claim a different event when available_at/created_at ties leave ORDER BY unstable.
 func keepSinglePendingOutbox(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregateID string) {

@@ -385,7 +385,9 @@ func (r *Relay) markFailure(ctx context.Context, row OutboxRow, deliverErr error
 	}
 	delaySecs := retryBackoffSeconds(row.Attempts)
 	if status == StatusPoison {
-		delaySecs = 0
+		// The SQL helper requires a positive delay for every failure status.
+		// Poison rows are terminal and never reclaimed, so this value is inert.
+		delaySecs = 1
 	}
 	var n int64
 	if err := tx.QueryRowContext(ctx,

@@ -418,7 +418,7 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 			mock.ExpectCommit()
 			mock.ExpectBegin()
 			mock.ExpectQuery(`evidence_outbox_mark_failure`).WithArgs(
-				id, 1, StatusPoison, tc.wantErr, 0,
+				id, 1, StatusPoison, tc.wantErr, sqlmock.AnyArg(),
 			).WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 			mock.ExpectCommit()
 
