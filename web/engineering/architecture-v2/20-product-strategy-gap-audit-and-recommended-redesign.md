@@ -318,9 +318,9 @@ The proxy must enforce the reservation. It should cap output, tool calls, retrie
 ```json
 {
   "budget_enforcement_mode": "enforced",
-  "reservation_id": "...",
+  "reservation_id": "...",
   "estimated_cost_usd": 0.012,
-  "policy_version": "...",
+  "policy_version": "...",
   "remaining_budget_usd": 12.44
 }
 ```
@@ -527,7 +527,7 @@ MCP tool descriptions and results are untrusted input. Tool poisoning and rug-pu
 
 ## A2A should be later and narrower
 
-A2A is useful for agent-to-agent tasks, but it is not the right first product. It introduces Agent Cards, task lifecycle, artifacts, streaming, push notifications, multiple bindings, and authentication patterns.[16]
+A2A is useful for agent-to-agent tasks, but it is not the right first product. It introduces Agent Cards, task lifecycle, artifacts, streaming, push notifications, multiple bindings, and authentication patterns.[17]
 
 IBEX should eventually expose an A2A edge adapter that maps an authenticated task to an existing durable worker job. It should not create a new agent runtime or share internal memory automatically.
 
@@ -1031,6 +1031,7 @@ The product should measure time-to-first-approved-tool, pinned/attested artifact
 [14]: https://developers.openai.com/codex/mcp "OpenAI Codex MCP configuration and integration"
 [15]: https://docs.github.com/en/copilot/concepts/context/mcp "GitHub Copilot MCP context and tool configuration"
 [16]: https://modelcontextprotocol.io/specification/2026-07-28 "Model Context Protocol specification"
+[17]: https://a2a-protocol.org/latest/specification/ "Agent2Agent protocol specification"
 
 [26]: https://agentskills.io/specification "Agent Skills specification"
 [27]: https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview "Anthropic Agent Skills overview"
