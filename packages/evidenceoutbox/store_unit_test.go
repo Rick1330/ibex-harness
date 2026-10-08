@@ -34,21 +34,28 @@ func TestUnit_PersistRun_Validation(t *testing.T) {
 	}
 }
 
+func marshalOutboxPayloadForTest(
+	t *testing.T,
+	payload any,
+	class RedactionClass,
+	fence *TombstoneFence,
+) map[string]json.RawMessage {
+	t.Helper()
+	raw, err := marshalOutboxPayload(payload, class, fence)
+	if err != nil {
+		t.Fatalf("marshalOutboxPayload: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("unmarshal outbox payload: %v", err)
+	}
+	return fields
+}
+
 func TestUnit_MarshalOutboxPayloadAddsTrustedMetadata(t *testing.T) {
 	t.Parallel()
-	fence := &TombstoneFence{
-		ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7,
-	}
-	raw, err := marshalOutboxPayload(
-		map[string]any{"event_id": "evt-1"}, RedactionClassMetadata, fence,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatal(err)
-	}
+	fence := &TombstoneFence{ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7}
+	payload := marshalOutboxPayloadForTest(t, map[string]any{"event_id": "evt-1"}, RedactionClassMetadata, fence)
 	if string(payload["redaction_class"]) != `"metadata"` {
 		t.Fatalf("redaction_class=%s", payload["redaction_class"])
 	}
@@ -59,21 +66,48 @@ func TestUnit_MarshalOutboxPayloadAddsTrustedMetadata(t *testing.T) {
 	if gotFence != *fence {
 		t.Fatalf("tombstone_fence=%+v want %+v", gotFence, *fence)
 	}
-	unclassifiedRaw, err := marshalOutboxPayload(map[string]any{"event_id": "evt-2"}, "", nil)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestUnit_MarshalOutboxPayloadDefaultsUnclassified(t *testing.T) {
+	t.Parallel()
+	payload := marshalOutboxPayloadForTest(t, map[string]any{"event_id": "evt-2"}, "", nil)
+	if string(payload["redaction_class"]) != `"unclassified"` {
+		t.Fatalf("missing producer classification was upgraded: %s", payload["redaction_class"])
 	}
-	var unclassified map[string]json.RawMessage
-	if err := json.Unmarshal(unclassifiedRaw, &unclassified); err != nil {
-		t.Fatal(err)
+}
+
+func TestUnit_MarshalOutboxPayloadAcceptsProhibitedClass(t *testing.T) {
+	t.Parallel()
+	payload := marshalOutboxPayloadForTest(
+		t, map[string]any{"event_id": "evt-3"}, RedactionClassProhibited, nil,
+	)
+	if string(payload["redaction_class"]) != `"prohibited"` {
+		t.Fatalf("redaction_class=%s want prohibited", payload["redaction_class"])
 	}
-	if string(unclassified["redaction_class"]) != `"unclassified"` {
-		t.Fatalf("missing producer classification was upgraded: %s", unclassified["redaction_class"])
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsUnsupportedClass(t *testing.T) {
+	t.Parallel()
+	if _, err := marshalOutboxPayload(map[string]any{"event_id": "evt-4"}, RedactionClass("unknown"), nil); err == nil {
+		t.Fatal("expected unsupported redaction class to be rejected")
 	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsCallerSuppliedClass(t *testing.T) {
+	t.Parallel()
 	if _, err := marshalOutboxPayload(
 		map[string]any{"redaction_class": "metadata"}, RedactionClassMetadata, nil,
 	); err == nil {
 		t.Fatal("expected caller-supplied redaction_class to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsCallerSuppliedFence(t *testing.T) {
+	t.Parallel()
+	if _, err := marshalOutboxPayload(
+		map[string]any{"tombstone_fence": map[string]any{}}, RedactionClassMetadata, nil,
+	); err == nil {
+		t.Fatal("expected caller-supplied tombstone_fence to be rejected")
 	}
 }
 

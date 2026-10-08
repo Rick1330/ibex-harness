@@ -75,15 +75,13 @@ async def test_load_candidate_memories_empty_ids() -> None:
 @pytest.mark.asyncio
 async def test_load_candidate_memories_rejects_user_retrieval_mode() -> None:
     session = _FakeSession([])
+    candidate_load = CandidateLoad(
+        org_id=uuid4(),
+        memory_ids=(),
+        search_mode=SearchMode.USER_RETRIEVAL,
+    )
     with pytest.raises(ValueError, match="historical conflict-candidate mode"):
-        await load_candidate_memories(
-            _factory_for(session),  # type: ignore[arg-type]
-            CandidateLoad(
-                org_id=uuid4(),
-                memory_ids=(),
-                search_mode=SearchMode.USER_RETRIEVAL,
-            ),
-        )
+        await load_candidate_memories(_factory_for(session), candidate_load)  # type: ignore[arg-type]
     assert session.executed == []
 
 

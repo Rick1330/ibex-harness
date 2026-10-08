@@ -658,6 +658,9 @@ func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFen
 	if strings.TrimSpace(string(class)) == "" {
 		class = RedactionClassUnclassified
 	}
+	if !isSupportedRedactionClass(class) {
+		return nil, fmt.Errorf("evidenceoutbox: unsupported redaction class %q", class)
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err

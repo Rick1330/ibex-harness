@@ -1,6 +1,6 @@
 # Contract Registry and Ownership
 
-**Status:** `specified`; inventory must be completed before new boundary work. The initial G0 registry packet is proposed in `web/content/docs/adr/0084-g0-principal-agent-binding-and-idempotency.mdx:10,24-34,141` and tracked by issue #935; no G0 exit is claimed.
+**Status:** `specified`; inventory must be completed before new boundary work. The initial G0 registry packet is proposed in `web/content/docs/adr/0084-g0-principal-agent-binding-and-idempotency.mdx:10,24-34,141`; closed issue #935 is historical context, while open issue #944 tracks the current follow-up; no G0 exit is claimed.
 
 ## Contract hierarchy
 

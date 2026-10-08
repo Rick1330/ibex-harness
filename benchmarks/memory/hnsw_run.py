@@ -159,7 +159,7 @@ async def _explain_search(engine: AsyncEngine, params: ExplainParams) -> dict[st
                 "agent_id": str(params.agent_id),
                 "min_similarity": params.min_similarity,
                 "limit": params.limit,
-                "include_expired": False,
+                "include_historical_candidates": False,
             },
         )
         payload = result.scalar()

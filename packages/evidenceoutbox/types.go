@@ -16,6 +16,15 @@ const (
 	RedactionClassProhibited   RedactionClass = "prohibited"
 )
 
+func isSupportedRedactionClass(class RedactionClass) bool {
+	switch class {
+	case RedactionClassUnclassified, RedactionClassMetadata, RedactionClassProhibited:
+		return true
+	default:
+		return false
+	}
+}
+
 // TombstoneFence identifies the authoritative resource version that a sink must
 // check against the org-scoped PostgreSQL lifecycle record before projection.
 type TombstoneFence struct {

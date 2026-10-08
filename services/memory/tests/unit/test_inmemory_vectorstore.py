@@ -111,9 +111,7 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
     await store.upsert(
         UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3")
     )
-    request = UpsertRequest(
-        memory_id=mem, org_id=org_b, embedding=_UNIT, embedding_model="bge-m3"
-    )
+    request = UpsertRequest(memory_id=mem, org_id=org_b, embedding=_UNIT, embedding_model="bge-m3")
     with pytest.raises(LookupError, match="not found for org"):
         await store.upsert(request)
     foreign = await store.search(
@@ -211,6 +209,19 @@ def test_search_request_rejects_invalid_iterative_scan() -> None:
         iterative_scan="bogus",
     )
     with pytest.raises(ValueError, match="iterative_scan"):
+        request.validate()
+
+
+def test_search_request_rejects_non_enum_mode() -> None:
+    org, agent = uuid4(), uuid4()
+    request = SearchRequest(
+        org_id=org,
+        agent_id=agent,
+        query_embedding=_UNIT,
+        limit=5,
+        mode="historical_conflict_candidates",  # type: ignore[arg-type]
+    )
+    with pytest.raises(TypeError, match="mode must be a SearchMode"):
         request.validate()
 
 
