@@ -363,8 +363,17 @@ func TestIntegration_Relay_PoisonedValidationFailureIsPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("process poison row: %v", err)
 	}
-	if res.Claimed != 1 || res.Poisoned != 1 || res.Delivered != 0 || res.Failed != 0 {
-		t.Fatalf("result=%+v want one claimed, terminal poison, no delivery", res)
+	if res.Claimed != 1 {
+		t.Fatalf("claimed=%d want 1", res.Claimed)
+	}
+	if res.Poisoned != 1 {
+		t.Fatalf("poisoned=%d want 1", res.Poisoned)
+	}
+	if res.Delivered != 0 {
+		t.Fatalf("delivered=%d want 0", res.Delivered)
+	}
+	if res.Failed != 0 {
+		t.Fatalf("failed=%d want 0", res.Failed)
 	}
 	if got := deliverer.count(); got != 0 {
 		t.Fatalf("sink deliveries=%d want 0", got)
