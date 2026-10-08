@@ -102,11 +102,13 @@ func (w *runWriter) persistAll(ctx context.Context) ([]uuid.UUID, error) {
 func (w *runWriter) enqueue(ctx context.Context, eventType string, payload any) error {
 	w.seq++
 	id, err := enqueueOutbox(ctx, w.tx, outboxWrite{
-		OrgID:       w.in.OrgID,
-		AggregateID: w.in.RequestID,
-		Seq:         w.seq,
-		EventType:   eventType,
-		Payload:     payload,
+		OrgID:          w.in.OrgID,
+		AggregateID:    w.in.RequestID,
+		Seq:            w.seq,
+		EventType:      eventType,
+		RedactionClass: w.in.RedactionClass,
+		TombstoneFence: w.in.TombstoneFence,
+		Payload:        payload,
 	})
 	if err != nil {
 		return err
@@ -248,6 +250,11 @@ var completenessValues = map[string]struct{}{
 }
 
 func validateRunInput(in RunInput) error {
+	if in.TombstoneFence != nil {
+		if err := validateTombstoneFence(in.TombstoneFence); err != nil {
+			return err
+		}
+	}
 	if err := validateRunIdentity(in); err != nil {
 		return err
 	}
@@ -378,15 +385,17 @@ func uuidPtrString(id *uuid.UUID) string {
 }
 
 type outboxWrite struct {
-	OrgID       uuid.UUID
-	AggregateID string
-	Seq         int64
-	EventType   string
-	Payload     any
+	OrgID          uuid.UUID
+	AggregateID    string
+	Seq            int64
+	EventType      string
+	RedactionClass RedactionClass
+	TombstoneFence *TombstoneFence
+	Payload        any
 }
 
 func enqueueOutbox(ctx context.Context, tx *sql.Tx, w outboxWrite) (uuid.UUID, error) {
-	raw, err := json.Marshal(w.Payload)
+	raw, err := marshalOutboxPayload(w.Payload, w.RedactionClass, w.TombstoneFence)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: marshal payload: %w", err)
 	}
@@ -644,4 +653,62 @@ func firstNonEmptyStr(values ...string) string {
 		}
 	}
 	return ""
+}
+func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFence) ([]byte, error) {
+	if strings.TrimSpace(string(class)) == "" {
+		class = RedactionClassUnclassified
+	}
+	if !isSupportedRedactionClass(class) {
+		return nil, fmt.Errorf("evidenceoutbox: unsupported redaction class %q", class)
+	}
+	fields, err := marshalPayloadToFields(payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := addProducerMetadata(fields, class, fence); err != nil {
+		return nil, err
+	}
+	return json.Marshal(fields)
+}
+
+func marshalPayloadToFields(payload any) (map[string]json.RawMessage, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return decodePayloadFields(raw)
+}
+
+func decodePayloadFields(raw []byte) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, fmt.Errorf("evidenceoutbox: payload must be a JSON object")
+	}
+	return fields, nil
+}
+
+func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence) error {
+	if _, exists := fields["redaction_class"]; exists {
+		return fmt.Errorf("evidenceoutbox: redaction_class is assigned by the producer")
+	}
+	if _, exists := fields["tombstone_fence"]; exists {
+		return fmt.Errorf("evidenceoutbox: tombstone_fence is assigned by the producer")
+	}
+	// The class has already been checked against the closed set of ASCII tokens.
+	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
+	if fence == nil {
+		return nil
+	}
+	if err := validateTombstoneFence(fence); err != nil {
+		return err
+	}
+	fenceJSON, err := json.Marshal(fence)
+	if err != nil {
+		return err
+	}
+	fields["tombstone_fence"] = fenceJSON
+	return nil
 }

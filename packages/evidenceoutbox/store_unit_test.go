@@ -2,6 +2,8 @@ package evidenceoutbox
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -30,6 +32,127 @@ func TestUnit_PersistRun_Validation(t *testing.T) {
 	_, err = store.PersistRun(context.Background(), RunInput{})
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func marshalOutboxPayloadForTest(
+	t *testing.T,
+	payload any,
+	class RedactionClass,
+	fence *TombstoneFence,
+) map[string]json.RawMessage {
+	t.Helper()
+	raw, err := marshalOutboxPayload(payload, class, fence)
+	if err != nil {
+		t.Fatalf("marshalOutboxPayload: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("unmarshal outbox payload: %v", err)
+	}
+	return fields
+}
+
+func TestUnit_MarshalOutboxPayloadAddsTrustedMetadata(t *testing.T) {
+	t.Parallel()
+	fence := &TombstoneFence{ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7}
+	payload := marshalOutboxPayloadForTest(t, map[string]any{"event_id": "evt-1"}, RedactionClassMetadata, fence)
+	if string(payload["redaction_class"]) != `"metadata"` {
+		t.Fatalf("redaction_class=%s", payload["redaction_class"])
+	}
+	var gotFence TombstoneFence
+	if err := json.Unmarshal(payload["tombstone_fence"], &gotFence); err != nil {
+		t.Fatal(err)
+	}
+	if gotFence != *fence {
+		t.Fatalf("tombstone_fence=%+v want %+v", gotFence, *fence)
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadDefaultsUnclassified(t *testing.T) {
+	t.Parallel()
+	payload := marshalOutboxPayloadForTest(t, map[string]any{"event_id": "evt-2"}, "", nil)
+	if string(payload["redaction_class"]) != `"unclassified"` {
+		t.Fatalf("missing producer classification was upgraded: %s", payload["redaction_class"])
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadAcceptsProhibitedClass(t *testing.T) {
+	t.Parallel()
+	payload := marshalOutboxPayloadForTest(
+		t, map[string]any{"event_id": "evt-3"}, RedactionClassProhibited, nil,
+	)
+	if string(payload["redaction_class"]) != `"prohibited"` {
+		t.Fatalf("redaction_class=%s want prohibited", payload["redaction_class"])
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsUnsupportedClass(t *testing.T) {
+	t.Parallel()
+	if _, err := marshalOutboxPayload(map[string]any{"event_id": "evt-4"}, RedactionClass("unknown"), nil); err == nil {
+		t.Fatal("expected unsupported redaction class to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsCallerSuppliedClass(t *testing.T) {
+	t.Parallel()
+	if _, err := marshalOutboxPayload(
+		map[string]any{"redaction_class": "metadata"}, RedactionClassMetadata, nil,
+	); err == nil {
+		t.Fatal("expected caller-supplied redaction_class to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsCallerSuppliedFence(t *testing.T) {
+	t.Parallel()
+	if _, err := marshalOutboxPayload(
+		map[string]any{"tombstone_fence": map[string]any{}}, RedactionClassMetadata, nil,
+	); err == nil {
+		t.Fatal("expected caller-supplied tombstone_fence to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsUnserializablePayload(t *testing.T) {
+	t.Parallel()
+	_, err := marshalOutboxPayload(make(chan int), RedactionClassMetadata, nil)
+	var unsupported *json.UnsupportedTypeError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("err=%v want unsupported-type marshal error", err)
+	}
+}
+
+func TestUnit_DecodePayloadFieldsRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+	if _, err := decodePayloadFields([]byte("{")); err == nil {
+		t.Fatal("expected malformed JSON to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRequiresJSONObject(t *testing.T) {
+	t.Parallel()
+	_, err := marshalOutboxPayload(nil, RedactionClassMetadata, nil)
+	if err == nil || !strings.Contains(err.Error(), "payload must be a JSON object") {
+		t.Fatalf("err=%v want JSON object validation error", err)
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsInvalidFence(t *testing.T) {
+	t.Parallel()
+	_, err := marshalOutboxPayload(
+		map[string]any{"event_id": "evt-5"}, RedactionClassMetadata, &TombstoneFence{},
+	)
+	if !errors.Is(err, errTombstoneFenceInvalid) {
+		t.Fatalf("err=%v want invalid tombstone fence", err)
+	}
+}
+
+func TestUnit_ValidateRunInputRejectsInvalidFence(t *testing.T) {
+	t.Parallel()
+	err := validateRunInput(RunInput{
+		TombstoneFence: &TombstoneFence{ResourceType: "memory", ResourceID: "mem-1"},
+	})
+	if !errors.Is(err, errTombstoneFenceInvalid) {
+		t.Fatalf("err=%v want invalid tombstone fence", err)
 	}
 }
 

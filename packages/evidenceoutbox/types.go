@@ -7,6 +7,32 @@ import (
 	"github.com/google/uuid"
 )
 
+// RedactionClass is the producer-assigned privacy class of an outbox payload.
+type RedactionClass string
+
+const (
+	RedactionClassUnclassified RedactionClass = "unclassified"
+	RedactionClassMetadata     RedactionClass = "metadata"
+	RedactionClassProhibited   RedactionClass = "prohibited"
+)
+
+func isSupportedRedactionClass(class RedactionClass) bool {
+	switch class {
+	case RedactionClassUnclassified, RedactionClassMetadata, RedactionClassProhibited:
+		return true
+	default:
+		return false
+	}
+}
+
+// TombstoneFence identifies the authoritative resource version that a sink must
+// check against the org-scoped PostgreSQL lifecycle record before projection.
+type TombstoneFence struct {
+	ResourceType    string `json:"resource_type"`
+	ResourceID      string `json:"resource_id"`
+	ResourceVersion int64  `json:"resource_version"`
+}
+
 // OutboxRow is one unpublished (or in-flight) evidence publication record.
 type OutboxRow struct {
 	ID             uuid.UUID
@@ -16,6 +42,8 @@ type OutboxRow struct {
 	AggregateSeq   int64
 	SchemaVersion  string
 	EventType      string
+	RedactionClass RedactionClass
+	TombstoneFence *TombstoneFence
 	Payload        json.RawMessage
 	PayloadDigest  string
 	DeliveryStatus string
@@ -108,6 +136,10 @@ type RunInput struct {
 	ErrorCode      string
 	CaptureMode    string
 	SampleDecision string
+	// RedactionClass must reflect the producer's sanitization result. Empty means
+	// unclassified and is rejected by the relay; it is never upgraded implicitly.
+	RedactionClass RedactionClass
+	TombstoneFence *TombstoneFence
 	StartedAt      time.Time
 	EndedAt        time.Time
 	Spans          []SpanInput

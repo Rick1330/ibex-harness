@@ -8,7 +8,7 @@ from uuid import UUID
 
 from app.dedup.hash import content_hash_sha256
 from app.dedup.types import DedupResult
-from app.vectorstore.base import SearchRequest, VectorStore
+from app.vectorstore.base import SearchMode, SearchRequest, VectorStore
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -86,7 +86,7 @@ class DedupService:
                 query_embedding=embedding,
                 limit=self._settings.near_duplicate_candidate_limit,
                 min_similarity=threshold,
-                include_expired=True,
+                mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
             )
         )
         # Milestone gate is strict greater-than; VectorStore.search uses >=.

@@ -86,9 +86,7 @@ async def test_orchestrator_persists_row_by_status(
     orch = build_orchestrator(deps)
     await ensure_pii_ready(orch)
     valid_from = (
-        datetime(2026, 6, 1, tzinfo=UTC)
-        if case.expected_kind == WriteOutcomeKind.CREATED
-        else None
+        datetime(2026, 6, 1, tzinfo=UTC) if case.expected_kind == WriteOutcomeKind.CREATED else None
     )
     outcome = await orch.create(
         CreateMemoryCommand(
@@ -114,9 +112,7 @@ async def test_orchestrator_exact_duplicate_raises_409_path(
     store,
 ) -> None:
     content = "Exact duplicate orchestrator payload"
-    org_id, agent_id, memory_id = await seed_org_agent_memory(
-        session_factory, content=content
-    )
+    org_id, agent_id, memory_id = await seed_org_agent_memory(session_factory, content=content)
     await set_content_hash(
         session_factory,
         org_id=org_id,
@@ -167,9 +163,7 @@ async def test_orchestrator_supersession_in_one_transaction(
     settings: Settings,
     store,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="supersede seed"
-    )
+    org_id, agent_id, _ = await seed_org_agent_memory(session_factory, content="supersede seed")
     march = datetime(2026, 3, 1, tzinfo=UTC)
     june = datetime(2026, 6, 1, tzinfo=UTC)
     old_content = "User prefers Python for all backend services"
@@ -217,9 +211,7 @@ async def test_orchestrator_escalation_row_persisted(
     settings: Settings,
     store,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="escalation seed"
-    )
+    org_id, agent_id, _ = await seed_org_agent_memory(session_factory, content="escalation seed")
     overlap_start = datetime(2026, 1, 1, tzinfo=UTC)
     overlap_end = datetime(2026, 12, 31, tzinfo=UTC)
     old_content = "User office is in Berlin Germany"
@@ -297,9 +289,14 @@ async def test_orchestrator_cross_tenant_isolated(
     assert out_a.memory.id != out_b.memory.id
 
     from app.conflict.persist import CandidateLoad, load_candidate_memories
+    from app.vectorstore.base import SearchMode
 
     cross_loaded = await load_candidate_memories(
         session_factory,
-        CandidateLoad(org_id=org_b, memory_ids=(out_a.memory.id,)),
+        CandidateLoad(
+            org_id=org_b,
+            memory_ids=(out_a.memory.id,),
+            search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        ),
     )
     assert cross_loaded == []

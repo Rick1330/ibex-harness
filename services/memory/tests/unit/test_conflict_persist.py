@@ -38,9 +38,7 @@ class _FakeSession:
         self._results = list(results)
         self.executed: list[tuple[object, object | None]] = []
 
-    async def execute(
-        self, statement: object, params: object | None = None
-    ) -> _FakeResult:
+    async def execute(self, statement: object, params: object | None = None) -> _FakeResult:
         self.executed.append((statement, params))
         if self._results:
             return self._results.pop(0)
@@ -64,9 +62,27 @@ async def test_load_candidate_memories_empty_ids() -> None:
     session = _FakeSession([])
     loaded = await load_candidate_memories(
         _factory_for(session),  # type: ignore[arg-type]
-        CandidateLoad(org_id=uuid4(), memory_ids=()),
+        CandidateLoad(
+            org_id=uuid4(),
+            memory_ids=(),
+            search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        ),
     )
     assert loaded == []
+    assert session.executed == []
+
+
+@pytest.mark.asyncio
+async def test_load_candidate_memories_rejects_user_retrieval_mode() -> None:
+    session = _FakeSession([])
+    candidate_load = CandidateLoad(
+        org_id=uuid4(),
+        memory_ids=(),
+        search_mode=SearchMode.USER_RETRIEVAL,
+    )
+    factory = _factory_for(session)
+    with pytest.raises(ValueError, match="historical conflict-candidate mode"):
+        await load_candidate_memories(factory, candidate_load)  # type: ignore[arg-type]
     assert session.executed == []
 
 
@@ -83,12 +99,14 @@ async def test_load_candidate_memories_maps_rows() -> None:
         confidence=0.9,
     )
     # set_config x2 + SELECT
-    session = _FakeSession(
-        [_FakeResult(), _FakeResult(), _FakeResult(rows=[row])]
-    )
+    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rows=[row])])
     loaded = await load_candidate_memories(
         _factory_for(session),  # type: ignore[arg-type]
-        CandidateLoad(org_id=uuid4(), memory_ids=(mid, missing)),
+        CandidateLoad(
+            org_id=uuid4(),
+            memory_ids=(mid, missing),
+            search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        ),
     )
     assert len(loaded) == 1
     assert loaded[0].memory_id == mid
@@ -109,18 +127,23 @@ async def test_load_candidate_aware_until() -> None:
         valid_until=vu,
         confidence=0.8,
     )
-    session = _FakeSession(
-        [_FakeResult(), _FakeResult(), _FakeResult(rows=[row])]
-    )
+    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rows=[row])])
     loaded = await load_candidate_memories(
         _factory_for(session),  # type: ignore[arg-type]
-        CandidateLoad(org_id=uuid4(), memory_ids=(mid,)),
+        CandidateLoad(
+            org_id=uuid4(),
+            memory_ids=(mid,),
+            search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        ),
     )
     assert loaded[0].interval.valid_until == vu
 
 
 @pytest.mark.asyncio
-async def test_apply_supersession_success() -> None:
+async def test_apply_supersession_success_records_status_and_link() -> None:
+    org_id = uuid4()
+    new_memory_id = uuid4()
+    target_memory_id = uuid4()
     session = _FakeSession(
         [
             _FakeResult(),
@@ -132,15 +155,30 @@ async def test_apply_supersession_success() -> None:
     await apply_supersession(
         _factory_for(session),  # type: ignore[arg-type]
         SupersedeApply(
-            org_id=uuid4(),
-            new_memory_id=uuid4(),
-            target_memory_id=uuid4(),
+            org_id=org_id,
+            new_memory_id=new_memory_id,
+            target_memory_id=target_memory_id,
             closed_at=datetime(2026, 6, 1, tzinfo=UTC),
         ),
     )
     assert len(session.executed) == 4
     update_sql = str(session.executed[2][0])
+    update_params = session.executed[2][1]
     assert "LEAST" in update_sql
+    assert "SET status = 'superseded'" in update_sql
+    assert "superseded_by = :new_id" in update_sql
+    assert isinstance(update_params, dict)
+    assert update_params["org_id"] == str(org_id)
+    assert update_params["target_id"] == str(target_memory_id)
+    assert update_params["new_id"] == str(new_memory_id)
+
+    relationship_sql = str(session.executed[3][0])
+    relationship_params = session.executed[3][1]
+    assert "'supersedes'" in relationship_sql
+    assert isinstance(relationship_params, dict)
+    assert relationship_params["org_id"] == str(org_id)
+    assert relationship_params["source_id"] == str(new_memory_id)
+    assert relationship_params["target_id"] == str(target_memory_id)
 
 
 @pytest.mark.asyncio
@@ -170,9 +208,7 @@ async def test_apply_supersession_sql_uses_least_coalesce_valid_until() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_supersession_missing_row() -> None:
-    session = _FakeSession(
-        [_FakeResult(), _FakeResult(), _FakeResult(rowcount=0)]
-    )
+    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rowcount=0)])
     factory = _factory_for(session)  # type: ignore[arg-type]
     apply = SupersedeApply(
         org_id=uuid4(),
@@ -197,3 +233,6 @@ async def test_insert_relationship() -> None:
         ),
     )
     assert len(session.executed) == 3
+
+
+from app.vectorstore.base import SearchMode

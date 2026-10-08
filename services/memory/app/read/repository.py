@@ -26,7 +26,7 @@ from app.read.ranking import (
     merge_candidates,
     rank_hydrated_hits,
 )
-from app.vectorstore.base import SearchHit, SearchRequest, VectorStore
+from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, VectorStore
 
 _HYDRATE_SQL = """
 SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
@@ -134,6 +134,7 @@ class MemoryReadRepository:
                 query_embedding=query.query_embedding,
                 limit=query.limit,
                 min_similarity=query.min_similarity,
+                mode=SearchMode.USER_RETRIEVAL,
             )
         )
         return _vector_candidates(vector_hits)

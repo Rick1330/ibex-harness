@@ -119,7 +119,7 @@ func (s *recordingDeliverer) Deliver(_ context.Context, row evidenceoutbox.Outbo
 	if s.failN.Add(-1) >= 0 {
 		return errors.New("injected deliverer failure")
 	}
-	key := row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
+	key := row.OrgID.String() + ":" + row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.seen == nil {
@@ -127,6 +127,15 @@ func (s *recordingDeliverer) Deliver(_ context.Context, row evidenceoutbox.Outbo
 	}
 	s.seen[key]++
 	return nil
+}
+
+func (s *recordingDeliverer) DeliverWithTombstoneFence(
+	ctx context.Context, row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFence,
+) error {
+	if row.TombstoneFence == nil || *row.TombstoneFence != fence {
+		return errors.New("test sink: fence mismatch")
+	}
+	return s.Deliver(ctx, row)
 }
 
 func (s *recordingDeliverer) count() int {
@@ -154,7 +163,7 @@ type ackLossDeliverer struct {
 }
 
 func (s *ackLossDeliverer) Deliver(ctx context.Context, row evidenceoutbox.OutboxRow) error {
-	key := row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
+	key := row.OrgID.String() + ":" + row.EventID.String() + ":" + fmt.Sprintf("%d", row.AggregateSeq)
 	s.mu.Lock()
 	s.deliveries++
 	if s.effects == nil {
@@ -173,6 +182,15 @@ func (s *ackLossDeliverer) Deliver(ctx context.Context, row evidenceoutbox.Outbo
 		return err
 	}
 	return nil
+}
+
+func (s *ackLossDeliverer) DeliverWithTombstoneFence(
+	ctx context.Context, row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFence,
+) error {
+	if row.TombstoneFence == nil || *row.TombstoneFence != fence {
+		return errors.New("test sink: fence mismatch")
+	}
+	return s.Deliver(ctx, row)
 }
 
 func (s *ackLossDeliverer) snapshot() (deliveries, effects int) {
@@ -321,6 +339,67 @@ func TestIntegration_OutboxAckLoss_ReplaysWithIdempotentSinkEffect(t *testing.T)
 	}
 }
 
+func TestIntegration_Relay_PoisonedValidationFailureIsPersisted(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	orgID := seedOrg(t, db)
+	store := mustStore(t, db)
+	requestID := "req-poison-" + uuid.NewString()
+	traceID := strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := store.PersistRun(context.Background(), evidenceoutbox.RunInput{
+		OrgID: orgID, RequestID: requestID, TraceID: traceID,
+	}); err != nil {
+		t.Fatalf("persist unclassified run: %v", err)
+	}
+
+	deliverer := &recordingDeliverer{}
+	relay, err := evidenceoutbox.NewRelay(
+		db, deliverer, evidenceoutbox.RelayConfig{BatchSize: 1, MaxAttempts: 5},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatalf("process poison row: %v", err)
+	}
+	assertPoisonedRelayResult(t, res)
+	assertIntegrationCount(t, "sink deliveries", deliverer.count(), 0)
+	assertPersistedPoisonRow(t, db, orgID, requestID)
+}
+
+func assertPoisonedRelayResult(t *testing.T, res evidenceoutbox.RelayBatchResult) {
+	t.Helper()
+	assertIntegrationCount(t, "claimed", res.Claimed, 1)
+	assertIntegrationCount(t, "poisoned", res.Poisoned, 1)
+	assertIntegrationCount(t, "delivered", res.Delivered, 0)
+	assertIntegrationCount(t, "failed", res.Failed, 0)
+}
+
+func assertIntegrationCount(t *testing.T, name string, got, want int) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s=%d want %d", name, got, want)
+	}
+}
+
+func assertPersistedPoisonRow(t *testing.T, db *sql.DB, orgID uuid.UUID, requestID string) {
+	t.Helper()
+	var status, lastError string
+	const query = `
+SELECT delivery_status, last_error
+FROM ibex_core.evidence_outbox
+WHERE org_id = $1 AND aggregate_id = $2
+ORDER BY aggregate_seq
+LIMIT 1`
+	if err := db.QueryRowContext(context.Background(), query, orgID, requestID).Scan(&status, &lastError); err != nil {
+		t.Fatalf("read poisoned row: %v", err)
+	}
+	if status != string(evidenceoutbox.StatusPoison) || !strings.Contains(lastError, "unclassified") {
+		t.Fatalf("status=%q last_error=%q want persisted poison for unclassified row", status, lastError)
+	}
+}
+
 // keepSinglePendingOutbox deletes sibling pending rows so ack-loss replay cannot
 // claim a different event when available_at/created_at ties leave ORDER BY unstable.
 func keepSinglePendingOutbox(t *testing.T, db *sql.DB, orgID uuid.UUID, aggregateID string) {
@@ -398,11 +477,15 @@ func persistMinimalRun(t *testing.T, store *evidenceoutbox.Store, orgID uuid.UUI
 	t.Helper()
 	requestID := "req-crash-" + uuid.NewString()
 	_, err := store.PersistRun(context.Background(), evidenceoutbox.RunInput{
-		OrgID:     orgID,
-		RequestID: requestID,
-		TraceID:   traceID,
-		Spans:     []evidenceoutbox.SpanInput{{SpanID: "1111111111111111", OperationKind: "proxy.chat"}},
-		Metrics:   &evidenceoutbox.AssemblyMetrics{TotalMs: 1},
+		OrgID:          orgID,
+		RequestID:      requestID,
+		TraceID:        traceID,
+		RedactionClass: evidenceoutbox.RedactionClassMetadata,
+		TombstoneFence: &evidenceoutbox.TombstoneFence{
+			ResourceType: "evidence_run", ResourceID: requestID, ResourceVersion: 1,
+		},
+		Spans:   []evidenceoutbox.SpanInput{{SpanID: "1111111111111111", OperationKind: "proxy.chat"}},
+		Metrics: &evidenceoutbox.AssemblyMetrics{TotalMs: 1},
 	})
 	if err != nil {
 		t.Fatalf("persist: %v", err)

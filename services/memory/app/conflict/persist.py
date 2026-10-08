@@ -12,12 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.conflict.intervals import ValidityInterval
 from app.conflict.types import CandidateMemory, SupersedeApply
 from app.org_context import set_service_org
+from app.vectorstore.base import SearchMode
 
 
 @dataclass(frozen=True, slots=True)
 class CandidateLoad:
     org_id: UUID
     memory_ids: tuple[UUID, ...]
+    search_mode: SearchMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,9 @@ async def load_candidate_memories(
     load: CandidateLoad,
 ) -> list[CandidateMemory]:
     """Load active candidate rows for conflict evaluation (org-scoped)."""
+    if load.search_mode is not SearchMode.HISTORICAL_CONFLICT_CANDIDATES:
+        msg = "candidate loading requires historical conflict-candidate mode"
+        raise ValueError(msg)
     if not load.memory_ids:
         return []
     async with factory() as session, session.begin():

@@ -111,9 +111,7 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
     await store.upsert(
         UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3")
     )
-    request = UpsertRequest(
-        memory_id=mem, org_id=org_b, embedding=_UNIT, embedding_model="bge-m3"
-    )
+    request = UpsertRequest(memory_id=mem, org_id=org_b, embedding=_UNIT, embedding_model="bge-m3")
     with pytest.raises(LookupError, match="not found for org"):
         await store.upsert(request)
     foreign = await store.search(
@@ -201,16 +199,30 @@ async def test_search_rejects_invalid_limit_parity() -> None:
         await store.search(request)
 
 
-def test_search_request_rejects_invalid_iterative_scan() -> None:
-    org, agent = uuid4(), uuid4()
-    request = SearchRequest(
-        org_id=org,
-        agent_id=agent,
-        query_embedding=_UNIT,
-        limit=5,
-        iterative_scan="bogus",
-    )
-    with pytest.raises(ValueError, match="iterative_scan"):
+@pytest.mark.parametrize(
+    ("overrides", "exc_type", "match"),
+    [
+        pytest.param({"iterative_scan": "bogus"}, ValueError, "iterative_scan", id="bad-iterative-scan"),
+        pytest.param(
+            {"mode": "historical_conflict_candidates"},
+            TypeError,
+            "mode must be a SearchMode",
+            id="non-enum-mode",
+        ),
+    ],
+)
+def test_search_request_rejects_invalid_options(
+    overrides: dict[str, object], exc_type: type[Exception], match: str
+) -> None:
+    request_args: dict[str, object] = {
+        "org_id": uuid4(),
+        "agent_id": uuid4(),
+        "query_embedding": _UNIT,
+        "limit": 5,
+    }
+    request_args.update(overrides)
+    request = SearchRequest(**request_args)  # type: ignore[arg-type]
+    with pytest.raises(exc_type, match=match):
         request.validate()
 
 

@@ -64,8 +64,8 @@ def _query(**kwargs: object) -> FindSimilarQuery:
 
 
 def _repo(
-  store: MagicMock | None = None,
-  settings: Settings | None = None,
+    store: MagicMock | None = None,
+    settings: Settings | None = None,
 ) -> MemoryReadRepository:
     return MemoryReadRepository(MagicMock(), store or MagicMock(), settings or _settings())
 
@@ -128,9 +128,7 @@ async def _run_sparse_fts_fallback(case: SparseFtsFallbackCase) -> list[MemorySe
         "app.read.repository.full_text_search",
         AsyncMock(return_value=[FullTextHit(memory_id=case.fts_id, rank=case.fts_rank)]),
     ) as fts_mock:
-        results = await repo.find_similar(
-            _query(query_text=case.query_text, limit=case.limit)
-        )
+        results = await repo.find_similar(_query(query_text=case.query_text, limit=case.limit))
     fts_mock.assert_awaited_once()
     return results
 
@@ -152,6 +150,10 @@ async def test_find_similar_vector_only_at_limit() -> None:
     )
     assert len(results) == 3
     store.search.assert_awaited_once()
+    search_request = store.search.await_args.args[0]
+    from app.vectorstore.base import SearchMode
+
+    assert search_request.mode is SearchMode.USER_RETRIEVAL
     repo._hydrate_hits.assert_awaited_once()
 
 
@@ -231,7 +233,10 @@ async def test_find_similar_no_fts_when_vector_fills_limit() -> None:
     ids = [uuid4() for _ in range(4)]
     store = MagicMock()
     store.search = AsyncMock(
-        return_value=[SearchHit(memory_id=mid, similarity=0.95 - index * 0.01) for index, mid in enumerate(ids)]
+        return_value=[
+            SearchHit(memory_id=mid, similarity=0.95 - index * 0.01)
+            for index, mid in enumerate(ids)
+        ]
     )
     repo = _repo(store)
     repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
