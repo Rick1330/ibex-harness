@@ -57,6 +57,8 @@ If documents disagree, implementation must stop at the boundary, the conflict mu
 17. [16-compatibility-and-versioning.md](16-compatibility-and-versioning.md)
 18. [17-roadmap-and-gates.md](17-roadmap-and-gates.md)
 19. [18-gap-register.md](18-gap-register.md)
+20. [19-references.md](19-references.md)
+21. [20-product-strategy-gap-audit-and-recommended-redesign.md](20-product-strategy-gap-audit-and-recommended-redesign.md) (product strategy / gap audit research; does not supersede numbered contracts)
 
 ## Non-goals
 
