@@ -236,8 +236,13 @@ func validateTombstoneFence(fence *TombstoneFence) error {
 	if fence == nil {
 		return errTombstoneFenceMissing
 	}
-	if strings.TrimSpace(fence.ResourceType) == "" ||
-		strings.TrimSpace(fence.ResourceID) == "" || fence.ResourceVersion <= 0 {
+	if strings.TrimSpace(fence.ResourceType) == "" {
+		return errTombstoneFenceInvalid
+	}
+	if strings.TrimSpace(fence.ResourceID) == "" {
+		return errTombstoneFenceInvalid
+	}
+	if fence.ResourceVersion <= 0 {
 		return errTombstoneFenceInvalid
 	}
 	return nil

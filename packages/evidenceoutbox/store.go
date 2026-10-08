@@ -661,10 +661,25 @@ func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFen
 	if !isSupportedRedactionClass(class) {
 		return nil, fmt.Errorf("evidenceoutbox: unsupported redaction class %q", class)
 	}
+	fields, err := marshalPayloadToFields(payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := addProducerMetadata(fields, class, fence); err != nil {
+		return nil, err
+	}
+	return json.Marshal(fields)
+}
+
+func marshalPayloadToFields(payload any) (map[string]json.RawMessage, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
+	return decodePayloadFields(raw)
+}
+
+func decodePayloadFields(raw []byte) (map[string]json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
@@ -672,26 +687,28 @@ func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFen
 	if fields == nil {
 		return nil, fmt.Errorf("evidenceoutbox: payload must be a JSON object")
 	}
+	return fields, nil
+}
+
+func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence) error {
 	if _, exists := fields["redaction_class"]; exists {
-		return nil, fmt.Errorf("evidenceoutbox: redaction_class is assigned by the producer")
+		return fmt.Errorf("evidenceoutbox: redaction_class is assigned by the producer")
 	}
 	if _, exists := fields["tombstone_fence"]; exists {
-		return nil, fmt.Errorf("evidenceoutbox: tombstone_fence is assigned by the producer")
+		return fmt.Errorf("evidenceoutbox: tombstone_fence is assigned by the producer")
 	}
-	classJSON, err := json.Marshal(class)
+	// The class has already been checked against the closed set of ASCII tokens.
+	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
+	if fence == nil {
+		return nil
+	}
+	if err := validateTombstoneFence(fence); err != nil {
+		return err
+	}
+	fenceJSON, err := json.Marshal(fence)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	fields["redaction_class"] = classJSON
-	if fence != nil {
-		if err := validateTombstoneFence(fence); err != nil {
-			return nil, err
-		}
-		fenceJSON, err := json.Marshal(fence)
-		if err != nil {
-			return nil, err
-		}
-		fields["tombstone_fence"] = fenceJSON
-	}
-	return json.Marshal(fields)
+	fields["tombstone_fence"] = fenceJSON
+	return nil
 }

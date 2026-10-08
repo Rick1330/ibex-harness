@@ -3,6 +3,7 @@ package evidenceoutbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -108,6 +109,50 @@ func TestUnit_MarshalOutboxPayloadRejectsCallerSuppliedFence(t *testing.T) {
 		map[string]any{"tombstone_fence": map[string]any{}}, RedactionClassMetadata, nil,
 	); err == nil {
 		t.Fatal("expected caller-supplied tombstone_fence to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsUnserializablePayload(t *testing.T) {
+	t.Parallel()
+	_, err := marshalOutboxPayload(make(chan int), RedactionClassMetadata, nil)
+	var unsupported *json.UnsupportedTypeError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("err=%v want unsupported-type marshal error", err)
+	}
+}
+
+func TestUnit_DecodePayloadFieldsRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+	if _, err := decodePayloadFields([]byte("{")); err == nil {
+		t.Fatal("expected malformed JSON to be rejected")
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRequiresJSONObject(t *testing.T) {
+	t.Parallel()
+	_, err := marshalOutboxPayload(nil, RedactionClassMetadata, nil)
+	if err == nil || !strings.Contains(err.Error(), "payload must be a JSON object") {
+		t.Fatalf("err=%v want JSON object validation error", err)
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadRejectsInvalidFence(t *testing.T) {
+	t.Parallel()
+	_, err := marshalOutboxPayload(
+		map[string]any{"event_id": "evt-5"}, RedactionClassMetadata, &TombstoneFence{},
+	)
+	if !errors.Is(err, errTombstoneFenceInvalid) {
+		t.Fatalf("err=%v want invalid tombstone fence", err)
+	}
+}
+
+func TestUnit_ValidateRunInputRejectsInvalidFence(t *testing.T) {
+	t.Parallel()
+	err := validateRunInput(RunInput{
+		TombstoneFence: &TombstoneFence{ResourceType: "memory", ResourceID: "mem-1"},
+	})
+	if !errors.Is(err, errTombstoneFenceInvalid) {
+		t.Fatalf("err=%v want invalid tombstone fence", err)
 	}
 }
 

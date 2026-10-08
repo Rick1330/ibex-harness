@@ -43,9 +43,15 @@ func validRelayPayload() []byte {
 }
 
 func relayPayloadWithClass(class RedactionClass) []byte {
+	return relayPayloadWithFence(class, TombstoneFence{
+		ResourceType: "memory", ResourceID: "mem-1", ResourceVersion: 1,
+	})
+}
+
+func relayPayloadWithFence(class RedactionClass, fence TombstoneFence) []byte {
 	return []byte(fmt.Sprintf(
-		`{"redaction_class":%q,"tombstone_fence":{"resource_type":"memory","resource_id":"mem-1","resource_version":1}}`,
-		class,
+		`{"redaction_class":%q,"tombstone_fence":{"resource_type":%q,"resource_id":%q,"resource_version":%d}}`,
+		class, fence.ResourceType, fence.ResourceID, fence.ResourceVersion,
 	))
 }
 
@@ -209,7 +215,16 @@ func assertDeliveredOnce(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
 	if d.n != 1 {
 		t.Fatalf("deliveries=%d", d.n)
 	}
-	if d.fence == nil || d.fence.ResourceType != "memory" || d.fence.ResourceID != "mem-1" || d.fence.ResourceVersion != 1 {
+	if d.fence == nil {
+		t.Fatal("nil fence passed to deliverer")
+	}
+	if d.fence.ResourceType != "memory" {
+		t.Fatalf("fence resource type=%q want memory", d.fence.ResourceType)
+	}
+	if d.fence.ResourceID != "mem-1" {
+		t.Fatalf("fence resource id=%q want mem-1", d.fence.ResourceID)
+	}
+	if d.fence.ResourceVersion != 1 {
 		t.Fatalf("fence passed to deliverer=%+v", d.fence)
 	}
 }
@@ -322,7 +337,7 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPoisonedWithoutDelivery(t, res, d)
+	assertPoisonedWithoutDelivery(t, res, d.n)
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
@@ -340,13 +355,33 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 	cases := []struct {
 		name           string
 		payload        []byte
-		wantErr        error
+		wantErr        string
 		legacyOnlySink bool
 	}{
-		{name: "missing class", payload: relayPayloadWithoutClass(), wantErr: errRedactionUnclassified},
-		{name: "prohibited class", payload: relayPayloadWithClass(RedactionClassProhibited), wantErr: errRedactionProhibited},
-		{name: "missing fence", payload: []byte(`{"redaction_class":"metadata"}`), wantErr: errTombstoneFenceMissing},
-		{name: "sink lacks fence hook", payload: validRelayPayload(), wantErr: errFencedDeliveryRequired, legacyOnlySink: true},
+		{name: "missing class", payload: relayPayloadWithoutClass(), wantErr: errRedactionUnclassified.Error()},
+		{name: "malformed payload", payload: []byte("{"), wantErr: errRedactionUnclassified.Error()},
+		{name: "prohibited class", payload: relayPayloadWithClass(RedactionClassProhibited), wantErr: errRedactionProhibited.Error()},
+		{
+			name: "unsupported class", payload: relayPayloadWithClass(RedactionClass("future")),
+			wantErr: fmt.Sprintf("%s: %q", errRedactionUnsupported, RedactionClass("future")),
+		},
+		{name: "missing fence", payload: []byte(`{"redaction_class":"metadata"}`), wantErr: errTombstoneFenceMissing.Error()},
+		{
+			name:    "empty fence resource type",
+			payload: relayPayloadWithFence(RedactionClassMetadata, TombstoneFence{ResourceID: "mem-1", ResourceVersion: 1}),
+			wantErr: errTombstoneFenceInvalid.Error(),
+		},
+		{
+			name:    "empty fence resource id",
+			payload: relayPayloadWithFence(RedactionClassMetadata, TombstoneFence{ResourceType: "memory", ResourceVersion: 1}),
+			wantErr: errTombstoneFenceInvalid.Error(),
+		},
+		{
+			name:    "nonpositive fence version",
+			payload: relayPayloadWithFence(RedactionClassMetadata, TombstoneFence{ResourceType: "memory", ResourceID: "mem-1"}),
+			wantErr: errTombstoneFenceInvalid.Error(),
+		},
+		{name: "sink lacks fence hook", payload: validRelayPayload(), wantErr: errFencedDeliveryRequired.Error(), legacyOnlySink: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -383,7 +418,7 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 			mock.ExpectCommit()
 			mock.ExpectBegin()
 			mock.ExpectQuery(`evidence_outbox_mark_failure`).WithArgs(
-				id, 1, StatusPoison, tc.wantErr.Error(), 0,
+				id, 1, StatusPoison, tc.wantErr, 0,
 			).WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 			mock.ExpectCommit()
 
@@ -391,9 +426,7 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if res.Poisoned != 1 || res.Failed != 0 || res.Delivered != 0 || sinkCalls() != 0 {
-				t.Fatalf("unsafe row reached sink or was retried: result=%+v sink_calls=%d", res, sinkCalls())
-			}
+			assertPoisonedWithoutDelivery(t, res, sinkCalls())
 			if err := mock.ExpectationsWereMet(); err != nil {
 				t.Fatal(err)
 			}
@@ -401,7 +434,7 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 	}
 }
 
-func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, d *stubDeliverer) {
+func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, sinkCalls int) {
 	t.Helper()
 	if res.Delivered != 0 {
 		t.Fatalf("delivered=%d want 0", res.Delivered)
@@ -412,8 +445,8 @@ func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, d *stubDe
 	if res.Poisoned != 1 {
 		t.Fatalf("poisoned=%d want 1", res.Poisoned)
 	}
-	if d.n != 0 {
-		t.Fatalf("deliveries=%d want 0", d.n)
+	if sinkCalls != 0 {
+		t.Fatalf("deliveries=%d want 0", sinkCalls)
 	}
 }
 
