@@ -105,11 +105,12 @@ def build_orchestrator(deps: OrchestratorTestDeps) -> MemoryWriteOrchestrator:
     dedup = DedupService(settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump)
     conflict = ConflictService(settings, subject_extractor=extract)
 
-    async def load_candidates(org_id: UUID, ids: tuple[UUID, ...]):
+    async def load_candidates(org_id: UUID, agent_id: UUID, ids: tuple[UUID, ...]):
         return await load_candidate_memories(
             session_factory,
             CandidateLoad(
                 org_id=org_id,
+                agent_id=agent_id,
                 memory_ids=ids,
                 search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
             ),

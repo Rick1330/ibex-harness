@@ -58,7 +58,7 @@ async def test_orchestrator_none_valid_from_supersedes_via_interval_evaluation()
     """HTTP-style command (valid_from=None) uses interval supersede, not missing_validity."""
     old_id = uuid4()
 
-    async def load(_org: UUID, ids: object) -> list[CandidateMemory]:
+    async def load(_org: UUID, _agent: UUID, ids: object) -> list[CandidateMemory]:
         assert list(ids) == [old_id]
         return [
             CandidateMemory(

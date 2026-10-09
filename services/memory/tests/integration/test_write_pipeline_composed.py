@@ -100,11 +100,12 @@ async def _set_content_hash(
 def _build_pipeline(deps: SimpleNamespace) -> WritePipeline:
     """Assemble validate → pii → exact → embed → near → conflict."""
 
-    async def load(org_id: UUID, ids: Sequence[UUID]) -> list:
+    async def load(org_id: UUID, agent_id: UUID, ids: Sequence[UUID]) -> list:
         return await load_candidate_memories(
             deps.factory,
             CandidateLoad(
                 org_id=org_id,
+                agent_id=agent_id,
                 memory_ids=tuple(ids),
                 search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
             ),

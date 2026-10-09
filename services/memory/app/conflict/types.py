@@ -73,6 +73,7 @@ class ConflictEvaluation:
 @dataclass(frozen=True, slots=True)
 class SupersedeApply:
     org_id: UUID
+    agent_id: UUID
     new_memory_id: UUID
     target_memory_id: UUID
     confidence: float = 0.90

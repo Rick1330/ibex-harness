@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from app.vectorstore import (
     InMemoryVectorStore,
     SearchHit,
+    SearchMode,
     SearchRequest,
     UpsertRequest,
     VectorStore,
@@ -243,3 +245,37 @@ async def test_inmemory_delete_wrong_org_is_noop() -> None:
         )
     )
     assert len(hits) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("validity", ["future", "expired"])
+async def test_inmemory_historical_mode_includes_out_of_window_active_rows(
+    validity: str,
+) -> None:
+    store = InMemoryVectorStore()
+    org, agent, mem = uuid4(), uuid4(), uuid4()
+    store.bind_agent(mem, agent)
+    now = datetime.now(tz=UTC)
+    if validity == "future":
+        store.set_lifecycle(mem, valid_from=now + timedelta(days=1))
+    else:
+        store.set_lifecycle(mem, valid_until=now - timedelta(days=1))
+    await store.upsert(
+        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3")
+    )
+
+    user_hits = await store.search(
+        SearchRequest(org_id=org, agent_id=agent, query_embedding=_UNIT, limit=5, min_similarity=0.0)
+    )
+    historical_hits = await store.search(
+        SearchRequest(
+            org_id=org,
+            agent_id=agent,
+            query_embedding=_UNIT,
+            limit=5,
+            min_similarity=0.0,
+            mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
+        )
+    )
+    assert user_hits == []
+    assert [hit.memory_id for hit in historical_hits] == [mem]

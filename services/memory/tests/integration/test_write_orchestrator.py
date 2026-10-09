@@ -295,6 +295,7 @@ async def test_orchestrator_cross_tenant_isolated(
         session_factory,
         CandidateLoad(
             org_id=org_b,
+            agent_id=agent_b,
             memory_ids=(out_a.memory.id,),
             search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
         ),

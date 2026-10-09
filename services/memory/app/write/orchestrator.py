@@ -209,6 +209,7 @@ class MemoryWriteOrchestrator:
                 session,
                 SupersedeApply(
                     org_id=command.org_id,
+                    agent_id=command.agent_id,
                     new_memory_id=memory_id,
                     target_memory_id=target_id,
                 ),
