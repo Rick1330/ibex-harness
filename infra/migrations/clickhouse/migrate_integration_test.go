@@ -3,15 +3,18 @@
 package clickhouse
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	// Registers the ClickHouse database/sql driver for integration tests.
-	_ "github.com/ClickHouse/clickhouse-go"
 )
 
 // Test compose maps native 9000 → host 9003 (dev uses 9002).
@@ -392,7 +395,26 @@ func TestIntegration_Migrate_ExplainUsesPrimaryKey(t *testing.T) {
 
 func insertSampleTrace(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.ExecContext(context.Background(), `
+	_ = db // schema assertions use database/sql; inserts use HTTP JSONEachRow below.
+	// The migration package intentionally registers the legacy v1 database/sql
+	// driver for golang-migrate. That driver cannot decode ClickHouse Bool
+	// columns for this fixture's INSERT path. Use ClickHouse's HTTP JSONEachRow
+	// endpoint for the test row instead of adding a second database driver to
+	// the test process or changing production migration behavior.
+	dsn, err := url.Parse(testMigrateConn().String())
+	if err != nil {
+		t.Fatalf("parse insert DSN: %v", err)
+	}
+	httpPort := map[string]string{"9000": "8123", "9002": "8123", "9003": "8124"}[dsn.Port()]
+	if httpPort == "" {
+		httpPort = "8123"
+	}
+	insertURL := url.URL{
+		Scheme: "http",
+		Host:   dsn.Hostname() + ":" + httpPort,
+		Path:   "/",
+	}
+	query := `
 		INSERT INTO ibex.llm_traces (
 			request_id, org_id, agent_id, session_id, checkpoint_id,
 			model, provider, is_streaming,
@@ -400,17 +422,42 @@ func insertSampleTrace(t *testing.T, db *sql.DB) {
 			auth_latency_ms, directive_latency_ms, provider_ttfb_ms, total_latency_ms,
 			status_code, is_complete, error_code,
 			requested_at, completed_at
-		) VALUES (
-			'req-1', '11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222',
-			NULL, NULL,
-			'gpt-4o', 'openai', 0,
-			10, 20, 30,
-			1, 2, 100, 5,
-			200, 1, '',
-			now64(3), now64(3)
-		)`)
+		) FORMAT JSONEachRow`
+	insertURL.RawQuery = url.Values{
+		"database": []string{"ibex"},
+		"query":    []string{query},
+	}.Encode()
+	when := time.Now().UTC()
+	row, err := json.Marshal(map[string]any{
+		"request_id": "req-1", "org_id": "11111111-1111-1111-1111-111111111111",
+		"agent_id": "22222222-2222-2222-2222-222222222222", "session_id": nil,
+		"checkpoint_id": nil, "model": "gpt-4o", "provider": "openai",
+		"is_streaming": false, "input_tokens": 10, "output_tokens": 20,
+		"total_tokens": 30, "auth_latency_ms": 1, "directive_latency_ms": 2,
+		"provider_ttfb_ms": 100, "total_latency_ms": 5, "status_code": 200,
+		"is_complete": true, "error_code": "",
+		"requested_at": when.Format("2006-01-02 15:04:05.000"),
+		"completed_at": when.Format("2006-01-02 15:04:05.000"),
+	})
 	if err != nil {
-		t.Fatalf("insert: %v", err)
+		t.Fatalf("marshal insert row: %v", err)
+	}
+	request, err := http.NewRequestWithContext(
+		context.Background(), http.MethodPost, insertURL.String(), bytes.NewReader(append(row, '\n')),
+	)
+	if err != nil {
+		t.Fatalf("build insert request: %v", err)
+	}
+	q := dsn.Query()
+	request.SetBasicAuth(q.Get("username"), q.Get("password"))
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send insert request: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("insert HTTP status=%d body=%s", response.StatusCode, strconv.Quote(string(body)))
 	}
 }
 
@@ -418,11 +465,12 @@ func explainOrgAgentQuery(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	rows, err := db.QueryContext(context.Background(), `
 		EXPLAIN indexes = 1
-		SELECT count()
+		SELECT request_id
 		FROM ibex.llm_traces
 		WHERE org_id = '11111111-1111-1111-1111-111111111111'
 		  AND agent_id = '22222222-2222-2222-2222-222222222222'
-		  AND requested_at >= now64(3) - INTERVAL 1 DAY`)
+		  AND requested_at >= now64(3) - INTERVAL 1 DAY
+		LIMIT 1`)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
