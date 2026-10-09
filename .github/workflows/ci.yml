@@ -1688,7 +1688,7 @@ jobs:
         run: buf generate
       - name: Install golangci-lint
         run: |
-          GOLANGCI_LINT_VERSION=2.8.0
+          GOLANGCI_LINT_VERSION=2.12.2
           GOLANGCI_LINT_ARCHIVE="golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
           curl --proto '=https' --tlsv1.2 -sSfL -o "${GOLANGCI_LINT_ARCHIVE}" \
             "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/${GOLANGCI_LINT_ARCHIVE}"
