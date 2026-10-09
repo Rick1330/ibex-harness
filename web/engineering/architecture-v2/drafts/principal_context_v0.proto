@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package ibex.principal.v0;
+
+// Draft only. Do not generate stubs or wire runtime services until G0 owners
+// approve authority identity, freshness, and propagation semantics.
+message PrincipalContext {
+  string org_id = 1;
+  string principal_id = 2;
+  string agent_id = 3;
+  string principal_type = 4; // user | service | operator
+  string authz_snapshot_id = 5;
+  string authz_snapshot_digest = 6;
+  string authority = 7;
+  string issued_at_rfc3339 = 8;
+  string expires_at_rfc3339 = 9;
+  string request_id = 10;
+  string trace_id = 11;
+  string source = 12;
+}
+
+message PrincipalContextProof {
+  PrincipalContext context = 1;
+  string signature_algorithm = 2;
+  bytes signature = 3;
+  string key_id = 4;
+}
