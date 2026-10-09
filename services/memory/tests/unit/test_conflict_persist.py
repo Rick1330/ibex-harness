@@ -64,6 +64,7 @@ async def test_load_candidate_memories_empty_ids() -> None:
         _factory_for(session),  # type: ignore[arg-type]
         CandidateLoad(
             org_id=uuid4(),
+            agent_id=uuid4(),
             memory_ids=(),
             search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
         ),
@@ -77,6 +78,7 @@ async def test_load_candidate_memories_rejects_user_retrieval_mode() -> None:
     session = _FakeSession([])
     candidate_load = CandidateLoad(
         org_id=uuid4(),
+        agent_id=uuid4(),
         memory_ids=(),
         search_mode=SearchMode.USER_RETRIEVAL,
     )
@@ -104,6 +106,7 @@ async def test_load_candidate_memories_maps_rows() -> None:
         _factory_for(session),  # type: ignore[arg-type]
         CandidateLoad(
             org_id=uuid4(),
+            agent_id=uuid4(),
             memory_ids=(mid, missing),
             search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
         ),
@@ -132,6 +135,7 @@ async def test_load_candidate_aware_until() -> None:
         _factory_for(session),  # type: ignore[arg-type]
         CandidateLoad(
             org_id=uuid4(),
+            agent_id=uuid4(),
             memory_ids=(mid,),
             search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
         ),
@@ -156,6 +160,7 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
         _factory_for(session),  # type: ignore[arg-type]
         SupersedeApply(
             org_id=org_id,
+            agent_id=uuid4(),
             new_memory_id=new_memory_id,
             target_memory_id=target_memory_id,
             closed_at=datetime(2026, 6, 1, tzinfo=UTC),
@@ -167,6 +172,7 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
     assert "LEAST" in update_sql
     assert "SET status = 'superseded'" in update_sql
     assert "superseded_by = :new_id" in update_sql
+    assert "AND agent_id = :agent_id" in update_sql
     assert isinstance(update_params, dict)
     assert update_params["org_id"] == str(org_id)
     assert update_params["target_id"] == str(target_memory_id)
@@ -197,6 +203,7 @@ async def test_apply_supersession_sql_uses_least_coalesce_valid_until() -> None:
         _factory_for(session),  # type: ignore[arg-type]
         SupersedeApply(
             org_id=uuid4(),
+            agent_id=uuid4(),
             new_memory_id=uuid4(),
             target_memory_id=uuid4(),
             closed_at=closed_at,
@@ -212,6 +219,7 @@ async def test_apply_supersession_missing_row() -> None:
     factory = _factory_for(session)  # type: ignore[arg-type]
     apply = SupersedeApply(
         org_id=uuid4(),
+        agent_id=uuid4(),
         new_memory_id=uuid4(),
         target_memory_id=uuid4(),
     )

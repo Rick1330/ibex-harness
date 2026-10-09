@@ -18,7 +18,7 @@ from app.conflict.types import (
 )
 from app.pipeline import ConflictStage, WriteContext, WritePipeline
 
-CandidateLoader = Callable[[UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
+CandidateLoader = Callable[[UUID, UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
 _MISSING = object()
 
 
@@ -26,11 +26,11 @@ def _dt(month: int) -> datetime:
     return datetime(2026, month, 1, tzinfo=UTC)
 
 
-async def _refuse_load(_org: UUID, _ids: object) -> list[CandidateMemory]:
+async def _refuse_load(_org: UUID, _agent: UUID, _ids: object) -> list[CandidateMemory]:
     raise AssertionError("should not load")
 
 
-async def _empty_load(_org: UUID, _ids: object) -> list[CandidateMemory]:
+async def _empty_load(_org: UUID, _agent: UUID, _ids: object) -> list[CandidateMemory]:
     return []
 
 
@@ -128,7 +128,7 @@ async def test_conflict_stage_early_exits(case: SimpleNamespace) -> None:
 async def test_conflict_stage_records_supersede_targets() -> None:
     old_id = uuid4()
 
-    async def load(_org: UUID, ids: object) -> list[CandidateMemory]:
+    async def load(_org: UUID, _agent: UUID, ids: object) -> list[CandidateMemory]:
         assert list(ids) == [old_id]
         return [
             CandidateMemory(
@@ -165,7 +165,7 @@ async def test_conflict_stage_missing_valid_from_escalates() -> None:
             del incoming, candidate
             return ConflictOutcome.UNRELATED
 
-    async def load(_org: UUID, _ids: object) -> list[CandidateMemory]:
+    async def load(_org: UUID, _agent: UUID, _ids: object) -> list[CandidateMemory]:
         return [
             CandidateMemory(
                 memory_id=cand,

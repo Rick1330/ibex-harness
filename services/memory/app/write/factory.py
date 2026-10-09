@@ -49,11 +49,14 @@ def build_write_pipeline(deps: WritePipelineDeps) -> WritePipeline:
     dedup = DedupService(settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump)
     conflict = ConflictService(settings)
 
-    async def load_candidates(org_id: UUID, ids: Sequence[UUID]) -> list:
+    async def load_candidates(
+        org_id: UUID, agent_id: UUID, ids: Sequence[UUID]
+    ) -> list:
         return await load_candidate_memories(
             session_factory,
             CandidateLoad(
                 org_id=org_id,
+                agent_id=agent_id,
                 memory_ids=tuple(ids),
                 search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
             ),

@@ -152,6 +152,7 @@ async def test_apply_supersession_updates_status_and_edge(
         session_factory,
         CandidateLoad(
             org_id=org_id,
+            agent_id=agent_id,
             memory_ids=(old_id,),
             search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
         ),
@@ -161,6 +162,7 @@ async def test_apply_supersession_updates_status_and_edge(
         session_factory,
         SupersedeApply(
             org_id=org_id,
+            agent_id=agent_id,
             new_memory_id=new_id,
             target_memory_id=old_id,
             closed_at=june,
@@ -179,11 +181,12 @@ async def test_load_candidates_cross_tenant_empty(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     _org_a, _, mem_a = await seed_org_agent_memory(session_factory, content="a")
-    org_b, _, _ = await seed_org_agent_memory(session_factory, content="b")
+    org_b, agent_b, _ = await seed_org_agent_memory(session_factory, content="b")
     loaded = await load_candidate_memories(
         session_factory,
         CandidateLoad(
             org_id=org_b,
+            agent_id=agent_b,
             memory_ids=(mem_a,),
             search_mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
         ),

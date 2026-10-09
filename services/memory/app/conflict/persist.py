@@ -18,6 +18,7 @@ from app.vectorstore.base import SearchMode
 @dataclass(frozen=True, slots=True)
 class CandidateLoad:
     org_id: UUID
+    agent_id: UUID
     memory_ids: tuple[UUID, ...]
     search_mode: SearchMode
 
@@ -55,6 +56,7 @@ async def load_candidate_memories(
                            confidence::float8 AS confidence
                     FROM ibex_core.memories
                     WHERE org_id = :org_id
+                      AND agent_id = :agent_id
                       AND id = ANY(CAST(:ids AS uuid[]))
                       AND status = 'active'
                       AND deleted_at IS NULL
@@ -62,6 +64,7 @@ async def load_candidate_memories(
                 ),
                 {
                     "org_id": str(load.org_id),
+                    "agent_id": str(load.agent_id),
                     "ids": [str(i) for i in load.memory_ids],
                 },
             )
@@ -103,6 +106,7 @@ async def apply_supersession_session(
                 updated_at = NOW()
             WHERE id = :target_id
               AND org_id = :org_id
+              AND agent_id = :agent_id
               AND status = 'active'
               AND deleted_at IS NULL
             """
@@ -112,6 +116,7 @@ async def apply_supersession_session(
             "closed_at": closed_at,
             "target_id": str(apply.target_memory_id),
             "org_id": str(apply.org_id),
+            "agent_id": str(apply.agent_id),
         },
     )
     if result.rowcount != 1:

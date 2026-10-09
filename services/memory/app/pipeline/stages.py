@@ -30,7 +30,7 @@ class EmbedCallable(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
 
 
-CandidateLoader = Callable[[UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
+CandidateLoader = Callable[[UUID, UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
 
 
 def _validate_content(content: str, max_chars: int) -> str | None:
@@ -174,7 +174,9 @@ class ConflictStage:
             ctx.error = "agent_id_required"
             return ctx
 
-        candidates = await self._load(ctx.org_id, tuple(ctx.near_duplicate_candidates))
+        candidates = await self._load(
+            ctx.org_id, ctx.agent_id, tuple(ctx.near_duplicate_candidates)
+        )
         if not candidates:
             return ctx
 
