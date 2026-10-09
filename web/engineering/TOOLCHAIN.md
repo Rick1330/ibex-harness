@@ -2,7 +2,7 @@
 
 ## Source of truth
 
-Tool versions are defined in [`infra/tool-versions.env`](../../infra/tool-versions.env). Do not duplicate version numbers in docs or scripts. Run:
+Tool versions are defined in [`infra/tool-versions.conf`](../../infra/tool-versions.conf). Do not duplicate version numbers in docs or scripts. Run:
 
 ```bash
 make check-tools
@@ -22,7 +22,7 @@ The checker compares installed tools with the manifest and prints remediation gu
 | Python | `PYTHON_VERSION` | 3.12 |
 | uv | `UV_VERSION` | 0.12.19 |
 
-`go.mod`, `package.json`, `.nvmrc`, and the CI installation blocks remain authoritative for their respective ecosystems. If those files change, update `infra/tool-versions.env` in the same change.
+`go.mod`, `package.json`, `.nvmrc`, and the CI installation blocks remain authoritative for their respective ecosystems. If those files change, update `infra/tool-versions.conf` in the same change.
 
 ## Fast path
 

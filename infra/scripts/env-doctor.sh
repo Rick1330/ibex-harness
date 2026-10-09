@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-source "$ROOT_DIR/infra/tool-versions.env"
+source "$ROOT_DIR/infra/tool-versions.conf"
 
 runtime="${IBEX_RUNTIME:-auto}"
 network="${IBEX_NETWORK:-bridge}"

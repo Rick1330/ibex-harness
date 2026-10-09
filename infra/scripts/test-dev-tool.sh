@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-source "$ROOT_DIR/infra/tool-versions.env"
+source "$ROOT_DIR/infra/tool-versions.conf"
 
 out="$(IBEX_TEST_MODE=1 bash "$ROOT_DIR/infra/scripts/dev-tool.sh" check-tools 2>&1)" || {
   echo "$out"

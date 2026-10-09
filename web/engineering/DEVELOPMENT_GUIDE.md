@@ -108,7 +108,7 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 - Buf CLI
 - Bash (Git Bash on Windows)
 
-See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks. Versions are defined in [`infra/tool-versions.env`](../../infra/tool-versions.env).
+See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks. Versions are defined in [`infra/tool-versions.conf`](../../infra/tool-versions.conf).
 
 ### 4.0 Development roadmap
 

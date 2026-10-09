@@ -24,7 +24,7 @@ check: ## Run the fast contributor environment gate
 	@"$(BASH)" "$(DEV_TOOL)" check-tools
 	@"$(BASH)" "$(DEV_TOOL)" readiness
 
-check-tools: ## Verify installed tools against infra/tool-versions.env
+check-tools: ## Verify installed tools against infra/tool-versions.conf
 	@"$(BASH)" "$(DEV_TOOL)" check-tools
 
 env-doctor: ## Diagnose runtime, network, ports, DNS, and injected telemetry

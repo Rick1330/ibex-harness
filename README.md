@@ -32,7 +32,7 @@ See the [current-state snapshot](https://ibexharness.com/roadmap/current-state),
 
 ## Quick start
 
-Prerequisites are Docker Compose v2 or Podman Compose, GNU Make, and the versions defined in [`infra/tool-versions.env`](infra/tool-versions.env). See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
+Prerequisites are Docker Compose v2 or Podman Compose, GNU Make, and the versions defined in [`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
 
 ```bash
 git clone https://github.com/Rick1330/ibex-harness.git

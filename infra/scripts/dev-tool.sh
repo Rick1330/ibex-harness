@@ -11,7 +11,7 @@ TEST_COMPOSE="$ROOT_DIR/infra/compose/test/docker-compose.yml"
 TEST_ENV="$ROOT_DIR/infra/compose/test/.env.example"
 OBS_COMPOSE="$ROOT_DIR/infra/compose/observability/docker-compose.yml"
 OBS_ENV="$ROOT_DIR/infra/compose/observability/.env.example"
-MANIFEST="$ROOT_DIR/infra/tool-versions.env"
+MANIFEST="$ROOT_DIR/infra/tool-versions.conf"
 PROTO_BREAKING_AGAINST="${PROTO_BREAKING_AGAINST:-https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto}"
 
 source "$MANIFEST"
@@ -118,7 +118,7 @@ check_tools() {
   fi
   if (( failures )); then
     cat >&2 <<'EOF'
-check-tools: one or more tools do not match infra/tool-versions.env.
+check-tools: one or more tools do not match infra/tool-versions.conf.
 Remediation: follow the OS-specific installation recipes in web/engineering/TOOLCHAIN.md,
 then rerun `make check-tools`. Do not silently upgrade lockfiles or go.mod.
 EOF
@@ -138,7 +138,7 @@ case "${1:-help}" in
   help)
     printf '%s\n' 'IBEX Harness commands:' \
       '  setup                  Provision dependencies, stacks, migrations, and readiness' \
-      '  check-tools            Verify installed versions against infra/tool-versions.env' \
+      '  check-tools            Verify installed versions against infra/tool-versions.conf' \
       '  env-doctor             Diagnose runtime, network, ports, DNS, and OTEL variables' \
       '  stack-init             Wait for services and create required object-store buckets' \
       '  readiness              Run stack-init readiness probes' \
