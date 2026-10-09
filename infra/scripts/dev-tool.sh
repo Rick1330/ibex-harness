@@ -59,6 +59,7 @@ compose() {
       fi
       "${podman_bin[@]}" compose "$@" ;;
     podman-compose) podman-compose "$@" ;;
+    *) echo "unsupported container runtime: $(runtime)" >&2; return 2 ;;
   esac
 }
 
@@ -156,7 +157,15 @@ case "${1:-help}" in
   check-tools) check_tools ;;
   env-doctor) bash "$ROOT_DIR/infra/scripts/env-doctor.sh" ;;
   stack-init|readiness) bash "$ROOT_DIR/infra/scripts/stack-init.sh" ;;
-  lint-docs) cd "$ROOT_DIR"; npx --yes markdownlint-cli2 "**/*.md" "#node_modules" ;;
+  lint-docs)
+    cd "$ROOT_DIR"
+    markdownlint="$ROOT_DIR/.github/markdownlint/node_modules/.bin/markdownlint-cli2"
+    if [[ ! -x "$markdownlint" ]]; then
+      echo 'markdownlint-cli2 is not installed; run npm ci --prefix .github/markdownlint --ignore-scripts' >&2
+      exit 1
+    fi
+    "$markdownlint" "**/*.md" "#node_modules"
+    ;;
   security-scan) cd "$ROOT_DIR"; require_tool gitleaks 'gitleaks is required for security-scan'; gitleaks detect --source . --config .gitleaks.toml --redact --verbose ;;
   repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/check-static-export.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check_roadmap_status.py ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;

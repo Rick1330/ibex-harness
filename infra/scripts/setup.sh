@@ -17,6 +17,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm --filter web run postinstall
+npm ci --prefix .github/markdownlint --ignore-scripts
 
 for sync in infra/scripts/*-uv-sync.sh; do
   [[ -x "$sync" ]] || chmod +x "$sync"
