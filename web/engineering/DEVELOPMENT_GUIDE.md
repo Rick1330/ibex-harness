@@ -100,15 +100,15 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 
 ### 4.1 Prerequisites
 
-- Docker + Docker Compose
+- Docker Compose v2 or Podman + Podman Compose
 - GNU Make
-- Go 1.25.13 (from `go.mod`)
+- Go 1.26.9 (from `go.mod`)
 - Python 3.12+ (from service/package manifests)
 - Node.js 22 (from `.nvmrc`)
 - Buf CLI
 - Bash (Git Bash on Windows)
 
-See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks.
+See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks. Versions are defined in [`infra/tool-versions.env`](../../infra/tool-versions.env).
 
 ### 4.0 Development roadmap
 
@@ -120,9 +120,11 @@ Session notes and closed audits live in the **session workspace** (sibling `ibex
 
 ### 4.1.1 Canonical local commands
 
-Use the root `Makefile` for common local tasks:
+Use the root `Makefile` for common local tasks. A fresh checkout should start with `make setup`; use `make env-doctor` when the runtime, ports, or sandbox telemetry are unusual:
 
 ```bash
+make setup
+make check-tools
 make help
 make repo-guards
 make lint-docs
@@ -148,11 +150,19 @@ We run local dependencies via Compose:
 - MinIO (S3-compatible)
 - (Optional) Monitoring stack
 
-Expected command (example):
+Expected command (bridge networking example):
 
 ```bash
 docker compose -f infra/compose/dev/docker-compose.yml up -d
 ```
+
+Podman and restricted sandboxes are supported through the same command surface:
+
+```bash
+IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
+```
+
+Host mode uses committed overlays under `infra/compose/overlays/host/`; it has no Compose service DNS or `host.docker.internal` gateway. See [TOOLCHAIN.md](TOOLCHAIN.md) for the port map and troubleshooting.
 
 ### 4.3 Migrations and seed
 

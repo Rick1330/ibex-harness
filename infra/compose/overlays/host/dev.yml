@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: ibex-dev-postgres
+    network_mode: host
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ibex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ibex}
+      POSTGRES_DB: ${POSTGRES_DB:-ibex}
+    volumes:
+      - ibex_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${POSTGRES_USER:-ibex} -d $${POSTGRES_DB:-ibex}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: docker.io/redis/redis-stack:7.4.0-v1
+    container_name: ibex-dev-redis
+    network_mode: host
+    volumes:
+      - ibex_redis_data:/data
+    command: ["redis-server", "--port", "6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:24.8.14.39
+    container_name: ibex-dev-clickhouse
+    network_mode: host
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-ibex}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-ibexdev}
+    volumes:
+      - ibex_clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-dev-ports.xml:/etc/clickhouse-server/config.d/host-ports.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -Fxq Ok."]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  minio:
+    image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    container_name: ibex-dev-minio
+    network_mode: host
+    command: ["server", "/data", "--address", ":9100", "--console-address", ":9101"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - ibex_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9100/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  ibex_postgres_data:
+  ibex_redis_data:
+  ibex_clickhouse_data:
+  ibex_minio_data:

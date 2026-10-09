@@ -1,216 +1,179 @@
-# IBEX Harness - Toolchain
+# IBEX Harness — Toolchain and Environment Setup
 
-## 1) Purpose
+## Source of truth
 
-This document defines the local tools required to work on IBEX Harness. The goal is a predictable setup where local commands match CI as closely as possible.
-
-Run the repository command surface from the root `Makefile` where possible:
+Tool versions are defined in [`infra/tool-versions.env`](../../infra/tool-versions.env). Do not duplicate version numbers in docs or scripts. Run:
 
 ```bash
-make help
+make check-tools
 ```
 
----
+The checker compares installed tools with the manifest and prints remediation guidance. It does not silently upgrade tools, lockfiles, `go.mod`, or `go.sum`.
 
-## 2) Required tools
-
-| Tool | Minimum | Why it is required |
+| Tool | Manifest key | Required value |
 | --- | --- | --- |
-| Git | 2.40+ | Source control and PR workflow |
-| Docker Engine + Docker Compose | Docker 24+, Compose v2 | Local Postgres, Redis, ClickHouse, and MinIO |
-| Go | 1.25.13+ | Go services (`auth`, `proxy`, future CLI); must match `go.mod` |
-| Docker builder (auth/proxy) | `golang:1.26-alpine3.22` | Multi-stage builds; `CGO_ENABLED=0`, pinned digests, non-root runtime |
-| GNU Make | any POSIX `make` implementation | Canonical command surface (`Makefile`) used by developers and CI; on Windows prefer running via Git Bash or install a compatible `make` implementation |
-| Node.js | 22 (see `.nvmrc`) | Docs site (`web/`), markdownlint, pnpm workspace |
-| pnpm | 9.15.9 (see root `packageManager`) | Workspace installs for `web/` and `@ibex-harness/proto` |
-| Python | 3.12+ | Python services and locked `uv` environments |
-| Buf CLI | 1.47+ | Protobuf linting and breaking-change checks |
-| Gitleaks | 8.24.3 | Required repository secret scan; CI always runs it |
-| golangci-lint | 2.8.0 | Required Go lint and depguard checks |
-| Bash | Git Bash, macOS bash, or Linux shell | Root `Makefile` targets and repo guards |
+| Go | `GO_VERSION` | 1.26.9 |
+| golangci-lint | `GOLANGCI_LINT_VERSION` | 2.12.2 |
+| Buf | `BUF_VERSION` | 1.47.2 |
+| Gitleaks | `GITLEAKS_VERSION` | 8.24.3 |
+| gotestsum | `GOTESTSUM_VERSION` | 1.13.0 |
+| Node.js | `NODE_MAJOR` | 22 |
+| pnpm | `PNPM_VERSION` | 9.15.9 |
+| Python | `PYTHON_VERSION` | 3.12 |
+| uv | `UV_VERSION` | 0.12.19 |
 
-## 3) Optional tools
+`go.mod`, `package.json`, `.nvmrc`, and the CI installation blocks remain authoritative for their respective ecosystems. If those files change, update `infra/tool-versions.env` in the same change.
 
-| Tool | Why it helps |
-| --- | --- |
-| Gitleaks | Run secret scans before pushing; CI always runs it |
-| pre-commit | Run fast local checks before every commit |
-| act | Dry-run GitHub Actions locally where Docker support is available |
+## Fast path
 
----
+On a fresh clone:
 
-## 4) Installation
+```bash
+make setup
+make check-tools
+```
 
-### 4.1 Windows
+For diagnostics without changing anything:
 
-Use PowerShell. Install Git Bash because Make targets run POSIX shell scripts. If `make` is not available, install Git for Windows (includes Git Bash) or install `make` via Chocolatey/winget. Prefer running `make` inside Git Bash to match CI behavior.
+```bash
+make setup-check
+make env-doctor
+```
 
-```powershell
-winget install --id Git.Git -e
-winget install --id Docker.DockerDesktop -e
-winget install --id GoLang.Go -e
-winget install --id OpenJS.NodeJS.LTS -e
-winget install --id Python.Python.3.12 -e
-winget install --id Bufbuild.Buf -e
-winget install --id Gitleaks.Gitleaks -e
+`make setup` installs frozen dependencies, generates protobuf output, starts development and test dependencies, applies migrations, initializes required object-store buckets, and runs direct readiness probes. It refuses to leave `go.sum` modified.
+
+## Container runtimes and networking
+
+The command surface supports both runtimes:
+
+```bash
+IBEX_RUNTIME=docker make compose-dev-up
+IBEX_RUNTIME=podman make compose-dev-up
+```
+
+`IBEX_RUNTIME=auto` (the default) prefers Docker Compose v2 and falls back to Podman Compose. Podman users may use either `podman compose` or `podman-compose`.
+
+Networking is selected independently:
+
+```bash
+IBEX_NETWORK=bridge make compose-dev-up   # default; Docker/Podman bridge network
+IBEX_NETWORK=host make compose-dev-up     # restricted sandboxes; committed overlay
+```
+
+Host mode has no Compose service DNS and no `host.docker.internal` gateway. The committed overlays under [`infra/compose/overlays/host/`](../../infra/compose/overlays/host/) replace service references with loopback endpoints, remove bridge-only mappings, relocate conflicting listeners, and use direct host ports.
+
+Use `make env-doctor` when the runtime or network behavior is unclear. It reports OS, architecture, shell, selected runtime, network mode, injected `OTEL_*` variables, localhost resolution, and the port map.
+
+## OS installation recipes
+
+### Windows / Git Bash
+
+Install Git for Windows (including Git Bash), Docker Desktop or Podman Desktop, Go, Node 22, Python 3.12, Buf, Gitleaks, and GNU Make. Then run the commands from Git Bash:
+
+```bash
 corepack enable
 corepack prepare pnpm@9.15.9 --activate
+make setup
 ```
 
-If `winget` does not provide a package in your environment, Chocolatey equivalents are:
-
-```powershell
-choco install git docker-desktop golang nodejs-lts python312 buf gitleaks -y
-corepack enable
-corepack prepare pnpm@9.15.9 --activate
-```
-
-After installing Docker Desktop, start it once from the Windows UI and confirm Docker Compose v2 is available.
-
-### 4.2 macOS
+If Corepack rejects stale package-manager signatures, install the pinned pnpm directly:
 
 ```bash
-brew install git go node python@3.11 bufbuild/buf/buf gitleaks pre-commit act
-brew install --cask docker
-corepack enable
-corepack prepare pnpm@9.15.9 --activate
+npm install --global pnpm@9.15.9
 ```
 
-Start Docker Desktop before running compose commands.
+### macOS
 
-### 4.3 Linux
+Install Homebrew packages for Git, Go, Node, Python, Buf, Gitleaks, GNU Make, and either Docker Desktop or Podman. Activate the pinned pnpm with Corepack or npm, then run `make setup`.
 
-Ubuntu/Debian:
+### Linux
+
+Install Git, GNU Make, Bash, curl, certificates, Go 1.26.9, Node 22, Python 3.12, and one supported container runtime. Install Buf, Gitleaks, golangci-lint, gotestsum, and uv using their official release/package instructions. Verify exact versions with:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git make curl ca-certificates gnupg python3.12 python3-pip
-# Node 22: use nvm/fnm or NodeSource; then:
-corepack enable
-corepack prepare pnpm@9.15.9 --activate
-# Go from distro or https://go.dev/dl/ (must match go.mod)
-sudo apt-get install -y golang-go
+make check-tools
 ```
 
-Install Docker Engine and the Compose plugin using Docker's official packages for your distribution:
+Auto-install is intentionally not performed by `make setup`: package managers and privilege boundaries differ across distributions. The setup command detects missing tools and prints the exact remediation category instead of making unreviewed global changes.
+
+## Dependency setup details
+
+The setup path uses:
 
 ```bash
-docker version
-docker compose version
+pnpm install --frozen-lockfile --ignore-scripts
 ```
 
-Install Buf:
+and each checked-in Python service’s existing `*-uv-sync.sh` helper. Protobuf stubs are generated with `buf generate`; generated output remains governed by the repository’s existing ignore rules.
 
-```bash
-curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.47.2/buf-Linux-x86_64" -o /tmp/buf
-sudo install -m 0755 /tmp/buf /usr/local/bin/buf
-```
+Go module operations are guarded: setup checks that `go.sum` is unchanged after the operation and restores it before failing if a command mutates it. Never use `go mod download all` as an unattended setup step.
 
-Install Gitleaks (and golangci-lint for Go checks):
+## Local stacks and ports
 
-```bash
-curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
-  | sudo tar -xz -C /usr/local/bin gitleaks
-# Follow the checksum-verified install block in .github/workflows/ci.yml for golangci-lint 2.8.0.
-```
+Development defaults:
 
-Fedora/RHEL:
+| Service | Port |
+| --- | ---: |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
+| ClickHouse HTTP | 8123 |
+| ClickHouse native | 9002 |
+| MinIO API | 9100 |
+| MinIO console | 9101 |
 
-```bash
-sudo dnf install -y git make curl python3.12 nodejs npm golang
-```
+Test defaults:
 
-Install Docker, Buf, and Gitleaks with the official upstream packages or release binaries for your architecture.
+| Service | Port |
+| --- | ---: |
+| PostgreSQL | 5433 |
+| Redis | 6380 |
+| ClickHouse HTTP | 8124 |
+| ClickHouse native | 9000 |
 
----
+MinIO uses 9100/9101 by default to avoid the ClickHouse native 9000 collision. Override ports through the Compose `.env.example` files rather than editing Compose YAML.
 
-## 5) Sanity check
+Observability ports are controlled by `infra/compose/observability/.env.example`. In host mode, Tempo owns the OTLP listener ports and the Collector overlay uses relocated receiver ports; service configuration uses `127.0.0.1` rather than Compose DNS.
 
-Run these commands from any shell. Version numbers may be newer than the minimums listed above.
+## Initialization and readiness
 
-```bash
-git --version
-docker version
-docker compose version
-go version
-node --version
-pnpm --version
-python --version
-buf --version
-```
-
-Expected:
-
-- `git --version` prints Git `2.40` or newer.
-- `docker version` reports a reachable Docker server.
-- `docker compose version` prints Compose `v2...`.
-- `go version` prints `go1.25.13` or newer (must match `go.mod`).
-- `node --version` prints `v22...` (`.nvmrc`; web app and `pnpm` workspace).
-- `pnpm --version` prints `9.15.9` (root `packageManager` in `package.json`).
-- `python --version` prints `3.12...` or newer.
-- `buf --version` prints `1.47...` or newer.
-
-The docs app (`web/`) currently uses Next.js 16 and Fumadocs 14. The frozen workspace install is `pnpm install --frozen-lockfile --ignore-scripts`; Python services use `uv sync --frozen --all-groups` from their checked-in `uv.lock` files.
-
-If Corepack rejects pnpm metadata because its bundled signature keys are stale, do not disable integrity checks; install the pinned package manager directly with `npm install --global pnpm@9.15.9` and verify `pnpm --version`.
-
-**Note:** CI `markdownlint` runs on Node 20 (`.github/markdownlint` isolated install); the web workspace and `@ibex-harness/proto` typecheck use Node 22 via `.github/actions/setup-pnpm-web`.
-
-Optional:
-
-```bash
-gitleaks version
-pre-commit --version
-act --version
-```
-
----
-
-## 6) Repository checks
-
-From the repository root:
-
-```bash
-make help
-make repo-guards
-make lint-docs
-make proto-lint
-make compose-dev-ps
-```
-
-Run a local secret scan when Gitleaks is installed:
-
-```bash
-make security-scan
-```
-
-Start local dependencies:
-
-```bash
-make compose-dev-up
-make compose-dev-down
-```
-
-Apply Postgres schema (after compose is healthy):
+After Compose starts:
 
 ```bash
 make db-migrate
-make db-version
+make clickhouse-migrate
+make stack-init
 ```
 
-Integration tests for migrations (requires [test compose](../../infra/compose/test/docker-compose.yml) on port 5433):
+`stack-init` uses direct PostgreSQL/Redis/ClickHouse/MinIO probes instead of trusting container health status. ClickHouse readiness matches the exact response `Ok.`. Required buckets are idempotently created when an AWS-compatible CLI is available.
+
+## Test telemetry isolation
+
+Sandbox and CI hosts may inject external OpenTelemetry variables. Repository test commands unset `OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, and exporter selectors unless:
 
 ```bash
-make compose-test-up
-go test -tags=integration ./infra/migrations/postgres/...
+IBEX_ALLOW_EXTERNAL_OTEL=1
 ```
 
----
+Use `make env-doctor` to see whether external telemetry variables are present. Do not copy their values into logs, issues, commits, or documentation.
 
-## 7) Troubleshooting
+## Troubleshooting
 
-If `make` is missing on Windows, install GNU Make (for example `winget install GnuWin32.Make` or Chocolatey `make`) and run `make` from Git Bash. Git for Windows does not include GNU Make by itself.
+- **No runtime:** install Docker Compose v2 or Podman + Podman Compose, then rerun `make check-tools`.
+- **Bridge networking fails:** use `IBEX_NETWORK=host`; inspect `make env-doctor` and the host overlay files.
+- **Rootful Podman rejects image names:** repository Compose images are fully qualified with `docker.io/` where applicable.
+- **Port already in use:** run `make env-doctor`, change the corresponding `.env.example` value in a local `.env`, and rerun the stack command.
+- **Container says unhealthy but direct service works:** run `make stack-init`; host-mode overlays use direct probes because image healthcheck binaries and bridge ports are not portable.
+- **Worker receives S3 404:** run `make stack-init` to create `ibex-sessions` and `ibex-exports`.
+- **Integration migration locks:** run migration-backed packages serially with `GO_TEST_P=1`; do not run shared-database migration suites concurrently.
+- **Web typecheck:** run the web typecheck target after `pnpm install` and protobuf/content generation; typecheck is a required gate even when build/tests pass.
 
-If Docker commands fail with connection errors, start Docker Desktop or the Docker daemon and retry `docker version`.
+## Canonical checks
 
-If `buf breaking` fails with network or authentication errors, verify GitHub access to `https://github.com/Rick1330/ibex-harness.git` and retry from `packages/proto`.
+```bash
+make repo-guards
+make lint-docs
+make security-scan
+make check-tools
+make proto-lint
+make stack-init
+```
