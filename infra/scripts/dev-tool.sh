@@ -107,7 +107,14 @@ check_tools() {
   actual="$(gitleaks version 2>/dev/null | head -1 | tr -d '[:space:]')"; version_ok GITLEAKS_VERSION "$actual" "$GITLEAKS_VERSION" || failures=$((failures+1))
   actual="$(golangci-lint version 2>/dev/null | sed -n 's/.*version \([^ ]*\).*/\1/p' | head -1)"; version_ok GOLANGCI_LINT_VERSION "$actual" "$GOLANGCI_LINT_VERSION" || failures=$((failures+1))
   actual="$(gotestsum --version 2>/dev/null | sed -n 's/.*v\([0-9.]*\).*/\1/p')"; version_ok GOTESTSUM_VERSION "$actual" "$GOTESTSUM_VERSION" || failures=$((failures+1))
-  if [[ "${IBEX_TEST_MODE:-0}" != 1 ]]; then runtime >/dev/null 2>&1 && printf 'PASS  %-20s %s\n' CONTAINER_RUNTIME "$(runtime)" || { echo 'FAIL  CONTAINER_RUNTIME no supported runtime'; failures=$((failures+1)); }; fi
+  if [[ "${IBEX_TEST_MODE:-0}" != 1 ]]; then
+    if runtime >/dev/null 2>&1; then
+      printf 'PASS  %-20s %s\n' CONTAINER_RUNTIME "$(runtime)"
+    else
+      echo 'FAIL  CONTAINER_RUNTIME no supported runtime'
+      failures=$((failures+1))
+    fi
+  fi
   if (( failures )); then
     cat >&2 <<'EOF'
 check-tools: one or more tools do not match infra/tool-versions.env.
