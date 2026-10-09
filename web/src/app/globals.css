@@ -4893,3 +4893,72 @@ html.dark .brand-mark-dark {
   width: 100%;
   max-width: none;
 }
+
+
+/* === Docs shell correction — preserve Fumadocs' grid contract ===
+ * Fumadocs renders #nd-docs-layout as a five-column CSS grid with named areas.
+ * Earlier flex overrides collapsed the main track and left most of the viewport
+ * empty. Keep the sidebar and TOC fixed, and let the page track consume the rest.
+ */
+@media (min-width: 1024px) {
+  #nd-docs-layout,
+  .docs-content-layout,
+  .roadmap-docs-layout {
+    display: grid !important;
+    width: 100% !important;
+    max-width: none !important;
+    grid-template:
+      "sidebar sidebar header toc toc"
+      "sidebar sidebar toc-popover toc toc"
+      "sidebar sidebar main toc toc" 1fr /
+      0 var(--ibex-sidebar-aside-width)
+      minmax(0, 1fr)
+      16rem
+      0 !important;
+  }
+
+  #nd-sidebar,
+  [data-sidebar],
+  .nd-sidebar {
+    grid-area: sidebar !important;
+    flex: none !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  #nd-page,
+  [data-docs-page],
+  .nd-page {
+    grid-area: main !important;
+    min-width: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  #nd-toc,
+  .nd-toc,
+  #nd-docs-layout > .docs-toc,
+  .docs-content-layout > .docs-toc,
+  .roadmap-docs-layout > .docs-toc {
+    grid-area: toc !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+  }
+
+  #nd-page main > article,
+  .nd-page main > article {
+    width: 100% !important;
+    max-width: min(72rem, 100%) !important;
+    box-sizing: border-box !important;
+    margin-inline: auto !important;
+    padding-inline: clamp(1.5rem, 3vw, 4rem) !important;
+  }
+
+  #nd-page .docs-prose,
+  .nd-page .docs-prose {
+    width: 100% !important;
+    max-width: none !important;
+  }
+}

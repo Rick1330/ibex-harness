@@ -10,17 +10,17 @@ make check-tools
 
 The checker compares installed tools with the manifest and prints remediation guidance. It does not silently upgrade tools, lockfiles, `go.mod`, or `go.sum`.
 
-| Tool | Manifest key | Required value |
+| Tool | Manifest key |
 | --- | --- | --- |
-| Go | `GO_VERSION` | 1.26.9 |
-| golangci-lint | `GOLANGCI_LINT_VERSION` | 2.12.2 |
-| Buf | `BUF_VERSION` | 1.47.2 |
-| Gitleaks | `GITLEAKS_VERSION` | 8.24.3 |
-| gotestsum | `GOTESTSUM_VERSION` | 1.13.0 |
-| Node.js | `NODE_MAJOR` | 22 |
-| pnpm | `PNPM_VERSION` | 9.15.9 |
-| Python | `PYTHON_VERSION` | 3.12 |
-| uv | `UV_VERSION` | 0.12.19 |
+| Go | `GO_VERSION` |
+| golangci-lint | `GOLANGCI_LINT_VERSION` |
+| Buf | `BUF_VERSION` |
+| Gitleaks | `GITLEAKS_VERSION` |
+| gotestsum | `GOTESTSUM_VERSION` |
+| Node.js | `NODE_MAJOR` |
+| pnpm | `PNPM_VERSION` |
+| Python | `PYTHON_VERSION` |
+| uv | `UV_VERSION` |
 
 `go.mod`, `package.json`, `.nvmrc`, and the CI installation blocks remain authoritative for their respective ecosystems. If those files change, update `infra/tool-versions.conf` in the same change.
 
@@ -88,7 +88,7 @@ Install Homebrew packages for Git, Go, Node, Python, Buf, Gitleaks, GNU Make, an
 
 ### Linux
 
-Install Git, GNU Make, Bash, curl, certificates, Go 1.26.9, Node 22, Python 3.12, and one supported container runtime. Install Buf, Gitleaks, golangci-lint, gotestsum, and uv using their official release/package instructions. Verify exact versions with:
+Install Git, GNU Make, Bash, curl, certificates, the versions listed in `infra/tool-versions.conf`, and one supported container runtime. Install Buf, Gitleaks, golangci-lint, gotestsum, and uv using their official release/package instructions. Verify exact versions with:
 
 ```bash
 make check-tools

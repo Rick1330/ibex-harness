@@ -102,9 +102,7 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 
 - Docker Compose v2 or Podman + Podman Compose
 - GNU Make
-- Go 1.26.9 (from `go.mod`)
-- Python 3.12+ (from service/package manifests)
-- Node.js 22 (from `.nvmrc`)
+- Go, Python, and Node versions from [`infra/tool-versions.conf`](../../infra/tool-versions.conf)
 - Buf CLI
 - Bash (Git Bash on Windows)
 

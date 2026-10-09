@@ -2,9 +2,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 0.0.0.0:14317
+        endpoint: 127.0.0.1:14317
       http:
-        endpoint: 0.0.0.0:14318
+        endpoint: 127.0.0.1:14318
 processors:
   batch:
     timeout: 1s

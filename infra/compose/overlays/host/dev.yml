@@ -46,7 +46,7 @@ services:
     image: cgr.dev/chainguard/minio:latest@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
     container_name: ibex-dev-minio
     network_mode: host
-    command: ["server", "/data", "--address", ":9100", "--console-address", ":9101"]
+    command: ["server", "/data", "--address", "127.0.0.1:9100", "--console-address", "127.0.0.1:9101"]
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}

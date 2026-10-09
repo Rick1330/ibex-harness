@@ -79,7 +79,7 @@ compose_with_mode() {
   if [[ "${IBEX_NETWORK:-bridge}" == host ]]; then
     local overlay="$ROOT_DIR/infra/compose/overlays/host/${kind}.yml"
     [[ -f "$overlay" ]] || { echo "missing host-network overlay: $overlay" >&2; exit 1; }
-    args+=( -f "$overlay" --env-file "$ROOT_DIR/infra/compose/${kind}/.env.example" )
+    args+=( -p "ibex-${kind}" -f "$overlay" --env-file "$ROOT_DIR/infra/compose/${kind}/.env.example" )
   elif [[ "${IBEX_NETWORK:-bridge}" != bridge ]]; then
     echo 'IBEX_NETWORK must be bridge or host' >&2; exit 2
   else
@@ -130,7 +130,10 @@ EOF
 unset_external_otel() {
   [[ "${IBEX_ALLOW_EXTERNAL_OTEL:-0}" == 1 ]] && return 0
   while IFS='=' read -r name _; do
-    case "$name" in OTEL_EXPORTER_OTLP_*|OTEL_SERVICE_NAME|OTEL_RESOURCE_ATTRIBUTES|OTEL_*_EXPORTER) unset "$name";; esac
+    case "$name" in
+      OTEL_*) unset "$name" ;;
+      *) : ;;
+    esac
   done < <(env)
 }
 
@@ -156,7 +159,7 @@ case "${1:-help}" in
   setup) bash "$ROOT_DIR/infra/scripts/setup.sh" "${2:-}" ;;
   check-tools) check_tools ;;
   env-doctor) bash "$ROOT_DIR/infra/scripts/env-doctor.sh" ;;
-  stack-init|readiness) bash "$ROOT_DIR/infra/scripts/stack-init.sh" ;;
+  stack-init|readiness) bash "$ROOT_DIR/infra/scripts/stack-init.sh" "$DEV_ENV" ;;
   lint-docs)
     cd "$ROOT_DIR"
     markdownlint="$ROOT_DIR/.github/markdownlint/node_modules/.bin/markdownlint-cli2"

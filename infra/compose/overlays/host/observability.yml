@@ -4,7 +4,7 @@ services:
     image: docker.io/prom/prometheus@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
     container_name: ibex-obs-prometheus
     network_mode: host
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d", "--web.enable-lifecycle"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
     volumes:
       - ../../../monitoring/prometheus/prometheus-host.yml:/etc/prometheus/prometheus.yml:ro
       - ../../../monitoring/prometheus/rules:/etc/prometheus/rules:ro
@@ -57,10 +57,12 @@ services:
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_USERS_DEFAULT_THEME: dark
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${IBEX_OBS_GRAFANA_ADMIN_PASSWORD:-ibex-local-only}
+      GF_SECURITY_ADMIN_PASSWORD: ${IBEX_OBS_GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
       GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
     volumes:
-      - ../../../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../../monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../../../monitoring/grafana/provisioning/datasources/datasources-host.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
       - ../../../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
 volumes:

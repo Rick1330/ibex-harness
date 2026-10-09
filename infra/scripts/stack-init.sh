@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT_DIR/infra/tool-versions.conf"
 
+if [[ -n "${1:-}" && -f "$1" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$1"
+  set +a
+fi
+
+SETUP_PYTHON="${IBEX_SETUP_PYTHON:-python3}"
+
 POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_USER="${POSTGRES_USER:-ibex}"
@@ -52,7 +61,7 @@ if command -v aws >/dev/null 2>&1; then
       aws --endpoint-url "http://127.0.0.1:${MINIO_API_PORT}" s3api head-bucket --bucket "$bucket" >/dev/null
     printf 'PASS  bucket %-18s\n' "$bucket"
   done
-elif python3 - "$MINIO_API_PORT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" "$buckets" <<'PY'
+elif "$SETUP_PYTHON" -c 'import boto3' >/dev/null 2>&1 && "$SETUP_PYTHON" - "$MINIO_API_PORT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" "$buckets" <<'PY'
 import sys
 try:
     import boto3

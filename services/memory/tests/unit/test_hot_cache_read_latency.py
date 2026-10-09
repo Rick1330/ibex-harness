@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import time
-import warnings
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -83,11 +81,4 @@ async def test_hot_cache_read_latency_p99_under_budget() -> None:
 
     p99 = _percentile_ms(samples_ms, 0.99)
     print(f"hot_cache_read p99={p99:.3f}ms budget={_P99_BUDGET_MS}ms limit={_READ_LIMIT}")
-    if p99 >= _P99_BUDGET_MS:
-        message = (
-            f"hot_cache_read p99={p99:.3f}ms exceeded {_P99_BUDGET_MS}ms; "
-            "set IBEX_PERF_GATES=1 to enforce the budget"
-        )
-        if os.environ.get("IBEX_PERF_GATES") == "1":
-            pytest.fail(message)
-        warnings.warn(message, RuntimeWarning, stacklevel=1)
+    assert p99 < _P99_BUDGET_MS
