@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: ibex-test-postgres
+    network_mode: host
+    environment:
+      POSTGRES_USER: ibex
+      POSTGRES_PASSWORD: ibex
+      POSTGRES_DB: ibex_test
+    command: ["postgres", "-p", "5433", "-c", "shared_buffers=1GB", "-c", "effective_cache_size=4GB", "-c", "maintenance_work_mem=1GB", "-c", "work_mem=64MB"]
+    volumes:
+      - ibex_test_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5433 -U ibex -d ibex_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: docker.io/redis/redis-stack:7.4.0-v1
+    container_name: ibex-test-redis
+    network_mode: host
+    command: ["redis-server", "--port", "6380"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  clickhouse:
+    image: docker.io/clickhouse/clickhouse-server:24.8.14.39
+    container_name: ibex-test-clickhouse
+    network_mode: host
+    environment:
+      CLICKHOUSE_DB: ibex
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ibextest
+    volumes:
+      - ibex_test_clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-test-ports.xml:/etc/clickhouse-server/config.d/host-ports.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8124/ping | grep -Fxq Ok."]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  ibex_test_postgres_data:
+  ibex_test_clickhouse_data:

@@ -32,17 +32,23 @@ See the [current-state snapshot](https://ibexharness.com/roadmap/current-state),
 
 ## Quick start
 
-Prerequisites are Docker Engine + Compose v2, Go 1.25.13+, Buf, GNU Make, Node 22, pnpm 9.15.9, Python 3.12+, and the repository’s locked `uv` environments. See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
+Prerequisites are Docker Compose v2 or Podman Compose, GNU Make, and the versions defined in [`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
 
 ```bash
 git clone https://github.com/Rick1330/ibex-harness.git
 cd ibex-harness
 
-pnpm install --frozen-lockfile --ignore-scripts
-make compose-dev-up
-make db-migrate
-make db-seed # local development data only; never run against production
+make setup
+make check-tools
 ```
+
+For a restricted sandbox or Podman machine:
+
+```bash
+IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
+```
+
+Use `make env-doctor` for runtime, port, DNS, and injected telemetry diagnostics. `make db-seed` remains an optional local-development step; never run it against production.
 
 For the complete setup, service startup matrix, test commands, and teardown procedure, read [DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md).
 

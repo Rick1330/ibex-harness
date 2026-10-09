@@ -5,7 +5,7 @@
   "scripts": {
     "generate:changelog": "node scripts/generate-changelog-content.mjs",
     "predev": "node scripts/generate-changelog-content.mjs",
-    "pretypecheck": "node scripts/generate-changelog-content.mjs",
+    "pretypecheck": "fumadocs-mdx && node scripts/generate-changelog-content.mjs",
     "pretest": "node scripts/generate-changelog-content.mjs",
     "dev": "node scripts/run-dev.mjs",
     "dev:clean": "node scripts/stop-next.mjs && node scripts/clean-next.mjs && node scripts/run-dev.mjs",

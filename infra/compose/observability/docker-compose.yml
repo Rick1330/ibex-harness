@@ -9,7 +9,7 @@ name: ibex-observability
 
 services:
   prometheus:
-    image: prom/prometheus@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
+    image: docker.io/prom/prometheus@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
     container_name: ibex-obs-prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -36,7 +36,7 @@ services:
       - observability
 
   alertmanager:
-    image: prom/alertmanager@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
+    image: docker.io/prom/alertmanager@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
     container_name: ibex-obs-alertmanager
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
@@ -56,7 +56,7 @@ services:
       - observability
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib@sha256:37fa87091cfaaec7234a27e4e395a40c31c2bfaea97a349a4afef6d9e9681197
+    image: docker.io/otel/opentelemetry-collector-contrib@sha256:37fa87091cfaaec7234a27e4e395a40c31c2bfaea97a349a4afef6d9e9681197
     container_name: ibex-obs-otel-collector
     command: ["--config=/etc/otelcol/config.yaml"]
     volumes:
@@ -76,7 +76,7 @@ services:
       - observability
 
   tempo:
-    image: grafana/tempo@sha256:ef4384fce6e8ad22b95b243d8fc165628cda655376fd50e7850536ad89d71d50
+    image: docker.io/grafana/tempo@sha256:ef4384fce6e8ad22b95b243d8fc165628cda655376fd50e7850536ad89d71d50
     container_name: ibex-obs-tempo
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
@@ -94,7 +94,7 @@ services:
       - observability
 
   loki:
-    image: grafana/loki@sha256:09a53b4a4ff81ffcd8f13886df19d33fac7a8d3aaf952e3c7e66cbade5b2fc31
+    image: docker.io/grafana/loki@sha256:09a53b4a4ff81ffcd8f13886df19d33fac7a8d3aaf952e3c7e66cbade5b2fc31
     container_name: ibex-obs-loki
     command: ["-config.file=/etc/loki/loki.yaml"]
     volumes:
@@ -112,7 +112,7 @@ services:
       - observability
 
   grafana:
-    image: grafana/grafana@sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c
+    image: docker.io/grafana/grafana@sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c
     container_name: ibex-obs-grafana
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"

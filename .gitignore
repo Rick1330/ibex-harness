@@ -70,6 +70,7 @@ htmlcov/
 build/
 .venv/
 venv/
+.ibex/
 uv.lock.bak
 
 # --- Node / Next.js ---

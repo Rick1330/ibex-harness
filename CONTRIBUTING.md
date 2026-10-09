@@ -4,6 +4,23 @@ This project follows the [Code of Conduct](CODE_OF_CONDUCT.md). By participating
 
 Thank you for contributing. This repository is a production-grade, security-sensitive monorepo. Please read this guide before opening a pull request.
 
+## First setup
+
+From a fresh checkout, use the repository-supported setup path:
+
+```bash
+make setup
+make check-tools
+```
+
+Podman and restricted sandboxes are supported with:
+
+```bash
+IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
+```
+
+Run `make env-doctor` when ports, container networking, or injected `OTEL_*` variables make the environment behave unexpectedly. See [web/engineering/TOOLCHAIN.md](web/engineering/TOOLCHAIN.md) for the manifest and runtime details.
+
 ## PR-only workflow
 
 **Direct pushes to `main` are not allowed** once branch protection is enabled.
