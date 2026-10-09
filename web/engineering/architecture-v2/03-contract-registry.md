@@ -1,6 +1,6 @@
 # Contract Registry and Ownership
 
-**Status:** `specified`; inventory must be completed before new boundary work. The initial G0 registry packet is proposed in `web/content/docs/adr/0084-g0-principal-agent-binding-and-idempotency.mdx:10,24-34,141`; closed issue #935 is historical context, while open issue #944 and PR #943 track the current follow-up; no G0 exit is claimed.
+**Status:** `specified`; inventory must be completed before new boundary work. The initial G0 registry packet is proposed in `web/content/docs/adr/0084-g0-principal-agent-binding-and-idempotency.mdx:10,24-34,141`; closed issue #935 is historical context. Issue #944 was closed by PR #943, squash-merged on 2026-10-09 at commit `1934456`, and reopened on 2026-10-09 solely for this docs-only cleanup. Owner review remains pending in the status ledger and ADR-0084 through 2026-10-22; no G0 exit is claimed.
 
 ## Contract hierarchy
 
