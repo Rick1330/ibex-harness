@@ -67,7 +67,13 @@ func TestNewIssuer_RejectsKindAndSignatureMismatch(t *testing.T) {
 		t.Fatalf("parts: %v", err)
 	}
 	parts := splitJWT(access)
-	bad := parts[0] + "." + parts[1] + "." + parts[2][:len(parts[2])-2] + "aa"
+	badSignature := []byte(parts[2])
+	if badSignature[0] == 'A' {
+		badSignature[0] = 'B'
+	} else {
+		badSignature[0] = 'A'
+	}
+	bad := parts[0] + "." + parts[1] + "." + string(badSignature)
 	_, err = ver.Verify(sessionjwt.RawToken(bad), sessionjwt.KindAccess)
 	if !errors.Is(err, sessionjwt.ErrInvalidToken) {
 		t.Fatalf("bad sig: %v", err)
