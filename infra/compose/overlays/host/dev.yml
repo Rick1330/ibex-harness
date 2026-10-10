@@ -37,6 +37,7 @@ services:
     volumes:
       - ibex_clickhouse_data:/var/lib/clickhouse
       - ./clickhouse-dev-ports.xml:/etc/clickhouse-server/config.d/host-ports.xml:ro
+      - ./clickhouse-dev-client.xml:/etc/clickhouse-client/config.xml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -Fxq Ok."]
       interval: 5s

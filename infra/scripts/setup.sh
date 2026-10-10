@@ -42,8 +42,8 @@ bash "$ROOT_DIR/infra/scripts/dev-tool.sh" compose-dev-up
 bash "$ROOT_DIR/infra/scripts/dev-tool.sh" compose-test-up
 bash "$ROOT_DIR/infra/scripts/dev-tool.sh" db-migrate
 bash "$ROOT_DIR/infra/scripts/dev-tool.sh" clickhouse-migrate
-bash "$ROOT_DIR/infra/scripts/dev-tool.sh" stack-init
-bash "$ROOT_DIR/infra/scripts/dev-tool.sh" readiness
+bash "$ROOT_DIR/infra/scripts/dev-tool.sh" stack-init dev
+bash "$ROOT_DIR/infra/scripts/dev-tool.sh" stack-init test
 
 if (( go_sum_initially_clean )) && ! git diff --quiet -- go.sum; then
   echo 'setup: refusing to leave go.sum modified; restoring it' >&2

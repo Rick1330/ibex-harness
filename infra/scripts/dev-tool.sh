@@ -143,12 +143,13 @@ case "${1:-help}" in
       '  setup                  Provision dependencies, stacks, migrations, and readiness' \
       '  check-tools            Verify installed versions against infra/tool-versions.conf' \
       '  env-doctor             Diagnose runtime, network, ports, DNS, and OTEL variables' \
-      '  stack-init             Wait for services and create required object-store buckets' \
+      '  stack-init [dev|test]  Wait for a stack and create required object-store buckets' \
       '  readiness              Run stack-init readiness probes' \
       '  lint-docs              Run markdownlint' '  security-scan          Run gitleaks locally' \
       '  repo-guards            Run repository layout and hygiene guards' '  proto-lint              Run Buf lint' \
       '  proto-breaking         Run Buf breaking checks' '  proto-gen               Generate protobuf stubs' \
       '  proto-test              Run protobuf contract tests' '  test-integration         Run Go integration tests' \
+      '  test-integration-auth   Run AuthService-backed proxy integration tests' \
       '  compose-dev-up/down/reset/logs/ps  Manage development stack' \
       '  compose-test-up/down   Manage test stack' '  observability-up/down/smoke  Manage observability' \
       '  db-migrate/down/version/seed  Manage Postgres migrations' \
@@ -159,7 +160,7 @@ case "${1:-help}" in
   setup) bash "$ROOT_DIR/infra/scripts/setup.sh" "${2:-}" ;;
   check-tools) check_tools ;;
   env-doctor) bash "$ROOT_DIR/infra/scripts/env-doctor.sh" ;;
-  stack-init|readiness) bash "$ROOT_DIR/infra/scripts/stack-init.sh" "$DEV_ENV" ;;
+  stack-init|readiness) bash "$ROOT_DIR/infra/scripts/stack-init.sh" "${2:-dev}" ;;
   lint-docs)
     cd "$ROOT_DIR"
     markdownlint="$ROOT_DIR/.github/markdownlint/node_modules/.bin/markdownlint-cli2"
@@ -176,7 +177,8 @@ case "${1:-help}" in
   proto-gen) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf generate ;;
   proto-test) cd "$ROOT_DIR"; go test ./packages/proto/... ;;
   proto-test-integration) cd "$PROTO_DIR"; buf generate; cd "$ROOT_DIR"; go test -tags=integration ./packages/proto/... ;;
-  test-integration) cd "$ROOT_DIR"; unset_external_otel; export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/14}"; go test -tags=integration -race -timeout=120s -p "${GO_TEST_P:-1}" ./... ;;
+  test-integration) cd "$ROOT_DIR"; unset_external_otel; export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/14}"; export POSTGRES_TEST_DSN="${POSTGRES_TEST_DSN:-postgres://ibex:ibex@127.0.0.1:5433/ibex_test?sslmode=disable}"; export CLICKHOUSE_TEST_DSN="${CLICKHOUSE_TEST_DSN:-clickhouse://default:ibextest@127.0.0.1:8124/ibex}"; export CLICKHOUSE_TEST_NATIVE_DSN="${CLICKHOUSE_TEST_NATIVE_DSN:-clickhouse://default:ibextest@127.0.0.1:9000?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree}"; export CLICKHOUSE_MIGRATE_DSN="${CLICKHOUSE_MIGRATE_DSN:-${CLICKHOUSE_TEST_NATIVE_DSN}}"; export CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8124}"; export CLICKHOUSE_DB="${CLICKHOUSE_DB:-ibex}"; export CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"; export CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-ibextest}"; export IBEX_AUTH_VALIDATE_TIMEOUT="${IBEX_AUTH_VALIDATE_TIMEOUT:-2s}"; export IBEX_TEST_FAST_ARGON2="${IBEX_TEST_FAST_ARGON2:-1}"; bash "$CH_MIGRATE" up; go test -tags=integration -race -timeout=120s -p "${GO_TEST_P:-1}" -parallel "${GO_TEST_PARALLEL:-1}" ./... ;;
+  test-integration-auth) cd "$ROOT_DIR"; unset_external_otel; export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/14}"; export POSTGRES_TEST_DSN="${POSTGRES_TEST_DSN:-postgres://ibex:ibex@127.0.0.1:5433/ibex_test?sslmode=disable}"; export IBEX_AUTH_VALIDATE_TIMEOUT="${IBEX_AUTH_VALIDATE_TIMEOUT:-2s}"; export IBEX_TEST_FAST_ARGON2="${IBEX_TEST_FAST_ARGON2:-1}"; go test -tags=integration -race -timeout=120s -p 1 -parallel "${GO_TEST_PARALLEL:-1}" ./services/auth/... ./services/proxy/... ;;
   compose-dev-up) compose_with_mode dev up -d ;;
   compose-dev-down) compose_with_mode dev down ;;
   compose-dev-reset) compose_with_mode dev down -v; compose_with_mode dev up -d ;;
