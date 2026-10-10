@@ -251,6 +251,7 @@ func assembleParamsFromRequest(ctx context.Context, model string, messages []pro
 	if traceID == "" || spanID == "" {
 		return contextclient.AssembleParams{}, false
 	}
+	principal, _ := PrincipalContextFromContext(ctx)
 	return contextclient.AssembleParams{
 		OrgID:              orgID.String(),
 		AgentID:            agentID.String(),
@@ -261,6 +262,7 @@ func assembleParamsFromRequest(ctx context.Context, model string, messages []pro
 		RequestID:          RequestIDFromContext(ctx),
 		TraceID:            traceID,
 		SpanID:             spanID,
+		PrincipalContext:   principal,
 		RecentMessages:     toAssembleMessages(messages),
 	}, true
 }
