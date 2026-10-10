@@ -30,8 +30,25 @@ fi
 
 CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
 CLICKHOUSE_DB="${CLICKHOUSE_DB:-ibex}"
-CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-}"
 CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-}"
+if [[ -z "$CLICKHOUSE_USER" || -z "$CLICKHOUSE_PASSWORD" ]]; then
+  migration_dsn="${CLICKHOUSE_MIGRATE_DSN:-${CLICKHOUSE_DSN:-}}"
+  if [[ -n "$migration_dsn" ]]; then
+    # shellcheck disable=SC2155
+    read -r dsn_user dsn_password < <(python3 - "$migration_dsn" <<'PY'
+from sys import argv
+from urllib.parse import unquote, urlparse
+
+parsed = urlparse(argv[1])
+print(unquote(parsed.username or ""), unquote(parsed.password or ""))
+PY
+    )
+    CLICKHOUSE_USER="${CLICKHOUSE_USER:-${dsn_user:-}}"
+    CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-${dsn_password:-}}"
+  fi
+fi
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
 if [[ ! "$CLICKHOUSE_DB" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
   echo "clickhouse migrate: invalid CLICKHOUSE_DB identifier" >&2
   exit 2
