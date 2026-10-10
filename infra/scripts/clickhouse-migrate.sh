@@ -28,6 +28,18 @@ if [[ -z "${CLICKHOUSE_MIGRATE_DSN:-}" && -z "${CLICKHOUSE_DSN:-}" ]]; then
   export CLICKHOUSE_MIGRATE_DSN="clickhouse://default:@localhost:9002?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree"
 fi
 
+CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
+CLICKHOUSE_DB="${CLICKHOUSE_DB:-ibex}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-}"
+if [[ ! "$CLICKHOUSE_DB" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "clickhouse migrate: invalid CLICKHOUSE_DB identifier" >&2
+  exit 2
+fi
+curl -fsS --retry 10 --retry-delay 1 --user "$CLICKHOUSE_USER:$CLICKHOUSE_PASSWORD" \
+  --data-binary "CREATE DATABASE IF NOT EXISTS \`$CLICKHOUSE_DB\`" \
+  "http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" >/dev/null
+
 case "$CMD" in
   up|down|version)
     cd "$ROOT_DIR"

@@ -33,6 +33,9 @@ var requiredLLMTraceColumns = []string{
 }
 
 func testMigrateConn() Conn {
+	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_NATIVE_DSN")); dsn != "" {
+		return ParseConn(dsn)
+	}
 	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_DSN")); dsn != "" {
 		return ParseConn(dsn)
 	}
@@ -405,7 +408,10 @@ func insertSampleTrace(t *testing.T, db *sql.DB) {
 	if err != nil {
 		t.Fatalf("parse insert DSN: %v", err)
 	}
-	httpPort := map[string]string{"9000": "8123", "9002": "8123", "9003": "8124"}[dsn.Port()]
+	httpPort := os.Getenv("CLICKHOUSE_HTTP_PORT")
+	if httpPort == "" {
+		httpPort = map[string]string{"9000": "8123", "9002": "8123", "9003": "8124"}[dsn.Port()]
+	}
 	if httpPort == "" {
 		httpPort = "8123"
 	}

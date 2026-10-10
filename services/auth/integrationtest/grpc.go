@@ -5,6 +5,7 @@ package integrationtest
 import (
 	"database/sql"
 	"net"
+	"os"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
@@ -78,7 +79,7 @@ func StartAuthGRPCWithCredentials(t testing.TB, dbDSN, masterKeyB64 string) *Aut
 	}
 	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
-	argon2 := token.DefaultArgon2Params()
+	argon2 := integrationArgon2Params()
 	return serveAuthFixture(t, authServeParts{
 		db: db, reg: reg,
 		validator: mustTokenValidator(t, repo, argon2),
@@ -97,7 +98,7 @@ func startAuthGRPC(t testing.TB, dbDSN string, opts authGRPCOpts) *AuthGRPCFixtu
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
 	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
-	argon2 := token.DefaultArgon2Params()
+	argon2 := integrationArgon2Params()
 	return serveAuthFixture(t, authServeParts{
 		db: db, reg: reg,
 		validator: mustTokenValidator(t, repo, argon2),
@@ -108,6 +109,13 @@ func startAuthGRPC(t testing.TB, dbDSN string, opts authGRPCOpts) *AuthGRPCFixtu
 		agentSvc:        mustAgentService(t, agentsRepo),
 		validateLimiter: opts.validateLimiter,
 	})
+}
+
+func integrationArgon2Params() token.Argon2Params {
+	if os.Getenv("IBEX_TEST_FAST_ARGON2") == "1" {
+		return token.TestArgon2Params()
+	}
+	return token.DefaultArgon2Params()
 }
 
 type authServeParts struct {

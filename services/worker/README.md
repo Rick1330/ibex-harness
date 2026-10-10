@@ -139,11 +139,12 @@ Integration test task `ibex.worker.maintenance.always_fail` exercises the full r
 
 ```bash
 make test-worker
-make test-worker-integration   # requires Redis + POSTGRES_TEST_DSN (or POSTGRES_DSN) + migrated DB
+make test-worker-integration   # uses the host-network test stack by default
 ```
 
-Integration tests that `TRUNCATE ibex_core.failed_tasks` require `POSTGRES_TEST_DSN` pointing at a
-dedicated test database. CI sets `POSTGRES_TEST_DSN` via `infra/scripts/worker-integration-test-ci.sh`.
+Integration tests that `TRUNCATE ibex_core.failed_tasks` use `POSTGRES_TEST_DSN` when supplied. Otherwise
+the runner derives `postgres://ibex:ibex@127.0.0.1:5433/ibex_test` and Redis on port 6380, matching
+`make compose-test-up` in host-network mode. CI can continue to override these values explicitly.
 
 ## Manual vLLM verification (not CI)
 
