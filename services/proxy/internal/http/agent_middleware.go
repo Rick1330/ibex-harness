@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -68,7 +69,20 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := WithAgent(r.Context(), *rec)
+	principal, err := principalContextFromVerifiedAuth(authRes, rec, requestID, TraceIDFromContext(r.Context()), "proxy-auth", time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, ErrPrincipalAgentMismatch) {
+			h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{ctx: r.Context(), requestID: requestID, docsBase: docsBase, requestingOrg: authRes.OrgID.String(), agentID: agentHeader})
+			apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized, "The agent is not authorized for this organization or is not active.", requestID, apierror.WriteOpts{DocsBase: docsBase})
+			return
+		}
+		if h.logger != nil {
+			h.logger.WarnCtx(r.Context(), "principal context unavailable")
+		}
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable, agentVerificationUnavailableMessage, requestID, apierror.WriteOpts{DocsBase: docsBase})
+		return
+	}
+	ctx := WithPrincipalContext(WithAgent(r.Context(), *rec), principal)
 	h.next.ServeHTTP(w, r.WithContext(ctx))
 }
 

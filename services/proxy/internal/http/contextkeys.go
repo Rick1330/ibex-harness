@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
@@ -17,6 +18,7 @@ const (
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
+	ctxKeyPrincipalContext
 	ctxKeyResolvedDirective
 	ctxKeyResolvedSession
 	ctxKeyAuthLatencyMs
@@ -86,6 +88,17 @@ func WithAgent(ctx context.Context, rec auth.AgentRecord) context.Context {
 func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
 	rec, ok := ctx.Value(ctxKeyAgent).(auth.AgentRecord)
 	return rec, ok
+}
+
+// WithPrincipalContext stores the additive verified identity binding.
+func WithPrincipalContext(ctx context.Context, principal *authv1.PrincipalContext) context.Context {
+	return context.WithValue(ctx, ctxKeyPrincipalContext, principal)
+}
+
+// PrincipalContextFromContext returns the verified identity binding when present.
+func PrincipalContextFromContext(ctx context.Context) (*authv1.PrincipalContext, bool) {
+	principal, ok := ctx.Value(ctxKeyPrincipalContext).(*authv1.PrincipalContext)
+	return principal, ok && principal != nil
 }
 
 // WithResolvedDirective stores a successfully resolved directive on the request
