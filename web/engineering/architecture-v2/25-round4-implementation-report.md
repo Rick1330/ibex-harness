@@ -20,7 +20,7 @@
 - `go test ./packages/evidenceoutbox`: **passed**, including JCS digest validation, relay poison/failure/replay behavior, tenant predicates, and producer proof checks.
 - `go test ./services/proxy/internal/http/session`: **passed**, including durable, failed-required, unknown, replay, and degraded-profile acknowledgement cases.
 - Memory focused suite (`test_dedup_service.py`, `test_inmemory_vectorstore.py`): **25 passed**.
-- Baseline repository `make check`: **passed** with Podman readiness probes before the implementation branches were created.
+- Toolchain and Podman readiness checks: **passed**. Final repository `make check` is currently blocked before lint by the pre-existing CI-policy error `Invalid action pin: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2`; no workflow policy was weakened.
 
 ## A2 boundaries
 
