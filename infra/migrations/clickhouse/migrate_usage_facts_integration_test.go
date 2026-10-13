@@ -37,7 +37,11 @@ func TestIntegration_UsageFacts_NoTTLAndOrderBy(t *testing.T) {
 	}
 
 	if err := Down(conn); err != nil {
-		t.Fatalf("down: %v", err)
+		t.Fatalf("down evidence_events: %v", err)
+	}
+	assertTableCount(t, db, "evidence_events", 0)
+	if err := Down(conn); err != nil {
+		t.Fatalf("down usage_facts: %v", err)
 	}
 	assertTableCount(t, db, "usage_facts", 0)
 }
