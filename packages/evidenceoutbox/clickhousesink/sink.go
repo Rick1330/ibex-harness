@@ -110,12 +110,30 @@ func (s *Sink) DeliverWithTombstoneFence(ctx context.Context, row evidenceoutbox
 }
 
 func validateRow(row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFence) error {
+	if err := validateIdentity(row); err != nil {
+		return err
+	}
+	if err := validatePayload(row); err != nil {
+		return err
+	}
+	return validateFence(fence)
+}
+
+func validateIdentity(row evidenceoutbox.OutboxRow) error {
 	if row.OrgID == uuid.Nil || row.EventID == uuid.Nil || row.AggregateSeq <= 0 {
 		return fmt.Errorf("clickhousesink: invalid tenant/event identity")
 	}
+	return nil
+}
+
+func validatePayload(row evidenceoutbox.OutboxRow) error {
 	if row.SchemaVersion == "" || row.EventType == "" || len(row.Payload) == 0 {
 		return fmt.Errorf("clickhousesink: incomplete outbox row")
 	}
+	return nil
+}
+
+func validateFence(fence evidenceoutbox.TombstoneFence) error {
 	if fence.ResourceType == "" || fence.ResourceID == "" || fence.ResourceVersion <= 0 {
 		return fmt.Errorf("clickhousesink: invalid tombstone fence")
 	}

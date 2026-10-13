@@ -36,6 +36,11 @@ func TestIntegration_UsageFacts_NoTTLAndOrderBy(t *testing.T) {
 		t.Fatalf("ORDER BY keys=%v want=%v", keys, want)
 	}
 
+	rollbackUsageFacts(t, conn, db)
+}
+
+func rollbackUsageFacts(t *testing.T, conn Conn, db *sql.DB) {
+	t.Helper()
 	if err := Down(conn); err != nil {
 		t.Fatalf("down evidence_events: %v", err)
 	}
