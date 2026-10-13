@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // Store persists evidence rows and outbox records in a single Postgres transaction.
@@ -29,6 +30,7 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 	if err := validateRunInput(in); err != nil {
 		return PersistResult{}, err
 	}
+	in.RedactionClass = resolveRedactionClass(in.RedactionClass, in.Producer)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PersistResult{}, fmt.Errorf("evidenceoutbox: begin: %w", err)
@@ -38,6 +40,11 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 
 	if err := setOrgRLS(ctx, tx, in.OrgID); err != nil {
 		return PersistResult{}, err
+	}
+	if result, found, err := findExistingRun(ctx, tx, in); err != nil {
+		return PersistResult{}, err
+	} else if found {
+		return result, nil
 	}
 
 	runID, err := insertRun(ctx, tx, in)
@@ -230,6 +237,37 @@ func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
 	return nil
 }
 
+func findExistingRun(ctx context.Context, tx *sql.Tx, in RunInput) (PersistResult, bool, error) {
+	var runID uuid.UUID
+	var requestID string
+	var outboxIDs []string
+	err := tx.QueryRowContext(ctx, `
+SELECT r.id, r.request_id,
+       COALESCE(array_agg(o.id ORDER BY o.aggregate_seq)::text[], ARRAY[]::text[])
+FROM ibex_core.evidence_runs AS r
+LEFT JOIN ibex_core.evidence_outbox AS o
+  ON o.org_id = r.org_id AND o.aggregate_id = r.request_id
+WHERE r.org_id = $1 AND r.request_id = $2
+GROUP BY r.id, r.request_id`, in.OrgID, in.RequestID).
+		Scan(&runID, &requestID, pq.Array(&outboxIDs))
+	if err == sql.ErrNoRows {
+		return PersistResult{}, false, nil
+	}
+	if err != nil {
+		return PersistResult{}, false, fmt.Errorf("evidenceoutbox: find existing run: %w", err)
+	}
+
+	ids := make([]uuid.UUID, 0, len(outboxIDs))
+	for _, rawID := range outboxIDs {
+		id, parseErr := uuid.Parse(rawID)
+		if parseErr != nil {
+			return PersistResult{}, false, fmt.Errorf("evidenceoutbox: parse existing outbox id: %w", parseErr)
+		}
+		ids = append(ids, id)
+	}
+	return PersistResult{RunID: runID, OutboxIDs: ids, AggregateID: requestID, Replayed: true}, true, nil
+}
+
 func marshalJSONObject(v any) ([]byte, error) {
 	if v == nil {
 		return []byte("{}"), nil
@@ -273,6 +311,9 @@ func validateRunInput(in RunInput) error {
 
 func validateRunProducer(in RunInput) error {
 	if in.Producer == nil {
+		if in.RedactionClass == RedactionClassMetadata {
+			return fmt.Errorf("evidenceoutbox: metadata redaction class requires producer metadata")
+		}
 		return nil
 	}
 	if err := validateProducerMetadata(in.Producer); err != nil {
@@ -282,6 +323,13 @@ func validateRunProducer(in RunInput) error {
 		return err
 	}
 	return validateProducerFence(in.TombstoneFence, in.Producer)
+}
+
+func resolveRedactionClass(class RedactionClass, producer *ProducerMetadata) RedactionClass {
+	if class == "" && producer != nil {
+		return producer.RedactionClass
+	}
+	return class
 }
 
 func validateProducerRedactionClass(in RunInput) error {
@@ -703,6 +751,7 @@ func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFen
 	if len(producers) > 0 {
 		producer = producers[0]
 	}
+	class = resolveRedactionClass(class, producer)
 	if strings.TrimSpace(string(class)) == "" {
 		class = RedactionClassUnclassified
 	}

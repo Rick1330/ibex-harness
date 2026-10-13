@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
+	"github.com/google/uuid"
 )
 
 // EvidencePersister is the optional 4.P.2 durable evidence write path.
@@ -95,6 +96,13 @@ func PersistEvidenceWithAck(ctx context.Context, p EvidencePersister, in evidenc
 	result, err := p.PersistRun(ctx, in)
 	if err != nil {
 		return EvidencePersistOutcome{Status: EvidenceAckUncertified, Err: err}
+	}
+	if result.RunID == uuid.Nil || len(result.OutboxIDs) == 0 {
+		return EvidencePersistOutcome{
+			Result: result,
+			Status: EvidenceAckUncertified,
+			Err:    errors.New("evidence commit outcome is unknown"),
+		}
 	}
 	return EvidencePersistOutcome{Result: result, Status: EvidenceAckDurable}
 }

@@ -258,6 +258,11 @@ func TestUnit_PersistEvidenceWithAck(t *testing.T) {
 	if outcome.Status != EvidenceAckUncertified || outcome.Err == nil {
 		t.Fatalf("uncertified outcome=%+v", outcome)
 	}
+	unknown := &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{}}
+	outcome = PersistEvidenceWithAck(context.Background(), unknown, in)
+	if outcome.Status != EvidenceAckUncertified || outcome.Err == nil || outcome.Err.Error() != "evidence commit outcome is unknown" {
+		t.Fatalf("unknown outcome=%+v", outcome)
+	}
 }
 
 func TestUnit_BuildEvidenceRun_DeployImageDigestFromEnv(t *testing.T) {
