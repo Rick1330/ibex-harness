@@ -17,43 +17,87 @@ var (
 	ErrPrincipalAgentMismatch      = errors.New("principal context agent mismatch")
 )
 
+type principalContextInput struct {
+	result    *auth.ValidateResult
+	agent     *auth.AgentRecord
+	requestID string
+	traceID   string
+	source    string
+	now       time.Time
+}
+
 // principalContextFromVerifiedAuth maps only AuthService-verified data. It is
 // additive: existing auth and agent context values remain authoritative.
 func principalContextFromVerifiedAuth(result *auth.ValidateResult, agent *auth.AgentRecord, requestID, traceID, source string, now time.Time) (*authv1.PrincipalContext, error) {
+	return buildPrincipalContext(principalContextInput{
+		result: result, agent: agent, requestID: requestID, traceID: traceID,
+		source: source, now: now,
+	})
+}
+
+func buildPrincipalContext(in principalContextInput) (*authv1.PrincipalContext, error) {
+	if err := validatePrincipalBinding(in.result, in.agent); err != nil {
+		return nil, err
+	}
+	issuedAt := normalizeIssuedAt(in.now)
+	ctx := newPrincipalContext(in.result, in.agent, in.requestID, in.traceID, in.source, issuedAt)
+	if !issuedAt.IsValid() {
+		return nil, fmt.Errorf("%w: invalid issued_at", ErrPrincipalContextUnavailable)
+	}
+	if !setPrincipalExpiry(ctx, in.result.ExpiresAt) {
+		return nil, fmt.Errorf("%w: invalid expires_at", ErrPrincipalContextUnavailable)
+	}
+	return ctx, nil
+}
+
+func validatePrincipalBinding(result *auth.ValidateResult, agent *auth.AgentRecord) error {
 	if result == nil || result.OrgID == uuid.Nil || agent == nil || agent.ID == uuid.Nil {
-		return nil, ErrPrincipalContextUnavailable
+		return ErrPrincipalContextUnavailable
 	}
 	if agent.OrgID != uuid.Nil && agent.OrgID != result.OrgID {
-		return nil, ErrPrincipalContextUnavailable
+		return ErrPrincipalContextUnavailable
 	}
 	if result.AgentID != uuid.Nil && result.AgentID != agent.ID {
-		return nil, ErrPrincipalAgentMismatch
+		return ErrPrincipalAgentMismatch
 	}
-	principalID := agent.ID.String()
-	principalType := "service"
-	if strings.TrimSpace(result.UserID) != "" {
-		principalID = result.UserID
-		principalType = "user"
-	}
-	if strings.TrimSpace(source) == "" {
-		source = "proxy-auth"
-	}
+	return nil
+}
+
+func normalizeIssuedAt(now time.Time) *timestamppb.Timestamp {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	ctx := &authv1.PrincipalContext{
+	return timestamppb.New(now.UTC())
+}
+
+func newPrincipalContext(result *auth.ValidateResult, agent *auth.AgentRecord, requestID, traceID, source string, issuedAt *timestamppb.Timestamp) *authv1.PrincipalContext {
+	principalID, principalType := principalIdentity(result, agent)
+	return &authv1.PrincipalContext{
 		OrgId: result.OrgID.String(), PrincipalId: principalID, AgentId: agent.ID.String(),
-		PrincipalType: principalType, Authority: "AuthService", IssuedAt: timestamppb.New(now.UTC()),
-		RequestId: requestID, TraceId: traceID, Source: source, Permissions: result.Permissions, TokenId: result.TokenID,
+		PrincipalType: principalType, Authority: "AuthService", IssuedAt: issuedAt,
+		RequestId: requestID, TraceId: traceID, Source: normalizePrincipalSource(source),
+		Permissions: result.Permissions, TokenId: result.TokenID,
 	}
-	if !ctx.IssuedAt.IsValid() {
-		return nil, fmt.Errorf("%w: invalid issued_at", ErrPrincipalContextUnavailable)
+}
+
+func principalIdentity(result *auth.ValidateResult, agent *auth.AgentRecord) (string, string) {
+	if strings.TrimSpace(result.UserID) != "" {
+		return result.UserID, "user"
 	}
-	if !result.ExpiresAt.IsZero() {
-		ctx.ExpiresAt = timestamppb.New(result.ExpiresAt.UTC())
-		if !ctx.ExpiresAt.IsValid() {
-			return nil, fmt.Errorf("%w: invalid expires_at", ErrPrincipalContextUnavailable)
-		}
+	return agent.ID.String(), "service"
+}
+
+func normalizePrincipalSource(source string) string {
+	if strings.TrimSpace(source) == "" {
+		return "proxy-auth"
 	}
-	return ctx, nil
+	return source
+}
+
+func setPrincipalExpiry(ctx *authv1.PrincipalContext, expiresAt time.Time) bool {
+	if expiresAt.IsZero() {
+		return true
+	}
+	ctx.ExpiresAt = timestamppb.New(expiresAt.UTC())
+	return ctx.ExpiresAt.IsValid()
 }
