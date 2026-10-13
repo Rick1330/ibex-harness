@@ -133,14 +133,26 @@ func validateIdentity(row evidenceoutbox.OutboxRow) error {
 }
 
 func validatePayload(row evidenceoutbox.OutboxRow) error {
-	if row.SchemaVersion == "" || row.EventType == "" || len(row.Payload) == 0 {
+	if row.SchemaVersion == "" {
+		return fmt.Errorf("clickhousesink: incomplete outbox row")
+	}
+	if row.EventType == "" {
+		return fmt.Errorf("clickhousesink: incomplete outbox row")
+	}
+	if len(row.Payload) == 0 {
 		return fmt.Errorf("clickhousesink: incomplete outbox row")
 	}
 	return nil
 }
 
 func validateFence(fence evidenceoutbox.TombstoneFence) error {
-	if fence.ResourceType == "" || fence.ResourceID == "" || fence.ResourceVersion <= 0 {
+	if fence.ResourceType == "" {
+		return fmt.Errorf("clickhousesink: invalid tombstone fence")
+	}
+	if fence.ResourceID == "" {
+		return fmt.Errorf("clickhousesink: invalid tombstone fence")
+	}
+	if fence.ResourceVersion <= 0 {
 		return fmt.Errorf("clickhousesink: invalid tombstone fence")
 	}
 	return nil
