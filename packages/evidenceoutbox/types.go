@@ -48,10 +48,28 @@ type ProducerMetadata struct {
 }
 
 func validateProducerMetadata(metadata *ProducerMetadata) error {
-	if metadata == nil || !isSupportedRedactionClass(metadata.RedactionClass) ||
-		metadata.RedactionClass == RedactionClassUnclassified ||
-		metadata.RedactionProofVersion == "" || metadata.ResourceType == "" ||
-		metadata.ResourceID == "" || metadata.ResourceVersion <= 0 || metadata.Source == "" {
+	if metadata == nil {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if !isSupportedRedactionClass(metadata.RedactionClass) {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.RedactionClass == RedactionClassUnclassified {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.RedactionProofVersion == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.ResourceType == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.ResourceID == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.ResourceVersion <= 0 {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.Source == "" {
 		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
 	}
 	return nil

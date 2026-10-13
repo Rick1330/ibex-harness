@@ -251,18 +251,8 @@ var completenessValues = map[string]struct{}{
 }
 
 func validateRunInput(in RunInput) error {
-	if in.Producer != nil {
-		if err := validateProducerMetadata(in.Producer); err != nil {
-			return err
-		}
-		if in.RedactionClass != "" && in.RedactionClass != in.Producer.RedactionClass {
-			return fmt.Errorf("evidenceoutbox: producer redaction class does not match run")
-		}
-		if in.TombstoneFence != nil && (in.TombstoneFence.ResourceType != in.Producer.ResourceType ||
-			in.TombstoneFence.ResourceID != in.Producer.ResourceID ||
-			in.TombstoneFence.ResourceVersion != in.Producer.ResourceVersion) {
-			return fmt.Errorf("evidenceoutbox: producer fence does not match run")
-		}
+	if err := validateRunProducer(in); err != nil {
+		return err
 	}
 	if in.TombstoneFence != nil {
 		if err := validateTombstoneFence(in.TombstoneFence); err != nil {
@@ -279,6 +269,45 @@ func validateRunInput(in RunInput) error {
 		return err
 	}
 	return validateRunToolSpanIDs(in.Tools)
+}
+
+func validateRunProducer(in RunInput) error {
+	if in.Producer == nil {
+		return nil
+	}
+	if err := validateProducerMetadata(in.Producer); err != nil {
+		return err
+	}
+	if err := validateProducerRedactionClass(in); err != nil {
+		return err
+	}
+	return validateProducerFence(in.TombstoneFence, in.Producer)
+}
+
+func validateProducerRedactionClass(in RunInput) error {
+	if in.RedactionClass == "" {
+		return nil
+	}
+	if in.RedactionClass == in.Producer.RedactionClass {
+		return nil
+	}
+	return fmt.Errorf("evidenceoutbox: producer redaction class does not match run")
+}
+
+func validateProducerFence(fence *TombstoneFence, producer *ProducerMetadata) error {
+	if fence == nil {
+		return nil
+	}
+	if fence.ResourceType != producer.ResourceType {
+		return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+	}
+	if fence.ResourceID != producer.ResourceID {
+		return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+	}
+	if fence.ResourceVersion != producer.ResourceVersion {
+		return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+	}
+	return nil
 }
 
 func validateRunIdentity(in RunInput) error {
@@ -710,40 +739,59 @@ func decodePayloadFields(raw []byte) (map[string]json.RawMessage, error) {
 }
 
 func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence, producer *ProducerMetadata) error {
+	if err := rejectProducerAssignedFields(fields); err != nil {
+		return err
+	}
+	// The class has already been checked against the closed set of ASCII tokens.
+	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
+	if err := addFenceMetadata(fields, fence); err != nil {
+		return err
+	}
+	return addProducerProof(fields, producer)
+}
+
+func rejectProducerAssignedFields(fields map[string]json.RawMessage) error {
 	if _, exists := fields["redaction_class"]; exists {
 		return fmt.Errorf("evidenceoutbox: redaction_class is assigned by the producer")
 	}
 	if _, exists := fields["tombstone_fence"]; exists {
 		return fmt.Errorf("evidenceoutbox: tombstone_fence is assigned by the producer")
 	}
-	// The class has already been checked against the closed set of ASCII tokens.
-	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
-	if fence != nil {
-		if err := validateTombstoneFence(fence); err != nil {
-			return err
-		}
-		fenceJSON, err := json.Marshal(fence)
-		if err != nil {
-			return err
-		}
-		fields["tombstone_fence"] = fenceJSON
+	return nil
+}
+
+func addFenceMetadata(fields map[string]json.RawMessage, fence *TombstoneFence) error {
+	if fence == nil {
+		return nil
 	}
-	if producer != nil {
-		if err := validateProducerMetadata(producer); err != nil {
-			return err
-		}
-		producerJSON, err := json.Marshal(producer)
-		if err != nil {
-			return err
-		}
-		var producerFields map[string]json.RawMessage
-		if err := json.Unmarshal(producerJSON, &producerFields); err != nil {
-			return err
-		}
-		for key, value := range producerFields {
-			if key == "redaction_class" {
-				continue
-			}
+	if err := validateTombstoneFence(fence); err != nil {
+		return err
+	}
+	fenceJSON, err := json.Marshal(fence)
+	if err != nil {
+		return err
+	}
+	fields["tombstone_fence"] = fenceJSON
+	return nil
+}
+
+func addProducerProof(fields map[string]json.RawMessage, producer *ProducerMetadata) error {
+	if producer == nil {
+		return nil
+	}
+	if err := validateProducerMetadata(producer); err != nil {
+		return err
+	}
+	producerJSON, err := json.Marshal(producer)
+	if err != nil {
+		return err
+	}
+	var producerFields map[string]json.RawMessage
+	if err := json.Unmarshal(producerJSON, &producerFields); err != nil {
+		return err
+	}
+	for key, value := range producerFields {
+		if key != "redaction_class" {
 			fields[key] = value
 		}
 	}
