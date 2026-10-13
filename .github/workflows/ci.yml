@@ -477,14 +477,14 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Migrate up twice (idempotent)
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           go run ./infra/migrations/postgres/cmd/migrate -command up
           go run ./infra/migrations/postgres/cmd/migrate -command up
           go run ./infra/migrations/postgres/cmd/migrate -command version
       - name: Integration tests (RLS, schema)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/db-migrate-integration.xml -- \
             -tags=integration -count=1 ./infra/migrations/postgres/...
@@ -546,7 +546,7 @@ jobs:
           done
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Auth unit tests
         run: |
@@ -564,7 +564,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Auth integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/auth-smoke-integration.xml -- \
             -tags=integration -count=1 ./services/auth/...
@@ -621,7 +621,7 @@ jobs:
         run: buf generate
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Proxy unit tests
         run: |
@@ -639,7 +639,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Proxy auth integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/proxy-auth-integration.xml -- \
             -tags=integration -count=1 -p 1 ./services/proxy/...
@@ -655,7 +655,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Proxy memory integration tests (3.5.D.6)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestMemoryIntegration_' ./services/proxy | grep -c '^TestMemoryIntegration_' || true)
           if [ "$count" -lt 3 ]; then
@@ -717,7 +717,7 @@ jobs:
         run: buf generate
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Proxy agent verification unit tests
         run: |
@@ -735,7 +735,7 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: Proxy agent verification integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestSecurity_SEC[23]_' ./services/proxy | grep -c '^TestSecurity_SEC' || true)
           if [ "$count" -lt 10 ]; then
@@ -797,11 +797,11 @@ jobs:
         run: buf generate
       - name: Migrate up
         env:
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Phase 1 security integration suite (M1.5.1)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestSecurity_' ./services/proxy | grep -c '^TestSecurity_' || true)
           if [ "$count" -lt 30 ]; then
@@ -1139,9 +1139,9 @@ jobs:
           enable-cache: true
       - name: API tenant / GUC integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          IBEX_API_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          IBEX_API_DATABASE_URL: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/api-integration-test-ci.sh
 
   worker-test:
@@ -1312,8 +1312,8 @@ jobs:
           aws --endpoint-url http://127.0.0.1:9100 s3 ls s3://ibex-sessions
       - name: Worker Redis + multistore integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
           S3_MASTER_KEY_B64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         run: bash infra/scripts/worker-integration-test-ci.sh
 
@@ -1362,8 +1362,8 @@ jobs:
           enable-cache: true
       - name: Memory PgVectorStore integration tests
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-integration-test-ci.sh
 
   memory-security-integration:
@@ -1420,8 +1420,8 @@ jobs:
           enable-cache: true
       - name: Memory security integration tests (m3.E.1 ISO-*)
         env:
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-security-integration-test-ci.sh
 
   security-integration-p35:
@@ -1482,9 +1482,9 @@ jobs:
         run: buf generate
       - name: Phase 3.5 ISO-MCP isolation matrix (3.5.F.2)
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
           IBEX_ISO_MCP_ALLOW_DESTRUCTIVE_DB: "1"
         run: bash infra/scripts/security-integration-p35.sh
 
@@ -1607,8 +1607,8 @@ jobs:
         run: buf generate
       - name: Phase 3.5 learning-loop e2e (3.5.F.1)
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/e2e-phase35-ci.sh
 
   verify-phase25:
@@ -2077,8 +2077,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
