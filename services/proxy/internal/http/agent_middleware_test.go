@@ -233,8 +233,11 @@ func TestUnit_BuildPrincipalContextMapsAndRejectsInvalidBindings(t *testing.T) {
 			got, ok := h.buildPrincipalContext(w, req, principalContextBuildInput{
 				authRes: tc.result, record: tc.record, agentHeader: agent.String(), requestID: "req-1",
 			})
-			if ok != tc.wantOK || (ok && got == nil) {
+			if ok != tc.wantOK {
 				t.Fatalf("ok=%v principal=%v want ok=%v", ok, got, tc.wantOK)
+			}
+			if ok && got == nil {
+				t.Fatal("successful principal construction returned nil principal")
 			}
 			if w.Code != tc.wantStatus {
 				t.Fatalf("status=%d want %d body=%s", w.Code, tc.wantStatus, w.Body.String())

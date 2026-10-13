@@ -84,7 +84,7 @@ func validatePrincipalPresence(result *auth.ValidateResult, agent *auth.AgentRec
 }
 
 func validatePrincipalOrganization(result *auth.ValidateResult, agent *auth.AgentRecord) error {
-	if agent.OrgID != uuid.Nil && agent.OrgID != result.OrgID {
+	if agent.OrgID == uuid.Nil || agent.OrgID != result.OrgID {
 		return ErrPrincipalContextUnavailable
 	}
 	return nil
