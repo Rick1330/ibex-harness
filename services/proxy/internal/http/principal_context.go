@@ -26,12 +26,19 @@ type principalContextInput struct {
 	now       time.Time
 }
 
+type principalContextMetadata struct {
+	requestID string
+	traceID   string
+	source    string
+	now       time.Time
+}
+
 // principalContextFromVerifiedAuth maps only AuthService-verified data. It is
 // additive: existing auth and agent context values remain authoritative.
-func principalContextFromVerifiedAuth(result *auth.ValidateResult, agent *auth.AgentRecord, requestID, traceID, source string, now time.Time) (*authv1.PrincipalContext, error) {
+func principalContextFromVerifiedAuth(result *auth.ValidateResult, agent *auth.AgentRecord, metadata principalContextMetadata) (*authv1.PrincipalContext, error) {
 	return buildPrincipalContext(principalContextInput{
-		result: result, agent: agent, requestID: requestID, traceID: traceID,
-		source: source, now: now,
+		result: result, agent: agent, requestID: metadata.requestID, traceID: metadata.traceID,
+		source: metadata.source, now: metadata.now,
 	})
 }
 
@@ -40,7 +47,7 @@ func buildPrincipalContext(in principalContextInput) (*authv1.PrincipalContext, 
 		return nil, err
 	}
 	issuedAt := normalizeIssuedAt(in.now)
-	ctx := newPrincipalContext(in.result, in.agent, in.requestID, in.traceID, in.source, issuedAt)
+	ctx := newPrincipalContext(in, issuedAt)
 	if !issuedAt.IsValid() {
 		return nil, fmt.Errorf("%w: invalid issued_at", ErrPrincipalContextUnavailable)
 	}
@@ -51,12 +58,30 @@ func buildPrincipalContext(in principalContextInput) (*authv1.PrincipalContext, 
 }
 
 func validatePrincipalBinding(result *auth.ValidateResult, agent *auth.AgentRecord) error {
-	if result == nil || result.OrgID == uuid.Nil || agent == nil || agent.ID == uuid.Nil {
+	if err := validatePrincipalPresence(result, agent); err != nil {
+		return err
+	}
+	if err := validatePrincipalOrganization(result, agent); err != nil {
+		return err
+	}
+	return validatePrincipalAgent(result, agent)
+}
+
+func validatePrincipalPresence(result *auth.ValidateResult, agent *auth.AgentRecord) error {
+	if result == nil || agent == nil || result.OrgID == uuid.Nil || agent.ID == uuid.Nil {
 		return ErrPrincipalContextUnavailable
 	}
+	return nil
+}
+
+func validatePrincipalOrganization(result *auth.ValidateResult, agent *auth.AgentRecord) error {
 	if agent.OrgID != uuid.Nil && agent.OrgID != result.OrgID {
 		return ErrPrincipalContextUnavailable
 	}
+	return nil
+}
+
+func validatePrincipalAgent(result *auth.ValidateResult, agent *auth.AgentRecord) error {
 	if result.AgentID != uuid.Nil && result.AgentID != agent.ID {
 		return ErrPrincipalAgentMismatch
 	}
@@ -70,13 +95,13 @@ func normalizeIssuedAt(now time.Time) *timestamppb.Timestamp {
 	return timestamppb.New(now.UTC())
 }
 
-func newPrincipalContext(result *auth.ValidateResult, agent *auth.AgentRecord, requestID, traceID, source string, issuedAt *timestamppb.Timestamp) *authv1.PrincipalContext {
-	principalID, principalType := principalIdentity(result, agent)
+func newPrincipalContext(in principalContextInput, issuedAt *timestamppb.Timestamp) *authv1.PrincipalContext {
+	principalID, principalType := principalIdentity(in.result, in.agent)
 	return &authv1.PrincipalContext{
-		OrgId: result.OrgID.String(), PrincipalId: principalID, AgentId: agent.ID.String(),
+		OrgId: in.result.OrgID.String(), PrincipalId: principalID, AgentId: in.agent.ID.String(),
 		PrincipalType: principalType, Authority: "AuthService", IssuedAt: issuedAt,
-		RequestId: requestID, TraceId: traceID, Source: normalizePrincipalSource(source),
-		Permissions: result.Permissions, TokenId: result.TokenID,
+		RequestId: in.requestID, TraceId: in.traceID, Source: normalizePrincipalSource(in.source),
+		Permissions: in.result.Permissions, TokenId: in.result.TokenID,
 	}
 }
 

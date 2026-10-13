@@ -183,34 +183,28 @@ func TestUnit_AgentVerification_InvalidAuthorization(t *testing.T) {
 	}
 }
 
-func TestUnit_AgentVerification_PrincipalContextRejectsCrossOrgVerifierRecord(t *testing.T) {
+func TestUnit_AgentVerification_PrincipalContextRejectsInvalidVerifierRecords(t *testing.T) {
 	t.Parallel()
-	recorder := &mockAgentVerifier{rec: &auth.AgentRecord{
-		ID: uuid.MustParse(agentTestAgentID()), OrgID: uuid.New(), Status: "active",
-	}}
-	rec := runAgentVerificationCase(t, agentVerifyCase{
-		verifier: recorder, agentID: agentTestAgentID(), withAuth: true,
-		authorization: "Bearer ibex_pat_test",
-		authAgentID:   uuid.Nil,
-	})
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	cases := []struct {
+		name   string
+		record *auth.AgentRecord
+	}{
+		{name: "cross organization", record: &auth.AgentRecord{ID: uuid.MustParse(agentTestAgentID()), OrgID: uuid.New(), Status: "active"}},
+		{name: "missing agent id", record: &auth.AgentRecord{ID: uuid.Nil, OrgID: agentTestOrgUUID, Status: "active"}},
 	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
-		t.Fatalf("body missing auth-unavailable code: %s", rec.Body.String())
-	}
-}
-
-func TestUnit_AgentVerification_PrincipalContextRejectsMissingVerifierAgentID(t *testing.T) {
-	t.Parallel()
-	recorder := &mockAgentVerifier{rec: &auth.AgentRecord{
-		ID: uuid.Nil, OrgID: agentTestOrgUUID, Status: "active",
-	}}
-	rec := runAgentVerification(t, recorder, agentTestAgentID(), true)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
-		t.Fatalf("body missing auth-unavailable code: %s", rec.Body.String())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &mockAgentVerifier{rec: tc.record}
+			rec := runAgentVerificationCase(t, agentVerifyCase{
+				verifier: recorder, agentID: agentTestAgentID(), withAuth: true,
+				authorization: "Bearer ibex_pat_test", authAgentID: uuid.Nil,
+			})
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
+				t.Fatalf("body missing auth-unavailable code: %s", rec.Body.String())
+			}
+		})
 	}
 }

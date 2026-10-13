@@ -9,6 +9,7 @@ import (
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
@@ -69,21 +70,31 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal, err := principalContextFromVerifiedAuth(authRes, rec, requestID, TraceIDFromContext(r.Context()), "proxy-auth", time.Now().UTC())
-	if err != nil {
-		if errors.Is(err, ErrPrincipalAgentMismatch) {
-			h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{ctx: r.Context(), requestID: requestID, docsBase: docsBase, requestingOrg: authRes.OrgID.String(), agentID: agentHeader})
-			apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized, "The agent is not authorized for this organization or is not active.", requestID, apierror.WriteOpts{DocsBase: docsBase})
-			return
-		}
-		if h.logger != nil {
-			h.logger.WarnCtx(r.Context(), "principal context unavailable")
-		}
-		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable, agentVerificationUnavailableMessage, requestID, apierror.WriteOpts{DocsBase: docsBase})
+	principal, ok := h.buildPrincipalContext(w, r, authRes, rec, agentHeader, requestID, docsBase)
+	if !ok {
 		return
 	}
 	ctx := WithPrincipalContext(WithAgent(r.Context(), *rec), principal)
 	h.next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func (h *agentVerifyHandler) buildPrincipalContext(w http.ResponseWriter, r *http.Request, authRes *auth.ValidateResult, rec *auth.AgentRecord, agentHeader, requestID, docsBase string) (*authv1.PrincipalContext, bool) {
+	principal, err := principalContextFromVerifiedAuth(authRes, rec, principalContextMetadata{
+		requestID: requestID, traceID: TraceIDFromContext(r.Context()), source: "proxy-auth", now: time.Now().UTC(),
+	})
+	if err == nil {
+		return principal, true
+	}
+	if errors.Is(err, ErrPrincipalAgentMismatch) {
+		h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{ctx: r.Context(), requestID: requestID, docsBase: docsBase, requestingOrg: authRes.OrgID.String(), agentID: agentHeader})
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized, "The agent is not authorized for this organization or is not active.", requestID, apierror.WriteOpts{DocsBase: docsBase})
+		return nil, false
+	}
+	if h.logger != nil {
+		h.logger.WarnCtx(r.Context(), "principal context unavailable")
+	}
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable, agentVerificationUnavailableMessage, requestID, apierror.WriteOpts{DocsBase: docsBase})
+	return nil, false
 }
 
 func (h *agentVerifyHandler) prepareAgentRequest(w http.ResponseWriter, r *http.Request, requestID, docsBase string) (*auth.ValidateResult, string, bool) {

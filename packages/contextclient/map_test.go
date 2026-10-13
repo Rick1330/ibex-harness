@@ -18,8 +18,12 @@ func TestUnit_ToProto_CorrelationFields(t *testing.T) {
 	})
 	assertCorrelation(t, pb)
 	assertMaxMemories(t, pb, 3)
-	if got := pb.GetPrincipalContext().GetAuthority(); got != "AuthService" {
-		t.Fatalf("principal_context.authority=%q", got)
+	principal := pb.GetPrincipalContext()
+	if principal.GetOrgId() != "o" || principal.GetAgentId() != "a" {
+		t.Fatalf("principal_context identity: org_id=%q agent_id=%q", principal.GetOrgId(), principal.GetAgentId())
+	}
+	if principal.GetAuthority() != "AuthService" {
+		t.Fatalf("principal_context.authority=%q", principal.GetAuthority())
 	}
 }
 
