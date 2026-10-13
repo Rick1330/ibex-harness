@@ -120,7 +120,13 @@ func validateRow(row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFen
 }
 
 func validateIdentity(row evidenceoutbox.OutboxRow) error {
-	if row.OrgID == uuid.Nil || row.EventID == uuid.Nil || row.AggregateSeq <= 0 {
+	if row.OrgID == uuid.Nil {
+		return fmt.Errorf("clickhousesink: invalid tenant identity")
+	}
+	if row.EventID == uuid.Nil {
+		return fmt.Errorf("clickhousesink: invalid event identity")
+	}
+	if row.AggregateSeq <= 0 {
 		return fmt.Errorf("clickhousesink: invalid tenant/event identity")
 	}
 	return nil
