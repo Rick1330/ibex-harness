@@ -481,6 +481,11 @@ func persistMinimalRun(t *testing.T, store *evidenceoutbox.Store, orgID uuid.UUI
 		RequestID:      requestID,
 		TraceID:        traceID,
 		RedactionClass: evidenceoutbox.RedactionClassMetadata,
+		Producer: &evidenceoutbox.ProducerMetadata{
+			RedactionClass: evidenceoutbox.RedactionClassMetadata, RedactionProofVersion: "redaction/v1",
+			ResourceType: "evidence_run", ResourceID: requestID, ResourceVersion: 1,
+			Source: "integration-test",
+		},
 		TombstoneFence: &evidenceoutbox.TombstoneFence{
 			ResourceType: "evidence_run", ResourceID: requestID, ResourceVersion: 1,
 		},
