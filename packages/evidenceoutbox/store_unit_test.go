@@ -156,6 +156,34 @@ func TestUnit_ValidateRunInputRejectsInvalidFence(t *testing.T) {
 	}
 }
 
+func TestUnit_MarshalOutboxPayloadAddsProducerProof(t *testing.T) {
+	t.Parallel()
+	producer := &ProducerMetadata{
+		RedactionClass: RedactionClassMetadata, RedactionProofVersion: "redaction/v1",
+		ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7,
+		Source: "proxy.session",
+	}
+	payload, err := marshalOutboxPayload(map[string]any{"event_id": "evt-6"}, RedactionClassMetadata, nil, producer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["redaction_proof_version"]) != `"redaction/v1"` || string(fields["source"]) != `"proxy.session"` {
+		t.Fatalf("producer proof fields missing: %s", payload)
+	}
+}
+
+func TestUnit_ValidateRunInputRejectsIncompleteProducerProof(t *testing.T) {
+	t.Parallel()
+	err := validateRunInput(RunInput{Producer: &ProducerMetadata{RedactionClass: RedactionClassMetadata}})
+	if err == nil || !strings.Contains(err.Error(), "producer metadata is incomplete") {
+		t.Fatalf("err=%v want incomplete producer metadata", err)
+	}
+}
+
 func TestUnit_PersistRun_HappyPathMinimal(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()

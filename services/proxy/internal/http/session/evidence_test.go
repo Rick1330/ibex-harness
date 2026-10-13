@@ -45,6 +45,25 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 	assertNestedEvidenceRun(t, in)
 }
 
+func TestUnit_BuildEvidenceRun_PropagatesProducerProof(t *testing.T) {
+	t.Parallel()
+	producer := &evidenceoutbox.ProducerMetadata{
+		RedactionClass:        evidenceoutbox.RedactionClassMetadata,
+		RedactionProofVersion: "redaction/v1",
+		ResourceType:          "evidence_run", ResourceID: "run-1", ResourceVersion: 3,
+		Source: "proxy.session",
+	}
+	in := BuildEvidenceRun(httptrace.AssembleInput{
+		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
+	}, SnapshotMeta{}, EvidenceExtras{Producer: producer})
+	if in.Producer != producer || in.RedactionClass != producer.RedactionClass {
+		t.Fatalf("producer metadata was not propagated: %+v", in)
+	}
+	if in.TombstoneFence == nil || in.TombstoneFence.ResourceVersion != producer.ResourceVersion {
+		t.Fatalf("producer fence was not propagated: %+v", in.TombstoneFence)
+	}
+}
+
 func buildNestedEvidenceRun(t *testing.T) evidenceoutbox.RunInput {
 	t.Helper()
 	org := uuid.New()
@@ -219,6 +238,20 @@ func TestUnit_PersistEvidence_FailOpen(t *testing.T) {
 	PersistEvidence(typedNil, logger.Discard("t"), evidenceoutbox.RunInput{
 		OrgID: uuid.New(), RequestID: "r", TraceID: "t",
 	})
+}
+
+func TestUnit_PersistEvidenceWithAck(t *testing.T) {
+	t.Parallel()
+	in := evidenceoutbox.RunInput{OrgID: uuid.New(), RequestID: "r", TraceID: "t"}
+	good := &fakeEvidenceStore{}
+	if outcome := PersistEvidenceWithAck(context.Background(), good, in); outcome.Status != EvidenceAckDurable || outcome.Err != nil {
+		t.Fatalf("durable outcome=%+v", outcome)
+	}
+	failed := &fakeEvidenceStore{err: errors.New("db down")}
+	outcome := PersistEvidenceWithAck(context.Background(), failed, in)
+	if outcome.Status != EvidenceAckUncertified || outcome.Err == nil {
+		t.Fatalf("uncertified outcome=%+v", outcome)
+	}
 }
 
 func TestUnit_BuildEvidenceRun_DeployImageDigestFromEnv(t *testing.T) {
