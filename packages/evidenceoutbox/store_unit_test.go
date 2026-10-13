@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -347,17 +348,9 @@ func TestUnit_PersistRun_ReplaysExistingDurableRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersistRun: %v", err)
 	}
-	if !result.Replayed {
-		t.Fatal("replay result was not marked as replayed")
-	}
-	if result.RunID != runID {
-		t.Fatalf("run_id=%s want %s", result.RunID, runID)
-	}
-	if len(result.OutboxIDs) != 1 {
-		t.Fatalf("outbox_ids=%v want one id", result.OutboxIDs)
-	}
-	if result.OutboxIDs[0] != outboxID {
-		t.Fatalf("outbox_id=%s want %s", result.OutboxIDs[0], outboxID)
+	want := PersistResult{RunID: runID, OutboxIDs: []uuid.UUID{outboxID}, AggregateID: "req-replay", Replayed: true}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("replay result=%+v want %+v", result, want)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
