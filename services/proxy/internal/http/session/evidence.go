@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -18,6 +19,25 @@ import (
 // surface to the chat client.
 type EvidencePersister interface {
 	PersistRun(ctx context.Context, in evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error)
+}
+
+// EvidenceAckStatus is the machine-readable acknowledgement state for an
+// evidence write. Uncertified is never treated as durable success.
+type EvidenceAckStatus string
+
+const (
+	EvidenceAckDurable     EvidenceAckStatus = "durable"
+	EvidenceAckReplay      EvidenceAckStatus = "replay"
+	EvidenceAckUncertified EvidenceAckStatus = "uncertified"
+	EvidenceAckUnavailable EvidenceAckStatus = "evidence_unavailable"
+)
+
+// EvidencePersistOutcome preserves the durable result and explicitly reports
+// when the evidence contract could not be certified.
+type EvidencePersistOutcome struct {
+	Result evidenceoutbox.PersistResult
+	Status EvidenceAckStatus
+	Err    error
 }
 
 // EffectiveEvidence returns a true-nil interface when p is nil or a typed-nil
@@ -52,7 +72,8 @@ func PersistEvidence(
 	if in.RequestID != "" {
 		ctx = reqid.WithRequestID(ctx, in.RequestID)
 	}
-	_, err := p.PersistRun(ctx, in)
+	outcome := PersistEvidenceWithAck(ctx, p, in)
+	err := outcome.Err
 	if err == nil || log == nil {
 		return
 	}
@@ -63,11 +84,29 @@ func PersistEvidence(
 	)
 }
 
+// PersistEvidenceWithAck performs one bounded durable write and returns a
+// typed uncertified outcome on any failure. Callers must not convert that
+// outcome into a successful evidence-required acknowledgement.
+func PersistEvidenceWithAck(ctx context.Context, p EvidencePersister, in evidenceoutbox.RunInput) EvidencePersistOutcome {
+	p = EffectiveEvidence(p)
+	if p == nil {
+		return EvidencePersistOutcome{Status: EvidenceAckUncertified, Err: errors.New("evidence persister is unavailable")}
+	}
+	result, err := p.PersistRun(ctx, in)
+	if err != nil {
+		return EvidencePersistOutcome{Status: EvidenceAckUncertified, Err: err}
+	}
+	return EvidencePersistOutcome{Result: result, Status: EvidenceAckDurable}
+}
+
 // EvidenceExtras carries assemble-time contracts into the durable evidence write.
 type EvidenceExtras struct {
 	Metrics        *evidenceoutbox.AssemblyMetrics
 	Candidates     []evidenceoutbox.ScoreCandidate
 	AssembleSpanID string
+	// Producer is supplied by the authoritative resource lifecycle owner; the
+	// session producer never infers a version from a session ID or event body.
+	Producer *evidenceoutbox.ProducerMetadata
 }
 
 // BuildEvidenceRun maps a completed post-response snapshot into PersistRun input.
@@ -99,7 +138,7 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		ended = started
 	}
 	status, completeness := evidenceStatusFromOutcome(snap)
-	return evidenceoutbox.RunInput{
+	in := evidenceoutbox.RunInput{
 		OrgID:             snap.OrgID,
 		AgentID:           &agent,
 		SessionID:         snap.SessionID,
@@ -116,6 +155,16 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		Candidates:        extras.Candidates,
 		DeployImageDigest: deployImageDigestFromEnv(),
 	}
+	if extras.Producer != nil {
+		in.RedactionClass = extras.Producer.RedactionClass
+		in.Producer = extras.Producer
+		in.TombstoneFence = &evidenceoutbox.TombstoneFence{
+			ResourceType:    extras.Producer.ResourceType,
+			ResourceID:      extras.Producer.ResourceID,
+			ResourceVersion: extras.Producer.ResourceVersion,
+		}
+	}
+	return in
 }
 
 // deployImageDigestFromEnv reads the OCI digest injected by Helm/CI

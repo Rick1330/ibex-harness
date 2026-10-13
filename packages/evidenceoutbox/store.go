@@ -108,6 +108,7 @@ func (w *runWriter) enqueue(ctx context.Context, eventType string, payload any) 
 		EventType:      eventType,
 		RedactionClass: w.in.RedactionClass,
 		TombstoneFence: w.in.TombstoneFence,
+		Producer:       w.in.Producer,
 		Payload:        payload,
 	})
 	if err != nil {
@@ -250,6 +251,19 @@ var completenessValues = map[string]struct{}{
 }
 
 func validateRunInput(in RunInput) error {
+	if in.Producer != nil {
+		if err := validateProducerMetadata(in.Producer); err != nil {
+			return err
+		}
+		if in.RedactionClass != "" && in.RedactionClass != in.Producer.RedactionClass {
+			return fmt.Errorf("evidenceoutbox: producer redaction class does not match run")
+		}
+		if in.TombstoneFence != nil && (in.TombstoneFence.ResourceType != in.Producer.ResourceType ||
+			in.TombstoneFence.ResourceID != in.Producer.ResourceID ||
+			in.TombstoneFence.ResourceVersion != in.Producer.ResourceVersion) {
+			return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+		}
+	}
 	if in.TombstoneFence != nil {
 		if err := validateTombstoneFence(in.TombstoneFence); err != nil {
 			return err
@@ -391,11 +405,12 @@ type outboxWrite struct {
 	EventType      string
 	RedactionClass RedactionClass
 	TombstoneFence *TombstoneFence
+	Producer       *ProducerMetadata
 	Payload        any
 }
 
 func enqueueOutbox(ctx context.Context, tx *sql.Tx, w outboxWrite) (uuid.UUID, error) {
-	raw, err := marshalOutboxPayload(w.Payload, w.RedactionClass, w.TombstoneFence)
+	raw, err := marshalOutboxPayload(w.Payload, w.RedactionClass, w.TombstoneFence, w.Producer)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: marshal payload: %w", err)
 	}
@@ -654,7 +669,11 @@ func firstNonEmptyStr(values ...string) string {
 	}
 	return ""
 }
-func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFence) ([]byte, error) {
+func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFence, producers ...*ProducerMetadata) ([]byte, error) {
+	var producer *ProducerMetadata
+	if len(producers) > 0 {
+		producer = producers[0]
+	}
 	if strings.TrimSpace(string(class)) == "" {
 		class = RedactionClassUnclassified
 	}
@@ -665,7 +684,7 @@ func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFen
 	if err != nil {
 		return nil, err
 	}
-	if err := addProducerMetadata(fields, class, fence); err != nil {
+	if err := addProducerMetadata(fields, class, fence, producer); err != nil {
 		return nil, err
 	}
 	return json.Marshal(fields)
@@ -690,7 +709,7 @@ func decodePayloadFields(raw []byte) (map[string]json.RawMessage, error) {
 	return fields, nil
 }
 
-func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence) error {
+func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence, producer *ProducerMetadata) error {
 	if _, exists := fields["redaction_class"]; exists {
 		return fmt.Errorf("evidenceoutbox: redaction_class is assigned by the producer")
 	}
@@ -699,16 +718,34 @@ func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass
 	}
 	// The class has already been checked against the closed set of ASCII tokens.
 	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
-	if fence == nil {
-		return nil
+	if fence != nil {
+		if err := validateTombstoneFence(fence); err != nil {
+			return err
+		}
+		fenceJSON, err := json.Marshal(fence)
+		if err != nil {
+			return err
+		}
+		fields["tombstone_fence"] = fenceJSON
 	}
-	if err := validateTombstoneFence(fence); err != nil {
-		return err
+	if producer != nil {
+		if err := validateProducerMetadata(producer); err != nil {
+			return err
+		}
+		producerJSON, err := json.Marshal(producer)
+		if err != nil {
+			return err
+		}
+		var producerFields map[string]json.RawMessage
+		if err := json.Unmarshal(producerJSON, &producerFields); err != nil {
+			return err
+		}
+		for key, value := range producerFields {
+			if key == "redaction_class" {
+				continue
+			}
+			fields[key] = value
+		}
 	}
-	fenceJSON, err := json.Marshal(fence)
-	if err != nil {
-		return err
-	}
-	fields["tombstone_fence"] = fenceJSON
 	return nil
 }
