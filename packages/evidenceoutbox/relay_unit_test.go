@@ -2,8 +2,6 @@ package evidenceoutbox
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
 )
 
@@ -34,8 +33,11 @@ func (s *stubDeliverer) DeliverWithTombstoneFence(
 }
 
 func validPayloadDigest(payload []byte) string {
-	digest := sha256.Sum256(payload)
-	return hex.EncodeToString(digest[:])
+	_, digest, err := canonicaljson.Digest(payload)
+	if err != nil {
+		return strings.Repeat("0", 64)
+	}
+	return digest
 }
 
 func validRelayPayload() []byte {

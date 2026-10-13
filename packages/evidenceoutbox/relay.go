@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
 )
 
@@ -269,9 +270,12 @@ func validateOutboxPayload(row OutboxRow) error {
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
 	}
 
-	expected := sha256.Sum256(row.Payload)
-	if !strings.EqualFold(actualDigest, hex.EncodeToString(expected[:])) {
-		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload")
+	_, expectedDigest, err := canonicaljson.Digest(row.Payload)
+	if err != nil {
+		return fmt.Errorf("evidenceoutbox: invalid row: payload is not canonicalizable: %w", err)
+	}
+	if !strings.EqualFold(actualDigest, expectedDigest) {
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload (jcs/v1)")
 	}
 	return nil
 }
