@@ -250,18 +250,31 @@ func TestUnit_PersistEvidenceWithAck(t *testing.T) {
 	t.Parallel()
 	in := evidenceoutbox.RunInput{OrgID: uuid.New(), RequestID: "r", TraceID: "t"}
 	good := &fakeEvidenceStore{}
-	if outcome := PersistEvidenceWithAck(context.Background(), good, in); outcome.Status != EvidenceAckDurable || outcome.Err != nil {
-		t.Fatalf("durable outcome=%+v", outcome)
+	outcome := PersistEvidenceWithAck(context.Background(), good, in)
+	if outcome.Status != EvidenceAckDurable {
+		t.Fatalf("durable status=%q", outcome.Status)
+	}
+	if outcome.Err != nil {
+		t.Fatalf("durable err=%v", outcome.Err)
 	}
 	failed := &fakeEvidenceStore{err: errors.New("db down")}
-	outcome := PersistEvidenceWithAck(context.Background(), failed, in)
-	if outcome.Status != EvidenceAckUncertified || outcome.Err == nil {
-		t.Fatalf("uncertified outcome=%+v", outcome)
+	outcome = PersistEvidenceWithAck(context.Background(), failed, in)
+	if outcome.Status != EvidenceAckUncertified {
+		t.Fatalf("uncertified status=%q", outcome.Status)
+	}
+	if outcome.Err == nil {
+		t.Fatal("uncertified outcome has no error")
 	}
 	unknown := &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{}}
 	outcome = PersistEvidenceWithAck(context.Background(), unknown, in)
-	if outcome.Status != EvidenceAckUncertified || outcome.Err == nil || outcome.Err.Error() != "evidence commit outcome is unknown" {
-		t.Fatalf("unknown outcome=%+v", outcome)
+	if outcome.Status != EvidenceAckUncertified {
+		t.Fatalf("unknown status=%q", outcome.Status)
+	}
+	if outcome.Err == nil {
+		t.Fatal("unknown outcome has no error")
+	}
+	if outcome.Err.Error() != "evidence commit outcome is unknown" {
+		t.Fatalf("unknown error=%q", outcome.Err)
 	}
 }
 

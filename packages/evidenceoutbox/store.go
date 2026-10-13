@@ -38,6 +38,18 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 	//nolint:errcheck // rollback after commit is a no-op
 	defer func() { _ = tx.Rollback() }()
 
+	result, err := persistRunTx(ctx, tx, in)
+	if err != nil {
+		return PersistResult{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return PersistResult{}, fmt.Errorf("evidenceoutbox: commit: %w", err)
+	}
+	return result, nil
+}
+
+func persistRunTx(ctx context.Context, tx *sql.Tx, in RunInput) (PersistResult, error) {
 	if err := setOrgRLS(ctx, tx, in.OrgID); err != nil {
 		return PersistResult{}, err
 	}
@@ -51,15 +63,10 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 	if err != nil {
 		return PersistResult{}, err
 	}
-
 	w := &runWriter{tx: tx, runID: runID, in: in}
 	outboxIDs, err := w.persistAll(ctx)
 	if err != nil {
 		return PersistResult{}, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return PersistResult{}, fmt.Errorf("evidenceoutbox: commit: %w", err)
 	}
 	return PersistResult{RunID: runID, OutboxIDs: outboxIDs, AggregateID: in.RequestID}, nil
 }

@@ -339,7 +339,7 @@ func TestUnit_PersistRun_ReplaysExistingDurableRun(t *testing.T) {
 	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-replay").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "request_id", "outbox_ids"}).
 			AddRow(runID, "req-replay", "{"+outboxID.String()+"}"))
-	mock.ExpectRollback()
+	mock.ExpectCommit()
 
 	result, err := store.PersistRun(context.Background(), RunInput{
 		OrgID: org, RequestID: "req-replay", TraceID: "cccccccccccccccccccccccccccccccc",
@@ -347,8 +347,17 @@ func TestUnit_PersistRun_ReplaysExistingDurableRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersistRun: %v", err)
 	}
-	if !result.Replayed || result.RunID != runID || len(result.OutboxIDs) != 1 || result.OutboxIDs[0] != outboxID {
-		t.Fatalf("unexpected replay result: %+v", result)
+	if !result.Replayed {
+		t.Fatal("replay result was not marked as replayed")
+	}
+	if result.RunID != runID {
+		t.Fatalf("run_id=%s want %s", result.RunID, runID)
+	}
+	if len(result.OutboxIDs) != 1 {
+		t.Fatalf("outbox_ids=%v want one id", result.OutboxIDs)
+	}
+	if result.OutboxIDs[0] != outboxID {
+		t.Fatalf("outbox_id=%s want %s", result.OutboxIDs[0], outboxID)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
