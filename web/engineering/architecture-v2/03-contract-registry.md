@@ -44,7 +44,7 @@ Each accepted row records: named owner; source path and generated artifacts; ver
 
 ### Proposed completion matrix from original issue #935 (historical context)
 
-The following values include decisions recorded on 2026-10-08 and remain a review baseline, not G0 acceptance. Explicitly marked owner decisions still require confirmation during the 14-day review window.
+The following values include decisions recorded on 2026-10-08 and the dated owner acceptance in `21-g0-owner-decision-record.md` (2026-10-10). The five registered shapes are contract-accepted; runtime seams remain provisional and explicitly marked owner/review conditions still apply through the 2026-10-22 window.
 
 | Contract | Compatibility / scope / trust | Profile and dependencies | Errors / deadline / retry | Identity / privacy / lifecycle | Owner / evidence / review |
 |---|---|---|---|---|---|
