@@ -68,7 +68,16 @@ func validatePrincipalBinding(result *auth.ValidateResult, agent *auth.AgentReco
 }
 
 func validatePrincipalPresence(result *auth.ValidateResult, agent *auth.AgentRecord) error {
-	if result == nil || agent == nil || result.OrgID == uuid.Nil || agent.ID == uuid.Nil {
+	if result == nil {
+		return ErrPrincipalContextUnavailable
+	}
+	if agent == nil {
+		return ErrPrincipalContextUnavailable
+	}
+	if result.OrgID == uuid.Nil {
+		return ErrPrincipalContextUnavailable
+	}
+	if agent.ID == uuid.Nil {
 		return ErrPrincipalContextUnavailable
 	}
 	return nil

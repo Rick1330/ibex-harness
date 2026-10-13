@@ -100,6 +100,8 @@ func TestPrincipalContextFromVerifiedAuthRejectsUnavailableBindings(t *testing.T
 		record *auth.AgentRecord
 	}{
 		{name: "nil inputs"},
+		{name: "nil record", result: &auth.ValidateResult{OrgID: org}},
+		{name: "nil organization", result: &auth.ValidateResult{}, record: &auth.AgentRecord{ID: agent, OrgID: org}},
 		{name: "missing agent id", result: &auth.ValidateResult{OrgID: org}, record: &auth.AgentRecord{OrgID: org}},
 		{name: "cross organization", result: &auth.ValidateResult{OrgID: org}, record: &auth.AgentRecord{ID: agent, OrgID: uuid.New()}},
 	}

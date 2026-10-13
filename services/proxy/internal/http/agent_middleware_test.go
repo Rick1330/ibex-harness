@@ -208,3 +208,40 @@ func TestUnit_AgentVerification_PrincipalContextRejectsInvalidVerifierRecords(t 
 		})
 	}
 }
+
+func TestUnit_BuildPrincipalContextMapsAndRejectsInvalidBindings(t *testing.T) {
+	t.Parallel()
+	h := &agentVerifyHandler{logger: logger.Discard("proxy")}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	org := agentTestOrgUUID
+	agent := uuid.MustParse(agentTestAgentID())
+	cases := []struct {
+		name       string
+		record     *auth.AgentRecord
+		result     *auth.ValidateResult
+		wantStatus int
+		wantCode   apierror.Code
+		wantOK     bool
+	}{
+		{name: "valid", record: &auth.AgentRecord{ID: agent, OrgID: org}, result: &auth.ValidateResult{OrgID: org}, wantStatus: http.StatusOK, wantOK: true},
+		{name: "agent mismatch", record: &auth.AgentRecord{ID: agent, OrgID: org}, result: &auth.ValidateResult{OrgID: org, AgentID: uuid.New()}, wantStatus: http.StatusForbidden, wantCode: apierror.CodeAgentNotAuthorized},
+		{name: "unavailable", record: &auth.AgentRecord{ID: uuid.Nil, OrgID: org}, result: &auth.ValidateResult{OrgID: org}, wantStatus: http.StatusServiceUnavailable, wantCode: apierror.CodeAuthUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			got, ok := h.buildPrincipalContext(w, req, principalContextBuildInput{
+				authRes: tc.result, record: tc.record, agentHeader: agent.String(), requestID: "req-1",
+			})
+			if ok != tc.wantOK || (ok && got == nil) {
+				t.Fatalf("ok=%v principal=%v want ok=%v", ok, got, tc.wantOK)
+			}
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d want %d body=%s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantCode != "" && !strings.Contains(w.Body.String(), string(tc.wantCode)) {
+				t.Fatalf("body missing %s: %s", tc.wantCode, w.Body.String())
+			}
+		})
+	}
+}

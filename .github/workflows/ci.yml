@@ -1545,8 +1545,8 @@ jobs:
         run: buf generate
       - name: Phase 3 memory HTTP lifecycle e2e (m3.E.2)
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-e2e-test-ci.sh
 
   e2e-smoke-p35:
