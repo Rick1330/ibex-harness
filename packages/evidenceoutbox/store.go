@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // Store persists evidence rows and outbox records in a single Postgres transaction.
@@ -29,6 +31,7 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 	if err := validateRunInput(in); err != nil {
 		return PersistResult{}, err
 	}
+	in.RedactionClass = resolveRedactionClass(in.RedactionClass, in.Producer)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return PersistResult{}, fmt.Errorf("evidenceoutbox: begin: %w", err)
@@ -36,23 +39,35 @@ func (s *Store) PersistRun(ctx context.Context, in RunInput) (PersistResult, err
 	//nolint:errcheck // rollback after commit is a no-op
 	defer func() { _ = tx.Rollback() }()
 
-	if err := setOrgRLS(ctx, tx, in.OrgID); err != nil {
-		return PersistResult{}, err
-	}
-
-	runID, err := insertRun(ctx, tx, in)
-	if err != nil {
-		return PersistResult{}, err
-	}
-
-	w := &runWriter{tx: tx, runID: runID, in: in}
-	outboxIDs, err := w.persistAll(ctx)
+	result, err := persistRunTx(ctx, tx, in)
 	if err != nil {
 		return PersistResult{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return PersistResult{}, fmt.Errorf("evidenceoutbox: commit: %w", err)
+	}
+	return result, nil
+}
+
+func persistRunTx(ctx context.Context, tx *sql.Tx, in RunInput) (PersistResult, error) {
+	if err := setOrgRLS(ctx, tx, in.OrgID); err != nil {
+		return PersistResult{}, err
+	}
+	if result, found, err := findExistingRun(ctx, tx, in); err != nil {
+		return PersistResult{}, err
+	} else if found {
+		return result, nil
+	}
+
+	runID, err := insertRun(ctx, tx, in)
+	if err != nil {
+		return PersistResult{}, err
+	}
+	w := &runWriter{tx: tx, runID: runID, in: in}
+	outboxIDs, err := w.persistAll(ctx)
+	if err != nil {
+		return PersistResult{}, err
 	}
 	return PersistResult{RunID: runID, OutboxIDs: outboxIDs, AggregateID: in.RequestID}, nil
 }
@@ -108,6 +123,7 @@ func (w *runWriter) enqueue(ctx context.Context, eventType string, payload any) 
 		EventType:      eventType,
 		RedactionClass: w.in.RedactionClass,
 		TombstoneFence: w.in.TombstoneFence,
+		Producer:       w.in.Producer,
 		Payload:        payload,
 	})
 	if err != nil {
@@ -229,6 +245,37 @@ func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
 	return nil
 }
 
+func findExistingRun(ctx context.Context, tx *sql.Tx, in RunInput) (PersistResult, bool, error) {
+	var runID uuid.UUID
+	var requestID string
+	var outboxIDs []string
+	err := tx.QueryRowContext(ctx, `
+SELECT r.id, r.request_id,
+       COALESCE(array_agg(o.id ORDER BY o.aggregate_seq)::text[], ARRAY[]::text[])
+FROM ibex_core.evidence_runs AS r
+LEFT JOIN ibex_core.evidence_outbox AS o
+  ON o.org_id = r.org_id AND o.aggregate_id = r.request_id
+WHERE r.org_id = $1 AND r.request_id = $2
+GROUP BY r.id, r.request_id`, in.OrgID, in.RequestID).
+		Scan(&runID, &requestID, pq.Array(&outboxIDs))
+	if err == sql.ErrNoRows {
+		return PersistResult{}, false, nil
+	}
+	if err != nil {
+		return PersistResult{}, false, fmt.Errorf("evidenceoutbox: find existing run: %w", err)
+	}
+
+	ids := make([]uuid.UUID, 0, len(outboxIDs))
+	for _, rawID := range outboxIDs {
+		id, parseErr := uuid.Parse(rawID)
+		if parseErr != nil {
+			return PersistResult{}, false, fmt.Errorf("evidenceoutbox: parse existing outbox id: %w", parseErr)
+		}
+		ids = append(ids, id)
+	}
+	return PersistResult{RunID: runID, OutboxIDs: ids, AggregateID: requestID, Replayed: true}, true, nil
+}
+
 func marshalJSONObject(v any) ([]byte, error) {
 	if v == nil {
 		return []byte("{}"), nil
@@ -250,6 +297,9 @@ var completenessValues = map[string]struct{}{
 }
 
 func validateRunInput(in RunInput) error {
+	if err := validateRunProducer(in); err != nil {
+		return err
+	}
 	if in.TombstoneFence != nil {
 		if err := validateTombstoneFence(in.TombstoneFence); err != nil {
 			return err
@@ -265,6 +315,55 @@ func validateRunInput(in RunInput) error {
 		return err
 	}
 	return validateRunToolSpanIDs(in.Tools)
+}
+
+func validateRunProducer(in RunInput) error {
+	if in.Producer == nil {
+		if in.RedactionClass == RedactionClassMetadata {
+			return fmt.Errorf("evidenceoutbox: metadata redaction class requires producer metadata")
+		}
+		return nil
+	}
+	if err := validateProducerMetadata(in.Producer); err != nil {
+		return err
+	}
+	if err := validateProducerRedactionClass(in); err != nil {
+		return err
+	}
+	return validateProducerFence(in.TombstoneFence, in.Producer)
+}
+
+func resolveRedactionClass(class RedactionClass, producer *ProducerMetadata) RedactionClass {
+	if class == "" && producer != nil {
+		return producer.RedactionClass
+	}
+	return class
+}
+
+func validateProducerRedactionClass(in RunInput) error {
+	if in.RedactionClass == "" {
+		return nil
+	}
+	if in.RedactionClass == in.Producer.RedactionClass {
+		return nil
+	}
+	return fmt.Errorf("evidenceoutbox: producer redaction class does not match run")
+}
+
+func validateProducerFence(fence *TombstoneFence, producer *ProducerMetadata) error {
+	if fence == nil {
+		return nil
+	}
+	if fence.ResourceType != producer.ResourceType {
+		return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+	}
+	if fence.ResourceID != producer.ResourceID {
+		return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+	}
+	if fence.ResourceVersion != producer.ResourceVersion {
+		return fmt.Errorf("evidenceoutbox: producer fence does not match run")
+	}
+	return nil
 }
 
 func validateRunIdentity(in RunInput) error {
@@ -391,30 +490,33 @@ type outboxWrite struct {
 	EventType      string
 	RedactionClass RedactionClass
 	TombstoneFence *TombstoneFence
+	Producer       *ProducerMetadata
 	Payload        any
 }
 
 func enqueueOutbox(ctx context.Context, tx *sql.Tx, w outboxWrite) (uuid.UUID, error) {
-	raw, err := marshalOutboxPayload(w.Payload, w.RedactionClass, w.TombstoneFence)
+	raw, err := marshalOutboxPayload(w.Payload, w.RedactionClass, w.TombstoneFence, w.Producer)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: marshal payload: %w", err)
 	}
 	eventID := uuid.New()
 	rowID := uuid.New()
-	// Digest PostgreSQL's JSONB canonical text, not Go's json.Marshal bytes.
-	// JSONB reorders keys and normalizes spacing; hashing the pre-cast input
-	// makes validateOutboxPayload reject every claimed row after SELECT.
+	// Evidence digests use RFC 8785 JCS (jcs/v1). The payload remains
+	// PostgreSQL jsonb for storage/query semantics; relay validation applies
+	// the same JCS transform after reading it back.
+	_, digest, err := canonicaljson.Digest(raw)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("evidenceoutbox: canonicalize payload: %w", err)
+	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_outbox (
 	id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
-	event_type, payload, payload_digest, delivery_status, attempts, available_at
+	event_type, payload, payload_digest, payload_digest_scheme, delivery_status, attempts, available_at
 ) VALUES (
 	$1, $2, $3, $4, $5, $6,
-	$7, $8::jsonb,
-	encode(sha256(convert_to(($8::jsonb)::text, 'UTF8')), 'hex'),
-	$9, 0, NOW()
+	$7, $8::jsonb, $9, $10, $11, 0, NOW()
 )`, rowID, w.OrgID, eventID, w.AggregateID, w.Seq, SchemaVersion,
-		w.EventType, raw, StatusPending)
+		w.EventType, raw, digest, PayloadDigestSchemeJCSV1, StatusPending)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: enqueue %s: %w", w.EventType, err)
 	}
@@ -654,7 +756,12 @@ func firstNonEmptyStr(values ...string) string {
 	}
 	return ""
 }
-func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFence) ([]byte, error) {
+func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFence, producers ...*ProducerMetadata) ([]byte, error) {
+	var producer *ProducerMetadata
+	if len(producers) > 0 {
+		producer = producers[0]
+	}
+	class = resolveRedactionClass(class, producer)
 	if strings.TrimSpace(string(class)) == "" {
 		class = RedactionClassUnclassified
 	}
@@ -665,7 +772,7 @@ func marshalOutboxPayload(payload any, class RedactionClass, fence *TombstoneFen
 	if err != nil {
 		return nil, err
 	}
-	if err := addProducerMetadata(fields, class, fence); err != nil {
+	if err := addProducerMetadata(fields, class, fence, producer); err != nil {
 		return nil, err
 	}
 	return json.Marshal(fields)
@@ -690,15 +797,29 @@ func decodePayloadFields(raw []byte) (map[string]json.RawMessage, error) {
 	return fields, nil
 }
 
-func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence) error {
+func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass, fence *TombstoneFence, producer *ProducerMetadata) error {
+	if err := rejectProducerAssignedFields(fields); err != nil {
+		return err
+	}
+	// The class has already been checked against the closed set of ASCII tokens.
+	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
+	if err := addFenceMetadata(fields, fence); err != nil {
+		return err
+	}
+	return addProducerProof(fields, producer)
+}
+
+func rejectProducerAssignedFields(fields map[string]json.RawMessage) error {
 	if _, exists := fields["redaction_class"]; exists {
 		return fmt.Errorf("evidenceoutbox: redaction_class is assigned by the producer")
 	}
 	if _, exists := fields["tombstone_fence"]; exists {
 		return fmt.Errorf("evidenceoutbox: tombstone_fence is assigned by the producer")
 	}
-	// The class has already been checked against the closed set of ASCII tokens.
-	fields["redaction_class"] = json.RawMessage(fmt.Sprintf("%q", class))
+	return nil
+}
+
+func addFenceMetadata(fields map[string]json.RawMessage, fence *TombstoneFence) error {
 	if fence == nil {
 		return nil
 	}
@@ -710,5 +831,28 @@ func addProducerMetadata(fields map[string]json.RawMessage, class RedactionClass
 		return err
 	}
 	fields["tombstone_fence"] = fenceJSON
+	return nil
+}
+
+func addProducerProof(fields map[string]json.RawMessage, producer *ProducerMetadata) error {
+	if producer == nil {
+		return nil
+	}
+	if err := validateProducerMetadata(producer); err != nil {
+		return err
+	}
+	producerJSON, err := json.Marshal(producer)
+	if err != nil {
+		return err
+	}
+	var producerFields map[string]json.RawMessage
+	if err := json.Unmarshal(producerJSON, &producerFields); err != nil {
+		return err
+	}
+	for key, value := range producerFields {
+		if key != "redaction_class" {
+			fields[key] = value
+		}
+	}
 	return nil
 }

@@ -2,8 +2,6 @@ package evidenceoutbox
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,11 +29,6 @@ func (s *stubDeliverer) DeliverWithTombstoneFence(
 ) error {
 	s.fence = &fence
 	return s.Deliver(ctx, row)
-}
-
-func validPayloadDigest(payload []byte) string {
-	digest := sha256.Sum256(payload)
-	return hex.EncodeToString(digest[:])
 }
 
 func validRelayPayload() []byte {
@@ -143,10 +136,10 @@ func TestUnit_ProcessBatch_AckLossReplaysWithIdempotentEffect(t *testing.T) {
 		payload := validRelayPayload()
 		return sqlmock.NewRows([]string{
 			"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-			"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+			"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 			"last_error", "created_at", "delivered_at",
 		}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-			payload, validPayloadDigest(payload), StatusInFlight, attempts, now, "", now, nil)
+			payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, attempts, now, "", now, nil)
 	}
 
 	// The sink applies the event, but the relay loses the acknowledgement.
@@ -190,10 +183,10 @@ func expectClaimAndAck(mock sqlmock.Sqlmock) uuid.UUID {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		payload, validPayloadDigest(payload), StatusInFlight, 1, now, "", now, nil)
+		payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(2).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -279,10 +272,10 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		payload, validPayloadDigest(payload), StatusInFlight, tc.attempts, now, "", now, nil)
+		payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, tc.attempts, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 
@@ -321,10 +314,10 @@ func TestUnit_ProcessBatch_InvalidTenantRowNeverReachesSink(t *testing.T) {
 	mock.ExpectBegin()
 	rows := sqlmock.NewRows([]string{
 		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-		"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 		"last_error", "created_at", "delivered_at",
 	}).AddRow(id, uuid.Nil, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-		payload, validPayloadDigest(payload), StatusInFlight, 1, now, "", now, nil)
+		payload, validPayloadDigest(payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
 	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 	mock.ExpectCommit()
 	mock.ExpectBegin()
@@ -410,10 +403,10 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 			mock.ExpectBegin()
 			rows := sqlmock.NewRows([]string{
 				"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-				"event_type", "payload", "payload_digest", "delivery_status", "attempts", "available_at",
+				"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
 				"last_error", "created_at", "delivered_at",
 			}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-				tc.payload, validPayloadDigest(tc.payload), StatusInFlight, 1, now, "", now, nil)
+				tc.payload, validPayloadDigest(tc.payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
 			mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
 			mock.ExpectCommit()
 			mock.ExpectBegin()
@@ -453,7 +446,7 @@ func assertPoisonedWithoutDelivery(t *testing.T, res RelayBatchResult, sinkCalls
 func TestUnit_ValidateOutboxRow_RejectsMalformedDigest(t *testing.T) {
 	t.Parallel()
 	payload := validRelayPayload()
-	row := OutboxRow{ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1, SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted, Payload: payload, PayloadDigest: "not-a-sha256-digest"}
+	row := OutboxRow{ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1, SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted, Payload: payload, PayloadDigestScheme: PayloadDigestSchemeJCSV1, PayloadDigest: "not-a-sha256-digest"}
 	if err := validateOutboxRow(row); err == nil || !strings.Contains(err.Error(), "payload_digest") {
 		t.Fatalf("err=%v want payload digest validation error", err)
 	}
@@ -465,7 +458,8 @@ func TestUnit_ValidateOutboxRow_RejectsDigestMismatch(t *testing.T) {
 	row := OutboxRow{
 		ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1,
 		SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted,
-		Payload: payload, PayloadDigest: validPayloadDigest([]byte(`{"value":"tampered"}`)),
+		Payload: payload, PayloadDigestScheme: PayloadDigestSchemeJCSV1,
+		PayloadDigest: validPayloadDigest([]byte(`{"value":"tampered"}`)),
 	}
 	if err := validateOutboxRow(row); err == nil || !strings.Contains(err.Error(), "does not match payload") {
 		t.Fatalf("err=%v want payload digest mismatch", err)
@@ -478,7 +472,8 @@ func TestUnit_ValidateOutboxRow_AcceptsUppercaseDigest(t *testing.T) {
 	row := OutboxRow{
 		ID: uuid.New(), OrgID: uuid.New(), EventID: uuid.New(), AggregateID: "agg", AggregateSeq: 1,
 		SchemaVersion: SchemaVersion, EventType: EventTypeRunCommitted,
-		Payload: payload, PayloadDigest: strings.ToUpper(validPayloadDigest(payload)),
+		Payload: payload, PayloadDigestScheme: PayloadDigestSchemeJCSV1,
+		PayloadDigest: strings.ToUpper(validPayloadDigest(payload)),
 	}
 	if err := validateOutboxRow(row); err != nil {
 		t.Fatalf("uppercase digest should be accepted: %v", err)

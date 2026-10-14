@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
 )
 
@@ -269,11 +270,30 @@ func validateOutboxPayload(row OutboxRow) error {
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
 	}
 
-	expected := sha256.Sum256(row.Payload)
-	if !strings.EqualFold(actualDigest, hex.EncodeToString(expected[:])) {
-		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload")
+	expectedDigest, err := expectedOutboxPayloadDigest(row)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actualDigest, expectedDigest) {
+		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload (%s)", row.PayloadDigestScheme)
 	}
 	return nil
+}
+
+func expectedOutboxPayloadDigest(row OutboxRow) (string, error) {
+	switch row.PayloadDigestScheme {
+	case PayloadDigestSchemePostgresJSONBText:
+		sum := sha256.Sum256(row.Payload)
+		return hex.EncodeToString(sum[:]), nil
+	case PayloadDigestSchemeJCSV1:
+		_, digest, err := canonicaljson.Digest(row.Payload)
+		if err != nil {
+			return "", fmt.Errorf("evidenceoutbox: invalid row: payload is not canonicalizable: %w", err)
+		}
+		return digest, nil
+	default:
+		return "", fmt.Errorf("evidenceoutbox: invalid row: unsupported payload_digest_scheme %q", row.PayloadDigestScheme)
+	}
 }
 
 func isHexDigest(value string) bool {
@@ -308,10 +328,11 @@ func (r *Relay) RecoverInFlight(ctx context.Context, olderThan time.Duration) (i
 }
 
 func claimPending(ctx context.Context, tx *sql.Tx, limit int) ([]OutboxRow, error) {
-	// Cast payload to text so Scan bytes match the JSONB::text form hashed at enqueue.
+	// payload::text preserves legacy digest bytes; the scheme column selects the verifier.
 	rs, err := tx.QueryContext(ctx,
 		`SELECT id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
-			event_type, payload::text, payload_digest, delivery_status, attempts, available_at,
+			event_type, payload::text, payload_digest, payload_digest_scheme,
+			delivery_status, attempts, available_at,
 			last_error, created_at, delivered_at
 		FROM ibex_core.evidence_outbox_claim_pending($1)`, limit)
 	if err != nil {
@@ -336,7 +357,7 @@ func scanOutboxRow(rs *sql.Rows) (OutboxRow, error) {
 	var payload []byte
 	if err := rs.Scan(
 		&row.ID, &row.OrgID, &row.EventID, &row.AggregateID, &row.AggregateSeq,
-		&row.SchemaVersion, &row.EventType, &payload, &row.PayloadDigest,
+		&row.SchemaVersion, &row.EventType, &payload, &row.PayloadDigest, &row.PayloadDigestScheme,
 		&row.DeliveryStatus, &row.Attempts, &row.AvailableAt, &row.LastError,
 		&row.CreatedAt, &delivered,
 	); err != nil {
