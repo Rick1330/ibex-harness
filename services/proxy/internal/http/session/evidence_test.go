@@ -383,7 +383,7 @@ func TestUnit_PersistEvidenceForProfile_GoldenOutcomes(t *testing.T) {
 			if out.Status != tc.wantStatus {
 				t.Fatalf("status=%q want %q err=%v", out.Status, tc.wantStatus, out.Err)
 			}
-			if tc.name == "replay" && out.Err != nil {
+			if tc.wantStatus == EvidenceAckReplay && out.Err != nil {
 				t.Fatalf("reconciled replay retained error: %v", out.Err)
 			}
 			got, _ := EvidenceAckHTTP(out)
@@ -400,5 +400,28 @@ func TestUnit_W3CHelpersRejectInvalidCharacters(t *testing.T) {
 	}
 	if got := w3cSpanIDOrEmpty("aabbccddeeff00zz"); got != "" {
 		t.Fatalf("invalid span accepted: %q", got)
+	}
+}
+
+func TestUnit_ApplyEvidenceExtras_TotalTokenFallbackBounds(t *testing.T) {
+	for name, usage := range map[string]provider.Usage{
+		"input only":     {InputTokens: 120},
+		"output only":    {OutputTokens: 45},
+		"negative input": {InputTokens: -1, OutputTokens: 45},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := evidenceoutbox.RunInput{}
+			applyEvidenceExtras(&in, httptrace.AssembleInput{Usage: &usage}, EvidenceExtras{})
+			if in.TokenUsage == nil {
+				t.Fatal("token usage was not copied")
+			}
+			want := int64(usage.InputTokens + usage.OutputTokens)
+			if usage.InputTokens < 0 {
+				want = 0
+			}
+			if in.TokenUsage.TotalTokens != want {
+				t.Fatalf("total=%d want %d", in.TokenUsage.TotalTokens, want)
+			}
+		})
 	}
 }

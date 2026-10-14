@@ -206,7 +206,8 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 func applyEvidenceExtras(in *evidenceoutbox.RunInput, snap httptrace.AssembleInput, extras EvidenceExtras) {
 	if snap.Usage != nil {
 		totalTokens := snap.Usage.TotalTokens
-		if totalTokens == 0 && snap.Usage.InputTokens > 0 && snap.Usage.OutputTokens > 0 {
+		if totalTokens == 0 && snap.Usage.InputTokens >= 0 && snap.Usage.OutputTokens >= 0 &&
+			(snap.Usage.InputTokens > 0 || snap.Usage.OutputTokens > 0) {
 			totalTokens = snap.Usage.InputTokens + snap.Usage.OutputTokens
 		}
 		in.TokenUsage = &evidenceoutbox.TokenUsage{
