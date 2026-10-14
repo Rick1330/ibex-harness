@@ -17,6 +17,13 @@ func TestIntegration_UsageFacts_NoTTLAndOrderBy(t *testing.T) {
 	if err := Up(conn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
+	// This package shares the compose database with later integration tests.
+	// Restore the current schema after asserting this test's rollback behavior.
+	t.Cleanup(func() {
+		if err := Up(conn); err != nil {
+			t.Errorf("restore ClickHouse test schema: %v", err)
+		}
+	})
 	assertTableCount(t, db, "usage_facts", 1)
 
 	var createSQL string
