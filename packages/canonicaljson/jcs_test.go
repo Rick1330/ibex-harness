@@ -46,9 +46,12 @@ func TestContractVectors(t *testing.T) {
 }
 
 func TestCanonicalizeRejectsMalformedJSON(t *testing.T) {
-	for _, input := range []string{"{", "[1,", "{\"a\":}"} {
+	for _, input := range []string{"{", "[1,", "{\"a\":}", `{"a":+1}`} {
 		if _, err := Canonicalize([]byte(input)); err == nil {
 			t.Fatalf("input %q was accepted", input)
+		}
+		if _, _, err := Digest([]byte(input)); err == nil {
+			t.Fatalf("Digest accepted malformed input %q", input)
 		}
 	}
 }
@@ -56,5 +59,30 @@ func TestCanonicalizeRejectsMalformedJSON(t *testing.T) {
 func TestCanonicalizeRejectsDuplicateObjectNames(t *testing.T) {
 	if _, err := Canonicalize([]byte(`{"a":1,"a":2}`)); err == nil {
 		t.Fatal("duplicate object names were accepted")
+	}
+}
+
+func TestCanonicalizeScalarRoots(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "true", input: `true`, want: `true`},
+		{name: "false", input: `false`, want: `false`},
+		{name: "null", input: `null`, want: `null`},
+		{name: "number", input: `1.0`, want: `1`},
+		{name: "string", input: `"a\/b"`, want: `"a/b"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Canonicalize([]byte(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("canonical=%q want %q", got, tc.want)
+			}
+		})
 	}
 }

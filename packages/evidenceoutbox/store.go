@@ -511,12 +511,12 @@ func enqueueOutbox(ctx context.Context, tx *sql.Tx, w outboxWrite) (uuid.UUID, e
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_outbox (
 	id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
-	event_type, payload, payload_digest, delivery_status, attempts, available_at
+	event_type, payload, payload_digest, payload_digest_scheme, delivery_status, attempts, available_at
 ) VALUES (
 	$1, $2, $3, $4, $5, $6,
-	$7, $8::jsonb, $9, $10, 0, NOW()
+	$7, $8::jsonb, $9, $10, $11, 0, NOW()
 )`, rowID, w.OrgID, eventID, w.AggregateID, w.Seq, SchemaVersion,
-		w.EventType, raw, digest, StatusPending)
+		w.EventType, raw, digest, PayloadDigestSchemeJCSV1, StatusPending)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: enqueue %s: %w", w.EventType, err)
 	}

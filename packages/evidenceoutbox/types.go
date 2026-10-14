@@ -77,23 +77,24 @@ func validateProducerMetadata(metadata *ProducerMetadata) error {
 
 // OutboxRow is one unpublished (or in-flight) evidence publication record.
 type OutboxRow struct {
-	ID             uuid.UUID
-	OrgID          uuid.UUID
-	EventID        uuid.UUID
-	AggregateID    string
-	AggregateSeq   int64
-	SchemaVersion  string
-	EventType      string
-	RedactionClass RedactionClass
-	TombstoneFence *TombstoneFence
-	Payload        json.RawMessage
-	PayloadDigest  string
-	DeliveryStatus string
-	Attempts       int
-	AvailableAt    time.Time
-	LastError      string
-	CreatedAt      time.Time
-	DeliveredAt    *time.Time
+	ID                  uuid.UUID
+	OrgID               uuid.UUID
+	EventID             uuid.UUID
+	AggregateID         string
+	AggregateSeq        int64
+	SchemaVersion       string
+	EventType           string
+	RedactionClass      RedactionClass
+	TombstoneFence      *TombstoneFence
+	Payload             json.RawMessage
+	PayloadDigestScheme string
+	PayloadDigest       string
+	DeliveryStatus      string
+	Attempts            int
+	AvailableAt         time.Time
+	LastError           string
+	CreatedAt           time.Time
+	DeliveredAt         *time.Time
 }
 
 // AssemblyMetrics is the durable stage-timing contract (mirrors proto AssemblyMetrics).

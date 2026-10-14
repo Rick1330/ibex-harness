@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
 )
 
@@ -211,6 +212,79 @@ func TestUnit_MarshalOutboxPayloadUsesProducerClassWhenRunClassEmpty(t *testing.
 	}
 	if string(fields["redaction_class"]) != `"metadata"` {
 		t.Fatalf("redaction_class=%s want metadata", fields["redaction_class"])
+	}
+}
+
+func TestUnit_EnqueueOutboxPersistsJCSV1Scheme(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	orgID := uuid.New()
+	fence := &TombstoneFence{ResourceType: "memory", ResourceID: "mem-1", ResourceVersion: 1}
+	payload := map[string]any{"event_id": "evt-1"}
+	raw, err := marshalOutboxPayload(payload, RedactionClassMetadata, fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, digest, err := canonicaljson.Digest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WithArgs(
+		sqlmock.AnyArg(), orgID, sqlmock.AnyArg(), "req-1", int64(1), SchemaVersion,
+		EventTypeRunCommitted, raw, digest, PayloadDigestSchemeJCSV1, StatusPending,
+	).WillReturnResult(sqlmock.NewResult(0, 1))
+	if _, err := enqueueOutbox(context.Background(), tx, outboxWrite{
+		OrgID: orgID, AggregateID: "req-1", Seq: 1, EventType: EventTypeRunCommitted,
+		RedactionClass: RedactionClassMetadata, TombstoneFence: fence, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectCommit()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnit_EnqueueOutboxRejectsDuplicateNestedJSONNames(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = enqueueOutbox(context.Background(), tx, outboxWrite{
+		OrgID: uuid.New(), AggregateID: "req-duplicate", Seq: 1,
+		EventType: EventTypeRunCommitted, Payload: map[string]json.RawMessage{
+			"nested": json.RawMessage(`{"duplicate":1,"duplicate":2}`),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "canonicalize payload") {
+		t.Fatalf("err=%v want canonicalization error", err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

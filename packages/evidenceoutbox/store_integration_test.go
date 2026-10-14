@@ -339,6 +339,48 @@ func TestIntegration_OutboxAckLoss_ReplaysWithIdempotentSinkEffect(t *testing.T)
 	}
 }
 
+func TestIntegration_OutboxRetriesLegacyJSONBDigest(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	orgID := seedOrg(t, db)
+	rowID, eventID := uuid.New(), uuid.New()
+	aggregateID := "legacy-retry-" + uuid.NewString()
+	payload := `{"redaction_class": "metadata", "tombstone_fence": {"resource_id": "mem-1", "resource_type": "memory", "resource_version": 1}}`
+	const insertLegacy = `
+INSERT INTO ibex_core.evidence_outbox (
+	id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
+	event_type, payload, payload_digest, delivery_status, attempts, available_at
+) VALUES (
+	$1, $2, $3, $4, 1, $5, $6, $7::jsonb,
+	encode(sha256(convert_to(($7::jsonb)::text, 'UTF8')), 'hex'),
+	'failed', 1, NOW()
+)`
+	if _, err := db.ExecContext(context.Background(), insertLegacy, rowID, orgID, eventID,
+		aggregateID, evidenceoutbox.SchemaVersion, evidenceoutbox.EventTypeRunCommitted, payload); err != nil {
+		t.Fatalf("insert legacy retry row: %v", err)
+	}
+
+	deliverer := &recordingDeliverer{}
+	relay := mustRelay(t, db, deliverer)
+	result, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatalf("process legacy retry: %v", err)
+	}
+	if result.Claimed != 1 || result.Delivered != 1 || deliverer.count() != 1 {
+		t.Fatalf("legacy retry: result=%+v deliveries=%d", result, deliverer.count())
+	}
+
+	var scheme, status string
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT payload_digest_scheme, delivery_status
+		FROM ibex_core.evidence_outbox WHERE id = $1`, rowID).Scan(&scheme, &status); err != nil {
+		t.Fatalf("read legacy retry row: %v", err)
+	}
+	if scheme != evidenceoutbox.PayloadDigestSchemePostgresJSONBText || status != string(evidenceoutbox.StatusDelivered) {
+		t.Fatalf("legacy row scheme=%q status=%q", scheme, status)
+	}
+}
+
 func TestIntegration_Relay_PoisonedValidationFailureIsPersisted(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
