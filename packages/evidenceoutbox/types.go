@@ -14,12 +14,13 @@ type RedactionClass string
 const (
 	RedactionClassUnclassified RedactionClass = "unclassified"
 	RedactionClassMetadata     RedactionClass = "metadata"
+	RedactionClassRedacted     RedactionClass = "redacted"
 	RedactionClassProhibited   RedactionClass = "prohibited"
 )
 
 func isSupportedRedactionClass(class RedactionClass) bool {
 	switch class {
-	case RedactionClassUnclassified, RedactionClassMetadata, RedactionClassProhibited:
+	case RedactionClassUnclassified, RedactionClassMetadata, RedactionClassRedacted, RedactionClassProhibited:
 		return true
 	default:
 		return false
@@ -132,6 +133,13 @@ type DirectiveSnapshot struct {
 	ContentHash        string
 }
 
+// TokenUsage contains numeric provider token totals only; prompts and response bodies are excluded.
+type TokenUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
+}
+
 // ToolAudit is a sanitized tool-call evidence row.
 type ToolAudit struct {
 	SpanID         string
@@ -174,6 +182,8 @@ type RunInput struct {
 	MetricsSpanID  string // optional; assembly metrics join key (prefer assemble span)
 	CheckpointID   *uuid.UUID
 	TurnID         *int
+	ModelID        string
+	TokenUsage     *TokenUsage
 	Completeness   string
 	Status         string
 	ErrorCode      string
