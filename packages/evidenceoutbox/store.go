@@ -90,6 +90,8 @@ func (w *runWriter) persistAll(ctx context.Context) ([]uuid.UUID, error) {
 		"checkpoint_id":  uuidPtrString(w.in.CheckpointID),
 		"schema_version": SchemaVersion,
 		"completeness":   defaultCompleteness(w.in.Completeness),
+		"model_id":       w.in.ModelID,
+		"token_usage":    w.in.TokenUsage,
 	}); err != nil {
 		return nil, err
 	}
@@ -297,6 +299,9 @@ var completenessValues = map[string]struct{}{
 }
 
 func validateRunInput(in RunInput) error {
+	if err := validateRunMetadata(in); err != nil {
+		return err
+	}
 	if err := validateRunProducer(in); err != nil {
 		return err
 	}
@@ -315,6 +320,38 @@ func validateRunInput(in RunInput) error {
 		return err
 	}
 	return validateRunToolSpanIDs(in.Tools)
+}
+
+func validateRunMetadata(in RunInput) error {
+	if in.ModelID != "" && !validModelIdentifier(in.ModelID) {
+		return fmt.Errorf("evidenceoutbox: invalid model identifier")
+	}
+	if in.TokenUsage != nil {
+		usage := in.TokenUsage
+		if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 ||
+			usage.InputTokens > 1_000_000_000_000 || usage.OutputTokens > 1_000_000_000_000 ||
+			usage.TotalTokens > 1_000_000_000_000 || usage.TotalTokens < usage.InputTokens+usage.OutputTokens {
+			return fmt.Errorf("evidenceoutbox: invalid token usage metadata")
+		}
+	}
+	return nil
+}
+
+func validModelIdentifier(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		switch {
+		case char >= 'A' && char <= 'Z':
+		case char >= 'a' && char <= 'z':
+		case char >= '0' && char <= '9':
+		case strings.ContainsRune("._:+/-", char):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validateRunProducer(in RunInput) error {
@@ -546,22 +583,30 @@ func insertRun(ctx context.Context, tx *sql.Tx, in RunInput) (uuid.UUID, error) 
 		status = "ok"
 	}
 	digest := deployImageDigestOrNull(in.DeployImageDigest)
+	inputTokens, outputTokens, totalTokens := tokenUsageValues(in.TokenUsage)
 	_, err := tx.ExecContext(ctx, `
 INSERT INTO ibex_core.evidence_runs (
 	id, org_id, agent_id, session_id, request_id, trace_id, checkpoint_id, turn_id,
 	schema_version, completeness, status, error_code, capture_mode, sample_decision,
-	started_at, ended_at, deploy_image_digest
+	started_at, ended_at, deploy_image_digest, model_id, input_tokens, output_tokens, total_tokens
 ) VALUES (
 	$1, $2, $3, $4, $5, $6, $7, $8,
 	$9, $10, $11, $12, $13, $14,
-	$15, $16, $17
+	$15, $16, $17, $18, $19, $20, $21
 )`, id, in.OrgID, in.AgentID, in.SessionID, in.RequestID, in.TraceID, in.CheckpointID, in.TurnID,
 		SchemaVersion, defaultCompleteness(in.Completeness), status, nullEmpty(in.ErrorCode),
-		capture, sample, started.UTC(), ended, digest)
+		capture, sample, started.UTC(), ended, digest, nullEmpty(in.ModelID), inputTokens, outputTokens, totalTokens)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("evidenceoutbox: insert run: %w", err)
 	}
 	return id, nil
+}
+
+func tokenUsageValues(usage *TokenUsage) (input, output, total int64) {
+	if usage == nil {
+		return 0, 0, 0
+	}
+	return usage.InputTokens, usage.OutputTokens, usage.TotalTokens
 }
 
 // deployImageDigestOrNull trims whitespace, allows empty (pre-4.P.5), and

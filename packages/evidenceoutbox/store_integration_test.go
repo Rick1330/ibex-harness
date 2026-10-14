@@ -221,6 +221,25 @@ func TestIntegration_PersistRun_WritesEvidenceAndOutbox(t *testing.T) {
 	}
 
 	assertPersistRunMetrics(t, db, res.RunID, 12)
+	assertPersistedModelTokenMetadata(t, db, res.RunID, "gpt-4o-mini", 120, 45, 165)
+}
+
+func assertPersistedModelTokenMetadata(t *testing.T, db *sql.DB, runID uuid.UUID, wantModel string, wantInput, wantOutput, wantTotal int64) {
+	t.Helper()
+	tx := beginServiceTx(t, db)
+	var model string
+	var input, output, total int64
+	if err := tx.QueryRowContext(context.Background(), `
+SELECT model_id, input_tokens, output_tokens, total_tokens
+FROM ibex_core.evidence_runs WHERE id = $1`, runID).Scan(&model, &input, &output, &total); err != nil {
+		t.Fatalf("model/token metadata: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit model/token metadata lookup: %v", err)
+	}
+	if model != wantModel || input != wantInput || output != wantOutput || total != wantTotal {
+		t.Fatalf("persisted model/token metadata=%q/%d/%d/%d want %q/%d/%d/%d", model, input, output, total, wantModel, wantInput, wantOutput, wantTotal)
+	}
 }
 
 func fullPersistRunInput(orgID, sessionID uuid.UUID) evidenceoutbox.RunInput {
@@ -235,6 +254,8 @@ func fullPersistRunInput(orgID, sessionID uuid.UUID) evidenceoutbox.RunInput {
 		SessionID:  &sessionID,
 		RequestID:  "req-" + uuid.NewString(),
 		TraceID:    strings.ReplaceAll(uuid.NewString(), "-", ""),
+		ModelID:    "gpt-4o-mini",
+		TokenUsage: &evidenceoutbox.TokenUsage{InputTokens: 120, OutputTokens: 45, TotalTokens: 165},
 		RootSpanID: "1111111111111111",
 		Spans: []evidenceoutbox.SpanInput{
 			{SpanID: "1111111111111111", OperationKind: "proxy.chat", Status: "ok"},

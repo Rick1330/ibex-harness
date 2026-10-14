@@ -353,6 +353,7 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 	}{
 		{name: "missing class", payload: relayPayloadWithoutClass(), wantErr: errRedactionUnclassified.Error()},
 		{name: "malformed payload", payload: []byte("{"), wantErr: errRedactionUnclassified.Error()},
+		{name: "redacted class", payload: relayPayloadWithClass(RedactionClassRedacted), wantErr: errRedactionNotProjectable.Error()},
 		{name: "prohibited class", payload: relayPayloadWithClass(RedactionClassProhibited), wantErr: errRedactionProhibited.Error()},
 		{
 			name: "unsupported class", payload: relayPayloadWithClass(RedactionClass("future")),

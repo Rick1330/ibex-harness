@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/billing"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
@@ -216,15 +218,29 @@ func TestUnit_EnqueuePostResponse_EvidenceRuns(t *testing.T) {
 		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
 	require.True(t, ok)
+	snap.Usage = &provider.Usage{InputTokens: 120, OutputTokens: 45, TotalTokens: 165}
+	store := newMemSessionStore()
+	active, err := store.GetOrCreate(context.Background(), pkgsession.GetOrCreateParams{
+		OrgID: meta.OrgID, AgentID: meta.AgentID, ExternalID: "ext-evidence",
+		Model: "gpt-4o", Provider: "openai",
+	})
+	require.NoError(t, err)
+	snap.SessionID = &active.ID
 	ev := &fakeEvidenceStore{}
 	EnqueuePostResponse(PostResponseJob{
-		Deps: LifecycleDeps{Evidence: ev},
+		Deps: LifecycleDeps{Store: store, Evidence: ev},
 		Log:  logger.Discard("t"),
 		Snap: snap, SnapOK: true, DoEvidence: true,
 		EvidenceExtras: EvidenceExtras{AssembleSpanID: "1122334455667788"},
 	})
 	if ev.calls != 1 {
 		t.Fatalf("calls=%d", ev.calls)
+	}
+	if ev.last.RedactionClass != evidenceoutbox.RedactionClassMetadata || ev.last.Producer == nil || ev.last.TombstoneFence == nil {
+		t.Fatalf("producer was not certified: class=%q producer=%+v fence=%+v", ev.last.RedactionClass, ev.last.Producer, ev.last.TombstoneFence)
+	}
+	if ev.last.ModelID != "gpt-4o" || ev.last.TokenUsage == nil || ev.last.TokenUsage.TotalTokens != 165 || ev.last.CaptureMode != "metadata" || ev.last.SampleDecision != "included" {
+		t.Fatalf("producer metadata mismatch: model=%q usage=%+v capture=%q sample=%q", ev.last.ModelID, ev.last.TokenUsage, ev.last.CaptureMode, ev.last.SampleDecision)
 	}
 	if ev.last.MetricsSpanID != "1122334455667788" {
 		t.Fatalf("metrics_span=%q", ev.last.MetricsSpanID)

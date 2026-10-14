@@ -97,8 +97,21 @@ func (f *outboxDigestMigrationFixture) insertRow(t *testing.T, row migrationOutb
 }
 
 func (f *outboxDigestMigrationFixture) rollback(t *testing.T) {
-	if err := Down(f.dsn); err != nil {
-		t.Fatalf("down migration 000040: %v", err)
+	version, dirty, err := Version(f.dsn)
+	if err != nil || dirty {
+		t.Fatalf("read current migration version before rollback: version=%d dirty=%v err=%v", version, dirty, err)
+	}
+	if version < 40 {
+		t.Fatalf("schema version=%d; need migration 000040 applied", version)
+	}
+	for version >= 40 {
+		if err := Down(f.dsn); err != nil {
+			t.Fatalf("roll back migration %d: %v", version, err)
+		}
+		version, dirty, err = Version(f.dsn)
+		if err != nil || dirty {
+			t.Fatalf("read migration version after rollback: version=%d dirty=%v err=%v", version, dirty, err)
+		}
 	}
 }
 

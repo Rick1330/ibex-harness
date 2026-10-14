@@ -11,6 +11,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
+	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
+	sessionevidence "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session/evidence"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/google/uuid"
 )
@@ -22,14 +24,19 @@ type EvidencePersister interface {
 	PersistRun(ctx context.Context, in evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error)
 }
 
+type evidenceFenceLookup interface {
+	LookupEvidenceFence(ctx context.Context, orgID, sessionID uuid.UUID) (pkgsession.EvidenceFence, error)
+}
+
 // EvidenceAckStatus is the machine-readable acknowledgement state for an
 // evidence write. Uncertified is never treated as durable success.
 type EvidenceAckStatus string
 
 const (
 	EvidenceAckDurable     EvidenceAckStatus = "durable"
-	EvidenceAckReplay      EvidenceAckStatus = "replay"
+	EvidenceAckReplay      EvidenceAckStatus = "replayed"
 	EvidenceAckUncertified EvidenceAckStatus = "uncertified"
+	EvidenceAckUnknown     EvidenceAckStatus = "unknown"
 	EvidenceAckUnavailable EvidenceAckStatus = "evidence_unavailable"
 )
 
@@ -39,6 +46,8 @@ type EvidencePersistOutcome struct {
 	Result evidenceoutbox.PersistResult
 	Status EvidenceAckStatus
 	Err    error
+	Input  evidenceoutbox.RunInput
+	Proof  *evidenceoutbox.ReconciliationProof
 }
 
 // EffectiveEvidence returns a true-nil interface when p is nil or a typed-nil
@@ -74,12 +83,11 @@ func PersistEvidence(
 		ctx = reqid.WithRequestID(ctx, in.RequestID)
 	}
 	outcome := PersistEvidenceWithAck(ctx, p, in)
-	err := outcome.Err
-	if err == nil || log == nil {
+	if outcome.Err == nil || log == nil {
 		return
 	}
 	log.WarnCtx(ctx, "evidence persist failed",
-		"error", err.Error(),
+		"outcome", string(outcome.Status),
 		"request_id", in.RequestID,
 		"org_id", in.OrgID.String(),
 	)
@@ -89,22 +97,7 @@ func PersistEvidence(
 // typed uncertified outcome on any failure. Callers must not convert that
 // outcome into a successful evidence-required acknowledgement.
 func PersistEvidenceWithAck(ctx context.Context, p EvidencePersister, in evidenceoutbox.RunInput) EvidencePersistOutcome {
-	p = EffectiveEvidence(p)
-	if p == nil {
-		return EvidencePersistOutcome{Status: EvidenceAckUncertified, Err: errors.New("evidence persister is unavailable")}
-	}
-	result, err := p.PersistRun(ctx, in)
-	if err != nil {
-		return EvidencePersistOutcome{Status: EvidenceAckUncertified, Err: err}
-	}
-	if result.RunID == uuid.Nil || len(result.OutboxIDs) == 0 {
-		return EvidencePersistOutcome{
-			Result: result,
-			Status: EvidenceAckUncertified,
-			Err:    errors.New("evidence commit outcome is unknown"),
-		}
-	}
-	return EvidencePersistOutcome{Result: result, Status: EvidenceAckDurable}
+	return PersistEvidenceForProfile(ctx, p, in, EvidenceAckProfile{Required: true})
 }
 
 // EvidenceExtras carries assemble-time contracts into the durable evidence write.
@@ -135,6 +128,42 @@ func BuildEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Ev
 	return in
 }
 
+// BuildCertifiedEvidenceRun consults the authoritative session lifecycle row,
+// attaches its current fence, and then applies the reviewed positive-list
+// sanitizer. It withholds rows whose stable identity or active fence is absent.
+func BuildCertifiedEvidenceRun(ctx context.Context, store evidenceFenceLookup, snap httptrace.AssembleInput, meta SnapshotMeta, extras EvidenceExtras) (evidenceoutbox.RunInput, error) {
+	in := BuildEvidenceRun(snap, meta, extras)
+	if store == nil || in.SessionID == nil || *in.SessionID == uuid.Nil {
+		return evidenceoutbox.RunInput{}, errors.New("session evidence: authoritative session fence unavailable")
+	}
+	fence, err := store.LookupEvidenceFence(ctx, in.OrgID, *in.SessionID)
+	if err != nil {
+		return evidenceoutbox.RunInput{}, errors.New("session evidence: authoritative session fence unavailable")
+	}
+	if fence.ResourceType != "session" || fence.ResourceID != *in.SessionID || fence.ResourceVersion <= 0 {
+		return evidenceoutbox.RunInput{}, errors.New("session evidence: invalid authoritative session fence")
+	}
+	in.TombstoneFence = &evidenceoutbox.TombstoneFence{
+		ResourceType: fence.ResourceType, ResourceID: fence.ResourceID.String(), ResourceVersion: fence.ResourceVersion,
+	}
+	in.Producer = &evidenceoutbox.ProducerMetadata{
+		ResourceType: fence.ResourceType, ResourceID: fence.ResourceID.String(), ResourceVersion: fence.ResourceVersion,
+		Source: "proxy.session.evidence", RedactionProofVersion: sessionevidence.RedactionProofVersion,
+	}
+	sanitized := sessionevidence.SanitizeRunInput(in)
+	if sanitized.Withheld {
+		return evidenceoutbox.RunInput{}, errors.New("session evidence: sanitizer withheld incomplete identity")
+	}
+	in = sanitized.Input
+	in.RedactionClass = sanitized.RedactionClass
+	if in.Producer == nil {
+		return evidenceoutbox.RunInput{}, errors.New("session evidence: sanitizer removed producer proof")
+	}
+	in.Producer.RedactionClass = sanitized.RedactionClass
+	in.Producer.RedactionProofVersion = sessionevidence.RedactionProofVersion
+	return in, nil
+}
+
 func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras EvidenceExtras) evidenceoutbox.RunInput {
 	agent := snap.AgentID
 	started := snap.Timings.RequestedAt
@@ -152,6 +181,9 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		SessionID:         snap.SessionID,
 		RequestID:         snap.RequestID,
 		TraceID:           firstNonEmpty(snap.TraceID, meta.TraceID),
+		ModelID:           snap.Model,
+		CaptureMode:       "metadata",
+		SampleDecision:    "included",
 		RootSpanID:        firstNonEmpty(snap.RootSpanID, meta.RootSpanID),
 		CheckpointID:      snap.CheckpointID,
 		Completeness:      completeness,
@@ -163,16 +195,26 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 		Candidates:        extras.Candidates,
 		DeployImageDigest: deployImageDigestFromEnv(),
 	}
-	if extras.Producer != nil {
-		in.RedactionClass = extras.Producer.RedactionClass
-		in.Producer = extras.Producer
-		in.TombstoneFence = &evidenceoutbox.TombstoneFence{
-			ResourceType:    extras.Producer.ResourceType,
-			ResourceID:      extras.Producer.ResourceID,
-			ResourceVersion: extras.Producer.ResourceVersion,
+	applyEvidenceExtras(&in, snap, extras)
+	return in
+}
+
+func applyEvidenceExtras(in *evidenceoutbox.RunInput, snap httptrace.AssembleInput, extras EvidenceExtras) {
+	if snap.Usage != nil {
+		in.TokenUsage = &evidenceoutbox.TokenUsage{
+			InputTokens: int64(snap.Usage.InputTokens), OutputTokens: int64(snap.Usage.OutputTokens),
+			TotalTokens: int64(snap.Usage.TotalTokens),
 		}
 	}
-	return in
+	if extras.Producer == nil {
+		return
+	}
+	in.RedactionClass = extras.Producer.RedactionClass
+	in.Producer = extras.Producer
+	in.TombstoneFence = &evidenceoutbox.TombstoneFence{
+		ResourceType: extras.Producer.ResourceType, ResourceID: extras.Producer.ResourceID,
+		ResourceVersion: extras.Producer.ResourceVersion,
+	}
 }
 
 // deployImageDigestFromEnv reads the OCI digest injected by Helm/CI

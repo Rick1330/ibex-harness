@@ -39,12 +39,13 @@ type TombstoneFencedDeliverer interface {
 var ErrTombstonedResource = errors.New("evidenceoutbox: resource is tombstoned or stale")
 
 var (
-	errRedactionUnclassified  = errors.New("evidenceoutbox: payload redaction class is unclassified")
-	errRedactionProhibited    = errors.New("evidenceoutbox: payload redaction class is prohibited")
-	errRedactionUnsupported   = errors.New("evidenceoutbox: payload redaction class is unsupported")
-	errTombstoneFenceMissing  = errors.New("evidenceoutbox: tombstone fence is required")
-	errTombstoneFenceInvalid  = errors.New("evidenceoutbox: tombstone fence is invalid")
-	errFencedDeliveryRequired = errors.New("evidenceoutbox: tombstone-fenced delivery is required")
+	errRedactionUnclassified   = errors.New("evidenceoutbox: payload redaction class is unclassified")
+	errRedactionProhibited     = errors.New("evidenceoutbox: payload redaction class is prohibited")
+	errRedactionNotProjectable = errors.New("evidenceoutbox: redacted payload is not projectable")
+	errRedactionUnsupported    = errors.New("evidenceoutbox: payload redaction class is unsupported")
+	errTombstoneFenceMissing   = errors.New("evidenceoutbox: tombstone fence is required")
+	errTombstoneFenceInvalid   = errors.New("evidenceoutbox: tombstone fence is invalid")
+	errFencedDeliveryRequired  = errors.New("evidenceoutbox: tombstone-fenced delivery is required")
 )
 
 // Relay claims pending outbox rows and delivers them at-least-once.
@@ -226,6 +227,8 @@ func validateRedactionClass(class RedactionClass) error {
 		return nil
 	case RedactionClassUnclassified:
 		return errRedactionUnclassified
+	case RedactionClassRedacted:
+		return errRedactionNotProjectable
 	case RedactionClassProhibited:
 		return errRedactionProhibited
 	default:
@@ -251,6 +254,7 @@ func validateTombstoneFence(fence *TombstoneFence) error {
 
 func isPermanentDeliveryFailure(err error) bool {
 	return errors.Is(err, errRedactionUnclassified) ||
+		errors.Is(err, errRedactionNotProjectable) ||
 		errors.Is(err, errRedactionProhibited) ||
 		errors.Is(err, errRedactionUnsupported) ||
 		errors.Is(err, errTombstoneFenceMissing) ||
