@@ -6,7 +6,12 @@ ALTER TABLE ibex_core.evidence_outbox
 
 -- The relay must receive the scheme from the SECURITY DEFINER claim function;
 -- it does not get direct SELECT access to the tenant-scoped outbox table.
-DROP FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER);
+-- Preserve the original implementation so down migration can restore it without
+-- copying its body or changing its locking and retry semantics.
+ALTER FUNCTION ibex_core.evidence_outbox_claim_pending(INTEGER)
+    RENAME TO evidence_outbox_claim_pending_legacy;
+REVOKE EXECUTE ON FUNCTION ibex_core.evidence_outbox_claim_pending_legacy(INTEGER)
+    FROM ibex_evidence_relay;
 
 CREATE FUNCTION ibex_core.evidence_outbox_claim_pending(p_limit INTEGER)
 RETURNS TABLE (
@@ -31,28 +36,20 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ibex_core, pg_temp
 AS $$
+DECLARE
+    claimed_ids UUID[];
 BEGIN
-    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 256 THEN
-        RAISE EXCEPTION 'evidence_outbox_claim_pending: p_limit must be between 1 and 256';
-    END IF;
+    SELECT array_agg(claimed.id)
+    INTO claimed_ids
+    FROM ibex_core.evidence_outbox_claim_pending_legacy(p_limit) AS claimed;
+
     RETURN QUERY
-    UPDATE ibex_core.evidence_outbox o
-    SET delivery_status = 'in_flight',
-        attempts = o.attempts + 1,
-        claimed_at = NOW()
-    WHERE o.id IN (
-        SELECT e.id FROM ibex_core.evidence_outbox e
-        WHERE e.delivery_status IN ('pending', 'failed')
-          AND e.available_at <= NOW()
-        ORDER BY e.available_at, e.created_at
-        FOR UPDATE SKIP LOCKED
-        LIMIT p_limit
-    )
-    RETURNING
-        o.id, o.org_id, o.event_id, o.aggregate_id, o.aggregate_seq,
+    SELECT o.id, o.org_id, o.event_id, o.aggregate_id, o.aggregate_seq,
         o.schema_version, o.event_type, o.payload, o.payload_digest,
         o.payload_digest_scheme, o.delivery_status, o.attempts, o.available_at,
-        COALESCE(o.last_error, ''), o.created_at, o.delivered_at;
+        COALESCE(o.last_error, ''), o.created_at, o.delivered_at
+    FROM ibex_core.evidence_outbox AS o
+    WHERE o.id = ANY(claimed_ids);
 END;
 $$;
 

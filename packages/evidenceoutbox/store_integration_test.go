@@ -366,6 +366,12 @@ INSERT INTO ibex_core.evidence_outbox (
 	if err != nil {
 		t.Fatalf("process legacy retry: %v", err)
 	}
+	assertLegacyRetryDelivery(t, result, deliverer)
+	assertLegacyRetryRowState(t, db, rowID)
+}
+
+func assertLegacyRetryDelivery(t *testing.T, result evidenceoutbox.RelayBatchResult, deliverer *recordingDeliverer) {
+	t.Helper()
 	if result.Claimed != 1 {
 		t.Fatalf("legacy retry claimed=%d want 1", result.Claimed)
 	}
@@ -375,15 +381,21 @@ INSERT INTO ibex_core.evidence_outbox (
 	if deliveries := deliverer.count(); deliveries != 1 {
 		t.Fatalf("legacy retry deliveries=%d want 1", deliveries)
 	}
+}
 
+func assertLegacyRetryRowState(t *testing.T, db *sql.DB, rowID uuid.UUID) {
+	t.Helper()
 	var scheme, status string
 	if err := db.QueryRowContext(context.Background(), `
 		SELECT payload_digest_scheme, delivery_status
 		FROM ibex_core.evidence_outbox WHERE id = $1`, rowID).Scan(&scheme, &status); err != nil {
 		t.Fatalf("read legacy retry row: %v", err)
 	}
-	if scheme != evidenceoutbox.PayloadDigestSchemePostgresJSONBText || status != string(evidenceoutbox.StatusDelivered) {
-		t.Fatalf("legacy row scheme=%q status=%q", scheme, status)
+	if scheme != evidenceoutbox.PayloadDigestSchemePostgresJSONBText {
+		t.Fatalf("legacy row scheme=%q want %q", scheme, evidenceoutbox.PayloadDigestSchemePostgresJSONBText)
+	}
+	if status != string(evidenceoutbox.StatusDelivered) {
+		t.Fatalf("legacy row status=%q want %q", status, evidenceoutbox.StatusDelivered)
 	}
 }
 

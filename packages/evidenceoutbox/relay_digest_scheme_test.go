@@ -26,6 +26,10 @@ func legacyJSONBDigest(payload []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func digestSchemeRow(payload []byte, scheme, digest string) OutboxRow {
+	return OutboxRow{Payload: payload, PayloadDigestScheme: scheme, PayloadDigest: digest}
+}
+
 func TestUnit_ProcessBatch_DeliversLegacyJSONBDigest(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
@@ -72,50 +76,58 @@ func TestUnit_ProcessBatch_DeliversLegacyJSONBDigest(t *testing.T) {
 	}
 }
 
-func TestUnit_ValidateOutboxPayloadUsesExplicitDigestScheme(t *testing.T) {
+func TestUnit_ValidateOutboxPayloadAcceptsLegacyJSONBTextDigest(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"a": 1}`)
-	legacy := OutboxRow{
-		Payload: payload, PayloadDigestScheme: PayloadDigestSchemePostgresJSONBText,
-		PayloadDigest: legacyJSONBDigest(payload),
-	}
-	if err := validateOutboxPayload(legacy); err != nil {
+	row := digestSchemeRow(payload, PayloadDigestSchemePostgresJSONBText, legacyJSONBDigest(payload))
+	if err := validateOutboxPayload(row); err != nil {
 		t.Fatalf("legacy JSONB digest rejected: %v", err)
 	}
+}
 
-	jcs := legacy
-	jcs.PayloadDigestScheme = PayloadDigestSchemeJCSV1
-	jcs.PayloadDigest = validPayloadDigest(payload)
-	if err := validateOutboxPayload(jcs); err != nil {
+func TestUnit_ValidateOutboxPayloadAcceptsJCSV1Digest(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"a": 1}`)
+	row := digestSchemeRow(payload, PayloadDigestSchemeJCSV1, validPayloadDigest(payload))
+	if err := validateOutboxPayload(row); err != nil {
 		t.Fatalf("JCS digest rejected: %v", err)
 	}
+}
 
-	wrongScheme := legacy
-	wrongScheme.PayloadDigestScheme = PayloadDigestSchemeJCSV1
-	err := validateOutboxPayload(wrongScheme)
+func TestUnit_ValidateOutboxPayloadRejectsLegacyDigestUnderJCS(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"a": 1}`)
+	row := digestSchemeRow(payload, PayloadDigestSchemeJCSV1, legacyJSONBDigest(payload))
+	err := validateOutboxPayload(row)
 	if err == nil {
 		t.Fatal("legacy digest accepted as JCS")
 	}
 	if !strings.Contains(err.Error(), "does not match payload") {
 		t.Fatalf("wrong-scheme error=%v", err)
 	}
+}
 
-	unknownScheme := legacy
-	unknownScheme.PayloadDigestScheme = "unknown/v1"
-	err = validateOutboxPayload(unknownScheme)
+func TestUnit_ValidateOutboxPayloadRejectsUnsupportedDigestScheme(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"a": 1}`)
+	row := digestSchemeRow(payload, "unknown/v1", legacyJSONBDigest(payload))
+	err := validateOutboxPayload(row)
 	if err == nil {
 		t.Fatal("unknown digest scheme accepted")
 	}
 	if !strings.Contains(err.Error(), "unsupported payload_digest_scheme") {
 		t.Fatalf("unknown-scheme error=%v", err)
 	}
+}
 
-	nonCanonical := OutboxRow{
-		Payload:             []byte(`{"duplicate":1,"duplicate":2}`),
-		PayloadDigestScheme: PayloadDigestSchemeJCSV1,
-		PayloadDigest:       strings.Repeat("0", 64),
-	}
-	err = validateOutboxPayload(nonCanonical)
+func TestUnit_ValidateOutboxPayloadRejectsDuplicateKeysForJCS(t *testing.T) {
+	t.Parallel()
+	row := digestSchemeRow(
+		[]byte(`{"duplicate":1,"duplicate":2}`),
+		PayloadDigestSchemeJCSV1,
+		strings.Repeat("0", 64),
+	)
+	err := validateOutboxPayload(row)
 	if err == nil {
 		t.Fatal("duplicate-key payload was accepted")
 	}
