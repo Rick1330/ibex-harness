@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,4 +79,61 @@ func TestWriteEvidenceAck_GoldenHTTPOutcomes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEvidenceAckHelpers_RejectMalformedResultsAndLists(t *testing.T) {
+	validRun, validOutbox := uuid.New(), uuid.New()
+	for name, result := range map[string]evidenceoutbox.PersistResult{
+		"nil run":       {OutboxIDs: []uuid.UUID{validOutbox}},
+		"empty outbox":  {RunID: validRun},
+		"nil outbox id": {RunID: validRun, OutboxIDs: []uuid.UUID{uuid.Nil}},
+	} {
+		if validPersistResult(result) {
+			t.Errorf("%s: malformed result accepted", name)
+		}
+	}
+	if !validPersistResult(evidenceoutbox.PersistResult{RunID: validRun, OutboxIDs: []uuid.UUID{validOutbox}}) {
+		t.Fatal("valid result rejected")
+	}
+	other := uuid.New()
+	for name, tc := range map[string]struct{ a, b []uuid.UUID }{
+		"different lengths":  {a: []uuid.UUID{validOutbox}, b: nil},
+		"different values":   {a: []uuid.UUID{validOutbox}, b: []uuid.UUID{other}},
+		"duplicate mismatch": {a: []uuid.UUID{validOutbox, validOutbox}, b: []uuid.UUID{validOutbox}},
+	} {
+		if sameUUIDList(tc.a, tc.b) {
+			t.Errorf("%s: mismatched lists considered equal", name)
+		}
+	}
+	if !sameUUIDList([]uuid.UUID{validOutbox, other}, []uuid.UUID{other, validOutbox}) {
+		t.Fatal("order-independent matching lists rejected")
+	}
+}
+
+func TestEvidenceAck_HandlesUnavailableAndUnreconcilablePersisters(t *testing.T) {
+	in := evidenceoutbox.RunInput{OrgID: uuid.New(), RequestID: "req", TraceID: "trace"}
+	if out := PersistEvidenceForProfile(context.Background(), nil, in, EvidenceAckProfile{}); out.Status != EvidenceAckUnavailable || out.Err == nil {
+		t.Fatalf("nil persister outcome=%+v", out)
+	}
+	plain := plainEvidencePersister{}
+	if out := PersistEvidenceForProfile(context.Background(), plain, in, EvidenceAckProfile{}); out.Status != EvidenceAckUnavailable {
+		t.Fatalf("unreconcilable persister outcome=%+v", out)
+	}
+	rowID, runID := uuid.New(), uuid.New()
+	agentID, sessionID := uuid.New(), uuid.New()
+	in.AgentID, in.SessionID = &agentID, &sessionID
+	proof := &evidenceoutbox.ReconciliationProof{OrgID: in.OrgID, AgentID: &agentID, SessionID: &sessionID, RequestID: in.RequestID, TraceID: in.TraceID, RunID: runID, OutboxIDs: []uuid.UUID{rowID}, RetryableOutboxIDs: []uuid.UUID{rowID}}
+	store := &fakeEvidenceStore{err: errors.New("db down"), proof: proof}
+	if out := PersistEvidenceForProfile(context.Background(), store, in, EvidenceAckProfile{}); out.Status != EvidenceAckUnavailable {
+		t.Fatalf("required profile incorrectly accepted uncertified proof: %+v", out)
+	}
+	if sameUUIDList([]uuid.UUID{rowID, runID}, []uuid.UUID{rowID, rowID}) {
+		t.Fatal("unmatched UUID multiset accepted")
+	}
+}
+
+type plainEvidencePersister struct{}
+
+func (plainEvidencePersister) PersistRun(context.Context, evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error) {
+	return evidenceoutbox.PersistResult{}, errors.New("db down")
 }

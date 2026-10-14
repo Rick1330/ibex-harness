@@ -393,3 +393,12 @@ func TestUnit_PersistEvidenceForProfile_GoldenOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestUnit_W3CHelpersRejectInvalidCharacters(t *testing.T) {
+	if got := w3cTraceIDOrEmpty("aabbccddeeff0011223344556677889z"); got != "" {
+		t.Fatalf("invalid trace accepted: %q", got)
+	}
+	if got := w3cSpanIDOrEmpty("aabbccddeeff00zz"); got != "" {
+		t.Fatalf("invalid span accepted: %q", got)
+	}
+}

@@ -566,3 +566,32 @@ func TestUnit_PreparePostResponse_BufferOnStreamingIncomplete(t *testing.T) {
 		t.Fatal("expected extraction buffer for incomplete streaming turn")
 	}
 }
+
+func TestUnit_DeferredEvidence_WithholdsWithoutFenceStore(t *testing.T) {
+	job := PostResponseJob{Deps: LifecycleDeps{Evidence: &fakeEvidenceStore{}}, Snap: httptrace.AssembleInput{RequestID: "req", OrgID: uuid.New(), AgentID: uuid.New()}}
+	persistDeferredEvidence(job)
+}
+
+func TestUnit_DeferredEvidence_WithholdsOnCertifiedBuildError(t *testing.T) {
+	sessionID := uuid.New()
+	job := PostResponseJob{
+		Deps: LifecycleDeps{Store: newMemSessionStore(), Evidence: &fakeEvidenceStore{}},
+		Snap: httptrace.AssembleInput{RequestID: "req", OrgID: uuid.New(), AgentID: uuid.New(), SessionID: &sessionID},
+	}
+	persistDeferredEvidence(job)
+}
+
+func TestUnit_DeferredEvidence_LogsPersistenceErrorAndSupportsNilLogger(t *testing.T) {
+	in := evidenceoutbox.RunInput{OrgID: uuid.New(), RequestID: "req", TraceID: "aabbccddeeff00112233445566778899"}
+	persistDeferredEvidenceRun(PostResponseJob{Deps: LifecycleDeps{Evidence: &fakeEvidenceStore{err: errors.New("db down")}}, Log: logger.Discard("t")}, context.Background(), in)
+	logDeferredEvidenceWithheld(PostResponseJob{Snap: inAssembleInput(in)}, context.Background())
+	logDeferredEvidenceWithheld(PostResponseJob{Snap: inAssembleInput(in), Log: logger.Discard("t")}, context.Background())
+}
+
+func inAssembleInput(in evidenceoutbox.RunInput) httptrace.AssembleInput {
+	agentID := uuid.Nil
+	if in.AgentID != nil {
+		agentID = *in.AgentID
+	}
+	return httptrace.AssembleInput{RequestID: in.RequestID, OrgID: in.OrgID, AgentID: agentID}
+}

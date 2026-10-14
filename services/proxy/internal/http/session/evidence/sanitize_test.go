@@ -2,6 +2,7 @@ package evidence
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,69 @@ func TestSanitizeRunInput_DoesNotUpgradePreRedactedInput(t *testing.T) {
 	got := SanitizeRunInput(in)
 	if got.Withheld || got.RedactionClass != evidenceoutbox.RedactionClassRedacted || got.Input.RedactionClass != evidenceoutbox.RedactionClassRedacted {
 		t.Fatalf("pre-redacted input was upgraded: %+v", got)
+	}
+}
+
+func TestSanitizeRunInput_InvalidAllowlistedBranchesDowngrade(t *testing.T) {
+	base := validRunInput()
+	base.RootSpanID = "aabbccddeeff0011"
+	base.MetricsSpanID = "1122334455667788"
+	base.CheckpointID = uuidPtr(uuid.New())
+	turnID := 1
+	base.TurnID = &turnID
+	base.Spans = []evidenceoutbox.SpanInput{{SpanID: "aabbccddeeff0011", ParentSpanID: "1122334455667788", OperationKind: "proxy.chat", Status: "ok", StartedAt: base.StartedAt, EndedAt: base.EndedAt}}
+	base.Metrics = &evidenceoutbox.AssemblyMetrics{}
+	base.Candidates = []evidenceoutbox.ScoreCandidate{{MemoryID: uuid.New(), RetrievalRank: 1}}
+	validCandidate := base.Candidates[0]
+
+	cases := map[string]func(*evidenceoutbox.RunInput){
+		"invalid model":         func(in *evidenceoutbox.RunInput) { in.ModelID = "provider response\n" },
+		"negative input tokens": func(in *evidenceoutbox.RunInput) { in.TokenUsage = &evidenceoutbox.TokenUsage{InputTokens: -1} },
+		"oversized token total": func(in *evidenceoutbox.RunInput) {
+			in.TokenUsage = &evidenceoutbox.TokenUsage{TotalTokens: 1_000_000_000_001}
+		},
+		"bad root span":           func(in *evidenceoutbox.RunInput) { in.RootSpanID = "bad" },
+		"bad metrics span":        func(in *evidenceoutbox.RunInput) { in.MetricsSpanID = "bad" },
+		"nil checkpoint":          func(in *evidenceoutbox.RunInput) { in.CheckpointID = uuidPtr(uuid.Nil) },
+		"negative turn":           func(in *evidenceoutbox.RunInput) { value := -1; in.TurnID = &value },
+		"invalid status":          func(in *evidenceoutbox.RunInput) { in.Status = "unknown" },
+		"invalid completeness":    func(in *evidenceoutbox.RunInput) { in.Completeness = "unsafe" },
+		"invalid capture mode":    func(in *evidenceoutbox.RunInput) { in.CaptureMode = "unsafe" },
+		"invalid sample decision": func(in *evidenceoutbox.RunInput) { in.SampleDecision = "unsafe" },
+		"reversed timing":         func(in *evidenceoutbox.RunInput) { in.EndedAt = in.StartedAt.Add(-time.Second) },
+		"invalid image digest":    func(in *evidenceoutbox.RunInput) { in.DeployImageDigest = "unsafe" },
+		"invalid span":            func(in *evidenceoutbox.RunInput) { in.Spans[0].OperationKind = "unsafe" },
+		"span attributes":         func(in *evidenceoutbox.RunInput) { in.Spans[0].Attributes = map[string]any{"secret": "value"} },
+		"span reversed timing":    func(in *evidenceoutbox.RunInput) { in.Spans[0].EndedAt = in.Spans[0].StartedAt.Add(-time.Second) },
+		"invalid metrics":         func(in *evidenceoutbox.RunInput) { in.Metrics.TotalMs = -1 },
+		"invalid candidate ID":    func(in *evidenceoutbox.RunInput) { in.Candidates[0].MemoryID = uuid.Nil },
+		"negative retrieval rank": func(in *evidenceoutbox.RunInput) {
+			in.Candidates[0] = validCandidate
+			in.Candidates[0].RetrievalRank = -1
+		},
+		"negative final rank":     func(in *evidenceoutbox.RunInput) { value := -1; in.Candidates[0].FinalRank = &value },
+		"nan score":               func(in *evidenceoutbox.RunInput) { in.Candidates[0].Similarity = floatPtr(math.NaN()) },
+		"invalid score schema":    func(in *evidenceoutbox.RunInput) { in.Candidates[0].ScoreSchema = "unsafe schema" },
+		"invalid score component": func(in *evidenceoutbox.RunInput) { in.Candidates[0].ScoreComponents = map[string]float64{"unsafe": 1} },
+		"invalid exclusion":       func(in *evidenceoutbox.RunInput) { in.Candidates[0].Exclusion = "unsafe" },
+		"negative token estimate": func(in *evidenceoutbox.RunInput) { value := -1; in.Candidates[0].TokenEstimate = &value },
+		"invalid directive hash": func(in *evidenceoutbox.RunInput) {
+			in.Directive = &evidenceoutbox.DirectiveSnapshot{ContentHash: "unsafe"}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := base
+			in.Spans = append([]evidenceoutbox.SpanInput(nil), base.Spans...)
+			in.Candidates = append([]evidenceoutbox.ScoreCandidate(nil), base.Candidates...)
+			metrics := *base.Metrics
+			in.Metrics = &metrics
+			mutate(&in)
+			got := SanitizeRunInput(in)
+			if got.Withheld || got.RedactionClass != evidenceoutbox.RedactionClassRedacted {
+				t.Fatalf("classification=%q withheld=%v dropped=%v", got.RedactionClass, got.Withheld, got.DroppedFields)
+			}
+		})
 	}
 }
 
