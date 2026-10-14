@@ -1,7 +1,7 @@
 // Package apierror defines canonical IBEX HTTP and gRPC error codes.
 package apierror
 
-// Code is a canonical IBEX error code string (UPPER_SNAKE_CASE, stable across API versions).
+// Code is a canonical IBEX error code string, stable across API versions.
 type Code string
 
 // Client error codes (4xx).
@@ -72,6 +72,8 @@ const (
 	CodeInternalError Code = "INTERNAL_ERROR"
 	// CodeServiceDegraded tells clients an internal dependency failed unexpectedly (HTTP 5xx).
 	CodeServiceDegraded Code = "SERVICE_DEGRADED"
+	// CodeEvidenceUnavailable tells clients the required evidence outcome could not be certified.
+	CodeEvidenceUnavailable Code = "evidence_unavailable"
 	// CodeAuthUnavailable tells clients the auth service is unreachable; retry later.
 	CodeAuthUnavailable Code = "AUTH_UNAVAILABLE"
 	// CodeProviderUnavailable tells clients the upstream LLM provider is unreachable or errored.
