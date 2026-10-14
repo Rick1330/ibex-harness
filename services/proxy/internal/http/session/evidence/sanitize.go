@@ -96,27 +96,44 @@ func sanitizeModelUsage(in evidenceoutbox.RunInput, out *evidenceoutbox.RunInput
 }
 
 func sanitizeTraceReferences(in evidenceoutbox.RunInput, out *evidenceoutbox.RunInput, markDropped func(string)) {
-	if validW3C(in.RootSpanID, 16) {
-		out.RootSpanID = strings.ToLower(in.RootSpanID)
-	} else if in.RootSpanID != "" {
-		markDropped("root_span_id")
+	out.RootSpanID = sanitizeSpanReference(in.RootSpanID, "root_span_id", markDropped)
+	out.MetricsSpanID = sanitizeSpanReference(in.MetricsSpanID, "metrics_span_id", markDropped)
+	out.CheckpointID = sanitizeUUIDReference(in.CheckpointID, "checkpoint_id", markDropped)
+	out.TurnID = sanitizeTurnReference(in.TurnID, markDropped)
+}
+
+func sanitizeSpanReference(value, field string, markDropped func(string)) string {
+	if value == "" {
+		return ""
 	}
-	if validW3C(in.MetricsSpanID, 16) {
-		out.MetricsSpanID = strings.ToLower(in.MetricsSpanID)
-	} else if in.MetricsSpanID != "" {
-		markDropped("metrics_span_id")
+	if !validW3C(value, 16) {
+		markDropped(field)
+		return ""
 	}
-	if in.CheckpointID != nil && *in.CheckpointID != uuid.Nil {
-		out.CheckpointID = cloneUUID(in.CheckpointID)
-	} else if in.CheckpointID != nil {
-		markDropped("checkpoint_id")
+	return strings.ToLower(value)
+}
+
+func sanitizeUUIDReference(value *uuid.UUID, field string, markDropped func(string)) *uuid.UUID {
+	if value == nil {
+		return nil
 	}
-	if in.TurnID != nil && *in.TurnID >= 0 {
-		value := *in.TurnID
-		out.TurnID = &value
-	} else if in.TurnID != nil {
+	if *value == uuid.Nil {
+		markDropped(field)
+		return nil
+	}
+	return cloneUUID(value)
+}
+
+func sanitizeTurnReference(value *int, markDropped func(string)) *int {
+	if value == nil {
+		return nil
+	}
+	if *value < 0 {
 		markDropped("turn_id")
+		return nil
 	}
+	copy := *value
+	return &copy
 }
 
 func sanitizeStatusAndCompleteness(in evidenceoutbox.RunInput, out *evidenceoutbox.RunInput, markDropped func(string)) {

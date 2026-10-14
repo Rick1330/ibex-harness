@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
@@ -148,18 +149,12 @@ func sameUUIDList(a, b []uuid.UUID) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	counts := make(map[uuid.UUID]int, len(a))
-	for _, id := range a {
-		counts[id]++
-	}
-	for _, id := range b {
-		counts[id]--
-		if counts[id] < 0 {
-			return false
-		}
-	}
-	for _, count := range counts {
-		if count != 0 {
+	left := append([]uuid.UUID(nil), a...)
+	right := append([]uuid.UUID(nil), b...)
+	sort.Slice(left, func(i, j int) bool { return left[i].String() < left[j].String() })
+	sort.Slice(right, func(i, j int) bool { return right[i].String() < right[j].String() })
+	for i := range left {
+		if left[i] != right[i] {
 			return false
 		}
 	}
