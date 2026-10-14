@@ -16,7 +16,8 @@ The session producer may assign `metadata` only after `session/evidence.Sanitize
 | `request_id` | 1–128 ASCII letters, digits, `.`, `_`, `:`, or `-` | Stable request correlation only. |
 | `trace_id` | Non-zero 32-character W3C hexadecimal ID | Normalized to lower case. |
 | `root_span_id`, `metrics_span_id`, `span.span_id`, `span.parent_span_id` | Non-zero 16-character W3C hexadecimal ID | Normalized to lower case. |
-| `turn_id`, `candidate.rank`, `candidate.final_rank`, `candidate.delta_rank`, `candidate.token_estimate` | Non-negative integer | No message or memory text. |
+| `turn_id`, `candidate.rank`, `candidate.final_rank`, `candidate.token_estimate` | Non-negative integer | No message or memory text. |
+| `candidate.delta_rank` | Signed integer rank movement | Negative values are valid when a candidate moves earlier in the final order; no message or memory text. |
 | `status` | `ok` or `error` | An upstream free-form error body/code is never included. |
 | `model_id` | 1–128 ASCII letters, digits, `.`, `_`, `:`, `+`, `/`, or `-` | Server-selected model identifier only; provider name and raw request fields are not included. |
 | `completeness` | `complete`, `partial`, `sampled`, `late`, `redacted`, `expired`, `deleted`, or `simulated` | Unsafe/unrecognized values become `partial` and downgrade classification. |
@@ -31,7 +32,7 @@ The session producer may assign `metadata` only after `session/evidence.Sanitize
 | `candidate.scores`, `candidate.score_components` | Finite numeric values; component keys limited to `similarity`, `confidence`, `composite`, `recency`, `token_fit`, `coverage` | Arbitrary score keys are removed and downgrade the row. |
 | `candidate.category` | One of `factual`, `preference`, `behavioral`, `episodic`, `procedural` | Mirrors the memory write taxonomy; arbitrary labels are removed and downgrade the row. |
 | `candidate.score_schema` | 1–64 ASCII letters, digits, `.`, `_`, `/`, or `-` | Version label only. |
-| `candidate.exclusion` | `none`, `budget`, `deduplicated`, `filtered`, `low_confidence`, or `not_selected` | Arbitrary explanation text is not allowed. |
+| `candidate.exclusion` | `included`, `none`, `budget`, `filter`, `deduplicated`, `filtered`, `low_confidence`, or `not_selected` | `included` is emitted by the context assembler when no exclusion applies and `filter` when a candidate is filtered; arbitrary explanation text is not allowed. |
 | `directive.content_hash` | 64 hex characters, optionally prefixed by `sha256:` | No directive content is included. |
 
 The following are explicitly **not metadata** and are removed or cause the row to be withheld/downgraded: message bodies, tool arguments/results, memory text, provider request/response bodies, arbitrary attributes, provider names, malformed model identifiers, category labels outside the enumerated taxonomy, session event bodies, upstream error strings, authorization material, bearer-token values, secrets, and unrecognized future fields. Numeric token counts are allowed; prompt/completion contents are not. A `redacted` row is persisted only as non-projectable evidence; the current relay must continue to reject it rather than infer safety.

@@ -73,7 +73,7 @@ const (
 	// CodeServiceDegraded tells clients an internal dependency failed unexpectedly (HTTP 5xx).
 	CodeServiceDegraded Code = "SERVICE_DEGRADED"
 	// CodeEvidenceUnavailable tells clients the required evidence outcome could not be certified.
-	CodeEvidenceUnavailable Code = "evidence_unavailable"
+	CodeEvidenceUnavailable Code = "EVIDENCE_UNAVAILABLE"
 	// CodeAuthUnavailable tells clients the auth service is unreachable; retry later.
 	CodeAuthUnavailable Code = "AUTH_UNAVAILABLE"
 	// CodeProviderUnavailable tells clients the upstream LLM provider is unreachable or errored.

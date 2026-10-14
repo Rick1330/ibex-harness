@@ -369,7 +369,7 @@ func sanitizeCandidateExclusion(in evidenceoutbox.ScoreCandidate, out *evidenceo
 	if in.Exclusion == "" {
 		return
 	}
-	if oneOf(in.Exclusion, "none", "budget", "deduplicated", "filtered", "low_confidence", "not_selected") {
+	if oneOf(in.Exclusion, "included", "none", "budget", "filter", "deduplicated", "filtered", "low_confidence", "not_selected") {
 		out.Exclusion = in.Exclusion
 	} else {
 		markDropped("candidate.exclusion")

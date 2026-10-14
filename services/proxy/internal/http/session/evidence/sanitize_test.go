@@ -23,8 +23,15 @@ func TestSanitizeRunInput_AllowlistedFieldsRemainMetadata(t *testing.T) {
 	in.Metrics = &evidenceoutbox.AssemblyMetrics{TotalMs: 12, CandidatesEvaluated: 2}
 	in.Candidates = []evidenceoutbox.ScoreCandidate{{
 		MemoryID: uuid.New(), RetrievalRank: 0, Category: "episodic", ScoreSchema: "score.v1",
-		Similarity: floatPtr(0.91), ScoreComponents: map[string]float64{"similarity": 0.91},
+		Similarity: floatPtr(0.91), ScoreComponents: map[string]float64{"similarity": 0.91}, Exclusion: "included",
 	}}
+	deltaRank := -1
+	in.Candidates[0].DeltaRank = &deltaRank
+	filterCandidate := in.Candidates[0]
+	filterCandidate.MemoryID = uuid.New()
+	filterCandidate.Exclusion = "filter"
+	filterCandidate.DeltaRank = nil
+	in.Candidates = append(in.Candidates, filterCandidate)
 	in.Directive = &evidenceoutbox.DirectiveSnapshot{DirectiveVersionID: uuidPtr(uuid.New()), ContentHash: strings.Repeat("a", 64)}
 
 	got := SanitizeRunInput(in)
@@ -39,6 +46,9 @@ func TestSanitizeRunInput_AllowlistedFieldsRemainMetadata(t *testing.T) {
 	}
 	if got.Input.ModelID != in.ModelID || got.Input.TokenUsage == nil || got.Input.TokenUsage.TotalTokens != 165 {
 		t.Fatalf("safe model/token metadata missing: model=%q usage=%+v", got.Input.ModelID, got.Input.TokenUsage)
+	}
+	if len(got.Input.Candidates) != 2 || got.Input.Candidates[0].Exclusion != "included" || got.Input.Candidates[0].DeltaRank == nil || *got.Input.Candidates[0].DeltaRank != -1 || got.Input.Candidates[1].Exclusion != "filter" {
+		t.Fatalf("producer candidate metadata changed: %+v", got.Input.Candidates[0])
 	}
 	if len(got.DroppedFields) != 0 {
 		t.Fatalf("unexpected dropped fields: %v", got.DroppedFields)

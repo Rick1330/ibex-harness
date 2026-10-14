@@ -150,6 +150,10 @@ func BuildCertifiedEvidenceRun(ctx context.Context, store evidenceFenceLookup, s
 		ResourceType: fence.ResourceType, ResourceID: fence.ResourceID.String(), ResourceVersion: fence.ResourceVersion,
 		Source: "proxy.session.evidence", RedactionProofVersion: sessionevidence.RedactionProofVersion,
 	}
+	in.ErrorCode = ""
+	for i := range in.Spans {
+		in.Spans[i].ErrorCode = ""
+	}
 	sanitized := sessionevidence.SanitizeRunInput(in)
 	if sanitized.Withheld {
 		return evidenceoutbox.RunInput{}, errors.New("session evidence: sanitizer withheld incomplete identity")
@@ -201,9 +205,13 @@ func baseEvidenceRun(snap httptrace.AssembleInput, meta SnapshotMeta, extras Evi
 
 func applyEvidenceExtras(in *evidenceoutbox.RunInput, snap httptrace.AssembleInput, extras EvidenceExtras) {
 	if snap.Usage != nil {
+		totalTokens := snap.Usage.TotalTokens
+		if totalTokens == 0 && snap.Usage.InputTokens > 0 && snap.Usage.OutputTokens > 0 {
+			totalTokens = snap.Usage.InputTokens + snap.Usage.OutputTokens
+		}
 		in.TokenUsage = &evidenceoutbox.TokenUsage{
 			InputTokens: int64(snap.Usage.InputTokens), OutputTokens: int64(snap.Usage.OutputTokens),
-			TotalTokens: int64(snap.Usage.TotalTokens),
+			TotalTokens: int64(totalTokens),
 		}
 	}
 	if extras.Producer == nil {

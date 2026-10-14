@@ -45,7 +45,9 @@ func PersistEvidenceForProfile(ctx context.Context, p EvidencePersister, in evid
 		err = errors.New("evidence commit outcome is unknown")
 	}
 	out.Err = err
-	if reconciled, ok := reconcileEvidenceFailure(ctx, p, in, profile, out); ok {
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), CheckpointTaskTimeout)
+	defer cancel()
+	if reconciled, ok := reconcileEvidenceFailure(reconcileCtx, p, in, profile, out); ok {
 		return reconciled
 	}
 	if unknown {
@@ -76,6 +78,7 @@ func reconcileEvidenceFailure(ctx context.Context, p EvidencePersister, in evide
 	}
 	if proof.AllDelivered(in) {
 		out.Status = EvidenceAckReplay
+		out.Err = nil
 		return out, true
 	}
 	if profile.AllowUncertified && proof.HasDurableRetry(in) {

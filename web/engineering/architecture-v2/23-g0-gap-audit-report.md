@@ -1,8 +1,8 @@
 # G0 / GAP-001–012 Audit Report
 
-**Repository:** `Rick1330/ibex-harness`  
-**Audited checkout:** `main` at `e633e48983da4bb21f552343e89632172270cb1a` (`feat(evidence): add ClickHouse relay sink pilot (#968)`)  
-**Audit date:** 2026-10-13  
+**Repository:** `Rick1330/ibex-harness`
+**Audited checkout:** `main` at `e633e48983da4bb21f552343e89632172270cb1a` (`feat(evidence): add ClickHouse relay sink pilot (#968)`)
+**Audit date:** 2026-10-13
 **Profile:** local Podman development/test stack
 
 ## Executive conclusion
@@ -39,7 +39,7 @@ The five explicit follow-up decisions in `18-gap-register.md:63-69` are **not al
 | Production evidence producer metadata and relay readiness | **Unresolved** | `18-gap-register.md:65`; `services/proxy/internal/http/session/evidence.go:91-118` constructs `RunInput` without `RedactionClass` or `TombstoneFence`. The store therefore defaults to unclassified/fenceless metadata and the relay rejects/poisons it. No producer sanitizer or authoritative producer fence source is wired. |
 | Memory historical-mode trust boundary | **Partially addressed, not resolved** | `18-gap-register.md:66`; `SearchMode` is still an in-process `PgVectorStore.search` parameter. The conflict loader rejects ordinary user mode, but a direct internal caller can request historical mode. A dedicated capability-bearing write-path adapter is not present. |
 | PolicySnapshot authority identity and freshness | **Resolved in the dated G0 contract record, but stale/contradictory elsewhere** | `21-g0-owner-decision-record.md:17-18,28-44` selects AuthService authority and records 60s/30s/5m bounds plus 5s clock skew. `18-gap-register.md:67` still presents the exact authority/freshness/stale behavior as an open owner decision. |
-| HTTP mapping for evidence acknowledgement | **Unresolved** | `18-gap-register.md:68` explicitly says exact HTTP/error codes are not chosen. The recommended candidate is `503 evidence_unavailable`, with profile-approved `202 outcome=uncertified` only after durable retry state; no accepted golden response mapping is implemented. |
+| HTTP mapping for evidence acknowledgement | **Unresolved** | `18-gap-register.md:68` explicitly says exact HTTP/error codes are not chosen. The recommended candidate is `503 EVIDENCE_UNAVAILABLE`, with profile-approved `202 outcome=uncertified` only after durable retry state; no accepted golden response mapping is implemented. |
 | Acting-owner confirmation | **Contradictory, not safely closed** | `21-g0-owner-decision-record.md:24,78` records Rick1330 as acting owner and says acceptance occurred. `18-gap-register.md:26,43,57,61,69` says individual confirmation remains pending through 2026-10-22. This requires an explicit reconciliation record, not inference. |
 
 Therefore, the answer to “were all five open G0 questions answered?” is **no**. One is clearly unresolved, one is partially addressed but lacks the required capability boundary, one is answered only by the dated decision record but contradicted by the GAP register, one remains explicitly unresolved, and the owner confirmation state conflicts across records.
@@ -117,7 +117,7 @@ The GAP register does not mark any gap as closed or accepted. The current dispos
 
 1. **Reconcile the owner record immediately:** choose whether `21-g0-owner-decision-record.md` supersedes the historical pending language in `18-gap-register.md` and `03-contract-registry.md`; update all three documents consistently with the same owner, reviewer, acceptance date, expiry, and scope.
 2. **Do not enable production evidence relay yet:** keep the current fail-closed behavior. Add a reviewed sanitizer/content-class proof and an authoritative resource-lifecycle fence source to the session producer before labeling rows `metadata`.
-3. **Choose and test the acknowledgement mapping:** record the final `evidence_unavailable`/`uncertified` status and response schema, then add golden HTTP tests for failed, unknown, durable, replay, and degraded-profile outcomes.
+3. **Choose and test the acknowledgement mapping:** record the final `EVIDENCE_UNAVAILABLE`/`uncertified` status and response schema, then add golden HTTP tests for failed, unknown, durable, replay, and degraded-profile outcomes.
 4. **Implement JCS where the evidence contract requires it:** use a reviewed RFC 8785-compatible library and run the repository vectors from `contracts/jcs-test-vectors.json`; do not conflate this with PostgreSQL JSONB canonicalization or checkpoint hashing.
 5. **Replace the in-process historical mode with a dedicated internal adapter/capability boundary** before expanding historical conflict retrieval.
 6. **Keep all production claims bounded:** current evidence supports local Podman readiness and focused local tests only, not hosted/HA, production support, exactly-once effects, or G1–G4 completion.

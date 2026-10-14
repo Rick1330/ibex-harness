@@ -9,6 +9,8 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/provider"
+	pkgssession "github.com/Rick1330/ibex-harness/packages/session"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/google/uuid"
 )
@@ -21,6 +23,14 @@ type fakeEvidenceStore struct {
 	useResult bool
 	proof     *evidenceoutbox.ReconciliationProof
 	proofErr  error
+}
+
+type fakeEvidenceFenceStore struct {
+	fence pkgssession.EvidenceFence
+}
+
+func (f fakeEvidenceFenceStore) LookupEvidenceFence(_ context.Context, _, _ uuid.UUID) (pkgssession.EvidenceFence, error) {
+	return f.fence, nil
 }
 
 func (f *fakeEvidenceStore) PersistRun(_ context.Context, in evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error) {
@@ -227,6 +237,32 @@ func TestUnit_BuildEvidenceRun_ErrorOutcome(t *testing.T) {
 	}
 }
 
+func TestUnit_BuildCertifiedEvidenceRun_ErrorOutcomeRemainsMetadata(t *testing.T) {
+	t.Parallel()
+	orgID, agentID, sessionID := uuid.New(), uuid.New(), uuid.New()
+	store := fakeEvidenceFenceStore{fence: pkgssession.EvidenceFence{
+		ResourceType: "session", ResourceID: sessionID, ResourceVersion: 4,
+	}}
+	in, err := BuildCertifiedEvidenceRun(context.Background(), store, httptrace.AssembleInput{
+		RequestID: "req-certified-error", OrgID: orgID, AgentID: agentID, SessionID: &sessionID,
+		TraceID: "aabbccddeeff00112233445566778899", RootSpanID: "aabbccddeeff0011",
+		Usage:   &provider.Usage{InputTokens: 120, OutputTokens: 45},
+		Outcome: httptrace.RequestOutcome{StatusCode: 502, IsComplete: false, ErrorCode: "PROVIDER_UNAVAILABLE"},
+	}, SnapshotMeta{}, EvidenceExtras{AssembleSpanID: "1122334455667788"})
+	if err != nil {
+		t.Fatalf("BuildCertifiedEvidenceRun() error = %v", err)
+	}
+	if in.RedactionClass != evidenceoutbox.RedactionClassMetadata || in.Status != "error" {
+		t.Fatalf("classification/status = %q/%q", in.RedactionClass, in.Status)
+	}
+	if in.ErrorCode != "" || in.Spans[0].ErrorCode != "" || in.Spans[1].ErrorCode != "" {
+		t.Fatalf("free-form error code survived: run=%q spans=%q/%q", in.ErrorCode, in.Spans[0].ErrorCode, in.Spans[1].ErrorCode)
+	}
+	if in.TokenUsage == nil || in.TokenUsage.TotalTokens != 165 {
+		t.Fatalf("total token fallback = %+v", in.TokenUsage)
+	}
+}
+
 func TestUnit_EffectiveEvidence_TypedNil(t *testing.T) {
 	t.Parallel()
 	var typedNil *fakeEvidenceStore
@@ -334,6 +370,10 @@ func TestUnit_PersistEvidenceForProfile_GoldenOutcomes(t *testing.T) {
 		{name: "failed-required", store: &fakeEvidenceStore{err: errors.New("db down")}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckUnavailable, wantHTTP: http.StatusServiceUnavailable},
 		{name: "failed-degraded-without-proof", store: &fakeEvidenceStore{err: errors.New("db down")}, profile: EvidenceAckProfile{Required: true, AllowUncertified: true}, wantStatus: EvidenceAckUnavailable, wantHTTP: http.StatusServiceUnavailable},
 		{name: "degraded-with-durable-retry-proof", store: &fakeEvidenceStore{err: errors.New("db down"), proof: proof}, profile: EvidenceAckProfile{Required: true, AllowUncertified: true}, wantStatus: EvidenceAckUncertified, wantHTTP: http.StatusAccepted},
+		{name: "reconciled-replay", store: &fakeEvidenceStore{err: errors.New("ack lost"), proof: &evidenceoutbox.ReconciliationProof{
+			OrgID: in.OrgID, AgentID: &agentID, SessionID: &sessionID, RequestID: in.RequestID, TraceID: in.TraceID,
+			RunID: proofRunID, OutboxIDs: []uuid.UUID{proofOutboxID},
+		}}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckReplay, wantHTTP: http.StatusOK},
 		{name: "unknown", store: &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{}}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckUnknown, wantHTTP: http.StatusServiceUnavailable},
 		{name: "replay", store: &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{RunID: uuid.New(), OutboxIDs: []uuid.UUID{uuid.New()}, Replayed: true}}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckReplay, wantHTTP: http.StatusOK},
 	}
@@ -342,6 +382,9 @@ func TestUnit_PersistEvidenceForProfile_GoldenOutcomes(t *testing.T) {
 			out := PersistEvidenceForProfile(context.Background(), tc.store, in, tc.profile)
 			if out.Status != tc.wantStatus {
 				t.Fatalf("status=%q want %q err=%v", out.Status, tc.wantStatus, out.Err)
+			}
+			if tc.name == "replay" && out.Err != nil {
+				t.Fatalf("reconciled replay retained error: %v", out.Err)
 			}
 			got, _ := EvidenceAckHTTP(out)
 			if got != tc.wantHTTP {
