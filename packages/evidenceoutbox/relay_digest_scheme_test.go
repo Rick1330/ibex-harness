@@ -94,44 +94,43 @@ func TestUnit_ValidateOutboxPayloadAcceptsJCSV1Digest(t *testing.T) {
 	}
 }
 
-func TestUnit_ValidateOutboxPayloadRejectsLegacyDigestUnderJCS(t *testing.T) {
+func TestUnit_ValidateOutboxPayloadRejectsInvalidSchemesAndPayloads(t *testing.T) {
 	t.Parallel()
 	payload := []byte(`{"a": 1}`)
-	row := digestSchemeRow(payload, PayloadDigestSchemeJCSV1, legacyJSONBDigest(payload))
-	err := validateOutboxPayload(row)
-	if err == nil {
-		t.Fatal("legacy digest accepted as JCS")
+	tests := []struct {
+		name string
+		row  OutboxRow
+		want string
+	}{
+		{
+			name: "legacy digest under JCS",
+			row:  digestSchemeRow(payload, PayloadDigestSchemeJCSV1, legacyJSONBDigest(payload)),
+			want: "does not match payload",
+		},
+		{
+			name: "unsupported digest scheme",
+			row:  digestSchemeRow(payload, "unknown/v1", legacyJSONBDigest(payload)),
+			want: "unsupported payload_digest_scheme",
+		},
+		{
+			name: "duplicate keys for JCS",
+			row: digestSchemeRow(
+				[]byte(`{"duplicate":1,"duplicate":2}`),
+				PayloadDigestSchemeJCSV1,
+				strings.Repeat("0", 64),
+			),
+			want: "payload is not canonicalizable",
+		},
 	}
-	if !strings.Contains(err.Error(), "does not match payload") {
-		t.Fatalf("wrong-scheme error=%v", err)
-	}
-}
-
-func TestUnit_ValidateOutboxPayloadRejectsUnsupportedDigestScheme(t *testing.T) {
-	t.Parallel()
-	payload := []byte(`{"a": 1}`)
-	row := digestSchemeRow(payload, "unknown/v1", legacyJSONBDigest(payload))
-	err := validateOutboxPayload(row)
-	if err == nil {
-		t.Fatal("unknown digest scheme accepted")
-	}
-	if !strings.Contains(err.Error(), "unsupported payload_digest_scheme") {
-		t.Fatalf("unknown-scheme error=%v", err)
-	}
-}
-
-func TestUnit_ValidateOutboxPayloadRejectsDuplicateKeysForJCS(t *testing.T) {
-	t.Parallel()
-	row := digestSchemeRow(
-		[]byte(`{"duplicate":1,"duplicate":2}`),
-		PayloadDigestSchemeJCSV1,
-		strings.Repeat("0", 64),
-	)
-	err := validateOutboxPayload(row)
-	if err == nil {
-		t.Fatal("duplicate-key payload was accepted")
-	}
-	if !strings.Contains(err.Error(), "payload is not canonicalizable") {
-		t.Fatalf("duplicate-key error=%v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateOutboxPayload(tc.row)
+			if err == nil {
+				t.Fatal("invalid payload or digest scheme was accepted")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validation error=%v want substring %q", err, tc.want)
+			}
+		})
 	}
 }

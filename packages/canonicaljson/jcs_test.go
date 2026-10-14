@@ -62,6 +62,28 @@ func TestCanonicalizeRejectsDuplicateObjectNames(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeObjectAndArrayRoots(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "object", input: `{"b":2,"a":1}`, want: `{"a":1,"b":2}`},
+		{name: "array", input: `[2,1]`, want: `[2,1]`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Canonicalize([]byte(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("canonical=%q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCanonicalizeScalarRoots(t *testing.T) {
 	tests := []struct {
 		name  string
