@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -13,9 +14,11 @@ import (
 )
 
 type fakeEvidenceStore struct {
-	calls int
-	last  evidenceoutbox.RunInput
-	err   error
+	calls     int
+	last      evidenceoutbox.RunInput
+	err       error
+	result    evidenceoutbox.PersistResult
+	useResult bool
 }
 
 func (f *fakeEvidenceStore) PersistRun(_ context.Context, in evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error) {
@@ -24,7 +27,10 @@ func (f *fakeEvidenceStore) PersistRun(_ context.Context, in evidenceoutbox.RunI
 	if f.err != nil {
 		return evidenceoutbox.PersistResult{}, f.err
 	}
-	return evidenceoutbox.PersistResult{RunID: uuid.New(), AggregateID: in.TraceID}, nil
+	if f.useResult {
+		return f.result, nil
+	}
+	return evidenceoutbox.PersistResult{RunID: uuid.New(), OutboxIDs: []uuid.UUID{uuid.New()}, AggregateID: in.TraceID}, nil
 }
 
 func TestUnit_BuildEvidenceRun_RequiresTraceAndRequest(t *testing.T) {
@@ -43,6 +49,25 @@ func TestUnit_BuildEvidenceRun_NestedSpans(t *testing.T) {
 	t.Parallel()
 	in := buildNestedEvidenceRun(t)
 	assertNestedEvidenceRun(t, in)
+}
+
+func TestUnit_BuildEvidenceRun_PropagatesProducerProof(t *testing.T) {
+	t.Parallel()
+	producer := &evidenceoutbox.ProducerMetadata{
+		RedactionClass:        evidenceoutbox.RedactionClassMetadata,
+		RedactionProofVersion: "redaction/v1",
+		ResourceType:          "evidence_run", ResourceID: "run-1", ResourceVersion: 3,
+		Source: "proxy.session",
+	}
+	in := BuildEvidenceRun(httptrace.AssembleInput{
+		RequestID: "req-1", OrgID: uuid.New(), AgentID: uuid.New(),
+	}, SnapshotMeta{}, EvidenceExtras{Producer: producer})
+	if in.Producer != producer || in.RedactionClass != producer.RedactionClass {
+		t.Fatalf("producer metadata was not propagated: %+v", in)
+	}
+	if in.TombstoneFence == nil || in.TombstoneFence.ResourceVersion != producer.ResourceVersion {
+		t.Fatalf("producer fence was not propagated: %+v", in.TombstoneFence)
+	}
 }
 
 func buildNestedEvidenceRun(t *testing.T) evidenceoutbox.RunInput {
@@ -221,6 +246,38 @@ func TestUnit_PersistEvidence_FailOpen(t *testing.T) {
 	})
 }
 
+func TestUnit_PersistEvidenceWithAck(t *testing.T) {
+	t.Parallel()
+	in := evidenceoutbox.RunInput{OrgID: uuid.New(), RequestID: "r", TraceID: "t"}
+	good := &fakeEvidenceStore{}
+	outcome := PersistEvidenceWithAck(context.Background(), good, in)
+	if outcome.Status != EvidenceAckDurable {
+		t.Fatalf("durable status=%q", outcome.Status)
+	}
+	if outcome.Err != nil {
+		t.Fatalf("durable err=%v", outcome.Err)
+	}
+	failed := &fakeEvidenceStore{err: errors.New("db down")}
+	outcome = PersistEvidenceWithAck(context.Background(), failed, in)
+	if outcome.Status != EvidenceAckUncertified {
+		t.Fatalf("uncertified status=%q", outcome.Status)
+	}
+	if outcome.Err == nil {
+		t.Fatal("uncertified outcome has no error")
+	}
+	unknown := &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{}}
+	outcome = PersistEvidenceWithAck(context.Background(), unknown, in)
+	if outcome.Status != EvidenceAckUncertified {
+		t.Fatalf("unknown status=%q", outcome.Status)
+	}
+	if outcome.Err == nil {
+		t.Fatal("unknown outcome has no error")
+	}
+	if outcome.Err.Error() != "evidence commit outcome is unknown" {
+		t.Fatalf("unknown error=%q", outcome.Err)
+	}
+}
+
 func TestUnit_BuildEvidenceRun_DeployImageDigestFromEnv(t *testing.T) {
 	t.Setenv("IBEX_DEPLOY_IMAGE_DIGEST", "  sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd  ")
 	in := BuildEvidenceRun(httptrace.AssembleInput{
@@ -241,5 +298,35 @@ func TestUnit_BuildEvidenceRun_DeployImageDigestUnset(t *testing.T) {
 	}, SnapshotMeta{}, EvidenceExtras{})
 	if in.DeployImageDigest != "" {
 		t.Fatalf("digest=%q want empty", in.DeployImageDigest)
+	}
+}
+
+func TestUnit_PersistEvidenceForProfile_GoldenOutcomes(t *testing.T) {
+	t.Parallel()
+	in := evidenceoutbox.RunInput{OrgID: uuid.New(), RequestID: "r", TraceID: "t"}
+	cases := []struct {
+		name       string
+		store      *fakeEvidenceStore
+		profile    EvidenceAckProfile
+		wantStatus EvidenceAckStatus
+		wantHTTP   int
+	}{
+		{name: "durable", store: &fakeEvidenceStore{}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckDurable, wantHTTP: http.StatusOK},
+		{name: "failed-required", store: &fakeEvidenceStore{err: errors.New("db down")}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckUnavailable, wantHTTP: http.StatusServiceUnavailable},
+		{name: "failed-degraded", store: &fakeEvidenceStore{err: errors.New("db down")}, profile: EvidenceAckProfile{Required: true, AllowUncertified: true}, wantStatus: EvidenceAckUncertified, wantHTTP: http.StatusOK},
+		{name: "unknown", store: &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{}}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckUnavailable, wantHTTP: http.StatusServiceUnavailable},
+		{name: "replay", store: &fakeEvidenceStore{useResult: true, result: evidenceoutbox.PersistResult{RunID: uuid.New(), OutboxIDs: []uuid.UUID{uuid.New()}, Replayed: true}}, profile: EvidenceAckProfile{Required: true}, wantStatus: EvidenceAckReplay, wantHTTP: http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := PersistEvidenceForProfile(context.Background(), tc.store, in, tc.profile)
+			if out.Status != tc.wantStatus {
+				t.Fatalf("status=%q want %q err=%v", out.Status, tc.wantStatus, out.Err)
+			}
+			got, _ := EvidenceAckHTTP(out.Status)
+			if got != tc.wantHTTP {
+				t.Fatalf("http=%d want %d", got, tc.wantHTTP)
+			}
+		})
 	}
 }

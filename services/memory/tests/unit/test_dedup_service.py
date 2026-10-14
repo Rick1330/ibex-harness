@@ -200,3 +200,17 @@ async def test_near_dup_org_scoped() -> None:
     svc = DedupService(Settings(near_duplicate_sim_threshold=0.50), store=store)
     assert await svc.find_near_duplicates(org_id=org_a, agent_id=agent, embedding=vec) == [mem]
     assert await svc.find_near_duplicates(org_id=org_b, agent_id=agent, embedding=vec) == []
+
+@pytest.mark.asyncio
+async def test_historical_capability_requires_both_fences() -> None:
+    from app.vectorstore.historical import HistoricalConflictCapability
+    from app.vectorstore.memory import InMemoryVectorStore
+
+    capability = HistoricalConflictCapability(InMemoryVectorStore())
+    with pytest.raises(ValueError, match="non-empty org_id and agent_id"):
+        await capability.search(
+            org_id=UUID(int=0),
+            agent_id=uuid4(),
+            query_embedding=[0.0] * 1024,
+            limit=1,
+        )

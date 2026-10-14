@@ -2,12 +2,15 @@ package evidenceoutbox
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
 )
 
@@ -156,6 +159,137 @@ func TestUnit_ValidateRunInputRejectsInvalidFence(t *testing.T) {
 	}
 }
 
+func TestUnit_MarshalOutboxPayloadAddsProducerProof(t *testing.T) {
+	t.Parallel()
+	producer := &ProducerMetadata{
+		RedactionClass: RedactionClassMetadata, RedactionProofVersion: "redaction/v1",
+		ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7,
+		Source: "proxy.session",
+	}
+	payload, err := marshalOutboxPayload(map[string]any{"event_id": "evt-6"}, RedactionClassMetadata, nil, producer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["redaction_proof_version"]) != `"redaction/v1"` || string(fields["source"]) != `"proxy.session"` {
+		t.Fatalf("producer proof fields missing: %s", payload)
+	}
+}
+
+func TestUnit_ValidateRunInputRejectsIncompleteProducerProof(t *testing.T) {
+	t.Parallel()
+	err := validateRunInput(RunInput{Producer: &ProducerMetadata{RedactionClass: RedactionClassMetadata}})
+	if err == nil || !strings.Contains(err.Error(), "producer metadata is incomplete") {
+		t.Fatalf("err=%v want incomplete producer metadata", err)
+	}
+}
+
+func TestUnit_ValidateRunInputRequiresProducerForMetadataClass(t *testing.T) {
+	t.Parallel()
+	err := validateRunInput(RunInput{RedactionClass: RedactionClassMetadata})
+	if err == nil || !strings.Contains(err.Error(), "requires producer metadata") {
+		t.Fatalf("err=%v want producer metadata requirement", err)
+	}
+}
+
+func TestUnit_MarshalOutboxPayloadUsesProducerClassWhenRunClassEmpty(t *testing.T) {
+	t.Parallel()
+	producer := &ProducerMetadata{
+		RedactionClass: RedactionClassMetadata, RedactionProofVersion: "redaction/v1",
+		ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 7,
+		Source: "proxy.session",
+	}
+	payload, err := marshalOutboxPayload(map[string]any{"event_id": "evt-7"}, "", nil, producer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["redaction_class"]) != `"metadata"` {
+		t.Fatalf("redaction_class=%s want metadata", fields["redaction_class"])
+	}
+}
+
+func TestUnit_EnqueueOutboxPersistsJCSV1Scheme(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	orgID := uuid.New()
+	fence := &TombstoneFence{ResourceType: "memory", ResourceID: "mem-1", ResourceVersion: 1}
+	payload := map[string]any{"event_id": "evt-1"}
+	raw, err := marshalOutboxPayload(payload, RedactionClassMetadata, fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, digest, err := canonicaljson.Digest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WithArgs(
+		sqlmock.AnyArg(), orgID, sqlmock.AnyArg(), "req-1", int64(1), SchemaVersion,
+		EventTypeRunCommitted, raw, digest, PayloadDigestSchemeJCSV1, StatusPending,
+	).WillReturnResult(sqlmock.NewResult(0, 1))
+	if _, err := enqueueOutbox(context.Background(), tx, outboxWrite{
+		OrgID: orgID, AggregateID: "req-1", Seq: 1, EventType: EventTypeRunCommitted,
+		RedactionClass: RedactionClassMetadata, TombstoneFence: fence, Payload: payload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectCommit()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnit_EnqueueOutboxRejectsDuplicateNestedJSONNames(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = enqueueOutbox(context.Background(), tx, outboxWrite{
+		OrgID: uuid.New(), AggregateID: "req-duplicate", Seq: 1,
+		EventType: EventTypeRunCommitted, Payload: map[string]json.RawMessage{
+			"nested": json.RawMessage(`{"duplicate":1,"duplicate":2}`),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "canonicalize payload") {
+		t.Fatalf("err=%v want canonicalization error", err)
+	}
+	mock.ExpectRollback()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnit_PersistRun_HappyPathMinimal(t *testing.T) {
 	t.Parallel()
 	db, mock, err := sqlmock.New()
@@ -172,6 +306,7 @@ func TestUnit_PersistRun_HappyPathMinimal(t *testing.T) {
 	digest := "sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-1").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).
 		WithArgs(
 			sqlmock.AnyArg(), org, sqlmock.AnyArg(), sqlmock.AnyArg(), "req-1",
@@ -222,6 +357,7 @@ func TestUnit_PersistRun_WithChildren(t *testing.T) {
 	sim := 0.9
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-2").WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_runs`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_spans`).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -255,6 +391,42 @@ func TestUnit_PersistRun_WithChildren(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("PersistRun: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnit_PersistRun_ReplaysExistingDurableRun(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := uuid.New()
+	runID := uuid.New()
+	outboxID := uuid.New()
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT r\.id, r\.request_id`).WithArgs(org, "req-replay").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "request_id", "outbox_ids"}).
+			AddRow(runID, "req-replay", "{"+outboxID.String()+"}"))
+	mock.ExpectCommit()
+
+	result, err := store.PersistRun(context.Background(), RunInput{
+		OrgID: org, RequestID: "req-replay", TraceID: "cccccccccccccccccccccccccccccccc",
+	})
+	if err != nil {
+		t.Fatalf("PersistRun: %v", err)
+	}
+	want := PersistResult{RunID: runID, OutboxIDs: []uuid.UUID{outboxID}, AggregateID: "req-replay", Replayed: true}
+	if !reflect.DeepEqual(result, want) {
+		t.Fatalf("replay result=%+v want %+v", result, want)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
