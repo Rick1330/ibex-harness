@@ -366,8 +366,14 @@ INSERT INTO ibex_core.evidence_outbox (
 	if err != nil {
 		t.Fatalf("process legacy retry: %v", err)
 	}
-	if result.Claimed != 1 || result.Delivered != 1 || deliverer.count() != 1 {
-		t.Fatalf("legacy retry: result=%+v deliveries=%d", result, deliverer.count())
+	if result.Claimed != 1 {
+		t.Fatalf("legacy retry claimed=%d want 1", result.Claimed)
+	}
+	if result.Delivered != 1 {
+		t.Fatalf("legacy retry delivered=%d want 1", result.Delivered)
+	}
+	if deliveries := deliverer.count(); deliveries != 1 {
+		t.Fatalf("legacy retry deliveries=%d want 1", deliveries)
 	}
 
 	var scheme, status string

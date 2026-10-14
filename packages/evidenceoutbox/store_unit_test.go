@@ -239,6 +239,7 @@ func TestUnit_EnqueueOutboxPersistsJCSV1Scheme(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback() }()
 	mock.ExpectExec(`INSERT INTO ibex_core.evidence_outbox`).WithArgs(
 		sqlmock.AnyArg(), orgID, sqlmock.AnyArg(), "req-1", int64(1), SchemaVersion,
 		EventTypeRunCommitted, raw, digest, PayloadDigestSchemeJCSV1, StatusPending,
@@ -270,6 +271,7 @@ func TestUnit_EnqueueOutboxRejectsDuplicateNestedJSONNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = tx.Rollback() }()
 	_, err = enqueueOutbox(context.Background(), tx, outboxWrite{
 		OrgID: uuid.New(), AggregateID: "req-duplicate", Seq: 1,
 		EventType: EventTypeRunCommitted, Payload: map[string]json.RawMessage{

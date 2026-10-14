@@ -24,6 +24,10 @@ func Canonicalize(input []byte) ([]byte, error) {
 	unwrapArray := false
 	root := bytes.TrimSpace(input)
 	if root[0] != '{' && root[0] != '[' {
+		const maxInt = int(^uint(0) >> 1)
+		if len(input) > maxInt-2 {
+			return nil, fmt.Errorf("canonicaljson: input is too large to wrap")
+		}
 		transformInput = make([]byte, 0, len(input)+2)
 		transformInput = append(transformInput, '[')
 		transformInput = append(transformInput, input...)

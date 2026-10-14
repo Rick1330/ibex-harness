@@ -270,24 +270,30 @@ func validateOutboxPayload(row OutboxRow) error {
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest must be a SHA-256 hex digest")
 	}
 
-	var expectedDigest string
-	switch row.PayloadDigestScheme {
-	case PayloadDigestSchemePostgresJSONBText:
-		sum := sha256.Sum256(row.Payload)
-		expectedDigest = hex.EncodeToString(sum[:])
-	case PayloadDigestSchemeJCSV1:
-		_, digest, err := canonicaljson.Digest(row.Payload)
-		if err != nil {
-			return fmt.Errorf("evidenceoutbox: invalid row: payload is not canonicalizable: %w", err)
-		}
-		expectedDigest = digest
-	default:
-		return fmt.Errorf("evidenceoutbox: invalid row: unsupported payload_digest_scheme %q", row.PayloadDigestScheme)
+	expectedDigest, err := expectedOutboxPayloadDigest(row)
+	if err != nil {
+		return err
 	}
 	if !strings.EqualFold(actualDigest, expectedDigest) {
 		return fmt.Errorf("evidenceoutbox: invalid row: payload_digest does not match payload (%s)", row.PayloadDigestScheme)
 	}
 	return nil
+}
+
+func expectedOutboxPayloadDigest(row OutboxRow) (string, error) {
+	switch row.PayloadDigestScheme {
+	case PayloadDigestSchemePostgresJSONBText:
+		sum := sha256.Sum256(row.Payload)
+		return hex.EncodeToString(sum[:]), nil
+	case PayloadDigestSchemeJCSV1:
+		_, digest, err := canonicaljson.Digest(row.Payload)
+		if err != nil {
+			return "", fmt.Errorf("evidenceoutbox: invalid row: payload is not canonicalizable: %w", err)
+		}
+		return digest, nil
+	default:
+		return "", fmt.Errorf("evidenceoutbox: invalid row: unsupported payload_digest_scheme %q", row.PayloadDigestScheme)
+	}
 }
 
 func isHexDigest(value string) bool {
