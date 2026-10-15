@@ -16,10 +16,42 @@ from app.enqueue_http import (
     reset_enqueue_http_for_tests,
     start_enqueue_server,
 )
+from app.idempotency_ledger import ClaimOutcome, ClaimToken, fingerprint_enqueue
+
+
+class _Ledger:
+    def __init__(self) -> None:
+        self.records: dict[tuple[str, str, str], tuple[str, ClaimToken, int, bytes | None]] = {}
+
+    async def claim(self, *, org_id, agent_id, key, request_hash) -> ClaimOutcome:
+        record_key = (str(org_id), str(agent_id), key)
+        existing = self.records.get(record_key)
+        if existing is not None:
+            old_hash, claim, status, response = existing
+            if old_hash != request_hash:
+                return ClaimOutcome(kind="conflict", claim=claim)
+            if response is not None:
+                return ClaimOutcome(kind="replay", claim=claim, status=status, response=response)
+            return ClaimOutcome(kind="in_progress", claim=claim, retry_after=1)
+        claim = ClaimToken(uuid4(), org_id, agent_id, key, request_hash, 1)
+        self.records[record_key] = (request_hash, claim, 0, None)
+        return ClaimOutcome(kind="owned", claim=claim)
+
+    async def finalize(self, claim, *, status, response) -> None:
+        record_key = (str(claim.org_id), str(claim.agent_id), claim.key)
+        request_hash, _, _, _ = self.records[record_key]
+        self.records[record_key] = (request_hash, claim, status, response)
+
+    async def release(self, claim) -> None:
+        self.records.pop((str(claim.org_id), str(claim.agent_id), claim.key), None)
+
+
+_ledger = _Ledger()
 
 
 @pytest.fixture(autouse=True)
 def _reset_enqueue_flag() -> None:
+    _ledger.records.clear()
     reset_enqueue_http_for_tests()
 
 
@@ -55,6 +87,8 @@ def _post_enqueue(
     client: TestClient, body: dict | bytes, *, token: str = "sekrit", raw: bool = False
 ):
     headers = {"Authorization": f"Bearer {token}"}
+    if isinstance(body, dict) and "session_id" in body:
+        headers["Idempotency-Key"] = str(body["session_id"])
     if raw:
         headers["Content-Type"] = "application/json"
         return client.post("/internal/extraction/enqueue", headers=headers, content=body)
@@ -62,7 +96,9 @@ def _post_enqueue(
 
 
 def _client(token: str = "sekrit", apply_async=None) -> TestClient:
-    return TestClient(create_enqueue_app(_settings(token=token), apply_async=apply_async))
+    return TestClient(
+        create_enqueue_app(_settings(token=token), apply_async=apply_async, ledger=_ledger)
+    )
 
 
 def test_enqueue_rejects_missing_and_bad_bearer() -> None:
@@ -113,6 +149,60 @@ def test_enqueue_accepts_valid_payload() -> None:
     assert captured[0]["turns"][0]["role"] == "user"
 
 
+def test_enqueue_requires_explicit_key_and_durable_ledger() -> None:
+    body = _valid_body()
+    client = TestClient(
+        create_enqueue_app(_settings(), apply_async=lambda _: SimpleNamespace(id="x"))
+    )
+    missing_key = client.post(
+        "/internal/extraction/enqueue",
+        headers={"Authorization": "Bearer sekrit"},
+        json=body,
+    )
+    assert missing_key.status_code == 400
+    assert missing_key.json() == {"error": "idempotency_key_required"}
+    no_ledger = TestClient(
+        create_enqueue_app(_settings(), apply_async=lambda _: SimpleNamespace(id="x"), ledger=None)
+    )
+    unavailable = no_ledger.post(
+        "/internal/extraction/enqueue",
+        headers={"Authorization": "Bearer sekrit", "Idempotency-Key": body["session_id"]},
+        json=body,
+    )
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {"error": "idempotency_unavailable"}
+
+
+def test_enqueue_conflicts_when_full_payload_changes() -> None:
+    calls: list[dict] = []
+    client = _client(apply_async=lambda kwargs: calls.append(kwargs) or SimpleNamespace(id="one"))
+    body = _valid_body()
+    key = body["session_id"]
+    first = client.post(
+        "/internal/extraction/enqueue",
+        headers={"Authorization": "Bearer sekrit", "Idempotency-Key": key},
+        json=body,
+    )
+    changed = dict(body)
+    changed["turns"] = [{"turn_index": 0, "role": "user", "content": "different"}]
+    second = client.post(
+        "/internal/extraction/enqueue",
+        headers={"Authorization": "Bearer sekrit", "Idempotency-Key": key},
+        json=changed,
+    )
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert second.json() == {"error": "idempotency_conflict"}
+    assert len(calls) == 1
+
+
+def test_enqueue_fingerprint_covers_every_turn_field() -> None:
+    body = _valid_body()
+    changed = dict(body)
+    changed["turns"] = [{"turn_index": 0, "role": "assistant", "content": "hello world xx"}]
+    assert fingerprint_enqueue(body) != fingerprint_enqueue(changed)
+
+
 def test_enqueue_idempotent_replay_same_task_id() -> None:
     calls: list[dict] = []
 
@@ -140,8 +230,9 @@ def test_enqueue_idempotent_defaults_to_session_id() -> None:
 
     client = _client(apply_async=capture)
     body = _valid_body()
-    r1 = _post_enqueue(client, body)
-    r2 = _post_enqueue(client, body)
+    headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": body["session_id"]}
+    r1 = client.post("/internal/extraction/enqueue", headers=headers, json=body)
+    r2 = client.post("/internal/extraction/enqueue", headers=headers, json=body)
     assert r1.json()["task_id"] == r2.json()["task_id"] == "task-sid"
     assert len(calls) == 1
 
@@ -204,16 +295,13 @@ def test_enqueue_rejects_missing_org_id() -> None:
     assert resp.status_code == 400
 
 
-def test_idempo_expired_entry_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app import enqueue_http as mod
-
+def test_enqueue_replay_is_durable_across_wait() -> None:
     calls: list[dict] = []
 
     def capture(kwargs: dict) -> SimpleNamespace:
         calls.append(kwargs)
         return SimpleNamespace(id=f"task-{len(calls)}")
 
-    monkeypatch.setattr(mod, "_IDEMPOTENCY_TTL_SEC", 0.01)
     client = _client(apply_async=capture)
     body = _valid_body()
     headers = {"Authorization": "Bearer sekrit", "Idempotency-Key": "expire-me"}
@@ -226,32 +314,7 @@ def test_idempo_expired_entry_is_ignored(monkeypatch: pytest.MonkeyPatch) -> Non
     assert (
         client.post("/internal/extraction/enqueue", headers=headers, json=body).status_code == 202
     )
-    assert len(calls) == 2
-
-
-def test_idempo_prunes_expired_on_write(monkeypatch: pytest.MonkeyPatch) -> None:
-    import time
-
-    from app import enqueue_http as mod
-
-    monkeypatch.setattr(mod, "_IDEMPOTENCY_TTL_SEC", 0.05)
-    for i in range(25):
-        mod._idempo_complete(f"k{i}", f"t{i}")
-    assert len(mod._idempo) == 25
-    time.sleep(0.08)
-    mod._idempo_complete("fresh", "t-fresh")
-    assert list(mod._idempo.keys()) == ["fresh"]
-    assert mod._idempo_get("fresh") == "t-fresh"
-
-
-def test_idempo_enforces_max_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    from app import enqueue_http as mod
-
-    monkeypatch.setattr(mod, "_MAX_IDEMPO_ENTRIES", 5)
-    for i in range(8):
-        mod._idempo_complete(f"k{i}", f"t{i}")
-    assert len(mod._idempo) <= 5
-    assert mod._idempo_get("k7") == "t7"
+    assert len(calls) == 1
 
 
 def test_enqueue_concurrent_idempotent_replay() -> None:
@@ -288,8 +351,9 @@ def test_enqueue_concurrent_idempotent_replay() -> None:
     for th in threads:
         th.join(timeout=5)
         assert not th.is_alive()
-    assert results == [202] * 8
-    assert task_ids == ["task-shared"] * 8
+    assert results.count(202) == 1
+    assert results.count(409) == 7
+    assert task_ids.count("task-shared") == 1
     assert len(calls) == 1
 
 
@@ -402,7 +466,7 @@ def test_enqueue_uses_celery_when_no_inject() -> None:
     orig = mod.extract_session_memories
     mod.extract_session_memories = _Task  # type: ignore[assignment]
     try:
-        app = create_enqueue_app(_settings(), apply_async=None)
+        app = create_enqueue_app(_settings(), apply_async=None, ledger=_ledger)
         client = TestClient(app)
         resp = _post_enqueue(client, _valid_body())
         assert resp.status_code == 202
