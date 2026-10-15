@@ -27,6 +27,10 @@ func (f *terminateLedgerFake) Finalize(context.Context, idempotency.ClaimToken, 
 	return f.finalizeErr
 }
 
+func (f *terminateLedgerFake) Release(context.Context, idempotency.ClaimToken) error {
+	return nil
+}
+
 func TestSessionTerminateLedgerBranches(t *testing.T) {
 	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
 	base := func(ledger idempotency.Ledger) (sessionTerminateHandler, *terminateStoreFake) {

@@ -16,6 +16,7 @@ import (
 type Ledger interface {
 	Claim(ctx context.Context, principal Principal, key string, requestHash string) (ClaimOutcome, error)
 	Finalize(ctx context.Context, claim ClaimToken, status int, response []byte) error
+	Release(ctx context.Context, claim ClaimToken) error
 }
 
 type Principal struct{ OrgID, AgentID uuid.UUID }
@@ -199,6 +200,37 @@ func (l *PostgresLedger) Finalize(ctx context.Context, claim ClaimToken, status 
        version=version+1, updated_at=NOW()
  WHERE id=$3 AND organization_id=$4 AND agent_id=$5 AND dedupe_key=$6
    AND request_hash=$7 AND version=$8 AND state='claimed'`, status, response, claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("%w: claim is no longer owned", ErrLedgerConflict)
+	}
+	return tx.Commit()
+}
+
+// Release removes an owned in-flight claim so a transient operation can be retried.
+// The claim token version fences stale owners from releasing a reclaimed claim.
+func (l *PostgresLedger) Release(ctx context.Context, claim ClaimToken) error {
+	if !validClaim(claim.Principal, claim.Key, claim.RequestHash) || claim.ID == uuid.Nil || claim.Version <= 0 {
+		return ErrInvalidLedgerClaim
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, claim.Principal.OrgID.String()); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.idempotency_ledger
+ WHERE id=$1 AND organization_id=$2 AND agent_id=$3 AND dedupe_key=$4
+   AND request_hash=$5 AND version=$6 AND state='claimed'`,
+		claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version)
 	if err != nil {
 		return err
 	}
