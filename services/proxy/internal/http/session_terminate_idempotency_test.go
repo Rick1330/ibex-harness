@@ -98,3 +98,13 @@ func TestSessionTerminateLedgerBranches(t *testing.T) {
 		}
 	})
 }
+
+func TestSessionTerminateReplayRecoveryFailureBranches(t *testing.T) {
+	id := terminateIdentity{orgID: uuid.New(), agentID: uuid.New(), externalID: "recovery-ext"}
+	var nilHandler sessionTerminateHandler
+	nilHandler.recoverReplayEnqueue(context.Background(), id)
+	errHandler := sessionTerminateHandler{store: &terminateStoreFake{err: errors.New("lookup failed")}}
+	errHandler.recoverReplayEnqueue(context.Background(), id)
+	notFoundHandler := sessionTerminateHandler{store: &terminateStoreFake{result: session.CompleteNotFound}}
+	notFoundHandler.recoverReplayEnqueue(context.Background(), id)
+}

@@ -168,6 +168,117 @@ func TestPostgresLedgerCrossTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestPostgresLedgerConstructorAndClaimFailures(t *testing.T) {
+	if _, err := NewPostgresLedger(nil, time.Minute); err == nil {
+		t.Fatal("nil database must fail")
+	}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ledger, err := NewPostgresLedger(db, 0)
+	if err != nil || ledger.lease != 2*time.Minute {
+		t.Fatalf("default lease=%v err=%v", ledger.lease, err)
+	}
+	org, agent := uuid.New(), uuid.New()
+	mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
+	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil {
+		t.Fatal("begin failure must be returned")
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnError(errors.New("scope failed"))
+	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil {
+		t.Fatal("scope failure must be returned")
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WillReturnError(errors.New("insert failed"))
+	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil {
+		t.Fatal("insert failure must be returned")
+	}
+}
+
+func TestPostgresLedgerClaimStates(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ledger, _ := NewPostgresLedger(db, time.Minute)
+	org, agent, id := uuid.New(), uuid.New(), uuid.New()
+	key := "state-key"
+	row := func(hash, state string, status any, response any, expires any, version int64) *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}).AddRow(id, hash, state, status, response, expires, version)
+	}
+	claim := func(hash string, rows *sqlmock.Rows, commit bool) (ClaimOutcome, error) {
+		mock.ExpectBegin()
+		mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WithArgs(org, agent, key, hash, "60.000000 seconds").WillReturnRows(sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}))
+		mock.ExpectQuery(`SELECT id, request_hash, state`).WithArgs(org, agent, key).WillReturnRows(rows)
+		if commit {
+			mock.ExpectCommit()
+		}
+		out, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash)
+		return out, err
+	}
+	hash := HashRequest([]byte("same"))
+	out, err := claim(HashRequest([]byte("other")), row(hash, "claimed", nil, nil, time.Now().Add(time.Minute), 1), true)
+	if err != nil || out.Kind != ClaimConflict {
+		t.Fatalf("conflict outcome=%+v err=%v", out, err)
+	}
+	out, err = claim(hash, row(hash, "finalized", 200, []byte(`{"ok":true}`), nil, 1), true)
+	if err != nil || out.Kind != ClaimReplay || out.Status != 200 {
+		t.Fatalf("replay outcome=%+v err=%v", out, err)
+	}
+	out, err = claim(hash, row(hash, "claimed", nil, nil, time.Now().Add(time.Minute), 1), true)
+	if err != nil || out.Kind != ClaimInProgress {
+		t.Fatalf("in-progress outcome=%+v err=%v", out, err)
+	}
+	out, err = claim(hash, row(hash, "failed_terminal", nil, nil, time.Now().Add(time.Minute), 1), false)
+	if err == nil || out.Kind != "" {
+		t.Fatalf("unsupported state outcome=%+v err=%v", out, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresLedgerFinalizeFailures(t *testing.T) {
+	claim := ClaimToken{ID: uuid.New(), Principal: Principal{OrgID: uuid.New(), AgentID: uuid.New()}, Key: "k", RequestHash: HashRequest([]byte("b")), Version: 1}
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ledger, _ := NewPostgresLedger(db, time.Minute)
+	if err := ledger.Finalize(context.Background(), ClaimToken{}, 200, nil); !errors.Is(err, ErrInvalidLedgerClaim) {
+		t.Fatalf("invalid finalize error=%v", err)
+	}
+	mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
+		t.Fatal("begin failure must be returned")
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnError(errors.New("scope failed"))
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
+		t.Fatal("scope failure must be returned")
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE ibex_core\.idempotency_ledger`).WillReturnError(errors.New("update failed"))
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
+		t.Fatal("update failure must be returned")
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE ibex_core\.idempotency_ledger`).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
+		t.Fatal("commit failure must be returned")
+	}
+}
+
 type ClaimCall struct {
 	Principal Principal
 	Key, Hash string
