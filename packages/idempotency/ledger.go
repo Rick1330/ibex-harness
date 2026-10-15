@@ -79,6 +79,14 @@ type ledgerRow struct {
 	expires            sql.NullTime
 	version            int64
 }
+
+const insertLedgerSQL = `
+INSERT INTO ibex_core.idempotency_ledger
+ (organization_id, agent_id, dedupe_key, request_hash, state, lease_expires_at)
+VALUES ($1, $2, $3, $4, 'claimed', NOW() + $5::interval)
+ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
+RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`
+
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanLedgerRow(s rowScanner) (ledgerRow, error) {
@@ -121,12 +129,7 @@ func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHas
 
 func (l *PostgresLedger) insertOrLoad(ctx context.Context, tx *sql.Tx, p Principal, key, requestHash string) (ledgerRow, bool, error) {
 	// Static SQL; every request-controlled value is passed through QueryRowContext arguments.
-	row, err := scanLedgerRow(tx.QueryRowContext(ctx, ` -- NOSONAR — parameterized query; no SQL is built from request data. nosemgrep: go.lang.security.audit.database.sql-injection.sql-injection
-INSERT INTO ibex_core.idempotency_ledger
- (organization_id, agent_id, dedupe_key, request_hash, state, lease_expires_at)
-VALUES ($1, $2, $3, $4, 'claimed', NOW() + $5::interval)
-ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
-RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`,
+	row, err := scanLedgerRow(tx.QueryRowContext(ctx, insertLedgerSQL,
 		p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", l.lease.Seconds())))
 	if err == nil {
 		return row, true, nil
