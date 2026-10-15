@@ -31,6 +31,8 @@ const (
 	msgLedgerUnavailable = "Idempotency ledger unavailable"
 )
 
+var marshalFingerprintJSON = json.Marshal
+
 // Claim holds ownership or replay state for an Idempotency-Key.
 // Replay=true means the caller must short-circuit and return Hit; otherwise
 // the caller owns the key until Finish/FinishCapture commits or releases it.
@@ -91,7 +93,7 @@ func fingerprintRequest(parsed *llm.ChatCompletionRequest, operation string, ski
 		Model:     parsed.Model, Messages: parsed.Messages, Stream: parsed.Stream,
 		Temperature: parsed.Temperature, MaxTokens: parsed.MaxTokens, SkipMemory: skipMemory,
 	}
-	raw, err := json.Marshal(payload)
+	raw, err := marshalFingerprintJSON(payload)
 	if err != nil {
 		return "", err
 	}

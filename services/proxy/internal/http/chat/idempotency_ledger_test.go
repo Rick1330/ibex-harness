@@ -316,6 +316,28 @@ func TestDurableChatLedgerFinalizeAndReleaseFailuresAreHandled(t *testing.T) {
 	})
 }
 
+func TestDurableChatFinishNoopAndCaptureRelease(t *testing.T) {
+	org, agent := uuid.New(), uuid.New()
+	fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{
+		Kind:  idempotency.ClaimOwned,
+		Claim: idempotency.ClaimToken{ID: uuid.New(), Version: 1},
+	}}
+	id := durableChatID(t, fake)
+	id.Finish(nil, http.StatusOK, []byte(`{}`))
+
+	req, parsed := durableChatRequest(org, agent, "capture-release")
+	claim, cont := id.Resolve(httptest.NewRecorder(), req, parsed)
+	if !cont || claim == nil {
+		t.Fatalf("claim=%#v cont=%v", claim, cont)
+	}
+	cw := &CapturingWriter{ResponseWriter: httptest.NewRecorder()}
+	_, _ = cw.Write([]byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)+1)))
+	id.FinishCapture(claim, cw)
+	if !fake.released {
+		t.Fatal("expected capped capture to release durable claim")
+	}
+}
+
 func TestDurableChatLedgerDoesNotReplayAcrossTenants(t *testing.T) {
 	orgA, orgB, agent := uuid.New(), uuid.New(), uuid.New()
 	fake := &tenantChatLedgerFake{}
