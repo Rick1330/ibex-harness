@@ -79,7 +79,7 @@ func FingerprintRequest(parsed *llm.ChatCompletionRequest) (idempotency.Fingerpr
 
 func fingerprintRequest(parsed *llm.ChatCompletionRequest, operation string) (idempotency.Fingerprint, error) {
 	payload := struct {
-		Operation   string        `json:"operation"`
+		Operation   string        `json:"operation,omitempty"`
 		Model       string        `json:"model"`
 		Messages    []llm.Message `json:"messages"`
 		Stream      bool          `json:"stream"`

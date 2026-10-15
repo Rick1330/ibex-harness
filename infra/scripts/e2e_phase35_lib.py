@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -147,6 +148,8 @@ def chat(
     if flags.session_id:
         headers["X-IBEX-Session-ID"] = flags.session_id
     body = {"model": "gpt-4o", "messages": [{"role": "user", "content": content}]}
+    key_material = f"{who.agent}:{flags.session_id or ''}:{content}".encode()
+    headers["Idempotency-Key"] = "phase35-chat-" + hashlib.sha256(key_material).hexdigest()
     resp = client.post(f"{env.proxy}/v1/chat/completions", headers=headers, json=body)
     hdrs = {k.lower(): v for k, v in resp.headers.items()}
     try:
