@@ -105,10 +105,14 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if h.ledger != nil && key == "" {
+	if h.ledger != nil && (key == "" || len(key) > 256) {
+		detail := "Idempotency-Key is required for session termination"
+		if len(key) > 256 {
+			detail = "Idempotency-Key must be 256 characters or fewer"
+		}
 		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
 			"Request validation failed", id.requestID,
-			apierror.WriteOpts{Detail: "Idempotency-Key is required for session termination", DocsBase: h.docsBase})
+			apierror.WriteOpts{Detail: detail, DocsBase: h.docsBase})
 		return
 	}
 	// The bounded termination command is canonical after validation: the path,
@@ -128,6 +132,7 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	}
 	switch claim.Kind {
 	case idempotency.ClaimReplay:
+		h.recoverReplayEnqueue(r.Context(), id)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(claim.Status)
 		_, _ = w.Write(claim.Response)
@@ -169,6 +174,26 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			externalID: id.externalID, requestID: id.requestID,
 		})
 	}
+}
+
+func (h sessionTerminateHandler) recoverReplayEnqueue(parent context.Context, id terminateIdentity) {
+	if h.store == nil {
+		return
+	}
+	result, sessionID, err := h.store.CompleteByExternalID(parent, id.orgID, id.agentID, id.externalID)
+	if err != nil {
+		if h.log != nil {
+			h.log.WarnCtx(parent, "idempotent termination replay recovery lookup failed", "error", err, "external_id", id.externalID)
+		}
+		return
+	}
+	if result != session.CompleteOK && result != session.CompleteNoop {
+		return
+	}
+	go h.afterTerminateEnqueue(context.WithoutCancel(parent), terminateEnqueueJob{
+		orgID: id.orgID, agentID: id.agentID, sessionID: sessionID,
+		externalID: id.externalID, requestID: id.requestID,
+	})
 }
 
 func (h sessionTerminateHandler) resolveTerminateIdentity(
@@ -258,13 +283,6 @@ func parseTerminateBody(w http.ResponseWriter, r *http.Request, requestID, docsB
 	}
 	body.Status = strings.TrimSpace(body.Status)
 	return body, true
-}
-
-func writeTerminateOK(w http.ResponseWriter, externalID string) {
-	body := terminateOKBody(externalID)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
 }
 
 func terminateOKBody(externalID string) []byte {

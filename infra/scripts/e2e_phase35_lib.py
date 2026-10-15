@@ -166,7 +166,10 @@ def require_chat_ok(code: int, label: str) -> None:
 def terminate(client: httpx.Client, env: Env, session_id: str) -> int:
     resp = client.post(
         f"{env.proxy}/v1/sessions/{session_id}/terminate",
-        headers=_auth_headers(org_a_tenant(env)),
+        headers={
+            **_auth_headers(org_a_tenant(env)),
+            "Idempotency-Key": f"phase35-terminate-{session_id}",
+        },
         json={"status": "completed"},
     )
     return resp.status_code

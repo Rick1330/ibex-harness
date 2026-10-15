@@ -25,6 +25,7 @@ type ClaimToken struct {
 	ID               uuid.UUID
 	Principal        Principal
 	Key, RequestHash string
+	Version          int64
 }
 type ClaimOutcome struct {
 	Kind       ClaimKind
@@ -45,10 +46,9 @@ const (
 var (
 	ErrInvalidLedgerClaim = errors.New("idempotency: invalid ledger claim")
 	ErrLedgerConflict     = errors.New("idempotency: key used with a different request")
-	ErrLedgerInProgress   = errors.New("idempotency: request is already in progress")
 )
 
-// HashRequest returns the canonical SHA-256 request hash used by handlers.
+// HashRequest returns the SHA-256 request hash used by handlers.
 func HashRequest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 
 // PostgresLedger implements request-idempotency-core.v1 using PostgreSQL row locks.
@@ -67,61 +67,89 @@ func NewPostgresLedger(db *sql.DB, lease time.Duration) (*PostgresLedger, error)
 	return &PostgresLedger{db: db, lease: lease}, nil
 }
 
+type ledgerRow struct {
+	id          uuid.UUID
+	requestHash string
+	state       string
+	status      sql.NullInt64
+	response    []byte
+	expires     sql.NullTime
+	version     int64
+}
+
+type rowScanner interface{ Scan(dest ...any) error }
+
+func scanLedgerRow(s rowScanner) (ledgerRow, error) {
+	var row ledgerRow
+	err := s.Scan(&row.id, &row.requestHash, &row.state, &row.status, &row.response, &row.expires, &row.version)
+	return row, err
+}
+
 func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHash string) (ClaimOutcome, error) {
 	key = strings.TrimSpace(key)
 	requestHash = strings.TrimSpace(requestHash)
 	if p.OrgID == uuid.Nil || p.AgentID == uuid.Nil || key == "" || requestHash == "" || len(key) > 256 {
 		return ClaimOutcome{}, ErrInvalidLedgerClaim
 	}
+
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ClaimOutcome{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, p.OrgID.String())
-	if err != nil {
+	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, p.OrgID.String()); err != nil {
 		return ClaimOutcome{}, err
 	}
-	var id uuid.UUID
-	var storedHash, state string
-	var status sql.NullInt64
-	var response []byte
-	var expires time.Time
-	err = tx.QueryRowContext(ctx, `
+	leaseArg := fmt.Sprintf("%f seconds", l.lease.Seconds())
+	row, err := scanLedgerRow(tx.QueryRowContext(ctx, `
 INSERT INTO ibex_core.idempotency_ledger
  (organization_id, agent_id, dedupe_key, request_hash, state, lease_expires_at)
 VALUES ($1, $2, $3, $4, 'claimed', NOW() + $5::interval)
-ON CONFLICT (organization_id, agent_id, dedupe_key) DO UPDATE SET
- state = CASE WHEN ibex_core.idempotency_ledger.state = 'claimed'
-                   AND ibex_core.idempotency_ledger.lease_expires_at <= NOW() THEN 'claimed'
-              ELSE ibex_core.idempotency_ledger.state END,
- request_hash = CASE WHEN ibex_core.idempotency_ledger.state = 'claimed'
-                   AND ibex_core.idempotency_ledger.lease_expires_at <= NOW() THEN EXCLUDED.request_hash
-              ELSE ibex_core.idempotency_ledger.request_hash END,
- lease_expires_at = CASE WHEN ibex_core.idempotency_ledger.state = 'claimed'
-                   AND ibex_core.idempotency_ledger.lease_expires_at <= NOW() THEN EXCLUDED.lease_expires_at
-              ELSE ibex_core.idempotency_ledger.lease_expires_at END,
- updated_at = NOW()
-RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at`,
-		p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", l.lease.Seconds())).
-		Scan(&id, &storedHash, &state, &status, &response, &expires)
-	if err != nil {
+ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
+RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`,
+		p.OrgID, p.AgentID, key, requestHash, leaseArg))
+
+	fresh := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return ClaimOutcome{}, err
 	}
-	out := ClaimOutcome{Claim: ClaimToken{ID: id, Principal: p, Key: key, RequestHash: storedHash}}
-	switch {
-	case storedHash != requestHash:
-		out.Kind = ClaimConflict
-	case state == "finalized":
-		out.Kind, out.Status, out.Response = ClaimReplay, int(status.Int64), response
-	case state == "claimed" && id != uuid.Nil && expires.After(time.Now().UTC()):
-		out.Kind, out.RetryAfter = ClaimInProgress, time.Until(expires)
-	default:
-		out.Kind = ClaimOwned
-		out.Claim.RequestHash = requestHash
+	if !fresh {
+		row, err = scanLedgerRow(tx.QueryRowContext(ctx, `
+SELECT id, request_hash, state, status_code, response_payload, lease_expires_at, version
+  FROM ibex_core.idempotency_ledger
+ WHERE organization_id=$1 AND agent_id=$2 AND dedupe_key=$3
+ FOR UPDATE`, p.OrgID, p.AgentID, key))
+		if err != nil {
+			return ClaimOutcome{}, err
+		}
 	}
-	if out.Kind == ClaimOwned {
-		out.Claim.RequestHash = requestHash
+
+	out := ClaimOutcome{Claim: ClaimToken{ID: row.id, Principal: p, Key: key, RequestHash: row.requestHash, Version: row.version}}
+	switch {
+	case row.requestHash != requestHash:
+		out.Kind = ClaimConflict
+	case fresh:
+		out.Kind = ClaimOwned
+	case row.state == "finalized":
+		out.Kind, out.Status, out.Response = ClaimReplay, int(row.status.Int64), row.response
+	case row.state == "claimed" && row.expires.Valid && row.expires.Time.After(time.Now().UTC()):
+		out.Kind = ClaimInProgress
+		out.RetryAfter = time.Until(row.expires.Time)
+	case row.state == "claimed" && row.expires.Valid:
+		row, err = scanLedgerRow(tx.QueryRowContext(ctx, `
+UPDATE ibex_core.idempotency_ledger
+   SET lease_expires_at=NOW()+$1::interval, version=version+1, updated_at=NOW()
+ WHERE id=$2 AND organization_id=$3 AND agent_id=$4 AND dedupe_key=$5
+   AND request_hash=$6 AND state='claimed' AND lease_expires_at <= NOW()
+RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`,
+			leaseArg, row.id, p.OrgID, p.AgentID, key, requestHash))
+		if err != nil {
+			return ClaimOutcome{}, err
+		}
+		out.Kind = ClaimOwned
+		out.Claim.Version = row.version
+	default:
+		return ClaimOutcome{}, fmt.Errorf("idempotency: unsupported ledger state %q", row.state)
 	}
 	if err := tx.Commit(); err != nil {
 		return ClaimOutcome{}, err
@@ -130,10 +158,23 @@ RETURNING id, request_hash, state, status_code, response_payload, lease_expires_
 }
 
 func (l *PostgresLedger) Finalize(ctx context.Context, claim ClaimToken, status int, response []byte) error {
-	if claim.ID == uuid.Nil || claim.Principal.OrgID == uuid.Nil || claim.Principal.AgentID == uuid.Nil || strings.TrimSpace(claim.Key) == "" || claim.RequestHash == "" {
+	if claim.ID == uuid.Nil || claim.Principal.OrgID == uuid.Nil || claim.Principal.AgentID == uuid.Nil || strings.TrimSpace(claim.Key) == "" || claim.RequestHash == "" || claim.Version <= 0 {
 		return ErrInvalidLedgerClaim
 	}
-	res, err := l.db.ExecContext(ctx, `UPDATE ibex_core.idempotency_ledger SET state='finalized', status_code=$1, response_payload=$2, lease_expires_at=NULL, version=version+1, updated_at=NOW() WHERE id=$3 AND organization_id=$4 AND agent_id=$5 AND dedupe_key=$6 AND request_hash=$7 AND state='claimed'`, status, response, claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash)
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, claim.Principal.OrgID.String()); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE ibex_core.idempotency_ledger
+   SET state='finalized', status_code=$1, response_payload=$2, lease_expires_at=NULL,
+       version=version+1, updated_at=NOW()
+ WHERE id=$3 AND organization_id=$4 AND agent_id=$5 AND dedupe_key=$6
+   AND request_hash=$7 AND version=$8 AND state='claimed'`,
+		status, response, claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version)
 	if err != nil {
 		return err
 	}
@@ -144,5 +185,5 @@ func (l *PostgresLedger) Finalize(ctx context.Context, claim ClaimToken, status 
 	if n != 1 {
 		return fmt.Errorf("%w: claim is no longer owned", ErrLedgerConflict)
 	}
-	return nil
+	return tx.Commit()
 }
