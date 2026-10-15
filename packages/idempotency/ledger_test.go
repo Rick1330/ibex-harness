@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,19 +184,22 @@ func TestPostgresLedgerConstructorAndClaimFailures(t *testing.T) {
 	}
 	org, agent := uuid.New(), uuid.New()
 	mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
-	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil {
-		t.Fatal("begin failure must be returned")
+	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil || !strings.Contains(err.Error(), "begin failed") {
+		t.Fatalf("claim begin error=%v", err)
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnError(errors.New("scope failed"))
-	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil {
-		t.Fatal("scope failure must be returned")
+	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil || !strings.Contains(err.Error(), "scope failed") {
+		t.Fatalf("claim scope error=%v", err)
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WillReturnError(errors.New("insert failed"))
-	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil {
-		t.Fatal("insert failure must be returned")
+	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil || !strings.Contains(err.Error(), "insert failed") {
+		t.Fatalf("claim insert error=%v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -256,26 +260,29 @@ func TestPostgresLedgerFinalizeFailures(t *testing.T) {
 		t.Fatalf("invalid finalize error=%v", err)
 	}
 	mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
-	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
-		t.Fatal("begin failure must be returned")
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil || !strings.Contains(err.Error(), "begin failed") {
+		t.Fatalf("finalize begin error=%v", err)
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnError(errors.New("scope failed"))
-	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
-		t.Fatal("scope failure must be returned")
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil || !strings.Contains(err.Error(), "scope failed") {
+		t.Fatalf("finalize scope error=%v", err)
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core\.idempotency_ledger`).WillReturnError(errors.New("update failed"))
-	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
-		t.Fatal("update failure must be returned")
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil || !strings.Contains(err.Error(), "update failed") {
+		t.Fatalf("finalize update error=%v", err)
 	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`UPDATE ibex_core\.idempotency_ledger`).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit().WillReturnError(errors.New("commit failed"))
-	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil {
-		t.Fatal("commit failure must be returned")
+	if err := ledger.Finalize(context.Background(), claim, 200, nil); err == nil || !strings.Contains(err.Error(), "commit failed") {
+		t.Fatalf("finalize commit error=%v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 
