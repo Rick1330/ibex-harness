@@ -65,10 +65,11 @@ type RouterDeps struct {
 	// ModelRouter org-gates provider selection (nil → DenyAllRegistry).
 	ModelRouter ProviderResolver
 	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
-	AgentDefaults    modelpolicy.AgentDefaultLoader
-	ResponsePipeline *responsepipeline.Pipeline
-	TraceWriter      TraceWriter
-	IdempotencyStore idempotency.Store
+	AgentDefaults     modelpolicy.AgentDefaultLoader
+	ResponsePipeline  *responsepipeline.Pipeline
+	TraceWriter       TraceWriter
+	IdempotencyStore  idempotency.Store
+	TerminationLedger idempotency.Ledger
 	// ContextClient is the fail-open Assemble client from bootstrap (nil when
 	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
 	// Production passes *contextclient.Client; tests may supply fakes.
@@ -171,6 +172,7 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		responsePipeline:         deps.ResponsePipeline,
 		traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
 		idempotencyStore:         deps.IdempotencyStore,
+		terminationLedger:        deps.TerminationLedger,
 		idempotencyTimeout:       deps.Config.IdempotencyRedisTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.Config.IdempotencyRedisTimeout),
 		contextClient:            deps.ContextClient,

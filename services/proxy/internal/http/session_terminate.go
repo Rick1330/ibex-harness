@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
@@ -38,6 +40,7 @@ type sessionTerminateHandler struct {
 	log           *logger.Logger
 	metrics       *metrics.ProxyRegistry
 	docsBase      string
+	ledger        idempotency.Ledger
 	enqueueFlight *terminateEnqueueFlight // optional; defaults to process-wide gate
 	enqueueDone   func()                  // test hook: every afterTerminateEnqueue exit
 }
@@ -97,14 +100,67 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if !h.validateTerminateBody(w, r, id.requestID) {
+	body, ok := h.validateTerminateBody(w, r, id.requestID)
+	if !ok {
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if h.ledger != nil && key == "" {
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+			"Request validation failed", id.requestID,
+			apierror.WriteOpts{Detail: "Idempotency-Key is required for session termination", DocsBase: h.docsBase})
+		return
+	}
+	// The bounded termination command is canonical after validation: the path,
+	// operation, and accepted status form the request hash. Ledger truth is
+	// authoritative; no in-memory flight can bypass this admission point.
+	var claim idempotency.ClaimOutcome
+	var err error
+	if h.ledger != nil {
+		canonicalBody, _ := json.Marshal(body)
+		requestHash := idempotency.HashRequest(append(append([]byte(id.externalID+"\x00terminate\x00"), canonicalBody...), 0))
+		claim, err = h.ledger.Claim(r.Context(), idempotency.Principal{OrgID: id.orgID, AgentID: id.agentID}, key, requestHash)
+		if err != nil {
+			apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+				"Idempotency ledger unavailable", id.requestID, apierror.WriteOpts{DocsBase: h.docsBase})
+			return
+		}
+	}
+	switch claim.Kind {
+	case idempotency.ClaimReplay:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(claim.Status)
+		_, _ = w.Write(claim.Response)
+		return
+	case idempotency.ClaimConflict:
+		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyKeyReuse,
+			"Idempotency-Key was already used with a different request", id.requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return
+	case idempotency.ClaimInProgress:
+		if claim.RetryAfter > 0 {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(claim.RetryAfter.Seconds())+1))
+		}
+		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyInProgress,
+			"A request with this Idempotency-Key is still in progress", id.requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
 		return
 	}
 	result, sessionID, ok := h.completeSession(w, r, id)
 	if !ok {
 		return
 	}
-	writeTerminateOK(w, id.externalID)
+	response := terminateOKBody(id.externalID)
+	if h.ledger != nil {
+		if err := h.ledger.Finalize(context.WithoutCancel(r.Context()), claim.Claim, http.StatusOK, response); err != nil {
+			apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+				"Idempotency finalize failed", id.requestID, apierror.WriteOpts{DocsBase: h.docsBase})
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(response)
 	// OK: first completion. Noop: recover retained turns after a prior failed enqueue.
 	if result == session.CompleteOK || result == session.CompleteNoop {
 		bg := context.WithoutCancel(r.Context())
@@ -147,18 +203,18 @@ func (h sessionTerminateHandler) resolveTerminateIdentity(
 
 func (h sessionTerminateHandler) validateTerminateBody(
 	w http.ResponseWriter, r *http.Request, requestID string,
-) bool {
+) (terminateRequestBody, bool) {
 	body, ok := parseTerminateBody(w, r, requestID, h.docsBase)
 	if !ok {
-		return false
+		return terminateRequestBody{}, false
 	}
 	if body.Status != session.StatusCompleted {
 		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
 			"Request validation failed", requestID,
 			apierror.WriteOpts{Detail: `status must be "completed"`, DocsBase: h.docsBase})
-		return false
+		return terminateRequestBody{}, false
 	}
-	return true
+	return body, true
 }
 
 func (h sessionTerminateHandler) completeSession(
@@ -205,15 +261,21 @@ func parseTerminateBody(w http.ResponseWriter, r *http.Request, requestID, docsB
 }
 
 func writeTerminateOK(w http.ResponseWriter, externalID string) {
+	body := terminateOKBody(externalID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	_, _ = w.Write(body)
+}
+
+func terminateOKBody(externalID string) []byte {
+	body, _ := json.Marshal(map[string]any{
 		"data": terminateResponseData{
 			SessionID:    externalID,
 			FinalStatus:  session.StatusCompleted,
 			TerminatedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	})
+	return append(body, '\n')
 }
 
 type terminateEnqueueJob struct {

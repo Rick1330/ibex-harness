@@ -46,6 +46,7 @@ type protectedRouteDeps struct {
 	responsePipeline         *responsepipeline.Pipeline
 	traceWriter              TraceWriter
 	idempotencyStore         idempotency.Store
+	terminationLedger        idempotency.Ledger
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler
@@ -77,7 +78,7 @@ func registerSessionTerminateRoute(deps protectedRouteDeps, rateLimit, agentVeri
 	)
 	h := sessionTerminateHandler{
 		store: deps.sessionStore, buffer: deps.turnBuffer, enqueue: deps.extractionEnqueue,
-		log: deps.logger, metrics: deps.reg, docsBase: deps.docsBase,
+		log: deps.logger, metrics: deps.reg, docsBase: deps.docsBase, ledger: deps.terminationLedger,
 	}
 	deps.mux.Handle("/v1/sessions/{session_id}/terminate", termChain(h))
 }
