@@ -135,34 +135,30 @@ func TestDurableChatFingerprintIncludesNormalizedSkipMemoryMode(t *testing.T) {
 	}
 }
 
-func TestDurableChatLedgerReplayAndConflict(t *testing.T) {
+func TestDurableChatLedgerReplay(t *testing.T) {
 	org, agent := uuid.New(), uuid.New()
-	for name, tc := range map[string]struct {
-		outcome    idempotency.ClaimOutcome
-		wantStatus int
-	}{
-		"replay":   {outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimReplay, Status: 201, Response: []byte(`{"ok":true}`)}, wantStatus: 201},
-		"conflict": {outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimConflict}, wantStatus: http.StatusConflict},
-	} {
-		t.Run(name, func(t *testing.T) {
-			fake := &chatLedgerFake{outcome: tc.outcome}
-			id := durableChatID(t, fake)
-			req, parsed := durableChatRequest(org, agent, "chat-key")
-			rec := httptest.NewRecorder()
-			claim, cont := id.Resolve(rec, req, parsed)
-			if name == "replay" {
-				if !cont || claim == nil || !claim.Replay || claim.Hit.Status != tc.wantStatus {
-					t.Fatalf("replay claim=%#v cont=%v status=%d", claim, cont, rec.Code)
-				}
-				assertChatMetric(t, id.Metrics, metrics.IdempotencyHit)
-				return
-			}
-			if cont || claim != nil || rec.Code != tc.wantStatus {
-				t.Fatalf("conflict claim=%#v cont=%v status=%d", claim, cont, rec.Code)
-			}
-			assertChatMetric(t, id.Metrics, metrics.IdempotencyConflict)
-		})
+	fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimReplay, Status: 201, Response: []byte(`{"ok":true}`)}}
+	id := durableChatID(t, fake)
+	req, parsed := durableChatRequest(org, agent, "chat-key")
+	rec := httptest.NewRecorder()
+	claim, cont := id.Resolve(rec, req, parsed)
+	if !cont || claim == nil || !claim.Replay || claim.Hit.Status != http.StatusCreated {
+		t.Fatalf("replay claim=%#v cont=%v status=%d", claim, cont, rec.Code)
 	}
+	assertChatMetric(t, id.Metrics, metrics.IdempotencyHit)
+}
+
+func TestDurableChatLedgerConflict(t *testing.T) {
+	org, agent := uuid.New(), uuid.New()
+	fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimConflict}}
+	id := durableChatID(t, fake)
+	req, parsed := durableChatRequest(org, agent, "chat-key")
+	rec := httptest.NewRecorder()
+	claim, cont := id.Resolve(rec, req, parsed)
+	if cont || claim != nil || rec.Code != http.StatusConflict {
+		t.Fatalf("conflict claim=%#v cont=%v status=%d", claim, cont, rec.Code)
+	}
+	assertChatMetric(t, id.Metrics, metrics.IdempotencyConflict)
 }
 
 func TestDurableChatLedgerInProgressReturnsRetryAfter(t *testing.T) {
@@ -209,25 +205,25 @@ func metricLabel(metric *dto.Metric, name string) string {
 	return ""
 }
 
-func TestDurableChatLedgerFailureAndMissingKeyFailClosed(t *testing.T) {
+func TestDurableChatLedgerClaimFailureFailsClosed(t *testing.T) {
 	org, agent := uuid.New(), uuid.New()
-	for name, tc := range map[string]struct {
-		ledger     idempotency.Ledger
-		key        string
-		wantStatus int
-	}{
-		"claim failure": {ledger: &chatLedgerFake{claimErr: errors.New("database unavailable")}, key: "chat-key", wantStatus: http.StatusServiceUnavailable},
-		"missing key":   {ledger: &chatLedgerFake{}, key: "", wantStatus: http.StatusBadRequest},
-	} {
-		t.Run(name, func(t *testing.T) {
-			id := durableChatID(t, tc.ledger)
-			req, parsed := durableChatRequest(org, agent, tc.key)
-			rec := httptest.NewRecorder()
-			claim, cont := id.Resolve(rec, req, parsed)
-			if cont || claim != nil || rec.Code != tc.wantStatus {
-				t.Fatalf("claim=%#v cont=%v status=%d want=%d", claim, cont, rec.Code, tc.wantStatus)
-			}
-		})
+	id := durableChatID(t, &chatLedgerFake{claimErr: errors.New("database unavailable")})
+	req, parsed := durableChatRequest(org, agent, "chat-key")
+	rec := httptest.NewRecorder()
+	claim, cont := id.Resolve(rec, req, parsed)
+	if cont || claim != nil || rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("claim=%#v cont=%v status=%d", claim, cont, rec.Code)
+	}
+}
+
+func TestDurableChatLedgerMissingKeyFailsClosed(t *testing.T) {
+	org, agent := uuid.New(), uuid.New()
+	id := durableChatID(t, &chatLedgerFake{})
+	req, parsed := durableChatRequest(org, agent, "")
+	rec := httptest.NewRecorder()
+	claim, cont := id.Resolve(rec, req, parsed)
+	if cont || claim != nil || rec.Code != http.StatusBadRequest {
+		t.Fatalf("claim=%#v cont=%v status=%d", claim, cont, rec.Code)
 	}
 }
 
