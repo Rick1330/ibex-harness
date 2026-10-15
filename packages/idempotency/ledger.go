@@ -63,6 +63,14 @@ func NewPostgresLedger(db *sql.DB, lease time.Duration) (*PostgresLedger, error)
 	return &PostgresLedger{db: db, lease: lease}, nil
 }
 
+// NewOptionalPostgresLedger preserves the intentionally disabled PostgreSQL profile.
+func NewOptionalPostgresLedger(db *sql.DB, lease time.Duration) (Ledger, error) {
+	if db == nil {
+		return nil, nil
+	}
+	return NewPostgresLedger(db, lease)
+}
+
 type ledgerRow struct {
 	id                 uuid.UUID
 	requestHash, state string

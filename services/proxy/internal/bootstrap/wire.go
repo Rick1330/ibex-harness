@@ -376,12 +376,9 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 	if err != nil {
 		return routerAssembleParts{}, fmt.Errorf("idempotency store: %w", err)
 	}
-	var terminationLedger idempotency.Ledger
-	if in.infra.pgDB != nil {
-		terminationLedger, err = idempotency.NewPostgresLedger(in.infra.pgDB, 2*time.Minute)
-		if err != nil {
-			return routerAssembleParts{}, fmt.Errorf("termination idempotency ledger: %w", err)
-		}
+	terminationLedger, err := idempotency.NewOptionalPostgresLedger(in.infra.pgDB, 2*time.Minute)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("termination idempotency ledger: %w", err)
 	}
 	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
 		PGDB:    in.infra.pgDB,
