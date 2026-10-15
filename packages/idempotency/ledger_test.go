@@ -264,6 +264,16 @@ func TestPostgresLedgerClaimStates(t *testing.T) {
 	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash); err == nil || !strings.Contains(err.Error(), "reclaim failed") {
 		t.Fatalf("reclaim error=%v", err)
 	}
+	mock.ExpectBegin()
+	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WithArgs(org, agent, key, hash, "60.000000 seconds").WillReturnRows(sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}))
+	mock.ExpectQuery(`SELECT id, request_hash, state`).WithArgs(org, agent, key).WillReturnRows(row(hash, "claimed", nil, nil, time.Now().Add(-time.Minute), 1))
+	mock.ExpectQuery(`UPDATE ibex_core\.idempotency_ledger`).WillReturnError(sql.ErrNoRows)
+	mock.ExpectCommit()
+	out, err = ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash)
+	if err != nil || out.Kind != ClaimInProgress || out.RetryAfter <= 0 {
+		t.Fatalf("clock-race outcome=%+v err=%v", out, err)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}

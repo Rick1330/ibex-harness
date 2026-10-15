@@ -169,6 +169,10 @@ UPDATE ibex_core.idempotency_ledger
    AND request_hash=$6 AND state='claimed' AND lease_expires_at <= NOW()
 RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`, leaseArg, row.id, p.OrgID, p.AgentID, key, requestHash))
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			out.Kind, out.RetryAfter = ClaimInProgress, time.Second
+			return out, nil
+		}
 		return ClaimOutcome{}, err
 	}
 	out.Kind, out.Claim.Version = ClaimOwned, row.version
