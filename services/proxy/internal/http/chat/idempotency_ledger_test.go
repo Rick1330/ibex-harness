@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,19 +14,21 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 	dto "github.com/prometheus/client_model/go"
 )
 
 type chatLedgerFake struct {
-	outcome   idempotency.ClaimOutcome
-	claimErr  error
-	finalErr  error
-	released  bool
-	principal idempotency.Principal
-	key       string
-	hash      string
-	finalized bool
+	outcome    idempotency.ClaimOutcome
+	claimErr   error
+	finalErr   error
+	releaseErr error
+	released   bool
+	principal  idempotency.Principal
+	key        string
+	hash       string
+	finalized  bool
 }
 
 func (f *chatLedgerFake) Claim(_ context.Context, p idempotency.Principal, key, hash string) (idempotency.ClaimOutcome, error) {
@@ -43,7 +46,7 @@ func (f *chatLedgerFake) Finalize(_ context.Context, _ idempotency.ClaimToken, _
 
 func (f *chatLedgerFake) Release(_ context.Context, _ idempotency.ClaimToken) error {
 	f.released = true
-	return nil
+	return f.releaseErr
 }
 
 type tenantChatLedgerFake struct {
@@ -199,6 +202,36 @@ func TestDurableChatLedgerFailureAndMissingKeyFailClosed(t *testing.T) {
 	}
 }
 
+func TestDurableChatLedgerRequiresAuthenticatedPrincipal(t *testing.T) {
+	org := uuid.New()
+	id := durableChatID(t, &chatLedgerFake{})
+	tests := map[string]*http.Request{
+		"missing auth":  httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil),
+		"missing agent": httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(auth.WithContext(context.Background(), &auth.ValidateResult{OrgID: org})),
+	}
+	for name, req := range tests {
+		t.Run(name, func(t *testing.T) {
+			req.Header.Set(idempotencyHeader, "chat-key")
+			rec := httptest.NewRecorder()
+			claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "gpt-test"})
+			if cont || claim != nil || rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("claim=%#v cont=%v status=%d", claim, cont, rec.Code)
+			}
+		})
+	}
+}
+
+func TestDurableChatLedgerStreamIsRejected(t *testing.T) {
+	org, agent := uuid.New(), uuid.New()
+	id := durableChatID(t, &chatLedgerFake{})
+	req, _ := durableChatRequest(org, agent, "stream-key")
+	rec := httptest.NewRecorder()
+	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "gpt-test", Stream: true})
+	if cont || claim != nil || rec.Code != http.StatusBadRequest {
+		t.Fatalf("claim=%#v cont=%v status=%d", claim, cont, rec.Code)
+	}
+}
+
 func TestDurableChatLedgerTransientFailureReleasesOwnedClaim(t *testing.T) {
 	org, agent := uuid.New(), uuid.New()
 	fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{
@@ -215,6 +248,43 @@ func TestDurableChatLedgerTransientFailureReleasesOwnedClaim(t *testing.T) {
 	if !fake.released || fake.finalized {
 		t.Fatalf("released=%v finalized=%v", fake.released, fake.finalized)
 	}
+}
+
+func TestDurableChatLedgerFinalizeAndReleaseFailuresAreHandled(t *testing.T) {
+	org, agent := uuid.New(), uuid.New()
+	t.Run("finalize failure", func(t *testing.T) {
+		fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{
+			Kind:  idempotency.ClaimOwned,
+			Claim: idempotency.ClaimToken{ID: uuid.New(), Version: 1},
+		}, finalErr: errors.New("finalize unavailable")}
+		id := durableChatID(t, fake)
+		req, parsed := durableChatRequest(org, agent, "finalize-failure")
+		claim, cont := id.Resolve(httptest.NewRecorder(), req, parsed)
+		if !cont || claim == nil {
+			t.Fatalf("claim=%#v cont=%v", claim, cont)
+		}
+		id.Finish(claim, http.StatusOK, []byte(`{"ok":true}`))
+		if !fake.finalized {
+			t.Fatal("expected finalize attempt")
+		}
+	})
+	t.Run("oversize release and release failure", func(t *testing.T) {
+		fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{
+			Kind:  idempotency.ClaimOwned,
+			Claim: idempotency.ClaimToken{ID: uuid.New(), Version: 1},
+		}, releaseErr: errors.New("release unavailable")}
+		id := durableChatID(t, fake)
+		req, parsed := durableChatRequest(org, agent, "oversize")
+		claim, cont := id.Resolve(httptest.NewRecorder(), req, parsed)
+		if !cont || claim == nil {
+			t.Fatalf("claim=%#v cont=%v", claim, cont)
+		}
+		body := []byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)+1))
+		id.Finish(claim, http.StatusOK, body)
+		if !fake.released {
+			t.Fatal("expected oversize response to release claim")
+		}
+	})
 }
 
 func TestDurableChatLedgerDoesNotReplayAcrossTenants(t *testing.T) {
