@@ -116,12 +116,8 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	response := terminateOKBody(id.externalID)
-	if h.ledger != nil {
-		if err := h.ledger.Finalize(context.WithoutCancel(r.Context()), claim.Claim, http.StatusOK, response); err != nil {
-			apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-				"Idempotency finalize failed", id.requestID, apierror.WriteOpts{DocsBase: h.docsBase})
-			return
-		}
+	if !h.finalizeTermination(w, r, id, claim, response) {
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -134,6 +130,18 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			externalID: id.externalID, requestID: id.requestID,
 		})
 	}
+}
+
+func (h sessionTerminateHandler) finalizeTermination(w http.ResponseWriter, r *http.Request, id terminateIdentity, claim idempotency.ClaimOutcome, response []byte) bool {
+	if h.ledger == nil {
+		return true
+	}
+	if err := h.ledger.Finalize(context.WithoutCancel(r.Context()), claim.Claim, http.StatusOK, response); err != nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			"Idempotency finalize failed", id.requestID, apierror.WriteOpts{DocsBase: h.docsBase})
+		return false
+	}
+	return true
 }
 
 func (h sessionTerminateHandler) admitTermination(w http.ResponseWriter, r *http.Request, id terminateIdentity, body terminateRequestBody) (idempotency.ClaimOutcome, bool) {
