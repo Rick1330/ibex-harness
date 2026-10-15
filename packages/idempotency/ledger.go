@@ -129,7 +129,7 @@ func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHas
 
 func (l *PostgresLedger) insertOrLoad(ctx context.Context, tx *sql.Tx, p Principal, key, requestHash string) (ledgerRow, bool, error) {
 	// Static SQL; every request-controlled value is passed through QueryRowContext arguments.
-	row, err := scanLedgerRow(tx.QueryRowContext(ctx, insertLedgerSQL,
+	row, err := scanLedgerRow(tx.QueryRowContext(ctx, insertLedgerSQL, // NOSONAR — static SQL with bound arguments.
 		p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", l.lease.Seconds())))
 	if err == nil {
 		return row, true, nil
