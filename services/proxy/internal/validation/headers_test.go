@@ -28,3 +28,20 @@ func TestValidateChatHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestSkipMemoryRequestedNormalizesTruthyValues(t *testing.T) {
+	for _, value := range []string{"1", "true", " TRUE ", "yes", "On"} {
+		h := http.Header{}
+		h.Set(HeaderSkipMemory, value)
+		if !SkipMemoryRequested(h) {
+			t.Fatalf("value %q should enable skip-memory", value)
+		}
+	}
+	for _, value := range []string{"", "0", "false", "no", "off", "unexpected"} {
+		h := http.Header{}
+		h.Set(HeaderSkipMemory, value)
+		if SkipMemoryRequested(h) {
+			t.Fatalf("value %q should not enable skip-memory", value)
+		}
+	}
+}

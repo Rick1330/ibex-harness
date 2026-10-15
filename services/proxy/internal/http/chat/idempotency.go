@@ -74,10 +74,10 @@ func ParseKey(h http.Header) (key string, present bool, fieldErr *apierror.Field
 
 // FingerprintRequest hashes the chat fields that must match on replay.
 func FingerprintRequest(parsed *llm.ChatCompletionRequest) (idempotency.Fingerprint, error) {
-	return fingerprintRequest(parsed, "")
+	return fingerprintRequest(parsed, "", false)
 }
 
-func fingerprintRequest(parsed *llm.ChatCompletionRequest, operation string) (idempotency.Fingerprint, error) {
+func fingerprintRequest(parsed *llm.ChatCompletionRequest, operation string, skipMemory bool) (idempotency.Fingerprint, error) {
 	payload := struct {
 		Operation   string        `json:"operation,omitempty"`
 		Model       string        `json:"model"`
@@ -85,10 +85,11 @@ func fingerprintRequest(parsed *llm.ChatCompletionRequest, operation string) (id
 		Stream      bool          `json:"stream"`
 		Temperature *float64      `json:"temperature"`
 		MaxTokens   *int          `json:"max_tokens"`
+		SkipMemory  bool          `json:"skip_memory,omitempty"`
 	}{
 		Operation: operation,
 		Model:     parsed.Model, Messages: parsed.Messages, Stream: parsed.Stream,
-		Temperature: parsed.Temperature, MaxTokens: parsed.MaxTokens,
+		Temperature: parsed.Temperature, MaxTokens: parsed.MaxTokens, SkipMemory: skipMemory,
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -159,7 +160,7 @@ func (id Idempotency) claimLedger(w http.ResponseWriter, r *http.Request, parsed
 		id.writeLedgerUnavailable(w, r)
 		return nil, false
 	}
-	fp, err := fingerprintRequest(parsed, "chat")
+	fp, err := fingerprintRequest(parsed, "chat", validation.SkipMemoryRequested(r.Header))
 	if err != nil {
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError, msgInternalError, reqID(r.Context()), apierror.WriteOpts{Detail: "idempotency fingerprint failed", DocsBase: id.DocsBase})
 		return nil, false

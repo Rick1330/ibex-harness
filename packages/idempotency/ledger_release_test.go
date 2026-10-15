@@ -2,6 +2,7 @@ package idempotency
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"strings"
 	"testing"
@@ -17,6 +18,17 @@ func releaseTestClaim() ClaimToken {
 		Principal: Principal{OrgID: uuid.New(), AgentID: uuid.New()},
 		Key:       "release-key", RequestHash: HashRequest([]byte("release-body")), Version: 3,
 	}
+}
+
+func expectClaimTransaction(m sqlmock.Sqlmock, claim ClaimToken) {
+	m.ExpectBegin()
+	m.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+func expectReleaseDelete(m sqlmock.Sqlmock, claim ClaimToken, result driver.Result) {
+	m.ExpectExec(`DELETE FROM ibex_core\.idempotency_ledger`).WithArgs(
+		claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version,
+	).WillReturnResult(result)
 }
 
 func TestPostgresLedgerReleaseValidationAndFailures(t *testing.T) {
@@ -56,30 +68,26 @@ func TestPostgresLedgerReleaseValidationAndFailures(t *testing.T) {
 		},
 		{
 			name: "delete", setup: func(m sqlmock.Sqlmock, c ClaimToken) {
-				m.ExpectBegin()
-				m.ExpectExec(`SELECT set_config`).WithArgs(c.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+				expectClaimTransaction(m, c)
 				m.ExpectExec(`DELETE FROM ibex_core\.idempotency_ledger`).WithArgs(c.ID, c.Principal.OrgID, c.Principal.AgentID, c.Key, c.RequestHash, c.Version).WillReturnError(errors.New("delete failed"))
 			}, want: "delete failed",
 		},
 		{
 			name: "rows affected", setup: func(m sqlmock.Sqlmock, c ClaimToken) {
-				m.ExpectBegin()
-				m.ExpectExec(`SELECT set_config`).WithArgs(c.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
-				m.ExpectExec(`DELETE FROM ibex_core\.idempotency_ledger`).WithArgs(c.ID, c.Principal.OrgID, c.Principal.AgentID, c.Key, c.RequestHash, c.Version).WillReturnResult(sqlmock.NewErrorResult(errors.New("rows failed")))
+				expectClaimTransaction(m, c)
+				expectReleaseDelete(m, c, sqlmock.NewErrorResult(errors.New("rows failed")))
 			}, want: "rows failed",
 		},
 		{
 			name: "lost owner", setup: func(m sqlmock.Sqlmock, c ClaimToken) {
-				m.ExpectBegin()
-				m.ExpectExec(`SELECT set_config`).WithArgs(c.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
-				m.ExpectExec(`DELETE FROM ibex_core\.idempotency_ledger`).WithArgs(c.ID, c.Principal.OrgID, c.Principal.AgentID, c.Key, c.RequestHash, c.Version).WillReturnResult(sqlmock.NewResult(0, 0))
+				expectClaimTransaction(m, c)
+				expectReleaseDelete(m, c, sqlmock.NewResult(0, 0))
 			}, want: ErrLedgerConflict.Error(),
 		},
 		{
 			name: "commit", setup: func(m sqlmock.Sqlmock, c ClaimToken) {
-				m.ExpectBegin()
-				m.ExpectExec(`SELECT set_config`).WithArgs(c.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
-				m.ExpectExec(`DELETE FROM ibex_core\.idempotency_ledger`).WithArgs(c.ID, c.Principal.OrgID, c.Principal.AgentID, c.Key, c.RequestHash, c.Version).WillReturnResult(sqlmock.NewResult(0, 1))
+				expectClaimTransaction(m, c)
+				expectReleaseDelete(m, c, sqlmock.NewResult(0, 1))
 				m.ExpectCommit().WillReturnError(errors.New("commit failed"))
 			}, want: "commit failed",
 		},
@@ -118,9 +126,8 @@ func TestPostgresLedgerReleaseSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	claim := releaseTestClaim()
-	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec(`DELETE FROM ibex_core\.idempotency_ledger`).WithArgs(claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectClaimTransaction(mock, claim)
+	expectReleaseDelete(mock, claim, sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	if err := ledger.Release(context.Background(), claim); err != nil {
 		t.Fatal(err)
@@ -141,8 +148,7 @@ func TestPostgresLedgerFinalizeRowsAffectedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	claim := releaseTestClaim()
-	mock.ExpectBegin()
-	mock.ExpectExec(`SELECT set_config`).WithArgs(claim.Principal.OrgID.String()).WillReturnResult(sqlmock.NewResult(0, 1))
+	expectClaimTransaction(mock, claim)
 	mock.ExpectExec(`UPDATE ibex_core\.idempotency_ledger`).WillReturnResult(sqlmock.NewErrorResult(errors.New("rows failed")))
 	if err := ledger.Finalize(context.Background(), claim, 200, []byte(`{"ok":true}`)); err == nil || !strings.Contains(err.Error(), "rows failed") {
 		t.Fatalf("finalize error=%v", err)

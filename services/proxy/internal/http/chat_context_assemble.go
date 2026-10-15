@@ -224,13 +224,7 @@ func (h chatCompletionHandler) shouldAssemble(r *http.Request) bool {
 }
 
 func skipMemoryRequested(h http.Header) bool {
-	v := strings.TrimSpace(strings.ToLower(h.Get(validation.HeaderSkipMemory)))
-	switch v {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
+	return validation.SkipMemoryRequested(h)
 }
 
 func assembleParamsFromRequest(ctx context.Context, model string, messages []provider.Message) (contextclient.AssembleParams, bool) {

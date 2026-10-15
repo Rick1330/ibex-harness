@@ -106,6 +106,35 @@ func TestDurableChatLedgerOwnedAndFinalized(t *testing.T) {
 	assertChatMetric(t, id.Metrics, metrics.IdempotencyMiss)
 }
 
+func TestDurableChatFingerprintIncludesNormalizedSkipMemoryMode(t *testing.T) {
+	org, agent := uuid.New(), uuid.New()
+	fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimOwned, Claim: idempotency.ClaimToken{ID: uuid.New(), Version: 1}}}
+	id := durableChatID(t, fake)
+	parsed := &llm.ChatCompletionRequest{Model: "gpt-test", Messages: []llm.Message{{Role: "user", Content: "hello"}}}
+	withoutHeader, _ := durableChatRequest(org, agent, "without-header")
+	if claim, cont := id.Resolve(httptest.NewRecorder(), withoutHeader, parsed); !cont || claim == nil {
+		t.Fatal("baseline durable claim failed")
+	}
+	baseline := fake.hash
+	withTruthyHeader, _ := durableChatRequest(org, agent, "truthy-header")
+	withTruthyHeader.Header.Set(validation.HeaderSkipMemory, " TRUE ")
+	if claim, cont := id.Resolve(httptest.NewRecorder(), withTruthyHeader, parsed); !cont || claim == nil {
+		t.Fatal("truthy durable claim failed")
+	}
+	truthy := fake.hash
+	if baseline == truthy {
+		t.Fatal("skip-memory mode must change the durable request fingerprint")
+	}
+	withEquivalentHeader, _ := durableChatRequest(org, agent, "equivalent-header")
+	withEquivalentHeader.Header.Set(validation.HeaderSkipMemory, "on")
+	if claim, cont := id.Resolve(httptest.NewRecorder(), withEquivalentHeader, parsed); !cont || claim == nil {
+		t.Fatal("equivalent durable claim failed")
+	}
+	if truthy != fake.hash {
+		t.Fatal("equivalent truthy skip-memory values must share a fingerprint")
+	}
+}
+
 func TestDurableChatLedgerReplayAndConflict(t *testing.T) {
 	org, agent := uuid.New(), uuid.New()
 	for name, tc := range map[string]struct {
