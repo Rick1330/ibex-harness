@@ -173,6 +173,7 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		usageFactWriter:          deps.usageFactWriter,
 		budgetCache:              deps.budgetCache,
 		idempotencyStore:         deps.idempotencyStore,
+		terminationLedger:        deps.terminationLedger,
 		idempotencyTimeout:       deps.idempotencyTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.idempotencyTimeout),
 		contextClient:            deps.contextClient,

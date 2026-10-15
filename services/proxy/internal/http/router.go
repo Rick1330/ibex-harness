@@ -255,6 +255,7 @@ type chatCompletionHandler struct {
 	usageFactWriter          *billing.UsageFactWriter
 	budgetCache              *billing.Cache
 	idempotencyStore         idempotency.Store
+	terminationLedger        idempotency.Ledger
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler
