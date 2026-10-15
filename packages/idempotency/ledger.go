@@ -13,8 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Ledger is the durable admission boundary for one mutating HTTP operation.
-// Implementations must scope keys by the complete principal tuple.
 type Ledger interface {
 	Claim(ctx context.Context, principal Principal, key string, requestHash string) (ClaimOutcome, error)
 	Finalize(ctx context.Context, claim ClaimToken, status int, response []byte) error
@@ -48,10 +46,8 @@ var (
 	ErrLedgerConflict     = errors.New("idempotency: key used with a different request")
 )
 
-// HashRequest returns the SHA-256 request hash used by handlers.
 func HashRequest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 
-// PostgresLedger implements request-idempotency-core.v1 using PostgreSQL row locks.
 type PostgresLedger struct {
 	db    *sql.DB
 	lease time.Duration
@@ -68,15 +64,13 @@ func NewPostgresLedger(db *sql.DB, lease time.Duration) (*PostgresLedger, error)
 }
 
 type ledgerRow struct {
-	id          uuid.UUID
-	requestHash string
-	state       string
-	status      sql.NullInt64
-	response    []byte
-	expires     sql.NullTime
-	version     int64
+	id                 uuid.UUID
+	requestHash, state string
+	status             sql.NullInt64
+	response           []byte
+	expires            sql.NullTime
+	version            int64
 }
-
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanLedgerRow(s rowScanner) (ledgerRow, error) {
@@ -85,13 +79,15 @@ func scanLedgerRow(s rowScanner) (ledgerRow, error) {
 	return row, err
 }
 
+func validClaim(p Principal, key, requestHash string) bool {
+	return p.OrgID != uuid.Nil && p.AgentID != uuid.Nil && strings.TrimSpace(key) != "" && strings.TrimSpace(requestHash) != "" && len(key) <= 256
+}
+
 func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHash string) (ClaimOutcome, error) {
-	key = strings.TrimSpace(key)
-	requestHash = strings.TrimSpace(requestHash)
-	if p.OrgID == uuid.Nil || p.AgentID == uuid.Nil || key == "" || requestHash == "" || len(key) > 256 {
+	key, requestHash = strings.TrimSpace(key), strings.TrimSpace(requestHash)
+	if !validClaim(p, key, requestHash) {
 		return ClaimOutcome{}, ErrInvalidLedgerClaim
 	}
-
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ClaimOutcome{}, err
@@ -101,55 +97,13 @@ func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHas
 		return ClaimOutcome{}, err
 	}
 	leaseArg := fmt.Sprintf("%f seconds", l.lease.Seconds())
-	row, err := scanLedgerRow(tx.QueryRowContext(ctx, `
-INSERT INTO ibex_core.idempotency_ledger
- (organization_id, agent_id, dedupe_key, request_hash, state, lease_expires_at)
-VALUES ($1, $2, $3, $4, 'claimed', NOW() + $5::interval)
-ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
-RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`,
-		p.OrgID, p.AgentID, key, requestHash, leaseArg))
-
-	fresh := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	row, fresh, err := l.insertOrLoad(ctx, tx, p, key, requestHash)
+	if err != nil {
 		return ClaimOutcome{}, err
 	}
-	if !fresh {
-		row, err = scanLedgerRow(tx.QueryRowContext(ctx, `
-SELECT id, request_hash, state, status_code, response_payload, lease_expires_at, version
-  FROM ibex_core.idempotency_ledger
- WHERE organization_id=$1 AND agent_id=$2 AND dedupe_key=$3
- FOR UPDATE`, p.OrgID, p.AgentID, key))
-		if err != nil {
-			return ClaimOutcome{}, err
-		}
-	}
-
-	out := ClaimOutcome{Claim: ClaimToken{ID: row.id, Principal: p, Key: key, RequestHash: row.requestHash, Version: row.version}}
-	switch {
-	case row.requestHash != requestHash:
-		out.Kind = ClaimConflict
-	case fresh:
-		out.Kind = ClaimOwned
-	case row.state == "finalized":
-		out.Kind, out.Status, out.Response = ClaimReplay, int(row.status.Int64), row.response
-	case row.state == "claimed" && row.expires.Valid && row.expires.Time.After(time.Now().UTC()):
-		out.Kind = ClaimInProgress
-		out.RetryAfter = time.Until(row.expires.Time)
-	case row.state == "claimed" && row.expires.Valid:
-		row, err = scanLedgerRow(tx.QueryRowContext(ctx, `
-UPDATE ibex_core.idempotency_ledger
-   SET lease_expires_at=NOW()+$1::interval, version=version+1, updated_at=NOW()
- WHERE id=$2 AND organization_id=$3 AND agent_id=$4 AND dedupe_key=$5
-   AND request_hash=$6 AND state='claimed' AND lease_expires_at <= NOW()
-RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`,
-			leaseArg, row.id, p.OrgID, p.AgentID, key, requestHash))
-		if err != nil {
-			return ClaimOutcome{}, err
-		}
-		out.Kind = ClaimOwned
-		out.Claim.Version = row.version
-	default:
-		return ClaimOutcome{}, fmt.Errorf("idempotency: unsupported ledger state %q", row.state)
+	out, err := l.resolveClaim(ctx, tx, p, key, requestHash, leaseArg, row, fresh)
+	if err != nil {
+		return ClaimOutcome{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return ClaimOutcome{}, err
@@ -157,8 +111,63 @@ RETURNING id, request_hash, state, status_code, response_payload, lease_expires_
 	return out, nil
 }
 
+func (l *PostgresLedger) insertOrLoad(ctx context.Context, tx *sql.Tx, p Principal, key, requestHash string) (ledgerRow, bool, error) {
+	row, err := scanLedgerRow(tx.QueryRowContext(ctx, `
+INSERT INTO ibex_core.idempotency_ledger
+ (organization_id, agent_id, dedupe_key, request_hash, state, lease_expires_at)
+VALUES ($1, $2, $3, $4, 'claimed', NOW() + $5::interval)
+ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
+RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`,
+		p.OrgID, p.AgentID, key, requestHash, fmt.Sprintf("%f seconds", l.lease.Seconds())))
+	if err == nil {
+		return row, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ledgerRow{}, false, err
+	}
+	row, err = scanLedgerRow(tx.QueryRowContext(ctx, `
+SELECT id, request_hash, state, status_code, response_payload, lease_expires_at, version
+  FROM ibex_core.idempotency_ledger
+ WHERE organization_id=$1 AND agent_id=$2 AND dedupe_key=$3 FOR UPDATE`, p.OrgID, p.AgentID, key))
+	return row, false, err
+}
+
+func (l *PostgresLedger) resolveClaim(ctx context.Context, tx *sql.Tx, p Principal, key, requestHash, leaseArg string, row ledgerRow, fresh bool) (ClaimOutcome, error) {
+	out := ClaimOutcome{Claim: ClaimToken{ID: row.id, Principal: p, Key: key, RequestHash: row.requestHash, Version: row.version}}
+	if row.requestHash != requestHash {
+		out.Kind = ClaimConflict
+		return out, nil
+	}
+	if fresh {
+		out.Kind = ClaimOwned
+		return out, nil
+	}
+	if row.state == "finalized" {
+		out.Kind, out.Status, out.Response = ClaimReplay, int(row.status.Int64), row.response
+		return out, nil
+	}
+	if row.state != "claimed" || !row.expires.Valid {
+		return ClaimOutcome{}, fmt.Errorf("idempotency: unsupported ledger state %q", row.state)
+	}
+	if row.expires.Time.After(time.Now().UTC()) {
+		out.Kind, out.RetryAfter = ClaimInProgress, time.Until(row.expires.Time)
+		return out, nil
+	}
+	row, err := scanLedgerRow(tx.QueryRowContext(ctx, `
+UPDATE ibex_core.idempotency_ledger
+   SET lease_expires_at=NOW()+$1::interval, version=version+1, updated_at=NOW()
+ WHERE id=$2 AND organization_id=$3 AND agent_id=$4 AND dedupe_key=$5
+   AND request_hash=$6 AND state='claimed' AND lease_expires_at <= NOW()
+RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`, leaseArg, row.id, p.OrgID, p.AgentID, key, requestHash))
+	if err != nil {
+		return ClaimOutcome{}, err
+	}
+	out.Kind, out.Claim.Version = ClaimOwned, row.version
+	return out, nil
+}
+
 func (l *PostgresLedger) Finalize(ctx context.Context, claim ClaimToken, status int, response []byte) error {
-	if claim.ID == uuid.Nil || claim.Principal.OrgID == uuid.Nil || claim.Principal.AgentID == uuid.Nil || strings.TrimSpace(claim.Key) == "" || claim.RequestHash == "" || claim.Version <= 0 {
+	if !validClaim(claim.Principal, claim.Key, claim.RequestHash) || claim.ID == uuid.Nil || claim.Version <= 0 {
 		return ErrInvalidLedgerClaim
 	}
 	tx, err := l.db.BeginTx(ctx, nil)
@@ -173,8 +182,7 @@ func (l *PostgresLedger) Finalize(ctx context.Context, claim ClaimToken, status 
    SET state='finalized', status_code=$1, response_payload=$2, lease_expires_at=NULL,
        version=version+1, updated_at=NOW()
  WHERE id=$3 AND organization_id=$4 AND agent_id=$5 AND dedupe_key=$6
-   AND request_hash=$7 AND version=$8 AND state='claimed'`,
-		status, response, claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version)
+   AND request_hash=$7 AND version=$8 AND state='claimed'`, status, response, claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.RequestHash, claim.Version)
 	if err != nil {
 		return err
 	}

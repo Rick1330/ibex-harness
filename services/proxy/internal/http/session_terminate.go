@@ -104,51 +104,11 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if h.ledger != nil && (key == "" || len(key) > 256) {
-		detail := "Idempotency-Key is required for session termination"
-		if len(key) > 256 {
-			detail = "Idempotency-Key must be 256 characters or fewer"
-		}
-		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-			"Request validation failed", id.requestID,
-			apierror.WriteOpts{Detail: detail, DocsBase: h.docsBase})
+	claim, handled := h.admitTermination(w, r, id, body)
+	if handled {
 		return
 	}
-	// The bounded termination command is canonical after validation: the path,
-	// operation, and accepted status form the request hash. Ledger truth is
-	// authoritative; no in-memory flight can bypass this admission point.
-	var claim idempotency.ClaimOutcome
-	var err error
-	if h.ledger != nil {
-		canonicalBody, _ := json.Marshal(body)
-		requestHash := idempotency.HashRequest(append(append([]byte(id.externalID+"\x00terminate\x00"), canonicalBody...), 0))
-		claim, err = h.ledger.Claim(r.Context(), idempotency.Principal{OrgID: id.orgID, AgentID: id.agentID}, key, requestHash)
-		if err != nil {
-			apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-				"Idempotency ledger unavailable", id.requestID, apierror.WriteOpts{DocsBase: h.docsBase})
-			return
-		}
-	}
-	switch claim.Kind {
-	case idempotency.ClaimReplay:
-		h.recoverReplayEnqueue(r.Context(), id)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(claim.Status)
-		_, _ = w.Write(claim.Response)
-		return
-	case idempotency.ClaimConflict:
-		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyKeyReuse,
-			"Idempotency-Key was already used with a different request", id.requestID,
-			apierror.WriteOpts{DocsBase: h.docsBase})
-		return
-	case idempotency.ClaimInProgress:
-		if claim.RetryAfter > 0 {
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(claim.RetryAfter.Seconds())+1))
-		}
-		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyInProgress,
-			"A request with this Idempotency-Key is still in progress", id.requestID,
-			apierror.WriteOpts{DocsBase: h.docsBase})
+	if h.writeClaimOutcome(w, r, id, claim) {
 		return
 	}
 	result, sessionID, ok := h.completeSession(w, r, id)
@@ -173,6 +133,55 @@ func (h sessionTerminateHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			orgID: id.orgID, agentID: id.agentID, sessionID: sessionID,
 			externalID: id.externalID, requestID: id.requestID,
 		})
+	}
+}
+
+func (h sessionTerminateHandler) admitTermination(w http.ResponseWriter, r *http.Request, id terminateIdentity, body terminateRequestBody) (idempotency.ClaimOutcome, bool) {
+	if h.ledger == nil {
+		return idempotency.ClaimOutcome{}, false
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" || len(key) > 256 {
+		detail := "Idempotency-Key is required for session termination"
+		if len(key) > 256 {
+			detail = "Idempotency-Key must be 256 characters or fewer"
+		}
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError, "Request validation failed", id.requestID,
+			apierror.WriteOpts{Detail: detail, DocsBase: h.docsBase})
+		return idempotency.ClaimOutcome{}, true
+	}
+	canonicalBody, _ := json.Marshal(body)
+	requestHash := idempotency.HashRequest(append(append([]byte(id.externalID+"\x00terminate\x00"), canonicalBody...), 0))
+	claim, err := h.ledger.Claim(r.Context(), idempotency.Principal{OrgID: id.orgID, AgentID: id.agentID}, key, requestHash)
+	if err != nil {
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded, "Idempotency ledger unavailable", id.requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return idempotency.ClaimOutcome{}, true
+	}
+	return claim, false
+}
+
+func (h sessionTerminateHandler) writeClaimOutcome(w http.ResponseWriter, r *http.Request, id terminateIdentity, claim idempotency.ClaimOutcome) bool {
+	switch claim.Kind {
+	case idempotency.ClaimReplay:
+		h.recoverReplayEnqueue(r.Context(), id)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(claim.Status)
+		_, _ = w.Write(claim.Response)
+		return true
+	case idempotency.ClaimConflict:
+		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyKeyReuse, "Idempotency-Key was already used with a different request", id.requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return true
+	case idempotency.ClaimInProgress:
+		if claim.RetryAfter > 0 {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(claim.RetryAfter.Seconds())+1))
+		}
+		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyInProgress, "A request with this Idempotency-Key is still in progress", id.requestID,
+			apierror.WriteOpts{DocsBase: h.docsBase})
+		return true
+	default:
+		return false
 	}
 }
 
