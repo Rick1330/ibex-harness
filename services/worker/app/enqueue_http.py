@@ -211,23 +211,30 @@ async def _claim_or_response(
     except Exception:
         logger.exception("worker_enqueue_idempotency_claim_failed")
         return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    response = _claim_outcome_response(outcome)
+    if response is not None:
+        return None, response
+    if outcome.claim is None:
+        return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return outcome, None
+
+
+def _claim_outcome_response(outcome: ClaimOutcome) -> Response | None:
     if outcome.kind == "replay":
-        return None, Response(
+        return Response(
             content=outcome.response or b"{}",
             status_code=outcome.status or 202,
             media_type="application/json",
         )
     if outcome.kind == "conflict":
-        return None, JSONResponse({"error": "idempotency_conflict"}, status_code=409)
+        return JSONResponse({"error": "idempotency_conflict"}, status_code=409)
     if outcome.kind == "in_progress":
-        return None, JSONResponse(
+        return JSONResponse(
             {"error": "idempotency_in_progress"},
             status_code=409,
             headers={"Retry-After": str(outcome.retry_after or 1)},
         )
-    if outcome.claim is None:
-        return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    return outcome, None
+    return None
 
 
 async def _dispatch_and_finalize(
@@ -272,7 +279,8 @@ async def enqueue_extraction(request: Request) -> Response:
     outcome, response = await _claim_or_response(ledger, kwargs, idem_key)
     if response is not None:
         return response
-    assert outcome is not None
+    if outcome is None:
+        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
     return await _dispatch_and_finalize(request, ledger, kwargs, outcome)
 
 

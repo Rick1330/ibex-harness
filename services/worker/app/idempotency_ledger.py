@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -50,7 +51,7 @@ class _ResolveContext:
     agent_id: UUID
     key: str
     request_hash: str
-    lease: str
+    lease: timedelta
     session: AsyncSession
 
 
@@ -103,8 +104,7 @@ class PostgresIdempotencyLedger:
     async def claim(
         self, *, org_id: UUID, agent_id: UUID, key: str, request_hash: str
     ) -> ClaimOutcome:
-        if not key or len(key) > 256 or not request_hash:
-            raise LedgerError("invalid idempotency claim")
+        _validate_claim(key, request_hash)
         lease = self._lease_interval()
         async with session_as_service_org(self._factory, str(org_id)) as session:
             context = _ResolveContext(
@@ -182,18 +182,16 @@ class PostgresIdempotencyLedger:
         fresh: bool,
         context: _ResolveContext,
     ) -> ClaimOutcome:
-        claim = ClaimToken(
-            claim_id=row["id"],
-            org_id=context.org_id,
-            agent_id=context.agent_id,
-            key=context.key,
-            request_hash=row["request_hash"],
-            version=int(row["version"]),
-        )
+        claim = _claim_from_row(row, context)
         if row["request_hash"] != context.request_hash:
             return ClaimOutcome(kind="conflict", claim=claim)
         if fresh:
             return ClaimOutcome(kind="owned", claim=claim)
+        return await self._resolve_existing_row(row, claim, context)
+
+    async def _resolve_existing_row(
+        self, row: Any, claim: ClaimToken, context: _ResolveContext
+    ) -> ClaimOutcome:
         if row["state"] == "finalized":
             return ClaimOutcome(
                 kind="replay",
@@ -282,8 +280,28 @@ class PostgresIdempotencyLedger:
             if result.rowcount != 1:
                 raise LedgerConflictError("claim is no longer owned")
 
-    def _lease_interval(self) -> str:
-        return f"{self._lease_seconds:.6f} seconds"
+    def _lease_interval(self) -> timedelta:
+        return timedelta(seconds=self._lease_seconds)
+
+
+def _validate_claim(key: str, request_hash: str) -> None:
+    if not key:
+        raise LedgerError("invalid idempotency claim")
+    if len(key) > 256:
+        raise LedgerError("invalid idempotency claim")
+    if not request_hash:
+        raise LedgerError("invalid idempotency claim")
+
+
+def _claim_from_row(row: Any, context: _ResolveContext) -> ClaimToken:
+    return ClaimToken(
+        claim_id=row["id"],
+        org_id=context.org_id,
+        agent_id=context.agent_id,
+        key=context.key,
+        request_hash=row["request_hash"],
+        version=int(row["version"]),
+    )
 
 
 def _claim_params(claim: ClaimToken) -> dict[str, Any]:

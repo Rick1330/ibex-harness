@@ -99,8 +99,11 @@ async def test_ping_uses_service_account_session(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.asyncio
 async def test_claim_rejects_invalid_key(session_context) -> None:
     ledger = mod.PostgresIdempotencyLedger(object())
-    with pytest.raises(mod.LedgerError, match="invalid"):
-        await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="", request_hash="hash")
+    for key, request_hash in (("", "hash"), ("x" * 257, "hash"), ("k", "")):
+        with pytest.raises(mod.LedgerError, match="invalid"):
+            await ledger.claim(
+                org_id=uuid4(), agent_id=uuid4(), key=key, request_hash=request_hash
+            )
 
 
 @pytest.mark.asyncio
@@ -118,6 +121,18 @@ async def test_claim_fresh_and_conflict(session_context) -> None:
     install(existing_session)
     conflict = await ledger.claim(org_id=org_id, agent_id=agent_id, key="k", request_hash="hash")
     assert conflict.kind == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_claim_binds_lease_as_timedelta(session_context) -> None:
+    install, _ = session_context
+    session = _Session(_Rows(_row()))
+    install(session)
+    ledger = mod.PostgresIdempotencyLedger(object(), lease_seconds=30)
+
+    await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="hash")
+
+    assert session.calls[0][1]["lease"] == timedelta(seconds=30)
 
 
 @pytest.mark.asyncio

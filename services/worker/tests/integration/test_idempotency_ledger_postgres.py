@@ -20,7 +20,6 @@ from app.db import (
     create_engine,
     create_session_factory,
     session_as_service_account,
-    session_as_service_org,
 )
 from app.idempotency_ledger import PostgresIdempotencyLedger
 
@@ -33,30 +32,26 @@ def _sql(statement: str):
     )
 
 
+@asynccontextmanager
+async def _session_as_app_org(factory: async_sessionmaker, org_id: str):
+    async with factory() as session, session.begin():
+        await session.execute(_sql("SET LOCAL ROLE ibex_app"))
+        await session.execute(
+            _sql("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": org_id},
+        )
+        await session.execute(_sql("SELECT set_config('app.is_service_account', 'false', true)"))
+        yield session
+
+
 @pytest_asyncio.fixture
-async def pg_factory(migrated_postgres: str):
+async def pg_factory(migrated_postgres: str, monkeypatch: pytest.MonkeyPatch):
     engine: AsyncEngine = create_engine(Settings(database_url=migrated_postgres))
     factory = create_session_factory(engine)
-
-    @asynccontextmanager
-    async def app_org_session(session_factory, org_id: str):
-        async with session_factory() as session, session.begin():
-            await session.execute(_sql("SET LOCAL ROLE ibex_app"))
-            await session.execute(
-                _sql("SELECT set_config('app.current_org_id', :org_id, true)"),
-                {"org_id": org_id},
-            )
-            await session.execute(
-                _sql("SELECT set_config('app.is_service_account', 'false', true)")
-            )
-            yield session
-
-    original_session = ledger_module.session_as_service_org
-    ledger_module.session_as_service_org = app_org_session
+    monkeypatch.setattr(ledger_module, "session_as_service_org", _session_as_app_org)
     try:
         yield factory
     finally:
-        ledger_module.session_as_service_org = original_session
         await engine.dispose()
 
 
@@ -89,6 +84,13 @@ async def _seed_org_agent(factory: async_sessionmaker, org_id: UUID, agent_id: U
 
 async def _delete_seed(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
     async with session_as_service_account(factory) as session:
+        await session.execute(
+            _sql(
+                "DELETE FROM ibex_core.idempotency_ledger "
+                "WHERE organization_id = :org_id AND agent_id = :agent_id"
+            ),
+            {"org_id": org_id, "agent_id": agent_id},
+        )
         await session.execute(
             _sql("DELETE FROM ibex_core.agents WHERE id = :id AND org_id = :org_id"),
             {"id": agent_id, "org_id": org_id},
@@ -129,7 +131,7 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
         assert claim_b.claim is not None
         await ledger.release(claim_b.claim)
 
-        async with session_as_service_org(pg_factory, str(org_a)) as session:
+        async with _session_as_app_org(pg_factory, str(org_a)) as session:
             visible_a = (
                 await session.execute(
                     _sql(
@@ -139,7 +141,7 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
                     {"org_a": org_a, "org_b": org_b},
                 )
             ).scalar_one()
-        async with session_as_service_org(pg_factory, str(org_b)) as session:
+        async with _session_as_app_org(pg_factory, str(org_b)) as session:
             visible_b = (
                 await session.execute(
                     _sql(
