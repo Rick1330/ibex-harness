@@ -3,7 +3,6 @@ package http
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -12,7 +11,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/providercap"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
@@ -155,9 +153,6 @@ func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerif
 
 func registerResponsesRoute(deps protectedRouteDeps, rateLimit, agentVerify, budget routeMiddleware) {
 	manifest := deps.capabilityManifest
-	if manifest == nil {
-		manifest, _ = providercap.LoadDefault(time.Now().UTC())
-	}
 	responsesChain := chain(
 		BodySizeLimitMiddleware(deps.cfg.MaxRequestBodyBytes, deps.docsBase),
 		ContentTypeMiddleware(deps.docsBase),
