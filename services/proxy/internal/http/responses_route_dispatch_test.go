@@ -404,7 +404,11 @@ func TestEnqueueResponsesUsageWritesFact(t *testing.T) {
 	if err := writer.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	assertUsageFact(t, singleUsageFact(t, ins), "req-enqueue", "openai", "gpt-4o")
+	fact := singleUsageFact(t, ins)
+	assertUsageFact(t, fact, "req-enqueue", "openai", "gpt-4o")
+	if fact.InputTokens != 2 || fact.OutputTokens != 3 || fact.TotalTokens != 5 {
+		t.Fatalf("unexpected token counts: %+v", fact)
+	}
 }
 
 func TestEnqueueResponsesUsageRejectsInvalidUsage(t *testing.T) {
