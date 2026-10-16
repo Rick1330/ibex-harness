@@ -512,7 +512,7 @@ func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pg
 
 func newHTTPServer(deps proxyhttp.RouterDeps) (*http.Server, error) {
 	if deps.CapabilityManifest == nil {
-		manifest, err := providercap.LoadDefault(time.Now().UTC())
+		manifest, err := providercap.LoadDefaultAllowStale(time.Now().UTC())
 		if err != nil {
 			return nil, fmt.Errorf("provider capability manifest: %w", err)
 		}

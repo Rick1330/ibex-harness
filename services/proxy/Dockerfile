@@ -6,6 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download -x
 COPY packages ./packages
 COPY services/proxy ./services/proxy
+COPY infra/provider-capabilities ./infra/provider-capabilities
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -o /out/proxy ./services/proxy/cmd/proxy
 
@@ -15,5 +16,7 @@ RUN apk upgrade --no-cache libcrypto3 libssl3 \
   && adduser -D -H -u 10001 ibex
 USER ibex
 COPY --from=build /out/proxy /usr/local/bin/proxy
+COPY --from=build /src/infra/provider-capabilities/manifest.v1.json /etc/ibex/provider-capabilities/manifest.v1.json
+ENV IBEX_PROVIDER_CAPABILITY_MANIFEST=/etc/ibex/provider-capabilities/manifest.v1.json
 EXPOSE 8082
 ENTRYPOINT ["/usr/local/bin/proxy"]

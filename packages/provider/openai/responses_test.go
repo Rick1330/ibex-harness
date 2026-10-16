@@ -1,0 +1,42 @@
+package openai
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/provider/responses"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
+)
+
+func TestCreateResponsePropagatesTenantCredentialAndParsesUsage(t *testing.T) {
+	var gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5},"output":[]}`))
+	}))
+	defer srv.Close()
+	c := New(Config{APIKey: "platform", BaseURL: srv.URL}, logger.Discard("test"), telemetry.NoopTracer("test"), nil)
+	out, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o"}, "tenant-key", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "Bearer tenant-key" || out.Usage == nil || out.Usage.TotalTokens != 5 {
+		t.Fatalf("auth=%q usage=%+v", gotKey, out.Usage)
+	}
+}
+
+func TestCreateResponseRejectsOversizedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", responsesBodyLimit+1)))
+	}))
+	defer srv.Close()
+	c := New(Config{APIKey: "k", BaseURL: srv.URL}, logger.Discard("test"), telemetry.NoopTracer("test"), nil)
+	if _, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o"}, "", "", ""); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("err=%v", err)
+	}
+}

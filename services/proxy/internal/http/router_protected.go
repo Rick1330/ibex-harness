@@ -167,7 +167,7 @@ func registerResponsesRoute(deps protectedRouteDeps, rateLimit, agentVerify, bud
 		ProviderRoutingMiddleware(providerRoutingOpts{resolver: deps.modelRouter, agentDefaults: deps.agentDefaults, log: deps.logger, docsBase: deps.docsBase}),
 		ResponsesCapabilityMiddleware(manifest, deps.docsBase),
 	)
-	deps.mux.Handle("/v1/responses", responsesChain(http.HandlerFunc(handleResponses)))
+	deps.mux.Handle("/v1/responses", responsesChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handleResponses(w, r, deps) })))
 }
 
 func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {

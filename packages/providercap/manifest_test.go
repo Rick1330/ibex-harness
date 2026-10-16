@@ -2,6 +2,7 @@ package providercap
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -43,5 +44,54 @@ func TestRequireDeniesUnverifiedAndUnsupported(t *testing.T) {
 	}
 	if err := s.Require("openai", "not-a-model", "responses"); !errors.Is(err, ErrCapabilityUnknown) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSnapshotReadersAreDeepCopies(t *testing.T) {
+	s, err := Load(strings.NewReader(validManifest), time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := s.Lookup("openai", "gpt-4o")
+	if !ok {
+		t.Fatal("model missing")
+	}
+	m.Capabilities["responses"] = Claim{State: StateUnsupported}
+	if err := s.Require("openai", "gpt-4o", "responses"); err != nil {
+		t.Fatalf("mutating lookup changed snapshot: %v", err)
+	}
+	manifest := s.Manifest()
+	manifest.Models[0].Capabilities["responses"] = Claim{State: StateUnsupported}
+	if err := s.Require("openai", "gpt-4o", "responses"); err != nil {
+		t.Fatalf("mutating manifest changed snapshot: %v", err)
+	}
+}
+
+func TestLoadDefaultConfiguredPathDoesNotFallback(t *testing.T) {
+	t.Setenv("IBEX_PROVIDER_CAPABILITY_MANIFEST", t.TempDir()+"/missing.json")
+	if _, err := LoadDefault(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("configured missing manifest must fail")
+	}
+}
+
+func TestLoadAllowStaleLoadsButRequireDenies(t *testing.T) {
+	stale := strings.Replace(validManifest, "2026-11-10T00:00:00Z", "2026-10-16T11:00:00Z", 1)
+	s, err := LoadAllowStale(strings.NewReader(stale), time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Require("openai", "gpt-4o", "responses"); !errors.Is(err, ErrCapabilityUnknown) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestLoadDefaultConfiguredValidPath(t *testing.T) {
+	f := t.TempDir() + "/manifest.json"
+	if err := os.WriteFile(f, []byte(validManifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IBEX_PROVIDER_CAPABILITY_MANIFEST", f)
+	if _, err := LoadDefault(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -60,6 +60,15 @@ type Snapshot struct {
 }
 
 func Load(r io.Reader, now time.Time) (*Snapshot, error) {
+	return load(r, now, false)
+}
+
+// LoadAllowStale loads structurally valid evidence even after expiry; Require rejects stale snapshots.
+func LoadAllowStale(r io.Reader, now time.Time) (*Snapshot, error) {
+	return load(r, now, true)
+}
+
+func load(r io.Reader, now time.Time, allowStale bool) (*Snapshot, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -73,7 +82,7 @@ func Load(r io.Reader, now time.Time) (*Snapshot, error) {
 	if err := dec.Decode(&extra); err != io.EOF {
 		return nil, fmt.Errorf("%w: trailing JSON", ErrInvalidManifest)
 	}
-	if err := validate(m, now); err != nil {
+	if err := validate(m, now, allowStale); err != nil {
 		return nil, err
 	}
 	models := make(map[string]Model, len(m.Models))
@@ -85,18 +94,39 @@ func Load(r io.Reader, now time.Time) (*Snapshot, error) {
 }
 func LoadBytes(b []byte, now time.Time) (*Snapshot, error) { return Load(bytes.NewReader(b), now) }
 func LoadFile(path string, now time.Time) (*Snapshot, error) {
+	return loadFile(path, now, false)
+}
+
+// LoadFileAllowStale is the startup-safe file loader.
+func LoadFileAllowStale(path string, now time.Time) (*Snapshot, error) {
+	return loadFile(path, now, true)
+}
+
+func loadFile(path string, now time.Time, allowStale bool) (*Snapshot, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	return Load(f, now)
+	defer func() { _ = f.Close() }()
+	return load(f, now, allowStale)
 }
 func LoadDefault(now time.Time) (*Snapshot, error) {
-	paths := []string{}
+	return loadDefault(now, false)
+}
+
+// LoadDefaultAllowStale is intended for startup; runtime Require still denies stale claims.
+func LoadDefaultAllowStale(now time.Time) (*Snapshot, error) {
+	return loadDefault(now, true)
+}
+
+func loadDefault(now time.Time, allowStale bool) (*Snapshot, error) {
 	if p := strings.TrimSpace(os.Getenv("IBEX_PROVIDER_CAPABILITY_MANIFEST")); p != "" {
-		paths = append(paths, p)
+		if allowStale {
+			return LoadFileAllowStale(p, now)
+		}
+		return LoadFile(p, now)
 	}
+	paths := []string{}
 	paths = append(paths, "infra/provider-capabilities/manifest.v1.json")
 	if wd, err := os.Getwd(); err == nil {
 		for dir := wd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
@@ -105,7 +135,13 @@ func LoadDefault(now time.Time) (*Snapshot, error) {
 	}
 	var last error
 	for _, p := range paths {
-		s, err := LoadFile(p, now)
+		var s *Snapshot
+		var err error
+		if allowStale {
+			s, err = LoadFileAllowStale(p, now)
+		} else {
+			s, err = LoadFile(p, now)
+		}
 		if err == nil {
 			return s, nil
 		}
@@ -114,7 +150,7 @@ func LoadDefault(now time.Time) (*Snapshot, error) {
 	return nil, fmt.Errorf("provider capability manifest: %w", last)
 }
 
-func validate(m Manifest, now time.Time) error {
+func validate(m Manifest, now time.Time, allowStale bool) error {
 	if m.Version != CurrentVersion {
 		return fmt.Errorf("%w: version %q", ErrInvalidManifest, m.Version)
 	}
@@ -124,7 +160,7 @@ func validate(m Manifest, now time.Time) error {
 	if now.Before(m.GeneratedAt) {
 		return fmt.Errorf("%w: generated_at is in the future", ErrInvalidManifest)
 	}
-	if !now.Before(m.ExpiresAt) {
+	if !now.Before(m.ExpiresAt) && !allowStale {
 		return fmt.Errorf("%w: expired at %s", ErrStaleManifest, m.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	if len(m.Models) == 0 {
@@ -163,19 +199,46 @@ func validate(m Manifest, now time.Time) error {
 func cloneClaims(in map[string]Claim) map[string]Claim {
 	out := make(map[string]Claim, len(in))
 	for k, v := range in {
-		out[k] = v
+		out[k] = cloneClaim(v)
 	}
 	return out
 }
-func (s *Snapshot) Manifest() Manifest { return s.manifest }
+func cloneClaim(in Claim) Claim {
+	out := in
+	if in.Provenance != nil {
+		p := *in.Provenance
+		out.Provenance = &p
+	}
+	return out
+}
+func cloneModel(in Model) Model {
+	out := in
+	out.Capabilities = cloneClaims(in.Capabilities)
+	return out
+}
+func cloneManifest(in Manifest) Manifest {
+	out := in
+	out.Models = make([]Model, len(in.Models))
+	for i, m := range in.Models {
+		out.Models[i] = cloneModel(m)
+	}
+	return out
+}
+func (s *Snapshot) Manifest() Manifest { return cloneManifest(s.manifest) }
 func (s *Snapshot) Lookup(provider, model string) (Model, bool) {
 	if s == nil {
 		return Model{}, false
 	}
 	m, ok := s.models[provider+"\x00"+model]
-	return m, ok
+	return cloneModel(m), ok
 }
 func (s *Snapshot) Require(provider, model string, names ...string) error {
+	if s == nil {
+		return fmt.Errorf("%w: nil snapshot", ErrCapabilityUnknown)
+	}
+	if time.Now().UTC().After(s.manifest.ExpiresAt) {
+		return fmt.Errorf("%w: manifest expired at %s", ErrCapabilityUnknown, s.manifest.ExpiresAt.UTC().Format(time.RFC3339))
+	}
 	m, ok := s.Lookup(provider, model)
 	if !ok {
 		return fmt.Errorf("%w: %s/%s", ErrCapabilityUnknown, provider, model)

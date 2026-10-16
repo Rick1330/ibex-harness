@@ -5,8 +5,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider/responses"
 )
 
-// ResponsesProvider is intentionally optional: existing Chat Completions
-// providers and test doubles remain source-compatible.
+// ResponsesProvider is optional so existing Chat-only providers remain compatible.
 type ResponsesProvider interface {
-	CreateResponse(context.Context, responses.Request) (responses.Response, error)
+	// CreateResponse sends one non-streaming Responses request using per-request credential overrides.
+	CreateResponse(context.Context, responses.Request, string, string, string) (responses.Response, error)
 }
