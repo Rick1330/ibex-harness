@@ -118,10 +118,18 @@ func handleResponses(w http.ResponseWriter, r *http.Request, deps protectedRoute
 		apierror.WriteStatus(w, http.StatusBadGateway, apierror.CodeProviderUnavailable, "Provider request failed", requestIDFromContext(r.Context()), apierror.WriteOpts{Detail: "Responses provider request failed", DocsBase: ErrorDocsBaseFromContext(r.Context())})
 		return
 	}
-	recordResponsesUsage(w, r, deps, dispatch.req, out)
+	recordResponsesUsage(w, r, deps, responsesUsageInput{Provider: responsesProviderName(r), Model: dispatch.req.Model, Usage: out.Usage})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out.Raw)
+}
+
+func responsesProviderName(r *http.Request) string {
+	prov, ok := provider.ProviderFromContext(r.Context())
+	if !ok || prov == nil {
+		return ""
+	}
+	return prov.Name()
 }
 
 func requireResponsesDispatch(w http.ResponseWriter, r *http.Request, deps protectedRouteDeps) (responsesDispatch, bool) {
@@ -154,13 +162,7 @@ func requireResponsesDispatch(w http.ResponseWriter, r *http.Request, deps prote
 	return responsesDispatch{req: req, rp: rp, cred: cred}, true
 }
 
-func recordResponsesUsage(w http.ResponseWriter, r *http.Request, deps protectedRouteDeps, req providerresponses.Request, out providerresponses.Response) {
-	prov, _ := provider.ProviderFromContext(r.Context())
-	providerName := ""
-	if prov != nil {
-		providerName = prov.Name()
-	}
-	in := responsesUsageInput{Provider: providerName, Model: req.Model, Usage: out.Usage}
+func recordResponsesUsage(w http.ResponseWriter, r *http.Request, deps protectedRouteDeps, in responsesUsageInput) {
 	if err := enqueueResponsesUsage(r.Context(), deps.usageFactWriter, in); err != nil {
 		// The provider operation already succeeded. Returning a retryable error here
 		// would cause clients to repeat a non-idempotent request. Preserve the
@@ -168,8 +170,8 @@ func recordResponsesUsage(w http.ResponseWriter, r *http.Request, deps protected
 		if deps.logger != nil {
 			deps.logger.WarnCtx(r.Context(), "responses usage accounting pending",
 				"request_id", requestIDFromContext(r.Context()),
-				"provider", providerName,
-				"model", req.Model,
+				"provider", in.Provider,
+				"model", in.Model,
 				"error", err,
 			)
 		}

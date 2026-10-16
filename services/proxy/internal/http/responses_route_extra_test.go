@@ -115,24 +115,50 @@ func responsesDispatchRequest(t *testing.T, ctx context.Context, authHeader stri
 func TestResponsesHandleHappyPathWritesUsage(t *testing.T) {
 	writer, ins := newResponsesWriter(t, 100)
 	prov := &scriptedResponsesProvider{resp: fullUsageResponse()}
-	deps := protectedRouteDeps{credentialResolver: &stubCredentialResolver{result: credentials.Result{PlatformDefault: true}}, usageFactWriter: writer, logger: discardLogger()}
+	deps := responsesDeps(writer, credentials.Result{PlatformDefault: true}, discardLogger())
 	ctx := responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, prov, responsesTestOrgID, responsesTestAgentID, "req-happy")
 	rr := httptest.NewRecorder()
 	handleResponses(rr, responsesDispatchRequest(t, ctx, "Bearer ibex_pat_x"), deps)
-	if rr.Code != http.StatusOK || prov.calls != 1 {
-		t.Fatalf("status=%d calls=%d body=%s", rr.Code, prov.calls, rr.Body.String())
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
-	if rr.Header().Get("X-IBEX-Usage-Accounting") != "" {
-		t.Fatalf("unexpected pending header: %q", rr.Header().Get("X-IBEX-Usage-Accounting"))
+	if prov.calls != 1 {
+		t.Fatalf("provider calls=%d", prov.calls)
+	}
+	if got := rr.Header().Get("X-IBEX-Usage-Accounting"); got != "" {
+		t.Fatalf("unexpected pending header: %q", got)
 	}
 	if err := writer.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(ins.rows) != 1 || len(ins.rows[0]) != 1 || ins.rows[0][0].RequestID != "req-happy" {
-		t.Fatalf("usage rows=%+v", ins.rows)
+	assertUsageFact(t, singleUsageFact(t, ins), "req-happy", "openai", "gpt-4o")
+}
+
+func responsesDeps(writer *billing.UsageFactWriter, result credentials.Result, log *logger.Logger) protectedRouteDeps {
+	return protectedRouteDeps{credentialResolver: &stubCredentialResolver{result: result}, usageFactWriter: writer, logger: log}
+}
+
+func singleUsageFact(t *testing.T, ins *fakeResponsesUsageInserter) billing.UsageFact {
+	t.Helper()
+	if len(ins.rows) != 1 {
+		t.Fatalf("usage batches=%d", len(ins.rows))
 	}
-	if ins.rows[0][0].Provider != "openai" || ins.rows[0][0].Model != "gpt-4o" {
-		t.Fatalf("usage fact=%+v", ins.rows[0][0])
+	if len(ins.rows[0]) != 1 {
+		t.Fatalf("usage rows=%d", len(ins.rows[0]))
+	}
+	return ins.rows[0][0]
+}
+
+func assertUsageFact(t *testing.T, fact billing.UsageFact, requestID, providerName, model string) {
+	t.Helper()
+	if fact.RequestID != requestID {
+		t.Fatalf("request_id=%q", fact.RequestID)
+	}
+	if fact.Provider != providerName {
+		t.Fatalf("provider=%q", fact.Provider)
+	}
+	if fact.Model != model {
+		t.Fatalf("model=%q", fact.Model)
 	}
 }
 
@@ -166,21 +192,21 @@ func TestResponsesHandleRejectsMalformedJourney(t *testing.T) {
 	}{
 		{
 			name:       "missing request",
-			deps:       protectedRouteDeps{credentialResolver: &stubCredentialResolver{}, usageFactWriter: writer, logger: discardLogger()},
+			deps:       responsesDeps(writer, credentials.Result{}, discardLogger()),
 			ctx:        provider.WithProvider(context.Background(), &scriptedResponsesProvider{}),
 			authHeader: "Bearer ibex_pat_x",
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
 			name:       "missing provider",
-			deps:       protectedRouteDeps{credentialResolver: &stubCredentialResolver{}, usageFactWriter: writer, logger: discardLogger()},
+			deps:       responsesDeps(writer, credentials.Result{}, discardLogger()),
 			ctx:        llm.WithResponsesRequest(context.Background(), responses.Request{Model: "gpt-4o"}),
 			authHeader: "Bearer ibex_pat_x",
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
 			name:       "provider lacks responses surface",
-			deps:       protectedRouteDeps{credentialResolver: &stubCredentialResolver{}, usageFactWriter: writer, logger: discardLogger()},
+			deps:       responsesDeps(writer, credentials.Result{}, discardLogger()),
 			ctx:        responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, &responsesNonProvider{}, responsesTestOrgID, responsesTestAgentID, "req-1"),
 			authHeader: "Bearer ibex_pat_x",
 			wantStatus: http.StatusUnprocessableEntity,
@@ -194,14 +220,14 @@ func TestResponsesHandleRejectsMalformedJourney(t *testing.T) {
 		},
 		{
 			name:       "missing org",
-			deps:       protectedRouteDeps{credentialResolver: &stubCredentialResolver{}, usageFactWriter: writer, logger: discardLogger()},
+			deps:       responsesDeps(writer, credentials.Result{}, discardLogger()),
 			ctx:        responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, &scriptedResponsesProvider{}, uuid.Nil, uuid.Nil, "req-1"),
 			authHeader: "Bearer ibex_pat_x",
 			wantStatus: http.StatusServiceUnavailable,
 		},
 		{
 			name:       "invalid auth header",
-			deps:       protectedRouteDeps{credentialResolver: &stubCredentialResolver{}, usageFactWriter: writer, logger: discardLogger()},
+			deps:       responsesDeps(writer, credentials.Result{}, discardLogger()),
 			ctx:        responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, &scriptedResponsesProvider{}, responsesTestOrgID, responsesTestAgentID, "req-1"),
 			authHeader: "",
 			wantStatus: http.StatusUnauthorized,
@@ -322,7 +348,7 @@ func TestRecordResponsesUsageMissingTenantLogsPending(t *testing.T) {
 	ctx := responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, &scriptedResponsesProvider{}, uuid.Nil, uuid.Nil, "req-tenant")
 	req := responsesDispatchRequest(t, ctx, "Bearer ibex_pat_x")
 	rr := httptest.NewRecorder()
-	recordResponsesUsage(rr, req, protectedRouteDeps{usageFactWriter: writer, logger: log}, responses.Request{Model: "gpt-4o"}, responses.Response{Usage: &responses.Usage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}})
+	recordResponsesUsage(rr, req, protectedRouteDeps{usageFactWriter: writer, logger: log}, responsesUsageInput{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}})
 	if rr.Header().Get("X-IBEX-Usage-Accounting") != "pending" {
 		t.Fatalf("pending header=%q", rr.Header().Get("X-IBEX-Usage-Accounting"))
 	}

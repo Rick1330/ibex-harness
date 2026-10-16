@@ -180,16 +180,36 @@ func validateVersion(m Manifest) error {
 }
 
 func validateFreshness(m Manifest, now time.Time, allowStale bool) error {
-	if m.GeneratedAt.IsZero() || m.ExpiresAt.IsZero() || !m.ExpiresAt.After(m.GeneratedAt) {
-		return fmt.Errorf("%w: invalid freshness window", ErrInvalidManifest)
+	if err := validateFreshnessWindow(m); err != nil {
+		return err
 	}
 	if now.Before(m.GeneratedAt) {
 		return fmt.Errorf("%w: generated_at is in the future", ErrInvalidManifest)
 	}
-	if !now.Before(m.ExpiresAt) && !allowStale {
-		return fmt.Errorf("%w: expired at %s", ErrStaleManifest, m.ExpiresAt.UTC().Format(time.RFC3339))
+	if allowStale {
+		return nil
+	}
+	if now.Before(m.ExpiresAt) {
+		return nil
+	}
+	return fmt.Errorf("%w: expired at %s", ErrStaleManifest, m.ExpiresAt.UTC().Format(time.RFC3339))
+}
+
+func validateFreshnessWindow(m Manifest) error {
+	if m.GeneratedAt.IsZero() {
+		return invalidFreshnessWindow()
+	}
+	if m.ExpiresAt.IsZero() {
+		return invalidFreshnessWindow()
+	}
+	if !m.ExpiresAt.After(m.GeneratedAt) {
+		return invalidFreshnessWindow()
 	}
 	return nil
+}
+
+func invalidFreshnessWindow() error {
+	return fmt.Errorf("%w: invalid freshness window", ErrInvalidManifest)
 }
 
 func validateModels(models []Model, now time.Time) error {

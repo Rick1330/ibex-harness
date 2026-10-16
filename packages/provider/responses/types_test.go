@@ -12,23 +12,31 @@ func TestParseResponsePreservesOrderAndUnknownRaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantTypes := []string{"reasoning", "future_item", "message"}
-	if len(got.Output) != len(wantTypes) {
-		t.Fatalf("output len=%d want=%d", len(got.Output), len(wantTypes))
+	assertOutputTypes(t, got, "reasoning", "future_item", "message")
+	future := got.Output[1]
+	if future.Message != nil {
+		t.Fatalf("unknown item decoded as known type: %+v", future)
 	}
-	for i, want := range wantTypes {
-		if got.Output[i].Type != want {
-			t.Fatalf("output[%d].Type=%q want %q", i, got.Output[i].Type, want)
-		}
+	if string(future.Raw) != `{"type":"future_item","x":{"keep":true}}` {
+		t.Fatalf("unknown item lost raw=%s", future.Raw)
 	}
-	if got.Output[1].Message != nil {
-		t.Fatalf("unknown item decoded as known type: %+v", got.Output[1])
-	}
-	if string(got.Output[1].Raw) != `{"type":"future_item","x":{"keep":true}}` {
-		t.Fatalf("unknown item lost raw=%s", got.Output[1].Raw)
-	}
-	if got.Output[0].Reasoning == nil || got.Output[0].Reasoning.EncryptedContent != "opaque" {
+	if got.Output[0].Reasoning == nil {
 		t.Fatal("reasoning not decoded")
+	}
+	if got.Output[0].Reasoning.EncryptedContent != "opaque" {
+		t.Fatalf("encrypted_content=%q", got.Output[0].Reasoning.EncryptedContent)
+	}
+}
+
+func assertOutputTypes(t *testing.T, got Response, want ...string) {
+	t.Helper()
+	if len(got.Output) != len(want) {
+		t.Fatalf("output len=%d want=%d", len(got.Output), len(want))
+	}
+	for i, expected := range want {
+		if got.Output[i].Type != expected {
+			t.Fatalf("output[%d].Type=%q want %q", i, got.Output[i].Type, expected)
+		}
 	}
 }
 
