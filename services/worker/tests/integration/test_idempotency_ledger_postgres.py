@@ -6,6 +6,7 @@ IBEX_WORKER_DATABASE_URL points at a migrated dedicated test database.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,6 +14,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+import app.idempotency_ledger as ledger_module
 from app.config import Settings
 from app.db import (
     create_engine,
@@ -21,6 +23,8 @@ from app.db import (
     session_as_service_org,
 )
 from app.idempotency_ledger import PostgresIdempotencyLedger
+
+pytestmark = pytest.mark.integration
 
 
 def _sql(statement: str):
@@ -33,8 +37,27 @@ def _sql(statement: str):
 async def pg_factory(migrated_postgres: str):
     engine: AsyncEngine = create_engine(Settings(database_url=migrated_postgres))
     factory = create_session_factory(engine)
-    yield factory
-    await engine.dispose()
+
+    @asynccontextmanager
+    async def app_org_session(session_factory, org_id: str):
+        async with session_factory() as session, session.begin():
+            await session.execute(_sql("SET LOCAL ROLE ibex_app"))
+            await session.execute(
+                _sql("SELECT set_config('app.current_org_id', :org_id, true)"),
+                {"org_id": org_id},
+            )
+            await session.execute(
+                _sql("SELECT set_config('app.is_service_account', 'false', true)")
+            )
+            yield session
+
+    original_session = ledger_module.session_as_service_org
+    ledger_module.session_as_service_org = app_org_session
+    try:
+        yield factory
+    finally:
+        ledger_module.session_as_service_org = original_session
+        await engine.dispose()
 
 
 async def _seed_org_agent(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
@@ -66,7 +89,10 @@ async def _seed_org_agent(factory: async_sessionmaker, org_id: UUID, agent_id: U
 
 async def _delete_seed(factory: async_sessionmaker, org_id: UUID, agent_id: UUID) -> None:
     async with session_as_service_account(factory) as session:
-        await session.execute(_sql("DELETE FROM ibex_core.agents WHERE id = :id"), {"id": agent_id})
+        await session.execute(
+            _sql("DELETE FROM ibex_core.agents WHERE id = :id AND org_id = :org_id"),
+            {"id": agent_id, "org_id": org_id},
+        )
         await session.execute(
             _sql("DELETE FROM ibex_core.organizations WHERE id = :id"), {"id": org_id}
         )

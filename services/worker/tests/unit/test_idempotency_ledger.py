@@ -22,6 +22,10 @@ class _Rows:
     def first(self) -> dict | None:
         return self.row
 
+    def one(self) -> dict:
+        assert self.row is not None
+        return self.row
+
 
 class _Session:
     def __init__(self, *results: _Rows | SimpleNamespace) -> None:
@@ -49,21 +53,39 @@ def session_context(monkeypatch: pytest.MonkeyPatch):
     return install, sessions
 
 
-def _row(*, request_hash="hash", state="claimed", version=1, expires=None, response=None):
-    return {
+def _row(**overrides):
+    row = {
         "id": uuid4(),
-        "request_hash": request_hash,
-        "state": state,
-        "status_code": 202 if state == "finalized" else None,
-        "response_payload": response,
-        "lease_expires_at": expires,
-        "version": version,
+        "request_hash": "hash",
+        "state": "claimed",
+        "status_code": None,
+        "response_payload": None,
+        "lease_expires_at": None,
+        "version": 1,
     }
+    if "expires" in overrides:
+        overrides["lease_expires_at"] = overrides.pop("expires")
+    if "response" in overrides:
+        overrides["response_payload"] = overrides.pop("response")
+    row.update(overrides)
+    if row["state"] == "finalized" and "status_code" not in overrides:
+        row["status_code"] = 202
+    return row
 
 
 @pytest.mark.asyncio
 async def test_ping_uses_service_account_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = _Session(SimpleNamespace())
+    session = _Session(
+        _Rows(
+            {
+                "table_exists": True,
+                "can_select": True,
+                "can_insert": True,
+                "can_update": True,
+                "can_delete": True,
+            }
+        )
+    )
 
     @asynccontextmanager
     async def context(_factory):

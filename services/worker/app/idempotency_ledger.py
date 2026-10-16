@@ -44,6 +44,16 @@ class ClaimOutcome:
     retry_after: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolveContext:
+    org_id: UUID
+    agent_id: UUID
+    key: str
+    request_hash: str
+    lease: str
+    session: AsyncSession
+
+
 def fingerprint_enqueue(payload: dict[str, Any]) -> str:
     """Hash the complete normalized enqueue request, including every turn body."""
     canonical = json.dumps(
@@ -75,11 +85,20 @@ class PostgresIdempotencyLedger:
     async def ping(self) -> None:
         """Verify the database dependency without requiring a tenant claim."""
         async with session_as_service_account(self._factory) as session:
-            await session.execute(
+            result = await session.execute(
                 text(
-                    "SELECT 1"
+                    """
+                    SELECT to_regclass('ibex_core.idempotency_ledger') IS NOT NULL AS table_exists,
+                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'SELECT') AS can_select,
+                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'INSERT') AS can_insert,
+                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'UPDATE') AS can_update,
+                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'DELETE') AS can_delete
+                    """
                 )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             )
+            probe = result.mappings().one()
+            if not all(probe.values()):
+                raise LedgerError("idempotency ledger is not ready")
 
     async def claim(
         self, *, org_id: UUID, agent_id: UUID, key: str, request_hash: str
@@ -88,61 +107,7 @@ class PostgresIdempotencyLedger:
             raise LedgerError("invalid idempotency claim")
         lease = self._lease_interval()
         async with session_as_service_org(self._factory, str(org_id)) as session:
-            inserted = (
-                (
-                    await session.execute(
-                        text(
-                            """
-                        INSERT INTO ibex_core.idempotency_ledger
-                          (organization_id, agent_id, dedupe_key, request_hash,
-                           state, lease_expires_at)
-                        VALUES (:org_id, :agent_id, :key, :request_hash,
-                                'claimed', NOW() + CAST(:lease AS interval))
-                        ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
-                        RETURNING id, request_hash, state, status_code,
-                                  response_payload, lease_expires_at, version
-                        """
-                        ),
-                        {
-                            "org_id": org_id,
-                            "agent_id": agent_id,
-                            "key": key,
-                            "request_hash": request_hash,
-                            "lease": lease,
-                        },
-                    )
-                )
-                .mappings()
-                .first()
-            )
-            fresh = inserted is not None
-            row = inserted
-            if row is None:
-                row = (
-                    (
-                        await session.execute(
-                            text(
-                                """
-                            SELECT id, request_hash, state, status_code,
-                                   response_payload, lease_expires_at, version
-                            FROM ibex_core.idempotency_ledger
-                            WHERE organization_id=:org_id
-                              AND agent_id=:agent_id
-                              AND dedupe_key=:key
-                            FOR UPDATE
-                            """
-                            ),
-                            {"org_id": org_id, "agent_id": agent_id, "key": key},
-                        )
-                    )
-                    .mappings()
-                    .first()
-                )
-            if row is None:
-                raise LedgerError("idempotency ledger row disappeared")
-            outcome = await self._resolve_row(
-                row,
-                fresh=fresh,
+            context = _ResolveContext(
                 org_id=org_id,
                 agent_id=agent_id,
                 key=key,
@@ -150,29 +115,82 @@ class PostgresIdempotencyLedger:
                 lease=lease,
                 session=session,
             )
-            return outcome
+            row, fresh = await self._insert_or_load(context)
+            if row is None:
+                raise LedgerError("idempotency ledger row disappeared")
+            return await self._resolve_row(row, fresh=fresh, context=context)
+
+    async def _insert_or_load(self, context: _ResolveContext) -> tuple[Any, bool]:
+        inserted = (
+            (
+                await context.session.execute(
+                    text(
+                        """
+                    INSERT INTO ibex_core.idempotency_ledger
+                      (organization_id, agent_id, dedupe_key, request_hash,
+                       state, lease_expires_at)
+                    VALUES (:org_id, :agent_id, :key, :request_hash,
+                            'claimed', NOW() + CAST(:lease AS interval))
+                    ON CONFLICT (organization_id, agent_id, dedupe_key) DO NOTHING
+                    RETURNING id, request_hash, state, status_code,
+                              response_payload, lease_expires_at, version
+                    """
+                    ),
+                    {
+                        "org_id": context.org_id,
+                        "agent_id": context.agent_id,
+                        "key": context.key,
+                        "request_hash": context.request_hash,
+                        "lease": context.lease,
+                    },
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if inserted is not None:
+            return inserted, True
+        loaded = (
+            (
+                await context.session.execute(
+                    text(
+                        """
+                    SELECT id, request_hash, state, status_code,
+                           response_payload, lease_expires_at, version
+                    FROM ibex_core.idempotency_ledger
+                    WHERE organization_id=:org_id AND agent_id=:agent_id
+                      AND dedupe_key=:key
+                    FOR UPDATE
+                    """
+                    ),
+                    {
+                        "org_id": context.org_id,
+                        "agent_id": context.agent_id,
+                        "key": context.key,
+                    },
+                )
+            )
+            .mappings()
+            .first()
+        )
+        return loaded, False
 
     async def _resolve_row(
         self,
         row: Any,
         *,
         fresh: bool,
-        org_id: UUID,
-        agent_id: UUID,
-        key: str,
-        request_hash: str,
-        lease: str,
-        session: AsyncSession,
+        context: _ResolveContext,
     ) -> ClaimOutcome:
         claim = ClaimToken(
             claim_id=row["id"],
-            org_id=org_id,
-            agent_id=agent_id,
-            key=key,
+            org_id=context.org_id,
+            agent_id=context.agent_id,
+            key=context.key,
             request_hash=row["request_hash"],
             version=int(row["version"]),
         )
-        if row["request_hash"] != request_hash:
+        if row["request_hash"] != context.request_hash:
             return ClaimOutcome(kind="conflict", claim=claim)
         if fresh:
             return ClaimOutcome(kind="owned", claim=claim)
@@ -191,7 +209,10 @@ class PostgresIdempotencyLedger:
             return ClaimOutcome(
                 kind="in_progress", claim=claim, retry_after=max(1, int(remaining) + 1)
             )
-        reclaimed = await session.execute(
+        return await self._reclaim(row, claim, context)
+
+    async def _reclaim(self, row: Any, claim: ClaimToken, context: _ResolveContext) -> ClaimOutcome:
+        reclaimed = await context.session.execute(
             text(
                 """
                     UPDATE ibex_core.idempotency_ledger
@@ -204,12 +225,12 @@ class PostgresIdempotencyLedger:
                     """
             ),
             {
-                "lease": lease,
+                "lease": context.lease,
                 "id": row["id"],
-                "org_id": org_id,
-                "agent_id": agent_id,
-                "key": key,
-                "request_hash": request_hash,
+                "org_id": context.org_id,
+                "agent_id": context.agent_id,
+                "key": context.key,
+                "request_hash": context.request_hash,
             },
         )
         row = reclaimed.mappings().first()

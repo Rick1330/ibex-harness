@@ -198,6 +198,59 @@ def _unavailable() -> JSONResponse:
     return JSONResponse({"error": "unavailable"}, status_code=503)
 
 
+async def _claim_or_response(
+    ledger: Any, kwargs: dict[str, Any], idem_key: str
+) -> tuple[ClaimOutcome | None, Response | None]:
+    try:
+        outcome: ClaimOutcome = await ledger.claim(
+            org_id=UUID(kwargs["org_id"]),
+            agent_id=UUID(kwargs["agent_id"]),
+            key=idem_key,
+            request_hash=fingerprint_enqueue(kwargs),
+        )
+    except Exception:
+        logger.exception("worker_enqueue_idempotency_claim_failed")
+        return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    if outcome.kind == "replay":
+        return None, Response(
+            content=outcome.response or b"{}",
+            status_code=outcome.status or 202,
+            media_type="application/json",
+        )
+    if outcome.kind == "conflict":
+        return None, JSONResponse({"error": "idempotency_conflict"}, status_code=409)
+    if outcome.kind == "in_progress":
+        return None, JSONResponse(
+            {"error": "idempotency_in_progress"},
+            status_code=409,
+            headers={"Retry-After": str(outcome.retry_after or 1)},
+        )
+    if outcome.claim is None:
+        return None, JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return outcome, None
+
+
+async def _dispatch_and_finalize(
+    request: Request, ledger: Any, kwargs: dict[str, Any], outcome: ClaimOutcome
+) -> Response:
+    try:
+        task_id = await _dispatch_extract_bounded(request, kwargs)
+    except DispatchBusyError:
+        await _release_durable_claim(ledger, outcome)
+        return _unavailable()
+    except Exception:
+        await _release_durable_claim(ledger, outcome)
+        logger.exception("worker_enqueue_dispatch_failed")
+        return _unavailable()
+    body = json.dumps({"task_id": task_id}, separators=(",", ":")).encode("utf-8")
+    try:
+        await ledger.finalize(outcome.claim, status=202, response=body)
+    except Exception:
+        logger.exception("worker_enqueue_idempotency_finalize_failed")
+        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return Response(content=body, status_code=202, media_type="application/json")
+
+
 async def enqueue_extraction(request: Request) -> Response:
     settings: Settings = request.app.state.settings
     if denied := _authorize(request, settings):
@@ -216,48 +269,11 @@ async def enqueue_extraction(request: Request) -> Response:
     ledger = getattr(request.app.state, "ledger", None)
     if ledger is None:
         return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    try:
-        outcome: ClaimOutcome = await ledger.claim(
-            org_id=UUID(kwargs["org_id"]),
-            agent_id=UUID(kwargs["agent_id"]),
-            key=idem_key,
-            request_hash=fingerprint_enqueue(kwargs),
-        )
-    except Exception:
-        logger.exception("worker_enqueue_idempotency_claim_failed")
-        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    if outcome.kind == "replay":
-        return Response(
-            content=outcome.response or b"{}",
-            status_code=outcome.status or 202,
-            media_type="application/json",
-        )
-    if outcome.kind == "conflict":
-        return JSONResponse({"error": "idempotency_conflict"}, status_code=409)
-    if outcome.kind == "in_progress":
-        return JSONResponse(
-            {"error": "idempotency_in_progress"},
-            status_code=409,
-            headers={"Retry-After": str(outcome.retry_after or 1)},
-        )
-    if outcome.claim is None:
-        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    try:
-        task_id = await _dispatch_extract_bounded(request, kwargs)
-    except DispatchBusyError:
-        await _release_durable_claim(ledger, outcome)
-        return _unavailable()
-    except Exception:
-        await _release_durable_claim(ledger, outcome)
-        logger.exception("worker_enqueue_dispatch_failed")
-        return _unavailable()
-    body = json.dumps({"task_id": task_id}, separators=(",", ":")).encode("utf-8")
-    try:
-        await ledger.finalize(outcome.claim, status=202, response=body)
-    except Exception:
-        logger.exception("worker_enqueue_idempotency_finalize_failed")
-        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    return Response(content=body, status_code=202, media_type="application/json")
+    outcome, response = await _claim_or_response(ledger, kwargs, idem_key)
+    if response is not None:
+        return response
+    assert outcome is not None
+    return await _dispatch_and_finalize(request, ledger, kwargs, outcome)
 
 
 async def _release_durable_claim(ledger: Any, outcome: ClaimOutcome) -> None:
