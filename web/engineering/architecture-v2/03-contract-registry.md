@@ -78,22 +78,22 @@ These are the six contract IDs actually specified in `22-g1-g7-contract-packet.m
 ### `provider-capability-manifest.v1`
 
 - **Owner / reviewer:** Provider + Platform roles; Rick1330 acting across G0 roles; no independent reviewer named; G1 individual assignments unconfirmed.
-- **Source / generated artifact:** [Draft contract: provider capability manifest](22-g1-g7-contract-packet.md#provider-capability-manifestv1); generated artifact not implemented.
-- **Version / compatibility / status:** Additive `v1`; proposed specification only; runtime not implemented.
+- **Source / generated artifact:** [Draft contract: provider capability manifest](22-g1-g7-contract-packet.md#provider-capability-manifestv1); runtime artifact `infra/provider-capabilities/manifest.v1.json`, loader `packages/providercap`.
+- **Version / compatibility / status:** Additive `v1`; local runtime loader and immutable snapshot implemented; hosted refresh/production enrollment remain out of scope.
 - **Scope / trust / profile:** Provider, model, and endpoint identity; manifest is an untrusted preflight hint, never an execution guarantee. Profile not selected; depends on provider adapters and provenance storage.
 - **Errors / deadline / cancellation / retry:** Unknown or expired manifest yields `capability_unknown`; caller deadline and TTL bound refresh; no silent capability promotion; retry only through bounded refresh policy.
 - **Idempotency / privacy / lifecycle:** Key `(provider, model, endpoint, contract)`; preserve provenance/confidence; no secrets or raw prompts; retention/deletion policy not implemented.
-- **Tests / evidence / support:** Native, adapter-needed, partial/unknown fixtures and expiry/mapping/model-vs-provider negatives are required, not implemented ([research: provider capability manifests](24-round4-architecture-research-synthesis.md#1-provider-capability-manifests)). No public support/deprecation window selected.
+- **Tests / evidence / support:** Focused malformed/stale/unverified/unknown tests and repository-local provider-doc provenance are implemented; authenticated account refresh, hosted availability, and public support/deprecation window remain unselected ([Round 5 research](25-round5-provider-research.md)).
 
 ### `responses.v1`
 
 - **Owner / reviewer:** Provider + Proxy roles; Rick1330 acting across G0 roles; no independent reviewer named; G1 individual assignments unconfirmed.
-- **Source / generated artifact:** [Draft contract: Responses](22-g1-g7-contract-packet.md#responsesv1); generated artifact not implemented.
-- **Version / compatibility / status:** Additive `v1`; specified, but adapter not implemented.
+- **Source / generated artifact:** [Draft contract: Responses](22-g1-g7-contract-packet.md#responsesv1); typed model/parser `packages/provider/responses`, OpenAI adapter, and protected `/v1/responses` route implemented locally.
+- **Version / compatibility / status:** Additive `v1`; non-streaming OpenAI local adapter implemented; semantic SSE, replay persistence, and production rollout remain out of scope.
 - **Scope / trust / profile:** Authenticated proxy/provider operation scope; ordered output items and opaque reasoning are data, not authority. Profile not selected; depends on a separate Responses adapter, provider credentials, and the existing Chat Completions boundary.
 - **Errors / deadline / cancellation / retry:** Typed parse/transport errors; absolute deadline; retry only before acknowledged semantic events or under provider idempotency policy.
 - **Idempotency / privacy / lifecycle:** Keep `previous_response_id`, `call_id`, and server operation key distinct; do not expose opaque reasoning; retention/deletion semantics not implemented.
-- **Tests / evidence / support:** Golden non-stream/SSE vectors, multi-call tool loop, replay, and unknown-item tests are required, not implemented ([research: OpenAI Responses contract](24-round4-architecture-research-synthesis.md#2-openai-responses-contract)). No public support/deprecation window selected.
+- **Tests / evidence / support:** Ordered known/unknown item preservation, malformed request, capability denial, and allowed-route tests are implemented; semantic SSE, multi-call execution, replay, and public support/deprecation remain unselected ([Round 5 research](25-round5-provider-research.md)).
 
 ### `memory-revision-ledger.v1`
 

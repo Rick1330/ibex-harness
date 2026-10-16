@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/providercap"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
@@ -41,6 +42,7 @@ type protectedRouteDeps struct {
 	evidenceStore            httpsession.EvidencePersister
 	docsBase                 string
 	providerRegistry         *provider.Registry
+	capabilityManifest       *providercap.Snapshot
 	modelRouter              ProviderResolver
 	agentDefaults            modelpolicy.AgentDefaultLoader
 	responsePipeline         *responsepipeline.Pipeline
@@ -62,6 +64,7 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 	rateLimit, agentVerify, budget := protectedAuthWrappers(deps)
 	registerAuthProbeRoutes(deps, rateLimit, agentVerify)
 	registerChatCompletionsRoute(deps, rateLimit, agentVerify, budget)
+	registerResponsesRoute(deps, rateLimit, agentVerify, budget)
 	registerSessionTerminateRoute(deps, rateLimit, agentVerify)
 }
 
@@ -148,6 +151,23 @@ func registerChatCompletionsRoute(deps protectedRouteDeps, rateLimit, agentVerif
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleChatCompletions(w, r, newChatCompletionHandler(deps))
 	})))
+}
+
+func registerResponsesRoute(deps protectedRouteDeps, rateLimit, agentVerify, budget routeMiddleware) {
+	manifest := deps.capabilityManifest
+	if manifest == nil {
+		manifest, _ = providercap.LoadDefault(time.Now().UTC())
+	}
+	responsesChain := chain(
+		BodySizeLimitMiddleware(deps.cfg.MaxRequestBodyBytes, deps.docsBase),
+		ContentTypeMiddleware(deps.docsBase),
+		AuthMiddleware(deps.validator, deps.logger, AuthOptions{RequireProxyChatCompletion: true, Metrics: deps.reg}),
+		agentVerify, rateLimit, budget,
+		ResponsesParseMiddleware(deps.docsBase),
+		ProviderRoutingMiddleware(providerRoutingOpts{resolver: deps.modelRouter, agentDefaults: deps.agentDefaults, log: deps.logger, docsBase: deps.docsBase}),
+		ResponsesCapabilityMiddleware(manifest, deps.docsBase),
+	)
+	deps.mux.Handle("/v1/responses", responsesChain(http.HandlerFunc(handleResponses)))
 }
 
 func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {

@@ -16,6 +16,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/providercap"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
@@ -59,9 +60,10 @@ type RouterDeps struct {
 	CheckpointPool     *asyncpool.Pool
 	GetOrCreateTimeout time.Duration
 	// EvidenceStore persists nested evidence + outbox rows (nil disables; 4.P.2).
-	EvidenceStore    httpsession.EvidencePersister
-	Health           *healthcheck.Server
-	ProviderRegistry *provider.Registry
+	EvidenceStore      httpsession.EvidencePersister
+	Health             *healthcheck.Server
+	ProviderRegistry   *provider.Registry
+	CapabilityManifest *providercap.Snapshot
 	// ModelRouter org-gates provider selection (nil → DenyAllRegistry).
 	ModelRouter ProviderResolver
 	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
@@ -167,6 +169,7 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		evidenceStore:            deps.EvidenceStore,
 		docsBase:                 deps.Config.ErrorDocsBase,
 		providerRegistry:         providerReg,
+		capabilityManifest:       deps.CapabilityManifest,
 		modelRouter:              modelRouter,
 		agentDefaults:            agentDefaults,
 		responsePipeline:         deps.ResponsePipeline,

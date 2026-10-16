@@ -1,0 +1,58 @@
+{
+  "version": "provider-capability-manifest.v1",
+  "generated_at": "2026-10-16T12:00:00Z",
+  "expires_at": "2026-11-10T00:00:00Z",
+  "models": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "tokenizer_family": "o200k_base",
+      "endpoint": "/v1/responses",
+      "capabilities": {
+        "responses": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/reference/resources/responses/methods/create","title":"Create a model response","accessed_at":"2026-10-16T12:00:00Z"}},
+        "streaming": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/streaming-responses","title":"Streaming API responses","accessed_at":"2026-10-16T12:00:00Z"}},
+        "vision": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/images-vision","title":"Images and vision","accessed_at":"2026-10-16T12:00:00Z"}},
+        "tools": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/function-calling","title":"Function calling","accessed_at":"2026-10-16T12:00:00Z"}},
+        "structured_outputs": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/structured-outputs","title":"Structured model outputs","accessed_at":"2026-10-16T12:00:00Z"}},
+        "reasoning": {"state":"unverified"},
+        "previous_response_id": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/conversation-state","title":"Conversation state","accessed_at":"2026-10-16T12:00:00Z"}}
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "tokenizer_family": "o200k_base",
+      "endpoint": "/v1/responses",
+      "capabilities": {
+        "responses": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/reference/resources/responses/methods/create","title":"Create a model response","accessed_at":"2026-10-16T12:00:00Z"}},
+        "streaming": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/streaming-responses","title":"Streaming API responses","accessed_at":"2026-10-16T12:00:00Z"}},
+        "vision": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/images-vision","title":"Images and vision","accessed_at":"2026-10-16T12:00:00Z"}},
+        "tools": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/function-calling","title":"Function calling","accessed_at":"2026-10-16T12:00:00Z"}},
+        "structured_outputs": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/structured-outputs","title":"Structured model outputs","accessed_at":"2026-10-16T12:00:00Z"}},
+        "reasoning": {"state":"unsupported"},
+        "previous_response_id": {"state":"supported", "provenance":{"source_url":"https://developers.openai.com/api/docs/guides/conversation-state","title":"Conversation state","accessed_at":"2026-10-16T12:00:00Z"}}
+      }
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "tokenizer_family": "claude",
+      "endpoint": "/v1/chat/completions",
+      "capabilities": {
+        "responses": {"state":"unsupported", "provenance":{"source_url":"https://platform.claude.com/docs/en/api/overview","title":"API overview","accessed_at":"2026-10-16T12:00:00Z"}},
+        "streaming": {"state":"supported", "provenance":{"source_url":"https://platform.claude.com/docs/en/build-with-claude/streaming","title":"Streaming messages","accessed_at":"2026-10-16T12:00:00Z"}},
+        "vision": {"state":"unsupported"},
+        "tools": {"state":"unsupported"},
+        "structured_outputs": {"state":"unsupported"},
+        "reasoning": {"state":"unsupported"},
+        "previous_response_id": {"state":"unsupported"}
+      }
+    }
+  ]
+}

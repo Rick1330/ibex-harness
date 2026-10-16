@@ -28,6 +28,10 @@ const (
 	CodeUnsupportedMediaType Code = "UNSUPPORTED_MEDIA_TYPE"
 	// CodeValidationError tells clients one or more fields failed semantic validation (see field_errors).
 	CodeValidationError Code = "VALIDATION_ERROR"
+	// CodeCapabilityUnsupported tells clients the provider/model explicitly cannot perform the requested operation.
+	CodeCapabilityUnsupported Code = "CAPABILITY_UNSUPPORTED"
+	// CodeCapabilityUnknown tells clients capability evidence is missing, stale, or unverified.
+	CodeCapabilityUnknown Code = "CAPABILITY_UNKNOWN"
 	// CodeInvalidCredential tells clients a provider API key failed upstream validation.
 	CodeInvalidCredential Code = "INVALID_CREDENTIAL"
 	// CodeMethodNotAllowed tells clients to use the HTTP method documented for the route.

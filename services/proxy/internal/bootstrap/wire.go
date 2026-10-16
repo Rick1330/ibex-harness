@@ -18,6 +18,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/providercap"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
@@ -510,6 +511,13 @@ func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pg
 }
 
 func newHTTPServer(deps proxyhttp.RouterDeps) (*http.Server, error) {
+	if deps.CapabilityManifest == nil {
+		manifest, err := providercap.LoadDefault(time.Now().UTC())
+		if err != nil {
+			return nil, fmt.Errorf("provider capability manifest: %w", err)
+		}
+		deps.CapabilityManifest = manifest
+	}
 	handler, err := proxyhttp.NewRouter(deps)
 	if err != nil {
 		return nil, err
