@@ -73,9 +73,17 @@ def health(_request: Request) -> Response:
 
 
 async def ready(request: Request) -> Response:
-    """Report readiness only when enqueue auth and Celery broker Redis are available."""
+    """Report readiness only when auth, PostgreSQL ledger, and Redis are available."""
     settings: Settings = request.app.state.settings
     if not _enqueue_auth_ready(settings):
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    ledger = getattr(request.app.state, "ledger", None)
+    if ledger is None:
+        return JSONResponse({"status": "not_ready"}, status_code=503)
+    try:
+        await asyncio.wait_for(ledger.ping(), timeout=0.5)
+    except Exception:
+        logger.exception("worker_enqueue_database_not_ready")
         return JSONResponse({"status": "not_ready"}, status_code=503)
     broker_url = _broker_url(settings)
     if not broker_url:
@@ -203,6 +211,8 @@ async def enqueue_extraction(request: Request) -> Response:
     idem_key = (request.headers.get("idempotency-key") or "").strip()
     if not idem_key:
         return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
+    if len(idem_key) > 256:
+        return JSONResponse({"error": "idempotency_key_too_long"}, status_code=400)
     ledger = getattr(request.app.state, "ledger", None)
     if ledger is None:
         return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)

@@ -22,8 +22,18 @@ from app.idempotency_ledger import ClaimOutcome, ClaimToken, fingerprint_enqueue
 class _Ledger:
     def __init__(self) -> None:
         self.records: dict[tuple[str, str, str], tuple[str, ClaimToken, int, bytes | None]] = {}
+        self.claim_error: Exception | None = None
+        self.finalize_error: Exception | None = None
+        self.release_error: Exception | None = None
+        self.ping_error: Exception | None = None
+
+    async def ping(self) -> None:
+        if self.ping_error is not None:
+            raise self.ping_error
 
     async def claim(self, *, org_id, agent_id, key, request_hash) -> ClaimOutcome:
+        if self.claim_error is not None:
+            raise self.claim_error
         record_key = (str(org_id), str(agent_id), key)
         existing = self.records.get(record_key)
         if existing is not None:
@@ -38,11 +48,15 @@ class _Ledger:
         return ClaimOutcome(kind="owned", claim=claim)
 
     async def finalize(self, claim, *, status, response) -> None:
+        if self.finalize_error is not None:
+            raise self.finalize_error
         record_key = (str(claim.org_id), str(claim.agent_id), claim.key)
         request_hash, _, _, _ = self.records[record_key]
         self.records[record_key] = (request_hash, claim, status, response)
 
     async def release(self, claim) -> None:
+        if self.release_error is not None:
+            raise self.release_error
         self.records.pop((str(claim.org_id), str(claim.agent_id), claim.key), None)
 
 
@@ -171,6 +185,57 @@ def test_enqueue_requires_explicit_key_and_durable_ledger() -> None:
     )
     assert unavailable.status_code == 503
     assert unavailable.json() == {"error": "idempotency_unavailable"}
+
+
+def test_enqueue_rejects_overlong_key_before_claim() -> None:
+    response = _client(apply_async=lambda _: SimpleNamespace(id="must-not-run")).post(
+        "/internal/extraction/enqueue",
+        headers={"Authorization": "Bearer sekrit", "Idempotency-Key": "x" * 257},
+        json=_valid_body(),
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "idempotency_key_too_long"}
+
+
+def test_enqueue_claim_failure_never_dispatches() -> None:
+    calls: list[dict] = []
+    _ledger.claim_error = RuntimeError("database down")
+    try:
+        response = _post_enqueue(
+            _client(apply_async=lambda kwargs: calls.append(kwargs)), _valid_body()
+        )
+    finally:
+        _ledger.claim_error = None
+    assert response.status_code == 503
+    assert calls == []
+
+
+def test_enqueue_finalize_failure_returns_503_without_release() -> None:
+    calls: list[dict] = []
+    _ledger.finalize_error = RuntimeError("database write failed")
+    try:
+        response = _post_enqueue(
+            _client(apply_async=lambda kwargs: calls.append(kwargs) or SimpleNamespace(id="task")),
+            _valid_body(),
+        )
+    finally:
+        _ledger.finalize_error = None
+    assert response.status_code == 503
+    assert len(calls) == 1
+    assert _ledger.records
+
+
+def test_enqueue_release_failure_is_translated_to_503() -> None:
+    _ledger.release_error = RuntimeError("database release failed")
+    try:
+        response = _post_enqueue(
+            _client(apply_async=lambda _: (_ for _ in ()).throw(RuntimeError("broker down"))),
+            _valid_body(),
+        )
+    finally:
+        _ledger.release_error = None
+    assert response.status_code == 503
+    assert response.json() == {"error": "unavailable"}
 
 
 def test_enqueue_conflicts_when_full_payload_changes() -> None:
@@ -519,7 +584,7 @@ def test_ready_uses_redis_url_fallback_when_resolved_broker_absent(
         enqueue_port=18007,
         redis_url="redis://fallback",
     )
-    response = TestClient(create_enqueue_app(settings)).get("/ready")
+    response = TestClient(create_enqueue_app(settings, ledger=_ledger)).get("/ready")
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
 
@@ -537,7 +602,9 @@ def test_ready_returns_ready_after_redis_ping(monkeypatch: pytest.MonkeyPatch) -
 
     client = _Redis()
     monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_args, **_kwargs: client)
-    response = TestClient(create_enqueue_app(_settings(redis_url="redis://redis"))).get("/ready")
+    response = TestClient(
+        create_enqueue_app(_settings(redis_url="redis://redis"), ledger=_ledger)
+    ).get("/ready")
     assert response.status_code == 200
     assert response.json() == {"status": "ready", "service": "worker"}
     assert client.closed is True
@@ -555,7 +622,43 @@ def test_ready_returns_not_ready_when_redis_fails(
             return None
 
     monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_args, **_kwargs: _Redis())
+    response = TestClient(
+        create_enqueue_app(_settings(redis_url="redis://redis"), ledger=_ledger)
+    ).get("/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+
+
+def test_ready_is_not_ready_without_database_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Redis:
+        async def ping(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_a, **_k: _Redis())
     response = TestClient(create_enqueue_app(_settings(redis_url="redis://redis"))).get("/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "not_ready"}
+
+
+def test_ready_is_not_ready_when_database_ping_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Redis:
+        async def ping(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("redis.asyncio.Redis.from_url", lambda *_a, **_k: _Redis())
+    _ledger.ping_error = OSError("connection refused")
+    try:
+        response = TestClient(
+            create_enqueue_app(_settings(redis_url="redis://redis"), ledger=_ledger)
+        ).get("/ready")
+    finally:
+        _ledger.ping_error = None
     assert response.status_code == 503
     assert response.json() == {"status": "not_ready"}
 

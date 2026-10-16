@@ -62,6 +62,19 @@ def _row(*, request_hash="hash", state="claimed", version=1, expires=None, respo
 
 
 @pytest.mark.asyncio
+async def test_ping_uses_service_account_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = _Session(SimpleNamespace())
+
+    @asynccontextmanager
+    async def context(_factory):
+        yield session
+
+    monkeypatch.setattr(mod, "session_as_service_account", context)
+    await mod.PostgresIdempotencyLedger(object()).ping()
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_claim_rejects_invalid_key(session_context) -> None:
     ledger = mod.PostgresIdempotencyLedger(object())
     with pytest.raises(mod.LedgerError, match="invalid"):

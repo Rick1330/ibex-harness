@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db import session_as_service_org
+from app.db import session_as_service_account, session_as_service_org
 
 LEDGER_LEASE_SECONDS = 120.0
 
@@ -71,6 +71,15 @@ class PostgresIdempotencyLedger:
     ) -> None:
         self._factory = session_factory
         self._lease_seconds = max(1.0, lease_seconds)
+
+    async def ping(self) -> None:
+        """Verify the database dependency without requiring a tenant claim."""
+        async with session_as_service_account(self._factory) as session:
+            await session.execute(
+                text(
+                    "SELECT 1"
+                )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            )
 
     async def claim(
         self, *, org_id: UUID, agent_id: UUID, key: str, request_hash: str
