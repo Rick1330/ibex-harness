@@ -121,7 +121,8 @@ func handleResponses(w http.ResponseWriter, r *http.Request, deps protectedRoute
 	recordResponsesUsage(w, r, deps, responsesUsageInput{Provider: responsesProviderName(r), Model: dispatch.req.Model, Usage: out.Usage})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(out.Raw)
+	// out.Raw is provider JSON written as application/json, not HTML: no XSS sink.
+	_, _ = w.Write(out.Raw) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 }
 
 func responsesProviderName(r *http.Request) string {

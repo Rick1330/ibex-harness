@@ -391,31 +391,45 @@ func TestResolveResponsesCredentialPinned(t *testing.T) {
 	}
 }
 
-func TestEnqueueResponsesUsageValidation(t *testing.T) {
+func validResponsesUsage() responsesUsageInput {
+	return responsesUsageInput{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}}
+}
+
+func TestEnqueueResponsesUsageWritesFact(t *testing.T) {
 	writer, ins := newResponsesWriter(t, 100)
 	ctx := responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, nil, responsesTestOrgID, responsesTestAgentID, "req-enqueue")
-	if err := enqueueResponsesUsage(ctx, writer, responsesUsageInput{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5}}); err != nil {
+	if err := enqueueResponsesUsage(ctx, writer, validResponsesUsage()); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(ins.rows) != 1 || ins.rows[0][0].TotalTokens != 5 {
-		t.Fatalf("rows=%+v", ins.rows)
-	}
+	assertUsageFact(t, singleUsageFact(t, ins), "req-enqueue", "openai", "gpt-4o")
+}
+
+func TestEnqueueResponsesUsageRejectsInvalidUsage(t *testing.T) {
+	writer, _ := newResponsesWriter(t, 100)
+	ctx := responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, nil, responsesTestOrgID, responsesTestAgentID, "req-enqueue")
+	overflow := int(^uint32(0)) + 1
 	for _, bad := range []responsesUsageInput{
 		{Provider: "openai", Model: "gpt-4o", Usage: nil},
-		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: int(^uint32(0)) + 1}},
-		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{OutputTokens: int(^uint32(0)) + 1}},
+		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: overflow}},
+		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{OutputTokens: overflow}},
 	} {
 		if err := enqueueResponsesUsage(ctx, writer, bad); err == nil {
 			t.Fatalf("expected error for %+v", bad.Usage)
 		}
 	}
-	if err := enqueueResponsesUsage(responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, nil, uuid.Nil, uuid.Nil, "req"), writer, responsesUsageInput{Provider: "openai", Usage: &responses.Usage{TotalTokens: 1}}); err == nil {
+}
+
+func TestEnqueueResponsesUsageRequiresTenantAndRequestID(t *testing.T) {
+	writer, _ := newResponsesWriter(t, 100)
+	noTenant := responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, nil, uuid.Nil, uuid.Nil, "req")
+	if err := enqueueResponsesUsage(noTenant, writer, validResponsesUsage()); err == nil {
 		t.Fatal("expected tenant identity error")
 	}
-	if err := enqueueResponsesUsage(responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, nil, responsesTestOrgID, responsesTestAgentID, ""), writer, responsesUsageInput{Provider: "openai", Usage: &responses.Usage{TotalTokens: 1}}); err == nil {
+	noRequestID := responsesRequestContext(t, responses.Request{Model: "gpt-4o"}, nil, responsesTestOrgID, responsesTestAgentID, "")
+	if err := enqueueResponsesUsage(noRequestID, writer, validResponsesUsage()); err == nil {
 		t.Fatal("expected request identity error")
 	}
 }

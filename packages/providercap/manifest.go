@@ -103,7 +103,9 @@ func LoadFileAllowStale(path string, now time.Time) (*Snapshot, error) {
 }
 
 func loadFile(path string, now time.Time, allowStale bool) (*Snapshot, error) {
-	f, err := os.Open(path)
+	// path is operator-supplied configuration (IBEX_PROVIDER_CAPABILITY_MANIFEST)
+	// or a fixed repo-relative seed path, never end-user request input.
+	f, err := os.Open(filepath.Clean(path)) // nosemgrep: go.lang.security.audit.file-access -- operator-configured manifest path, not user input
 	if err != nil {
 		return nil, err
 	}
@@ -226,8 +228,8 @@ func validateModels(models []Model, now time.Time) error {
 }
 
 func validateModel(model Model, seen map[string]struct{}, now time.Time) error {
-	if strings.TrimSpace(model.Provider) == "" || strings.TrimSpace(model.Model) == "" || strings.TrimSpace(model.Endpoint) == "" {
-		return fmt.Errorf("%w: model identity is required", ErrInvalidManifest)
+	if err := validateModelIdentity(model); err != nil {
+		return err
 	}
 	key := model.Provider + "\x00" + model.Model
 	if _, ok := seen[key]; ok {
@@ -237,17 +239,58 @@ func validateModel(model Model, seen map[string]struct{}, now time.Time) error {
 	if err := validateModelLimits(model); err != nil {
 		return err
 	}
-	if model.TokenizerFamily == "" || len(model.Capabilities) == 0 {
-		return fmt.Errorf("%w: incomplete model %s", ErrInvalidManifest, model.Model)
+	if err := validateModelCompleteness(model); err != nil {
+		return err
 	}
 	return validateClaims(model, now)
 }
 
-func validateModelLimits(model Model) error {
-	if model.ContextWindow <= 0 || model.MaxOutputTokens <= 0 || model.MaxOutputTokens > model.ContextWindow {
-		return fmt.Errorf("%w: invalid limits for %s", ErrInvalidManifest, model.Model)
+func validateModelIdentity(model Model) error {
+	if strings.TrimSpace(model.Provider) == "" {
+		return modelIdentityRequired()
+	}
+	if strings.TrimSpace(model.Model) == "" {
+		return modelIdentityRequired()
+	}
+	if strings.TrimSpace(model.Endpoint) == "" {
+		return modelIdentityRequired()
 	}
 	return nil
+}
+
+func modelIdentityRequired() error {
+	return fmt.Errorf("%w: model identity is required", ErrInvalidManifest)
+}
+
+func validateModelCompleteness(model Model) error {
+	if model.TokenizerFamily == "" {
+		return incompleteModel(model.Model)
+	}
+	if len(model.Capabilities) == 0 {
+		return incompleteModel(model.Model)
+	}
+	return nil
+}
+
+func incompleteModel(name string) error {
+	return fmt.Errorf("%w: incomplete model %s", ErrInvalidManifest, name)
+}
+
+func validateModelLimits(model Model) error {
+	if model.ContextWindow <= 0 {
+		return invalidLimits(model.Model)
+	}
+	if model.MaxOutputTokens <= 0 {
+		return invalidLimits(model.Model)
+	}
+	if model.MaxOutputTokens > model.ContextWindow {
+		return invalidLimits(model.Model)
+	}
+	return nil
+}
+
+func invalidLimits(name string) error {
+	return fmt.Errorf("%w: invalid limits for %s", ErrInvalidManifest, name)
 }
 
 func validateClaims(model Model, now time.Time) error {
@@ -260,7 +303,7 @@ func validateClaims(model Model, now time.Time) error {
 }
 
 func validateClaim(modelName, claimName string, claim Claim, now time.Time) error {
-	if claim.State != StateSupported && claim.State != StateUnsupported && claim.State != StateUnverified {
+	if !validClaimState(claim.State) {
 		return fmt.Errorf("%w: invalid state for %s/%s", ErrInvalidManifest, modelName, claimName)
 	}
 	if err := validateClaimProvenance(modelName, claimName, claim); err != nil {
@@ -272,14 +315,33 @@ func validateClaim(modelName, claimName string, claim Claim, now time.Time) erro
 	return nil
 }
 
+func validClaimState(state State) bool {
+	switch state {
+	case StateSupported, StateUnsupported, StateUnverified:
+		return true
+	default:
+		return false
+	}
+}
+
 func validateClaimProvenance(modelName, claimName string, claim Claim) error {
 	if claim.State != StateSupported {
 		return nil
 	}
-	if claim.Provenance == nil || strings.TrimSpace(claim.Provenance.SourceURL) == "" || claim.Provenance.AccessedAt.IsZero() {
-		return fmt.Errorf("%w: supported claim %s/%s lacks provenance", ErrInvalidManifest, modelName, claimName)
+	if claim.Provenance == nil {
+		return claimLacksProvenance(modelName, claimName)
+	}
+	if strings.TrimSpace(claim.Provenance.SourceURL) == "" {
+		return claimLacksProvenance(modelName, claimName)
+	}
+	if claim.Provenance.AccessedAt.IsZero() {
+		return claimLacksProvenance(modelName, claimName)
 	}
 	return nil
+}
+
+func claimLacksProvenance(modelName, claimName string) error {
+	return fmt.Errorf("%w: supported claim %s/%s lacks provenance", ErrInvalidManifest, modelName, claimName)
 }
 func cloneClaims(in map[string]Claim) map[string]Claim {
 	out := make(map[string]Claim, len(in))

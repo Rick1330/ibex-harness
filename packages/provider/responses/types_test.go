@@ -92,8 +92,14 @@ func TestParseResponseFunctionItemsAndUsageValidation(t *testing.T) {
 
 func TestDecodeOrderedItems(t *testing.T) {
 	items, err := DecodeOrderedItems(bytes.NewReader([]byte(`{"output":[{"type":"message","role":"assistant"},{"type":"future","x":1}]}`)))
-	if err != nil || len(items) != 2 || items[1].Type != "future" {
-		t.Fatalf("items=%+v err=%v", items, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items=%+v", items)
+	}
+	if items[1].Type != "future" {
+		t.Fatalf("items[1].Type=%q", items[1].Type)
 	}
 	if _, err := DecodeOrderedItems(bytes.NewReader([]byte(`{"output":{}}`))); err == nil {
 		t.Fatal("non-array must fail")

@@ -38,7 +38,8 @@ func TestCreateResponsePropagatesTenantCredentialAndParsesUsage(t *testing.T) {
 
 func TestCreateResponseRejectsOversizedBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("x", responsesBodyLimit+1)))
+		// Test server returns a raw byte payload, not HTML: no XSS sink.
+		_, _ = w.Write([]byte(strings.Repeat("x", responsesBodyLimit+1))) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 	}))
 	defer srv.Close()
 	c := New(Config{APIKey: "k", BaseURL: srv.URL}, logger.Discard("test"), telemetry.NoopTracer("test"), nil)
