@@ -121,27 +121,26 @@ func LoadDefaultAllowStale(now time.Time) (*Snapshot, error) {
 
 func loadDefault(now time.Time, allowStale bool) (*Snapshot, error) {
 	if p := strings.TrimSpace(os.Getenv("IBEX_PROVIDER_CAPABILITY_MANIFEST")); p != "" {
-		if allowStale {
-			return LoadFileAllowStale(p, now)
-		}
-		return LoadFile(p, now)
+		return loadConfiguredManifest(p, now, allowStale)
 	}
-	paths := []string{}
-	paths = append(paths, "infra/provider-capabilities/manifest.v1.json")
-	if wd, err := os.Getwd(); err == nil {
-		for dir := wd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-			paths = append(paths, filepath.Join(dir, "infra/provider-capabilities/manifest.v1.json"))
-		}
+	return loadSeedManifest(now, allowStale)
+}
+
+func loadConfiguredManifest(path string, now time.Time, allowStale bool) (*Snapshot, error) {
+	return loadFileByMode(path, now, allowStale)
+}
+
+func loadFileByMode(path string, now time.Time, allowStale bool) (*Snapshot, error) {
+	if allowStale {
+		return LoadFileAllowStale(path, now)
 	}
+	return LoadFile(path, now)
+}
+
+func loadSeedManifest(now time.Time, allowStale bool) (*Snapshot, error) {
 	var last error
-	for _, p := range paths {
-		var s *Snapshot
-		var err error
-		if allowStale {
-			s, err = LoadFileAllowStale(p, now)
-		} else {
-			s, err = LoadFile(p, now)
-		}
+	for _, p := range seedManifestPaths() {
+		s, err := loadFileByMode(p, now, allowStale)
 		if err == nil {
 			return s, nil
 		}
@@ -150,10 +149,37 @@ func loadDefault(now time.Time, allowStale bool) (*Snapshot, error) {
 	return nil, fmt.Errorf("provider capability manifest: %w", last)
 }
 
+func seedManifestPaths() []string {
+	const rel = "infra/provider-capabilities/manifest.v1.json"
+	paths := []string{rel}
+	wd, err := os.Getwd()
+	if err != nil {
+		return paths
+	}
+	for dir := wd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		paths = append(paths, filepath.Join(dir, rel))
+	}
+	return paths
+}
+
 func validate(m Manifest, now time.Time, allowStale bool) error {
+	if err := validateVersion(m); err != nil {
+		return err
+	}
+	if err := validateFreshness(m, now, allowStale); err != nil {
+		return err
+	}
+	return validateModels(m.Models, now)
+}
+
+func validateVersion(m Manifest) error {
 	if m.Version != CurrentVersion {
 		return fmt.Errorf("%w: version %q", ErrInvalidManifest, m.Version)
 	}
+	return nil
+}
+
+func validateFreshness(m Manifest, now time.Time, allowStale bool) error {
 	if m.GeneratedAt.IsZero() || m.ExpiresAt.IsZero() || !m.ExpiresAt.After(m.GeneratedAt) {
 		return fmt.Errorf("%w: invalid freshness window", ErrInvalidManifest)
 	}
@@ -163,36 +189,75 @@ func validate(m Manifest, now time.Time, allowStale bool) error {
 	if !now.Before(m.ExpiresAt) && !allowStale {
 		return fmt.Errorf("%w: expired at %s", ErrStaleManifest, m.ExpiresAt.UTC().Format(time.RFC3339))
 	}
-	if len(m.Models) == 0 {
+	return nil
+}
+
+func validateModels(models []Model, now time.Time) error {
+	if len(models) == 0 {
 		return fmt.Errorf("%w: models is required", ErrInvalidManifest)
 	}
-	seen := make(map[string]struct{}, len(m.Models))
-	for _, model := range m.Models {
-		if strings.TrimSpace(model.Provider) == "" || strings.TrimSpace(model.Model) == "" || strings.TrimSpace(model.Endpoint) == "" {
-			return fmt.Errorf("%w: model identity is required", ErrInvalidManifest)
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		if err := validateModel(model, seen, now); err != nil {
+			return err
 		}
-		key := model.Provider + "\x00" + model.Model
-		if _, ok := seen[key]; ok {
-			return fmt.Errorf("%w: duplicate model %s/%s", ErrInvalidManifest, model.Provider, model.Model)
+	}
+	return nil
+}
+
+func validateModel(model Model, seen map[string]struct{}, now time.Time) error {
+	if strings.TrimSpace(model.Provider) == "" || strings.TrimSpace(model.Model) == "" || strings.TrimSpace(model.Endpoint) == "" {
+		return fmt.Errorf("%w: model identity is required", ErrInvalidManifest)
+	}
+	key := model.Provider + "\x00" + model.Model
+	if _, ok := seen[key]; ok {
+		return fmt.Errorf("%w: duplicate model %s/%s", ErrInvalidManifest, model.Provider, model.Model)
+	}
+	seen[key] = struct{}{}
+	if err := validateModelLimits(model); err != nil {
+		return err
+	}
+	if model.TokenizerFamily == "" || len(model.Capabilities) == 0 {
+		return fmt.Errorf("%w: incomplete model %s", ErrInvalidManifest, model.Model)
+	}
+	return validateClaims(model, now)
+}
+
+func validateModelLimits(model Model) error {
+	if model.ContextWindow <= 0 || model.MaxOutputTokens <= 0 || model.MaxOutputTokens > model.ContextWindow {
+		return fmt.Errorf("%w: invalid limits for %s", ErrInvalidManifest, model.Model)
+	}
+	return nil
+}
+
+func validateClaims(model Model, now time.Time) error {
+	for name, claim := range model.Capabilities {
+		if err := validateClaim(model.Model, name, claim, now); err != nil {
+			return err
 		}
-		seen[key] = struct{}{}
-		if model.ContextWindow <= 0 || model.MaxOutputTokens <= 0 || model.MaxOutputTokens > model.ContextWindow {
-			return fmt.Errorf("%w: invalid limits for %s", ErrInvalidManifest, model.Model)
-		}
-		if model.TokenizerFamily == "" || len(model.Capabilities) == 0 {
-			return fmt.Errorf("%w: incomplete model %s", ErrInvalidManifest, model.Model)
-		}
-		for name, claim := range model.Capabilities {
-			if claim.State != StateSupported && claim.State != StateUnsupported && claim.State != StateUnverified {
-				return fmt.Errorf("%w: invalid state for %s/%s", ErrInvalidManifest, model.Model, name)
-			}
-			if claim.State == StateSupported && (claim.Provenance == nil || strings.TrimSpace(claim.Provenance.SourceURL) == "" || claim.Provenance.AccessedAt.IsZero()) {
-				return fmt.Errorf("%w: supported claim %s/%s lacks provenance", ErrInvalidManifest, model.Model, name)
-			}
-			if claim.Provenance != nil && claim.Provenance.AccessedAt.After(now) {
-				return fmt.Errorf("%w: future provenance for %s/%s", ErrInvalidManifest, model.Model, name)
-			}
-		}
+	}
+	return nil
+}
+
+func validateClaim(modelName, claimName string, claim Claim, now time.Time) error {
+	if claim.State != StateSupported && claim.State != StateUnsupported && claim.State != StateUnverified {
+		return fmt.Errorf("%w: invalid state for %s/%s", ErrInvalidManifest, modelName, claimName)
+	}
+	if err := validateClaimProvenance(modelName, claimName, claim); err != nil {
+		return err
+	}
+	if claim.Provenance != nil && claim.Provenance.AccessedAt.After(now) {
+		return fmt.Errorf("%w: future provenance for %s/%s", ErrInvalidManifest, modelName, claimName)
+	}
+	return nil
+}
+
+func validateClaimProvenance(modelName, claimName string, claim Claim) error {
+	if claim.State != StateSupported {
+		return nil
+	}
+	if claim.Provenance == nil || strings.TrimSpace(claim.Provenance.SourceURL) == "" || claim.Provenance.AccessedAt.IsZero() {
+		return fmt.Errorf("%w: supported claim %s/%s lacks provenance", ErrInvalidManifest, modelName, claimName)
 	}
 	return nil
 }

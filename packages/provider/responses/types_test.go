@@ -12,10 +12,19 @@ func TestParseResponsePreservesOrderAndUnknownRaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Output) != 3 || got.Output[0].Type != "reasoning" || got.Output[1].Type != "future_item" || got.Output[2].Type != "message" {
-		t.Fatalf("order/types=%+v", got.Output)
+	wantTypes := []string{"reasoning", "future_item", "message"}
+	if len(got.Output) != len(wantTypes) {
+		t.Fatalf("output len=%d want=%d", len(got.Output), len(wantTypes))
 	}
-	if got.Output[1].Message != nil || string(got.Output[1].Raw) != `{"type":"future_item","x":{"keep":true}}` {
+	for i, want := range wantTypes {
+		if got.Output[i].Type != want {
+			t.Fatalf("output[%d].Type=%q want %q", i, got.Output[i].Type, want)
+		}
+	}
+	if got.Output[1].Message != nil {
+		t.Fatalf("unknown item decoded as known type: %+v", got.Output[1])
+	}
+	if string(got.Output[1].Raw) != `{"type":"future_item","x":{"keep":true}}` {
 		t.Fatalf("unknown item lost raw=%s", got.Output[1].Raw)
 	}
 	if got.Output[0].Reasoning == nil || got.Output[0].Reasoning.EncryptedContent != "opaque" {

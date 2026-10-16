@@ -59,6 +59,14 @@ func (r Request) RequiredCapabilities() []string {
 	return caps
 }
 
+// CredentialOverride carries per-request tenant credentials without leaking
+// them into logs. Empty BaseURL selects the process-wide endpoint.
+type CredentialOverride struct {
+	APIKey        string
+	BaseURL       string
+	TLSServerName string
+}
+
 // Usage is the provider-reported token usage for a completed response.
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`

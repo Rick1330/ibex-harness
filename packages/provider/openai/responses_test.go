@@ -21,12 +21,18 @@ func TestCreateResponsePropagatesTenantCredentialAndParsesUsage(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(Config{APIKey: "platform", BaseURL: srv.URL}, logger.Discard("test"), telemetry.NoopTracer("test"), nil)
-	out, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o"}, "tenant-key", "", "")
+	out, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o"}, responses.CredentialOverride{APIKey: "tenant-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotKey != "Bearer tenant-key" || out.Usage == nil || out.Usage.TotalTokens != 5 {
-		t.Fatalf("auth=%q usage=%+v", gotKey, out.Usage)
+	if gotKey != "Bearer tenant-key" {
+		t.Fatalf("auth=%q", gotKey)
+	}
+	if out.Usage == nil {
+		t.Fatal("usage missing")
+	}
+	if out.Usage.TotalTokens != 5 {
+		t.Fatalf("usage=%+v", out.Usage)
 	}
 }
 
@@ -36,7 +42,7 @@ func TestCreateResponseRejectsOversizedBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(Config{APIKey: "k", BaseURL: srv.URL}, logger.Discard("test"), telemetry.NoopTracer("test"), nil)
-	if _, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o"}, "", "", ""); err == nil || !strings.Contains(err.Error(), "exceeds") {
+	if _, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o"}, responses.CredentialOverride{}); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -56,7 +62,7 @@ func TestCompleteResponsesRawWrapperAndStreamRejection(t *testing.T) {
 	if raw.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d", raw.StatusCode)
 	}
-	if _, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o", Stream: true}, "", "", ""); err == nil {
+	if _, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o", Stream: true}, responses.CredentialOverride{}); err == nil {
 		t.Fatal("stream must be rejected")
 	}
 }

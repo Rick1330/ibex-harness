@@ -18,11 +18,11 @@ func (c *Client) CompleteResponses(ctx context.Context, req responses.Request, a
 }
 
 // CreateResponse implements the typed non-streaming Responses surface.
-func (c *Client) CreateResponse(ctx context.Context, req responses.Request, apiKeyOverride, baseURLOverride, tlsServerName string) (responses.Response, error) {
+func (c *Client) CreateResponse(ctx context.Context, req responses.Request, cred responses.CredentialOverride) (responses.Response, error) {
 	if req.Stream {
 		return responses.Response{}, fmt.Errorf("responses streaming is not enabled")
 	}
-	resp, err := c.inner.CompleteResponsesWithTLS(ctx, req, apiKeyOverride, baseURLOverride, tlsServerName)
+	resp, err := c.inner.CompleteResponsesWithTLS(ctx, req, cred)
 	if err != nil {
 		return responses.Response{}, err
 	}

@@ -21,7 +21,7 @@ func (p *responsesTestProvider) Complete(context.Context, provider.Request) (pro
 }
 func (p *responsesTestProvider) Name() string              { return "openai" }
 func (p *responsesTestProvider) SupportedModels() []string { return []string{"gpt-4o"} }
-func (p *responsesTestProvider) CreateResponse(context.Context, responses.Request, string, string, string) (responses.Response, error) {
+func (p *responsesTestProvider) CreateResponse(context.Context, responses.Request, responses.CredentialOverride) (responses.Response, error) {
 	p.calls++
 	return responses.ParseResponse([]byte(`{"id":"r","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"output":[]}`))
 }
@@ -37,13 +37,26 @@ func routeTestSnapshot(t *testing.T) *providercap.Snapshot {
 	return s
 }
 
+func runResponsesGate(t *testing.T, manifest *providercap.Snapshot, req *http.Request, next http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	ResponsesCapabilityMiddleware(manifest, "")(next).ServeHTTP(rr, req)
+	return rr
+}
+
+func responsesGateDeny(t *testing.T, req *http.Request, msg string) *httptest.ResponseRecorder {
+	t.Helper()
+	return runResponsesGate(t, routeTestSnapshot(t), req, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal(msg) }))
+}
+
+var responsesGateNoContent = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+
 func TestResponsesCapabilityGateDeniesBeforeDispatch(t *testing.T) {
 	p := &responsesTestProvider{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx := llm.WithResponsesRequest(req.Context(), responses.Request{Model: "gpt-4o", Stream: true})
 	ctx = provider.WithProvider(ctx, p)
-	rr := httptest.NewRecorder()
-	ResponsesCapabilityMiddleware(routeTestSnapshot(t), "")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("downstream must not run") })).ServeHTTP(rr, req.WithContext(ctx))
+	rr := responsesGateDeny(t, req.WithContext(ctx), "downstream must not run")
 	if rr.Code != http.StatusUnprocessableEntity || p.calls != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", rr.Code, p.calls, rr.Body.String())
 	}
@@ -53,8 +66,7 @@ func TestResponsesCapabilityGateAllowsVerifiedModel(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx := llm.WithResponsesRequest(req.Context(), responses.Request{Model: "gpt-4o"})
 	ctx = provider.WithProvider(ctx, p)
-	rr := httptest.NewRecorder()
-	ResponsesCapabilityMiddleware(routeTestSnapshot(t), "")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(rr, req.WithContext(ctx))
+	rr := runResponsesGate(t, routeTestSnapshot(t), req.WithContext(ctx), responsesGateNoContent)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -63,8 +75,7 @@ func TestResponsesCapabilityGateDeniesUnsupportedField(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx := llm.WithResponsesRequest(req.Context(), responses.Request{Model: "gpt-4o", Reasoning: &responses.Reasoning{Effort: "low"}})
 	ctx = provider.WithProvider(ctx, &responsesTestProvider{})
-	rr := httptest.NewRecorder()
-	ResponsesCapabilityMiddleware(routeTestSnapshot(t), "")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("downstream must not run") })).ServeHTTP(rr, req.WithContext(ctx))
+	rr := responsesGateDeny(t, req.WithContext(ctx), "downstream must not run")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -111,8 +122,7 @@ func TestResponsesCapabilityMiddlewareDeniesMissingContextProviderAndStreaming(t
 	}{{"missing request", httptest.NewRequest(http.MethodPost, "/v1/responses", nil), http.StatusServiceUnavailable}, {"missing provider", httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(llm.WithResponsesRequest(context.Background(), responses.Request{Model: "gpt-4o"})), http.StatusServiceUnavailable}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rr := httptest.NewRecorder()
-			ResponsesCapabilityMiddleware(manifest, "")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("downstream") })).ServeHTTP(rr, tc.req)
+			rr := runResponsesGate(t, manifest, tc.req, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("downstream") }))
 			if rr.Code != tc.want {
 				t.Fatalf("status=%d", rr.Code)
 			}
@@ -122,8 +132,7 @@ func TestResponsesCapabilityMiddlewareDeniesMissingContextProviderAndStreaming(t
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx := llm.WithResponsesRequest(req.Context(), responses.Request{Model: "gpt-4o", Stream: true})
 	ctx = provider.WithProvider(ctx, p)
-	rr := httptest.NewRecorder()
-	ResponsesCapabilityMiddleware(manifest, "")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("stream reached downstream") })).ServeHTTP(rr, req.WithContext(ctx))
+	rr := runResponsesGate(t, manifest, req.WithContext(ctx), http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("stream reached downstream") }))
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status=%d", rr.Code)
 	}
