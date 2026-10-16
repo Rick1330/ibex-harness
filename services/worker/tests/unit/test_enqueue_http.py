@@ -40,16 +40,25 @@ def test_enqueue_rejects_non_object_json() -> None:
     assert resp.json()["error"] == "invalid_json"
 
 
-def test_enqueue_rejects_oversized_content_length() -> None:
+@pytest.mark.parametrize(
+    ("content_length", "expected_error"),
+    [
+        ("not-an-int", "invalid_content_length"),
+        (str(MAX_ENQUEUE_BODY_BYTES + 1), "payload_too_large"),
+    ],
+)
+def test_enqueue_rejects_invalid_or_oversized_content_length(
+    content_length: str, expected_error: str
+) -> None:
     client = _client(apply_async=lambda kwargs: SimpleNamespace(id="t1"))
     headers = {
         "Authorization": "Bearer sekrit",
         "Content-Type": "application/json",
-        "Content-Length": str(MAX_ENQUEUE_BODY_BYTES + 1),
+        "Content-Length": content_length,
     }
     resp = client.post("/internal/extraction/enqueue", headers=headers, content=b"{}")
     assert resp.status_code == 400
-    assert resp.json()["error"] == "payload_too_large"
+    assert resp.json()["error"] == expected_error
 
 
 def test_enqueue_accepts_valid_payload() -> None:
@@ -99,18 +108,6 @@ def test_enqueue_rejects_overlong_key_before_claim() -> None:
     )
     assert response.status_code == 400
     assert response.json() == {"error": "idempotency_key_too_long"}
-
-
-def test_enqueue_rejects_invalid_content_length() -> None:
-    client = _client(apply_async=lambda kwargs: SimpleNamespace(id="t1"))
-    headers = {
-        "Authorization": "Bearer sekrit",
-        "Content-Type": "application/json",
-        "Content-Length": "not-an-int",
-    }
-    resp = client.post("/internal/extraction/enqueue", headers=headers, content=b"{}")
-    assert resp.status_code == 400
-    assert resp.json()["error"] == "invalid_content_length"
 
 
 def test_enqueue_rejects_empty_and_bad_json_body() -> None:

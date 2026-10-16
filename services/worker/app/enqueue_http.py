@@ -7,6 +7,7 @@ import hmac
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -36,6 +37,13 @@ _dispatch_sem = threading.Semaphore(_DISPATCH_CONCURRENCY)
 
 class DispatchBusyError(RuntimeError):
     """Raised when enqueue dispatch concurrency is exhausted."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedEnqueue:
+    kwargs: dict[str, Any]
+    idempotency_key: str
+    ledger: Any
 
 
 def _bearer_matches(provided: str, expected: str) -> bool:
@@ -237,6 +245,30 @@ def _claim_outcome_response(outcome: ClaimOutcome) -> Response | None:
     return None
 
 
+async def _prepare_enqueue_request(
+    request: Request,
+) -> _ValidatedEnqueue | Response:
+    settings: Settings = request.app.state.settings
+    denied = _authorize(request, settings)
+    if denied is not None:
+        return denied
+    try:
+        payload = await _read_json_limited(request)
+        kwargs = _parse_enqueue_body(payload)
+    except (ValueError, TypeError) as exc:
+        return _bad_request(exc)
+
+    idem_key = (request.headers.get("idempotency-key") or "").strip()
+    if not idem_key:
+        return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
+    if len(idem_key) > 256:
+        return JSONResponse({"error": "idempotency_key_too_long"}, status_code=400)
+    ledger = getattr(request.app.state, "ledger", None)
+    if ledger is None:
+        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
+    return _ValidatedEnqueue(kwargs, idem_key, ledger)
+
+
 async def _dispatch_and_finalize(
     request: Request, ledger: Any, kwargs: dict[str, Any], outcome: ClaimOutcome
 ) -> Response:
@@ -259,29 +291,17 @@ async def _dispatch_and_finalize(
 
 
 async def enqueue_extraction(request: Request) -> Response:
-    settings: Settings = request.app.state.settings
-    if denied := _authorize(request, settings):
-        return denied
-    try:
-        payload = await _read_json_limited(request)
-        kwargs = _parse_enqueue_body(payload)
-    except (ValueError, TypeError) as exc:
-        return _bad_request(exc)
-
-    idem_key = (request.headers.get("idempotency-key") or "").strip()
-    if not idem_key:
-        return JSONResponse({"error": "idempotency_key_required"}, status_code=400)
-    if len(idem_key) > 256:
-        return JSONResponse({"error": "idempotency_key_too_long"}, status_code=400)
-    ledger = getattr(request.app.state, "ledger", None)
-    if ledger is None:
-        return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    outcome, response = await _claim_or_response(ledger, kwargs, idem_key)
+    prepared = await _prepare_enqueue_request(request)
+    if isinstance(prepared, Response):
+        return prepared
+    outcome, response = await _claim_or_response(
+        prepared.ledger, prepared.kwargs, prepared.idempotency_key
+    )
     if response is not None:
         return response
     if outcome is None:
         return JSONResponse({"error": "idempotency_unavailable"}, status_code=503)
-    return await _dispatch_and_finalize(request, ledger, kwargs, outcome)
+    return await _dispatch_and_finalize(request, prepared.ledger, prepared.kwargs, outcome)
 
 
 async def _release_durable_claim(ledger: Any, outcome: ClaimOutcome) -> None:

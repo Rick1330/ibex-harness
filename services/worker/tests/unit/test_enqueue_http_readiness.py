@@ -20,6 +20,7 @@ from app.enqueue_http import create_enqueue_app
 def _reset_enqueue_state() -> None:
     reset_enqueue_state()
 
+
 def test_health() -> None:
     assert _client().get("/health").status_code == 200
 
@@ -71,11 +72,21 @@ def test_ready_returns_ready_after_redis_ping(monkeypatch: pytest.MonkeyPatch) -
     assert redis.closed is True
 
 
-@pytest.mark.parametrize("error", [OSError("connection refused"), TimeoutError("slow")])
-def test_ready_returns_not_ready_when_redis_fails(
-    monkeypatch: pytest.MonkeyPatch, error: Exception
+@pytest.mark.parametrize(
+    ("database_error", "redis_error"),
+    [
+        (OSError("connection refused"), None),
+        (None, OSError("connection refused")),
+        (None, TimeoutError("slow")),
+    ],
+)
+def test_ready_returns_not_ready_when_dependency_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    database_error: Exception | None,
+    redis_error: Exception | None,
 ) -> None:
-    _patch_redis(monkeypatch, error)
+    _ledger.ping_error = database_error
+    _patch_redis(monkeypatch, redis_error)
     response = TestClient(
         create_enqueue_app(_settings(redis_url="redis://redis"), ledger=_ledger)
     ).get("/ready")
@@ -86,17 +97,5 @@ def test_ready_returns_not_ready_when_redis_fails(
 def test_ready_is_not_ready_without_database_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_redis(monkeypatch)
     response = TestClient(create_enqueue_app(_settings(redis_url="redis://redis"))).get("/ready")
-    assert response.status_code == 503
-    assert response.json() == {"status": "not_ready"}
-
-
-def test_ready_is_not_ready_when_database_ping_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_redis(monkeypatch)
-    _ledger.ping_error = OSError("connection refused")
-    response = TestClient(
-        create_enqueue_app(_settings(redis_url="redis://redis"), ledger=_ledger)
-    ).get("/ready")
     assert response.status_code == 503
     assert response.json() == {"status": "not_ready"}
