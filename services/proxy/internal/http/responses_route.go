@@ -115,8 +115,10 @@ func handleResponses(w http.ResponseWriter, r *http.Request, deps protectedRoute
 		return
 	}
 	if err := enqueueResponsesUsage(r.Context(), deps.usageFactWriter, prov.Name(), req.Model, out.Usage); err != nil {
-		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded, "Usage accounting unavailable", requestIDFromContext(r.Context()), apierror.WriteOpts{Detail: "Responses usage could not be recorded", DocsBase: ErrorDocsBaseFromContext(r.Context())})
-		return
+		// The provider operation already succeeded. Returning a retryable error here
+		// would cause clients to repeat a non-idempotent request. Preserve the
+		// completed response and mark accounting for reconciliation instead.
+		w.Header().Set("X-IBEX-Usage-Accounting", "pending")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

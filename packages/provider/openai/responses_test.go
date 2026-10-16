@@ -40,3 +40,23 @@ func TestCreateResponseRejectsOversizedBody(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestCompleteResponsesRawWrapperAndStreamRejection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"r","status":"completed","output":[]}`))
+	}))
+	defer srv.Close()
+	c := New(Config{APIKey: "k", BaseURL: srv.URL}, logger.Discard("test"), telemetry.NoopTracer("test"), nil)
+	raw, err := c.CompleteResponses(context.Background(), responses.Request{Model: "gpt-4o"}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = raw.Body.Close() }()
+	if raw.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", raw.StatusCode)
+	}
+	if _, err := c.CreateResponse(context.Background(), responses.Request{Model: "gpt-4o", Stream: true}, "", "", ""); err == nil {
+		t.Fatal("stream must be rejected")
+	}
+}

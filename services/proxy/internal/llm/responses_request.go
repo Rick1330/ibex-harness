@@ -31,9 +31,9 @@ func ParseResponsesRequest(r io.Reader) (responses.Request, error) {
 	if err := dec.Decode(&extra); err != io.EOF {
 		return responses.Request{}, fmt.Errorf("trailing JSON")
 	}
+	req.Model = strings.TrimSpace(req.Model)
 	if err := req.Validate(); err != nil {
 		return responses.Request{}, err
 	}
-	req.Model = strings.TrimSpace(req.Model)
 	return req, nil
 }

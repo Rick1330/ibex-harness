@@ -19,7 +19,7 @@ func TestParseResponsePreservesOrderAndUnknownRaw(t *testing.T) {
 		t.Fatalf("unknown item lost raw=%s", got.Output[1].Raw)
 	}
 	if got.Output[0].Reasoning == nil || got.Output[0].Reasoning.EncryptedContent != "opaque" {
-		t.Fatalf("reasoning not decoded")
+		t.Fatal("reasoning not decoded")
 	}
 }
 
@@ -56,5 +56,29 @@ func TestRequestPreservesRawInputAndRequiredCapabilities(t *testing.T) {
 func TestParseResponseRejectsMalformedOutputDiscriminator(t *testing.T) {
 	if _, err := ParseResponse([]byte(`{"output":[{"id":"missing-type"}]}`)); err == nil {
 		t.Fatal("missing discriminator must fail")
+	}
+}
+
+func TestParseResponseFunctionItemsAndUsageValidation(t *testing.T) {
+	body := []byte(`{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5},"output":[{"type":"function_call","id":"fc","call_id":"c","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"c","output":"ok"}]}`)
+	got, err := ParseResponse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Output[0].FunctionCall == nil || got.Output[1].FunctionCallOutput == nil {
+		t.Fatalf("items=%+v", got.Output)
+	}
+	if _, err := ParseResponse([]byte(`{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":6}}`)); err == nil {
+		t.Fatal("inconsistent usage must fail")
+	}
+}
+
+func TestDecodeOrderedItems(t *testing.T) {
+	items, err := DecodeOrderedItems(bytes.NewReader([]byte(`{"output":[{"type":"message","role":"assistant"},{"type":"future","x":1}]}`)))
+	if err != nil || len(items) != 2 || items[1].Type != "future" {
+		t.Fatalf("items=%+v err=%v", items, err)
+	}
+	if _, err := DecodeOrderedItems(bytes.NewReader([]byte(`{"output":{}}`))); err == nil {
+		t.Fatal("non-array must fail")
 	}
 }

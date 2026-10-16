@@ -95,3 +95,22 @@ func TestLoadDefaultConfiguredValidPath(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStaleLoaderVariants(t *testing.T) {
+	stale := []byte(strings.Replace(validManifest, "2026-11-10T00:00:00Z", "2026-10-16T11:00:00Z", 1))
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	if _, err := LoadBytes(stale, now); !errors.Is(err, ErrStaleManifest) {
+		t.Fatalf("LoadBytes err=%v", err)
+	}
+	f := t.TempDir() + "/stale.json"
+	if err := os.WriteFile(f, stale, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFileAllowStale(f, now); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IBEX_PROVIDER_CAPABILITY_MANIFEST", f)
+	if _, err := LoadDefaultAllowStale(now); err != nil {
+		t.Fatal(err)
+	}
+}

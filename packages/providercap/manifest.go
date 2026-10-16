@@ -236,7 +236,7 @@ func (s *Snapshot) Require(provider, model string, names ...string) error {
 	if s == nil {
 		return fmt.Errorf("%w: nil snapshot", ErrCapabilityUnknown)
 	}
-	if time.Now().UTC().After(s.manifest.ExpiresAt) {
+	if !time.Now().UTC().Before(s.manifest.ExpiresAt) {
 		return fmt.Errorf("%w: manifest expired at %s", ErrCapabilityUnknown, s.manifest.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	m, ok := s.Lookup(provider, model)

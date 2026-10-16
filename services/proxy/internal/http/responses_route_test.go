@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +48,6 @@ func TestResponsesCapabilityGateDeniesBeforeDispatch(t *testing.T) {
 		t.Fatalf("status=%d calls=%d body=%s", rr.Code, p.calls, rr.Body.String())
 	}
 }
-
 func TestResponsesCapabilityGateAllowsVerifiedModel(t *testing.T) {
 	p := &responsesTestProvider{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -59,7 +59,6 @@ func TestResponsesCapabilityGateAllowsVerifiedModel(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
-
 func TestResponsesCapabilityGateDeniesUnsupportedField(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	ctx := llm.WithResponsesRequest(req.Context(), responses.Request{Model: "gpt-4o", Reasoning: &responses.Reasoning{Effort: "low"}})
@@ -70,7 +69,6 @@ func TestResponsesCapabilityGateDeniesUnsupportedField(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
-
 func TestHandleResponsesRejectsNonPostBeforeProvider(t *testing.T) {
 	p := &responsesTestProvider{}
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
@@ -80,5 +78,53 @@ func TestHandleResponsesRejectsNonPostBeforeProvider(t *testing.T) {
 	handleResponses(rr, req.WithContext(ctx), protectedRouteDeps{})
 	if rr.Code != http.StatusMethodNotAllowed || p.calls != 0 {
 		t.Fatalf("status=%d calls=%d", rr.Code, p.calls)
+	}
+}
+func TestResponsesParseMiddlewareRejectsInvalidAndCarriesValidRequest(t *testing.T) {
+	for _, body := range []string{"{bad}", `{"model":"   "}`} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+		rr := httptest.NewRecorder()
+		ResponsesParseMiddleware("")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("invalid request reached handler") })).ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("body=%s status=%d", body, rr.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o"}`))
+	rr := httptest.NewRecorder()
+	ResponsesParseMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, ok := llm.ResponsesRequestFromContext(r.Context())
+		if !ok || got.Model != "gpt-4o" {
+			t.Fatalf("request=%+v ok=%v", got, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d", rr.Code)
+	}
+}
+func TestResponsesCapabilityMiddlewareDeniesMissingContextProviderAndStreaming(t *testing.T) {
+	manifest := routeTestSnapshot(t)
+	cases := []struct {
+		name string
+		req  *http.Request
+		want int
+	}{{"missing request", httptest.NewRequest(http.MethodPost, "/v1/responses", nil), http.StatusServiceUnavailable}, {"missing provider", httptest.NewRequest(http.MethodPost, "/v1/responses", nil).WithContext(llm.WithResponsesRequest(context.Background(), responses.Request{Model: "gpt-4o"})), http.StatusServiceUnavailable}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			ResponsesCapabilityMiddleware(manifest, "")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("downstream") })).ServeHTTP(rr, tc.req)
+			if rr.Code != tc.want {
+				t.Fatalf("status=%d", rr.Code)
+			}
+		})
+	}
+	p := &responsesTestProvider{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx := llm.WithResponsesRequest(req.Context(), responses.Request{Model: "gpt-4o", Stream: true})
+	ctx = provider.WithProvider(ctx, p)
+	rr := httptest.NewRecorder()
+	ResponsesCapabilityMiddleware(manifest, "")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("stream reached downstream") })).ServeHTTP(rr, req.WithContext(ctx))
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d", rr.Code)
 	}
 }
