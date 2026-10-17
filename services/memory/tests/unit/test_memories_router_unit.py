@@ -350,7 +350,7 @@ def test_forget_returns_success_when_post_commit_cache_invalidation_fails(
         async def forget_memory(self, **_kwargs):
             raise RuntimeError("unexpected cache failure")
 
-    async def _forget(_session, **_kwargs):
+    async def _forget(_session, _request):
         return 2
 
     memory_id = uuid4()

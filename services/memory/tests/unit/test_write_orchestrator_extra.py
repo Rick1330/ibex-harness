@@ -444,21 +444,24 @@ async def test_stale_extraction_session_fails_before_memory_insert() -> None:
     orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
     orch._pipeline.run = _run  # type: ignore[method-assign]
     insert = AsyncMock()
+    command = CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=agent_id,
+        content=ctx.content,
+        session_id=session_id,
+        expected_session_revision=7,
+    )
     with (
         patch(
             "app.write.orchestrator.require_extraction_session",
             AsyncMock(side_effect=StaleLifecycleError()),
         ),
+        patch(
+            "app.write.orchestrator.lock_organization_for_memory_write",
+            AsyncMock(),
+        ),
         patch("app.write.orchestrator.insert_memory_session", insert),
-        pytest.raises(StaleLifecycleError),
     ):
-        await orch.create(
-            CreateMemoryCommand(
-                org_id=org_id,
-                agent_id=agent_id,
-                content=ctx.content,
-                session_id=session_id,
-                expected_session_revision=7,
-            )
-        )
+        with pytest.raises(StaleLifecycleError):
+            await orch.create(command)
     insert.assert_not_awaited()

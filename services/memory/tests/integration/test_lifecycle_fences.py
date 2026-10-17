@@ -15,7 +15,12 @@ from app.config import Settings
 from app.conflict.persist import apply_supersession_session
 from app.conflict.types import SupersedeApply
 from app.exceptions import StaleLifecycleError
-from app.lifecycle import forget_memory_session, require_extraction_session
+from app.lifecycle import (
+    ExtractionSessionFence,
+    ForgetMemory,
+    forget_memory_session,
+    require_extraction_session,
+)
 from app.schemas.memories import ForgetMemoryRequest
 from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
@@ -77,10 +82,11 @@ async def test_forget_http_scope_revision_and_tombstone_vector_fence(
 
     from fastapi import HTTPException
 
+    stale_request = ForgetMemoryRequest(expected_revision=1)
     with pytest.raises(HTTPException) as stale:
         await forget_memory(
             memory_id,
-            ForgetMemoryRequest(expected_revision=1),
+            stale_request,
             token,
             session_factory,
             None,
@@ -93,16 +99,15 @@ async def test_forget_http_scope_revision_and_tombstone_vector_fence(
     assert (revision, tombstoned, status, embedding) == (2, True, "deleted", None)
     with pytest.raises(LookupError):
         await store.delete(memory_id=memory_id, org_id=org_id, expected_revision=2)
+    stale_upsert = UpsertRequest(
+        memory_id=memory_id,
+        org_id=org_id,
+        embedding=query,
+        embedding_model="test",
+        expected_revision=1,
+    )
     with pytest.raises(LookupError):
-        await store.upsert(
-            UpsertRequest(
-                memory_id=memory_id,
-                org_id=org_id,
-                embedding=query,
-                embedding_model="test",
-                expected_revision=1,
-            )
-        )
+        await store.upsert(stale_upsert)
     for mode in SearchMode:
         hits = await store.search(
             SearchRequest(
@@ -147,15 +152,19 @@ async def test_forget_outbox_failure_rolls_back_tombstone(
             ),
             {"org": str(org_id), "id": str(memory_id)},
         )
-    with pytest.raises(IntegrityError):
-        async with session_factory() as session, session.begin():
+    async with session_factory() as session:
+        await session.begin()
+        with pytest.raises(IntegrityError):
             await forget_memory_session(
                 session,
-                org_id=org_id,
-                agent_id=agent_id,
-                memory_id=memory_id,
-                expected_revision=1,
+                ForgetMemory(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    memory_id=memory_id,
+                    expected_revision=1,
+                ),
             )
+        await session.rollback()
     revision, tombstoned, status, _ = await _read_lifecycle(
         session_factory, org_id=org_id, memory_id=memory_id
     )
@@ -168,15 +177,19 @@ async def test_stale_forget_mutation_emits_no_outbox_event(
     org_id, agent_id, memory_id = await seed_org_agent_memory(
         session_factory, content="stale mutation has no event"
     )
-    with pytest.raises(StaleLifecycleError):
-        async with session_factory() as session, session.begin():
+    async with session_factory() as session:
+        await session.begin()
+        with pytest.raises(StaleLifecycleError):
             await forget_memory_session(
                 session,
-                org_id=org_id,
-                agent_id=agent_id,
-                memory_id=memory_id,
-                expected_revision=2,
+                ForgetMemory(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    memory_id=memory_id,
+                    expected_revision=2,
+                ),
             )
+        await session.rollback()
     revision, tombstoned, status, _ = await _read_lifecycle(
         session_factory, org_id=org_id, memory_id=memory_id
     )
@@ -222,10 +235,12 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
         async with session_factory() as session, session.begin():
             await require_extraction_session(
                 session,
-                org_id=org_id,
-                agent_id=agent_id,
-                session_id=session_id,
-                expected_revision=1,
+                ExtractionSessionFence(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    expected_revision=1,
+                ),
             )
             await session.execute(
                 text(
@@ -339,7 +354,13 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
         await barrier.wait()
         async with session_factory() as session, session.begin():
             return await forget_memory_session(
-                session, org_id=org_id, agent_id=agent_id, memory_id=target_id, expected_revision=1
+                session,
+                ForgetMemory(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    memory_id=target_id,
+                    expected_revision=1,
+                ),
             )
 
     async def _supersede():

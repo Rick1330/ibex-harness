@@ -244,16 +244,15 @@ def test_writer_receives_original_session_revision_when_lifecycle_changes_during
             self.writes.append((request.turn_index, request.memory.content))
 
     writer = _FencedWriter()
-    with pytest.raises(ExtractionLifecycleConflict, match="stale"):
-        run_batch_extraction(
-            make_job(
-                JobParts(
-                    provider=_RaceProvider(),
-                    writer=writer,
-                    session_store=store,
-                    turns=sample_turns(1),
-                )
-            )
+    job = make_job(
+        JobParts(
+            provider=_RaceProvider(),
+            writer=writer,
+            session_store=store,
+            turns=sample_turns(1),
         )
+    )
+    with pytest.raises(ExtractionLifecycleConflict, match="stale"):
+        run_batch_extraction(job)
     assert len(writer.requests) == 1
     assert writer.requests[0].expected_session_revision == 7

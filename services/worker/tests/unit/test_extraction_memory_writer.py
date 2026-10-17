@@ -237,5 +237,13 @@ def test_writer_close_owned_client() -> None:
 
 def test_writer_maps_stale_lifecycle_conflict_to_non_retryable_typed_error() -> None:
     writer = _writer(lambda _r: _409("STALE_LIFECYCLE_REVISION"))
+    request = _request()
     with pytest.raises(ExtractionLifecycleConflict, match="stale session revision"):
-        writer.write(_request())
+        writer.write(request)
+
+
+def test_writer_maps_stale_memory_target_to_retryable_transport_error() -> None:
+    writer = _writer(lambda _r: _409("STALE_MEMORY_REVISION"))
+    request = _request()
+    with pytest.raises(ExtractionTransportError, match="fresh candidates"):
+        writer.write(request)

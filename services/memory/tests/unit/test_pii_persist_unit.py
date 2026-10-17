@@ -46,7 +46,10 @@ async def test_update_memory_pii_flags_success() -> None:
     session = _FakeSession(rowcount=1)
     from unittest.mock import AsyncMock, patch
 
-    with patch("app.pii.persist.enqueue_memory_lifecycle_event", AsyncMock()) as enqueue:
+    with (
+        patch("app.pii.persist.lock_organization_for_memory_write", AsyncMock()),
+        patch("app.pii.persist.enqueue_memory_lifecycle_event", AsyncMock()) as enqueue,
+    ):
         await update_memory_pii_flags(
             _factory_for(session),  # type: ignore[arg-type]
             MemoryPiiUpdate(
@@ -60,7 +63,9 @@ async def test_update_memory_pii_flags_success() -> None:
             ),
         )
     enqueue.assert_awaited_once()
-    assert enqueue.await_args.kwargs["revision"] == 2
+    event = enqueue.await_args.args[1]
+    assert event.revision == 2
+    assert event.event_type == "content_updated"
 
 
 @pytest.mark.asyncio
@@ -76,8 +81,11 @@ async def test_update_memory_pii_flags_wrong_rowcount() -> None:
         pii_redacted=False,
         expected_revision=1,
     )
-    with pytest.raises(StaleLifecycleError):
-        await update_memory_pii_flags(factory, update)
+    from unittest.mock import AsyncMock, patch
+
+    with patch("app.pii.persist.lock_organization_for_memory_write", AsyncMock()):
+        with pytest.raises(StaleLifecycleError):
+            await update_memory_pii_flags(factory, update)
 
 
 def test_memory_pii_update_fields() -> None:

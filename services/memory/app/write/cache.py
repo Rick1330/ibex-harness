@@ -44,8 +44,8 @@ class MemoryCacheWriter:
             WRITE_CACHE_ERRORS.labels(op="forget_invalidate").inc()
             logger.warning(
                 "memory cache invalidation failed org_id=%s memory_id=%s",
-                org_id,
-                memory_id,
+                org_id.hex,
+                memory_id.hex,
             )
 
     async def write_created(self, outcome: WriteOutcome) -> None:

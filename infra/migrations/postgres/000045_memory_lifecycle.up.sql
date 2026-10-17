@@ -6,7 +6,8 @@ ALTER TABLE ibex_core.memories
     ADD COLUMN expires_at TIMESTAMPTZ;
 
 UPDATE ibex_core.memories
-SET tombstoned = (status = 'deleted' OR deleted_at IS NOT NULL);
+SET tombstoned = TRUE
+WHERE status = 'deleted' OR deleted_at IS NOT NULL;
 
 ALTER TABLE ibex_core.sessions
     ADD COLUMN lifecycle_revision BIGINT NOT NULL DEFAULT 1 CHECK (lifecycle_revision > 0);
@@ -21,6 +22,9 @@ BEGIN
        OR NEW.deleted_at IS DISTINCT FROM OLD.deleted_at
        OR NEW.org_id IS DISTINCT FROM OLD.org_id
        OR NEW.agent_id IS DISTINCT FROM OLD.agent_id THEN
+        NEW.lifecycle_revision := OLD.lifecycle_revision + 1;
+    ELSIF NEW.lifecycle_revision IS DISTINCT FROM OLD.lifecycle_revision THEN
+        -- Memory forget advances the source session fence to invalidate queued writes.
         NEW.lifecycle_revision := OLD.lifecycle_revision + 1;
     ELSE
         -- Do not allow callers to forge the revision independently of lifecycle state.
@@ -96,8 +100,6 @@ CREATE TABLE ibex_core.memory_lifecycle_outbox (
 CREATE INDEX idx_memory_lifecycle_outbox_pending
     ON ibex_core.memory_lifecycle_outbox (available_at, occurred_at, id)
     WHERE delivered_at IS NULL;
-CREATE INDEX idx_memory_lifecycle_outbox_memory
-    ON ibex_core.memory_lifecycle_outbox (org_id, memory_id, revision);
 
 ALTER TABLE ibex_core.memory_lifecycle_outbox ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.memory_lifecycle_outbox FORCE ROW LEVEL SECURITY;
@@ -121,7 +123,7 @@ COMMENT ON COLUMN ibex_core.memories.lifecycle_revision IS
 COMMENT ON COLUMN ibex_core.memories.tombstoned IS
     'Terminal visibility fence; tombstones win in all retrieval modes.';
 COMMENT ON COLUMN ibex_core.sessions.lifecycle_revision IS
-    'Monotonic session lifecycle fence advanced when status or deleted_at changes.';
+    'Monotonic session lifecycle fence advanced on eligibility changes and session-linked memory forget.';
 
 -- The deletion saga persists hold_blocked and never reclaims that terminal state.
 -- The original status check omitted this value, making legal-hold deferral fail at commit.

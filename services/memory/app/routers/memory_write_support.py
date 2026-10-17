@@ -14,6 +14,7 @@ from redis.exceptions import RedisError
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
+    MemoryOrganizationUnavailableError,
     StaleLifecycleError,
     ValidationError,
 )
@@ -201,6 +202,11 @@ async def commit_idempotency_or_log(handle: IdempotencyHandle, *, status: int, b
 
 
 def http_error_for_write(exc: BaseException) -> HTTPException:
+    if isinstance(exc, MemoryOrganizationUnavailableError):
+        return HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        )
     if isinstance(exc, StaleLifecycleError):
         return HTTPException(
             status_code=409,

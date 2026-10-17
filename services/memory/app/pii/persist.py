@@ -8,9 +8,12 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.exceptions import StaleLifecycleError
-from app.lifecycle import enqueue_memory_lifecycle_event
-from app.org_context import set_service_org
+from app.exceptions import StaleMemoryRevisionError
+from app.lifecycle import (
+    MemoryLifecycleEvent,
+    enqueue_memory_lifecycle_event,
+    lock_organization_for_memory_write,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +33,7 @@ async def update_memory_pii_flags(
 ) -> None:
     """Update content/status/PII flags with explicit org_id filter (defense in depth)."""
     async with factory() as session, session.begin():
-        await set_service_org(session, update.org_id)
+        await lock_organization_for_memory_write(session, update.org_id)
         result = await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 """
@@ -59,15 +62,17 @@ async def update_memory_pii_flags(
             },
         )
         if result.rowcount != 1:
-            raise StaleLifecycleError(
-                f"Memory {update.memory_id} is missing, tombstoned, or no longer at revision {update.expected_revision}"
+            raise StaleMemoryRevisionError(
+                "Memory is missing, tombstoned, or no longer at the expected lifecycle revision"
             )
         new_revision = int(result.scalar_one())
         if new_revision != update.expected_revision:
             await enqueue_memory_lifecycle_event(
                 session,
-                org_id=update.org_id,
-                memory_id=update.memory_id,
-                revision=new_revision,
-                event_type=("quarantined" if update.status == "quarantined" else "content_updated"),
+                MemoryLifecycleEvent(
+                    org_id=update.org_id,
+                    memory_id=update.memory_id,
+                    revision=new_revision,
+                    event_type=("quarantined" if update.status == "quarantined" else "content_updated"),
+                ),
             )

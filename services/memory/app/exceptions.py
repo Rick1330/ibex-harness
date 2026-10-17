@@ -52,6 +52,21 @@ class StaleLifecycleError(ConflictError):
         super().__init__(message)
 
 
+class StaleMemoryRevisionError(StaleLifecycleError):
+    """A supersession/PII target changed; callers may reload candidates and retry."""
+
+    code = "STALE_MEMORY_REVISION"
+
+
+class MemoryOrganizationUnavailableError(ConflictError):
+    """The organization was cancelled while a memory write was pending."""
+
+    code = "ORG_UNAVAILABLE"
+
+    def __init__(self, message: str = "Organization no longer accepts memory writes") -> None:
+        super().__init__(message)
+
+
 class ExternalServiceError(IBEXError):
     code = "UPSTREAM_ERROR"
     http_status = 503

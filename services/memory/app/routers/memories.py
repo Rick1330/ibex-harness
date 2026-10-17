@@ -30,12 +30,13 @@ from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
     MemoryNotFoundError,
+    MemoryOrganizationUnavailableError,
     StaleLifecycleError,
     ValidationError,
 )
 from app.feedback.models import ApplyFeedbackCommand, FeedbackKind
 from app.feedback.persist import require_agent_id
-from app.lifecycle import forget_memory_session
+from app.lifecycle import ForgetMemory, forget_memory_session
 from app.read.models import HotMemoryQuery
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
@@ -135,7 +136,6 @@ async def create_memory(
 
 @router.post(
     "/{memory_id}/forget",
-    response_model=ForgetMemoryResponse,
     summary="Forget a memory",
     responses={
         401: {"description": "Authentication required"},
@@ -164,12 +164,18 @@ async def forget_memory(
         async with session_factory() as session, session.begin():
             revision = await forget_memory_session(
                 session,
-                org_id=token.org_id,
-                agent_id=agent_id,
-                memory_id=memory_id,
-                expected_revision=request.expected_revision,
+                ForgetMemory(
+                    org_id=token.org_id,
+                    agent_id=agent_id,
+                    memory_id=memory_id,
+                    expected_revision=request.expected_revision,
+                ),
             )
-    except (MemoryNotFoundError, StaleLifecycleError) as exc:
+    except (
+        MemoryNotFoundError,
+        StaleLifecycleError,
+        MemoryOrganizationUnavailableError,
+    ) as exc:
         if isinstance(exc, MemoryNotFoundError):
             raise HTTPException(
                 status_code=404,
@@ -192,8 +198,8 @@ async def forget_memory(
         except Exception:
             logger.warning(
                 "memory cache invalidation failed after committed forget org_id=%s memory_id=%s",
-                token.org_id,
-                memory_id,
+                token.org_id.hex,
+                memory_id.hex,
                 exc_info=True,
             )
     return ForgetMemoryResponse(

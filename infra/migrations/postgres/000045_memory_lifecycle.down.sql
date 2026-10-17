@@ -3,6 +3,7 @@
 -- after a consumer has acted on outbox rows without an explicit recovery plan.
 DO $$
 BEGIN
+    PERFORM set_config('app.is_service_account', 'true', true);
     IF EXISTS (SELECT 1 FROM ibex_core.memory_lifecycle_outbox)
        OR EXISTS (SELECT 1 FROM ibex_core.org_deletion_jobs WHERE status = 'hold_blocked')
        OR EXISTS (

@@ -102,21 +102,22 @@ _PG_PRE_CASCADE: tuple[str, ...] = (
 )
 
 _CASCADE_STATEMENTS: tuple[str, ...] = (
-    """
-    INSERT INTO ibex_core.memory_lifecycle_outbox (
-        org_id, memory_id, revision, schema_version, event_type, occurred_at
-    )
-    SELECT org_id, id, lifecycle_revision + 1, 1, 'purged', NOW()
-    FROM ibex_core.memories
-    WHERE org_id = CAST(:org_id AS uuid)
-    ON CONFLICT (org_id, memory_id, revision) DO NOTHING
-    """,
     "DELETE FROM ibex_core.memory_feedback WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.memory_conflict_escalations WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.memory_relationships WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.memory_labels WHERE org_id = CAST(:org_id AS uuid)",
-    "UPDATE ibex_core.memories SET session_id = NULL WHERE org_id = CAST(:org_id AS uuid)",
-    "DELETE FROM ibex_core.memories WHERE org_id = CAST(:org_id AS uuid)",
+    """
+    WITH deleted_memories AS (
+        DELETE FROM ibex_core.memories
+        WHERE org_id = CAST(:org_id AS uuid)
+        RETURNING org_id, id, lifecycle_revision
+    )
+    INSERT INTO ibex_core.memory_lifecycle_outbox (
+        org_id, memory_id, revision, schema_version, event_type, occurred_at
+    )
+    SELECT org_id, id, lifecycle_revision + 1, 1, 'purged', NOW()
+    FROM deleted_memories
+    """,
     "UPDATE ibex_core.sessions SET directive_version_id = NULL WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.sessions WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.directive_versions WHERE org_id = CAST(:org_id AS uuid)",

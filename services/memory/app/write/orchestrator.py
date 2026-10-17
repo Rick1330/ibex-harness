@@ -21,11 +21,14 @@ from app.dedup.persist import (
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
-    StaleLifecycleError,
+    StaleMemoryRevisionError,
     ValidationError,
 )
 from app.lifecycle import (
+    ExtractionSessionFence,
+    MemoryLifecycleEvent,
     enqueue_memory_lifecycle_event,
+    lock_organization_for_memory_write,
     require_extraction_session,
 )
 from app.pipeline.context import WriteContext
@@ -131,13 +134,8 @@ class MemoryWriteOrchestrator:
         self, command: CreateMemoryCommand, ctx: WriteContext
     ) -> WriteOutcome:
         async with self._factory() as session, session.begin():
-            await require_extraction_session(
-                session,
-                org_id=command.org_id,
-                agent_id=command.agent_id,
-                session_id=command.session_id,
-                expected_revision=command.expected_session_revision,
-            )
+            await lock_organization_for_memory_write(session, command.org_id)
+            await require_extraction_session(session, _session_fence(command))
             memory = await insert_memory_session(session, command=command, ctx=ctx)
             await insert_labels_session(
                 session,
@@ -148,10 +146,12 @@ class MemoryWriteOrchestrator:
             )
             await enqueue_memory_lifecycle_event(
                 session,
-                org_id=command.org_id,
-                memory_id=memory.id,
-                revision=memory.lifecycle_revision,
-                event_type="quarantined",
+                MemoryLifecycleEvent(
+                    org_id=command.org_id,
+                    memory_id=memory.id,
+                    revision=memory.lifecycle_revision,
+                    event_type="quarantined",
+                ),
             )
         return WriteOutcome(
             kind=WriteOutcomeKind.QUARANTINED,
@@ -176,13 +176,8 @@ class MemoryWriteOrchestrator:
     async def _insert_active_memory_tx(self, command: CreateMemoryCommand, ctx: WriteContext):
         escalation_count = 0
         async with self._factory() as session, session.begin():
-            await require_extraction_session(
-                session,
-                org_id=command.org_id,
-                agent_id=command.agent_id,
-                session_id=command.session_id,
-                expected_revision=command.expected_session_revision,
-            )
+            await lock_organization_for_memory_write(session, command.org_id)
+            await require_extraction_session(session, _session_fence(command))
             memory = await insert_memory_session(session, command=command, ctx=ctx)
             try:
                 await insert_labels_session(
@@ -199,10 +194,12 @@ class MemoryWriteOrchestrator:
             )
             await enqueue_memory_lifecycle_event(
                 session,
-                org_id=command.org_id,
-                memory_id=memory.id,
-                revision=memory.lifecycle_revision,
-                event_type="created",
+                MemoryLifecycleEvent(
+                    org_id=command.org_id,
+                    memory_id=memory.id,
+                    revision=memory.lifecycle_revision,
+                    event_type="created",
+                ),
             )
         if escalation_count:
             ESCALATIONS_INSERTED.inc(escalation_count)
@@ -240,8 +237,8 @@ class MemoryWriteOrchestrator:
         for target_id in ctx.pending_supersede_targets:
             expected_revision = ctx.pending_supersede_revisions.get(target_id)
             if expected_revision is None:
-                raise StaleLifecycleError(
-                    f"Missing observed lifecycle revision for supersede target {target_id}"
+                raise StaleMemoryRevisionError(
+                    "Missing observed lifecycle revision for a supersession target"
                 )
             await apply_supersession_session(
                 session,
@@ -284,13 +281,8 @@ class MemoryWriteOrchestrator:
             msg = "unique violation without existing active memory"
             raise RuntimeError(msg)
         async with self._factory() as session, session.begin():
-            await require_extraction_session(
-                session,
-                org_id=command.org_id,
-                agent_id=command.agent_id,
-                session_id=command.session_id,
-                expected_revision=command.expected_session_revision,
-            )
+            await lock_organization_for_memory_write(session, command.org_id)
+            await require_extraction_session(session, _session_fence(command))
             await increment_retrieval_count_session(
                 session, RetrievalBump(org_id=command.org_id, memory_id=existing)
             )
@@ -301,6 +293,15 @@ class MemoryWriteOrchestrator:
             existing,
         )
         return existing
+
+
+def _session_fence(command: CreateMemoryCommand) -> ExtractionSessionFence:
+    return ExtractionSessionFence(
+        org_id=command.org_id,
+        agent_id=command.agent_id,
+        session_id=command.session_id,
+        expected_revision=command.expected_session_revision,
+    )
 
 
 def _is_embedding_failure(exc: BaseException) -> bool:

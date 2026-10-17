@@ -11,8 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.conflict.intervals import ValidityInterval
 from app.conflict.types import CandidateMemory, SupersedeApply
-from app.exceptions import StaleLifecycleError
-from app.lifecycle import enqueue_memory_lifecycle_event
+from app.exceptions import StaleMemoryRevisionError
+from app.lifecycle import (
+    MemoryLifecycleEvent,
+    enqueue_memory_lifecycle_event,
+    lock_organization_for_memory_write,
+)
 from app.org_context import set_service_org
 from app.vectorstore.base import SearchMode
 
@@ -100,7 +104,7 @@ async def apply_supersession_session(
 ) -> None:
     """Mark target superseded, close interval, insert supersedes edge (caller txn)."""
     closed_at = apply.closed_at or datetime.now(tz=UTC)
-    await set_service_org(session, apply.org_id)
+    await lock_organization_for_memory_write(session, apply.org_id)
     result = await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             """
@@ -130,8 +134,8 @@ async def apply_supersession_session(
     )
     updated = result.mappings().one_or_none()
     if updated is None:
-        raise StaleLifecycleError(
-            f"Memory {apply.target_memory_id} is missing, tombstoned, or no longer at revision {apply.expected_revision}"
+        raise StaleMemoryRevisionError(
+            "Supersession target is missing, tombstoned, or no longer at the expected lifecycle revision"
         )
     await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -157,10 +161,12 @@ async def apply_supersession_session(
     )
     await enqueue_memory_lifecycle_event(
         session,
-        org_id=apply.org_id,
-        memory_id=apply.target_memory_id,
-        revision=int(updated["lifecycle_revision"]),
-        event_type="superseded",
+        MemoryLifecycleEvent(
+            org_id=apply.org_id,
+            memory_id=apply.target_memory_id,
+            revision=int(updated["lifecycle_revision"]),
+            event_type="superseded",
+        ),
     )
 
 
@@ -179,7 +185,7 @@ async def insert_relationship(
 ) -> None:
     """Insert a typed memory_relationships edge (org-scoped)."""
     async with factory() as session, session.begin():
-        await set_service_org(session, insert.org_id)
+        await lock_organization_for_memory_write(session, insert.org_id)
         await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 """

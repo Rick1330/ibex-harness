@@ -121,6 +121,9 @@ async def test_update_greatest_and_org_isolation(pg_engine: AsyncEngine) -> None
     await store._update(org_a, session_a, 9, expected_lifecycle_revision=1)
     await store._update(org_a, session_a, 3, expected_lifecycle_revision=1)
     with pytest.raises(ExtractionLifecycleConflict):
+        await store._update(org_a, session_a, 99, expected_lifecycle_revision=2)
+    assert await _read_turn(factory, session_a, org_a) == 9
+    with pytest.raises(ExtractionLifecycleConflict):
         await store._update(org_b, session_a, 99, expected_lifecycle_revision=1)
     assert await _read_turn(factory, session_a, org_a) == 9
     assert await _read_turn(factory, session_b, org_b) == 5

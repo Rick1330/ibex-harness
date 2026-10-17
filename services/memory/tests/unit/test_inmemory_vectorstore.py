@@ -238,17 +238,16 @@ async def test_inmemory_upsert_requires_registered_lifecycle_snapshot() -> None:
     org, agent, mem = uuid4(), uuid4(), uuid4()
     store.bind_agent(mem, agent, lifecycle_revision=1)
     store._lifecycle.pop(mem)
+    request = UpsertRequest(
+        memory_id=mem,
+        org_id=org,
+        embedding=_UNIT,
+        embedding_model="bge-m3",
+        expected_revision=1,
+    )
 
     with pytest.raises(LookupError, match="no registered lifecycle snapshot"):
-        await store.upsert(
-            UpsertRequest(
-                memory_id=mem,
-                org_id=org,
-                embedding=_UNIT,
-                embedding_model="bge-m3",
-                expected_revision=1,
-            )
-        )
+        await store.upsert(request)
 
 
 @pytest.mark.asyncio

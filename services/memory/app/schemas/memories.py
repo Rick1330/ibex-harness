@@ -33,7 +33,7 @@ class CreateMemoryRequest(BaseModel):
     valid_from: datetime | None = None
     valid_until: datetime | None = None
     expires_at: datetime | None = None
-    expected_session_revision: int | None = Field(default=None, ge=1)
+    expected_session_revision: int | None = Field(default=None, ge=1, le=2**63 - 1)
 
     @field_validator("tags")
     @classmethod
@@ -112,7 +112,7 @@ class QuarantineMemoryResponse(BaseModel):
 
 
 class ForgetMemoryRequest(BaseModel):
-    expected_revision: int = Field(ge=1)
+    expected_revision: int = Field(ge=1, le=2**63 - 1)
 
 
 class ForgetMemoryData(BaseModel):

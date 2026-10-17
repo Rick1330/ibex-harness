@@ -414,8 +414,10 @@ X-Idempotency-Key: {uuid}
     { "label": "behavioral", "confidence": 0.72 }
   ],
   "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "expected_session_revision": 1,
   "visibility": "agent",
   "tags": ["ui", "preferences"],
+  "expires_at": "2025-01-15T10:30:00Z",
   "metadata": {
     "source_url": "https://example.com",
     "extracted_at": "2024-01-15T10:30:00Z"
@@ -432,13 +434,15 @@ X-Idempotency-Key: {uuid}
 | `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual`. Ignored for label rows when `labels` is provided; used as fallback when `labels` is omitted |
 | `confidence` | float | No | 0.0-1.0. Default: 0.80. Used with scalar `category` when `labels` is omitted |
 | `labels` | object[] | No | Multi-label classification (1–5 labels). Each item: `label` (enum) + `confidence` (0.0–1.0). When omitted, one label is synthesized from `category` + `confidence`. `memories.category` in the response reflects the DB trigger winner (highest confidence; tie → `label` ASC) |
-| `session_id` | UUID | No | Session this memory was created in |
+| `session_id` | UUID | No | Source session; if set, it must be completed and not deleted, and `expected_session_revision` is required |
+| `expected_session_revision` | integer | Conditional | Required with `session_id`; positive source-session lifecycle revision, capped at `2^63 - 1` |
 | `visibility` | enum | No | `agent`, `org`, `session`. Default: `agent` |
 | `tags` | string[] | No | Searchable tags. Max 20 tags, 50 chars each |
 | `metadata` | object | No | Arbitrary JSON metadata. Max 10KB |
 | `pinned` | boolean | No | Always include in context. Default: false |
 | `valid_from` | ISO8601 datetime | No | World-time start of the fact (ADR-0047). Omitted → write path defaults to now. |
 | `valid_until` | ISO8601 datetime | No | Exclusive end of validity. Must be strictly after `valid_from` when both are set. |
+| `expires_at` | ISO8601 datetime | No | Soft-expiry cutoff for ordinary retrieval; does not tombstone the memory |
 
 **Response: 201 Created**
 
@@ -465,6 +469,7 @@ X-Idempotency-Key: {uuid}
     "metadata": {
       "source_url": "https://example.com"
     },
+    "lifecycle_revision": 1,
     "created_at": "2024-01-15T10:30:45.123Z",
     "updated_at": "2024-01-15T10:30:45.123Z"
   },
@@ -497,6 +502,7 @@ X-Idempotency-Key: {uuid}
   "data": {
     "id": "...",
     "status": "quarantined",
+    "lifecycle_revision": 1,
     "pii_detected": true
   },
   "meta": {
@@ -587,7 +593,7 @@ Content-Type: application/json
 {"expected_revision": 4}
 ```
 
-`expected_revision` is a required positive integer. The service compares it under a row lock, advances the lifecycle revision, sets the terminal tombstone/deleted state, clears embedding fields, and inserts a redacted outbox event in the same PostgreSQL transaction. Successful mutation invalidates the object and hot-cache entries best-effort after commit; database retrieval predicates remain authoritative.
+`expected_revision` is a required positive integer no greater than `2^63 - 1` (PostgreSQL `BIGINT` maximum). The service compares it under a row lock, advances the lifecycle revision, sets the terminal tombstone/deleted state, clears embedding fields, and inserts a redacted outbox event in the same PostgreSQL transaction. If the memory belongs to a source session, the same transaction also advances that session's lifecycle fence so extraction requests that captured its previous revision fail closed. Successful mutation invalidates the object and hot-cache entries best-effort after commit; database retrieval predicates remain authoritative.
 
 **Response: 200 OK**
 

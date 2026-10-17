@@ -168,6 +168,10 @@ def _raise_for_memory_conflict(response: httpx.Response) -> None:
     code = _detail_code(response)
     if code == "IDEMPOTENCY_IN_PROGRESS":
         raise ExtractionTransportError("memory service HTTP 409 IDEMPOTENCY_IN_PROGRESS")
+    if code == "STALE_MEMORY_REVISION":
+        raise ExtractionTransportError(
+            "memory target revision changed; retry extraction with fresh candidates"
+        )
     if code == "STALE_LIFECYCLE_REVISION":
         raise ExtractionLifecycleConflict("memory service rejected stale session revision")
     raise ValueError("memory service HTTP 409")
