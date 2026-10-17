@@ -12,11 +12,18 @@ from redis.exceptions import RedisError
 
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
-from app.deps import get_memory_cache_writer, get_session_factory, get_write_orchestrator
+from app.deps import (
+    get_memory_cache_writer,
+    get_session_factory,
+    get_write_orchestrator,
+    require_memory_write,
+)
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
+    MemoryNotFoundError,
     MemoryOrganizationUnavailableError,
+    StaleLifecycleError,
     ValidationError,
 )
 from app.idempotency.redis_store import (
@@ -383,3 +390,61 @@ def test_forget_returns_success_when_post_commit_cache_invalidation_fails(
         "revision": 2,
         "tombstoned": True,
     }
+
+
+class _ForgetContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+class _ForgetSession(_ForgetContext):
+    def begin(self):
+        return _ForgetContext()
+
+
+def test_forget_requires_agent_scoped_token(client) -> None:
+    http, _mock_orch = client
+    http.app.dependency_overrides[require_memory_write] = lambda: ValidateResult(
+        org_id=ORG, permissions=MEMORY_WRITE, agent_id=None
+    )
+    with http:
+        response = http.post(
+            f"/v1/memories/{uuid4()}/forget",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"expected_revision": 1},
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AGENT_SCOPE_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    ("side_effect", "expected_status", "expected_code"),
+    [
+        (MemoryNotFoundError(), 404, "NOT_FOUND"),
+        (StaleLifecycleError("stale"), 409, "STALE_LIFECYCLE_REVISION"),
+        (MemoryOrganizationUnavailableError(), 409, "ORG_UNAVAILABLE"),
+    ],
+    ids=["not_found", "stale_lifecycle", "org_unavailable"],
+)
+def test_forget_maps_domain_errors(
+    client, monkeypatch, side_effect, expected_status, expected_code
+) -> None:
+    http, _mock_orch = client
+
+    async def _forget(_session, _request):
+        raise side_effect
+
+    monkeypatch.setattr(memories_router, "forget_memory_session", _forget)
+    http.app.dependency_overrides[get_session_factory] = lambda: _ForgetSession
+    http.app.dependency_overrides[get_memory_cache_writer] = lambda: None
+    with http:
+        response = http.post(
+            f"/v1/memories/{uuid4()}/forget",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"expected_revision": 1},
+        )
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["code"] == expected_code

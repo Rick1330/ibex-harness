@@ -15,7 +15,12 @@ from app.config import Settings
 from app.conflict.intervals import ValidityInterval
 from app.conflict.service import ConflictService
 from app.conflict.types import CandidateMemory, ConflictDecision, ConflictOutcome
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    StaleMemoryRevisionError,
+    ValidationError,
+)
 from app.pipeline import ConflictStage, WritePipeline
 from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
@@ -469,3 +474,19 @@ async def test_stale_extraction_session_fails_before_memory_insert() -> None:
     ):
         await orch.create(command)
     insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_supersession_missing_observed_revision_raises() -> None:
+    orch = MemoryWriteOrchestrator(WritePipeline([]), MagicMock())
+    org_id, agent_id = uuid4(), uuid4()
+    target_id = uuid4()
+    ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="x")
+    ctx.pending_supersede_targets = [target_id]
+    ctx.pending_supersede_revisions = {}
+    command = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x")
+
+    with pytest.raises(StaleMemoryRevisionError, match="Missing observed lifecycle revision"):
+        await orch._apply_supersession_and_escalations(
+            MagicMock(), command, uuid4(), ctx
+        )

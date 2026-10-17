@@ -108,3 +108,28 @@ async def test_refresh_hot_fail_open_on_redis_error() -> None:
     row = sample_memory_row()
     await writer.refresh_hot(row)  # must not raise
     redis.register_script.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_forget_memory_evicts_object_and_hot_entry() -> None:
+    redis = MagicMock()
+    redis.delete = AsyncMock()
+    redis.zrem = AsyncMock()
+    writer = MemoryCacheWriter(redis, MagicMock())
+    org_id, agent_id, memory_id = uuid4(), uuid4(), uuid4()
+    await writer.forget_memory(org_id=org_id, agent_id=agent_id, memory_id=memory_id)
+    redis.delete.assert_awaited_once_with(writer.object_key(org_id, memory_id))
+    redis.zrem.assert_awaited_once_with(writer.hot_key(org_id, agent_id), str(memory_id))
+
+
+@pytest.mark.asyncio
+async def test_forget_memory_fail_open_on_redis_error() -> None:
+    from redis.exceptions import RedisError
+
+    redis = MagicMock()
+    redis.delete = AsyncMock(side_effect=RedisError("down"))
+    redis.zrem = AsyncMock()
+    writer = MemoryCacheWriter(redis, MagicMock())
+    await writer.forget_memory(org_id=uuid4(), agent_id=uuid4(), memory_id=uuid4())
+    redis.delete.assert_awaited_once()
+    redis.zrem.assert_not_awaited()

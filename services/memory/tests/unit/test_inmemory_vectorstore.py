@@ -14,6 +14,7 @@ from app.vectorstore import (
     UpsertRequest,
     VectorStore,
 )
+from app.vectorstore.memory import _cosine_similarity
 
 _ZERO = [0.0] * 1024
 _UNIT = [1.0] + [0.0] * 1023
@@ -343,3 +344,106 @@ async def test_inmemory_historical_mode_includes_out_of_window_active_rows(
     )
     assert user_hits == []
     assert [hit.memory_id for hit in historical_hits] == [mem]
+
+
+def test_upsert_request_rejects_non_positive_revision() -> None:
+    request = UpsertRequest(
+        memory_id=uuid4(),
+        org_id=uuid4(),
+        embedding=_ZERO,
+        embedding_model="bge-m3",
+        expected_revision=0,
+    )
+    with pytest.raises(ValueError, match="expected_revision must be positive"):
+        request.validate()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ef_search": 0},
+        {"min_similarity": -0.1},
+        {"min_similarity": 1.1},
+    ],
+)
+def test_search_request_rejects_invalid_bounds(overrides: dict[str, object]) -> None:
+    args: dict[str, object] = {
+        "org_id": uuid4(),
+        "agent_id": uuid4(),
+        "query_embedding": _UNIT,
+        "limit": 5,
+    }
+    args.update(overrides)
+    with pytest.raises(ValueError):
+        SearchRequest(**args).validate()  # type: ignore[arg-type]
+
+
+def test_bind_agent_rejects_non_positive_revision() -> None:
+    store = InMemoryVectorStore()
+    with pytest.raises(ValueError, match="lifecycle_revision must be positive"):
+        store.bind_agent(uuid4(), uuid4(), lifecycle_revision=0)
+
+
+def test_set_lifecycle_rejects_non_positive_revision() -> None:
+    store = InMemoryVectorStore()
+    with pytest.raises(ValueError, match="lifecycle_revision must be positive"):
+        store.set_lifecycle(uuid4(), lifecycle_revision=0)
+
+
+@pytest.mark.asyncio
+async def test_inmemory_upsert_rejects_stale_revision() -> None:
+    store = InMemoryVectorStore()
+    org, agent, mem = uuid4(), uuid4(), uuid4()
+    store.bind_agent(mem, agent, lifecycle_revision=2)
+    request = UpsertRequest(
+        memory_id=mem,
+        org_id=org,
+        embedding=_UNIT,
+        embedding_model="bge-m3",
+        expected_revision=1,
+    )
+    with pytest.raises(LookupError, match="revision is stale"):
+        await store.upsert(request)
+
+
+@pytest.mark.asyncio
+async def test_inmemory_search_skips_expired_rows() -> None:
+    store = InMemoryVectorStore()
+    org, agent, mem = uuid4(), uuid4(), uuid4()
+    store.bind_agent(mem, agent, lifecycle_revision=1)
+    store.set_lifecycle(
+        mem,
+        expires_at=datetime.now(tz=UTC) - timedelta(days=1),
+        lifecycle_revision=1,
+    )
+    await store.upsert(
+        UpsertRequest(
+            memory_id=mem,
+            org_id=org,
+            embedding=_UNIT,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
+    )
+    hits = await store.search(
+        SearchRequest(
+            org_id=org, agent_id=agent, query_embedding=_UNIT, limit=5, min_similarity=0.0
+        )
+    )
+    assert hits == []
+
+
+@pytest.mark.asyncio
+async def test_inmemory_delete_rejects_non_positive_revision() -> None:
+    store = InMemoryVectorStore()
+    with pytest.raises(ValueError, match="expected_revision must be positive"):
+        await store.delete(memory_id=uuid4(), org_id=uuid4(), expected_revision=0)
+
+
+def test_cosine_similarity_dimension_mismatch() -> None:
+    with pytest.raises(ValueError, match="dimensions must match"):
+        _cosine_similarity([1.0], [1.0, 2.0])
+
+
+def test_cosine_similarity_zero_norm_returns_zero() -> None:
+    assert _cosine_similarity(_ZERO, _UNIT) == 0.0
