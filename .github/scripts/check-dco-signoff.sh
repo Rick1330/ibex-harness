@@ -11,6 +11,25 @@ if [[ -z "$BASE_SHA" || -z "$HEAD_SHA" ]]; then
   exit 0
 fi
 
+# is_bot_identity <author_name> <author_email>: known automation accounts, or any
+# GitHub "[bot]" noreply email.
+is_bot_identity() {
+  local name="$1" email="$2"
+  case "$name" in
+    "github-actions[bot]" | "dependabot[bot]" | "ibex-harness-benchmark[bot]" | \
+      "greptile-apps[bot]" | "coderabbitai[bot]" | "renovate[bot]")
+      [[ "$email" == *@users.noreply.github.com ]] && return 0
+      ;;
+  esac
+  [[ "$email" == *+*\[bot\]@users.noreply.github.com ]] && return 0
+  return 1
+}
+
+# has_bot_coauthor <message>: commit trailer crediting a "[bot]" co-author.
+has_bot_coauthor() {
+  grep -qiE '^Co-authored-by:.*\[bot\]' <<<"$1"
+}
+
 missing=0
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
@@ -21,17 +40,15 @@ while IFS= read -r sha; do
   fi
   author_email="$(git log -1 --format='%ae' "$sha")"
   author_name="$(git log -1 --format='%an' "$sha")"
-  # Only known automation identities are exempt. Author fields are spoofable, so
-  # do not treat every "*[bot]" noreply commit as trusted automation.
-  case "$author_name" in
-    "github-actions[bot]" | "dependabot[bot]" | "ibex-harness-benchmark[bot]")
-      case "$author_email" in
-        *@users.noreply.github.com) continue ;;
-        *) ;;
-      esac
-      ;;
-    *) ;;
-  esac
+  message="$(git log -1 --format='%B' "$sha")"
+  # Bot/automation commits are exempt from sign-off. A commit qualifies when its
+  # author is a known automation account, when the author email is a "[bot]"
+  # noreply identity, or when it credits a "[bot]" as a co-author (how GitHub
+  # code-review apps such as greptile-apps commit suggestions on a user's behalf).
+  # Author fields are spoofable, so this stays scoped to explicit bot markers.
+  if is_bot_identity "$author_name" "$author_email" || has_bot_coauthor "$message"; then
+    continue
+  fi
   if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by:'; then
     echo "Missing Signed-off-by on commit ${sha:0:7} ($author_name <$author_email>)"
     missing=1

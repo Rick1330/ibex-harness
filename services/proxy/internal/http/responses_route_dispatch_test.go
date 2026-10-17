@@ -406,7 +406,7 @@ func TestEnqueueResponsesUsageWritesFact(t *testing.T) {
 	}
 	fact := singleUsageFact(t, ins)
 	assertUsageFact(t, fact, "req-enqueue", "openai", "gpt-4o")
-	if fact.InputTokens != 2 || fact.OutputTokens != 3 || fact.TotalTokens != 5 {
+	if got := [3]uint32{fact.InputTokens, fact.OutputTokens, fact.TotalTokens}; got != [3]uint32{2, 3, 5} {
 		t.Fatalf("unexpected token counts: %+v", fact)
 	}
 }
