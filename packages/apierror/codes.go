@@ -68,6 +68,16 @@ const (
 	CodeLegalHoldActive Code = "LEGAL_HOLD_ACTIVE"
 	// CodeCapturePolicyConflict tells clients the org/agent capture policy row already exists.
 	CodeCapturePolicyConflict Code = "CAPTURE_POLICY_CONFLICT"
+	// CodeSnapshotExpired tells clients the policy snapshot is outside its freshness window.
+	CodeSnapshotExpired Code = "SNAPSHOT_EXPIRED"
+	// CodeSnapshotSignatureInvalid tells clients the policy snapshot failed signature or structural verification.
+	CodeSnapshotSignatureInvalid Code = "SNAPSHOT_SIGNATURE_INVALID"
+	// CodeSnapshotOrgMismatch tells clients the policy snapshot is bound to a different organization.
+	CodeSnapshotOrgMismatch Code = "SNAPSHOT_ORG_MISMATCH"
+	// CodeSnapshotAgentMismatch tells clients the policy snapshot is bound to a different agent.
+	CodeSnapshotAgentMismatch Code = "SNAPSHOT_AGENT_MISMATCH"
+	// CodeSnapshotKeyUnknown tells clients the policy snapshot names an unknown signing key.
+	CodeSnapshotKeyUnknown Code = "SNAPSHOT_KEY_UNKNOWN"
 )
 
 // Server / dependency error codes (5xx).
@@ -84,4 +94,6 @@ const (
 	CodeProviderUnavailable Code = "PROVIDER_UNAVAILABLE"
 	// CodeProviderTimeout tells clients the upstream LLM provider exceeded its deadline.
 	CodeProviderTimeout Code = "PROVIDER_TIMEOUT"
+	// CodeSnapshotUnavailable tells clients the policy snapshot could not be issued or verified; retry later.
+	CodeSnapshotUnavailable Code = "SNAPSHOT_UNAVAILABLE"
 )

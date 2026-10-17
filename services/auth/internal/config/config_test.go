@@ -267,6 +267,7 @@ func TestValidate_AuthServiceTokenRequiredOutsideDevelopment(t *testing.T) {
 				t.Fatal("expected missing AuthService token error")
 			}
 			cfg.AuthServiceToken = "service-secret"
+			cfg.PolicySigningKeyPEM = policySigningPEM(t)
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("configured service token should validate: %v", err)
 			}

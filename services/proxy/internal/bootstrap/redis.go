@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	contextv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
@@ -66,10 +67,12 @@ func newIdempotencyStore(redisClient redis.UniversalClient, cfg config.Config) (
 }
 
 type authClients struct {
-	validator     auth.TokenValidator
-	agentVerifier auth.AgentVerifier
-	client        authv1.AuthServiceClient
-	conn          *grpc.ClientConn
+	validator      auth.TokenValidator
+	agentVerifier  auth.AgentVerifier
+	policyFetcher  auth.PolicySnapshotFetcher
+	policyVerifier *policysnapshot.Verifier
+	client         authv1.AuthServiceClient
+	conn           *grpc.ClientConn
 }
 
 func setupAuthClients(
@@ -97,11 +100,48 @@ func setupAuthClients(
 		_ = dialed.conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, fmt.Errorf("agent verifier: %w", err)
 	}
+	policyFetcher, policyVerifier, err := setupPolicySnapshot(cfg, log, dialed.client)
+	if err != nil {
+		_ = dialed.conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
+		return authClients{}, err
+	}
 	logAuthClientsConfigured(log, cfg, validator)
 	return authClients{
 		validator: validator, agentVerifier: agentVerifier,
+		policyFetcher: policyFetcher, policyVerifier: policyVerifier,
 		client: dialed.client, conn: dialed.conn,
 	}, nil
+}
+
+// setupPolicySnapshot builds the GAP-002 issuance client and verifier when
+// IBEX_PROXY_POLICY_PUBLIC_KEYS is configured; otherwise the stage stays off.
+func setupPolicySnapshot(
+	cfg config.Config,
+	log *logger.Logger,
+	client authv1.AuthServiceClient,
+) (auth.PolicySnapshotFetcher, *policysnapshot.Verifier, error) {
+	if strings.TrimSpace(cfg.PolicyPublicKeysJSON) == "" {
+		return nil, nil, nil
+	}
+	keys, err := policysnapshot.ParseKeySetJSON(cfg.PolicyPublicKeysJSON)
+	if err != nil {
+		return nil, nil, fmt.Errorf("policy snapshot keys: %w", err)
+	}
+	verifier, err := policysnapshot.NewVerifier(policysnapshot.VerifierConfig{
+		Keys: keys, MinEpoch: cfg.PolicyMinEpoch,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("policy snapshot verifier: %w", err)
+	}
+	fetcher, err := auth.NewGRPCPolicySnapshotClient(client, cfg.AuthValidateTimeout)
+	if err != nil {
+		return nil, nil, fmt.Errorf("policy snapshot client: %w", err)
+	}
+	log.InfoCtx(context.Background(), "policy snapshot stage configured",
+		"key_ids", len(keys.KeyIDs()),
+		"min_epoch", cfg.PolicyMinEpoch,
+	)
+	return fetcher, verifier, nil
 }
 
 type dialedAuthGRPC struct {

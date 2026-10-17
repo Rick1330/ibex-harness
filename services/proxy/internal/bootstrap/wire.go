@@ -421,6 +421,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
+		PolicySnapshotFetcher: in.infra.auth.policyFetcher, PolicySnapshotVerifier: in.infra.auth.policyVerifier,
 		Limiter: in.infra.limiter, BudgetCache: p.budgetCache, UsageFactWriter: p.usageFactWriter,
 		DirectiveResolver: in.infra.directiveResolver,
 		SessionStore:      in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,

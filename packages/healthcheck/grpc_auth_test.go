@@ -102,6 +102,12 @@ func (m *mockAuthClient) ConsumeStepUp(
 	return nil, status.Error(codes.Unimplemented, "not used")
 }
 
+func (m *mockAuthClient) IssuePolicySnapshot(
+	context.Context, *authv1.IssuePolicySnapshotRequest, ...grpc.CallOption,
+) (*authv1.IssuePolicySnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "not used")
+}
+
 func TestAuthGRPC_UnauthenticatedIsHealthy(t *testing.T) {
 	t.Parallel()
 	client := &mockAuthClient{err: status.Error(codes.Unauthenticated, "invalid token")}

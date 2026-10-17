@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/google/uuid"
 )
 
@@ -30,7 +31,24 @@ func (c Config) Validate() error {
 		c.validateSessionSweeper,
 		c.validateClickHouse,
 		c.validateIdempotency,
+		c.validatePolicySnapshot,
 	)
+}
+
+// validatePolicySnapshot validates the optional GAP-002 policy snapshot key
+// set. Empty keys disable the stage; when set, keys must parse.
+func (c Config) validatePolicySnapshot() error {
+	if c.PolicyMinEpoch < 0 {
+		return fmt.Errorf("IBEX_PROXY_POLICY_MIN_EPOCH must be non-negative")
+	}
+	raw := strings.TrimSpace(c.PolicyPublicKeysJSON)
+	if raw == "" {
+		return nil
+	}
+	if _, err := policysnapshot.ParseKeySetJSON(raw); err != nil {
+		return fmt.Errorf("IBEX_PROXY_POLICY_PUBLIC_KEYS: %w", err)
+	}
+	return nil
 }
 
 func (c Config) validateIdempotency() error {

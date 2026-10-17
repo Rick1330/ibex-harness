@@ -66,6 +66,7 @@ type ProxyRegistry struct {
 	contextAssembleFallbackTotal  *prometheus.CounterVec
 	extractionEnqueueTotal        *prometheus.CounterVec
 	providerFallbacksTotal        *prometheus.CounterVec
+	policySnapshotTotal           *prometheus.CounterVec
 	processUp                     prometheus.Gauge
 }
 
