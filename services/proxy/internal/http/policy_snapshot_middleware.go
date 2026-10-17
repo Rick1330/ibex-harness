@@ -39,22 +39,25 @@ type policySnapshotRequest struct {
 	agent     auth.AgentRecord
 }
 
+// policySnapshotConfig configures one policy snapshot middleware stage.
+type policySnapshotConfig struct {
+	fetcher  PolicySnapshotFetcher
+	verifier *policysnapshot.Verifier
+	class    policysnapshot.Class
+	metrics  policySnapshotRecorder
+	logger   *logger.Logger
+}
+
 // PolicySnapshotMiddleware mints and verifies a signed policy snapshot for the
 // verified principal before protected effects. Must run after
 // AgentVerificationMiddleware and before RateLimitMiddleware: the selected
 // agent is already validated, so issuance binds org/subject/agent/permissions
 // for exactly this request.
-func PolicySnapshotMiddleware(
-	fetcher PolicySnapshotFetcher,
-	verifier *policysnapshot.Verifier,
-	class policysnapshot.Class,
-	metrics policySnapshotRecorder,
-	log *logger.Logger,
-) func(http.Handler) http.Handler {
+func PolicySnapshotMiddleware(cfg policySnapshotConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return &policySnapshotHandler{
-			fetcher: fetcher, verifier: verifier, class: class,
-			metrics: metrics, logger: log, next: next,
+			fetcher: cfg.fetcher, verifier: cfg.verifier, class: cfg.class,
+			metrics: cfg.metrics, logger: cfg.logger, next: next,
 		}
 	}
 }

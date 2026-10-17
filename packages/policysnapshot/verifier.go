@@ -79,8 +79,11 @@ func (v *Verifier) verifyEnvelopeStructure(env Envelope) (*rsa.PublicKey, error)
 	if env.Algorithm != AlgorithmRS256 {
 		return nil, fmt.Errorf("%w: unsupported algorithm", ErrMalformed)
 	}
-	if len(env.Payload) == 0 || len(env.Payload) > maxPayloadBytes || len(env.Signature) == 0 {
-		return nil, fmt.Errorf("%w: invalid envelope", ErrMalformed)
+	if len(env.Payload) == 0 || len(env.Payload) > maxPayloadBytes {
+		return nil, fmt.Errorf("%w: invalid payload", ErrMalformed)
+	}
+	if len(env.Signature) == 0 {
+		return nil, fmt.Errorf("%w: invalid signature", ErrMalformed)
 	}
 	key, ok := v.keys.Lookup(env.KeyID)
 	if !ok {

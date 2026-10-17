@@ -43,6 +43,37 @@ func policyCallerCtx(caller CallerContext) context.Context {
 	return ContextWithCaller(context.Background(), caller)
 }
 
+type issueExpectations struct {
+	orgID       string
+	agentID     string
+	subjectID   string
+	permissions int64
+}
+
+func assertIssueParams(t *testing.T, issuer *fakePolicyIssuer, want issueExpectations) {
+	t.Helper()
+	if issuer.calls != 1 {
+		t.Fatalf("issuer calls = %d, want 1", issuer.calls)
+	}
+	got := issuer.got
+	if got.OrgID != want.orgID || got.AgentID != want.agentID || got.SubjectID != want.subjectID {
+		t.Fatalf("issue params = %+v", got)
+	}
+	if got.Permissions != want.permissions {
+		t.Fatalf("permissions = %d, want %d", got.Permissions, want.permissions)
+	}
+}
+
+func assertIssuedEnvelope(t *testing.T, env *authv1.PolicySnapshotEnvelope) {
+	t.Helper()
+	if env.GetAlgorithm() != policysnapshot.AlgorithmRS256 || env.GetKeyId() != "v1" {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if string(env.GetPayload()) != "payload" || string(env.GetSignature()) != "signature" {
+		t.Fatalf("envelope payload/signature = %q/%q", env.GetPayload(), env.GetSignature())
+	}
+}
+
 func TestIssuePolicySnapshotHappyPath(t *testing.T) {
 	orgID := uuid.NewString()
 	agentID := uuid.NewString()
@@ -58,22 +89,8 @@ func TestIssuePolicySnapshotHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssuePolicySnapshot: %v", err)
 	}
-	if issuer.calls != 1 {
-		t.Fatalf("issuer calls = %d, want 1", issuer.calls)
-	}
-	if issuer.got.OrgID != orgID || issuer.got.AgentID != agentID || issuer.got.SubjectID != userID {
-		t.Fatalf("issue params = %+v", issuer.got)
-	}
-	if issuer.got.Permissions != 42 {
-		t.Fatalf("permissions = %d, want 42", issuer.got.Permissions)
-	}
-	env := resp.GetEnvelope()
-	if env.GetAlgorithm() != policysnapshot.AlgorithmRS256 || env.GetKeyId() != "v1" {
-		t.Fatalf("envelope = %+v", env)
-	}
-	if string(env.GetPayload()) != "payload" || string(env.GetSignature()) != "signature" {
-		t.Fatalf("envelope payload/signature = %q/%q", env.GetPayload(), env.GetSignature())
-	}
+	assertIssueParams(t, issuer, issueExpectations{orgID: orgID, agentID: agentID, subjectID: userID, permissions: 42})
+	assertIssuedEnvelope(t, resp.GetEnvelope())
 }
 
 func TestIssuePolicySnapshotSubjectFallback(t *testing.T) {

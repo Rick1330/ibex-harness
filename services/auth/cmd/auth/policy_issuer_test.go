@@ -22,25 +22,34 @@ func testPolicySigningPEM(t *testing.T) string {
 	}))
 }
 
-func TestUnit_NewPolicySnapshotIssuer(t *testing.T) {
+func TestUnit_NewPolicySnapshotIssuer_NoSigningKey(t *testing.T) {
 	t.Parallel()
 	issuer, err := newPolicySnapshotIssuer(config.Config{})
 	if err != nil || issuer != nil {
 		t.Fatalf("issuer=%v err=%v want nil,nil without signing key", issuer, err)
 	}
+}
 
-	_, err = newPolicySnapshotIssuer(config.Config{PolicySigningKeyPEM: "not-a-pem"})
+func TestUnit_NewPolicySnapshotIssuer_RejectsInvalidPEM(t *testing.T) {
+	t.Parallel()
+	_, err := newPolicySnapshotIssuer(config.Config{PolicySigningKeyPEM: "not-a-pem"})
 	if err == nil || !strings.Contains(err.Error(), "policy snapshot issuer") {
 		t.Fatalf("err = %v", err)
 	}
+}
 
-	issuer, err = newPolicySnapshotIssuer(config.Config{
+func TestUnit_NewPolicySnapshotIssuer_Configured(t *testing.T) {
+	t.Parallel()
+	issuer, err := newPolicySnapshotIssuer(config.Config{
 		PolicySigningKeyPEM: testPolicySigningPEM(t), PolicySigningKeyID: "v9", PolicyEpoch: 3,
 	})
 	if err != nil {
 		t.Fatalf("newPolicySnapshotIssuer: %v", err)
 	}
-	if issuer == nil || issuer.KeyID() != "v9" || issuer.Epoch() != 3 {
+	if issuer == nil {
+		t.Fatal("issuer is nil")
+	}
+	if issuer.KeyID() != "v9" || issuer.Epoch() != 3 {
 		t.Fatalf("issuer = %+v", issuer)
 	}
 }

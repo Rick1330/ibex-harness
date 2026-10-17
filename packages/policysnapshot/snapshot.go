@@ -149,11 +149,19 @@ func (c Claims) validateScope() error {
 	}
 }
 
-func (c Claims) computeDigest() (string, error) {
-	c.Digest = ""
+func (c Claims) marshalClaims() ([]byte, error) {
 	raw, err := json.Marshal(c)
 	if err != nil {
-		return "", fmt.Errorf("%w: marshal claims: %v", ErrMalformed, err)
+		return nil, fmt.Errorf("%w: marshal claims: %v", ErrMalformed, err)
+	}
+	return raw, nil
+}
+
+func (c Claims) computeDigest() (string, error) {
+	c.Digest = ""
+	raw, err := c.marshalClaims()
+	if err != nil {
+		return "", err
 	}
 	_, digest, err := canonicaljson.Digest(raw)
 	if err != nil {
@@ -163,9 +171,9 @@ func (c Claims) computeDigest() (string, error) {
 }
 
 func (c Claims) canonicalPayload() ([]byte, error) {
-	raw, err := json.Marshal(c)
+	raw, err := c.marshalClaims()
 	if err != nil {
-		return nil, fmt.Errorf("%w: marshal claims: %v", ErrMalformed, err)
+		return nil, err
 	}
 	payload, err := canonicaljson.Canonicalize(raw)
 	if err != nil {

@@ -134,7 +134,10 @@ func runPolicyChain(
 	t.Helper()
 	metrics := &recordingPolicyMetrics{}
 	capture := &policyTerminalCapture{}
-	policyHandler := PolicySnapshotMiddleware(fetcher, verifier, class, metrics, logger.Discard("proxy"))(
+	policyHandler := PolicySnapshotMiddleware(policySnapshotConfig{
+		fetcher: fetcher, verifier: verifier, class: class,
+		metrics: metrics, logger: logger.Discard("proxy"),
+	})(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			capture.claims, capture.hasClaims = PolicySnapshotClaimsFromContext(r.Context())
 			if principal, ok := PrincipalContextFromContext(r.Context()); ok {
@@ -205,9 +208,14 @@ func assertCapturedClaims(t *testing.T, capture *policyTerminalCapture) {
 
 func assertPrincipalEnriched(t *testing.T, capture *policyTerminalCapture) {
 	t.Helper()
-	if capture.principal == nil || capture.principal.GetAuthzSnapshotId() != capture.claims.SnapshotID ||
-		capture.principal.GetAuthzSnapshotDigest() != capture.claims.Digest {
-		t.Fatalf("principal = %+v claims=%+v", capture.principal, capture.claims)
+	if capture.principal == nil {
+		t.Fatalf("principal missing, claims=%+v", capture.claims)
+	}
+	if capture.principal.GetAuthzSnapshotId() != capture.claims.SnapshotID {
+		t.Fatalf("principal snapshot id = %q want %q", capture.principal.GetAuthzSnapshotId(), capture.claims.SnapshotID)
+	}
+	if capture.principal.GetAuthzSnapshotDigest() != capture.claims.Digest {
+		t.Fatalf("principal snapshot digest = %q want %q", capture.principal.GetAuthzSnapshotDigest(), capture.claims.Digest)
 	}
 }
 
@@ -332,7 +340,10 @@ func TestUnit_PolicySnapshot_ReadClassRejectsMutationAge(t *testing.T) {
 func TestUnit_PolicySnapshot_MissingContextsFailClosed(t *testing.T) {
 	t.Parallel()
 	key := policyTestKeyPair(t)
-	handler := PolicySnapshotMiddleware(&mockPolicyFetcher{}, newPolicyVerifier(t, key, "v1", 1), policysnapshot.ClassMutation, nil, logger.Discard("proxy"))(
+	handler := PolicySnapshotMiddleware(policySnapshotConfig{
+		fetcher: &mockPolicyFetcher{}, verifier: newPolicyVerifier(t, key, "v1", 1),
+		class: policysnapshot.ClassMutation, logger: logger.Discard("proxy"),
+	})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 
@@ -356,7 +367,11 @@ func TestUnit_PolicySnapshot_MissingContextsFailClosed(t *testing.T) {
 func TestUnit_PolicySnapshot_InvalidAuthorizationHeader(t *testing.T) {
 	t.Parallel()
 	key := policyTestKeyPair(t)
-	handler := PolicySnapshotMiddleware(&mockPolicyFetcher{}, newPolicyVerifier(t, key, "v1", 1), policysnapshot.ClassMutation, &recordingPolicyMetrics{}, logger.Discard("proxy"))(
+	handler := PolicySnapshotMiddleware(policySnapshotConfig{
+		fetcher: &mockPolicyFetcher{}, verifier: newPolicyVerifier(t, key, "v1", 1),
+		class: policysnapshot.ClassMutation, metrics: &recordingPolicyMetrics{},
+		logger: logger.Discard("proxy"),
+	})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	agentCtx := WithAgent(context.Background(), auth.AgentRecord{ID: uuid.MustParse(agentTestAgentID()), OrgID: agentTestOrgUUID})
@@ -386,7 +401,10 @@ func TestUnit_PolicySnapshot_SucceedsWithoutPrincipalContext(t *testing.T) {
 	env := issuePolicyEnvelope(t, iss, agentTestOrgID(), agentTestAgentID())
 
 	metrics := &recordingPolicyMetrics{}
-	handler := PolicySnapshotMiddleware(&mockPolicyFetcher{envelope: &env}, ver, policysnapshot.ClassMutation, metrics, logger.Discard("proxy"))(
+	handler := PolicySnapshotMiddleware(policySnapshotConfig{
+		fetcher: &mockPolicyFetcher{envelope: &env}, verifier: ver,
+		class: policysnapshot.ClassMutation, metrics: metrics, logger: logger.Discard("proxy"),
+	})(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if _, ok := PrincipalContextFromContext(r.Context()); ok {
 				t.Error("principal context unexpectedly present")

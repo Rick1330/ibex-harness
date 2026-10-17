@@ -89,12 +89,12 @@ func TestUnit_ProtectedAuthWrappers_PolicyStage(t *testing.T) {
 		policyFetcher:  &mockPolicyFetcher{},
 		policyVerifier: newPolicyVerifier(t, policyTestKeyPair(t), "v1", 1),
 	}
-	_, _, policyMutation, policyRead, _ := protectedAuthWrappers(wired)
-	if policyMutation == nil || policyRead == nil {
+	mw := protectedAuthWrappers(wired)
+	if mw.policyMutation == nil || mw.policyRead == nil {
 		t.Fatal("expected policy middlewares when fetcher and verifier are wired")
 	}
-	_, _, policyMutation, policyRead, _ = protectedAuthWrappers(protectedRouteDeps{})
-	if policyMutation != nil || policyRead != nil {
+	mw = protectedAuthWrappers(protectedRouteDeps{})
+	if mw.policyMutation != nil || mw.policyRead != nil {
 		t.Fatal("expected nil policy middlewares without fetcher/verifier")
 	}
 }

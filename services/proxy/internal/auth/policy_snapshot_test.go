@@ -3,9 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -87,8 +89,11 @@ func TestUnit_GRPCPolicySnapshotClient_IssueMapsEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if env.Algorithm != "RS256" || env.KeyID != "v1" || string(env.Payload) != "payload" || string(env.Signature) != "sig" {
-		t.Fatalf("envelope = %+v", env)
+	want := policysnapshot.Envelope{
+		Algorithm: "RS256", KeyID: "v1", Payload: []byte("payload"), Signature: []byte("sig"),
+	}
+	if !reflect.DeepEqual(*env, want) {
+		t.Fatalf("envelope = %+v want %+v", env, want)
 	}
 }
 

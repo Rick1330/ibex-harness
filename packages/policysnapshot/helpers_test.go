@@ -102,19 +102,28 @@ func mustVerify(t *testing.T, set KeySet, opts verifyOpts, params VerifyParams) 
 	return verifier.Verify(params)
 }
 
-// mutationVerifyErr verifies a mutation-class request at baseTime and returns
-// the error for assertion, collapsing repeated VerifyParams literals.
-func mutationVerifyErr(t *testing.T, set KeySet, envelope Envelope, orgID, agentID string) error {
+// mutationVerifyCase bundles the inputs for a mutation-class verification at
+// baseTime, collapsing repeated VerifyParams literals.
+type mutationVerifyCase struct {
+	set      KeySet
+	envelope Envelope
+	orgID    string
+	agentID  string
+}
+
+// mutationVerifyErr verifies a mutation-class request and returns the error
+// for assertion.
+func mutationVerifyErr(t *testing.T, tc mutationVerifyCase) error {
 	t.Helper()
-	_, err := mustVerify(t, set, verifyOpts{now: baseTime}, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: orgID, ExpectedAgentID: agentID, Class: ClassMutation,
+	_, err := mustVerify(t, tc.set, verifyOpts{now: baseTime}, VerifyParams{
+		Envelope: tc.envelope, ExpectedOrgID: tc.orgID, ExpectedAgentID: tc.agentID, Class: ClassMutation,
 	})
 	return err
 }
 
-func requireMutationVerifyErr(t *testing.T, set KeySet, envelope Envelope, orgID, agentID string, want error) {
+func requireMutationVerifyErr(t *testing.T, tc mutationVerifyCase, want error) {
 	t.Helper()
-	if err := mutationVerifyErr(t, set, envelope, orgID, agentID); !errors.Is(err, want) {
+	if err := mutationVerifyErr(t, tc); !errors.Is(err, want) {
 		t.Fatalf("verify err = %v, want %v", err, want)
 	}
 }

@@ -20,6 +20,16 @@ func signPayload(t *testing.T, key *rsa.PrivateKey, payload []byte) []byte {
 	return signature
 }
 
+// baseMutationFixture issues an org-1/agent-1 envelope at baseTime together
+// with its signing key and matching key set, collapsing repeated setup trios.
+func baseMutationFixture(t *testing.T) (*rsa.PrivateKey, Envelope, KeySet) {
+	t.Helper()
+	key := mustRSAPrivate(t)
+	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
+	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	return key, envelope, keySetFrom(t, key, testKeyID)
+}
+
 func TestIssueVerifyRoundTrip(t *testing.T) {
 	key := mustRSAPrivate(t)
 	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
@@ -68,50 +78,39 @@ func TestIssueVerifyRoundTrip(t *testing.T) {
 }
 
 func TestVerifyRejectsTamperedSignature(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	_, envelope, set := baseMutationFixture(t)
 	envelope.Signature[0] ^= 0xff
 
-	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrSignatureInvalid)
+	requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-1"}, ErrSignatureInvalid)
 }
 
 func TestVerifyRejectsTamperedPayload(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	_, envelope, set := baseMutationFixture(t)
 	envelope.Payload = remarshalClaims(t, envelope.Payload, func(c *Claims) { c.OrgID = "org-2" })
 
-	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-2", "", ErrSignatureInvalid)
+	requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-2"}, ErrSignatureInvalid)
 }
 
 func TestVerifyRejectsDigestMismatch(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	key, envelope, set := baseMutationFixture(t)
 	envelope.Payload = remarshalClaims(t, envelope.Payload, func(c *Claims) {
 		c.Digest = "0000000000000000000000000000000000000000000000000000000000000000"
 	})
 	envelope.Signature = signPayload(t, key, envelope.Payload)
 
-	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrSignatureInvalid)
+	requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-1"}, ErrSignatureInvalid)
 }
 
 func TestVerifyRejectsNonCanonicalPayload(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	key, envelope, set := baseMutationFixture(t)
 	envelope.Payload = append([]byte{' '}, envelope.Payload...)
 	envelope.Signature = signPayload(t, key, envelope.Payload)
 
-	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrMalformed)
+	requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-1"}, ErrMalformed)
 }
 
 func TestVerifyRejectsMalformedEnvelopes(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	set := keySetFrom(t, key, testKeyID)
-	valid := mustIssue(t, issuer, "org-1", "agent-1")
+	_, valid, set := baseMutationFixture(t)
 
 	cases := []struct {
 		name   string
@@ -130,7 +129,7 @@ func TestVerifyRejectsMalformedEnvelopes(t *testing.T) {
 			envelope.Signature = append([]byte(nil), valid.Signature...)
 			envelope.Payload = append([]byte(nil), valid.Payload...)
 			tc.mutate(&envelope)
-			requireMutationVerifyErr(t, set, envelope, "org-1", "", ErrMalformed)
+			requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-1"}, ErrMalformed)
 		})
 	}
 }
@@ -158,25 +157,20 @@ func TestVerifyRejectsUnsupportedClaims(t *testing.T) {
 			envelope := mustIssue(t, issuer, "org-1", "agent-1")
 			envelope.Payload = remarshalClaims(t, envelope.Payload, tc.mutate)
 			envelope.Signature = signPayload(t, key, envelope.Payload)
-			requireMutationVerifyErr(t, set, envelope, "org-1", "", ErrMalformed)
+			requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-1"}, ErrMalformed)
 		})
 	}
 }
 
 func TestVerifyRejectsUnknownKey(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	_, envelope, set := baseMutationFixture(t)
 	envelope.KeyID = "v2"
 
-	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrKeyUnknown)
+	requireMutationVerifyErr(t, mutationVerifyCase{set: set, envelope: envelope, orgID: "org-1"}, ErrKeyUnknown)
 }
 
 func TestVerifyBindingMismatches(t *testing.T) {
-	key := mustRSAPrivate(t)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	set := keySetFrom(t, key, testKeyID)
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	_, envelope, set := baseMutationFixture(t)
 
 	cases := []struct {
 		name    string
@@ -208,10 +202,7 @@ func TestVerifyBindingMismatches(t *testing.T) {
 }
 
 func TestVerifyFreshnessBoundaries(t *testing.T) {
-	key := mustRSAPrivate(t)
-	set := keySetFrom(t, key, testKeyID)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	_, envelope, set := baseMutationFixture(t)
 
 	cases := []struct {
 		name    string
@@ -234,10 +225,7 @@ func TestVerifyFreshnessBoundaries(t *testing.T) {
 }
 
 func TestVerifyFutureIssuedBoundaries(t *testing.T) {
-	key := mustRSAPrivate(t)
-	set := keySetFrom(t, key, testKeyID)
-	issuer := mustIssuer(t, key, testIssuerOpts{now: baseTime})
-	envelope := mustIssue(t, issuer, "org-1", "agent-1")
+	_, envelope, set := baseMutationFixture(t)
 
 	cases := []struct {
 		name    string
@@ -310,13 +298,14 @@ func TestVerifyRotationOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldEnvelope := mustIssue(t, oldIssuer, "org-1", "agent-1")
-	if err := mutationVerifyErr(t, rotating, oldEnvelope, "org-1", ""); err != nil {
+	if err := mutationVerifyErr(t, mutationVerifyCase{set: rotating, envelope: oldEnvelope, orgID: "org-1"}); err != nil {
 		t.Fatalf("overlap verify old key: %v", err)
 	}
 
 	retired := keySetFrom(t, newKey, "v2")
-	requireMutationVerifyErr(t, retired, oldEnvelope, "org-1", "", ErrKeyUnknown)
-	if err := mutationVerifyErr(t, retired, mustIssue(t, newIssuer, "org-1", "agent-1"), "org-1", ""); err != nil {
+	requireMutationVerifyErr(t, mutationVerifyCase{set: retired, envelope: oldEnvelope, orgID: "org-1"}, ErrKeyUnknown)
+	newEnvelope := mustIssue(t, newIssuer, "org-1", "agent-1")
+	if err := mutationVerifyErr(t, mutationVerifyCase{set: retired, envelope: newEnvelope, orgID: "org-1"}); err != nil {
 		t.Fatalf("verify new key: %v", err)
 	}
 }

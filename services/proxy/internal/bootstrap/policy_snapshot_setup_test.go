@@ -41,69 +41,69 @@ func testPolicyKeysJSON(t *testing.T) string {
 	return string(raw)
 }
 
-func TestUnit_SetupPolicySnapshot(t *testing.T) {
+func TestUnit_SetupPolicySnapshot_StageOffWithoutKeys(t *testing.T) {
 	t.Parallel()
-	log := logger.Discard("proxy")
-	validKeys := testPolicyKeysJSON(t)
+	fetcher, verifier, err := setupPolicySnapshot(config.Config{}, logger.Discard("proxy"), nil)
+	if err != nil {
+		t.Fatalf("setupPolicySnapshot: %v", err)
+	}
+	if fetcher != nil || verifier != nil {
+		t.Fatalf("fetcher=%v verifier=%v want both nil", fetcher, verifier)
+	}
+}
 
-	t.Run("stage off without keys", func(t *testing.T) {
-		fetcher, verifier, err := setupPolicySnapshot(config.Config{}, log, nil)
-		if err != nil {
-			t.Fatalf("setupPolicySnapshot: %v", err)
-		}
-		if fetcher != nil || verifier != nil {
-			t.Fatalf("fetcher=%v verifier=%v want both nil", fetcher, verifier)
-		}
-	})
+func TestUnit_SetupPolicySnapshot_ConfiguredWithValidKeys(t *testing.T) {
+	t.Parallel()
+	fetcher, verifier, err := setupPolicySnapshot(config.Config{
+		PolicyPublicKeysJSON: testPolicyKeysJSON(t), PolicyMinEpoch: 2, AuthValidateTimeout: time.Second,
+	}, logger.Discard("proxy"), &stubAuthServiceClient{})
+	if err != nil {
+		t.Fatalf("setupPolicySnapshot: %v", err)
+	}
+	if _, ok := fetcher.(*auth.GRPCPolicySnapshotClient); !ok {
+		t.Fatalf("fetcher type = %T", fetcher)
+	}
+	if verifier == nil {
+		t.Fatal("verifier is nil")
+	}
+}
 
-	t.Run("configured with valid keys", func(t *testing.T) {
-		fetcher, verifier, err := setupPolicySnapshot(config.Config{
-			PolicyPublicKeysJSON: validKeys, PolicyMinEpoch: 2, AuthValidateTimeout: time.Second,
-		}, log, &stubAuthServiceClient{})
-		if err != nil {
-			t.Fatalf("setupPolicySnapshot: %v", err)
-		}
-		if _, ok := fetcher.(*auth.GRPCPolicySnapshotClient); !ok {
-			t.Fatalf("fetcher type = %T", fetcher)
-		}
-		if verifier == nil {
-			t.Fatal("verifier is nil")
-		}
-	})
+func TestUnit_SetupPolicySnapshot_RejectsInvalidKeysJSON(t *testing.T) {
+	t.Parallel()
+	_, _, err := setupPolicySnapshot(config.Config{PolicyPublicKeysJSON: "{"}, logger.Discard("proxy"), &stubAuthServiceClient{})
+	if err == nil || !strings.Contains(err.Error(), "policy snapshot keys") {
+		t.Fatalf("err = %v", err)
+	}
+}
 
-	t.Run("rejects invalid keys json", func(t *testing.T) {
-		_, _, err := setupPolicySnapshot(config.Config{PolicyPublicKeysJSON: "{"}, log, &stubAuthServiceClient{})
-		if err == nil || !strings.Contains(err.Error(), "policy snapshot keys") {
-			t.Fatalf("err = %v", err)
-		}
-	})
+func TestUnit_SetupPolicySnapshot_RejectsInvalidKeyPEM(t *testing.T) {
+	t.Parallel()
+	raw, err := json.Marshal(map[string]string{"v1": "not-a-pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = setupPolicySnapshot(config.Config{PolicyPublicKeysJSON: string(raw)}, logger.Discard("proxy"), &stubAuthServiceClient{})
+	if err == nil || !strings.Contains(err.Error(), "policy snapshot keys") {
+		t.Fatalf("err = %v", err)
+	}
+}
 
-	t.Run("rejects invalid key pem", func(t *testing.T) {
-		raw, err := json.Marshal(map[string]string{"v1": "not-a-pem"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _, err = setupPolicySnapshot(config.Config{PolicyPublicKeysJSON: string(raw)}, log, &stubAuthServiceClient{})
-		if err == nil || !strings.Contains(err.Error(), "policy snapshot keys") {
-			t.Fatalf("err = %v", err)
-		}
-	})
+func TestUnit_SetupPolicySnapshot_RejectsNegativeMinEpoch(t *testing.T) {
+	t.Parallel()
+	_, _, err := setupPolicySnapshot(config.Config{
+		PolicyPublicKeysJSON: testPolicyKeysJSON(t), PolicyMinEpoch: -1,
+	}, logger.Discard("proxy"), &stubAuthServiceClient{})
+	if err == nil || !strings.Contains(err.Error(), "policy snapshot verifier") {
+		t.Fatalf("err = %v", err)
+	}
+}
 
-	t.Run("rejects negative min epoch", func(t *testing.T) {
-		_, _, err := setupPolicySnapshot(config.Config{
-			PolicyPublicKeysJSON: validKeys, PolicyMinEpoch: -1,
-		}, log, &stubAuthServiceClient{})
-		if err == nil || !strings.Contains(err.Error(), "policy snapshot verifier") {
-			t.Fatalf("err = %v", err)
-		}
-	})
-
-	t.Run("rejects nil auth client", func(t *testing.T) {
-		_, _, err := setupPolicySnapshot(config.Config{PolicyPublicKeysJSON: validKeys}, log, nil)
-		if err == nil || !strings.Contains(err.Error(), "policy snapshot client") {
-			t.Fatalf("err = %v", err)
-		}
-	})
+func TestUnit_SetupPolicySnapshot_RejectsNilAuthClient(t *testing.T) {
+	t.Parallel()
+	_, _, err := setupPolicySnapshot(config.Config{PolicyPublicKeysJSON: testPolicyKeysJSON(t)}, logger.Discard("proxy"), nil)
+	if err == nil || !strings.Contains(err.Error(), "policy snapshot client") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestUnit_SetupAuthClients_WithPolicySnapshot(t *testing.T) {
