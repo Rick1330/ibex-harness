@@ -31,38 +31,61 @@ func TestUnit_GRPCPolicySnapshotClient_ConstructorGuards(t *testing.T) {
 	}
 }
 
-func TestUnit_GRPCPolicySnapshotClient_IssueForwardsBearerAndAgent(t *testing.T) {
-	t.Parallel()
-	var gotReq *authv1.IssuePolicySnapshotRequest
-	var gotAuth []string
-	var hadDeadline bool
+type issueCallCapture struct {
+	req         *authv1.IssuePolicySnapshotRequest
+	authHeader  []string
+	hadDeadline bool
+}
+
+func clientWithIssueCapture(t *testing.T, capture *issueCallCapture) *GRPCPolicySnapshotClient {
+	t.Helper()
 	client, err := NewGRPCPolicySnapshotClient(&mockAuthServiceClient{
 		issuePolicySnapshotFn: func(ctx context.Context, req *authv1.IssuePolicySnapshotRequest, _ ...grpc.CallOption) (*authv1.IssuePolicySnapshotResponse, error) {
-			gotReq = req
+			capture.req = req
 			if md, ok := metadata.FromOutgoingContext(ctx); ok {
-				gotAuth = md.Get("authorization")
+				capture.authHeader = md.Get("authorization")
 			}
-			_, hadDeadline = ctx.Deadline()
-			return &authv1.IssuePolicySnapshotResponse{Envelope: &authv1.PolicySnapshotEnvelope{
-				Algorithm: "RS256", KeyId: "v1", Payload: []byte("payload"), Signature: []byte("sig"),
-			}}, nil
+			_, capture.hadDeadline = ctx.Deadline()
+			return policyTestResponse(), nil
 		},
 	}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return client
+}
+
+func policyTestResponse() *authv1.IssuePolicySnapshotResponse {
+	return &authv1.IssuePolicySnapshotResponse{Envelope: &authv1.PolicySnapshotEnvelope{
+		Algorithm: "RS256", KeyId: "v1", Payload: []byte("payload"), Signature: []byte("sig"),
+	}}
+}
+
+func TestUnit_GRPCPolicySnapshotClient_IssueForwardsBearerAndAgent(t *testing.T) {
+	t.Parallel()
+	var capture issueCallCapture
+	client := clientWithIssueCapture(t, &capture)
+	if _, err := client.Issue(context.Background(), "ibex_pat_test", "agent-1"); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if capture.req.GetAgentId() != "agent-1" {
+		t.Fatalf("agent id = %q", capture.req.GetAgentId())
+	}
+	if len(capture.authHeader) != 1 || capture.authHeader[0] != "Bearer ibex_pat_test" {
+		t.Fatalf("authorization metadata = %v", capture.authHeader)
+	}
+	if !capture.hadDeadline {
+		t.Fatal("call context missing deadline")
+	}
+}
+
+func TestUnit_GRPCPolicySnapshotClient_IssueMapsEnvelope(t *testing.T) {
+	t.Parallel()
+	var capture issueCallCapture
+	client := clientWithIssueCapture(t, &capture)
 	env, err := client.Issue(context.Background(), "ibex_pat_test", "agent-1")
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
-	}
-	if gotReq.GetAgentId() != "agent-1" {
-		t.Fatalf("agent id = %q", gotReq.GetAgentId())
-	}
-	if len(gotAuth) != 1 || gotAuth[0] != "Bearer ibex_pat_test" {
-		t.Fatalf("authorization metadata = %v", gotAuth)
-	}
-	if !hadDeadline {
-		t.Fatal("call context missing deadline")
 	}
 	if env.Algorithm != "RS256" || env.KeyID != "v1" || string(env.Payload) != "payload" || string(env.Signature) != "sig" {
 		t.Fatalf("envelope = %+v", env)
@@ -79,7 +102,7 @@ func TestUnit_GRPCPolicySnapshotClient_IssueErrors(t *testing.T) {
 		{"unauthenticated", status.Error(codes.Unauthenticated, "bad token"), ErrInvalidToken},
 		{"permission denied", status.Error(codes.PermissionDenied, "nope"), ErrPolicySnapshotDenied},
 		{"invalid argument", status.Error(codes.InvalidArgument, "bad agent"), ErrPolicySnapshotDenied},
-		{"failed precondition", status.Error(codes.FailedPrecondition, "no issuer"), ErrPolicySnapshotDenied},
+		{"failed precondition", status.Error(codes.FailedPrecondition, "no issuer"), ErrPolicySnapshotUnavailable},
 		{"unavailable", status.Error(codes.Unavailable, "down"), ErrPolicySnapshotUnavailable},
 		{"deadline", status.Error(codes.DeadlineExceeded, "slow"), ErrPolicySnapshotUnavailable},
 		{"unknown", errors.New("boom"), ErrPolicySnapshotUnavailable},

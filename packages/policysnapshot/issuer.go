@@ -45,46 +45,91 @@ type Issuer struct {
 
 // NewIssuer validates the signing material and configuration.
 func NewIssuer(cfg IssuerConfig) (*Issuer, error) {
-	key, err := parsePrivateKeyPEM(cfg.PrivateKeyPEM)
+	key, err := parseSigningKey(cfg.PrivateKeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	keyID, err := resolveKeyID(cfg.KeyID)
+	if err != nil {
+		return nil, err
+	}
+	epoch, err := resolveEpoch(cfg.Epoch)
+	if err != nil {
+		return nil, err
+	}
+	authority, err := resolveAuthority(cfg.Authority)
+	if err != nil {
+		return nil, err
+	}
+	ttl, err := resolveTTL(cfg.TTL)
+	if err != nil {
+		return nil, err
+	}
+	return &Issuer{
+		key: key, keyID: keyID, epoch: epoch, authority: authority,
+		ttl: ttl, clock: resolveClock(cfg.Clock), newID: resolveNewID(cfg.NewID),
+	}, nil
+}
+
+func parseSigningKey(pemData string) (*rsa.PrivateKey, error) {
+	key, err := parsePrivateKeyPEM(pemData)
 	if err != nil {
 		return nil, err
 	}
 	if key.N.BitLen() < minRSAKeyBits {
 		return nil, fmt.Errorf("policysnapshot: signing key must be >= %d bits", minRSAKeyBits)
 	}
-	keyID := strings.TrimSpace(cfg.KeyID)
+	return key, nil
+}
+
+func resolveKeyID(raw string) (string, error) {
+	keyID := strings.TrimSpace(raw)
 	if keyID == "" {
-		return nil, fmt.Errorf("policysnapshot: empty key id")
+		return "", fmt.Errorf("policysnapshot: empty key id")
 	}
-	if cfg.Epoch < 1 {
-		return nil, fmt.Errorf("policysnapshot: epoch must be >= 1")
+	return keyID, nil
+}
+
+func resolveEpoch(epoch int64) (int64, error) {
+	if epoch < 1 {
+		return 0, fmt.Errorf("policysnapshot: epoch must be >= 1")
 	}
-	authority := strings.TrimSpace(cfg.Authority)
+	return epoch, nil
+}
+
+func resolveAuthority(raw string) (string, error) {
+	authority := strings.TrimSpace(raw)
 	if authority == "" {
 		authority = AuthorityAuthService
 	}
 	if authority != AuthorityAuthService {
-		return nil, fmt.Errorf("policysnapshot: unsupported authority %q", authority)
+		return "", fmt.Errorf("policysnapshot: unsupported authority %q", authority)
 	}
-	ttl := cfg.TTL
+	return authority, nil
+}
+
+func resolveTTL(ttl time.Duration) (time.Duration, error) {
 	if ttl == 0 {
 		ttl = DefaultTTL
 	}
 	if ttl < time.Second {
-		return nil, fmt.Errorf("policysnapshot: ttl must be >= 1s")
+		return 0, fmt.Errorf("policysnapshot: ttl must be >= 1s")
 	}
-	clock := cfg.Clock
+	return ttl, nil
+}
+
+func resolveClock(clock func() time.Time) func() time.Time {
 	if clock == nil {
-		clock = func() time.Time { return time.Now().UTC() }
+		return func() time.Time { return time.Now().UTC() }
 	}
-	newID := cfg.NewID
+	return clock
+}
+
+func resolveNewID(newID func() string) func() string {
 	if newID == nil {
-		newID = uuid.NewString
+		return uuid.NewString
 	}
-	return &Issuer{
-		key: key, keyID: keyID, epoch: cfg.Epoch, authority: authority,
-		ttl: ttl, clock: clock, newID: newID,
-	}, nil
+	return newID
 }
 
 // IssueParams is the verified caller scope to attest.
@@ -122,7 +167,10 @@ func (i *Issuer) Issue(p IssueParams) (Envelope, error) {
 	if err != nil {
 		return Envelope{}, err
 	}
-	signature, err := rsa.SignPKCS1v15(rand.Reader, i.key, crypto.SHA256, sha256Sum(payload))
+	// RS256 pins PKCS#1 v1.5 signature padding per the G0 owner decision
+	// record (21-g0-owner-decision-record.md §2.1); this is signature
+	// padding, not encryption.
+	signature, err := rsa.SignPKCS1v15(rand.Reader, i.key, crypto.SHA256, sha256Sum(payload)) //NOSONAR go:S5542 RS256 requires PKCS#1 v1.5 signature padding
 	if err != nil {
 		return Envelope{}, fmt.Errorf("policysnapshot: sign: %w", err)
 	}

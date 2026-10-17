@@ -32,7 +32,7 @@ func TestIssueVerifyRoundTrip(t *testing.T) {
 		t.Fatalf("key_id = %q, want %q", envelope.KeyID, testKeyID)
 	}
 
-	claims, err := mustVerify(t, keySetFrom(t, key, testKeyID), 0, baseTime.Add(time.Second), VerifyParams{
+	claims, err := mustVerify(t, keySetFrom(t, key, testKeyID), verifyOpts{now: baseTime.Add(time.Second)}, VerifyParams{
 		Envelope:        envelope,
 		ExpectedOrgID:   "org-1",
 		ExpectedAgentID: "agent-1",
@@ -73,12 +73,7 @@ func TestVerifyRejectsTamperedSignature(t *testing.T) {
 	envelope := mustIssue(t, issuer, "org-1", "agent-1")
 	envelope.Signature[0] ^= 0xff
 
-	_, err := mustVerify(t, keySetFrom(t, key, testKeyID), 0, baseTime, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-	})
-	if !errors.Is(err, ErrSignatureInvalid) {
-		t.Fatalf("err = %v, want ErrSignatureInvalid", err)
-	}
+	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrSignatureInvalid)
 }
 
 func TestVerifyRejectsTamperedPayload(t *testing.T) {
@@ -87,12 +82,7 @@ func TestVerifyRejectsTamperedPayload(t *testing.T) {
 	envelope := mustIssue(t, issuer, "org-1", "agent-1")
 	envelope.Payload = remarshalClaims(t, envelope.Payload, func(c *Claims) { c.OrgID = "org-2" })
 
-	_, err := mustVerify(t, keySetFrom(t, key, testKeyID), 0, baseTime, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: "org-2", Class: ClassMutation,
-	})
-	if !errors.Is(err, ErrSignatureInvalid) {
-		t.Fatalf("err = %v, want ErrSignatureInvalid", err)
-	}
+	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-2", "", ErrSignatureInvalid)
 }
 
 func TestVerifyRejectsDigestMismatch(t *testing.T) {
@@ -104,12 +94,7 @@ func TestVerifyRejectsDigestMismatch(t *testing.T) {
 	})
 	envelope.Signature = signPayload(t, key, envelope.Payload)
 
-	_, err := mustVerify(t, keySetFrom(t, key, testKeyID), 0, baseTime, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-	})
-	if !errors.Is(err, ErrSignatureInvalid) {
-		t.Fatalf("err = %v, want ErrSignatureInvalid", err)
-	}
+	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrSignatureInvalid)
 }
 
 func TestVerifyRejectsNonCanonicalPayload(t *testing.T) {
@@ -119,12 +104,7 @@ func TestVerifyRejectsNonCanonicalPayload(t *testing.T) {
 	envelope.Payload = append([]byte{' '}, envelope.Payload...)
 	envelope.Signature = signPayload(t, key, envelope.Payload)
 
-	_, err := mustVerify(t, keySetFrom(t, key, testKeyID), 0, baseTime, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-	})
-	if !errors.Is(err, ErrMalformed) {
-		t.Fatalf("err = %v, want ErrMalformed", err)
-	}
+	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrMalformed)
 }
 
 func TestVerifyRejectsMalformedEnvelopes(t *testing.T) {
@@ -150,12 +130,7 @@ func TestVerifyRejectsMalformedEnvelopes(t *testing.T) {
 			envelope.Signature = append([]byte(nil), valid.Signature...)
 			envelope.Payload = append([]byte(nil), valid.Payload...)
 			tc.mutate(&envelope)
-			_, err := mustVerify(t, set, 0, baseTime, VerifyParams{
-				Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-			})
-			if !errors.Is(err, ErrMalformed) {
-				t.Fatalf("err = %v, want ErrMalformed", err)
-			}
+			requireMutationVerifyErr(t, set, envelope, "org-1", "", ErrMalformed)
 		})
 	}
 }
@@ -183,12 +158,7 @@ func TestVerifyRejectsUnsupportedClaims(t *testing.T) {
 			envelope := mustIssue(t, issuer, "org-1", "agent-1")
 			envelope.Payload = remarshalClaims(t, envelope.Payload, tc.mutate)
 			envelope.Signature = signPayload(t, key, envelope.Payload)
-			_, err := mustVerify(t, set, 0, baseTime, VerifyParams{
-				Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-			})
-			if !errors.Is(err, ErrMalformed) {
-				t.Fatalf("err = %v, want ErrMalformed", err)
-			}
+			requireMutationVerifyErr(t, set, envelope, "org-1", "", ErrMalformed)
 		})
 	}
 }
@@ -199,12 +169,7 @@ func TestVerifyRejectsUnknownKey(t *testing.T) {
 	envelope := mustIssue(t, issuer, "org-1", "agent-1")
 	envelope.KeyID = "v2"
 
-	_, err := mustVerify(t, keySetFrom(t, key, testKeyID), 0, baseTime, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-	})
-	if !errors.Is(err, ErrKeyUnknown) {
-		t.Fatalf("err = %v, want ErrKeyUnknown", err)
-	}
+	requireMutationVerifyErr(t, keySetFrom(t, key, testKeyID), envelope, "org-1", "", ErrKeyUnknown)
 }
 
 func TestVerifyBindingMismatches(t *testing.T) {
@@ -226,7 +191,7 @@ func TestVerifyBindingMismatches(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := mustVerify(t, set, 0, baseTime, VerifyParams{
+			_, err := mustVerify(t, set, verifyOpts{now: baseTime}, VerifyParams{
 				Envelope: envelope, ExpectedOrgID: tc.org, ExpectedAgentID: tc.agent, Class: ClassMutation,
 			})
 			if tc.wantErr == nil {
@@ -263,15 +228,7 @@ func TestVerifyFreshnessBoundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := mustVerify(t, set, 0, baseTime.Add(tc.offset), VerifyParams{
-				Envelope: envelope, ExpectedOrgID: "org-1", Class: tc.class,
-			})
-			if tc.wantErr && !errors.Is(err, ErrExpired) {
-				t.Fatalf("err = %v, want ErrExpired", err)
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("err = %v, want nil", err)
-			}
+			requireExpiredOutcome(t, verifyAt(t, set, baseTime.Add(tc.offset), envelope, tc.class), tc.wantErr)
 		})
 	}
 }
@@ -292,15 +249,7 @@ func TestVerifyFutureIssuedBoundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := mustVerify(t, set, 0, baseTime.Add(tc.offset), VerifyParams{
-				Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-			})
-			if tc.wantErr && !errors.Is(err, ErrExpired) {
-				t.Fatalf("err = %v, want ErrExpired", err)
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("err = %v, want nil", err)
-			}
+			requireExpiredOutcome(t, verifyAt(t, set, baseTime.Add(tc.offset), envelope, ClassMutation), tc.wantErr)
 		})
 	}
 }
@@ -321,15 +270,7 @@ func TestVerifyExpiry(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := mustVerify(t, set, 0, baseTime.Add(tc.offset), VerifyParams{
-				Envelope: envelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-			})
-			if tc.wantErr && !errors.Is(err, ErrExpired) {
-				t.Fatalf("err = %v, want ErrExpired", err)
-			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("err = %v, want nil", err)
-			}
+			requireExpiredOutcome(t, verifyAt(t, set, baseTime.Add(tc.offset), envelope, ClassMutation), tc.wantErr)
 		})
 	}
 }
@@ -340,13 +281,13 @@ func TestVerifyEpochFloor(t *testing.T) {
 	oldIssuer := mustIssuer(t, key, testIssuerOpts{now: baseTime, epoch: 1})
 	newIssuer := mustIssuer(t, key, testIssuerOpts{now: baseTime, epoch: 2})
 
-	if _, err := mustVerify(t, set, 2, baseTime, VerifyParams{
+	if _, err := mustVerify(t, set, verifyOpts{minEpoch: 2, now: baseTime}, VerifyParams{
 		Envelope: mustIssue(t, oldIssuer, "org-1", "agent-1"), ExpectedOrgID: "org-1", Class: ClassMutation,
 	}); !errors.Is(err, ErrExpired) {
 		t.Fatalf("stale epoch err = %v, want ErrExpired", err)
 	}
 
-	claims, err := mustVerify(t, set, 2, baseTime, VerifyParams{
+	claims, err := mustVerify(t, set, verifyOpts{minEpoch: 2, now: baseTime}, VerifyParams{
 		Envelope: mustIssue(t, newIssuer, "org-1", "agent-1"), ExpectedOrgID: "org-1", Class: ClassMutation,
 	})
 	if err != nil {
@@ -369,21 +310,13 @@ func TestVerifyRotationOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldEnvelope := mustIssue(t, oldIssuer, "org-1", "agent-1")
-	if _, err := mustVerify(t, rotating, 0, baseTime, VerifyParams{
-		Envelope: oldEnvelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-	}); err != nil {
+	if err := mutationVerifyErr(t, rotating, oldEnvelope, "org-1", ""); err != nil {
 		t.Fatalf("overlap verify old key: %v", err)
 	}
 
 	retired := keySetFrom(t, newKey, "v2")
-	if _, err := mustVerify(t, retired, 0, baseTime, VerifyParams{
-		Envelope: oldEnvelope, ExpectedOrgID: "org-1", Class: ClassMutation,
-	}); !errors.Is(err, ErrKeyUnknown) {
-		t.Fatalf("retired key err = %v, want ErrKeyUnknown", err)
-	}
-	if _, err := mustVerify(t, retired, 0, baseTime, VerifyParams{
-		Envelope: mustIssue(t, newIssuer, "org-1", "agent-1"), ExpectedOrgID: "org-1", Class: ClassMutation,
-	}); err != nil {
+	requireMutationVerifyErr(t, retired, oldEnvelope, "org-1", "", ErrKeyUnknown)
+	if err := mutationVerifyErr(t, retired, mustIssue(t, newIssuer, "org-1", "agent-1"), "org-1", ""); err != nil {
 		t.Fatalf("verify new key: %v", err)
 	}
 }

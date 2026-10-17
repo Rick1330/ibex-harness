@@ -111,28 +111,37 @@ func registerAuthProbeRoutes(deps protectedRouteDeps, rateLimit, agentVerify, po
 	authNone := AuthMiddleware(deps.validator, deps.logger, AuthOptions{Metrics: deps.reg})
 	deps.mux.Handle("/v1/internal/auth-probe", chain(authNone, agentVerify, policyRead, rateLimit)(http.HandlerFunc(handleAuthProbe)))
 
-	authOrg := func(orgID string) routeMiddleware {
-		return AuthMiddleware(deps.validator, deps.logger, AuthOptions{PathOrgID: orgID, Metrics: deps.reg})
+	orgProbe := orgAuthProbeChain{
+		deps:        deps,
+		rateLimit:   rateLimit,
+		agentVerify: agentVerify,
+		policyRead:  policyRead,
 	}
-	deps.mux.HandleFunc("/v1/orgs/{org_id}/auth-probe", orgAuthProbeHandler(deps, authOrg, rateLimit, agentVerify, policyRead))
+	deps.mux.HandleFunc("/v1/orgs/{org_id}/auth-probe", orgProbe.handler())
 }
 
-func orgAuthProbeHandler(
-	deps protectedRouteDeps,
-	authOrg func(string) routeMiddleware,
-	rateLimit, agentVerify, policyRead routeMiddleware,
-) http.HandlerFunc {
+// orgAuthProbeChain bundles the shared middlewares for org-scoped auth probes.
+type orgAuthProbeChain struct {
+	deps        protectedRouteDeps
+	rateLimit   routeMiddleware
+	agentVerify routeMiddleware
+	policyRead  routeMiddleware
+}
+
+func (chainDeps orgAuthProbeChain) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet, deps.docsBase) {
+		if !requireMethod(w, r, http.MethodGet, chainDeps.deps.docsBase) {
 			return
 		}
 		orgID := strings.TrimSpace(r.PathValue("org_id"))
+		authOrg := AuthMiddleware(chainDeps.deps.validator, chainDeps.deps.logger,
+			AuthOptions{PathOrgID: orgID, Metrics: chainDeps.deps.reg})
 		chain(
-			PathOrgUUIDMiddleware(deps.docsBase),
-			authOrg(orgID),
-			agentVerify,
-			policyRead,
-			rateLimit,
+			PathOrgUUIDMiddleware(chainDeps.deps.docsBase),
+			authOrg,
+			chainDeps.agentVerify,
+			chainDeps.policyRead,
+			chainDeps.rateLimit,
 		)(http.HandlerFunc(handleAuthProbe)).ServeHTTP(w, r)
 	}
 }

@@ -113,6 +113,13 @@ type Envelope struct {
 }
 
 func (c Claims) validateStructure() error {
+	if err := c.validateIdentity(); err != nil {
+		return err
+	}
+	return c.validateScope()
+}
+
+func (c Claims) validateIdentity() error {
 	switch {
 	case c.ContractVersion != ContractVersion:
 		return fmt.Errorf("%w: unsupported contract_version", ErrMalformed)
@@ -124,6 +131,13 @@ func (c Claims) validateStructure() error {
 		return fmt.Errorf("%w: missing subject_id", ErrMalformed)
 	case strings.TrimSpace(c.SnapshotID) == "":
 		return fmt.Errorf("%w: missing snapshot_id", ErrMalformed)
+	default:
+		return nil
+	}
+}
+
+func (c Claims) validateScope() error {
+	switch {
 	case c.Epoch < 1:
 		return fmt.Errorf("%w: invalid epoch", ErrMalformed)
 	case c.Permissions < 0:

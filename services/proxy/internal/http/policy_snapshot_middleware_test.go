@@ -178,21 +178,36 @@ func TestUnit_PolicySnapshot_RoundTripEnrichesPrincipal(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	assertFetcherCall(t, fetcher)
+	assertCapturedClaims(t, capture)
+	assertPrincipalEnriched(t, capture)
+	if metrics.last() != policysnapshot.MetricIssued {
+		t.Fatalf("metric = %q want issued", metrics.last())
+	}
+}
+
+func assertFetcherCall(t *testing.T, fetcher *mockPolicyFetcher) {
+	t.Helper()
 	if fetcher.calls != 1 || fetcher.gotAgent != agentTestAgentID() {
 		t.Fatalf("fetcher calls=%d agent=%q", fetcher.calls, fetcher.gotAgent)
 	}
+}
+
+func assertCapturedClaims(t *testing.T, capture *policyTerminalCapture) {
+	t.Helper()
 	if !capture.hasClaims {
 		t.Fatal("claims missing from context")
 	}
 	if capture.claims.OrgID != agentTestOrgID() || capture.claims.AgentID != agentTestAgentID() {
 		t.Fatalf("claims = %+v", capture.claims)
 	}
+}
+
+func assertPrincipalEnriched(t *testing.T, capture *policyTerminalCapture) {
+	t.Helper()
 	if capture.principal == nil || capture.principal.GetAuthzSnapshotId() != capture.claims.SnapshotID ||
 		capture.principal.GetAuthzSnapshotDigest() != capture.claims.Digest {
 		t.Fatalf("principal = %+v claims=%+v", capture.principal, capture.claims)
-	}
-	if metrics.last() != policysnapshot.MetricIssued {
-		t.Fatalf("metric = %q want issued", metrics.last())
 	}
 }
 
@@ -330,4 +345,70 @@ func TestUnit_PolicySnapshot_MissingContextsFailClosed(t *testing.T) {
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	assertPolicyCode(t, rec, http.StatusInternalServerError, apierror.CodeServiceDegraded)
+
+	authCtx := auth.WithContext(context.Background(), &auth.ValidateResult{OrgID: agentTestOrgUUID})
+	req = httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil).WithContext(authCtx)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertPolicyCode(t, rec, http.StatusInternalServerError, apierror.CodeServiceDegraded)
+}
+
+func TestUnit_PolicySnapshot_InvalidAuthorizationHeader(t *testing.T) {
+	t.Parallel()
+	key := policyTestKeyPair(t)
+	handler := PolicySnapshotMiddleware(&mockPolicyFetcher{}, newPolicyVerifier(t, key, "v1", 1), policysnapshot.ClassMutation, &recordingPolicyMetrics{}, logger.Discard("proxy"))(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	agentCtx := WithAgent(context.Background(), auth.AgentRecord{ID: uuid.MustParse(agentTestAgentID()), OrgID: agentTestOrgUUID})
+	ctx := auth.WithContext(agentCtx, &auth.ValidateResult{OrgID: agentTestOrgUUID})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertPolicyCode(t, rec, http.StatusUnauthorized, apierror.CodeInvalidToken)
+}
+
+func TestUnit_PolicySnapshot_NilEnvelopeFailsClosed(t *testing.T) {
+	t.Parallel()
+	key := policyTestKeyPair(t)
+	rec, _, metrics := runPolicyChain(t, &mockPolicyFetcher{}, newPolicyVerifier(t, key, "v1", 1), policysnapshot.ClassMutation)
+	assertPolicyCode(t, rec, http.StatusServiceUnavailable, apierror.CodeSnapshotUnavailable)
+	if metrics.last() != policysnapshot.MetricUnavailable {
+		t.Fatalf("metric = %q want unavailable", metrics.last())
+	}
+}
+
+func TestUnit_PolicySnapshot_SucceedsWithoutPrincipalContext(t *testing.T) {
+	t.Parallel()
+	key := policyTestKeyPair(t)
+	iss := newPolicyIssuer(t, key, "v1", 1, nil)
+	ver := newPolicyVerifier(t, key, "v1", 1)
+	env := issuePolicyEnvelope(t, iss, agentTestOrgID(), agentTestAgentID())
+
+	metrics := &recordingPolicyMetrics{}
+	handler := PolicySnapshotMiddleware(&mockPolicyFetcher{envelope: &env}, ver, policysnapshot.ClassMutation, metrics, logger.Discard("proxy"))(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := PrincipalContextFromContext(r.Context()); ok {
+				t.Error("principal context unexpectedly present")
+			}
+			if _, ok := PolicySnapshotClaimsFromContext(r.Context()); !ok {
+				t.Error("claims missing from context")
+			}
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	agentCtx := WithAgent(context.Background(), auth.AgentRecord{ID: uuid.MustParse(agentTestAgentID()), OrgID: agentTestOrgUUID})
+	ctx := auth.WithContext(agentCtx, &auth.ValidateResult{OrgID: agentTestOrgUUID})
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_test")
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if metrics.last() != policysnapshot.MetricIssued {
+		t.Fatalf("metric = %q want issued", metrics.last())
+	}
 }

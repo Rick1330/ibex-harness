@@ -48,7 +48,9 @@ func TestNewIssuerValidation(t *testing.T) {
 }
 
 func TestNewIssuerRejectsWeakKey(t *testing.T) {
-	weak, err := rsa.GenerateKey(rand.Reader, 1024)
+	// The undersized key is a throwaway fixture that must be rejected; it is
+	// never used for real signing.
+	weak, err := rsa.GenerateKey(rand.Reader, 1024) // nosemgrep -- throwaway fixture asserting weak keys are rejected
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +92,29 @@ func TestIssueValidation(t *testing.T) {
 				t.Fatal("Issue accepted invalid params")
 			}
 		})
+	}
+}
+
+func TestIssueWithDefaultClockUsesWallTime(t *testing.T) {
+	key := mustRSAPrivate(t)
+	issuer, err := NewIssuer(IssuerConfig{
+		PrivateKeyPEM: mustPrivatePEM(t, key), KeyID: "v1", Epoch: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	before := time.Now().UTC().Unix()
+	envelope, err := issuer.Issue(IssueParams{OrgID: "org-1", SubjectID: "user-1", Permissions: 1})
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	var claims Claims
+	if err := json.Unmarshal(envelope.Payload, &claims); err != nil {
+		t.Fatalf("unmarshal claims: %v", err)
+	}
+	after := time.Now().UTC().Unix()
+	if claims.IssuedAt < before || claims.IssuedAt > after {
+		t.Fatalf("issued_at = %d not within [%d, %d]", claims.IssuedAt, before, after)
 	}
 }
 

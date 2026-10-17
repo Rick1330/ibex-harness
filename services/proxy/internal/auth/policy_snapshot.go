@@ -58,8 +58,11 @@ func (c *GRPCPolicySnapshotClient) Issue(ctx context.Context, bearer, agentID st
 	if err != nil {
 		return nil, mapIssuePolicySnapshotError(err)
 	}
-	env := resp.GetEnvelope()
-	if env == nil || len(env.GetPayload()) == 0 || len(env.GetSignature()) == 0 || env.GetAlgorithm() == "" || env.GetKeyId() == "" {
+	return envelopeFromProto(resp.GetEnvelope())
+}
+
+func envelopeFromProto(env *authv1.PolicySnapshotEnvelope) (*policysnapshot.Envelope, error) {
+	if !envelopeComplete(env) {
 		return nil, ErrPolicySnapshotUnavailable
 	}
 	return &policysnapshot.Envelope{
@@ -70,11 +73,19 @@ func (c *GRPCPolicySnapshotClient) Issue(ctx context.Context, bearer, agentID st
 	}, nil
 }
 
+func envelopeComplete(env *authv1.PolicySnapshotEnvelope) bool {
+	return env != nil &&
+		env.GetAlgorithm() != "" &&
+		env.GetKeyId() != "" &&
+		len(env.GetPayload()) > 0 &&
+		len(env.GetSignature()) > 0
+}
+
 func mapIssuePolicySnapshotError(err error) error {
 	switch status.Code(err) {
 	case codes.Unauthenticated:
 		return ErrInvalidToken
-	case codes.PermissionDenied, codes.InvalidArgument, codes.FailedPrecondition:
+	case codes.PermissionDenied, codes.InvalidArgument:
 		return ErrPolicySnapshotDenied
 	default:
 		return ErrPolicySnapshotUnavailable

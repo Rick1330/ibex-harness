@@ -51,7 +51,7 @@ type ServerDeps struct {
 	CredService          providerCredentialAPI
 	TotpService          totpPort
 	SessionIssuer        sessionIssuerPort
-	PolicySnapshotIssuer policySnapshotIssuerPort
+	PolicySnapshotIssuer policySnapshotIssuer
 	Metrics              *metrics.AuthRegistry
 	Log                  *logger.Logger
 }
@@ -66,7 +66,7 @@ type Server struct {
 	credService   providerCredentialAPI
 	totpService   totpPort
 	sessionIssuer sessionIssuerPort
-	policyIssuer  policySnapshotIssuerPort
+	policyIssuer  policySnapshotIssuer
 	log           *logger.Logger
 }
 

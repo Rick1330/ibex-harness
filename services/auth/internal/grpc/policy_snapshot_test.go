@@ -12,6 +12,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 )
@@ -43,12 +44,13 @@ func policyCallerCtx(caller CallerContext) context.Context {
 }
 
 func TestIssuePolicySnapshotHappyPath(t *testing.T) {
-	srv := newTestServer(t, &fakeTokenValidator{}, nil, nil)
-	issuer := &fakePolicyIssuer{}
-	srv.policyIssuer = issuer
 	orgID := uuid.NewString()
 	agentID := uuid.NewString()
 	userID := uuid.NewString()
+	srv := newTestServer(t, &fakeTokenValidator{}, nil,
+		&fakeAgentAPI{view: service.AgentView{ID: agentID, OrgID: orgID, Status: "active"}})
+	issuer := &fakePolicyIssuer{}
+	srv.policyIssuer = issuer
 
 	resp, err := srv.IssuePolicySnapshot(policyCallerCtx(CallerContext{
 		OrgID: orgID, TokenID: uuid.NewString(), UserID: userID, Permissions: 42,
@@ -120,12 +122,95 @@ func TestIssuePolicySnapshotAgentBinding(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := newTestServer(t, &fakeTokenValidator{}, nil, nil)
+			srv := newTestServer(t, &fakeTokenValidator{}, nil,
+				&fakeAgentAPI{view: service.AgentView{ID: boundAgent}})
 			issuer := &fakePolicyIssuer{}
 			srv.policyIssuer = issuer
 			_, err := srv.IssuePolicySnapshot(policyCallerCtx(tc.caller), &authv1.IssuePolicySnapshotRequest{AgentId: tc.request})
 			assertGRPCCode(t, err, tc.want)
 			if tc.want != codes.OK && issuer.calls != 0 {
+				t.Fatalf("issuer called %d times on denial", issuer.calls)
+			}
+		})
+	}
+}
+
+func TestIssuePolicySnapshotAgentValidation(t *testing.T) {
+	orgID := uuid.NewString()
+	agentID := uuid.NewString()
+	cases := []struct {
+		name      string
+		caller    CallerContext
+		agents    *fakeAgentAPI
+		request   string
+		want      codes.Code
+		wantIssue bool
+	}{
+		{
+			name:   "authorized agent",
+			caller: CallerContext{OrgID: orgID, TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{view: service.AgentView{ID: agentID, OrgID: orgID, Status: "active"}},
+			want:   codes.OK, wantIssue: true,
+		},
+		{
+			name:   "agent not authorized",
+			caller: CallerContext{OrgID: orgID, TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{},
+			want:   codes.PermissionDenied,
+		},
+		{
+			name:   "agent inactive",
+			caller: CallerContext{OrgID: orgID, TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{err: service.ErrAgentInactive},
+			want:   codes.PermissionDenied,
+		},
+		{
+			name:   "agent lookup failure",
+			caller: CallerContext{OrgID: orgID, TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{err: errors.New("db down")},
+			want:   codes.Internal,
+		},
+		{
+			name:   "agent lookup canceled",
+			caller: CallerContext{OrgID: orgID, TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{err: context.Canceled},
+			want:   codes.Canceled,
+		},
+		{
+			name:   "agent lookup deadline exceeded",
+			caller: CallerContext{OrgID: orgID, TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{err: context.DeadlineExceeded},
+			want:   codes.DeadlineExceeded,
+		},
+		{
+			name:   "caller org not a uuid",
+			caller: CallerContext{OrgID: "not-a-uuid", TokenID: uuid.NewString()},
+			agents: &fakeAgentAPI{view: service.AgentView{ID: agentID}},
+			want:   codes.Internal,
+		},
+		{
+			name:    "caller agent binding not a uuid",
+			caller:  CallerContext{OrgID: orgID, TokenID: uuid.NewString(), AgentID: "not-a-uuid"},
+			agents:  &fakeAgentAPI{view: service.AgentView{ID: agentID}},
+			request: "not-a-uuid",
+			want:    codes.Internal,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := tc.request
+			if request == "" {
+				request = agentID
+			}
+			srv := newTestServer(t, &fakeTokenValidator{}, nil, tc.agents)
+			issuer := &fakePolicyIssuer{}
+			srv.policyIssuer = issuer
+			_, err := srv.IssuePolicySnapshot(policyCallerCtx(tc.caller), &authv1.IssuePolicySnapshotRequest{AgentId: request})
+			assertGRPCCode(t, err, tc.want)
+			if tc.wantIssue && issuer.calls != 1 {
+				t.Fatalf("issuer calls = %d, want 1", issuer.calls)
+			}
+			if !tc.wantIssue && issuer.calls != 0 {
 				t.Fatalf("issuer called %d times on denial", issuer.calls)
 			}
 		})
@@ -175,6 +260,29 @@ func TestIssuePolicySnapshotFailures(t *testing.T) {
 }
 
 func TestIssuePolicySnapshotEnvelopeVerifies(t *testing.T) {
+	key, issuer := newPolicyTestIssuer(t)
+	orgID := uuid.NewString()
+	agentID := uuid.NewString()
+	userID := uuid.NewString()
+	srv := newTestServer(t, &fakeTokenValidator{}, nil,
+		&fakeAgentAPI{view: service.AgentView{ID: agentID, OrgID: orgID, Status: "active"}})
+	srv.policyIssuer = issuer
+
+	env := issueSnapshotEnvelope(t, srv, CallerContext{
+		OrgID: orgID, TokenID: uuid.NewString(), UserID: userID, Permissions: 7,
+	}, agentID)
+	claims := verifyIssuedEnvelope(t, key, env, orgID, agentID)
+
+	if claims.OrgID != orgID || claims.AgentID != agentID || claims.SubjectID != userID || claims.Permissions != 7 {
+		t.Fatalf("claims = %+v", claims)
+	}
+	if claims.Epoch != 4 {
+		t.Fatalf("epoch = %d, want 4", claims.Epoch)
+	}
+}
+
+func newPolicyTestIssuer(t *testing.T) (*rsa.PrivateKey, *policysnapshot.Issuer) {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -189,18 +297,20 @@ func TestIssuePolicySnapshotEnvelopeVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newTestServer(t, &fakeTokenValidator{}, nil, nil)
-	srv.policyIssuer = issuer
-	orgID := uuid.NewString()
-	agentID := uuid.NewString()
-	userID := uuid.NewString()
+	return key, issuer
+}
 
-	resp, err := srv.IssuePolicySnapshot(policyCallerCtx(CallerContext{
-		OrgID: orgID, TokenID: uuid.NewString(), UserID: userID, Permissions: 7,
-	}), &authv1.IssuePolicySnapshotRequest{AgentId: agentID})
+func issueSnapshotEnvelope(t *testing.T, srv *Server, caller CallerContext, agentID string) *authv1.PolicySnapshotEnvelope {
+	t.Helper()
+	resp, err := srv.IssuePolicySnapshot(policyCallerCtx(caller), &authv1.IssuePolicySnapshotRequest{AgentId: agentID})
 	if err != nil {
 		t.Fatalf("IssuePolicySnapshot: %v", err)
 	}
+	return resp.GetEnvelope()
+}
+
+func verifyIssuedEnvelope(t *testing.T, key *rsa.PrivateKey, env *authv1.PolicySnapshotEnvelope, orgID, agentID string) policysnapshot.Claims {
+	t.Helper()
 	verifier, err := policysnapshot.NewVerifier(policysnapshot.VerifierConfig{
 		Keys:     policyKeySet(t, key),
 		MinEpoch: 4,
@@ -209,7 +319,6 @@ func TestIssuePolicySnapshotEnvelopeVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := resp.GetEnvelope()
 	claims, err := verifier.Verify(policysnapshot.VerifyParams{
 		Envelope: policysnapshot.Envelope{
 			Algorithm: env.GetAlgorithm(), KeyID: env.GetKeyId(),
@@ -220,12 +329,7 @@ func TestIssuePolicySnapshotEnvelopeVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
-	if claims.OrgID != orgID || claims.AgentID != agentID || claims.SubjectID != userID || claims.Permissions != 7 {
-		t.Fatalf("claims = %+v", claims)
-	}
-	if claims.Epoch != 4 {
-		t.Fatalf("epoch = %d, want 4", claims.Epoch)
-	}
+	return claims
 }
 
 func policyKeySet(t *testing.T, key *rsa.PrivateKey) policysnapshot.KeySet {

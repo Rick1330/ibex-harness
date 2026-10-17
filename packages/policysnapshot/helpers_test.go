@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"testing"
 	"time"
 
@@ -87,13 +88,55 @@ func mustIssuer(t *testing.T, key *rsa.PrivateKey, opts testIssuerOpts) *Issuer 
 	return issuer
 }
 
-func mustVerify(t *testing.T, set KeySet, minEpoch int64, now time.Time, params VerifyParams) (Claims, error) {
+type verifyOpts struct {
+	minEpoch int64
+	now      time.Time
+}
+
+func mustVerify(t *testing.T, set KeySet, opts verifyOpts, params VerifyParams) (Claims, error) {
 	t.Helper()
-	verifier, err := NewVerifier(VerifierConfig{Keys: set, MinEpoch: minEpoch, Clock: fixedClock(now)})
+	verifier, err := NewVerifier(VerifierConfig{Keys: set, MinEpoch: opts.minEpoch, Clock: fixedClock(opts.now)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return verifier.Verify(params)
+}
+
+// mutationVerifyErr verifies a mutation-class request at baseTime and returns
+// the error for assertion, collapsing repeated VerifyParams literals.
+func mutationVerifyErr(t *testing.T, set KeySet, envelope Envelope, orgID, agentID string) error {
+	t.Helper()
+	_, err := mustVerify(t, set, verifyOpts{now: baseTime}, VerifyParams{
+		Envelope: envelope, ExpectedOrgID: orgID, ExpectedAgentID: agentID, Class: ClassMutation,
+	})
+	return err
+}
+
+func requireMutationVerifyErr(t *testing.T, set KeySet, envelope Envelope, orgID, agentID string, want error) {
+	t.Helper()
+	if err := mutationVerifyErr(t, set, envelope, orgID, agentID); !errors.Is(err, want) {
+		t.Fatalf("verify err = %v, want %v", err, want)
+	}
+}
+
+// verifyAt verifies an org-1 mutation-class request at the given clock time.
+func verifyAt(t *testing.T, set KeySet, now time.Time, envelope Envelope, class Class) error {
+	t.Helper()
+	_, err := mustVerify(t, set, verifyOpts{now: now}, VerifyParams{
+		Envelope: envelope, ExpectedOrgID: "org-1", Class: class,
+	})
+	return err
+}
+
+// requireExpiredOutcome asserts the freshness outcome for boundary tables.
+func requireExpiredOutcome(t *testing.T, err error, wantExpired bool) {
+	t.Helper()
+	if wantExpired && !errors.Is(err, ErrExpired) {
+		t.Fatalf("err = %v, want ErrExpired", err)
+	}
+	if !wantExpired && err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
 }
 
 func mustIssue(t *testing.T, issuer *Issuer, orgID, agentID string) Envelope {

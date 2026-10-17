@@ -58,28 +58,35 @@ type VerifyParams struct {
 // Verify fail-closed validates envelope, digest, signature, bindings, epoch,
 // and freshness, returning the attested claims on success.
 func (v *Verifier) Verify(p VerifyParams) (Claims, error) {
-	env := p.Envelope
-	if env.Algorithm != AlgorithmRS256 {
-		return Claims{}, fmt.Errorf("%w: unsupported algorithm", ErrMalformed)
-	}
-	if len(env.Payload) == 0 || len(env.Payload) > maxPayloadBytes || len(env.Signature) == 0 {
-		return Claims{}, fmt.Errorf("%w: invalid envelope", ErrMalformed)
-	}
-	key, ok := v.keys.Lookup(env.KeyID)
-	if !ok {
-		return Claims{}, fmt.Errorf("%w: key_id %q", ErrKeyUnknown, env.KeyID)
-	}
-	claims, err := verifyClaimsPayload(env.Payload)
+	key, err := v.verifyEnvelopeStructure(p.Envelope)
 	if err != nil {
 		return Claims{}, err
 	}
-	if err := verifySignature(key, env.Payload, env.Signature); err != nil {
+	claims, err := verifyClaimsPayload(p.Envelope.Payload)
+	if err != nil {
+		return Claims{}, err
+	}
+	if err := verifySignature(key, p.Envelope.Payload, p.Envelope.Signature); err != nil {
 		return Claims{}, err
 	}
 	if err := v.verifyAuthorityAndTime(claims, p); err != nil {
 		return Claims{}, err
 	}
 	return claims, nil
+}
+
+func (v *Verifier) verifyEnvelopeStructure(env Envelope) (*rsa.PublicKey, error) {
+	if env.Algorithm != AlgorithmRS256 {
+		return nil, fmt.Errorf("%w: unsupported algorithm", ErrMalformed)
+	}
+	if len(env.Payload) == 0 || len(env.Payload) > maxPayloadBytes || len(env.Signature) == 0 {
+		return nil, fmt.Errorf("%w: invalid envelope", ErrMalformed)
+	}
+	key, ok := v.keys.Lookup(env.KeyID)
+	if !ok {
+		return nil, fmt.Errorf("%w: key_id %q", ErrKeyUnknown, env.KeyID)
+	}
+	return key, nil
 }
 
 func verifyClaimsPayload(payload []byte) (Claims, error) {
@@ -101,7 +108,8 @@ func verifyClaimsPayload(payload []byte) (Claims, error) {
 }
 
 func verifySignature(key *rsa.PublicKey, payload, signature []byte) error {
-	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, sha256Sum(payload), signature); err != nil {
+	// RS256 uses PKCS#1 v1.5 signature padding (decision record 21 §2.1).
+	if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, sha256Sum(payload), signature); err != nil { //NOSONAR go:S5542 RS256 requires PKCS#1 v1.5 signature padding
 		return fmt.Errorf("%w: %v", ErrSignatureInvalid, err)
 	}
 	return nil
