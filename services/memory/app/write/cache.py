@@ -42,7 +42,7 @@ class MemoryCacheWriter:
             await self.redis.zrem(self.hot_key(org_id, agent_id), str(memory_id))
         except (OSError, RedisError):
             WRITE_CACHE_ERRORS.labels(op="forget_invalidate").inc()
-            logger.warning(
+            logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
                 "memory cache invalidation failed org_id=%s memory_id=%s",
                 org_id.hex,
                 memory_id.hex,

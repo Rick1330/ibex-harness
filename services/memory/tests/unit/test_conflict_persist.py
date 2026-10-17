@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -159,29 +160,24 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
     org_id = uuid4()
     new_memory_id = uuid4()
     target_memory_id = uuid4()
-    session = _FakeSession(
-        [
-            _FakeResult(),
-            _FakeResult(),
-            _FakeResult(rowcount=1),
-            _FakeResult(),
-            _FakeResult(),
-        ]
-    )
-    await apply_supersession(
-        _factory_for(session),  # type: ignore[arg-type]
-        SupersedeApply(
-            org_id=org_id,
-            agent_id=uuid4(),
-            new_memory_id=new_memory_id,
-            target_memory_id=target_memory_id,
-            closed_at=datetime(2026, 6, 1, tzinfo=UTC),
-            expected_revision=1,
-        ),
-    )
-    assert len(session.executed) == 5
-    update_sql = str(session.executed[2][0])
-    update_params = session.executed[2][1]
+    session = _FakeSession([_FakeResult(rowcount=1)])
+    with patch(
+        "app.conflict.persist.lock_organization_for_memory_write", AsyncMock()
+    ):
+        await apply_supersession(
+            _factory_for(session),  # type: ignore[arg-type]
+            SupersedeApply(
+                org_id=org_id,
+                agent_id=uuid4(),
+                new_memory_id=new_memory_id,
+                target_memory_id=target_memory_id,
+                closed_at=datetime(2026, 6, 1, tzinfo=UTC),
+                expected_revision=1,
+            ),
+        )
+    assert len(session.executed) == 3
+    update_sql = str(session.executed[0][0])
+    update_params = session.executed[0][1]
     assert "LEAST" in update_sql
     assert "SET status = 'superseded'" in update_sql
     assert "superseded_by = :new_id" in update_sql
@@ -192,9 +188,9 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
     assert update_params["new_id"] == str(new_memory_id)
     assert update_params["expected_revision"] == 1
 
-    relationship_sql = str(session.executed[3][0])
-    relationship_params = session.executed[3][1]
-    assert "memory_lifecycle_outbox" in str(session.executed[4][0])
+    relationship_sql = str(session.executed[1][0])
+    relationship_params = session.executed[1][1]
+    assert "memory_lifecycle_outbox" in str(session.executed[2][0])
     assert "'supersedes'" in relationship_sql
     assert isinstance(relationship_params, dict)
     assert relationship_params["org_id"] == str(org_id)
@@ -205,34 +201,29 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
 @pytest.mark.asyncio
 async def test_apply_supersession_sql_uses_least_coalesce_valid_until() -> None:
     """SQL-shape coverage: supersession UPDATE uses LEAST/COALESCE on valid_until."""
-    session = _FakeSession(
-        [
-            _FakeResult(),
-            _FakeResult(),
-            _FakeResult(rowcount=1),
-            _FakeResult(),
-            _FakeResult(),
-        ]
-    )
+    session = _FakeSession([_FakeResult(rowcount=1)])
     closed_at = datetime(2026, 6, 1, tzinfo=UTC)
-    await apply_supersession(
-        _factory_for(session),  # type: ignore[arg-type]
-        SupersedeApply(
-            org_id=uuid4(),
-            agent_id=uuid4(),
-            new_memory_id=uuid4(),
-            target_memory_id=uuid4(),
-            closed_at=closed_at,
-            expected_revision=1,
-        ),
-    )
-    update_sql = str(session.executed[2][0])
+    with patch(
+        "app.conflict.persist.lock_organization_for_memory_write", AsyncMock()
+    ):
+        await apply_supersession(
+            _factory_for(session),  # type: ignore[arg-type]
+            SupersedeApply(
+                org_id=uuid4(),
+                agent_id=uuid4(),
+                new_memory_id=uuid4(),
+                target_memory_id=uuid4(),
+                closed_at=closed_at,
+                expected_revision=1,
+            ),
+        )
+    update_sql = str(session.executed[0][0])
     assert "LEAST(COALESCE(valid_until" in update_sql.replace("\n", " ")
 
 
 @pytest.mark.asyncio
 async def test_apply_supersession_missing_row() -> None:
-    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rowcount=0)])
+    session = _FakeSession([_FakeResult(rowcount=0)])
     factory = _factory_for(session)  # type: ignore[arg-type]
     apply = SupersedeApply(
         org_id=uuid4(),
@@ -241,24 +232,30 @@ async def test_apply_supersession_missing_row() -> None:
         target_memory_id=uuid4(),
         expected_revision=1,
     )
-    with pytest.raises(StaleLifecycleError):
+    with (
+        patch("app.conflict.persist.lock_organization_for_memory_write", AsyncMock()),
+        pytest.raises(StaleLifecycleError),
+    ):
         await apply_supersession(factory, apply)
 
 
 @pytest.mark.asyncio
 async def test_insert_relationship() -> None:
-    session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult()])
-    await insert_relationship(
-        _factory_for(session),  # type: ignore[arg-type]
-        RelationshipInsert(
-            org_id=uuid4(),
-            source_memory_id=uuid4(),
-            target_memory_id=uuid4(),
-            relationship_type="contradicts",
-            resolution_notes="fixture",
-        ),
-    )
-    assert len(session.executed) == 3
+    session = _FakeSession([_FakeResult()])
+    with patch(
+        "app.conflict.persist.lock_organization_for_memory_write", AsyncMock()
+    ):
+        await insert_relationship(
+            _factory_for(session),  # type: ignore[arg-type]
+            RelationshipInsert(
+                org_id=uuid4(),
+                source_memory_id=uuid4(),
+                target_memory_id=uuid4(),
+                relationship_type="contradicts",
+                resolution_notes="fixture",
+            ),
+        )
+    assert len(session.executed) == 1
 
 
 from app.vectorstore.base import SearchMode

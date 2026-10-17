@@ -113,6 +113,7 @@ async def create_memory(
         ValidationError,
         EmbeddingServiceError,
         StaleLifecycleError,
+        MemoryOrganizationUnavailableError,
     ) as exc:
         await release_idempotency(idem)
         raise http_error_for_write(exc) from exc
@@ -196,7 +197,7 @@ async def forget_memory(
                 org_id=token.org_id, agent_id=agent_id, memory_id=memory_id
             )
         except Exception:
-            logger.warning(
+            logger.warning(  # NOSONAR pythonsecurity:S5145 - UUID hex is hex-only, not free text
                 "memory cache invalidation failed after committed forget org_id=%s memory_id=%s",
                 token.org_id.hex,
                 memory_id.hex,

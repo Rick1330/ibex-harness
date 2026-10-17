@@ -13,7 +13,12 @@ from redis.exceptions import RedisError
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
 from app.deps import get_memory_cache_writer, get_session_factory, get_write_orchestrator
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    MemoryOrganizationUnavailableError,
+    ValidationError,
+)
 from app.idempotency.redis_store import (
     ClaimKind,
     ClaimOutcome,
@@ -159,6 +164,15 @@ def test_create_memory_503_embedding(client) -> None:
         resp = _post_memory(http, content="x")
     assert resp.status_code == 503
     assert resp.json()["detail"]["code"] == "EMBEDDING_FAILED"
+
+
+def test_create_memory_409_org_unavailable(client) -> None:
+    http, mock_orch = client
+    mock_orch.create = AsyncMock(side_effect=MemoryOrganizationUnavailableError())
+    with http:
+        resp = _post_memory(http, content="x")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "ORG_UNAVAILABLE"
 
 
 def _post_validation(http: TestClient, payload: dict) -> object:

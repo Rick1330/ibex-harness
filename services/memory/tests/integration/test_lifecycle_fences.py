@@ -152,18 +152,16 @@ async def test_forget_outbox_failure_rolls_back_tombstone(
             ),
             {"org": str(org_id), "id": str(memory_id)},
         )
+    command = ForgetMemory(
+        org_id=org_id,
+        agent_id=agent_id,
+        memory_id=memory_id,
+        expected_revision=1,
+    )
     async with session_factory() as session:
         await session.begin()
         with pytest.raises(IntegrityError):
-            await forget_memory_session(
-                session,
-                ForgetMemory(
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    memory_id=memory_id,
-                    expected_revision=1,
-                ),
-            )
+            await forget_memory_session(session, command)
         await session.rollback()
     revision, tombstoned, status, _ = await _read_lifecycle(
         session_factory, org_id=org_id, memory_id=memory_id
@@ -177,18 +175,16 @@ async def test_stale_forget_mutation_emits_no_outbox_event(
     org_id, agent_id, memory_id = await seed_org_agent_memory(
         session_factory, content="stale mutation has no event"
     )
+    stale_command = ForgetMemory(
+        org_id=org_id,
+        agent_id=agent_id,
+        memory_id=memory_id,
+        expected_revision=2,
+    )
     async with session_factory() as session:
         await session.begin()
         with pytest.raises(StaleLifecycleError):
-            await forget_memory_session(
-                session,
-                ForgetMemory(
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    memory_id=memory_id,
-                    expected_revision=2,
-                ),
-            )
+            await forget_memory_session(session, stale_command)
         await session.rollback()
     revision, tombstoned, status, _ = await _read_lifecycle(
         session_factory, org_id=org_id, memory_id=memory_id
@@ -213,7 +209,6 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
         session_factory, content="extraction fence parent fixture"
     )
     session_id = uuid4()
-    content = f"stale extraction must not persist {uuid4()}"
     content_hash = f"stale-{uuid4()}"
     async with session_factory() as session, session.begin():
         await with_service_org(session, org_id)
@@ -231,30 +226,15 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
             text("UPDATE ibex_core.sessions SET status='abandoned' WHERE id=:id AND org_id=:org"),
             {"id": str(session_id), "org": str(org_id)},
         )
-    with pytest.raises(StaleLifecycleError):
-        async with session_factory() as session, session.begin():
-            await require_extraction_session(
-                session,
-                ExtractionSessionFence(
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    expected_revision=1,
-                ),
-            )
-            await session.execute(
-                text(
-                    """INSERT INTO ibex_core.memories
-                       (org_id, agent_id, content, content_hash, content_tokens)
-                       VALUES (:org, :agent, :content, :hash, 4)"""
-                ),
-                {
-                    "org": str(org_id),
-                    "agent": str(agent_id),
-                    "content": content,
-                    "hash": content_hash,
-                },
-            )
+    fence = ExtractionSessionFence(
+        org_id=org_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        expected_revision=1,
+    )
+    async with session_factory() as session, session.begin():
+        with pytest.raises(StaleLifecycleError):
+            await require_extraction_session(session, fence)
     async with session_factory() as session, session.begin():
         await with_service_org(session, org_id)
         count = await session.scalar(

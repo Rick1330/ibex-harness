@@ -83,9 +83,11 @@ async def test_update_memory_pii_flags_wrong_rowcount() -> None:
     )
     from unittest.mock import AsyncMock, patch
 
-    with patch("app.pii.persist.lock_organization_for_memory_write", AsyncMock()):
-        with pytest.raises(StaleLifecycleError):
-            await update_memory_pii_flags(factory, update)
+    with (
+        patch("app.pii.persist.lock_organization_for_memory_write", AsyncMock()),
+        pytest.raises(StaleLifecycleError),
+    ):
+        await update_memory_pii_flags(factory, update)
 
 
 def test_memory_pii_update_fields() -> None:

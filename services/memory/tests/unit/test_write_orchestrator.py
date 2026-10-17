@@ -130,6 +130,10 @@ async def test_orchestrator_quarantine_persists_without_active_path() -> None:
     )
     with (
         patch(
+            "app.write.orchestrator.lock_organization_for_memory_write",
+            AsyncMock(),
+        ),
+        patch(
             "app.write.orchestrator.insert_memory_session",
             AsyncMock(return_value=fake_row),
         ) as insert_mock,

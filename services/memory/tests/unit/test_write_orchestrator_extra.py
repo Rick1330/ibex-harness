@@ -146,6 +146,7 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
     orch._factory = mock_factory
 
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch(
             "app.write.orchestrator.insert_memory_session",
             AsyncMock(side_effect=exc),
@@ -224,6 +225,7 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
     )
 
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
@@ -280,6 +282,7 @@ async def test_orchestrator_escalations_metric_increments_after_commit() -> None
     before = _counter_value("ibex_memory_conflict_escalations_inserted_total")
 
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
@@ -395,6 +398,7 @@ async def test_orchestrator_active_integrity_errors(
             "insert_memory_session": AsyncMock(return_value=fake_row),
             patch_target: AsyncMock(side_effect=side_effect),
         }
+    patches["lock_organization_for_memory_write"] = AsyncMock()
 
     cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
     with (
@@ -461,7 +465,7 @@ async def test_stale_extraction_session_fails_before_memory_insert() -> None:
             AsyncMock(),
         ),
         patch("app.write.orchestrator.insert_memory_session", insert),
+        pytest.raises(StaleLifecycleError),
     ):
-        with pytest.raises(StaleLifecycleError):
-            await orch.create(command)
+        await orch.create(command)
     insert.assert_not_awaited()

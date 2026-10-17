@@ -264,6 +264,7 @@ async def test_orchestrator_quarantine_calls_after_commit() -> None:
         pii_detected=True,
     )
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
@@ -408,6 +409,7 @@ async def test_orchestrator_after_commit_failure_does_not_propagate() -> None:
     )
     fake_row = sample_memory_row(content="x")
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
