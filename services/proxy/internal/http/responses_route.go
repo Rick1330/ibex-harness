@@ -250,8 +250,11 @@ func validateResponsesUsage(usage *providerresponses.Usage) error {
 	if usage == nil {
 		return errors.New("provider response did not include usage")
 	}
-	if usage.InputTokens > int(^uint32(0)) || usage.OutputTokens > int(^uint32(0)) {
-		return errors.New("provider response usage exceeds billing limits")
+	limit := int(^uint32(0))
+	for _, tokens := range []int{usage.InputTokens, usage.OutputTokens, usage.TotalTokens} {
+		if tokens < 0 || tokens > limit {
+			return errors.New("provider response usage exceeds billing limits")
+		}
 	}
 	return nil
 }

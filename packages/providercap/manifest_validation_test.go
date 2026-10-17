@@ -10,7 +10,7 @@ import (
 )
 
 func manifestWith(models string) string {
-	return `{"version":"provider-capability-manifest.v1","generated_at":"2026-10-16T00:00:00Z","expires_at":"2026-11-10T00:00:00Z","models":` + models + `}`
+	return `{"version":"provider-capability-manifest.v1","generated_at":"2026-10-16T00:00:00Z","expires_at":"2099-01-01T00:00:00Z","models":` + models + `}`
 }
 
 func supportedModel(provider, model string) string {
@@ -26,7 +26,7 @@ func TestValidateRejectsMalformedManifests(t *testing.T) {
 	}{
 		{"trailing json", validManifest + `{"extra":true}`, ErrInvalidManifest},
 		{"zero freshness window", strings.Replace(validManifest, `"generated_at":"2026-10-16T00:00:00Z"`, `"generated_at":"0001-01-01T00:00:00Z"`, 1), ErrInvalidManifest},
-		{"expires before generated", strings.Replace(validManifest, `"expires_at":"2026-11-10T00:00:00Z"`, `"expires_at":"2026-10-01T00:00:00Z"`, 1), ErrInvalidManifest},
+		{"expires before generated", strings.Replace(validManifest, `"expires_at":"2099-01-01T00:00:00Z"`, `"expires_at":"2026-10-01T00:00:00Z"`, 1), ErrInvalidManifest},
 		{"generated in future", strings.Replace(validManifest, `"generated_at":"2026-10-16T00:00:00Z"`, `"generated_at":"2027-10-16T00:00:00Z"`, 1), ErrInvalidManifest},
 		{"no models", manifestWith(`[]`), ErrInvalidManifest},
 		{"model identity missing", manifestWith(`[` + strings.Replace(supportedModel("openai", "gpt-4o"), `"model":"gpt-4o"`, `"model":"  "`, 1) + `]`), ErrInvalidManifest},
@@ -49,7 +49,7 @@ func TestValidateRejectsMalformedManifests(t *testing.T) {
 
 func TestLoadWithZeroNowUsesCurrentTime(t *testing.T) {
 	body := strings.Replace(validManifest, `"generated_at":"2026-10-16T00:00:00Z"`, `"generated_at":"2000-01-01T00:00:00Z"`, 1)
-	body = strings.Replace(body, `"expires_at":"2026-11-10T00:00:00Z"`, `"expires_at":"2099-01-01T00:00:00Z"`, 1)
+	body = strings.Replace(body, `"expires_at":"2099-01-01T00:00:00Z"`, `"expires_at":"2999-01-01T00:00:00Z"`, 1)
 	if _, err := Load(strings.NewReader(body), time.Time{}); err != nil {
 		t.Fatalf("zero-now load failed: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestLookupAndRequireNilAndMisses(t *testing.T) {
 
 func TestRequireRejectsExpiredSnapshot(t *testing.T) {
 	body := strings.Replace(validManifest, `"generated_at":"2026-10-16T00:00:00Z"`, `"generated_at":"2019-01-01T00:00:00Z"`, 1)
-	body = strings.Replace(body, `"expires_at":"2026-11-10T00:00:00Z"`, `"expires_at":"2020-01-01T00:00:00Z"`, 1)
+	body = strings.Replace(body, `"expires_at":"2099-01-01T00:00:00Z"`, `"expires_at":"2020-01-01T00:00:00Z"`, 1)
 	body = strings.Replace(body, `"accessed_at":"2026-10-16T00:00:00Z"`, `"accessed_at":"2019-01-01T00:00:00Z"`, 1)
 	s, err := LoadAllowStale(strings.NewReader(body), time.Date(2019, 6, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -92,6 +92,7 @@ func TestRequireRejectsExpiredSnapshot(t *testing.T) {
 }
 
 func TestLoadSeedManifestFromWorkingDirectory(t *testing.T) {
+	t.Setenv("IBEX_PROVIDER_CAPABILITY_MANIFEST", "")
 	dir := t.TempDir()
 	seed := filepath.Join(dir, "infra", "provider-capabilities")
 	if err := os.MkdirAll(seed, 0o755); err != nil {
@@ -113,6 +114,7 @@ func TestLoadSeedManifestFromWorkingDirectory(t *testing.T) {
 }
 
 func TestLoadSeedManifestMissingFails(t *testing.T) {
+	t.Setenv("IBEX_PROVIDER_CAPABILITY_MANIFEST", "")
 	t.Chdir(t.TempDir())
 	if _, err := LoadDefault(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)); err == nil {
 		t.Fatal("missing seed manifest must fail")

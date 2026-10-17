@@ -419,6 +419,8 @@ func TestEnqueueResponsesUsageRejectsInvalidUsage(t *testing.T) {
 		{Provider: "openai", Model: "gpt-4o", Usage: nil},
 		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: overflow}},
 		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{OutputTokens: overflow}},
+		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{TotalTokens: overflow}},
+		{Provider: "openai", Model: "gpt-4o", Usage: &responses.Usage{InputTokens: -1}},
 	} {
 		if err := enqueueResponsesUsage(ctx, writer, bad); err == nil {
 			t.Fatalf("expected error for %+v", bad.Usage)
