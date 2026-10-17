@@ -3,6 +3,7 @@ package contextclient
 import (
 	"testing"
 
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	contextv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1"
 )
 
@@ -11,11 +12,19 @@ func TestUnit_ToProto_CorrelationFields(t *testing.T) {
 	pb := toProto(AssembleParams{
 		OrgID: "o", AgentID: "a", Model: "m",
 		RequestID: "rid", TraceID: "tid", SpanID: "sid",
-		RecentMessages: []Message{{Role: "user", Content: "hi"}},
-		Options:        AssembleOptions{MaxMemories: 3},
+		PrincipalContext: &authv1.PrincipalContext{OrgId: "o", AgentId: "a", Authority: "AuthService"},
+		RecentMessages:   []Message{{Role: "user", Content: "hi"}},
+		Options:          AssembleOptions{MaxMemories: 3},
 	})
 	assertCorrelation(t, pb)
 	assertMaxMemories(t, pb, 3)
+	principal := pb.GetPrincipalContext()
+	if principal.GetOrgId() != "o" || principal.GetAgentId() != "a" {
+		t.Fatalf("principal_context identity: org_id=%q agent_id=%q", principal.GetOrgId(), principal.GetAgentId())
+	}
+	if principal.GetAuthority() != "AuthService" {
+		t.Fatalf("principal_context.authority=%q", principal.GetAuthority())
+	}
 }
 
 func assertCorrelation(t *testing.T, pb *contextv1.AssembleContextRequest) {

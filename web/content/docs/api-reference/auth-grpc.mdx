@@ -24,6 +24,7 @@ service AuthService {
   rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
   rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
   rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  rpc IssuePolicySnapshot(IssuePolicySnapshotRequest) returns (IssuePolicySnapshotResponse);
 }
 ```
 
@@ -133,6 +134,44 @@ RPC: ibex.auth.v1.AuthService/ValidateAgent
 | `Unavailable` / transport error | 503 | `AUTH_UNAVAILABLE` |
 
 Cross-org agent lookups return **`PermissionDenied`**, not `NotFound`. Policy: [ADR-0016](/docs/adr/0016-agent-identity-verification).
+
+## IssuePolicySnapshot
+
+Called by the proxy after `ValidateAgent` on protected routes (GAP-002). Mints an immutable RS256-signed `policy-snapshot.v1` envelope binding org, subject, selected agent, permissions, epoch, and issue/expiry times. The envelope is verified locally by the proxy against `IBEX_PROXY_POLICY_PUBLIC_KEYS` before any effect.
+
+```text
+RPC: ibex.auth.v1.AuthService/IssuePolicySnapshot
+```
+
+### Request
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `agent_id` | uuid string | Selected agent; required for agent-scoped tokens and must equal the token binding. Org-scoped tokens may select any agent in the org (the proxy previously verified membership). |
+
+Caller identity (org, token/subject, permissions) comes from the authenticated bearer metadata — never from request fields.
+
+### Response (success)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `envelope.algorithm` | string | Always `RS256` |
+| `envelope.key_id` | string | Policy-signing key id (for rotation) |
+| `envelope.payload` | bytes | JCS-canonical `policy-snapshot.v1` claims JSON |
+| `envelope.signature` | bytes | RSA PKCS#1 v1.5 SHA-256 signature over `payload` |
+
+### gRPC status codes
+
+| gRPC code | Proxy HTTP | IBEX code |
+| --- | --- | --- |
+| `OK` | 200 (handler continues) | — |
+| `Unauthenticated` | 401 | `INVALID_TOKEN` |
+| `PermissionDenied` | 403 | `AGENT_NOT_AUTHORIZED` |
+| `InvalidArgument` | 400 | validation failure |
+| `FailedPrecondition` | 503 | `SNAPSHOT_UNAVAILABLE` (signing key not configured) |
+| `Unavailable` / transport error | 503 | `SNAPSHOT_UNAVAILABLE` |
+
+TTL defaults to 60s; consumers bound accepted age per operation class (30s mutation, 60s read, 5s clock skew).
 
 ## Example (grpcurl)
 

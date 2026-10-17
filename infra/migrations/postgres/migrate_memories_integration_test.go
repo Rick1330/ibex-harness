@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -366,4 +368,159 @@ func seedMemory(t *testing.T, ctx context.Context, seed memorySeed) string {
 		t.Fatalf("seed memory org=%s: %v", seed.orgID, err)
 	}
 	return id
+}
+
+func TestMemoryLifecycleOutbox_RLSLeastPrivilege(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	ctx := context.Background()
+	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
+	memoryA := seedMemory(t, ctx, memorySeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "outbox-a"})
+	memoryB := seedMemory(t, ctx, memorySeed{db: db, orgID: orgB, agentSlug: "agent-b", content: "outbox-b"})
+	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		for _, row := range [][2]string{{orgA, memoryA}, {orgB, memoryB}} {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO ibex_core.memory_lifecycle_outbox
+(org_id, memory_id, revision, event_type)
+VALUES ($1::uuid, $2::uuid, 2, 'forgotten')`, row[0], row[1]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed lifecycle events: %v", err)
+	}
+
+	err := withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
+		var own, foreign int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.memory_lifecycle_outbox WHERE org_id=$1::uuid`, orgA).Scan(&own); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.memory_lifecycle_outbox WHERE org_id=$1::uuid`, orgB).Scan(&foreign); err != nil {
+			return err
+		}
+		if own != 1 || foreign != 0 {
+			return fmt.Errorf("ibex_app outbox visibility own=%d foreign=%d, want 1/0", own, foreign)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("outbox RLS visibility: %v", err)
+	}
+	var updateErr error
+	_ = withOrgContext(ctx, db, orgA, func(tx *sql.Tx) error {
+		_, updateErr = tx.ExecContext(ctx, `UPDATE ibex_core.memory_lifecycle_outbox SET attempts=attempts+1 WHERE org_id=$1::uuid`, orgA)
+		return nil
+	}) // PostgreSQL aborts the denied statement's transaction; helper rolls it back.
+	if updateErr == nil {
+		t.Fatal("ibex_app unexpectedly updated relay-owned outbox state")
+	}
+}
+
+func TestMemoryLifecycleRevision_TombstoneIsTerminal(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	ctx := context.Background()
+	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
+	memoryID := seedMemory(t, ctx, memorySeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "terminal tombstone"})
+	var revision int64
+	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+UPDATE ibex_core.memories
+SET status='deleted', deleted_at=NOW(), tombstoned=TRUE
+WHERE id=$1::uuid RETURNING lifecycle_revision`, memoryID).Scan(&revision)
+	}); err != nil {
+		t.Fatalf("forget memory: %v", err)
+	}
+	if revision != 2 {
+		t.Fatalf("lifecycle revision=%d, want 2", revision)
+	}
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE ibex_core.memories SET tombstoned=FALSE, status='active', deleted_at=NULL WHERE id=$1::uuid`, memoryID)
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected terminal tombstone trigger to reject resurrection")
+	}
+	var pqErr *pq.Error
+	if !errors.As(err, &pqErr) || pqErr.Code != "P0001" {
+		t.Fatalf("expected terminal tombstone exception, got %v", err)
+	}
+	var stillTombstoned bool
+	var finalRevision int64
+	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT tombstoned, lifecycle_revision FROM ibex_core.memories WHERE id=$1::uuid`, memoryID).Scan(&stillTombstoned, &finalRevision)
+	}); err != nil {
+		t.Fatalf("verify tombstone: %v", err)
+	}
+	if !stillTombstoned || finalRevision != 2 {
+		t.Fatalf("tombstoned=%v revision=%d, want true/2", stillTombstoned, finalRevision)
+	}
+}
+
+func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	if err := Down(dsn); err != nil {
+		t.Fatalf("clean down of 000045: %v", err)
+	}
+	v, dirty, err := Version(dsn)
+	if err != nil || dirty || v != 44 {
+		t.Fatalf("version after clean down = (%d, dirty=%v, err=%v), want (44, false, nil)", v, dirty, err)
+	}
+	ctx := context.Background()
+	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
+	memoryID := seedMemory(t, ctx, memorySeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "lifecycle-down-guard"})
+	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE ibex_core.memories SET status = 'deleted', deleted_at = NOW() WHERE id = $1::uuid`, memoryID)
+		return err
+	}); err != nil {
+		t.Fatalf("create legacy deleted state: %v", err)
+	}
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up after clean down: %v", err)
+	}
+	var tombstoned bool
+	var revision int64
+	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT tombstoned, lifecycle_revision FROM ibex_core.memories WHERE id = $1::uuid`, memoryID).Scan(&tombstoned, &revision)
+	}); err != nil {
+		t.Fatalf("read reconciled lifecycle state: %v", err)
+	}
+	if !tombstoned || revision != 1 {
+		t.Fatalf("reconciled state = (tombstoned=%v, revision=%d), want (true, 1)", tombstoned, revision)
+	}
+	downSQL, err := migrationFiles.ReadFile("000045_memory_lifecycle.down.sql")
+	if err != nil {
+		t.Fatalf("read down migration: %v", err)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin guarded down: %v", err)
+	}
+	_, err = tx.ExecContext(ctx, string(downSQL))
+	if err == nil || !strings.Contains(err.Error(), "refusing destructive 000045 rollback") {
+		_ = tx.Rollback()
+		t.Fatalf("guarded down error = %v, want refusal", err)
+	}
+	_ = tx.Rollback()
+	v, dirty, err = Version(dsn)
+	if err != nil || dirty || v != 45 {
+		t.Fatalf("version after refused down = (%d, dirty=%v, err=%v), want (45, false, nil)", v, dirty, err)
+	}
 }

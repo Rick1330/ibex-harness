@@ -31,5 +31,6 @@ class WriteContext:
     conflict_decisions: list[ConflictDecision] = field(default_factory=list)
     conflict_llm_calls: int = 0
     pending_supersede_targets: list[UUID] = field(default_factory=list)
+    pending_supersede_revisions: dict[UUID, int] = field(default_factory=dict)
     stop: bool = False
     error: str | None = None

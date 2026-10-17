@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
@@ -17,6 +19,14 @@ type agentVerifyHandler struct {
 	verifier AgentVerifier
 	logger   *logger.Logger
 	next     http.Handler
+}
+
+type principalContextBuildInput struct {
+	authRes     *auth.ValidateResult
+	record      *auth.AgentRecord
+	agentHeader string
+	requestID   string
+	docsBase    string
 }
 
 const agentVerificationUnavailableMessage = "Authentication service unavailable. The request cannot be verified."
@@ -68,8 +78,33 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := WithAgent(r.Context(), *rec)
+	principal, ok := h.buildPrincipalContext(w, r, principalContextBuildInput{
+		authRes: authRes, record: rec, agentHeader: agentHeader, requestID: requestID, docsBase: docsBase,
+	})
+	if !ok {
+		return
+	}
+	ctx := WithPrincipalContext(WithAgent(r.Context(), *rec), principal)
 	h.next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func (h *agentVerifyHandler) buildPrincipalContext(w http.ResponseWriter, r *http.Request, in principalContextBuildInput) (*authv1.PrincipalContext, bool) {
+	principal, err := principalContextFromVerifiedAuth(in.authRes, in.record, principalContextMetadata{
+		requestID: in.requestID, traceID: TraceIDFromContext(r.Context()), source: "proxy-auth", now: time.Now().UTC(),
+	})
+	if err == nil {
+		return principal, true
+	}
+	if errors.Is(err, ErrPrincipalAgentMismatch) {
+		h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{ctx: r.Context(), requestID: in.requestID, docsBase: in.docsBase, requestingOrg: in.authRes.OrgID.String(), agentID: in.agentHeader})
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized, "The agent is not authorized for this organization or is not active.", in.requestID, apierror.WriteOpts{DocsBase: in.docsBase})
+		return nil, false
+	}
+	if h.logger != nil {
+		h.logger.WarnCtx(r.Context(), "principal context unavailable")
+	}
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable, agentVerificationUnavailableMessage, in.requestID, apierror.WriteOpts{DocsBase: in.docsBase})
+	return nil, false
 }
 
 func (h *agentVerifyHandler) prepareAgentRequest(w http.ResponseWriter, r *http.Request, requestID, docsBase string) (*auth.ValidateResult, string, bool) {

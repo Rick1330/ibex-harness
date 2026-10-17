@@ -1,7 +1,7 @@
 // Package apierror defines canonical IBEX HTTP and gRPC error codes.
 package apierror
 
-// Code is a canonical IBEX error code string (UPPER_SNAKE_CASE, stable across API versions).
+// Code is a canonical IBEX error code string, stable across API versions.
 type Code string
 
 // Client error codes (4xx).
@@ -28,6 +28,10 @@ const (
 	CodeUnsupportedMediaType Code = "UNSUPPORTED_MEDIA_TYPE"
 	// CodeValidationError tells clients one or more fields failed semantic validation (see field_errors).
 	CodeValidationError Code = "VALIDATION_ERROR"
+	// CodeCapabilityUnsupported tells clients the provider/model explicitly cannot perform the requested operation.
+	CodeCapabilityUnsupported Code = "CAPABILITY_UNSUPPORTED"
+	// CodeCapabilityUnknown tells clients capability evidence is missing, stale, or unverified.
+	CodeCapabilityUnknown Code = "CAPABILITY_UNKNOWN"
 	// CodeInvalidCredential tells clients a provider API key failed upstream validation.
 	CodeInvalidCredential Code = "INVALID_CREDENTIAL"
 	// CodeMethodNotAllowed tells clients to use the HTTP method documented for the route.
@@ -64,6 +68,16 @@ const (
 	CodeLegalHoldActive Code = "LEGAL_HOLD_ACTIVE"
 	// CodeCapturePolicyConflict tells clients the org/agent capture policy row already exists.
 	CodeCapturePolicyConflict Code = "CAPTURE_POLICY_CONFLICT"
+	// CodeSnapshotExpired tells clients the policy snapshot is outside its freshness window.
+	CodeSnapshotExpired Code = "SNAPSHOT_EXPIRED"
+	// CodeSnapshotSignatureInvalid tells clients the policy snapshot failed signature or structural verification.
+	CodeSnapshotSignatureInvalid Code = "SNAPSHOT_SIGNATURE_INVALID"
+	// CodeSnapshotOrgMismatch tells clients the policy snapshot is bound to a different organization.
+	CodeSnapshotOrgMismatch Code = "SNAPSHOT_ORG_MISMATCH"
+	// CodeSnapshotAgentMismatch tells clients the policy snapshot is bound to a different agent.
+	CodeSnapshotAgentMismatch Code = "SNAPSHOT_AGENT_MISMATCH"
+	// CodeSnapshotKeyUnknown tells clients the policy snapshot names an unknown signing key.
+	CodeSnapshotKeyUnknown Code = "SNAPSHOT_KEY_UNKNOWN"
 )
 
 // Server / dependency error codes (5xx).
@@ -72,10 +86,14 @@ const (
 	CodeInternalError Code = "INTERNAL_ERROR"
 	// CodeServiceDegraded tells clients an internal dependency failed unexpectedly (HTTP 5xx).
 	CodeServiceDegraded Code = "SERVICE_DEGRADED"
+	// CodeEvidenceUnavailable tells clients the required evidence outcome could not be certified.
+	CodeEvidenceUnavailable Code = "EVIDENCE_UNAVAILABLE"
 	// CodeAuthUnavailable tells clients the auth service is unreachable; retry later.
 	CodeAuthUnavailable Code = "AUTH_UNAVAILABLE"
 	// CodeProviderUnavailable tells clients the upstream LLM provider is unreachable or errored.
 	CodeProviderUnavailable Code = "PROVIDER_UNAVAILABLE"
 	// CodeProviderTimeout tells clients the upstream LLM provider exceeded its deadline.
 	CodeProviderTimeout Code = "PROVIDER_TIMEOUT"
+	// CodeSnapshotUnavailable tells clients the policy snapshot could not be issued or verified; retry later.
+	CodeSnapshotUnavailable Code = "SNAPSHOT_UNAVAILABLE"
 )

@@ -14,6 +14,7 @@ from app.extraction.batch import (
     select_unprocessed_turns,
 )
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_BATCH
+from app.extraction.provider import ExtractionLifecycleConflict
 from app.extraction.schema import ExtractedMemory
 from app.extraction.session_store import SessionSnapshot
 from tests.unit.extraction_fakes import (
@@ -216,3 +217,42 @@ def test_extracted_memory_confidence_is_forwarded() -> None:
         }
     )
     assert mem.confidence == 0.4
+
+
+def test_writer_receives_original_session_revision_when_lifecycle_changes_during_provider_call() -> None:
+    store = completed_store()
+    assert store.snapshot is not None
+    store.snapshot = SessionSnapshot(
+        last_extracted_turn=-1, status="completed", deleted_at=None, lifecycle_revision=7
+    )
+
+    class _RaceProvider(FakeProvider):
+        def extract(self, system_prompt: str, user_content: str):
+            store.snapshot = SessionSnapshot(
+                last_extracted_turn=-1,
+                status="abandoned",
+                deleted_at=datetime.now(tz=UTC),
+                lifecycle_revision=8,
+            )
+            return super().extract(system_prompt, user_content)
+
+    class _FencedWriter(RecordingWriter):
+        def write(self, request):
+            self.requests.append(request)
+            if store.snapshot is not None and request.expected_session_revision != store.snapshot.lifecycle_revision:
+                raise ExtractionLifecycleConflict("stale session lifecycle revision")
+            self.writes.append((request.turn_index, request.memory.content))
+
+    writer = _FencedWriter()
+    job = make_job(
+        JobParts(
+            provider=_RaceProvider(),
+            writer=writer,
+            session_store=store,
+            turns=sample_turns(1),
+        )
+    )
+    with pytest.raises(ExtractionLifecycleConflict, match="stale"):
+        run_batch_extraction(job)
+    assert len(writer.requests) == 1
+    assert writer.requests[0].expected_session_revision == 7

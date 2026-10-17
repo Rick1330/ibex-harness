@@ -50,6 +50,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `chdsn/` | ClickHouse DSN flattening helpers |
 | `circuitbreaker/` | Shared provider breaker (consecutive default + opt-in rolling window; [ADR-0076](../web/content/docs/adr/0076-circuit-breaker-per-provider.mdx)); optional wrap for context Assemble deferred |
 | `contextclient/` | Fail-open Go gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../web/content/docs/adr/0071-context-grpc-degradation-deadline.mdx)): `Assemble` never returns a Go `error` (`Fallback` flag); default **45ms** `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`; dial/wire in proxy bootstrap |
+| `policysnapshot/` | Signed `policy-snapshot.v1` envelope contract (GAP-002 / owner decision record §2.1-2.2): JCS claims, RS256 issuer/verifier, key rotation/epoch, 30s mutation / 60s read freshness, 5s skew; AuthService authority. Package docs: [`policysnapshot/README.md`](policysnapshot/README.md) |
 | `evidenceoutbox/` | 4.P.2 evidence-scoped transactional outbox + durable evidence writers (runs/spans/metrics/scores/directive/tool/session_events); relay with crash/replay; does **not** absorb model-policy or org-deletion publication |
 
 ---
@@ -61,7 +62,7 @@ Every current package directory has a package-level README with ownership, contr
 | Package family | Directories |
 | --- | --- |
 | Python support | `apierror_py`, `authclient`, `ibex_async_db` |
-| API/domain contracts | `apierror`, `billing`, `modelpolicy`, `objectstore`, `usagequery` |
+| API/domain contracts | `apierror`, `billing`, `modelpolicy`, `policysnapshot`, `objectstore`, `usagequery` |
 | Privacy and security | `privacyaudit`, `ssrf`, `crypto`, `permissions`, `authcache`, `revocation` |
 | Runtime infrastructure | `config`, `healthcheck`, `logger`, `metrics`, `telemetry`, `shutdown`, `reqid`, `redissub` |
 | Provider/context pipeline | `provider`, `embedder`, `tokenizer`, `contextclient`, `responsepipeline`, `circuitbreaker`, `directive`, `injection` |

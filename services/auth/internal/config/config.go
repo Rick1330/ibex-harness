@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/crypto"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -42,6 +43,9 @@ type Config struct {
 	JWTRefreshTTL          time.Duration
 	JWTStepUpTTL           time.Duration
 	AuthServiceToken       string
+	PolicySigningKeyPEM    string
+	PolicySigningKeyID     string
+	PolicyEpoch            int64
 	Argon2                 token.Argon2Params
 	ShutdownTimeout        time.Duration
 	Telemetry              telemetry.Config
@@ -61,6 +65,7 @@ func (c Config) Validate() error {
 		func() error { return validateCredentialsMasterKey(c) },
 		func() error { return validateTOTPSessionConfig(c) },
 		func() error { return validateAuthServiceToken(c) },
+		func() error { return validatePolicySigningConfig(c) },
 		func() error { return validateValidateTokenRPM(c.ValidateTokenRPM) },
 		func() error { return shutdown.ValidateTimeout(c.ShutdownTimeout) },
 	}
@@ -80,6 +85,39 @@ func validateAuthServiceToken(c Config) error {
 		return fmt.Errorf("IBEX_AUTH_SERVICE_TOKEN is required when operator sessions are enabled outside development")
 	}
 	return nil
+}
+
+// validatePolicySigningConfig requires and validates the AuthService
+// policy-signing key outside development (GAP-002, decision record 21 §2.1).
+func validatePolicySigningConfig(c Config) error {
+	if strings.TrimSpace(c.PolicySigningKeyPEM) == "" {
+		if c.Environment == "development" {
+			return nil
+		}
+		return fmt.Errorf("IBEX_AUTH_POLICY_SIGNING_KEY_PEM is required outside development")
+	}
+	if _, err := policysnapshot.NewIssuer(c.PolicyIssuerConfig()); err != nil {
+		return fmt.Errorf("IBEX_AUTH_POLICY_SIGNING_KEY_PEM: %w", err)
+	}
+	return nil
+}
+
+// PolicyIssuerConfig normalizes policy-signing settings for Issuer
+// construction: an unset key id defaults to v1 and an unset epoch to 1.
+func (c Config) PolicyIssuerConfig() policysnapshot.IssuerConfig {
+	keyID := strings.TrimSpace(c.PolicySigningKeyID)
+	if keyID == "" {
+		keyID = "v1"
+	}
+	epoch := c.PolicyEpoch
+	if epoch == 0 {
+		epoch = 1
+	}
+	return policysnapshot.IssuerConfig{
+		PrivateKeyPEM: strings.TrimSpace(c.PolicySigningKeyPEM),
+		KeyID:         keyID,
+		Epoch:         epoch,
+	}
 }
 
 func requiresAuthServiceToken(c Config) bool {

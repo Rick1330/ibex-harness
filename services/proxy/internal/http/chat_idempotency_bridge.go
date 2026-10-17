@@ -15,6 +15,7 @@ type capturingWriter = chat.CapturingWriter
 func (h chatCompletionHandler) idemp() chat.Idempotency {
 	return chat.Idempotency{
 		Store:         h.idempotencyStore,
+		Ledger:        h.terminationLedger,
 		Metrics:       h.metrics,
 		Log:           h.log,
 		DocsBase:      h.docsBase,

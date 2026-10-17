@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package ibex.context.v1;
 
+import "ibex/auth/v1/principal_context.proto";
+
 option go_package = "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1;contextv1";
 
 service ContextAssemblyService {
@@ -32,6 +34,8 @@ message AssembleContextRequest {
   string request_id = 10;
   string trace_id = 11;
   string span_id = 12;
+  // Additive verified identity binding; authorization remains at the proxy.
+  ibex.auth.v1.PrincipalContext principal_context = 13;
 }
 
 message AssemblyOptions {

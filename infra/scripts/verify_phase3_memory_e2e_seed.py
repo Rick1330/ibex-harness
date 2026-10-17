@@ -18,16 +18,19 @@ _MEMORY_DIR = _ROOT / "services" / "memory"
 if str(_MEMORY_DIR) not in sys.path:
     sys.path.insert(0, str(_MEMORY_DIR))
 
-from sqlalchemy import text  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker  # noqa: E402
-
-from app.config import Settings  # noqa: E402
-from app.dedup.hash import content_hash_sha256  # noqa: E402
-from app.db import create_engine, create_session_factory  # noqa: E402
-from app.vectorstore.base import UpsertRequest  # noqa: E402
-from app.vectorstore.pgvector_store import PgVectorStore  # noqa: E402
-from tests.integration.conftest import TimedMemorySeed, insert_timed_memory, with_service_org  # noqa: E402
-from tests.integration.find_similar_support import (  # noqa: E402
+from app.config import Settings
+from app.db import create_engine, create_session_factory
+from app.dedup.hash import content_hash_sha256
+from app.vectorstore.base import UpsertRequest
+from app.vectorstore.pgvector_store import PgVectorStore
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from tests.integration.conftest import (
+    TimedMemorySeed,
+    insert_timed_memory,
+    with_service_org,
+)
+from tests.integration.find_similar_support import (
     InsertActiveMemoryParams,
     InsertScoredMemoryParams,
     SeedCompositeRankingParams,
@@ -95,12 +98,23 @@ async def cmd_supersede_seed(org_id: UUID, agent_id: UUID, old_content: str) -> 
         ),
     )
     embedding = (await _fetch_embeddings([old_content]))[0]
+    async with factory() as session, session.begin():
+        await with_service_org(session, org_id)
+        row = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT lifecycle_revision FROM ibex_core.memories "
+                "WHERE id = :memory_id AND org_id = :org_id"
+            ),
+            {"memory_id": str(old_id), "org_id": str(org_id)},
+        )
+        lifecycle_revision = row.scalar_one()
     await store.upsert(
         UpsertRequest(
             memory_id=old_id,
             org_id=org_id,
             embedding=embedding,
             embedding_model="BAAI/bge-m3",
+            expected_revision=lifecycle_revision,
         )
     )
     print(json.dumps({"old_id": str(old_id), "valid_until": june.isoformat()}))
@@ -242,10 +256,9 @@ async def cmd_hot_cache_read_check(
     expect_absent: bool,
 ) -> None:
     """Exercise MemoryHotCacheReader hydrate path (no dedicated HTTP route today)."""
-    from redis.asyncio import Redis
-
     from app.read.hot_cache import MemoryHotCacheReader
     from app.read.models import HotMemoryQuery
+    from redis.asyncio import Redis
 
     factory, _ = _session_stack()
     redis = Redis.from_url(_redis_url())
@@ -287,8 +300,12 @@ async def cmd_ranking_seed(org_id: UUID, agent_id: UUID) -> None:
         ),
     )
     hotspot = SeedCompositeRankingParams().hotspot
-    await upsert_embedding(store, org_id=org_id, memory_id=factual_id, hotspot=hotspot)
-    await upsert_embedding(store, org_id=org_id, memory_id=episodic_id, hotspot=hotspot)
+    await upsert_embedding(
+        store, factory, org_id=org_id, memory_id=factual_id, hotspot=hotspot
+    )
+    await upsert_embedding(
+        store, factory, org_id=org_id, memory_id=episodic_id, hotspot=hotspot
+    )
     print(
         json.dumps(
             {

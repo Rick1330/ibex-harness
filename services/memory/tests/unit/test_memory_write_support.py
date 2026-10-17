@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 
-from app.exceptions import DuplicateMemoryError, ValidationError
+from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
 from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyRecord, IdempotencyState
 from app.routers.memory_write_support import (
     begin_idempotency,
@@ -72,6 +72,12 @@ def test_http_error_for_write_maps_duplicate() -> None:
 def test_http_error_for_write_maps_validation() -> None:
     exc = http_error_for_write(ValidationError("bad", field="content"))
     assert exc.status_code == 400
+
+
+def test_http_error_for_write_maps_stale_lifecycle() -> None:
+    exc = http_error_for_write(StaleLifecycleError("stale"))
+    assert exc.status_code == 409
+    assert exc.detail["code"] == "STALE_LIFECYCLE_REVISION"
 
 
 @pytest.mark.asyncio

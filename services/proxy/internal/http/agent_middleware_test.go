@@ -182,3 +182,69 @@ func TestUnit_AgentVerification_InvalidAuthorization(t *testing.T) {
 		t.Fatalf("raw parse detail leaked: %s", body)
 	}
 }
+
+func TestUnit_AgentVerification_PrincipalContextRejectsInvalidVerifierRecords(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		record *auth.AgentRecord
+	}{
+		{name: "cross organization", record: &auth.AgentRecord{ID: uuid.MustParse(agentTestAgentID()), OrgID: uuid.New(), Status: "active"}},
+		{name: "missing agent id", record: &auth.AgentRecord{ID: uuid.Nil, OrgID: agentTestOrgUUID, Status: "active"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &mockAgentVerifier{rec: tc.record}
+			rec := runAgentVerificationCase(t, agentVerifyCase{
+				verifier: recorder, agentID: agentTestAgentID(), withAuth: true,
+				authorization: "Bearer ibex_pat_test", authAgentID: uuid.Nil,
+			})
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), string(apierror.CodeAuthUnavailable)) {
+				t.Fatalf("body missing auth-unavailable code: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestUnit_BuildPrincipalContextMapsAndRejectsInvalidBindings(t *testing.T) {
+	t.Parallel()
+	h := &agentVerifyHandler{logger: logger.Discard("proxy")}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	org := agentTestOrgUUID
+	agent := uuid.MustParse(agentTestAgentID())
+	cases := []struct {
+		name       string
+		record     *auth.AgentRecord
+		result     *auth.ValidateResult
+		wantStatus int
+		wantCode   apierror.Code
+		wantOK     bool
+	}{
+		{name: "valid", record: &auth.AgentRecord{ID: agent, OrgID: org}, result: &auth.ValidateResult{OrgID: org}, wantStatus: http.StatusOK, wantOK: true},
+		{name: "agent mismatch", record: &auth.AgentRecord{ID: agent, OrgID: org}, result: &auth.ValidateResult{OrgID: org, AgentID: uuid.New()}, wantStatus: http.StatusForbidden, wantCode: apierror.CodeAgentNotAuthorized},
+		{name: "unavailable", record: &auth.AgentRecord{ID: uuid.Nil, OrgID: org}, result: &auth.ValidateResult{OrgID: org}, wantStatus: http.StatusServiceUnavailable, wantCode: apierror.CodeAuthUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			got, ok := h.buildPrincipalContext(w, req, principalContextBuildInput{
+				authRes: tc.result, record: tc.record, agentHeader: agent.String(), requestID: "req-1",
+			})
+			if ok != tc.wantOK {
+				t.Fatalf("ok=%v principal=%v want ok=%v", ok, got, tc.wantOK)
+			}
+			if ok && got == nil {
+				t.Fatal("successful principal construction returned nil principal")
+			}
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d want %d body=%s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantCode != "" && !strings.Contains(w.Body.String(), string(tc.wantCode)) {
+				t.Fatalf("body missing %s: %s", tc.wantCode, w.Body.String())
+			}
+		})
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
@@ -60,9 +61,10 @@ type optionalBufArgs struct {
 }
 
 type terminateReqParams struct {
-	org, agent uuid.UUID
-	externalID string
-	body       string
+	org, agent     uuid.UUID
+	externalID     string
+	body           string
+	idempotencyKey string
 }
 
 func optionalTerminateBuffer(t *testing.T, a optionalBufArgs) *extractionbuffer.Buffer {
@@ -120,6 +122,9 @@ func terminateAuthedRequest(t *testing.T, p terminateReqParams) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+p.externalID+"/terminate", bytes.NewBufferString(p.body))
 	req.SetPathValue("session_id", p.externalID)
 	req.Header.Set("Content-Type", "application/json")
+	if p.idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", p.idempotencyKey)
+	}
 	ctx := auth.WithContext(req.Context(), &auth.ValidateResult{
 		OrgID: p.org, Permissions: int64(permissions.SessionTerminate | permissions.Admin),
 	})
@@ -158,6 +163,7 @@ type terminateHandlerArgs struct {
 	buf    *extractionbuffer.Buffer
 	srvURL string
 	metric string
+	ledger idempotency.Ledger
 }
 
 func newTerminateHandler(t *testing.T, a terminateHandlerArgs) sessionTerminateHandler {
@@ -166,6 +172,7 @@ func newTerminateHandler(t *testing.T, a terminateHandlerArgs) sessionTerminateH
 		store: a.store, buffer: a.buf,
 		enqueue: extractionenqueue.New(extractionenqueue.Config{BaseURL: a.srvURL, Token: "tok"}),
 		log:     logger.Discard("t"), metrics: metrics.NewProxy(a.metric),
+		ledger:        a.ledger,
 		enqueueFlight: newTerminateEnqueueFlight(),
 	}
 }

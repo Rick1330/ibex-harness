@@ -39,8 +39,8 @@ async def test_find_similar_cross_org_isolation(
     org_b, _agent_b, mem_b = await seed_org_agent_memory(
         session_factory, content="org b prefers concise technical summaries"
     )
-    query_vec = await upsert_embedding(store, org_id=org_a, memory_id=mem_a, hotspot=1)
-    await upsert_embedding(store, org_id=org_b, memory_id=mem_b, hotspot=1)
+    query_vec = await upsert_embedding(store, session_factory, org_id=org_a, memory_id=mem_a, hotspot=1)
+    await upsert_embedding(store, session_factory, org_id=org_b, memory_id=mem_b, hotspot=1)
 
     repo = build_read_repository(session_factory, store, settings)
     results = await repo.find_similar(
@@ -111,8 +111,8 @@ async def test_find_similar_cross_agent_isolation(
             },
         )
 
-    query_vec = await upsert_embedding(store, org_id=org_id, memory_id=mem_a, hotspot=2)
-    await upsert_embedding(store, org_id=org_id, memory_id=mem_b, hotspot=2)
+    query_vec = await upsert_embedding(store, session_factory, org_id=org_id, memory_id=mem_a, hotspot=2)
+    await upsert_embedding(store, session_factory, org_id=org_id, memory_id=mem_b, hotspot=2)
 
     repo = build_read_repository(session_factory, store, settings)
     results = await repo.find_similar(
@@ -169,8 +169,8 @@ async def test_find_similar_excludes_quarantined_and_deleted(
             ),
             {"id": str(deleted_id)},
         )
-    query_vec = await upsert_embedding(store, org_id=org_id, memory_id=active_id, hotspot=4)
-    await upsert_embedding(store, org_id=org_id, memory_id=quarantined_id, hotspot=4)
+    query_vec = await upsert_embedding(store, session_factory, org_id=org_id, memory_id=active_id, hotspot=4)
+    await upsert_embedding(store, session_factory, org_id=org_id, memory_id=quarantined_id, hotspot=4)
 
     repo = build_read_repository(session_factory, store, settings)
     results = await repo.find_similar(
@@ -203,7 +203,7 @@ async def test_find_similar_sparse_agent_triggers_fallback(
             content="lexical preference dark mode interface only",
         ),
     )
-    query_vec = await upsert_embedding(store, org_id=org_id, memory_id=mem_id, hotspot=5)
+    query_vec = await upsert_embedding(store, session_factory, org_id=org_id, memory_id=mem_id, hotspot=5)
 
     repo = build_read_repository(session_factory, store, settings)
     results = await repo.find_similar(
@@ -310,7 +310,7 @@ async def test_find_similar_punctuation_query_degrades_gracefully(
     org_id, agent_id, mem_id = await seed_org_agent_memory(
         session_factory, content="preference content"
     )
-    query_vec = await upsert_embedding(store, org_id=org_id, memory_id=mem_id, hotspot=6)
+    query_vec = await upsert_embedding(store, session_factory, org_id=org_id, memory_id=mem_id, hotspot=6)
 
     repo = build_read_repository(session_factory, store, settings)
     results = await repo.find_similar(
@@ -336,7 +336,7 @@ async def test_http_post_search(
     org_id, agent_id, mem_id = await seed_org_agent_memory(
         session_factory, content="http search dark mode preference"
     )
-    await upsert_embedding(store, org_id=org_id, memory_id=mem_id, hotspot=3)
+    await upsert_embedding(store, session_factory, org_id=org_id, memory_id=mem_id, hotspot=3)
 
     async with search_http_client(
         session_factory, settings, store, org_id=org_id

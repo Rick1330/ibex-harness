@@ -94,13 +94,19 @@ type AnthropicConfig struct {
 }
 
 type Config struct {
-	Environment            string
-	ServiceName            string
-	LogLevel               slog.Level
-	Port                   string
-	RedisURL               string
-	AuthGRPCAddr           string
-	AuthValidateTimeout    time.Duration
+	Environment         string
+	ServiceName         string
+	LogLevel            slog.Level
+	Port                string
+	RedisURL            string
+	AuthGRPCAddr        string
+	AuthValidateTimeout time.Duration
+	// PolicyPublicKeysJSON maps key ids to PEM-encoded AuthService policy-signing
+	// public keys (IBEX_PROXY_POLICY_PUBLIC_KEYS, JSON object). Empty disables
+	// the GAP-002 policy snapshot stage.
+	PolicyPublicKeysJSON string
+	// PolicyMinEpoch is the minimum accepted signing-key epoch (0 accepts any).
+	PolicyMinEpoch         int64
 	ContextGRPCTarget      string
 	ContextAssembleTimeout time.Duration
 	// ContextEnabled gates Assemble on the chat hot path (3.5.D.2). Default false:

@@ -14,6 +14,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 | gRPC `CreateProviderCredential` / `GetProviderCredential` / `DeleteProviderCredential` / `ListProviderCredentials` | Organization-scoped BYO-provider credential lifecycle; secrets are sealed at rest and responses expose metadata, not plaintext |
 | Operator session/TOTP methods | Session issuance/refresh/logout and TOTP primitives owned by AuthService; API/Console integration remains a separate readiness gate |
+| gRPC `IssuePolicySnapshot` | Mints an RS256 `policy-snapshot.v1` envelope binding caller org/subject, selected agent, permissions, epoch, and issue/expiry times (GAP-002); fails closed with `FailedPrecondition` when `IBEX_AUTH_POLICY_SIGNING_KEY_PEM` is unset |
 
 ## Configuration
 
@@ -24,6 +25,9 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | `POSTGRES_DSN` | Yes | — |
 | `REDIS_URL` | No | empty (disables revoke pub/sub + ValidateToken RPM) |
 | `IBEX_AUTH_VALIDATE_RPM` | No | `6000` (per proxy-host aggregate) |
+| `IBEX_AUTH_POLICY_SIGNING_KEY_PEM` | Outside development | empty (issuance fails closed) |
+| `IBEX_AUTH_POLICY_SIGNING_KEY_ID` | No | `v1` |
+| `IBEX_AUTH_POLICY_EPOCH` | No | `1` |
 | `IBEX_PORT` | No | `8081` |
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |

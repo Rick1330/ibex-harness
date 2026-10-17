@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
@@ -17,12 +19,14 @@ const (
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
+	ctxKeyPrincipalContext
 	ctxKeyResolvedDirective
 	ctxKeyResolvedSession
 	ctxKeyAuthLatencyMs
 	ctxKeyDirectiveLatencyMs
 	ctxKeyContextAssembleMeta
 	ctxKeyProviderDurationMs
+	ctxKeyPolicySnapshot
 )
 
 // WithRequestID stores the request ID on the context.
@@ -86,6 +90,31 @@ func WithAgent(ctx context.Context, rec auth.AgentRecord) context.Context {
 func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
 	rec, ok := ctx.Value(ctxKeyAgent).(auth.AgentRecord)
 	return rec, ok
+}
+
+// WithPrincipalContext stores the additive verified identity binding.
+func WithPrincipalContext(ctx context.Context, principal *authv1.PrincipalContext) context.Context {
+	return context.WithValue(ctx, ctxKeyPrincipalContext, principal)
+}
+
+// PrincipalContextFromContext returns the verified identity binding when present.
+func PrincipalContextFromContext(ctx context.Context) (*authv1.PrincipalContext, bool) {
+	principal, ok := ctx.Value(ctxKeyPrincipalContext).(*authv1.PrincipalContext)
+	return principal, ok && principal != nil
+}
+
+// WithPolicySnapshotClaims stores the verified policy snapshot claims on the
+// request context. Present only after PolicySnapshotMiddleware verified the
+// envelope for this request.
+func WithPolicySnapshotClaims(ctx context.Context, claims policysnapshot.Claims) context.Context {
+	return context.WithValue(ctx, ctxKeyPolicySnapshot, claims)
+}
+
+// PolicySnapshotClaimsFromContext returns the verified snapshot claims when
+// PolicySnapshotMiddleware ran and verification succeeded.
+func PolicySnapshotClaimsFromContext(ctx context.Context) (policysnapshot.Claims, bool) {
+	claims, ok := ctx.Value(ctxKeyPolicySnapshot).(policysnapshot.Claims)
+	return claims, ok
 }
 
 // WithResolvedDirective stores a successfully resolved directive on the request

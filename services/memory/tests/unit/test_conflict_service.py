@@ -63,6 +63,7 @@ def _pair(inc: _Snippet, cand: _Snippet) -> tuple[IncomingMemory, CandidateMemor
             memory_id=cand.memory_id or uuid4(),
             content=cand.content,
             interval=_interval(cand),
+            lifecycle_revision=1,
         ),
     )
 

@@ -11,6 +11,7 @@ Track B–C skeleton.
 | Method | Path | Contract |
 | --- | --- | --- |
 | POST | `/v1/memories` | Idempotent write pipeline; PII/quarantine, dedup, conflict, labels, persistence, and after-commit cache/index effects |
+| POST | `/v1/memories/{memory_id}/forget` | Provisional GAP-007 revision-fenced tombstone; requires the caller's expected revision; not an accepted public lifecycle contract |
 | POST | `/v1/memories/search` | Tenant/agent-scoped semantic search with HNSW and optional full-text fallback |
 | GET | `/v1/memories/hot` | Tenant/agent hot-cache reads for context assembly |
 | POST | `/v1/memories/{memory_id}/feedback` | Positive/negative/neutral feedback with scope validation |

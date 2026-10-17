@@ -43,15 +43,17 @@ type validateForOrger interface {
 // NewServer rejects nil interfaces and typed-nil service pointers.
 // CredService is optional; when nil, provider-credential RPCs return FailedPrecondition.
 // TotpService / SessionIssuer are optional; when nil, related RPCs return FailedPrecondition.
+// PolicySnapshotIssuer is optional; when nil, IssuePolicySnapshot returns FailedPrecondition.
 type ServerDeps struct {
-	Validator     tokenValidator
-	TokenService  tokenAPI
-	AgentService  validateForOrger
-	CredService   providerCredentialAPI
-	TotpService   totpPort
-	SessionIssuer sessionIssuerPort
-	Metrics       *metrics.AuthRegistry
-	Log           *logger.Logger
+	Validator            tokenValidator
+	TokenService         tokenAPI
+	AgentService         validateForOrger
+	CredService          providerCredentialAPI
+	TotpService          totpPort
+	SessionIssuer        sessionIssuerPort
+	PolicySnapshotIssuer policySnapshotIssuer
+	Metrics              *metrics.AuthRegistry
+	Log                  *logger.Logger
 }
 
 // Server implements ibex.auth.v1.AuthService.
@@ -64,6 +66,7 @@ type Server struct {
 	credService   providerCredentialAPI
 	totpService   totpPort
 	sessionIssuer sessionIssuerPort
+	policyIssuer  policySnapshotIssuer
 	log           *logger.Logger
 }
 
@@ -96,6 +99,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		credService:   deps.CredService,
 		totpService:   deps.TotpService,
 		sessionIssuer: deps.SessionIssuer,
+		policyIssuer:  deps.PolicySnapshotIssuer,
 		log:           deps.Log,
 	}, nil
 }

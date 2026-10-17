@@ -28,6 +28,7 @@ class SearchMemoryHit(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+    lifecycle_revision: int = 1
 
 
 class SearchResultItem(BaseModel):

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -345,6 +346,24 @@ func TestUnit_InitAuthServices_EmptyRedisURL(t *testing.T) {
 	assertAuthServiceDeps(t, deps)
 	if deps.redisClient != nil {
 		t.Fatal("expected nil redis when REDIS_URL empty")
+	}
+}
+
+func TestUnit_InitAuthServices_InvalidPolicySigningKey(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+
+	_, err := initAuthServices(config.Config{
+		RedisURL:            "",
+		ValidateTokenRPM:    6000,
+		Argon2:              token.TestArgon2Params(),
+		PolicySigningKeyPEM: "not-a-pem",
+	}, db, logger.Discard("auth"), reg)
+
+	if err == nil || !strings.Contains(err.Error(), "policy snapshot issuer") {
+		t.Fatalf("err = %v, want policy snapshot issuer failure", err)
 	}
 }
 

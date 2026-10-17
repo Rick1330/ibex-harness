@@ -57,7 +57,7 @@ async def test_memory_iso_3_1_tier1_pii_bypass_blocked_on_search(
         ),
     )
     query_vec = await upsert_embedding(
-        security_env.store,
+        security_env.store, session_factory,
         org_id=org_a.org_id,
         memory_id=bypass_id,
         hotspot=7,
@@ -93,7 +93,7 @@ async def test_memory_iso_3_1_placeholder_content_not_blocked(
         ),
     )
     query_vec = await upsert_embedding(
-        security_env.store,
+        security_env.store, session_factory,
         org_id=org_a.org_id,
         memory_id=safe_id,
         hotspot=8,
@@ -122,7 +122,7 @@ async def test_memory_iso_3_2_quarantined_never_in_search(
         ),
     )
     query_vec = await upsert_embedding(
-        security_env.store,
+        security_env.store, session_factory,
         org_id=org_a.org_id,
         memory_id=quarantined_id,
         hotspot=7,

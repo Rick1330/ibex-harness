@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -27,7 +28,10 @@ const (
 	idempotencyHeader    = "Idempotency-Key"
 	maxIdempotencyKeyLen = 256
 	msgInternalError     = "Internal error"
+	msgLedgerUnavailable = "Idempotency ledger unavailable"
 )
+
+var marshalFingerprintJSON = json.Marshal
 
 // Claim holds ownership or replay state for an Idempotency-Key.
 // Replay=true means the caller must short-circuit and return Hit; otherwise
@@ -39,6 +43,7 @@ type Claim struct {
 	RequestID string
 	Hit       idempotency.Record
 	Replay    bool
+	Ledger    *idempotency.ClaimToken
 }
 
 // Idempotency wires Redis claim/commit/release for chat completions.
@@ -46,6 +51,7 @@ type Claim struct {
 // is preferred over strict dedupe when the store is unreachable.
 type Idempotency struct {
 	Store         idempotency.Store
+	Ledger        idempotency.Ledger
 	Metrics       *metrics.ProxyRegistry
 	Log           *logger.Logger
 	DocsBase      string
@@ -70,17 +76,24 @@ func ParseKey(h http.Header) (key string, present bool, fieldErr *apierror.Field
 
 // FingerprintRequest hashes the chat fields that must match on replay.
 func FingerprintRequest(parsed *llm.ChatCompletionRequest) (idempotency.Fingerprint, error) {
+	return fingerprintRequest(parsed, "", false)
+}
+
+func fingerprintRequest(parsed *llm.ChatCompletionRequest, operation string, skipMemory bool) (idempotency.Fingerprint, error) {
 	payload := struct {
+		Operation   string        `json:"operation,omitempty"`
 		Model       string        `json:"model"`
 		Messages    []llm.Message `json:"messages"`
 		Stream      bool          `json:"stream"`
 		Temperature *float64      `json:"temperature"`
 		MaxTokens   *int          `json:"max_tokens"`
+		SkipMemory  bool          `json:"skip_memory,omitempty"`
 	}{
-		Model: parsed.Model, Messages: parsed.Messages, Stream: parsed.Stream,
-		Temperature: parsed.Temperature, MaxTokens: parsed.MaxTokens,
+		Operation: operation,
+		Model:     parsed.Model, Messages: parsed.Messages, Stream: parsed.Stream,
+		Temperature: parsed.Temperature, MaxTokens: parsed.MaxTokens, SkipMemory: skipMemory,
 	}
-	raw, err := json.Marshal(payload)
+	raw, err := marshalFingerprintJSON(payload)
 	if err != nil {
 		return "", err
 	}
@@ -93,35 +106,40 @@ func (id Idempotency) Resolve(
 	w http.ResponseWriter,
 	r *http.Request,
 	parsed *llm.ChatCompletionRequest,
-) (claim *Claim, cont bool) {
+) (*Claim, bool) {
 	key, present, fieldErr := ParseKey(r.Header)
 	if !present {
-		id.Metrics.IncIdempotency(metrics.IdempotencySkipped)
-		return nil, true
+		return id.resolveMissingKey(w, r, parsed)
 	}
 	if fieldErr != nil {
-		writeValidation(validationWrite{
-			w: w, r: r, docsBase: id.DocsBase,
-			fields: []apierror.FieldError{*fieldErr},
-		})
+		writeValidation(validationWrite{w: w, r: r, docsBase: id.DocsBase, fields: []apierror.FieldError{*fieldErr}})
 		return nil, false
 	}
 	if parsed.Stream {
-		writeValidation(validationWrite{
-			w: w, r: r, docsBase: id.DocsBase,
-			fields: []apierror.FieldError{{
-				Field: "stream", Code: "UNSUPPORTED_WITH_IDEMPOTENCY",
-				Message: "Idempotency-Key requires stream=false",
-			}},
-			detail: "Idempotency-Key is not supported for streaming requests",
-		})
+		writeValidation(validationWrite{w: w, r: r, docsBase: id.DocsBase,
+			fields: []apierror.FieldError{{Field: "stream", Code: "UNSUPPORTED_WITH_IDEMPOTENCY", Message: "Idempotency-Key requires stream=false"}},
+			detail: "Idempotency-Key is not supported for streaming requests"})
 		return nil, false
+	}
+	if id.Ledger != nil {
+		return id.claimLedger(w, r, parsed, key)
 	}
 	if id.Store == nil {
 		id.Metrics.IncIdempotency(metrics.IdempotencySkipped)
 		return nil, true
 	}
 	return id.claim(w, r, parsed, key)
+}
+
+func (id Idempotency) resolveMissingKey(w http.ResponseWriter, r *http.Request, parsed *llm.ChatCompletionRequest) (*Claim, bool) {
+	if id.Ledger == nil || parsed.Stream {
+		id.Metrics.IncIdempotency(metrics.IdempotencySkipped)
+		return nil, true
+	}
+	writeValidation(validationWrite{w: w, r: r, docsBase: id.DocsBase,
+		fields: []apierror.FieldError{{Field: "header.Idempotency-Key", Code: "REQUIRED", Message: "Idempotency-Key is required for chat completions"}},
+		detail: "Idempotency-Key is required when the durable idempotency profile is enabled"})
+	return nil, false
 }
 
 type validationWrite struct {
@@ -138,6 +156,68 @@ func writeValidation(p validationWrite) {
 		apierror.WriteOpts{DocsBase: p.docsBase, FieldErrors: p.fields, Detail: p.detail})
 }
 
+func (id Idempotency) claimLedger(w http.ResponseWriter, r *http.Request, parsed *llm.ChatCompletionRequest, key string) (*Claim, bool) {
+	principal, ok := ledgerPrincipal(r)
+	if !ok {
+		id.writeLedgerUnavailable(w, r)
+		return nil, false
+	}
+	fp, err := fingerprintRequest(parsed, "chat", validation.SkipMemoryRequested(r.Header))
+	if err != nil {
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError, msgInternalError, reqID(r.Context()), apierror.WriteOpts{Detail: "idempotency fingerprint failed", DocsBase: id.DocsBase})
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), id.Timeout)
+	defer cancel()
+	out, err := id.Ledger.Claim(ctx, principal, key, string(fp))
+	if err != nil {
+		id.Metrics.IncIdempotency(metrics.IdempotencyRedisError)
+		id.writeLedgerUnavailable(w, r)
+		return nil, false
+	}
+	return id.applyLedgerOutcome(w, r, principal, key, fp, out)
+}
+
+func ledgerPrincipal(r *http.Request) (idempotency.Principal, bool) {
+	orgID, ok := orgIDFromAuth(r)
+	if !ok {
+		return idempotency.Principal{}, false
+	}
+	result, ok := auth.FromContext(r.Context())
+	if !ok || result.AgentID == uuid.Nil {
+		return idempotency.Principal{}, false
+	}
+	return idempotency.Principal{OrgID: orgID, AgentID: result.AgentID}, true
+}
+
+func (id Idempotency) writeLedgerUnavailable(w http.ResponseWriter, r *http.Request) {
+	apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded, msgLedgerUnavailable, reqID(r.Context()), apierror.WriteOpts{DocsBase: id.DocsBase})
+}
+
+func (id Idempotency) applyLedgerOutcome(w http.ResponseWriter, r *http.Request, principal idempotency.Principal, key string, fp idempotency.Fingerprint, out idempotency.ClaimOutcome) (*Claim, bool) {
+	base := &Claim{OrgID: principal.OrgID, Key: key, FP: fp, RequestID: reqID(r.Context())}
+	switch out.Kind {
+	case idempotency.ClaimOwned:
+		id.Metrics.IncIdempotency(metrics.IdempotencyMiss)
+		base.Ledger = &out.Claim
+		return base, true
+	case idempotency.ClaimReplay:
+		id.Metrics.IncIdempotency(metrics.IdempotencyHit)
+		base.Replay = true
+		base.Hit = idempotency.Record{Status: out.Status, Body: out.Response}
+		return base, true
+	case idempotency.ClaimConflict:
+		id.Metrics.IncIdempotency(metrics.IdempotencyConflict)
+		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyKeyReuse, "Idempotency-Key was already used with a different request", reqID(r.Context()), apierror.WriteOpts{DocsBase: id.DocsBase})
+	case idempotency.ClaimInProgress:
+		id.Metrics.IncIdempotency(metrics.IdempotencyInProgress)
+		if out.RetryAfter > 0 {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(out.RetryAfter.Seconds())+1))
+		}
+		apierror.WriteStatus(w, http.StatusConflict, apierror.CodeIdempotencyInProgress, "A request with this Idempotency-Key is still in progress", reqID(r.Context()), apierror.WriteOpts{DocsBase: id.DocsBase})
+	}
+	return nil, false
+}
 func (id Idempotency) claim(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -253,6 +333,10 @@ func ShouldCommit(status int) bool {
 // Finish commits or releases after the provider response.
 // Transient 429/5xx and oversize bodies release so clients can retry the same key.
 func (id Idempotency) Finish(claim *Claim, status int, body []byte) {
+	if id.Ledger != nil {
+		id.finishLedger(claim, status, body)
+		return
+	}
 	if claim == nil || id.Store == nil {
 		return
 	}
@@ -267,6 +351,35 @@ func (id Idempotency) Finish(claim *Claim, status int, body []byte) {
 	id.commit(claim, status, body)
 }
 
+func (id Idempotency) finishLedger(claim *Claim, status int, body []byte) {
+	if claim == nil || claim.Ledger == nil {
+		return
+	}
+	if !ShouldCommit(status) || int64(len(body)) > validation.MaxProviderResponseBytes {
+		id.releaseLedger(claim)
+		return
+	}
+	ctx, cancel := id.redisOpContext(claim)
+	defer cancel()
+	if err := id.Ledger.Finalize(ctx, *claim.Ledger, status, body); err != nil {
+		if id.Log != nil {
+			id.Log.WarnCtx(ctx, "idempotency ledger finalize failed", "org_id", claim.OrgID.String(), "key_len", len(claim.Key), "error", err.Error())
+		}
+		id.Metrics.IncIdempotency(metrics.IdempotencyRedisError)
+	}
+}
+
+func (id Idempotency) releaseLedger(claim *Claim) {
+	ctx, cancel := id.redisOpContext(claim)
+	defer cancel()
+	if err := id.Ledger.Release(ctx, *claim.Ledger); err != nil {
+		if id.Log != nil {
+			id.Log.WarnCtx(ctx, "idempotency ledger release failed", "org_id", claim.OrgID.String(), "key_len", len(claim.Key), "error", err.Error())
+		}
+		id.Metrics.IncIdempotency(metrics.IdempotencyRedisError)
+	}
+}
+
 // FinishCapture commits a captured response, or releases when the capture was
 // capped (nil body is not treated as an empty successful body).
 func (id Idempotency) FinishCapture(claim *Claim, cw *CapturingWriter) {
@@ -274,7 +387,9 @@ func (id Idempotency) FinishCapture(claim *Claim, cw *CapturingWriter) {
 		return
 	}
 	if cw.ExceededLimit() {
-		if claim != nil && id.Store != nil {
+		if claim != nil && id.Ledger != nil && claim.Ledger != nil {
+			id.releaseLedger(claim)
+		} else if claim != nil && id.Store != nil {
 			id.release(claim)
 		}
 		return

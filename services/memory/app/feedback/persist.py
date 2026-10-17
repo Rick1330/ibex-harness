@@ -51,11 +51,13 @@ async def _load_memory(
                     id, org_id, agent_id, content, content_tokens, category, status,
                     confidence, source, pii_detected, pii_redacted, session_id,
                     metadata, retrieval_count, usefulness_score,
-                    valid_from, valid_until, created_at, updated_at
+                    valid_from, valid_until, created_at, updated_at,
+                    lifecycle_revision, tombstoned, expires_at
                 FROM ibex_core.memories
                 WHERE id = :memory_id
                   AND org_id = :org_id
                   AND deleted_at IS NULL
+                  AND tombstoned = FALSE
                 FOR UPDATE
                 """
             ),
@@ -137,11 +139,13 @@ async def _update_usefulness(
                 WHERE id = :memory_id
                   AND org_id = :org_id
                   AND deleted_at IS NULL
+                  AND tombstoned = FALSE
                 RETURNING
                     id, org_id, agent_id, content, content_tokens, category, status,
                     confidence, source, pii_detected, pii_redacted, session_id,
                     metadata, retrieval_count, usefulness_score,
-                    valid_from, valid_until, created_at, updated_at
+                    valid_from, valid_until, created_at, updated_at,
+                    lifecycle_revision, tombstoned, expires_at
                 """
             ),
             {

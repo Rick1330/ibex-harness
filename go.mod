@@ -10,6 +10,7 @@ require (
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/caarlos0/env/v11 v11.4.1
+	github.com/cyberphone/json-canonicalization v0.0.0-20261011152517-32a48195b9b2
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7

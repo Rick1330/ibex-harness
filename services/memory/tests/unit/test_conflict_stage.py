@@ -135,6 +135,7 @@ async def test_conflict_stage_records_supersede_targets() -> None:
                 memory_id=old_id,
                 content="User prefers Python",
                 interval=ValidityInterval(valid_from=_dt(3), valid_until=_dt(6)),
+                lifecycle_revision=1,
             )
         ]
 
@@ -171,6 +172,7 @@ async def test_conflict_stage_missing_valid_from_escalates() -> None:
                 memory_id=cand,
                 content="User prefers Python",
                 interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
+                lifecycle_revision=1,
             )
         ]
 
