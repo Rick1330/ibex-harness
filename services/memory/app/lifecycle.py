@@ -231,15 +231,8 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
         raise StaleLifecycleError("expected memory lifecycle revision must be positive")
     await lock_organization_for_memory_write(session, request.org_id)
 
-    source_session_id = await _memory_source_session_id(session, request)
-    if source_session_id is not None:
-        source_session_id = await _lock_source_session(session, request, source_session_id)
-    row = await _lock_forget_target(session, request)
-    if row is None:
-        raise MemoryNotFoundError()
-    if bool(row["tombstoned"]) or int(row["lifecycle_revision"]) != request.expected_revision:
-        raise StaleLifecycleError("memory lifecycle revision is stale")
-
+    source_session_id = await _resolve_source_session(session, request)
+    await _require_forget_target(session, request)
     new_revision = await _tombstone_memory(session, request)
     if source_session_id is not None:
         await _advance_source_session_revision(session, request, source_session_id)
@@ -253,6 +246,23 @@ async def forget_memory_session(session: AsyncSession, request: ForgetMemory) ->
         ),
     )
     return new_revision
+
+
+async def _resolve_source_session(
+    session: AsyncSession, request: ForgetMemory
+) -> UUID | None:
+    source_session_id = await _memory_source_session_id(session, request)
+    if source_session_id is None:
+        return None
+    return await _lock_source_session(session, request, source_session_id)
+
+
+async def _require_forget_target(session: AsyncSession, request: ForgetMemory) -> None:
+    row = await _lock_forget_target(session, request)
+    if row is None:
+        raise MemoryNotFoundError()
+    if bool(row["tombstoned"]) or int(row["lifecycle_revision"]) != request.expected_revision:
+        raise StaleLifecycleError("memory lifecycle revision is stale")
 
 
 async def _memory_source_session_id(

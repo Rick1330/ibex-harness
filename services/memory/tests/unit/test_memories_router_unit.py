@@ -421,18 +421,17 @@ def test_forget_requires_agent_scoped_token(client) -> None:
 
 
 @pytest.mark.parametrize(
-    ("side_effect", "expected_status", "expected_code"),
+    ("side_effect", "expected"),
     [
-        (MemoryNotFoundError(), 404, "NOT_FOUND"),
-        (StaleLifecycleError("stale"), 409, "STALE_LIFECYCLE_REVISION"),
-        (MemoryOrganizationUnavailableError(), 409, "ORG_UNAVAILABLE"),
+        (MemoryNotFoundError(), (404, "NOT_FOUND")),
+        (StaleLifecycleError("stale"), (409, "STALE_LIFECYCLE_REVISION")),
+        (MemoryOrganizationUnavailableError(), (409, "ORG_UNAVAILABLE")),
     ],
     ids=["not_found", "stale_lifecycle", "org_unavailable"],
 )
-def test_forget_maps_domain_errors(
-    client, monkeypatch, side_effect, expected_status, expected_code
-) -> None:
+def test_forget_maps_domain_errors(client, monkeypatch, side_effect, expected) -> None:
     http, _mock_orch = client
+    expected_status, expected_code = expected
 
     async def _forget(_session, _request):
         raise side_effect

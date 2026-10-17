@@ -65,6 +65,18 @@ async def _read_outbox(
     return [(int(row.revision), row.event_type) for row in events]
 
 
+async def _execute_sql(factory, org_id, statement: str, params: dict) -> None:
+    async with factory() as session, session.begin():
+        await with_service_org(session, org_id)
+        await session.execute(text(statement), params)
+
+
+async def _scalar(factory, org_id, statement: str, params: dict):
+    async with factory() as session, session.begin():
+        await with_service_org(session, org_id)
+        return await session.scalar(text(statement), params)
+
+
 async def _seed_memory_with_embedding(
     factory: async_sessionmaker[AsyncSession],
     settings: Settings,
@@ -172,16 +184,14 @@ async def test_forget_outbox_failure_rolls_back_tombstone(
         session_factory, content="outbox atomic rollback fixture"
     )
     # Force the exact revision's unique key to conflict after the mutation executes.
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text(
-                """INSERT INTO ibex_core.memory_lifecycle_outbox
-                   (org_id, memory_id, revision, event_type)
-                   VALUES (:org, :id, 2, 'forgotten')"""
-            ),
-            {"org": str(org_id), "id": str(memory_id)},
-        )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        """INSERT INTO ibex_core.memory_lifecycle_outbox
+           (org_id, memory_id, revision, event_type)
+           VALUES (:org, :id, 2, 'forgotten')""",
+        {"org": str(org_id), "id": str(memory_id)},
+    )
     command = ForgetMemory(
         org_id=org_id,
         agent_id=agent_id,
@@ -231,22 +241,20 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
     )
     session_id = uuid4()
     content_hash = f"stale-{uuid4()}"
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text(
-                """INSERT INTO ibex_core.sessions
-                   (id, org_id, agent_id, status, model, provider)
-                   VALUES (:id, :org, :agent, 'completed', 'test', 'test')"""
-            ),
-            {"id": str(session_id), "org": str(org_id), "agent": str(agent_id)},
-        )
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text("UPDATE ibex_core.sessions SET status='abandoned' WHERE id=:id AND org_id=:org"),
-            {"id": str(session_id), "org": str(org_id)},
-        )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        """INSERT INTO ibex_core.sessions
+           (id, org_id, agent_id, status, model, provider)
+           VALUES (:id, :org, :agent, 'completed', 'test', 'test')""",
+        {"id": str(session_id), "org": str(org_id), "agent": str(agent_id)},
+    )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        "UPDATE ibex_core.sessions SET status='abandoned' WHERE id=:id AND org_id=:org",
+        {"id": str(session_id), "org": str(org_id)},
+    )
     fence = ExtractionSessionFence(
         org_id=org_id,
         agent_id=agent_id,
@@ -256,14 +264,12 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
     async with session_factory() as session, session.begin():
         with pytest.raises(StaleLifecycleError):
             await require_extraction_session(session, fence)
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        count = await session.scalar(
-            text(
-                "SELECT COUNT(*) FROM ibex_core.memories WHERE org_id=:org AND content_hash=:hash"
-            ),
-            {"org": str(org_id), "hash": content_hash},
-        )
+    count = await _scalar(
+        session_factory,
+        org_id,
+        "SELECT COUNT(*) FROM ibex_core.memories WHERE org_id=:org AND content_hash=:hash",
+        {"org": str(org_id), "hash": content_hash},
+    )
     assert count == 0
 
 
@@ -273,16 +279,16 @@ async def test_expires_at_hides_normal_retrieval_but_tombstone_wins_historical_m
     org_id, agent_id, memory_id, query, store = await _seed_memory_with_embedding(
         session_factory, settings, content="soft expiry integration fixture", hotspot=17
     )
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text("UPDATE ibex_core.memories SET expires_at=:expiry WHERE id=:id AND org_id=:org"),
-            {
-                "expiry": datetime.now(tz=UTC) - timedelta(seconds=1),
-                "id": str(memory_id),
-                "org": str(org_id),
-            },
-        )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        "UPDATE ibex_core.memories SET expires_at=:expiry WHERE id=:id AND org_id=:org",
+        {
+            "expiry": datetime.now(tz=UTC) - timedelta(seconds=1),
+            "id": str(memory_id),
+            "org": str(org_id),
+        },
+    )
     common = {
         "org_id": org_id,
         "agent_id": agent_id,
@@ -296,16 +302,14 @@ async def test_expires_at_hides_normal_retrieval_but_tombstone_wins_historical_m
     )
     assert ordinary == []
     assert [hit.memory_id for hit in historical] == [memory_id]
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text(
-                """UPDATE ibex_core.memories
-                   SET status='deleted', deleted_at=NOW(), tombstoned=TRUE
-                   WHERE id=:id AND org_id=:org"""
-            ),
-            {"id": str(memory_id), "org": str(org_id)},
-        )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        """UPDATE ibex_core.memories
+           SET status='deleted', deleted_at=NOW(), tombstoned=TRUE
+           WHERE id=:id AND org_id=:org""",
+        {"id": str(memory_id), "org": str(org_id)},
+    )
     assert (
         await store.search(SearchRequest(**common, mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES))
         == []
@@ -363,22 +367,20 @@ async def test_concurrent_supersede_vs_forget_has_one_typed_loser(
         session_factory, content="concurrent lifecycle target"
     )
     new_memory_id = uuid4()
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text(
-                """INSERT INTO ibex_core.memories
-                   (id, org_id, agent_id, content, content_hash, content_tokens)
-                   VALUES (:id, :org, :agent, :content, :hash, 4)"""
-            ),
-            {
-                "id": str(new_memory_id),
-                "org": str(org_id),
-                "agent": str(agent_id),
-                "content": "concurrent lifecycle replacement",
-                "hash": f"race-{new_memory_id}",
-            },
-        )
+    await _execute_sql(
+        session_factory,
+        org_id,
+        """INSERT INTO ibex_core.memories
+           (id, org_id, agent_id, content, content_hash, content_tokens)
+           VALUES (:id, :org, :agent, :content, :hash, 4)""",
+        {
+            "id": str(new_memory_id),
+            "org": str(org_id),
+            "agent": str(agent_id),
+            "content": "concurrent lifecycle replacement",
+            "hash": f"race-{new_memory_id}",
+        },
+    )
 
     barrier = asyncio.Barrier(3)
     forget_task = asyncio.create_task(

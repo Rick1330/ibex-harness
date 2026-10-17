@@ -82,6 +82,22 @@ def _forget(*, expected_revision: int = 1) -> ForgetMemory:
     )
 
 
+async def _forget_success(results: list[_FakeResult]) -> tuple[int, int]:
+    session = _ScriptedSession(list(results))
+    with patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()):
+        revision = await forget_memory_session(session, _forget())
+    return revision, session.executed
+
+
+async def _forget_raises(results: list[_FakeResult], exc, match) -> None:
+    session = _ScriptedSession(list(results))
+    with (
+        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
+        pytest.raises(exc, match=match),
+    ):
+        await forget_memory_session(session, _forget())
+
+
 async def _call_lock(session: _ScriptedSession) -> None:
     with patch("app.lifecycle.set_service_org", AsyncMock()):
         await lock_organization_for_memory_write(session, ORG)
@@ -256,7 +272,7 @@ async def test_enqueue_rejects_unknown_event_type() -> None:
 
 @pytest.mark.asyncio
 async def test_forget_full_path_advances_source_session() -> None:
-    session = _ScriptedSession(
+    revision, executed = await _forget_success(
         [
             _FakeResult(scalar=SESSION),
             _FakeResult(scalar=SESSION),
@@ -266,15 +282,12 @@ async def test_forget_full_path_advances_source_session() -> None:
             _FakeResult(),
         ]
     )
-    with patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()):
-        revision = await forget_memory_session(session, _forget())
-    assert revision == 2
-    assert session.executed == 6
+    assert (revision, executed) == (2, 6)
 
 
 @pytest.mark.asyncio
 async def test_forget_without_source_session_skips_session_lock() -> None:
-    session = _ScriptedSession(
+    revision, executed = await _forget_success(
         [
             _FakeResult(scalar=None),
             _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
@@ -282,15 +295,12 @@ async def test_forget_without_source_session_skips_session_lock() -> None:
             _FakeResult(),
         ]
     )
-    with patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()):
-        revision = await forget_memory_session(session, _forget())
-    assert revision == 2
-    assert session.executed == 4
+    assert (revision, executed) == (2, 4)
 
 
 @pytest.mark.asyncio
 async def test_forget_missing_source_session_lock_skips_advance() -> None:
-    session = _ScriptedSession(
+    revision, executed = await _forget_success(
         [
             _FakeResult(scalar=SESSION),
             _FakeResult(scalar=None),
@@ -299,66 +309,45 @@ async def test_forget_missing_source_session_lock_skips_advance() -> None:
             _FakeResult(),
         ]
     )
-    with patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()):
-        revision = await forget_memory_session(session, _forget())
-    assert revision == 2
-    assert session.executed == 5
+    assert (revision, executed) == (2, 5)
 
 
 @pytest.mark.asyncio
 async def test_forget_missing_target_raises_not_found() -> None:
-    session = _ScriptedSession([_FakeResult(scalar=None), _FakeResult(mapping=None)])
-    with (
-        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
-        pytest.raises(MemoryNotFoundError),
-    ):
-        await forget_memory_session(session, _forget())
+    await _forget_raises(
+        [_FakeResult(scalar=None), _FakeResult(mapping=None)], MemoryNotFoundError, None
+    )
 
 
 @pytest.mark.asyncio
 async def test_forget_tombstoned_target_raises_stale() -> None:
-    session = _ScriptedSession(
-        [
-            _FakeResult(scalar=None),
-            _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": True}),
-        ]
+    await _forget_raises(
+        [_FakeResult(scalar=None), _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": True})],
+        StaleLifecycleError,
+        "stale",
     )
-    with (
-        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
-        pytest.raises(StaleLifecycleError, match="stale"),
-    ):
-        await forget_memory_session(session, _forget())
 
 
 @pytest.mark.asyncio
 async def test_forget_target_revision_mismatch_raises_stale() -> None:
-    session = _ScriptedSession(
-        [
-            _FakeResult(scalar=None),
-            _FakeResult(mapping={"lifecycle_revision": 5, "tombstoned": False}),
-        ]
+    await _forget_raises(
+        [_FakeResult(scalar=None), _FakeResult(mapping={"lifecycle_revision": 5, "tombstoned": False})],
+        StaleLifecycleError,
+        "stale",
     )
-    with (
-        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
-        pytest.raises(StaleLifecycleError, match="stale"),
-    ):
-        await forget_memory_session(session, _forget())
 
 
 @pytest.mark.asyncio
 async def test_forget_tombstone_returns_nothing_raises_stale() -> None:
-    session = _ScriptedSession(
+    await _forget_raises(
         [
             _FakeResult(scalar=None),
             _FakeResult(mapping={"lifecycle_revision": 1, "tombstoned": False}),
             _FakeResult(mapping=None),
-        ]
+        ],
+        StaleLifecycleError,
+        "changed during forget",
     )
-    with (
-        patch("app.lifecycle.lock_organization_for_memory_write", AsyncMock()),
-        pytest.raises(StaleLifecycleError, match="changed during forget"),
-    ):
-        await forget_memory_session(session, _forget())
 
 
 @pytest.mark.asyncio
