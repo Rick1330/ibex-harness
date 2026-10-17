@@ -28,11 +28,15 @@ class UpsertRequest:
     org_id: UUID
     embedding: Sequence[float]
     embedding_model: str
+    expected_revision: int
     embedding_dim: int = _DEFAULT_EMBEDDING_DIM
 
     def validate(self) -> None:
         _require_default_embedding_dim(self.embedding_dim)
         _require_embedding_length(self.embedding, self.embedding_dim, "embedding")
+        if self.expected_revision < 1:
+            msg = "expected_revision must be positive"
+            raise ValueError(msg)
         if not self.embedding_model.strip():
             msg = "embedding_model must be non-empty"
             raise ValueError(msg)
@@ -124,5 +128,5 @@ class VectorStore(ABC):
         """Return hits ordered by descending cosine similarity."""
 
     @abstractmethod
-    async def delete(self, *, memory_id: UUID, org_id: UUID) -> None:
-        """Clear embedding fields for a memory (does not delete the row)."""
+    async def delete(self, *, memory_id: UUID, org_id: UUID, expected_revision: int) -> None:
+        """Clear embeddings only at the expected revision; never bypass a tombstone."""

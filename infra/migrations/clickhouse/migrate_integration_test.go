@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -33,6 +34,9 @@ var requiredLLMTraceColumns = []string{
 }
 
 func testMigrateConn() Conn {
+	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_NATIVE_DSN")); dsn != "" {
+		return ParseConn(dsn)
+	}
 	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_DSN")); dsn != "" {
 		return ParseConn(dsn)
 	}
@@ -59,6 +63,7 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	drops := []string{
+		`DROP TABLE IF EXISTS ibex.evidence_events`,
 		`DROP TABLE IF EXISTS ibex.usage_facts`,
 		`DROP TABLE IF EXISTS ibex.evidence_assembly_metrics`,
 		`DROP TABLE IF EXISTS ibex.evidence_spans`,
@@ -91,8 +96,8 @@ func TestIntegration_Migrate_UpIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if dirty || v != 5 {
-		t.Fatalf("version=%d dirty=%v want 5/clean", v, dirty)
+	if dirty || v != 6 {
+		t.Fatalf("version=%d dirty=%v want 6/clean", v, dirty)
 	}
 }
 
@@ -115,6 +120,7 @@ func assertEvidencePlaneTables(t *testing.T, db *sql.DB) {
 	t.Helper()
 	assertEvidenceSpansTable(t, db)
 	assertEvidenceAssemblyMetricsTable(t, db)
+	assertEvidenceEventsTable(t, db)
 }
 
 func assertEvidenceSpansTable(t *testing.T, db *sql.DB) {
@@ -146,6 +152,22 @@ func assertEvidenceAssemblyMetricsTable(t *testing.T, db *sql.DB) {
 		}
 	}
 	assertCreateHasTTLAndOrder(t, db, "evidence_assembly_metrics", "org_id", "request_id", "recorded_at")
+}
+
+func assertEvidenceEventsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertTableCount(t, db, "evidence_events", 1)
+	got := loadTableColumns(t, db, "evidence_events")
+	for _, col := range []string{
+		"org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
+		"event_type", "redaction_class", "resource_type", "resource_id",
+		"resource_version", "payload", "received_at", "event_date",
+	} {
+		if _, ok := got[col]; !ok {
+			t.Errorf("evidence_events missing column %s", col)
+		}
+	}
+	assertCreateHasTTLAndOrder(t, db, "evidence_events", "org_id", "event_id", "aggregate_seq")
 }
 
 func loadTableColumns(t *testing.T, db *sql.DB, table string) map[string]struct{} {
@@ -183,6 +205,10 @@ func systemColumnsQuery(table string) (string, bool) {
 		return `
 		SELECT name FROM system.columns
 		WHERE database = 'ibex' AND table = 'evidence_assembly_metrics'`, true
+	case "evidence_events":
+		return `
+		SELECT name FROM system.columns
+		WHERE database = 'ibex' AND table = 'evidence_events'`, true
 	default:
 		return "", false
 	}
@@ -212,6 +238,8 @@ func showCreateEvidenceTable(t *testing.T, db *sql.DB, table string) string {
 		q = `SHOW CREATE TABLE ibex.evidence_spans`
 	case "evidence_assembly_metrics":
 		q = `SHOW CREATE TABLE ibex.evidence_assembly_metrics`
+	case "evidence_events":
+		q = `SHOW CREATE TABLE ibex.evidence_events`
 	default:
 		t.Fatalf("unknown table %s", table)
 	}
@@ -340,6 +368,7 @@ func assertTableCount(t *testing.T, db *sql.DB, name string, want uint64) {
 		"llm_traces":                {},
 		"evidence_spans":            {},
 		"evidence_assembly_metrics": {},
+		"evidence_events":           {},
 		"usage_facts":               {},
 	}
 	if _, ok := allowed[name]; !ok {
@@ -396,60 +425,14 @@ func TestIntegration_Migrate_ExplainUsesPrimaryKey(t *testing.T) {
 func insertSampleTrace(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_ = db // schema assertions use database/sql; inserts use HTTP JSONEachRow below.
-	// The migration package intentionally registers the legacy v1 database/sql
-	// driver for golang-migrate. That driver cannot decode ClickHouse Bool
-	// columns for this fixture's INSERT path. Use ClickHouse's HTTP JSONEachRow
-	// endpoint for the test row instead of adding a second database driver to
-	// the test process or changing production migration behavior.
 	dsn, err := url.Parse(testMigrateConn().String())
 	if err != nil {
 		t.Fatalf("parse insert DSN: %v", err)
 	}
-	httpPort := map[string]string{"9000": "8123", "9002": "8123", "9003": "8124"}[dsn.Port()]
-	if httpPort == "" {
-		httpPort = "8123"
-	}
-	insertURL := url.URL{
-		Scheme: "http",
-		Host:   dsn.Hostname() + ":" + httpPort,
-		Path:   "/",
-	}
-	query := `
-		INSERT INTO ibex.llm_traces (
-			request_id, org_id, agent_id, session_id, checkpoint_id,
-			model, provider, is_streaming,
-			input_tokens, output_tokens, total_tokens,
-			auth_latency_ms, directive_latency_ms, provider_ttfb_ms, total_latency_ms,
-			status_code, is_complete, error_code,
-			requested_at, completed_at
-		) FORMAT JSONEachRow`
-	insertURL.RawQuery = url.Values{
-		"database": []string{"ibex"},
-		"query":    []string{query},
-	}.Encode()
-	when := time.Now().UTC()
-	row, err := json.Marshal(map[string]any{
-		"request_id": "req-1", "org_id": "11111111-1111-1111-1111-111111111111",
-		"agent_id": "22222222-2222-2222-2222-222222222222", "session_id": nil,
-		"checkpoint_id": nil, "model": "gpt-4o", "provider": "openai",
-		"is_streaming": false, "input_tokens": 10, "output_tokens": 20,
-		"total_tokens": 30, "auth_latency_ms": 1, "directive_latency_ms": 2,
-		"provider_ttfb_ms": 100, "total_latency_ms": 5, "status_code": 200,
-		"is_complete": true, "error_code": "",
-		"requested_at": when.Format("2006-01-02 15:04:05.000"),
-		"completed_at": when.Format("2006-01-02 15:04:05.000"),
-	})
-	if err != nil {
-		t.Fatalf("marshal insert row: %v", err)
-	}
-	request, err := http.NewRequestWithContext(
-		context.Background(), http.MethodPost, insertURL.String(), bytes.NewReader(append(row, '\n')),
-	)
+	request, err := sampleTraceRequest(dsn)
 	if err != nil {
 		t.Fatalf("build insert request: %v", err)
 	}
-	q := dsn.Query()
-	request.SetBasicAuth(q.Get("username"), q.Get("password"))
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatalf("send insert request: %v", err)
@@ -461,6 +444,45 @@ func insertSampleTrace(t *testing.T, db *sql.DB) {
 	}
 }
 
+func sampleTraceRequest(dsn *url.URL) (*http.Request, error) {
+	httpPort := os.Getenv("CLICKHOUSE_HTTP_PORT")
+	if httpPort == "" {
+		httpPort = map[string]string{"9000": "8124", "9002": "8123", "9003": "8124"}[dsn.Port()]
+	}
+	if httpPort == "" {
+		httpPort = "8123"
+	}
+	insertURL := url.URL{Scheme: "http", Host: dsn.Hostname() + ":" + httpPort, Path: "/"}
+	insertURL.RawQuery = url.Values{
+		"database": []string{"ibex"},
+		"query": []string{`INSERT INTO ibex.llm_traces (
+request_id, org_id, agent_id, session_id, checkpoint_id,
+model, provider, is_streaming, input_tokens, output_tokens, total_tokens,
+auth_latency_ms, directive_latency_ms, provider_ttfb_ms, total_latency_ms,
+status_code, is_complete, error_code, requested_at, completed_at
+) FORMAT JSONEachRow`},
+	}.Encode()
+	when := time.Now().UTC().Format("2006-01-02 15:04:05.000")
+	row, err := json.Marshal(map[string]any{
+		"request_id": "req-1", "org_id": "11111111-1111-1111-1111-111111111111",
+		"agent_id": "22222222-2222-2222-2222-222222222222", "session_id": nil,
+		"checkpoint_id": nil, "model": "gpt-4o", "provider": "openai",
+		"is_streaming": false, "input_tokens": 10, "output_tokens": 20, "total_tokens": 30,
+		"auth_latency_ms": 1, "directive_latency_ms": 2, "provider_ttfb_ms": 100,
+		"total_latency_ms": 5, "status_code": 200, "is_complete": true, "error_code": "",
+		"requested_at": when, "completed_at": when,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal insert row: %w", err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPost, insertURL.String(), bytes.NewReader(append(row, '\n')))
+	if err != nil {
+		return nil, err
+	}
+	q := dsn.Query()
+	request.SetBasicAuth(q.Get("username"), q.Get("password"))
+	return request, nil
+}
 func explainOrgAgentQuery(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	rows, err := db.QueryContext(context.Background(), `
@@ -529,6 +551,11 @@ func TestIntegration_Migrate_DownUpRoundTrip(t *testing.T) {
 	}
 	assertTableCount(t, db, "usage_facts", 1)
 	if err := Down(conn); err != nil {
+		t.Fatalf("down evidence_events: %v", err)
+	}
+	assertTableCount(t, db, "evidence_events", 0)
+	assertTableCount(t, db, "usage_facts", 1)
+	if err := Down(conn); err != nil {
 		t.Fatalf("down usage_facts: %v", err)
 	}
 	assertTableCount(t, db, "usage_facts", 0)
@@ -541,4 +568,5 @@ func TestIntegration_Migrate_DownUpRoundTrip(t *testing.T) {
 		t.Fatalf("up after down: %v", err)
 	}
 	assertTableCount(t, db, "usage_facts", 1)
+	assertTableCount(t, db, "evidence_events", 1)
 }

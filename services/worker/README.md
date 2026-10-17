@@ -81,7 +81,7 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Shared base URL for derived broker/results |
 | `REDIS_DB_QUEUE` | `1` | Broker logical DB |
 | `REDIS_DB_RESULTS` | `3` | Result backend logical DB |
-| `IBEX_WORKER_DATABASE_URL` / `POSTGRES_DSN` | (none) | Postgres DSN for dead-letter persistence |
+| `IBEX_WORKER_DATABASE_URL` / `POSTGRES_DSN` | (none) | Postgres DSN for dead-letter persistence and durable enqueue idempotency; required when enqueue HTTP is enabled |
 | `IBEX_WORKER_METRICS_PORT` | `8006` | Prometheus `/metrics` HTTP port |
 | `IBEX_WORKER_ENQUEUE_PORT` | `8007` | Starlette port for `POST /internal/extraction/enqueue` and `GET /health` ([ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http)) |
 | `IBEX_WORKER_ENQUEUE_HOST` | `127.0.0.1` | Bind host; compose sets `0.0.0.0` |
@@ -105,7 +105,7 @@ visibility.
 - **OTel:** `IbexTask.__call__` wraps every task in a span (`ibex-worker` tracer). See [ADR-0062](/docs/adr/0062-worker-task-observability-dead-letter).
 - **Dead-letter:** `task_failure` signal persists exhausted-retry failures to `ibex_core.failed_tasks` and increments `ibex_worker_task_dead_letter_total{task_name}`.
 - **Metrics:** `GET :8006/metrics` when worker process is running (`ibex_process_up`, dead-letter counter).
-- **Enqueue HTTP:** `POST :8007/internal/extraction/enqueue` (static Bearer) enqueues `extract_session_memories` via Celery `apply_async`. `GET :8007/health` stays **unauthenticated** (liveness only; no secrets), matching embedder `/health`. Without `IBEX_WORKER_ENQUEUE_API_TOKEN`, the enqueue server does not start.
+- **Enqueue HTTP:** `POST :8007/internal/extraction/enqueue` (static Bearer plus required `Idempotency-Key`, max 256 characters) admits `extract_session_memories` through the tenant-scoped PostgreSQL `ibex_core.idempotency_ledger` before Celery `apply_async`. The full normalized payload (org, agent, session, and every turn) is hashed; replay returns the original task ID, changed payloads return 409, active claims return 409 with `Retry-After`, and dispatch failures release the claim. If dispatch succeeds but `ledger.finalize` does not commit, the handler returns 503 and the claim may remain active for its 120-second lease. Same-key retries during that lease return 409 `idempotency_in_progress`; after expiry, a retry may reclaim the claim and dispatch the task again. If finalization committed but its response was lost, a retry replays the stored result instead. PostgreSQL configuration is required for this mutation surface; without it, the endpoint fails closed with 503. `GET :8007/ready` checks the enqueue token, PostgreSQL ledger, and Redis broker; it returns 503 when any dependency is unavailable. `GET :8007/health` stays **unauthenticated** (liveness only; no secrets), matching embedder `/health`. Without `IBEX_WORKER_ENQUEUE_API_TOKEN`, the enqueue server does not start.
 - **Alert:** `IBEXWorkerTaskDeadLettered` in `infra/monitoring/prometheus/rules/ibex-worker.yml`.
 
 ### Local verification
@@ -139,11 +139,12 @@ Integration test task `ibex.worker.maintenance.always_fail` exercises the full r
 
 ```bash
 make test-worker
-make test-worker-integration   # requires Redis + POSTGRES_TEST_DSN (or POSTGRES_DSN) + migrated DB
+make test-worker-integration   # uses the host-network test stack by default
 ```
 
-Integration tests that `TRUNCATE ibex_core.failed_tasks` require `POSTGRES_TEST_DSN` pointing at a
-dedicated test database. CI sets `POSTGRES_TEST_DSN` via `infra/scripts/worker-integration-test-ci.sh`.
+Integration tests that `TRUNCATE ibex_core.failed_tasks` use `POSTGRES_TEST_DSN` when supplied. Otherwise
+the runner derives `postgres://ibex:ibex@127.0.0.1:5433/ibex_test` and Redis on port 6380, matching
+`make compose-test-up` in host-network mode. CI can continue to override these values explicitly.
 
 ## Manual vLLM verification (not CI)
 

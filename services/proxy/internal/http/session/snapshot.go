@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/billing"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/extractionbuffer"
@@ -230,7 +231,44 @@ func persistDeferredEvidence(job PostResponseJob) {
 		ScoreSchema:        job.Snap.ScoreSchema,
 		EvidenceExtras:     job.EvidenceExtras,
 	}
-	PersistEvidence(job.Deps.Evidence, job.Log, BuildEvidenceRun(job.Snap, meta, job.EvidenceExtras))
+	ctx, cancel := context.WithTimeout(context.Background(), CheckpointTaskTimeout)
+	defer cancel()
+	if job.Snap.RequestID != "" {
+		ctx = reqid.WithRequestID(ctx, job.Snap.RequestID)
+	}
+	fenceStore, ok := job.Deps.Store.(evidenceFenceLookup)
+	if !ok {
+		logDeferredEvidenceWithheld(job, ctx)
+		return
+	}
+	in, err := BuildCertifiedEvidenceRun(ctx, fenceStore, job.Snap, meta, job.EvidenceExtras)
+	if err != nil {
+		logDeferredEvidenceWithheld(job, ctx)
+		return
+	}
+	persistDeferredEvidenceRun(job, ctx, in)
+}
+
+func persistDeferredEvidenceRun(job PostResponseJob, ctx context.Context, in evidenceoutbox.RunInput) {
+	outcome := PersistEvidenceForProfile(ctx, job.Deps.Evidence, in, EvidenceAckProfile{Required: true})
+	if outcome.Err != nil && job.Log != nil {
+		job.Log.WarnCtx(ctx, "evidence persist failed",
+			"outcome", string(outcome.Status),
+			"request_id", in.RequestID,
+			"org_id", in.OrgID.String(),
+		)
+	}
+}
+
+func logDeferredEvidenceWithheld(job PostResponseJob, ctx context.Context) {
+	if job.Log == nil {
+		return
+	}
+	job.Log.WarnCtx(ctx, "evidence run withheld",
+		"outcome", string(EvidenceAckUnavailable),
+		"request_id", job.Snap.RequestID,
+		"org_id", job.Snap.OrgID.String(),
+	)
 }
 
 // PreparePostResponseInput groups deps and turn data for PreparePostResponse.

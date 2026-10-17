@@ -9,7 +9,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.schemas.limits import MAX_LABELS, validate_memory_metadata, validate_tags
-from app.schemas.memories import CreateMemoryRequest, MemoryLabelSchema
+from app.schemas.memories import (
+    CreateMemoryRequest,
+    ForgetMemoryRequest,
+    MemoryLabelSchema,
+)
 
 
 def test_validate_tags_rejects_empty_tag() -> None:
@@ -80,3 +84,30 @@ def test_create_memory_request_rejects_too_many_labels() -> None:
     labels = [MemoryLabelSchema(label="factual", confidence=0.5)] * (MAX_LABELS + 1)
     with pytest.raises(ValidationError):
         CreateMemoryRequest(agent_id=agent_id, content="hello", labels=labels)
+
+
+def test_create_memory_session_requires_bounded_expected_revision() -> None:
+    agent_id = uuid4()
+    session_id = uuid4()
+    with pytest.raises(ValidationError, match="expected_session_revision"):
+        CreateMemoryRequest(agent_id=agent_id, content="hello", session_id=session_id)
+    request = CreateMemoryRequest(
+        agent_id=agent_id,
+        content="hello",
+        session_id=session_id,
+        expected_session_revision=2**63 - 1,
+    )
+    assert request.expected_session_revision == 2**63 - 1
+    with pytest.raises(ValidationError):
+        CreateMemoryRequest(
+            agent_id=agent_id,
+            content="hello",
+            session_id=session_id,
+            expected_session_revision=2**63,
+        )
+
+
+def test_forget_request_bounds_expected_memory_revision() -> None:
+    assert ForgetMemoryRequest(expected_revision=2**63 - 1).expected_revision == 2**63 - 1
+    with pytest.raises(ValidationError):
+        ForgetMemoryRequest(expected_revision=2**63)

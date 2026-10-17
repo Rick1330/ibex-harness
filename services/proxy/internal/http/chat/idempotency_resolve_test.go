@@ -145,6 +145,15 @@ func TestUnit_FingerprintRequest(t *testing.T) {
 	}
 }
 
+func TestUnit_FingerprintRequestMarshalFailure(t *testing.T) {
+	original := marshalFingerprintJSON
+	t.Cleanup(func() { marshalFingerprintJSON = original })
+	marshalFingerprintJSON = func(any) ([]byte, error) { return nil, errors.New("marshal failed") }
+	if _, err := FingerprintRequest(&llm.ChatCompletionRequest{Model: "m"}); err == nil || err.Error() != "marshal failed" {
+		t.Fatalf("error=%v want marshal failure", err)
+	}
+}
+
 type claimContWant struct {
 	wantClaim bool
 	wantCont  bool

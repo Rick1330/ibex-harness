@@ -18,6 +18,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/providercap"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
@@ -376,6 +377,10 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 	if err != nil {
 		return routerAssembleParts{}, fmt.Errorf("idempotency store: %w", err)
 	}
+	terminationLedger, err := idempotency.NewOptionalPostgresLedger(in.infra.pgDB, 2*time.Minute)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("termination idempotency ledger: %w", err)
+	}
 	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
 		PGDB:    in.infra.pgDB,
 		Base:    providerReg,
@@ -391,23 +396,24 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 	}
 	return routerAssembleParts{
 		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
-		idempStore: idempStore, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
+		idempStore: idempStore, terminationLedger: terminationLedger, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
 		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
 		budgetCache: budgetCache, usageFactWriter: optionalUsageFactWriter(in.cfg.ClickHouseDSN, in.log, in.reg, nil),
 	}, nil
 }
 
 type routerAssembleParts struct {
-	in              finishAssembledCoreInput
-	providerReg     *provider.Registry
-	tokenizerReg    *tokenizer.Registry
-	idempStore      idempotency.Store
-	traceWriter     *ibexch.Writer
-	modelRouter     proxyhttp.ProviderResolver
-	agentDefaults   modelpolicy.AgentDefaultLoader
-	mpCache         *modelpolicy.Cache
-	budgetCache     *billing.Cache
-	usageFactWriter *billing.UsageFactWriter
+	in                finishAssembledCoreInput
+	providerReg       *provider.Registry
+	tokenizerReg      *tokenizer.Registry
+	idempStore        idempotency.Store
+	terminationLedger idempotency.Ledger
+	traceWriter       *ibexch.Writer
+	modelRouter       proxyhttp.ProviderResolver
+	agentDefaults     modelpolicy.AgentDefaultLoader
+	mpCache           *modelpolicy.Cache
+	budgetCache       *billing.Cache
+	usageFactWriter   *billing.UsageFactWriter
 }
 
 func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
@@ -415,19 +421,21 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
+		PolicySnapshotFetcher: in.infra.auth.policyFetcher, PolicySnapshotVerifier: in.infra.auth.policyVerifier,
 		Limiter: in.infra.limiter, BudgetCache: p.budgetCache, UsageFactWriter: p.usageFactWriter,
 		DirectiveResolver: in.infra.directiveResolver,
 		SessionStore:      in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
-		EvidenceStore:    in.infra.sessionStack.evidence,
-		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
-		ProviderRegistry: p.providerReg,
-		ModelRouter:      p.modelRouter,
-		AgentDefaults:    p.agentDefaults,
-		ResponsePipeline: buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
-		IdempotencyStore: p.idempStore,
-		ContextClient:    in.infra.ctxClients.client,
-		TurnBuffer:       in.infra.sessionStack.turnBuffer,
+		EvidenceStore:     in.infra.sessionStack.evidence,
+		Health:            buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, p.tokenizerReg),
+		ProviderRegistry:  p.providerReg,
+		ModelRouter:       p.modelRouter,
+		AgentDefaults:     p.agentDefaults,
+		ResponsePipeline:  buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
+		IdempotencyStore:  p.idempStore,
+		TerminationLedger: p.terminationLedger,
+		ContextClient:     in.infra.ctxClients.client,
+		TurnBuffer:        in.infra.sessionStack.turnBuffer,
 		ExtractionEnqueue: extractionenqueue.New(extractionenqueue.Config{
 			BaseURL: in.cfg.WorkerEnqueueBaseURL,
 			Token:   in.cfg.WorkerEnqueueAPIToken,
@@ -504,6 +512,13 @@ func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pg
 }
 
 func newHTTPServer(deps proxyhttp.RouterDeps) (*http.Server, error) {
+	if deps.CapabilityManifest == nil {
+		manifest, err := providercap.LoadDefaultAllowStale(time.Now().UTC())
+		if err != nil {
+			return nil, fmt.Errorf("provider capability manifest: %w", err)
+		}
+		deps.CapabilityManifest = manifest
+	}
 	handler, err := proxyhttp.NewRouter(deps)
 	if err != nil {
 		return nil, err

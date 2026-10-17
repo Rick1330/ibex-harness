@@ -59,3 +59,4 @@ class MemorySearchResult:
     created_at: datetime
     updated_at: datetime
     categories: tuple[str, ...] = ()
+    lifecycle_revision: int = 1

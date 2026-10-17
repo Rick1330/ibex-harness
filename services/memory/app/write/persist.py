@@ -83,6 +83,9 @@ def memory_row_from_mapping(row: Any) -> MemoryRow:
         valid_until=_aware_opt(row.valid_until),
         created_at=_aware(row.created_at),
         updated_at=_aware(row.updated_at),
+        lifecycle_revision=int(getattr(row, "lifecycle_revision", 1)),
+        tombstoned=bool(getattr(row, "tombstoned", False)),
+        expires_at=_aware_opt(getattr(row, "expires_at", None)),
     )
 
 
@@ -112,6 +115,7 @@ async def insert_memory_session(
         "metadata": json.dumps(_persist_metadata(command)),
         "valid_from": valid_from,
         "valid_until": command.valid_until or ctx.valid_until,
+        "expires_at": command.expires_at,
     }
     row = (
         await session.execute(
@@ -120,17 +124,18 @@ async def insert_memory_session(
                 INSERT INTO ibex_core.memories (
                     org_id, agent_id, session_id, content, content_hash, content_tokens,
                     category, status, confidence, source, pii_detected, pii_redacted,
-                    metadata, valid_from, valid_until
+                    metadata, valid_from, valid_until, expires_at
                 ) VALUES (
                     :org_id, :agent_id, :session_id, :content, :content_hash, :content_tokens,
                     :category, :status, :confidence, :source, :pii_detected, :pii_redacted,
-                    CAST(:metadata AS jsonb), :valid_from, :valid_until
+                    CAST(:metadata AS jsonb), :valid_from, :valid_until, :expires_at
                 )
                 RETURNING
                     id, org_id, agent_id, content, content_tokens, category, status,
                     confidence, source, pii_detected, pii_redacted, session_id,
                     metadata, retrieval_count, usefulness_score,
-                    valid_from, valid_until, created_at, updated_at
+                    valid_from, valid_until, created_at, updated_at,
+                    lifecycle_revision, tombstoned, expires_at
                 """
             ),
             params,
@@ -184,7 +189,8 @@ async def reload_memory_session(
                     id, org_id, agent_id, content, content_tokens, category, status,
                     confidence, source, pii_detected, pii_redacted, session_id,
                     metadata, retrieval_count, usefulness_score,
-                    valid_from, valid_until, created_at, updated_at
+                    valid_from, valid_until, created_at, updated_at,
+                    lifecycle_revision, tombstoned, expires_at
                 FROM ibex_core.memories
                 WHERE id = :memory_id AND org_id = :org_id
                 """

@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
@@ -154,6 +155,7 @@ type authServiceDeps struct {
 	credSvc          *service.ProviderCredentialService
 	totpSvc          *service.TotpService
 	sessionIssuer    *sessionjwt.Issuer
+	policyIssuer     *policysnapshot.Issuer
 	agentsRepo       *repository.AgentsRepository
 	redisClient      redis.UniversalClient
 	validateLimiter  ratelimit.KeyedLimiter
@@ -178,12 +180,30 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
+	policyIssuer, err := newPolicySnapshotIssuer(cfg)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 	return authServiceDeps{
 		validator: core.validator, authServiceToken: cfg.AuthServiceToken, tokenSvc: core.tokenSvc, credSvc: credSvc,
-		totpSvc: totpSvc, sessionIssuer: sessionIssuer,
+		totpSvc: totpSvc, sessionIssuer: sessionIssuer, policyIssuer: policyIssuer,
 		agentsRepo: core.agentsRepo, redisClient: core.redisClient,
 		validateLimiter: core.validateLimiter, log: log,
 	}, nil
+}
+
+// newPolicySnapshotIssuer returns nil when no signing key is configured
+// (development only); IssuePolicySnapshot then fails closed with
+// FailedPrecondition.
+func newPolicySnapshotIssuer(cfg config.Config) (*policysnapshot.Issuer, error) {
+	if strings.TrimSpace(cfg.PolicySigningKeyPEM) == "" {
+		return nil, nil
+	}
+	issuer, err := policysnapshot.NewIssuer(cfg.PolicyIssuerConfig())
+	if err != nil {
+		return nil, fmt.Errorf("policy snapshot issuer: %w", err)
+	}
+	return issuer, nil
 }
 
 func newSessionAndTotp(
@@ -481,14 +501,15 @@ func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetri
 		return fmt.Errorf("agent service: %w", err)
 	}
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
-		Validator:     deps.validator,
-		TokenService:  deps.tokenSvc,
-		AgentService:  agentSvc,
-		CredService:   deps.credSvc,
-		TotpService:   optionalTotp(deps.totpSvc),
-		SessionIssuer: optionalSessionIssuer(deps.sessionIssuer),
-		Metrics:       reg,
-		Log:           deps.log,
+		Validator:            deps.validator,
+		TokenService:         deps.tokenSvc,
+		AgentService:         agentSvc,
+		CredService:          deps.credSvc,
+		TotpService:          optionalTotp(deps.totpSvc),
+		SessionIssuer:        optionalSessionIssuer(deps.sessionIssuer),
+		PolicySnapshotIssuer: optionalPolicyIssuer(deps.policyIssuer),
+		Metrics:              reg,
+		Log:                  deps.log,
 	})
 	if err != nil {
 		return fmt.Errorf("grpc auth service: %w", err)
@@ -511,6 +532,15 @@ func optionalTotp(svc *service.TotpService) interface {
 func optionalSessionIssuer(iss *sessionjwt.Issuer) interface {
 	IssuePair(p sessionjwt.IssuePairParams) (access, refresh string, accessExp, refreshExp time.Time, err error)
 	RefreshPair(ctx context.Context, refreshToken sessionjwt.RefreshToken) (access, refresh string, accessExp, refreshExp time.Time, err error)
+} {
+	if iss == nil {
+		return nil
+	}
+	return iss
+}
+
+func optionalPolicyIssuer(iss *policysnapshot.Issuer) interface {
+	Issue(p policysnapshot.IssueParams) (policysnapshot.Envelope, error)
 } {
 	if iss == nil {
 		return nil

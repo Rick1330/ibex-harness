@@ -15,7 +15,12 @@ from app.config import Settings
 from app.conflict.intervals import ValidityInterval
 from app.conflict.service import ConflictService
 from app.conflict.types import CandidateMemory, ConflictDecision, ConflictOutcome
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    StaleMemoryRevisionError,
+    ValidationError,
+)
 from app.pipeline import ConflictStage, WritePipeline
 from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
@@ -68,6 +73,7 @@ async def test_orchestrator_none_valid_from_supersedes_via_interval_evaluation()
                     valid_from=_conflict_dt(3),
                     valid_until=_conflict_dt(6),
                 ),
+                lifecycle_revision=1,
             )
         ]
 
@@ -145,6 +151,7 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
     orch._factory = mock_factory
 
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch(
             "app.write.orchestrator.insert_memory_session",
             AsyncMock(side_effect=exc),
@@ -153,8 +160,9 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
             "app.write.orchestrator.find_active_by_content_hash",
             AsyncMock(return_value=existing),
         ),
+        patch("app.write.orchestrator.require_extraction_session", AsyncMock()),
         patch(
-            "app.write.orchestrator.increment_retrieval_count",
+            "app.write.orchestrator.increment_retrieval_count_session",
             AsyncMock(return_value=1),
         ),
     ):
@@ -176,13 +184,11 @@ def test_is_embedding_failure_names() -> None:
             sqlstate=None,
             pgcode="23505",
             message=(
-                'duplicate key value violates unique constraint '
+                "duplicate key value violates unique constraint "
                 '"idx_memories_org_agent_content_hash_active"'
             ),
         ),
-        HashViolationOpts(
-            message="Key (org_id, agent_id, content_hash)=(...) already exists."
-        ),
+        HashViolationOpts(message="Key (org_id, agent_id, content_hash)=(...) already exists."),
         HashViolationOpts(detail="idx_memories_org_agent_content_hash_active violated"),
     ],
 )
@@ -204,6 +210,7 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
         status="active",
         embedding=[0.1] * 8,
         pending_supersede_targets=[target_id],
+        pending_supersede_revisions={target_id: 1},
         conflict_decisions=[],
     )
 
@@ -223,9 +230,11 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
     )
 
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.enqueue_memory_lifecycle_event", AsyncMock()),
         patch("app.write.orchestrator.apply_supersession_session", AsyncMock()) as supersede,
         patch("app.write.orchestrator.insert_escalations_session", AsyncMock(return_value=0)),
     ):
@@ -278,9 +287,11 @@ async def test_orchestrator_escalations_metric_increments_after_commit() -> None
     before = _counter_value("ibex_memory_conflict_escalations_inserted_total")
 
     with (
+        patch("app.write.orchestrator.lock_organization_for_memory_write", AsyncMock()),
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.enqueue_memory_lifecycle_event", AsyncMock()),
         patch(
             "app.write.orchestrator.insert_escalations_session",
             AsyncMock(return_value=escalation_count),
@@ -392,6 +403,7 @@ async def test_orchestrator_active_integrity_errors(
             "insert_memory_session": AsyncMock(return_value=fake_row),
             patch_target: AsyncMock(side_effect=side_effect),
         }
+    patches["lock_organization_for_memory_write"] = AsyncMock()
 
     cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
     with (
@@ -420,3 +432,61 @@ def test_raise_duplicate_label_error_reraises_other() -> None:
     exc.orig = orig
     with pytest.raises(IntegrityError):
         orch._raise_duplicate_label_error(exc)
+
+
+@pytest.mark.asyncio
+async def test_stale_extraction_session_fails_before_memory_insert() -> None:
+    from app.exceptions import StaleLifecycleError
+
+    org_id, agent_id, session_id = uuid4(), uuid4(), uuid4()
+    ctx = WriteContext(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="stale extraction write",
+        content_hash="stale-hash",
+        status="active",
+    )
+
+    async def _run(_command: WriteContext) -> WriteContext:
+        return ctx
+
+    orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
+    orch._pipeline.run = _run  # type: ignore[method-assign]
+    insert = AsyncMock()
+    command = CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=agent_id,
+        content=ctx.content,
+        session_id=session_id,
+        expected_session_revision=7,
+    )
+    with (
+        patch(
+            "app.write.orchestrator.require_extraction_session",
+            AsyncMock(side_effect=StaleLifecycleError()),
+        ),
+        patch(
+            "app.write.orchestrator.lock_organization_for_memory_write",
+            AsyncMock(),
+        ),
+        patch("app.write.orchestrator.insert_memory_session", insert),
+        pytest.raises(StaleLifecycleError),
+    ):
+        await orch.create(command)
+    insert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_supersession_missing_observed_revision_raises() -> None:
+    orch = MemoryWriteOrchestrator(WritePipeline([]), MagicMock())
+    org_id, agent_id = uuid4(), uuid4()
+    target_id = uuid4()
+    ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="x")
+    ctx.pending_supersede_targets = [target_id]
+    ctx.pending_supersede_revisions = {}
+    command = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x")
+
+    with pytest.raises(StaleMemoryRevisionError, match="Missing observed lifecycle revision"):
+        await orch._apply_supersession_and_escalations(
+            MagicMock(), command, uuid4(), ctx
+        )

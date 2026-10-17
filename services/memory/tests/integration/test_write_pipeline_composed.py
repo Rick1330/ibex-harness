@@ -282,6 +282,7 @@ async def test_composed_cross_tenant_near_dup_isolation(
             org_id=org_a,
             embedding=vec,
             embedding_model="test-model",
+            expected_revision=1,
         )
     )
     await store.upsert(
@@ -290,6 +291,7 @@ async def test_composed_cross_tenant_near_dup_isolation(
             org_id=org_b,
             embedding=vec,
             embedding_model="test-model",
+            expected_revision=1,
         )
     )
 

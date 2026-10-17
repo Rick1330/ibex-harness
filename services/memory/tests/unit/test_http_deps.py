@@ -12,7 +12,9 @@ from app.auth.client import StaticTokenValidator, ValidateResult, parse_authoriz
 from app.auth.errors import AuthFailedError
 from app.deps import (
     get_embedding_client,
+    get_feedback_service,
     get_idempotency_store,
+    get_memory_cache_writer,
     get_read_repository,
     get_redis,
     get_session_factory,
@@ -111,6 +113,33 @@ def test_get_embedding_client_missing_returns_503() -> None:
     with pytest.raises(HTTPException) as exc:
         get_embedding_client(request)
     assert exc.value.status_code == 503
+
+
+def test_get_feedback_service_missing_returns_503() -> None:
+    request = MagicMock()
+    request.app.state.memory = MemoryAppState()
+    with pytest.raises(HTTPException) as exc:
+        get_feedback_service(request)
+    assert exc.value.status_code == 503
+
+
+def test_get_feedback_service_from_state() -> None:
+    state = MemoryAppState()
+    sentinel = object()
+    state.feedback_service = sentinel  # type: ignore[assignment]
+    request = MagicMock()
+    request.app.state.memory = state
+    assert get_feedback_service(request) is sentinel
+
+
+def test_get_memory_cache_writer_optional() -> None:
+    state = MemoryAppState()
+    request = MagicMock()
+    request.app.state.memory = state
+    assert get_memory_cache_writer(request) is None
+    sentinel = object()
+    state.cache_writer = sentinel  # type: ignore[assignment]
+    assert get_memory_cache_writer(request) is sentinel
 
 
 def test_get_idempotency_and_redis_from_state() -> None:

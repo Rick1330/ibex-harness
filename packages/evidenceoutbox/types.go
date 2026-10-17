@@ -2,6 +2,7 @@ package evidenceoutbox
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,12 +14,13 @@ type RedactionClass string
 const (
 	RedactionClassUnclassified RedactionClass = "unclassified"
 	RedactionClassMetadata     RedactionClass = "metadata"
+	RedactionClassRedacted     RedactionClass = "redacted"
 	RedactionClassProhibited   RedactionClass = "prohibited"
 )
 
 func isSupportedRedactionClass(class RedactionClass) bool {
 	switch class {
-	case RedactionClassUnclassified, RedactionClassMetadata, RedactionClassProhibited:
+	case RedactionClassUnclassified, RedactionClassMetadata, RedactionClassRedacted, RedactionClassProhibited:
 		return true
 	default:
 		return false
@@ -33,25 +35,67 @@ type TombstoneFence struct {
 	ResourceVersion int64  `json:"resource_version"`
 }
 
+// ProducerMetadata is the producer's explicit proof that an evidence payload
+// was classified and bound to an authoritative resource lifecycle record.
+// Empty or incomplete metadata is rejected when attached to a RunInput; the
+// relay never infers these values from an untyped payload or aggregate ID.
+type ProducerMetadata struct {
+	RedactionClass        RedactionClass `json:"redaction_class"`
+	RedactionProofVersion string         `json:"redaction_proof_version"`
+	ResourceType          string         `json:"resource_type"`
+	ResourceID            string         `json:"resource_id"`
+	ResourceVersion       int64          `json:"resource_version"`
+	Source                string         `json:"source"`
+}
+
+func validateProducerMetadata(metadata *ProducerMetadata) error {
+	if metadata == nil {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if !isSupportedRedactionClass(metadata.RedactionClass) {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.RedactionClass == RedactionClassUnclassified {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.RedactionProofVersion == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.ResourceType == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.ResourceID == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.ResourceVersion <= 0 {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	if metadata.Source == "" {
+		return fmt.Errorf("evidenceoutbox: producer metadata is incomplete")
+	}
+	return nil
+}
+
 // OutboxRow is one unpublished (or in-flight) evidence publication record.
 type OutboxRow struct {
-	ID             uuid.UUID
-	OrgID          uuid.UUID
-	EventID        uuid.UUID
-	AggregateID    string
-	AggregateSeq   int64
-	SchemaVersion  string
-	EventType      string
-	RedactionClass RedactionClass
-	TombstoneFence *TombstoneFence
-	Payload        json.RawMessage
-	PayloadDigest  string
-	DeliveryStatus string
-	Attempts       int
-	AvailableAt    time.Time
-	LastError      string
-	CreatedAt      time.Time
-	DeliveredAt    *time.Time
+	ID                  uuid.UUID
+	OrgID               uuid.UUID
+	EventID             uuid.UUID
+	AggregateID         string
+	AggregateSeq        int64
+	SchemaVersion       string
+	EventType           string
+	RedactionClass      RedactionClass
+	TombstoneFence      *TombstoneFence
+	Payload             json.RawMessage
+	PayloadDigestScheme string
+	PayloadDigest       string
+	DeliveryStatus      string
+	Attempts            int
+	AvailableAt         time.Time
+	LastError           string
+	CreatedAt           time.Time
+	DeliveredAt         *time.Time
 }
 
 // AssemblyMetrics is the durable stage-timing contract (mirrors proto AssemblyMetrics).
@@ -87,6 +131,13 @@ type ScoreCandidate struct {
 type DirectiveSnapshot struct {
 	DirectiveVersionID *uuid.UUID
 	ContentHash        string
+}
+
+// TokenUsage contains numeric provider token totals only; prompts and response bodies are excluded.
+type TokenUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+	TotalTokens  int64 `json:"total_tokens"`
 }
 
 // ToolAudit is a sanitized tool-call evidence row.
@@ -131,6 +182,8 @@ type RunInput struct {
 	MetricsSpanID  string // optional; assembly metrics join key (prefer assemble span)
 	CheckpointID   *uuid.UUID
 	TurnID         *int
+	ModelID        string
+	TokenUsage     *TokenUsage
 	Completeness   string
 	Status         string
 	ErrorCode      string
@@ -140,6 +193,7 @@ type RunInput struct {
 	// unclassified and is rejected by the relay; it is never upgraded implicitly.
 	RedactionClass RedactionClass
 	TombstoneFence *TombstoneFence
+	Producer       *ProducerMetadata
 	StartedAt      time.Time
 	EndedAt        time.Time
 	Spans          []SpanInput
@@ -158,4 +212,7 @@ type PersistResult struct {
 	RunID       uuid.UUID
 	OutboxIDs   []uuid.UUID
 	AggregateID string
+	// Replayed is true when idempotency returned an already durable result.
+	// Replay is success, but is not a new commit.
+	Replayed bool
 }

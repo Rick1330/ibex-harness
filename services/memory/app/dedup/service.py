@@ -8,7 +8,8 @@ from uuid import UUID
 
 from app.dedup.hash import content_hash_sha256
 from app.dedup.types import DedupResult
-from app.vectorstore.base import SearchMode, SearchRequest, VectorStore
+from app.vectorstore.base import VectorStore
+from app.vectorstore.historical import HistoricalConflictCapability
 
 if TYPE_CHECKING:
     from app.config import Settings
@@ -25,11 +26,12 @@ class DedupService:
         settings: Settings,
         *,
         store: VectorStore | None = None,
+        historical: HistoricalConflictCapability | None = None,
         exact_lookup: ExactLookupFn | None = None,
         bump_retrieval: BumpFn | None = None,
     ) -> None:
         self._settings = settings
-        self._store = store
+        self._historical = historical or (HistoricalConflictCapability(store) if store is not None else None)
         self._exact_lookup = exact_lookup
         self._bump_retrieval = bump_retrieval
 
@@ -75,19 +77,16 @@ class DedupService:
         agent_id: UUID,
         embedding: Sequence[float],
     ) -> list[UUID]:
-        if self._store is None:
-            msg = "VectorStore required for near-duplicate search"
+        if self._historical is None:
+            msg = "VectorStore required for historical conflict search capability"
             raise RuntimeError(msg)
         threshold = self._settings.near_duplicate_sim_threshold
-        hits = await self._store.search(
-            SearchRequest(
-                org_id=org_id,
-                agent_id=agent_id,
-                query_embedding=embedding,
-                limit=self._settings.near_duplicate_candidate_limit,
-                min_similarity=threshold,
-                mode=SearchMode.HISTORICAL_CONFLICT_CANDIDATES,
-            )
+        hits = await self._historical.search(
+            org_id=org_id,
+            agent_id=agent_id,
+            query_embedding=embedding,
+            limit=self._settings.near_duplicate_candidate_limit,
+            min_similarity=threshold,
         )
         # Milestone gate is strict greater-than; VectorStore.search uses >=.
         return [h.memory_id for h in hits if h.similarity > threshold]

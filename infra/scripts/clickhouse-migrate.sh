@@ -28,6 +28,40 @@ if [[ -z "${CLICKHOUSE_MIGRATE_DSN:-}" && -z "${CLICKHOUSE_DSN:-}" ]]; then
   export CLICKHOUSE_MIGRATE_DSN="clickhouse://default:@localhost:9002?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree"
 fi
 
+CLICKHOUSE_HTTP_PORT="${CLICKHOUSE_HTTP_PORT:-8123}"
+CLICKHOUSE_DB="${CLICKHOUSE_DB:-ibex}"
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-}"
+CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-}"
+if [[ -z "$CLICKHOUSE_USER" || -z "$CLICKHOUSE_PASSWORD" ]]; then
+  migration_dsn="${CLICKHOUSE_MIGRATE_DSN:-${CLICKHOUSE_DSN:-}}"
+  if [[ -n "$migration_dsn" ]]; then
+    # shellcheck disable=SC2155
+    read -r dsn_user dsn_password < <(python3 - "$migration_dsn" <<'PY'
+from sys import argv
+from urllib.parse import unquote, urlparse
+
+parsed = urlparse(argv[1])
+print(unquote(parsed.username or ""), unquote(parsed.password or ""))
+PY
+    )
+    CLICKHOUSE_USER="${CLICKHOUSE_USER:-${dsn_user:-}}"
+    CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-${dsn_password:-}}"
+  fi
+fi
+CLICKHOUSE_USER="${CLICKHOUSE_USER:-default}"
+if [[ ! "$CLICKHOUSE_DB" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "clickhouse migrate: invalid CLICKHOUSE_DB identifier" >&2
+  exit 2
+fi
+
+netrc_file="$(mktemp)"
+trap 'rm -f "$netrc_file"' EXIT
+chmod 600 "$netrc_file"
+printf 'machine 127.0.0.1 login %s password %s\n' "$CLICKHOUSE_USER" "$CLICKHOUSE_PASSWORD" >"$netrc_file"
+curl -fsS --retry 10 --retry-delay 1 --netrc-file "$netrc_file" \
+  --data-binary "CREATE DATABASE IF NOT EXISTS \`$CLICKHOUSE_DB\`" \
+  "http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" >/dev/null
+
 case "$CMD" in
   up|down|version)
     cd "$ROOT_DIR"

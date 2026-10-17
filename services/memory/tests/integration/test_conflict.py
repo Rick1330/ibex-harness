@@ -166,6 +166,7 @@ async def test_apply_supersession_updates_status_and_edge(
             new_memory_id=new_id,
             target_memory_id=old_id,
             closed_at=june,
+            expected_revision=1,
         ),
     )
     status, tip, edge = await _fetch_supersession_state(

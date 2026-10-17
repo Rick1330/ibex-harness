@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package ibex.auth.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1;authv1";
+
+// PrincipalContext is the verified, additive identity binding passed across
+// internal request boundaries. It is not a replacement for authorization.
+message PrincipalContext {
+  string org_id = 1;
+  string principal_id = 2;
+  string agent_id = 3;
+  string principal_type = 4;
+  string authz_snapshot_id = 5;
+  string authz_snapshot_digest = 6;
+  string authority = 7;
+  google.protobuf.Timestamp issued_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+  string request_id = 10;
+  string trace_id = 11;
+  string source = 12;
+  int64 permissions = 13;
+  string token_id = 14;
+}
+
+// PrincipalContextProof is reserved for a later signed propagation seam.
+message PrincipalContextProof {
+  PrincipalContext context = 1;
+  string signature_algorithm = 2;
+  bytes signature = 3;
+  string key_id = 4;
+}

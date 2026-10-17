@@ -221,6 +221,25 @@ func TestIntegration_PersistRun_WritesEvidenceAndOutbox(t *testing.T) {
 	}
 
 	assertPersistRunMetrics(t, db, res.RunID, 12)
+	assertPersistedModelTokenMetadata(t, db, res.RunID, "gpt-4o-mini", 120, 45, 165)
+}
+
+func assertPersistedModelTokenMetadata(t *testing.T, db *sql.DB, runID uuid.UUID, wantModel string, wantInput, wantOutput, wantTotal int64) {
+	t.Helper()
+	tx := beginServiceTx(t, db)
+	var model string
+	var input, output, total int64
+	if err := tx.QueryRowContext(context.Background(), `
+SELECT model_id, input_tokens, output_tokens, total_tokens
+FROM ibex_core.evidence_runs WHERE id = $1`, runID).Scan(&model, &input, &output, &total); err != nil {
+		t.Fatalf("model/token metadata: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit model/token metadata lookup: %v", err)
+	}
+	if model != wantModel || input != wantInput || output != wantOutput || total != wantTotal {
+		t.Fatalf("persisted model/token metadata=%q/%d/%d/%d want %q/%d/%d/%d", model, input, output, total, wantModel, wantInput, wantOutput, wantTotal)
+	}
 }
 
 func fullPersistRunInput(orgID, sessionID uuid.UUID) evidenceoutbox.RunInput {
@@ -235,6 +254,8 @@ func fullPersistRunInput(orgID, sessionID uuid.UUID) evidenceoutbox.RunInput {
 		SessionID:  &sessionID,
 		RequestID:  "req-" + uuid.NewString(),
 		TraceID:    strings.ReplaceAll(uuid.NewString(), "-", ""),
+		ModelID:    "gpt-4o-mini",
+		TokenUsage: &evidenceoutbox.TokenUsage{InputTokens: 120, OutputTokens: 45, TotalTokens: 165},
 		RootSpanID: "1111111111111111",
 		Spans: []evidenceoutbox.SpanInput{
 			{SpanID: "1111111111111111", OperationKind: "proxy.chat", Status: "ok"},
@@ -336,6 +357,66 @@ func TestIntegration_OutboxAckLoss_ReplaysWithIdempotentSinkEffect(t *testing.T)
 	}
 	if deliveries, effects := deliverer.snapshot(); deliveries != 2 || effects != 1 {
 		t.Fatalf("replay effect: deliveries=%d effects=%d", deliveries, effects)
+	}
+}
+
+func TestIntegration_OutboxRetriesLegacyJSONBDigest(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	orgID := seedOrg(t, db)
+	rowID, eventID := uuid.New(), uuid.New()
+	aggregateID := "legacy-retry-" + uuid.NewString()
+	payload := `{"redaction_class": "metadata", "tombstone_fence": {"resource_id": "mem-1", "resource_type": "memory", "resource_version": 1}}`
+	const insertLegacy = `
+INSERT INTO ibex_core.evidence_outbox (
+	id, org_id, event_id, aggregate_id, aggregate_seq, schema_version,
+	event_type, payload, payload_digest, delivery_status, attempts, available_at
+) VALUES (
+	$1, $2, $3, $4, 1, $5, $6, $7::jsonb,
+	encode(sha256(convert_to(($7::jsonb)::text, 'UTF8')), 'hex'),
+	'failed', 1, NOW()
+)`
+	if _, err := db.ExecContext(context.Background(), insertLegacy, rowID, orgID, eventID,
+		aggregateID, evidenceoutbox.SchemaVersion, evidenceoutbox.EventTypeRunCommitted, payload); err != nil {
+		t.Fatalf("insert legacy retry row: %v", err)
+	}
+
+	deliverer := &recordingDeliverer{}
+	relay := mustRelay(t, db, deliverer)
+	result, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatalf("process legacy retry: %v", err)
+	}
+	assertLegacyRetryDelivery(t, result, deliverer)
+	assertLegacyRetryRowState(t, db, rowID)
+}
+
+func assertLegacyRetryDelivery(t *testing.T, result evidenceoutbox.RelayBatchResult, deliverer *recordingDeliverer) {
+	t.Helper()
+	if result.Claimed != 1 {
+		t.Fatalf("legacy retry claimed=%d want 1", result.Claimed)
+	}
+	if result.Delivered != 1 {
+		t.Fatalf("legacy retry delivered=%d want 1", result.Delivered)
+	}
+	if deliveries := deliverer.count(); deliveries != 1 {
+		t.Fatalf("legacy retry deliveries=%d want 1", deliveries)
+	}
+}
+
+func assertLegacyRetryRowState(t *testing.T, db *sql.DB, rowID uuid.UUID) {
+	t.Helper()
+	var scheme, status string
+	if err := db.QueryRowContext(context.Background(), `
+		SELECT payload_digest_scheme, delivery_status
+		FROM ibex_core.evidence_outbox WHERE id = $1`, rowID).Scan(&scheme, &status); err != nil {
+		t.Fatalf("read legacy retry row: %v", err)
+	}
+	if scheme != evidenceoutbox.PayloadDigestSchemePostgresJSONBText {
+		t.Fatalf("legacy row scheme=%q want %q", scheme, evidenceoutbox.PayloadDigestSchemePostgresJSONBText)
+	}
+	if status != string(evidenceoutbox.StatusDelivered) {
+		t.Fatalf("legacy row status=%q want %q", status, evidenceoutbox.StatusDelivered)
 	}
 }
 
@@ -481,6 +562,11 @@ func persistMinimalRun(t *testing.T, store *evidenceoutbox.Store, orgID uuid.UUI
 		RequestID:      requestID,
 		TraceID:        traceID,
 		RedactionClass: evidenceoutbox.RedactionClassMetadata,
+		Producer: &evidenceoutbox.ProducerMetadata{
+			RedactionClass: evidenceoutbox.RedactionClassMetadata, RedactionProofVersion: "redaction/v1",
+			ResourceType: "evidence_run", ResourceID: requestID, ResourceVersion: 1,
+			Source: "integration-test",
+		},
 		TombstoneFence: &evidenceoutbox.TombstoneFence{
 			ResourceType: "evidence_run", ResourceID: requestID, ResourceVersion: 1,
 		},

@@ -57,7 +57,9 @@ See [.env.example](.env.example).
 | `IBEX_PORT` | `8080` | HTTP listen port |
 | `REDIS_URL` | (empty in development) | Required outside development for shared rate limiting; Redis operation failure returns `503 SERVICE_DEGRADED` before provider work. Development may omit it and use the explicit Noop limiter. |
 | `IBEX_AUTH_GRPC_ADDR` | `127.0.0.1:9091` | Auth gRPC target |
-| `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget |
+| `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget (also bounds `IssuePolicySnapshot`) |
+| `IBEX_PROXY_POLICY_PUBLIC_KEYS` | (empty; stage disabled) | JSON `key_id` → PEM RSA public keys for `policy-snapshot.v1` verification (GAP-002); required outside development when protected routes are mounted |
+| `IBEX_PROXY_POLICY_MIN_EPOCH` | `0` | Minimum accepted policy-signing epoch |
 | `IBEX_CONTEXT_ENABLED` | `false` | Master switch for Assemble on chat path; `false` = Phase 2 directive-only |
 | `IBEX_CONTEXT_EMBED_METADATA` | `false` | Embed top-level `ibex` JSON in non-streaming responses (3.5.D.3) |
 | `IBEX_CONTEXT_GRPC_TARGET` | `127.0.0.1:9092` | Context assembly gRPC dial target (empty skips dial) |

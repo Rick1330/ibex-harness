@@ -4,10 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT_DIR/infra/tool-versions.conf"
 
-if [[ -n "${1:-}" && -f "$1" ]]; then
+PROFILE="${1:-dev}"
+if [[ -f "$PROFILE" ]]; then
+  ENV_FILE="$PROFILE"
+  PROFILE="custom"
+else
+  case "$PROFILE" in
+    dev) ENV_FILE="$ROOT_DIR/infra/compose/dev/.env.example" ;;
+    test) ENV_FILE="$ROOT_DIR/infra/compose/test/.env.example" ;;
+    *) echo "stack-init: profile must be dev, test, or an env file path (got $PROFILE)" >&2; exit 2 ;;
+  esac
+fi
+if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
-  source "$1"
+  source "$ENV_FILE"
   set +a
 fi
 
@@ -25,6 +36,8 @@ S3_ACCESS_KEY="${S3_ACCESS_KEY:-minioadmin}"
 S3_SECRET_KEY="${S3_SECRET_KEY:-minioadmin}"
 
 failures=0
+printf 'stack-init: profile=%s postgres=%s redis=%s clickhouse-http=%s minio=%s\n' \
+  "$PROFILE" "$POSTGRES_PORT" "$REDIS_PORT" "$CLICKHOUSE_HTTP_PORT" "$MINIO_API_PORT"
 probe() {
   local name="$1"; shift
   if "$@" >/dev/null 2>&1; then printf 'PASS  %-24s\n' "$name"

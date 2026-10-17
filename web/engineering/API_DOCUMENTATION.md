@@ -13,7 +13,8 @@
 | D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
 | Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
 | D2 metadata trace list/detail | **Mounted-but-provisional** | `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` are read-only, tenant-scoped, no-store metadata routes. Full provenance panels, content, score explanations, replay, and actions remain planned and unaccepted. |
-| Memories, sessions, agents, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| Memory service create/search/forget routes | **Mounted but provisional for GAP-007 lifecycle** | Runtime route and local tests exist; migration, PostgreSQL/RLS integration evidence, review, and contract acceptance remain open. See provisional forget endpoint below. |
+| Sessions, agents, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
 | Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
 
 ### Contract ownership and validation
@@ -413,8 +414,10 @@ X-Idempotency-Key: {uuid}
     { "label": "behavioral", "confidence": 0.72 }
   ],
   "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "expected_session_revision": 1,
   "visibility": "agent",
   "tags": ["ui", "preferences"],
+  "expires_at": "2025-01-15T10:30:00Z",
   "metadata": {
     "source_url": "https://example.com",
     "extracted_at": "2024-01-15T10:30:00Z"
@@ -431,13 +434,15 @@ X-Idempotency-Key: {uuid}
 | `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual`. Ignored for label rows when `labels` is provided; used as fallback when `labels` is omitted |
 | `confidence` | float | No | 0.0-1.0. Default: 0.80. Used with scalar `category` when `labels` is omitted |
 | `labels` | object[] | No | Multi-label classification (1–5 labels). Each item: `label` (enum) + `confidence` (0.0–1.0). When omitted, one label is synthesized from `category` + `confidence`. `memories.category` in the response reflects the DB trigger winner (highest confidence; tie → `label` ASC) |
-| `session_id` | UUID | No | Session this memory was created in |
+| `session_id` | UUID | No | Source session; if set, it must be completed and not deleted, and `expected_session_revision` is required |
+| `expected_session_revision` | integer | Conditional | Required with `session_id`; positive source-session lifecycle revision, capped at `2^63 - 1` |
 | `visibility` | enum | No | `agent`, `org`, `session`. Default: `agent` |
 | `tags` | string[] | No | Searchable tags. Max 20 tags, 50 chars each |
 | `metadata` | object | No | Arbitrary JSON metadata. Max 10KB |
 | `pinned` | boolean | No | Always include in context. Default: false |
 | `valid_from` | ISO8601 datetime | No | World-time start of the fact (ADR-0047). Omitted → write path defaults to now. |
 | `valid_until` | ISO8601 datetime | No | Exclusive end of validity. Must be strictly after `valid_from` when both are set. |
+| `expires_at` | ISO8601 datetime | No | Soft-expiry cutoff for ordinary retrieval; does not tombstone the memory |
 
 **Response: 201 Created**
 
@@ -464,6 +469,7 @@ X-Idempotency-Key: {uuid}
     "metadata": {
       "source_url": "https://example.com"
     },
+    "lifecycle_revision": 1,
     "created_at": "2024-01-15T10:30:45.123Z",
     "updated_at": "2024-01-15T10:30:45.123Z"
   },
@@ -496,6 +502,7 @@ X-Idempotency-Key: {uuid}
   "data": {
     "id": "...",
     "status": "quarantined",
+    "lifecycle_revision": 1,
     "pii_detected": true
   },
   "meta": {
@@ -567,6 +574,36 @@ Authorization: Bearer {token}
   }
 }
 ```
+
+---
+
+### POST /v1/memories/{memory_id}/forget (provisional; GAP-007 / issue #995)
+
+This is the implemented per-memory tombstone operation in the current Python memory service. **It is provisional and not an accepted public lifecycle contract.** The older generic `DELETE /v1/memories/{memory_id}` section below is reference material and is not mounted by this service.
+
+**Authentication:** `memory:write` permission and an agent-scoped bearer token. `org_id` and `agent_id` are taken from verified token context, never from the request body.
+
+**Request:**
+
+```http
+POST /v1/memories/a1b2c3d4-e5f6-7890-abcd-ef1234567890/forget
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{"expected_revision": 4}
+```
+
+`expected_revision` is a required positive integer no greater than `2^63 - 1` (PostgreSQL `BIGINT` maximum). The service compares it under a row lock, advances the lifecycle revision, sets the terminal tombstone/deleted state, clears embedding fields, and inserts a redacted outbox event in the same PostgreSQL transaction. If the memory belongs to a source session, the same transaction also advances that session's lifecycle fence so extraction requests that captured its previous revision fail closed. Successful mutation invalidates the object and hot-cache entries best-effort after commit; database retrieval predicates remain authoritative.
+
+**Response: 200 OK**
+
+```json
+{"data":{"memory_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","revision":5,"tombstoned":true}}
+```
+
+**Errors:** `401 MISSING_TOKEN` when authentication is absent or invalid; `403 INSUFFICIENT_PERMISSIONS` when the verified token lacks `memory:write`; `403 AGENT_SCOPE_REQUIRED` when it is not agent-scoped; `404 NOT_FOUND` for a missing or out-of-scope memory; `409 STALE_LIFECYCLE_REVISION` when the expected revision is stale or already tombstoned; `422` for an invalid UUID or request body / non-positive `expected_revision`; `503 SERVICE_DEGRADED` when authentication is unavailable; and `503 DATABASE_UNAVAILABLE` when the database transaction cannot be completed. No content, embedding, or other memory body is returned in the lifecycle event. No lifecycle relay or downstream consumer is currently registered.
+
+Search and create responses include `lifecycle_revision` so a client can supply the revision precondition. `expires_at` is a soft visibility gate for ordinary retrieval and does not tombstone or erase a memory. The historical conflict-candidate mode remains internal and always excludes tombstones.
 
 ---
 
@@ -695,11 +732,9 @@ Content-Type: application/json
 
 ---
 
-### DELETE /v1/memories/{memory_id}
+### DELETE /v1/memories/{memory_id} (historical reference; not mounted by current memory service)
 
-**Delete a memory**
-
-Soft deletes by default. Use `?permanent=true` for GDPR compliance flows (requires admin permission).
+The following generic soft-delete/permanent-delete schema is legacy reference material, not a route in the current Python memory service. For the provisional GAP-007 implementation, use the revision-fenced `POST /v1/memories/{memory_id}/forget` above; it does not expose a permanent-purge or legal-hold bypass.
 
 **Required Permission:** `memory:delete`
 

@@ -1,5 +1,7 @@
 package contextclient
 
+import authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+
 // Message is a chat turn passed to AssembleContext (role/content only).
 type Message struct {
 	Role    string
@@ -28,6 +30,8 @@ type AssembleParams struct {
 	RequestID string
 	TraceID   string
 	SpanID    string
+	// PrincipalContext is additive verified identity; nil preserves old callers.
+	PrincipalContext *authv1.PrincipalContext
 }
 
 // MemoryUsed is one retrieval candidate returned by Assemble.

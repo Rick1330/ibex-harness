@@ -12,8 +12,20 @@ from redis.exceptions import RedisError
 
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
-from app.deps import get_write_orchestrator
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.deps import (
+    get_memory_cache_writer,
+    get_session_factory,
+    get_write_orchestrator,
+    require_memory_write,
+)
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    MemoryNotFoundError,
+    MemoryOrganizationUnavailableError,
+    StaleLifecycleError,
+    ValidationError,
+)
 from app.idempotency.redis_store import (
     ClaimKind,
     ClaimOutcome,
@@ -23,6 +35,7 @@ from app.idempotency.redis_store import (
 )
 from app.main import create_app
 from app.permissions import MEMORY_WRITE
+from app.routers import memories as memories_router
 from app.write.models import WriteOutcome, WriteOutcomeKind
 from tests.unit.memory_test_support import sample_memory_row
 
@@ -158,6 +171,15 @@ def test_create_memory_503_embedding(client) -> None:
         resp = _post_memory(http, content="x")
     assert resp.status_code == 503
     assert resp.json()["detail"]["code"] == "EMBEDDING_FAILED"
+
+
+def test_create_memory_409_org_unavailable(client) -> None:
+    http, mock_orch = client
+    mock_orch.create = AsyncMock(side_effect=MemoryOrganizationUnavailableError())
+    with http:
+        resp = _post_memory(http, content="x")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "ORG_UNAVAILABLE"
 
 
 def _post_validation(http: TestClient, payload: dict) -> object:
@@ -327,3 +349,101 @@ def test_create_memory_quarantine_commits_idempotency(client) -> None:
     assert resp.status_code == 202
     assert len(store.committed) == 1
     assert store.committed[0][2] == 202
+
+
+def test_forget_returns_success_when_post_commit_cache_invalidation_fails(
+    client, monkeypatch
+) -> None:
+    http, _mock_orch = client
+
+    class _FakeContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _FakeSession(_FakeContext):
+        def begin(self):
+            return _FakeContext()
+
+    class _FailingCacheWriter:
+        async def forget_memory(self, **_kwargs):
+            raise RuntimeError("unexpected cache failure")
+
+    async def _forget(_session, _request):
+        return 2
+
+    memory_id = uuid4()
+    monkeypatch.setattr(memories_router, "forget_memory_session", _forget)
+    http.app.dependency_overrides[get_session_factory] = lambda: _FakeSession
+    http.app.dependency_overrides[get_memory_cache_writer] = lambda: _FailingCacheWriter()
+    with http:
+        response = http.post(
+            f"/v1/memories/{memory_id}/forget",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"expected_revision": 1},
+        )
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "memory_id": str(memory_id),
+        "revision": 2,
+        "tombstoned": True,
+    }
+
+
+class _ForgetContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+class _ForgetSession(_ForgetContext):
+    def begin(self):
+        return _ForgetContext()
+
+
+def test_forget_requires_agent_scoped_token(client) -> None:
+    http, _mock_orch = client
+    http.app.dependency_overrides[require_memory_write] = lambda: ValidateResult(
+        org_id=ORG, permissions=MEMORY_WRITE, agent_id=None
+    )
+    with http:
+        response = http.post(
+            f"/v1/memories/{uuid4()}/forget",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"expected_revision": 1},
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AGENT_SCOPE_REQUIRED"
+
+
+@pytest.mark.parametrize(
+    ("side_effect", "expected"),
+    [
+        (MemoryNotFoundError(), (404, "NOT_FOUND")),
+        (StaleLifecycleError("stale"), (409, "STALE_LIFECYCLE_REVISION")),
+        (MemoryOrganizationUnavailableError(), (409, "ORG_UNAVAILABLE")),
+    ],
+    ids=["not_found", "stale_lifecycle", "org_unavailable"],
+)
+def test_forget_maps_domain_errors(client, monkeypatch, side_effect, expected) -> None:
+    http, _mock_orch = client
+    expected_status, expected_code = expected
+
+    async def _forget(_session, _request):
+        raise side_effect
+
+    monkeypatch.setattr(memories_router, "forget_memory_session", _forget)
+    http.app.dependency_overrides[get_session_factory] = lambda: _ForgetSession
+    http.app.dependency_overrides[get_memory_cache_writer] = lambda: None
+    with http:
+        response = http.post(
+            f"/v1/memories/{uuid4()}/forget",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"expected_revision": 1},
+        )
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["code"] == expected_code

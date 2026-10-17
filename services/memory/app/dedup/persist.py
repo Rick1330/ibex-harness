@@ -42,6 +42,7 @@ async def find_active_by_content_hash(
                       AND content_hash = :content_hash
                       AND status = 'active'
                       AND deleted_at IS NULL
+                      AND tombstoned = FALSE
                     LIMIT 1
                     """
                 ),
@@ -63,29 +64,38 @@ async def increment_retrieval_count(
 ) -> int:
     """Increment retrieval_count on exact-dedup hit; return new count."""
     async with factory() as session, session.begin():
-        await set_service_org(session, bump.org_id)
-        row = (
-            await session.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    """
-                    UPDATE ibex_core.memories
-                    SET retrieval_count = retrieval_count + 1,
-                        last_retrieved_at = NOW(),
-                        updated_at = NOW()
-                    WHERE id = :memory_id
-                      AND org_id = :org_id
-                      AND status = 'active'
-                      AND deleted_at IS NULL
-                    RETURNING retrieval_count
-                    """
-                ),
-                {
-                    "memory_id": str(bump.memory_id),
-                    "org_id": str(bump.org_id),
-                },
-            )
-        ).one_or_none()
-        if row is None:
-            msg = "retrieval_count bump expected 1 row"
-            raise RuntimeError(msg)
-        return int(row.retrieval_count)
+        return await increment_retrieval_count_session(session, bump)
+
+
+async def increment_retrieval_count_session(
+    session: AsyncSession,
+    bump: RetrievalBump,
+) -> int:
+    """Bump within a caller-owned transaction (including extraction fencing)."""
+    await set_service_org(session, bump.org_id)
+    row = (
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                UPDATE ibex_core.memories
+                SET retrieval_count = retrieval_count + 1,
+                    last_retrieved_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = :memory_id
+                  AND org_id = :org_id
+                  AND status = 'active'
+                  AND deleted_at IS NULL
+                  AND tombstoned = FALSE
+                RETURNING retrieval_count
+                """
+            ),
+            {
+                "memory_id": str(bump.memory_id),
+                "org_id": str(bump.org_id),
+            },
+        )
+    ).one_or_none()
+    if row is None:
+        msg = "retrieval_count bump expected 1 row"
+        raise RuntimeError(msg)
+    return int(row.retrieval_count)

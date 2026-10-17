@@ -73,8 +73,13 @@ Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 | 401 | `MISSING_TOKEN` | No `Authorization` header |
 | 401 | `INVALID_TOKEN` | Bearer malformed, expired, or revoked |
 | 403 | `INSUFFICIENT_PERMISSIONS` | Token lacks route permission |
-| 403 | `AGENT_NOT_AUTHORIZED` | Agent unknown or wrong org |
+| 403 | `AGENT_NOT_AUTHORIZED` | Agent unknown, wrong org, or policy snapshot issuance denied |
 | 403 | `AGENT_SUSPENDED` | Agent paused, suspended, or archived |
+| 403 | `SNAPSHOT_EXPIRED` | Policy snapshot outside its freshness window or epoch below minimum |
+| 403 | `SNAPSHOT_SIGNATURE_INVALID` | Policy snapshot failed signature or structural verification |
+| 403 | `SNAPSHOT_ORG_MISMATCH` | Policy snapshot is bound to a different organization |
+| 403 | `SNAPSHOT_AGENT_MISMATCH` | Policy snapshot is bound to a different agent |
+| 403 | `SNAPSHOT_KEY_UNKNOWN` | Policy snapshot names an unknown signing key |
 | 405 | `METHOD_NOT_ALLOWED` | Wrong HTTP method for route |
 | 413 | `PAYLOAD_TOO_LARGE` | Body exceeds `IBEX_MAX_REQUEST_BODY_BYTES` (1 MiB) |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Chat POST without `application/json` |
@@ -89,6 +94,7 @@ Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 | 501 | `PROVIDER_NOT_CONFIGURED` | Requested model is not registered in the active provider registry |
 | 503 | `SERVICE_DEGRADED` | Auth ValidateToken failed unexpectedly / deadline |
 | 503 | `AUTH_UNAVAILABLE` | Auth ValidateAgent transport failure |
+| 503 | `SNAPSHOT_UNAVAILABLE` | Policy snapshot issuance or verification could not complete; retry later |
 | 500 | `INTERNAL_ERROR` | Unhandled server fault |
 
 ## Provider / upstream errors

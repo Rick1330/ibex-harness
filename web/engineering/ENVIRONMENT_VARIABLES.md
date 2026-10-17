@@ -225,7 +225,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs (env seed; DB overrides from m4.B.2 win when present) | |
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
-| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](../content/docs/adr/0011-proxy-auth-client.mdx); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
+| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`); also bounds `IssuePolicySnapshot` (GAP-002) | Code default per [ADR-0011](../content/docs/adr/0011-proxy-auth-client.mdx); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
+| `IBEX_PROXY_POLICY_PUBLIC_KEYS` | Staging/production yes (when protected routes mounted, GAP-002); optional in development | (empty; stage disabled) | JSON object mapping policy-signing key ids to PEM RSA public keys from AuthService (`IBEX_AUTH_POLICY_SIGNING_KEY_PEM`); verified before mutating chat/responses/session-terminate and auth-probe requests | Public keys only; staging/production construction fails closed without fetcher+verifier. See [Errors](/docs/api-reference/errors) `SNAPSHOT_*` |
+| `IBEX_PROXY_POLICY_MIN_EPOCH` | No | `0` (accept any) | Minimum accepted signing-key epoch; snapshots below fail closed with `SNAPSHOT_EXPIRED` | Raise during key rotation; pair with the auth `IBEX_AUTH_POLICY_EPOCH` |
 | `IBEX_AUTH_CACHE_ENABLED` | No | `true` | Request bloom + LRU wrap for ValidateToken ([ADR-0028](/docs/adr/0028-auth-cache-design)). Wrap is **skipped** (WARN) when `REDIS_URL` is empty or Redis Ping fails — revoke must not rely on LRU TTL alone without the pub/sub channel ([ADR-0029](/docs/adr/0029-token-revocation-propagation)). | Set `false` to force every request through gRPC |
 | `IBEX_AUTH_CACHE_LRU_CAPACITY` | No | `5000` | Max claims entries per proxy process | |
 | `IBEX_AUTH_CACHE_LRU_MAX_TTL` | No | `30s` | Max cache TTL (also max revoke lag if a pub/sub message is missed) | Requires Redis + healthy Ping for cache wrap |
@@ -330,6 +332,9 @@ Used by: **auth** (`services/auth`)
 |----------|----------|---------|-------------|----------------|
 | `IBEX_CREDENTIALS_MASTER_KEY` | Conditional | (empty) | Base64-encoded 32-byte AES-256 KEK for sealing org provider API keys | **Secret.** Required when `IBEX_ENV=production`. Auth-only; never ship to API/proxy |
 | `IBEX_CREDENTIALS_MASTER_KEY_ID` | No | `v1` | Logical KEK version stored with each sealed blob | Rotation metadata only |
+| `IBEX_AUTH_POLICY_SIGNING_KEY_PEM` | Conditional | (empty; issuance fails closed with `FailedPrecondition`) | PEM RSA private key (PKCS#1 or PKCS#8, ≥2048 bits) minting `policy-snapshot.v1` envelopes for `IssuePolicySnapshot` (GAP-002). Required outside development; matching public key ships to the proxy as `IBEX_PROXY_POLICY_PUBLIC_KEYS` | **Secret.** Auth-only; never log or ship to proxy/console |
+| `IBEX_AUTH_POLICY_SIGNING_KEY_ID` | No | `v1` | Policy-signing key id stamped into the envelope `key_id` for rotation | Public metadata |
+| `IBEX_AUTH_POLICY_EPOCH` | No | `1` | Effective policy epoch stamped into snapshots; consumers reject below `IBEX_PROXY_POLICY_MIN_EPOCH` | Raise on authority/policy-generation change |
 
 Auth stores ciphertext only. Management API validate-before-store then calls `CreateProviderCredential`; proxy resolves via `GetProviderCredential` with a 30s cache ([ADR-0074](/docs/adr/0074-provider-credential-storage)).
 

@@ -57,11 +57,18 @@ class FakeSessionStore:
                 last_extracted_turn=self.updated,
                 status=self.snapshot.status,
                 deleted_at=self.snapshot.deleted_at,
+                lifecycle_revision=self.snapshot.lifecycle_revision,
             )
         return self.snapshot
 
-    def update_last_extracted_turn(self, org_id, session_id, last_extracted_turn: int) -> None:
+    def update_last_extracted_turn(
+        self, org_id, session_id, last_extracted_turn: int,
+        expected_lifecycle_revision: int,
+    ) -> None:
         del org_id, session_id
+        if self.snapshot is not None and self.snapshot.lifecycle_revision != expected_lifecycle_revision:
+            from app.extraction.provider import ExtractionLifecycleConflict
+            raise ExtractionLifecycleConflict("stale session revision")
         self.update_attempts += 1
         if self._fail_updates > 0:
             self._fail_updates -= 1
@@ -78,6 +85,7 @@ class FakeSessionStore:
                 last_extracted_turn=self.updated,
                 status=self.snapshot.status,
                 deleted_at=self.snapshot.deleted_at,
+                lifecycle_revision=self.snapshot.lifecycle_revision,
             )
 
 

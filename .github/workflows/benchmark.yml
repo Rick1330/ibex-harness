@@ -125,7 +125,7 @@ jobs:
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       BENCH_PROXY_PORT: "18082"
-      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
       REDIS_URL: redis://127.0.0.1:6379/0
       BENCH_PROFILE: ${{ needs.detect-benchmark-trigger.outputs.bench_profile }}
     services:

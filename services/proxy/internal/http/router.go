@@ -15,7 +15,9 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/modelpolicy"
+	"github.com/Rick1330/ibex-harness/packages/policysnapshot"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/providercap"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
@@ -48,7 +50,13 @@ type RouterDeps struct {
 	Tracer        trace.Tracer
 	Validator     TokenValidator
 	AgentVerifier AgentVerifier
-	Limiter       ratelimit.Limiter
+	// PolicySnapshotFetcher mints signed snapshots via AuthService (nil disables
+	// the GAP-002 policy snapshot stage; staging/production require it).
+	PolicySnapshotFetcher PolicySnapshotFetcher
+	// PolicySnapshotVerifier verifies issued snapshots against the AuthService
+	// policy-signing key set (nil disables the stage).
+	PolicySnapshotVerifier *policysnapshot.Verifier
+	Limiter                ratelimit.Limiter
 	// BudgetCache enforces spend hard-caps after RPM (nil disables).
 	BudgetCache *billing.Cache
 	// UsageFactWriter batches usage_facts inserts (nil disables).
@@ -59,16 +67,18 @@ type RouterDeps struct {
 	CheckpointPool     *asyncpool.Pool
 	GetOrCreateTimeout time.Duration
 	// EvidenceStore persists nested evidence + outbox rows (nil disables; 4.P.2).
-	EvidenceStore    httpsession.EvidencePersister
-	Health           *healthcheck.Server
-	ProviderRegistry *provider.Registry
+	EvidenceStore      httpsession.EvidencePersister
+	Health             *healthcheck.Server
+	ProviderRegistry   *provider.Registry
+	CapabilityManifest *providercap.Snapshot
 	// ModelRouter org-gates provider selection (nil → DenyAllRegistry).
 	ModelRouter ProviderResolver
 	// AgentDefaults loads agents.default_model when request model is empty (nil → noop).
-	AgentDefaults    modelpolicy.AgentDefaultLoader
-	ResponsePipeline *responsepipeline.Pipeline
-	TraceWriter      TraceWriter
-	IdempotencyStore idempotency.Store
+	AgentDefaults     modelpolicy.AgentDefaultLoader
+	ResponsePipeline  *responsepipeline.Pipeline
+	TraceWriter       TraceWriter
+	IdempotencyStore  idempotency.Store
+	TerminationLedger idempotency.Ledger
 	// ContextClient is the fail-open Assemble client from bootstrap (nil when
 	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
 	// Production passes *contextclient.Client; tests may supply fakes.
@@ -88,6 +98,9 @@ func NewRouter(deps RouterDeps) (http.Handler, error) {
 	}
 	if protectedRoutesRequireAgentVerifier(deps) {
 		return nil, fmt.Errorf("proxy %s profile requires an agent verifier when protected routes are mounted", deps.Config.Environment)
+	}
+	if protectedRoutesRequirePolicySnapshot(deps) {
+		return nil, fmt.Errorf("proxy %s profile requires policy snapshot fetcher and verifier when protected routes are mounted", deps.Config.Environment)
 	}
 	mux := http.NewServeMux()
 	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
@@ -117,6 +130,17 @@ func protectedRoutesRequireLimiter(deps RouterDeps) bool {
 
 func protectedRoutesRequireAgentVerifier(deps RouterDeps) bool {
 	if deps.Validator == nil || deps.AgentVerifier != nil {
+		return false
+	}
+	_, protectedProfile := map[string]struct{}{"staging": {}, "production": {}}[deps.Config.Environment]
+	return protectedProfile
+}
+
+func protectedRoutesRequirePolicySnapshot(deps RouterDeps) bool {
+	if deps.Validator == nil {
+		return false
+	}
+	if deps.PolicySnapshotFetcher != nil && deps.PolicySnapshotVerifier != nil {
 		return false
 	}
 	_, protectedProfile := map[string]struct{}{"staging": {}, "production": {}}[deps.Config.Environment]
@@ -155,6 +179,8 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		reg:                      deps.Metrics,
 		validator:                deps.Validator,
 		agentVerifier:            deps.AgentVerifier,
+		policyFetcher:            deps.PolicySnapshotFetcher,
+		policyVerifier:           deps.PolicySnapshotVerifier,
 		limiter:                  deps.Limiter,
 		budgetCache:              deps.BudgetCache,
 		usageFactWriter:          deps.UsageFactWriter,
@@ -166,11 +192,13 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		evidenceStore:            deps.EvidenceStore,
 		docsBase:                 deps.Config.ErrorDocsBase,
 		providerRegistry:         providerReg,
+		capabilityManifest:       deps.CapabilityManifest,
 		modelRouter:              modelRouter,
 		agentDefaults:            agentDefaults,
 		responsePipeline:         deps.ResponsePipeline,
 		traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
 		idempotencyStore:         deps.IdempotencyStore,
+		terminationLedger:        deps.TerminationLedger,
 		idempotencyTimeout:       deps.Config.IdempotencyRedisTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.Config.IdempotencyRedisTimeout),
 		contextClient:            deps.ContextClient,
@@ -253,6 +281,7 @@ type chatCompletionHandler struct {
 	usageFactWriter          *billing.UsageFactWriter
 	budgetCache              *billing.Cache
 	idempotencyStore         idempotency.Store
+	terminationLedger        idempotency.Ledger
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler

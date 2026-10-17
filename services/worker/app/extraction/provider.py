@@ -18,6 +18,10 @@ class ExtractionProviderError(Exception):
     """Non-retryable provider configuration or response-shape error."""
 
 
+class ExtractionLifecycleConflict(ExtractionProviderError):
+    """The source session revision changed; never retry with the stale snapshot."""
+
+
 @dataclass(frozen=True, slots=True)
 class ExtractionCall:
     """Raw model output plus usage for llm_traces (never includes prompt text)."""
