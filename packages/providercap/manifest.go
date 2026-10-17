@@ -105,8 +105,7 @@ func LoadFileAllowStale(path string, now time.Time) (*Snapshot, error) {
 func loadFile(path string, now time.Time, allowStale bool) (*Snapshot, error) {
 	// path is operator-supplied configuration (IBEX_PROVIDER_CAPABILITY_MANIFEST)
 	// or a fixed repo-relative seed path, never end-user request input.
-	// nosemgrep: operator-configured manifest path, never derived from request input.
-	f, err := os.Open(filepath.Clean(path))
+	f, err := os.Open(filepath.Clean(path)) // nosemgrep: go_filesystem_rule-fileread
 	if err != nil {
 		return nil, err
 	}

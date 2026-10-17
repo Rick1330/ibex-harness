@@ -25,9 +25,13 @@ is_bot_identity() {
   return 1
 }
 
-# has_bot_coauthor <message>: commit trailer crediting a "[bot]" co-author.
-has_bot_coauthor() {
-  grep -qiE '^Co-authored-by:.*\[bot\]' <<<"$1"
+# is_github_applied <committer_name> <committer_email>: commits created through
+# GitHub itself (web editor, suggested changes, review apps) are committed by
+# GitHub <noreply@github.com>. The author owns the content but cannot add a local
+# sign-off, so treat those as automation.
+is_github_applied() {
+  [[ "$1" == "GitHub" && "$2" == "noreply@github.com" ]] && return 0
+  return 1
 }
 
 missing=0
@@ -40,13 +44,14 @@ while IFS= read -r sha; do
   fi
   author_email="$(git log -1 --format='%ae' "$sha")"
   author_name="$(git log -1 --format='%an' "$sha")"
-  message="$(git log -1 --format='%B' "$sha")"
-  # Bot/automation commits are exempt from sign-off. A commit qualifies when its
-  # author is a known automation account, when the author email is a "[bot]"
-  # noreply identity, or when it credits a "[bot]" as a co-author (how GitHub
-  # code-review apps such as greptile-apps commit suggestions on a user's behalf).
-  # Author fields are spoofable, so this stays scoped to explicit bot markers.
-  if is_bot_identity "$author_name" "$author_email" || has_bot_coauthor "$message"; then
+  committer_email="$(git log -1 --format='%ce' "$sha")"
+  committer_name="$(git log -1 --format='%cn' "$sha")"
+  # Bot/automation commits are exempt from sign-off: known automation authors (or
+  # any "[bot]" noreply author), and commits applied by GitHub itself. This is
+  # keyed off the author/committer identity only, so a co-author trailer cannot
+  # bypass the human sign-off requirement.
+  if is_bot_identity "$author_name" "$author_email" ||
+    is_github_applied "$committer_name" "$committer_email"; then
     continue
   fi
   if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by:'; then
