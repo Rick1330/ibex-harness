@@ -112,30 +112,18 @@ async def test_lock_organization_active_acquires_advisory_and_row_lock() -> None
     assert session.executed == 2
 
 
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        None,
+        {"status": "cancelled", "deleted_at": None},
+        {"status": "active", "deleted_at": datetime.now(tz=UTC)},
+    ],
+    ids=["missing", "cancelled", "deleted"],
+)
 @pytest.mark.asyncio
-async def test_lock_organization_missing_row_raises() -> None:
-    session = _ScriptedSession([_FakeResult(), _FakeResult(mapping=None)])
-    with pytest.raises(MemoryOrganizationUnavailableError):
-        await _call_lock(session)
-
-
-@pytest.mark.asyncio
-async def test_lock_organization_cancelled_raises() -> None:
-    session = _ScriptedSession(
-        [_FakeResult(), _FakeResult(mapping={"status": "cancelled", "deleted_at": None})]
-    )
-    with pytest.raises(MemoryOrganizationUnavailableError):
-        await _call_lock(session)
-
-
-@pytest.mark.asyncio
-async def test_lock_organization_deleted_raises() -> None:
-    session = _ScriptedSession(
-        [
-            _FakeResult(),
-            _FakeResult(mapping={"status": "active", "deleted_at": datetime.now(tz=UTC)}),
-        ]
-    )
+async def test_lock_organization_rejects_unavailable(mapping: dict | None) -> None:
+    session = _ScriptedSession([_FakeResult(), _FakeResult(mapping=mapping)])
     with pytest.raises(MemoryOrganizationUnavailableError):
         await _call_lock(session)
 
@@ -147,28 +135,19 @@ async def test_require_session_absent_and_no_revision_is_noop() -> None:
     assert session.executed == 0
 
 
+@pytest.mark.parametrize(
+    ("fence", "match"),
+    [
+        (_fence(session_id=None, expected_revision=1), "without session_id"),
+        (_fence(session_id=SESSION, expected_revision=None), "revision is required"),
+        (_fence(session_id=SESSION, expected_revision=0), "revision is required"),
+    ],
+    ids=["revision_without_session", "missing_revision", "non_positive_revision"],
+)
 @pytest.mark.asyncio
-async def test_require_session_revision_without_session_id_raises() -> None:
-    with pytest.raises(StaleLifecycleError, match="without session_id"):
-        await require_extraction_session(
-            _ScriptedSession([]), _fence(session_id=None, expected_revision=1)
-        )
-
-
-@pytest.mark.asyncio
-async def test_require_session_missing_revision_raises() -> None:
-    with pytest.raises(StaleLifecycleError, match="revision is required"):
-        await require_extraction_session(
-            _ScriptedSession([]), _fence(session_id=SESSION, expected_revision=None)
-        )
-
-
-@pytest.mark.asyncio
-async def test_require_session_non_positive_revision_raises() -> None:
-    with pytest.raises(StaleLifecycleError, match="revision is required"):
-        await require_extraction_session(
-            _ScriptedSession([]), _fence(session_id=SESSION, expected_revision=0)
-        )
+async def test_require_session_revision_guard_raises(fence, match: str) -> None:
+    with pytest.raises(StaleLifecycleError, match=match):
+        await require_extraction_session(_ScriptedSession([]), fence)
 
 
 @pytest.mark.asyncio
@@ -213,60 +192,41 @@ async def test_require_session_stale_row_raises() -> None:
 
 def test_matches_session_fence_all_branches() -> None:
     fence = _fence(session_id=SESSION, expected_revision=2)
-    assert _matches_session_fence(None, fence) is False
-    assert (
-        _matches_session_fence(
-            {"agent_id": uuid4(), "status": "completed", "deleted_at": None, "lifecycle_revision": 2},
-            fence,
-        )
-        is False
-    )
-    assert (
-        _matches_session_fence(
-            {"agent_id": AGENT, "status": "active", "deleted_at": None, "lifecycle_revision": 2},
-            fence,
-        )
-        is False
-    )
-    assert (
-        _matches_session_fence(
-            {
-                "agent_id": AGENT,
-                "status": "completed",
-                "deleted_at": datetime.now(tz=UTC),
-                "lifecycle_revision": 2,
-            },
-            fence,
-        )
-        is False
-    )
-    assert (
-        _matches_session_fence(
-            {"agent_id": AGENT, "status": "completed", "deleted_at": None, "lifecycle_revision": 1},
-            fence,
-        )
-        is False
-    )
-    assert (
-        _matches_session_fence(
-            {"agent_id": AGENT, "status": "completed", "deleted_at": None, "lifecycle_revision": 2},
-            fence,
-        )
-        is True
-    )
+    matching = {
+        "agent_id": AGENT,
+        "status": "completed",
+        "deleted_at": None,
+        "lifecycle_revision": 2,
+    }
+    cases: list[tuple[dict | None, bool]] = [
+        (None, False),
+        ({**matching, "agent_id": uuid4()}, False),
+        ({**matching, "status": "active"}, False),
+        ({**matching, "deleted_at": datetime.now(tz=UTC)}, False),
+        ({**matching, "lifecycle_revision": 1}, False),
+        (matching, True),
+    ]
+    for row, expected in cases:
+        assert _matches_session_fence(row, fence) is expected
 
 
+@pytest.mark.parametrize(
+    ("event", "match"),
+    [
+        (
+            MemoryLifecycleEvent(org_id=ORG, memory_id=MEM, revision=0, event_type="created"),
+            "positive",
+        ),
+        (
+            MemoryLifecycleEvent(org_id=ORG, memory_id=MEM, revision=1, event_type="bogus"),
+            "unsupported",
+        ),
+    ],
+    ids=["non_positive_revision", "unknown_event_type"],
+)
 @pytest.mark.asyncio
-async def test_enqueue_rejects_non_positive_revision() -> None:
-    event = MemoryLifecycleEvent(org_id=ORG, memory_id=MEM, revision=0, event_type="created")
-    with pytest.raises(ValueError, match="positive"):
-        await enqueue_memory_lifecycle_event(_ScriptedSession([]), event)
-
-
-@pytest.mark.asyncio
-async def test_enqueue_rejects_unknown_event_type() -> None:
-    event = MemoryLifecycleEvent(org_id=ORG, memory_id=MEM, revision=1, event_type="bogus")
-    with pytest.raises(ValueError, match="unsupported"):
+async def test_enqueue_rejects_invalid_event(event, match: str) -> None:
+    with pytest.raises(ValueError, match=match):
         await enqueue_memory_lifecycle_event(_ScriptedSession([]), event)
 
 

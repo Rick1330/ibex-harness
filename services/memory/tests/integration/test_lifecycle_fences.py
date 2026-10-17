@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -31,50 +32,53 @@ from tests.integration.conftest import seed_org_agent_memory, with_service_org, 
 pytestmark = pytest.mark.integration
 
 
+@asynccontextmanager
+async def _service_session(factory, org_id):
+    async with factory() as session, session.begin():
+        await with_service_org(session, org_id)
+        yield session
+
+
+async def _execute_sql(factory, org_id, statement: str, params: dict) -> None:
+    async with _service_session(factory, org_id) as session:
+        await session.execute(text(statement), params)
+
+
+async def _scalar(factory, org_id, statement: str, params: dict):
+    async with _service_session(factory, org_id) as session:
+        return await session.scalar(text(statement), params)
+
+
+async def _rows(factory, org_id, statement: str, params: dict) -> list:
+    async with _service_session(factory, org_id) as session:
+        return (await session.execute(text(statement), params)).all()
+
+
 async def _read_lifecycle(
     factory: async_sessionmaker[AsyncSession], *, org_id, memory_id
 ) -> tuple[int, bool, str, object]:
-    async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        row = (
-            await session.execute(
-                text(
-                    """SELECT lifecycle_revision, tombstoned, status, embedding
-                       FROM ibex_core.memories WHERE id=:id AND org_id=:org"""
-                ),
-                {"id": str(memory_id), "org": str(org_id)},
-            )
-        ).one()
+    rows = await _rows(
+        factory,
+        org_id,
+        """SELECT lifecycle_revision, tombstoned, status, embedding
+           FROM ibex_core.memories WHERE id=:id AND org_id=:org""",
+        {"id": str(memory_id), "org": str(org_id)},
+    )
+    row = rows[0]
     return int(row.lifecycle_revision), bool(row.tombstoned), str(row.status), row.embedding
 
 
 async def _read_outbox(
     factory: async_sessionmaker[AsyncSession], *, org_id, memory_id
 ) -> list[tuple[int, str]]:
-    async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        events = (
-            await session.execute(
-                text(
-                    """SELECT revision, event_type FROM ibex_core.memory_lifecycle_outbox
-                       WHERE org_id=:org AND memory_id=:id"""
-                ),
-                {"org": str(org_id), "id": str(memory_id)},
-            )
-        ).all()
-    return [(int(row.revision), row.event_type) for row in events]
-
-
-async def _execute_sql(factory, org_id, statement: str, params: dict) -> None:
-    async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(text(statement), params)
-
-
-async def _scalar(factory, org_id, statement: str, params: dict):
-    async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        return await session.scalar(text(statement), params)
+    rows = await _rows(
+        factory,
+        org_id,
+        """SELECT revision, event_type FROM ibex_core.memory_lifecycle_outbox
+           WHERE org_id=:org AND memory_id=:id""",
+        {"org": str(org_id), "id": str(memory_id)},
+    )
+    return [(int(row.revision), row.event_type) for row in rows]
 
 
 async def _seed_memory_with_embedding(

@@ -173,17 +173,23 @@ async def lock_organization_for_memory_write(session: AsyncSession, org_id: UUID
         raise MemoryOrganizationUnavailableError()
 
 
+def _validate_session_fence_revision(fence: ExtractionSessionFence) -> bool:
+    """Return True when the fence carries no session and needs no verification."""
+    if fence.session_id is None:
+        if fence.expected_revision is not None:
+            raise StaleLifecycleError("session revision supplied without session_id")
+        return True
+    if fence.expected_revision is None or fence.expected_revision < 1:
+        raise StaleLifecycleError("expected session lifecycle revision is required")
+    return False
+
+
 async def require_extraction_session(
     session: AsyncSession, fence: ExtractionSessionFence
 ) -> None:
     """Lock and verify the source session in the memory-write transaction."""
-    if fence.session_id is None:
-        if fence.expected_revision is not None:
-            raise StaleLifecycleError("session revision supplied without session_id")
+    if _validate_session_fence_revision(fence):
         return
-    if fence.expected_revision is None or fence.expected_revision < 1:
-        raise StaleLifecycleError("expected session lifecycle revision is required")
-
     await set_service_org(session, fence.org_id)
     row = await _fetch_mapping(
         session,
