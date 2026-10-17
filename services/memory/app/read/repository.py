@@ -31,6 +31,7 @@ from app.vectorstore.base import SearchHit, SearchMode, SearchRequest, VectorSto
 _HYDRATE_SQL = """
 SELECT m.id, m.org_id, m.agent_id, m.content, m.category, m.confidence, m.status,
        m.created_at, m.updated_at, m.valid_from, m.usefulness_score, m.retrieval_count,
+       m.lifecycle_revision,
        COALESCE(
          (
            SELECT array_agg(ml.label ORDER BY ml.confidence DESC, ml.label ASC)
@@ -45,6 +46,8 @@ WHERE m.org_id = :org_id
   AND m.confidence >= :min_confidence
   AND m.status = 'active'
   AND m.deleted_at IS NULL
+  AND m.tombstoned = FALSE
+  AND (m.expires_at IS NULL OR m.expires_at > CURRENT_TIMESTAMP)
   AND m.valid_from <= CURRENT_TIMESTAMP
   AND (m.valid_until IS NULL OR m.valid_until > CURRENT_TIMESTAMP)
 """
@@ -221,6 +224,7 @@ class MemoryReadRepository:
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     categories=_categories_from_row(row),
+                    lifecycle_revision=int(row.get("lifecycle_revision", 1)),
                 ),
                 valid_from=row["valid_from"],
                 usefulness_score=float(row["usefulness_score"]),

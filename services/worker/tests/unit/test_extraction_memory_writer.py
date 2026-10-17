@@ -17,7 +17,7 @@ from app.extraction.memory_writer import (
     memory_idempotency_digest,
     memory_idempotency_key,
 )
-from app.extraction.provider import ExtractionTransportError
+from app.extraction.provider import ExtractionLifecycleConflict, ExtractionTransportError
 from app.extraction.schema import ExtractedMemory
 
 
@@ -44,6 +44,7 @@ def _request(memory: ExtractedMemory | None = None) -> MemoryWriteRequest:
         turn_index=3,
         memory=memory or _memory(),
         ordinal=0,
+        expected_session_revision=1,
     )
 
 
@@ -71,6 +72,7 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
         turn_index=5,
         memory=_memory(),
         ordinal=2,
+        expected_session_revision=4,
     )
     writer = _writer(handler, token="mem-token")
     writer.write(req)
@@ -83,6 +85,7 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
     assert body["labels"][0]["label"] == "preference"
     assert "valid_from" in body
     assert "valid_until" in body
+    assert body["expected_session_revision"] == 4
 
 
 def test_identity_key_stable_when_llm_wording_differs() -> None:
@@ -105,6 +108,7 @@ def test_identity_key_stable_when_llm_wording_differs() -> None:
         turn_index=0,
         memory=_memory(content=wording_a),
         ordinal=0,
+        expected_session_revision=1,
     )
     slot_b = MemoryWriteRequest(
         org_id=org_id,
@@ -113,6 +117,7 @@ def test_identity_key_stable_when_llm_wording_differs() -> None:
         turn_index=0,
         memory=_memory(content=wording_b),
         ordinal=0,
+        expected_session_revision=1,
     )
     assert memory_idempotency_digest(slot_a) == memory_idempotency_digest(slot_b)
     assert memory_idempotency_key(slot_a) == memory_idempotency_key(slot_b)
@@ -136,6 +141,7 @@ def test_writer_sends_same_key_on_retry_with_different_wording() -> None:
                 turn_index=7,
                 memory=_memory(content=content),
                 ordinal=1,
+        expected_session_revision=1,
             )
         )
     assert len(keys) == 2
@@ -227,3 +233,9 @@ def test_writer_close_owned_client() -> None:
     writer = HttpMemoryWriter(MemoryHttpConfig(base_url="http://memory.example", token="t"))
     writer.close()
     writer.close()
+
+
+def test_writer_maps_stale_lifecycle_conflict_to_non_retryable_typed_error() -> None:
+    writer = _writer(lambda _r: _409("STALE_LIFECYCLE_REVISION"))
+    with pytest.raises(ExtractionLifecycleConflict, match="stale session revision"):
+        writer.write(_request())

@@ -8,6 +8,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.exceptions import StaleLifecycleError
+from app.lifecycle import enqueue_memory_lifecycle_event
 from app.org_context import set_service_org
 
 
@@ -19,6 +21,7 @@ class MemoryPiiUpdate:
     status: str
     pii_detected: bool
     pii_redacted: bool
+    expected_revision: int
 
 
 async def update_memory_pii_flags(
@@ -40,6 +43,9 @@ async def update_memory_pii_flags(
                 WHERE id = :memory_id
                   AND org_id = :org_id
                   AND deleted_at IS NULL
+                  AND tombstoned = FALSE
+                  AND lifecycle_revision = :expected_revision
+                RETURNING lifecycle_revision
                 """
             ),
             {
@@ -49,8 +55,19 @@ async def update_memory_pii_flags(
                 "pii_redacted": update.pii_redacted,
                 "memory_id": str(update.memory_id),
                 "org_id": str(update.org_id),
+                "expected_revision": update.expected_revision,
             },
         )
         if result.rowcount != 1:
-            msg = f"memory update expected 1 row, got {result.rowcount}"
-            raise RuntimeError(msg)
+            raise StaleLifecycleError(
+                f"Memory {update.memory_id} is missing, tombstoned, or no longer at revision {update.expected_revision}"
+            )
+        new_revision = int(result.scalar_one())
+        if new_revision != update.expected_revision:
+            await enqueue_memory_lifecycle_event(
+                session,
+                org_id=update.org_id,
+                memory_id=update.memory_id,
+                revision=new_revision,
+                event_type=("quarantined" if update.status == "quarantined" else "content_updated"),
+            )

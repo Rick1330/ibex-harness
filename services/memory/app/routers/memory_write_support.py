@@ -11,7 +11,12 @@ from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    StaleLifecycleError,
+    ValidationError,
+)
 from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyToken
 from app.schemas.limits import MAX_IDEMPOTENCY_KEY_LENGTH
 from app.schemas.memories import (
@@ -183,9 +188,7 @@ async def commit_idempotency(handle: IdempotencyHandle, *, status: int, body: by
         )
 
 
-async def commit_idempotency_or_log(
-    handle: IdempotencyHandle, *, status: int, body: bytes
-) -> None:
+async def commit_idempotency_or_log(handle: IdempotencyHandle, *, status: int, body: bytes) -> None:
     if not handle.active:
         return
     try:
@@ -198,6 +201,11 @@ async def commit_idempotency_or_log(
 
 
 def http_error_for_write(exc: BaseException) -> HTTPException:
+    if isinstance(exc, StaleLifecycleError):
+        return HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        )
     if isinstance(exc, DuplicateMemoryError):
         return HTTPException(
             status_code=409,
@@ -255,6 +263,8 @@ def memory_command_from_request(
         metadata=request.metadata,
         valid_from=request.valid_from,
         valid_until=request.valid_until,
+        expires_at=request.expires_at,
+        expected_session_revision=request.expected_session_revision,
         labels=resolved,
     )
 
@@ -281,6 +291,7 @@ def memory_data_from_outcome(outcome: WriteOutcome, org_id: UUID) -> MemoryData:
         metadata=memory.metadata,
         created_at=memory.created_at,
         updated_at=memory.updated_at,
+        lifecycle_revision=memory.lifecycle_revision,
     )
 
 
@@ -292,7 +303,11 @@ async def finalize_quarantine_response(
 ) -> QuarantineMemoryResponse:
     response.status_code = 202
     payload = QuarantineMemoryResponse(
-        data=QuarantineMemoryData(id=outcome.memory.id, status="quarantined"),
+        data=QuarantineMemoryData(
+            id=outcome.memory.id,
+            status="quarantined",
+            lifecycle_revision=outcome.memory.lifecycle_revision,
+        ),
         meta={"message": "Memory quarantined for review due to PII detection"},
     )
     await commit_idempotency_or_log(

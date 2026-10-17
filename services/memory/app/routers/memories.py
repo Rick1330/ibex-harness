@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 from typing import Annotated, Any
 from uuid import UUID
@@ -20,16 +21,21 @@ from app.deps import (
     get_create_memory_context,
     get_feedback_memory_context,
     get_hot_memory_context,
+    get_memory_cache_writer,
     get_search_memory_context,
+    get_session_factory,
+    require_memory_write,
 )
 from app.exceptions import (
     DuplicateMemoryError,
     EmbeddingServiceError,
     MemoryNotFoundError,
+    StaleLifecycleError,
     ValidationError,
 )
 from app.feedback.models import ApplyFeedbackCommand, FeedbackKind
 from app.feedback.persist import require_agent_id
+from app.lifecycle import forget_memory_session
 from app.read.models import HotMemoryQuery
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
@@ -57,8 +63,15 @@ from app.schemas.feedback import (
     RecordFeedbackRequest,
     RecordFeedbackResponse,
 )
-from app.schemas.memories import CreateMemoryRequest
+from app.schemas.memories import (
+    CreateMemoryRequest,
+    ForgetMemoryData,
+    ForgetMemoryRequest,
+    ForgetMemoryResponse,
+)
 from app.schemas.search import SearchMemoriesRequest, SearchMemoriesResponse
+
+logger = logging.getLogger(__name__)
 from app.write.models import WriteOutcomeKind
 
 router = APIRouter(prefix="/v1/memories", tags=["memories"])
@@ -94,7 +107,12 @@ async def create_memory(
     command = memory_command_from_request(request, ctx.token.org_id)
     try:
         outcome = await ctx.orchestrator.create(command)
-    except (DuplicateMemoryError, ValidationError, EmbeddingServiceError) as exc:
+    except (
+        DuplicateMemoryError,
+        ValidationError,
+        EmbeddingServiceError,
+        StaleLifecycleError,
+    ) as exc:
         await release_idempotency(idem)
         raise http_error_for_write(exc) from exc
     except Exception as exc:
@@ -112,6 +130,74 @@ async def create_memory(
             idem=idem,
             response=response,
         )
+    )
+
+
+@router.post(
+    "/{memory_id}/forget",
+    response_model=ForgetMemoryResponse,
+    summary="Forget a memory",
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Agent-scoped token and memory:write permission required"},
+        404: {"description": "Memory not found in caller scope"},
+        409: {"description": "Expected lifecycle revision is stale"},
+        422: {"description": "Invalid memory UUID or expected_revision body"},
+        503: {"description": "Authentication or database service unavailable"},
+    },
+)
+async def forget_memory(
+    memory_id: UUID,
+    request: ForgetMemoryRequest,
+    token: Annotated[Any, Depends(require_memory_write)],
+    session_factory: Annotated[Any, Depends(get_session_factory)],
+    cache_writer: Annotated[Any, Depends(get_memory_cache_writer)],
+) -> ForgetMemoryResponse:
+    """Tombstone a memory in the authenticated token's org and agent scope."""
+    try:
+        if token.agent_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "AGENT_SCOPE_REQUIRED", "message": "Agent-scoped token required"},
+            )
+        agent_id = token.agent_id
+        async with session_factory() as session, session.begin():
+            revision = await forget_memory_session(
+                session,
+                org_id=token.org_id,
+                agent_id=agent_id,
+                memory_id=memory_id,
+                expected_revision=request.expected_revision,
+            )
+    except (MemoryNotFoundError, StaleLifecycleError) as exc:
+        if isinstance(exc, MemoryNotFoundError):
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "NOT_FOUND", "message": "Memory not found"},
+            ) from exc
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "DATABASE_UNAVAILABLE", "message": "Database unavailable"},
+        ) from exc
+    if cache_writer is not None:
+        try:
+            await cache_writer.forget_memory(
+                org_id=token.org_id, agent_id=agent_id, memory_id=memory_id
+            )
+        except Exception:
+            logger.warning(
+                "memory cache invalidation failed after committed forget org_id=%s memory_id=%s",
+                token.org_id,
+                memory_id,
+                exc_info=True,
+            )
+    return ForgetMemoryResponse(
+        data=ForgetMemoryData(memory_id=memory_id, revision=revision, tombstoned=True)
     )
 
 

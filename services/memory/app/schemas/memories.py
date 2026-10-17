@@ -32,6 +32,8 @@ class CreateMemoryRequest(BaseModel):
     pinned: bool = False
     valid_from: datetime | None = None
     valid_until: datetime | None = None
+    expires_at: datetime | None = None
+    expected_session_revision: int | None = Field(default=None, ge=1)
 
     @field_validator("tags")
     @classmethod
@@ -41,18 +43,19 @@ class CreateMemoryRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_metadata_and_interval(self) -> CreateMemoryRequest:
         validate_memory_metadata(self.metadata)
+        if self.session_id is not None and self.expected_session_revision is None:
+            raise ValueError("expected_session_revision is required when session_id is set")
+        if self.session_id is None and self.expected_session_revision is not None:
+            raise ValueError("expected_session_revision requires session_id")
         start = self.valid_from
         end = self.valid_until
         if start is None or end is None:
             return self
         if (start.tzinfo is None) != (end.tzinfo is None):
-            raise ValueError(
-                "valid_from and valid_until must both be timezone-aware or both naive"
-            )
+            raise ValueError("valid_from and valid_until must both be timezone-aware or both naive")
         if end <= start:
             raise ValueError(
-                "valid_until must be greater than valid_from "
-                "(matches memories_valid_interval_chk)"
+                "valid_until must be greater than valid_from (matches memories_valid_interval_chk)"
             )
         return self
 
@@ -77,6 +80,7 @@ class MemoryData(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+    lifecycle_revision: int = 1
 
 
 class DeduplicationMeta(BaseModel):
@@ -98,9 +102,24 @@ class CreateMemoryResponse(BaseModel):
 class QuarantineMemoryData(BaseModel):
     id: UUID
     status: Literal["quarantined"]
+    lifecycle_revision: int = 1
     pii_detected: bool = True
 
 
 class QuarantineMemoryResponse(BaseModel):
     data: QuarantineMemoryData
     meta: dict[str, str]
+
+
+class ForgetMemoryRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+
+
+class ForgetMemoryData(BaseModel):
+    memory_id: UUID
+    revision: int
+    tombstoned: Literal[True] = True
+
+
+class ForgetMemoryResponse(BaseModel):
+    data: ForgetMemoryData

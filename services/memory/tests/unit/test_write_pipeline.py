@@ -164,11 +164,12 @@ async def test_novel_runs_embed_then_near_dup() -> None:
     store = InMemoryVectorStore()
     org, agent = uuid4(), uuid4()
     near_id = uuid4()
-    store.bind_agent(near_id, agent)
+    store.bind_agent(near_id, agent, lifecycle_revision=1)
     vec = [0.0] * 1023 + [1.0]
     await store.upsert(
         UpsertRequest(
-            memory_id=near_id, org_id=org, embedding=vec, embedding_model="test"
+            memory_id=near_id, org_id=org, embedding=vec, embedding_model="test",
+            expected_revision=1,
         )
     )
 

@@ -135,6 +135,7 @@ async def test_orchestrator_quarantine_persists_without_active_path() -> None:
         ) as insert_mock,
         patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
         patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.enqueue_memory_lifecycle_event", AsyncMock()),
     ):
         outcome = await orch.create(
             CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)

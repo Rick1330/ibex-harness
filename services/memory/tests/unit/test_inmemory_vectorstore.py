@@ -28,18 +28,18 @@ async def test_inmemory_round_trip_and_ranking() -> None:
     agent = uuid4()
     mem_a = uuid4()
     mem_b = uuid4()
-    store.bind_agent(mem_a, agent)
-    store.bind_agent(mem_b, agent)
+    store.bind_agent(mem_a, agent, lifecycle_revision=1)
+    store.bind_agent(mem_b, agent, lifecycle_revision=1)
 
     query = _UNIT
     near = [0.9] + [0.0] * 1023
     far = [0.0] * 1023 + [1.0]
 
     await store.upsert(
-        UpsertRequest(memory_id=mem_a, org_id=org, embedding=near, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem_a, org_id=org, embedding=near, embedding_model="bge-m3", expected_revision=1)
     )
     await store.upsert(
-        UpsertRequest(memory_id=mem_b, org_id=org, embedding=far, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem_b, org_id=org, embedding=far, embedding_model="bge-m3", expected_revision=1)
     )
 
     hits = await store.search(
@@ -52,7 +52,7 @@ async def test_inmemory_round_trip_and_ranking() -> None:
     assert hits[0].similarity > hits[1].similarity
     assert isinstance(hits[0], SearchHit)
 
-    await store.delete(memory_id=mem_a, org_id=org)
+    await store.delete(memory_id=mem_a, org_id=org, expected_revision=1)
     hits_after = await store.search(
         SearchRequest(
             org_id=org, agent_id=agent, query_embedding=query, limit=10, min_similarity=0.0
@@ -67,9 +67,9 @@ async def test_inmemory_respects_org_and_agent_scope() -> None:
     org_a, org_b = uuid4(), uuid4()
     agent_a, agent_b = uuid4(), uuid4()
     mem = uuid4()
-    store.bind_agent(mem, agent_a)
+    store.bind_agent(mem, agent_a, lifecycle_revision=1)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     )
 
     assert (
@@ -95,12 +95,12 @@ async def test_inmemory_rejects_agent_rebind_after_upsert() -> None:
     store = InMemoryVectorStore()
     mem, org = uuid4(), uuid4()
     agent_a, agent_b = uuid4(), uuid4()
-    store.bind_agent(mem, agent_a)
+    store.bind_agent(mem, agent_a, lifecycle_revision=1)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     )
     with pytest.raises(ValueError, match="cannot rebind"):
-        store.bind_agent(mem, agent_b)
+        store.bind_agent(mem, agent_b, lifecycle_revision=1)
 
 
 @pytest.mark.asyncio
@@ -109,11 +109,11 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
     org_a, org_b = uuid4(), uuid4()
     agent_a = uuid4()
     mem = uuid4()
-    store.bind_agent(mem, agent_a)
+    store.bind_agent(mem, agent_a, lifecycle_revision=1)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     )
-    request = UpsertRequest(memory_id=mem, org_id=org_b, embedding=_UNIT, embedding_model="bge-m3")
+    request = UpsertRequest(memory_id=mem, org_id=org_b, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     with pytest.raises(LookupError, match="not found for org"):
         await store.upsert(request)
     foreign = await store.search(
@@ -136,7 +136,8 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
         (
             False,
             lambda mem, org: UpsertRequest(
-                memory_id=mem, org_id=org, embedding=_ZERO, embedding_model="bge-m3"
+                memory_id=mem, org_id=org, embedding=_ZERO, embedding_model="bge-m3",
+                expected_revision=1,
             ),
             KeyError,
             None,
@@ -144,7 +145,8 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
         (
             True,
             lambda mem, org: UpsertRequest(
-                memory_id=mem, org_id=org, embedding=[0.0] * 8, embedding_model="bge-m3"
+                memory_id=mem, org_id=org, embedding=[0.0] * 8, embedding_model="bge-m3",
+                expected_revision=1,
             ),
             ValueError,
             "embedding length",
@@ -157,6 +159,7 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
                 embedding=[0.0] * 512,
                 embedding_model="bge-m3",
                 embedding_dim=512,
+                expected_revision=1,
             ),
             ValueError,
             "1024",
@@ -164,7 +167,8 @@ async def test_inmemory_rejects_cross_org_upsert() -> None:
         (
             True,
             lambda mem, org: UpsertRequest(
-                memory_id=mem, org_id=org, embedding=_ZERO, embedding_model="  "
+                memory_id=mem, org_id=org, embedding=_ZERO, embedding_model="  ",
+                expected_revision=1,
             ),
             ValueError,
             "non-empty",
@@ -182,7 +186,7 @@ async def test_inmemory_upsert_validation(
     store = InMemoryVectorStore()
     mem, org = uuid4(), uuid4()
     if bind_first:
-        store.bind_agent(mem, uuid4())
+        store.bind_agent(mem, uuid4(), lifecycle_revision=1)
     request = build(mem, org)
     with pytest.raises(exc_type, match=match):
         await store.upsert(request)
@@ -192,9 +196,9 @@ async def test_inmemory_upsert_validation(
 async def test_search_rejects_invalid_limit_parity() -> None:
     store = InMemoryVectorStore()
     org, agent, mem = uuid4(), uuid4(), uuid4()
-    store.bind_agent(mem, agent)
+    store.bind_agent(mem, agent, lifecycle_revision=1)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     )
     request = SearchRequest(org_id=org, agent_id=agent, query_embedding=_UNIT, limit=0)
     with pytest.raises(ValueError, match="limit must be >= 1"):
@@ -229,16 +233,36 @@ def test_search_request_rejects_invalid_options(
 
 
 @pytest.mark.asyncio
-async def test_inmemory_delete_wrong_org_is_noop() -> None:
+async def test_inmemory_upsert_requires_registered_lifecycle_snapshot() -> None:
+    store = InMemoryVectorStore()
+    org, agent, mem = uuid4(), uuid4(), uuid4()
+    store.bind_agent(mem, agent, lifecycle_revision=1)
+    store._lifecycle.pop(mem)
+
+    with pytest.raises(LookupError, match="no registered lifecycle snapshot"):
+        await store.upsert(
+            UpsertRequest(
+                memory_id=mem,
+                org_id=org,
+                embedding=_UNIT,
+                embedding_model="bge-m3",
+                expected_revision=1,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_inmemory_delete_wrong_org_fails_closed() -> None:
     store = InMemoryVectorStore()
     org_a, org_b = uuid4(), uuid4()
     agent = uuid4()
     mem = uuid4()
-    store.bind_agent(mem, agent)
+    store.bind_agent(mem, agent, lifecycle_revision=1)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem, org_id=org_a, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     )
-    await store.delete(memory_id=mem, org_id=org_b)
+    with pytest.raises(LookupError):
+        await store.delete(memory_id=mem, org_id=org_b, expected_revision=1)
     hits = await store.search(
         SearchRequest(
             org_id=org_a, agent_id=agent, query_embedding=_UNIT, limit=5, min_similarity=0.0
@@ -248,20 +272,61 @@ async def test_inmemory_delete_wrong_org_is_noop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_inmemory_delete_rejects_stale_or_tombstoned_lifecycle() -> None:
+    store = InMemoryVectorStore()
+    org, agent, mem = uuid4(), uuid4(), uuid4()
+    store.bind_agent(mem, agent, lifecycle_revision=1)
+    await store.upsert(
+        UpsertRequest(
+            memory_id=mem,
+            org_id=org,
+            embedding=_UNIT,
+            embedding_model="bge-m3",
+            expected_revision=1,
+        )
+    )
+    store.set_lifecycle(
+        mem,
+        status="deleted",
+        deleted_at=datetime.now(tz=UTC),
+        lifecycle_revision=2,
+        tombstoned=True,
+    )
+
+    with pytest.raises(LookupError):
+        await store.delete(memory_id=mem, org_id=org, expected_revision=1)
+    with pytest.raises(LookupError):
+        await store.delete(memory_id=mem, org_id=org, expected_revision=2)
+    assert mem in store._rows
+    assert (
+        await store.search(
+            SearchRequest(
+                org_id=org,
+                agent_id=agent,
+                query_embedding=_UNIT,
+                limit=5,
+                min_similarity=0.0,
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("validity", ["future", "expired"])
 async def test_inmemory_historical_mode_includes_out_of_window_active_rows(
     validity: str,
 ) -> None:
     store = InMemoryVectorStore()
     org, agent, mem = uuid4(), uuid4(), uuid4()
-    store.bind_agent(mem, agent)
+    store.bind_agent(mem, agent, lifecycle_revision=1)
     now = datetime.now(tz=UTC)
     if validity == "future":
-        store.set_lifecycle(mem, valid_from=now + timedelta(days=1))
+        store.set_lifecycle(mem, valid_from=now + timedelta(days=1), lifecycle_revision=1)
     else:
-        store.set_lifecycle(mem, valid_until=now - timedelta(days=1))
+        store.set_lifecycle(mem, valid_until=now - timedelta(days=1), lifecycle_revision=1)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem, org_id=org, embedding=_UNIT, embedding_model="bge-m3", expected_revision=1)
     )
 
     user_hits = await store.search(

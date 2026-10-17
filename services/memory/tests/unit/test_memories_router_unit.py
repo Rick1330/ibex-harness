@@ -12,7 +12,7 @@ from redis.exceptions import RedisError
 
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
-from app.deps import get_write_orchestrator
+from app.deps import get_memory_cache_writer, get_session_factory, get_write_orchestrator
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.idempotency.redis_store import (
     ClaimKind,
@@ -23,6 +23,7 @@ from app.idempotency.redis_store import (
 )
 from app.main import create_app
 from app.permissions import MEMORY_WRITE
+from app.routers import memories as memories_router
 from app.write.models import WriteOutcome, WriteOutcomeKind
 from tests.unit.memory_test_support import sample_memory_row
 
@@ -327,3 +328,44 @@ def test_create_memory_quarantine_commits_idempotency(client) -> None:
     assert resp.status_code == 202
     assert len(store.committed) == 1
     assert store.committed[0][2] == 202
+
+
+def test_forget_returns_success_when_post_commit_cache_invalidation_fails(
+    client, monkeypatch
+) -> None:
+    http, _mock_orch = client
+
+    class _FakeContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class _FakeSession(_FakeContext):
+        def begin(self):
+            return _FakeContext()
+
+    class _FailingCacheWriter:
+        async def forget_memory(self, **_kwargs):
+            raise RuntimeError("unexpected cache failure")
+
+    async def _forget(_session, **_kwargs):
+        return 2
+
+    memory_id = uuid4()
+    monkeypatch.setattr(memories_router, "forget_memory_session", _forget)
+    http.app.dependency_overrides[get_session_factory] = lambda: _FakeSession
+    http.app.dependency_overrides[get_memory_cache_writer] = lambda: _FailingCacheWriter()
+    with http:
+        response = http.post(
+            f"/v1/memories/{memory_id}/forget",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"expected_revision": 1},
+        )
+    assert response.status_code == 200
+    assert response.json()["data"] == {
+        "memory_id": str(memory_id),
+        "revision": 2,
+        "tombstoned": True,
+    }

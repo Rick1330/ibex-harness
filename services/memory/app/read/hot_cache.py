@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _HYDRATE_HOT_SQL = """
 SELECT id, org_id, agent_id, content, category, confidence, status,
-       created_at, updated_at
+       created_at, updated_at, lifecycle_revision
 FROM ibex_core.memories
 WHERE org_id = :org_id
   AND agent_id = :agent_id
@@ -30,6 +30,8 @@ WHERE org_id = :org_id
   AND confidence >= :min_confidence
   AND status = 'active'
   AND deleted_at IS NULL
+  AND tombstoned = FALSE
+  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
   AND valid_from <= CURRENT_TIMESTAMP
   AND (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
 """
@@ -151,5 +153,6 @@ class MemoryHotCacheReader:
                 source="hot_cache",
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
+                lifecycle_revision=int(row.get("lifecycle_revision", 1)),
             )
         return out

@@ -90,8 +90,8 @@ async def test_near_dup_uses_vector_store_and_strict_gt() -> None:
     org, agent = uuid4(), uuid4()
     near_id = uuid4()
     far_id = uuid4()
-    store.bind_agent(near_id, agent)
-    store.bind_agent(far_id, agent)
+    store.bind_agent(near_id, agent, lifecycle_revision=1)
+    store.bind_agent(far_id, agent, lifecycle_revision=1)
 
     await store.upsert(
         UpsertRequest(
@@ -99,6 +99,7 @@ async def test_near_dup_uses_vector_store_and_strict_gt() -> None:
             org_id=org,
             embedding=_axis(0),
             embedding_model="test",
+            expected_revision=1,
         )
     )
     await store.upsert(
@@ -107,6 +108,7 @@ async def test_near_dup_uses_vector_store_and_strict_gt() -> None:
             org_id=org,
             embedding=_axis(2),
             embedding_model="test",
+            expected_revision=1,
         )
     )
 
@@ -192,10 +194,10 @@ async def test_near_dup_org_scoped() -> None:
     store = InMemoryVectorStore()
     org_a, org_b, agent = uuid4(), uuid4(), uuid4()
     mem = uuid4()
-    store.bind_agent(mem, agent)
+    store.bind_agent(mem, agent, lifecycle_revision=1)
     vec = _axis(0)
     await store.upsert(
-        UpsertRequest(memory_id=mem, org_id=org_a, embedding=vec, embedding_model="t")
+        UpsertRequest(memory_id=mem, org_id=org_a, embedding=vec, embedding_model="t", expected_revision=1)
     )
     svc = DedupService(Settings(near_duplicate_sim_threshold=0.50), store=store)
     assert await svc.find_near_duplicates(org_id=org_a, agent_id=agent, embedding=vec) == [mem]

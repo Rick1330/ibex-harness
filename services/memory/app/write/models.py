@@ -31,6 +31,8 @@ class CreateMemoryCommand:
     metadata: dict[str, Any] | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
+    expires_at: datetime | None = None
+    expected_session_revision: int | None = None
     labels: tuple[MemoryLabelInput, ...] = ()
 
     def __post_init__(self) -> None:
@@ -68,6 +70,9 @@ class MemoryRow:
     updated_at: datetime
     # Full label set for half-life decay (F4-030a). Empty → scorers use (category,).
     categories: tuple[str, ...] = ()
+    lifecycle_revision: int = 1
+    tombstoned: bool = False
+    expires_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

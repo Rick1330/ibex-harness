@@ -22,7 +22,7 @@ from uuid import UUID, uuid5
 
 import httpx
 
-from app.extraction.provider import ExtractionTransportError
+from app.extraction.provider import ExtractionLifecycleConflict, ExtractionTransportError
 from app.extraction.schema import ExtractedMemory
 
 _RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
@@ -39,6 +39,7 @@ class MemoryWriteRequest:
     turn_index: int
     memory: ExtractedMemory
     ordinal: int
+    expected_session_revision: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +119,7 @@ def _memory_payload(request: MemoryWriteRequest) -> dict[str, object]:
             for item in memory.categories
         ],
         "session_id": str(request.session_id),
+        "expected_session_revision": request.expected_session_revision,
     }
     if memory.valid_from is not None:
         payload["valid_from"] = memory.valid_from.isoformat()
@@ -163,8 +165,11 @@ def _raise_for_memory_status(response: httpx.Response) -> None:
 def _raise_for_memory_conflict(response: httpx.Response) -> None:
     if _detail_code(response) in _SUCCESS_409_CODES:
         return
-    if _detail_code(response) == "IDEMPOTENCY_IN_PROGRESS":
+    code = _detail_code(response)
+    if code == "IDEMPOTENCY_IN_PROGRESS":
         raise ExtractionTransportError("memory service HTTP 409 IDEMPOTENCY_IN_PROGRESS")
+    if code == "STALE_LIFECYCLE_REVISION":
+        raise ExtractionLifecycleConflict("memory service rejected stale session revision")
     raise ValueError("memory service HTTP 409")
 
 

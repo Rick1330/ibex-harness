@@ -102,6 +102,15 @@ _PG_PRE_CASCADE: tuple[str, ...] = (
 )
 
 _CASCADE_STATEMENTS: tuple[str, ...] = (
+    """
+    INSERT INTO ibex_core.memory_lifecycle_outbox (
+        org_id, memory_id, revision, schema_version, event_type, occurred_at
+    )
+    SELECT org_id, id, lifecycle_revision + 1, 1, 'purged', NOW()
+    FROM ibex_core.memories
+    WHERE org_id = CAST(:org_id AS uuid)
+    ON CONFLICT (org_id, memory_id, revision) DO NOTHING
+    """,
     "DELETE FROM ibex_core.memory_feedback WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.memory_conflict_escalations WHERE org_id = CAST(:org_id AS uuid)",
     "DELETE FROM ibex_core.memory_relationships WHERE org_id = CAST(:org_id AS uuid)",
@@ -307,6 +316,12 @@ async def _record_job_failed(
 
 
 async def _finish_if_hold_blocked(ctx: _StageCtx) -> dict[str, str] | None:
+    # Hold this same transaction-scoped key through the PostgreSQL purge stage so
+    # a newly committed hold cannot turn the initial decision into a failed job.
+    await ctx.session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(CAST(:org_id AS text)))"),
+        {"org_id": ctx.org_id},
+    )
     if not await _has_active_legal_hold(ctx.session, ctx.org_id):
         return None
     await _audit_append(

@@ -9,12 +9,8 @@ from dataclasses import asdict, dataclass
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-
 from app.vectorstore.base import SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import SEARCH_SQL, PgVectorStore
-
 from corpus import (
     analyze_memories,
     bulk_insert_memories,
@@ -28,6 +24,8 @@ from corpus import (
     try_prewarm,
 )
 from plan_assert import PlanAssertionError, assert_hnsw_index_used
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from synth import (
     bootstrap_p95_ci,
     percentile,
@@ -385,12 +383,35 @@ async def _measure_corpus(
     org_id, agent_id, _build_s = await _prepare_corpus(
         engine, factory, size=params.size, index_build_mode=params.index_build_mode
     )
+    memory_id = memory_id_for(org_id, 0)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.is_service_account', 'true', true)"
+            )
+        )
+        await conn.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.current_org_id', :org_id, true)"
+            ),
+            {"org_id": str(org_id)},
+        )
+        lifecycle_revision = (
+            await conn.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    "SELECT lifecycle_revision FROM ibex_core.memories "
+                    "WHERE id = :memory_id AND org_id = :org_id"
+                ),
+                {"memory_id": str(memory_id), "org_id": str(org_id)},
+            )
+        ).scalar_one()
     await store.upsert(
         UpsertRequest(
-            memory_id=memory_id_for(org_id, 0),
+            memory_id=memory_id,
             org_id=org_id,
             embedding=unit_vector(0),
             embedding_model="bench-synthetic",
+            expected_revision=lifecycle_revision,
         )
     )
     count = await count_memories(engine)

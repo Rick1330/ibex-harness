@@ -15,19 +15,23 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.extraction.provider import ExtractionLifecycleConflict
+
 
 @dataclass(frozen=True, slots=True)
 class SessionSnapshot:
     last_extracted_turn: int
     status: str
     deleted_at: datetime | None
+    lifecycle_revision: int = 1
 
 
 class SessionStore(Protocol):
     def load(self, org_id: UUID, session_id: UUID) -> SessionSnapshot | None: ...
 
     def update_last_extracted_turn(
-        self, org_id: UUID, session_id: UUID, last_extracted_turn: int
+        self, org_id: UUID, session_id: UUID, last_extracted_turn: int,
+        expected_lifecycle_revision: int,
     ) -> None: ...
 
 
@@ -82,9 +86,12 @@ class PostgresSessionStore:
         return _run_coro(self._load(org_id, session_id))  # type: ignore[return-value]
 
     def update_last_extracted_turn(
-        self, org_id: UUID, session_id: UUID, last_extracted_turn: int
+        self, org_id: UUID, session_id: UUID, last_extracted_turn: int,
+        expected_lifecycle_revision: int,
     ) -> None:
-        _run_coro(self._update(org_id, session_id, last_extracted_turn))
+        _run_coro(
+            self._update(org_id, session_id, last_extracted_turn, expected_lifecycle_revision)
+        )
 
     async def _load(self, org_id: UUID, session_id: UUID) -> SessionSnapshot | None:
         async with self._factory() as session, session.begin():
@@ -92,7 +99,7 @@ class PostgresSessionStore:
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
-                    SELECT last_extracted_turn, status, deleted_at
+                    SELECT last_extracted_turn, status, deleted_at, lifecycle_revision
                     FROM ibex_core.sessions
                     WHERE id = :session_id AND org_id = :org_id
                     """
@@ -106,27 +113,37 @@ class PostgresSessionStore:
             last_extracted_turn=int(row.last_extracted_turn),
             status=str(row.status),
             deleted_at=row.deleted_at,
+            lifecycle_revision=int(row.lifecycle_revision),
         )
 
     async def _update(
-        self, org_id: UUID, session_id: UUID, last_extracted_turn: int
+        self, org_id: UUID, session_id: UUID, last_extracted_turn: int,
+        expected_lifecycle_revision: int,
     ) -> None:
         async with self._factory() as session, session.begin():
             await _set_org_guc(session, org_id)
-            await session.execute(
+            result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                     UPDATE ibex_core.sessions
                     SET last_extracted_turn = GREATEST(last_extracted_turn, :turn)
                     WHERE id = :session_id AND org_id = :org_id
+                      AND lifecycle_revision = :expected_revision
+                      AND status = 'completed' AND deleted_at IS NULL
+                    RETURNING id
                     """
                 ),
                 {
                     "turn": last_extracted_turn,
                     "session_id": session_id,
                     "org_id": org_id,
+                    "expected_revision": expected_lifecycle_revision,
                 },
             )
+            if result.scalar_one_or_none() is None:
+                raise ExtractionLifecycleConflict(
+                    "session lifecycle changed before extraction progress commit"
+                )
 
 
 async def _set_org_guc(session: AsyncSession, org_id: UUID) -> None:

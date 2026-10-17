@@ -209,10 +209,10 @@ async def seed_composite_ranking_pair(
         ),
     )
     query_vec = await upsert_embedding(
-        request.store, org_id=org_id, memory_id=factual_id, hotspot=opts.hotspot
+        request.store, request.session_factory, org_id=org_id, memory_id=factual_id, hotspot=opts.hotspot
     )
     await upsert_embedding(
-        request.store, org_id=org_id, memory_id=episodic_id, hotspot=opts.hotspot
+        request.store, request.session_factory, org_id=org_id, memory_id=episodic_id, hotspot=opts.hotspot
     )
     return CompositeRankingSeed(
         org_id=org_id,
@@ -225,18 +225,30 @@ async def seed_composite_ranking_pair(
 
 async def upsert_embedding(
     store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
     *,
     org_id: UUID,
     memory_id: UUID,
     hotspot: int,
 ) -> list[float]:
     embedding = zero_embedding(hotspot=hotspot)
+    async with session_factory() as session:
+        await with_service_org(session, org_id)
+        row = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT lifecycle_revision FROM ibex_core.memories "
+                "WHERE id = :memory_id AND org_id = :org_id"
+            ),
+            {"memory_id": str(memory_id), "org_id": str(org_id)},
+        )
+        lifecycle_revision = row.scalar_one()
     await store.upsert(
         UpsertRequest(
             memory_id=memory_id,
             org_id=org_id,
             embedding=embedding,
             embedding_model="test",
+            expected_revision=lifecycle_revision,
         )
     )
     return embedding
@@ -252,7 +264,7 @@ async def seed_agent_with_memories(
     )
     memory_ids = [first_id]
     query_vec = await upsert_embedding(
-        store, org_id=org_id, memory_id=first_id, hotspot=params.hotspot
+        store, session_factory, org_id=org_id, memory_id=first_id, hotspot=params.hotspot
     )
     for index in range(1, params.count):
         memory_id = await insert_active_memory(
@@ -263,7 +275,7 @@ async def seed_agent_with_memories(
                 content=f"{params.content_prefix} memory {index} preference dark mode",
             ),
         )
-        await upsert_embedding(store, org_id=org_id, memory_id=memory_id, hotspot=params.hotspot)
+        await upsert_embedding(store, session_factory, org_id=org_id, memory_id=memory_id, hotspot=params.hotspot)
         memory_ids.append(memory_id)
     return SeededAgent(org_id=org_id, agent_id=agent_id), memory_ids, query_vec
 

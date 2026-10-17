@@ -22,6 +22,7 @@ def test_candidate_confidence_boundaries(confidence: float) -> None:
         content="x",
         interval=_interval(),
         confidence=confidence,
+        lifecycle_revision=1,
     )
     assert row.confidence == confidence
 
@@ -36,6 +37,7 @@ def test_candidate_confidence_rejects_out_of_range(confidence: float) -> None:
             content="x",
             interval=interval,
             confidence=confidence,
+            lifecycle_revision=1,
         )
 
 

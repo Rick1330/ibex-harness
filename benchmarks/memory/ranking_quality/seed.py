@@ -9,10 +9,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
+from app.vectorstore.pgvector_store import PgVectorStore
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.conftest import with_service_org, zero_embedding
 from tests.integration.find_similar_support import (
     InsertScoredMemoryParams,
@@ -31,8 +30,8 @@ _SERVICE_ACCOUNT_SQL = "SELECT set_config('app.is_service_account', 'true', true
 if str(_BENCH_MEMORY) not in sys.path:
     sys.path.insert(0, str(_BENCH_MEMORY))
 
-from path_guard import resolve_bench_input_path  # noqa: E402
-from validate_gold_set import validate_gold_set  # noqa: E402
+from path_guard import resolve_bench_input_path
+from validate_gold_set import validate_gold_set
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +163,13 @@ async def _seed_memory_row(
     if hotspot < 0 or hotspot >= len(zero_embedding()):
         msg = f"embedding_hotspot out of range for {content_key}"
         raise ValueError(msg)
-    await upsert_embedding(store, org_id=GOLD_ORG_ID, memory_id=memory_id, hotspot=hotspot)
+    await upsert_embedding(
+        store,
+        session_factory,
+        org_id=GOLD_ORG_ID,
+        memory_id=memory_id,
+        hotspot=hotspot,
+    )
     return content_key, memory_id
 
 

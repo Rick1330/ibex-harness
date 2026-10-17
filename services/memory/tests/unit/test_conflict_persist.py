@@ -17,6 +17,7 @@ from app.conflict.persist import (
     load_candidate_memories,
 )
 from app.conflict.types import SupersedeApply
+from app.exceptions import StaleLifecycleError
 
 
 class _FakeResult:
@@ -31,6 +32,12 @@ class _FakeResult:
 
     def all(self) -> list[object]:
         return self._rows
+
+    def mappings(self):
+        rows = self._rows
+        if not rows and self.rowcount:
+            rows = [{"lifecycle_revision": 2}]
+        return SimpleNamespace(one_or_none=lambda: rows[0] if rows else None)
 
 
 class _FakeSession:
@@ -99,6 +106,7 @@ async def test_load_candidate_memories_maps_rows() -> None:
         valid_from=vf,
         valid_until=None,
         confidence=0.9,
+        lifecycle_revision=7,
     )
     # set_config x2 + SELECT
     session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rows=[row])])
@@ -116,6 +124,7 @@ async def test_load_candidate_memories_maps_rows() -> None:
     assert loaded[0].interval.valid_from.tzinfo is not None
     assert loaded[0].interval.valid_until is None
     assert loaded[0].confidence == 0.9
+    assert loaded[0].lifecycle_revision == 7
 
 
 @pytest.mark.asyncio
@@ -129,6 +138,7 @@ async def test_load_candidate_aware_until() -> None:
         valid_from=vf,
         valid_until=vu,
         confidence=0.8,
+        lifecycle_revision=2,
     )
     session = _FakeSession([_FakeResult(), _FakeResult(), _FakeResult(rows=[row])])
     loaded = await load_candidate_memories(
@@ -141,6 +151,7 @@ async def test_load_candidate_aware_until() -> None:
         ),
     )
     assert loaded[0].interval.valid_until == vu
+    assert loaded[0].lifecycle_revision == 2
 
 
 @pytest.mark.asyncio
@@ -154,6 +165,7 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
             _FakeResult(),
             _FakeResult(rowcount=1),
             _FakeResult(),
+            _FakeResult(),
         ]
     )
     await apply_supersession(
@@ -164,9 +176,10 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
             new_memory_id=new_memory_id,
             target_memory_id=target_memory_id,
             closed_at=datetime(2026, 6, 1, tzinfo=UTC),
+            expected_revision=1,
         ),
     )
-    assert len(session.executed) == 4
+    assert len(session.executed) == 5
     update_sql = str(session.executed[2][0])
     update_params = session.executed[2][1]
     assert "LEAST" in update_sql
@@ -177,9 +190,11 @@ async def test_apply_supersession_success_records_status_and_link() -> None:
     assert update_params["org_id"] == str(org_id)
     assert update_params["target_id"] == str(target_memory_id)
     assert update_params["new_id"] == str(new_memory_id)
+    assert update_params["expected_revision"] == 1
 
     relationship_sql = str(session.executed[3][0])
     relationship_params = session.executed[3][1]
+    assert "memory_lifecycle_outbox" in str(session.executed[4][0])
     assert "'supersedes'" in relationship_sql
     assert isinstance(relationship_params, dict)
     assert relationship_params["org_id"] == str(org_id)
@@ -196,6 +211,7 @@ async def test_apply_supersession_sql_uses_least_coalesce_valid_until() -> None:
             _FakeResult(),
             _FakeResult(rowcount=1),
             _FakeResult(),
+            _FakeResult(),
         ]
     )
     closed_at = datetime(2026, 6, 1, tzinfo=UTC)
@@ -207,6 +223,7 @@ async def test_apply_supersession_sql_uses_least_coalesce_valid_until() -> None:
             new_memory_id=uuid4(),
             target_memory_id=uuid4(),
             closed_at=closed_at,
+            expected_revision=1,
         ),
     )
     update_sql = str(session.executed[2][0])
@@ -222,8 +239,9 @@ async def test_apply_supersession_missing_row() -> None:
         agent_id=uuid4(),
         new_memory_id=uuid4(),
         target_memory_id=uuid4(),
+        expected_revision=1,
     )
-    with pytest.raises(RuntimeError, match="expected 1 row"):
+    with pytest.raises(StaleLifecycleError):
         await apply_supersession(factory, apply)
 
 

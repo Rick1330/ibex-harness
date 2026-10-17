@@ -45,6 +45,13 @@ class DuplicateMemoryError(ConflictError):
         self.existing_id = existing_id
 
 
+class StaleLifecycleError(ConflictError):
+    code = "STALE_LIFECYCLE_REVISION"
+
+    def __init__(self, message: str = "Lifecycle revision is stale") -> None:
+        super().__init__(message)
+
+
 class ExternalServiceError(IBEXError):
     code = "UPSTREAM_ERROR"
     http_status = 503

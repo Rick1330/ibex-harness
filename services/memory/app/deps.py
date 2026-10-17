@@ -14,6 +14,7 @@ from app.feedback.service import MemoryFeedbackService
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
 from app.read.hot_cache import MemoryHotCacheReader
 from app.read.repository import MemoryReadRepository
+from app.write.cache import MemoryCacheWriter
 from app.write.orchestrator import MemoryWriteOrchestrator
 
 _T = TypeVar("_T")
@@ -43,9 +44,7 @@ def get_validator(request: Request) -> TokenValidator:
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
-    return _require_memory_component(
-        request, "session_factory", message="Database not configured"
-    )
+    return _require_memory_component(request, "session_factory", message="Database not configured")
 
 
 def get_write_orchestrator(request: Request) -> MemoryWriteOrchestrator:
@@ -102,9 +101,7 @@ def require_memory_read(
 
 
 def get_read_repository(request: Request) -> MemoryReadRepository:
-    return _require_memory_component(
-        request, "read_repository", message="Read path not configured"
-    )
+    return _require_memory_component(request, "read_repository", message="Read path not configured")
 
 
 def get_embedding_client(request: Request):
@@ -207,3 +204,7 @@ def get_feedback_memory_context(
     feedback_service: Annotated[MemoryFeedbackService, Depends(get_feedback_service)],
 ) -> FeedbackMemoryContext:
     return FeedbackMemoryContext(token=token, feedback_service=feedback_service)
+
+
+def get_memory_cache_writer(request: Request) -> MemoryCacheWriter | None:
+    return _optional_memory_component(request, "cache_writer")  # type: ignore[return-value]

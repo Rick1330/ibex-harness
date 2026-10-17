@@ -31,6 +31,7 @@ async def test_pgvector_upsert_search_delete(
             org_id=org_id,
             embedding=query,
             embedding_model="bge-m3",
+            expected_revision=1,
         )
     )
     hits = await store.search(
@@ -47,7 +48,7 @@ async def test_pgvector_upsert_search_delete(
     assert hits[0].memory_id == memory_id
     assert hits[0].similarity == pytest.approx(1.0, abs=1e-6)
 
-    await store.delete(memory_id=memory_id, org_id=org_id)
+    await store.delete(memory_id=memory_id, org_id=org_id, expected_revision=1)
     hits_after = await store.search(
         SearchRequest(
             org_id=org_id,
@@ -75,6 +76,7 @@ async def test_expired_active_memory_is_candidate_only_for_write_path(
             org_id=org_id,
             embedding=query,
             embedding_model="bge-m3",
+            expected_revision=1,
         )
     )
     async with session_factory() as session, session.begin():
@@ -123,10 +125,10 @@ async def test_pgvector_cross_org_isolation(
     vec_a = zero_embedding(hotspot=1)
     vec_b = zero_embedding(hotspot=2)
     await store.upsert(
-        UpsertRequest(memory_id=mem_a, org_id=org_a, embedding=vec_a, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem_a, org_id=org_a, embedding=vec_a, embedding_model="bge-m3", expected_revision=1)
     )
     await store.upsert(
-        UpsertRequest(memory_id=mem_b, org_id=org_b, embedding=vec_b, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem_b, org_id=org_b, embedding=vec_b, embedding_model="bge-m3", expected_revision=1)
     )
 
     hits_a = await store.search(
@@ -189,6 +191,7 @@ async def test_upsert_missing_memory_raises(
         org_id=UUID("00000000-0000-0000-0000-000000000002"),
         embedding=zero_embedding(),
         embedding_model="bge-m3",
+        expected_revision=1,
     )
     with pytest.raises(LookupError):
         await store.upsert(request)
@@ -252,11 +255,12 @@ async def test_search_relaxed_order_returns_descending_similarity(
 
     await store.upsert(
         UpsertRequest(
-            memory_id=mem_near, org_id=org_id, embedding=vec_near, embedding_model="bge-m3"
+            memory_id=mem_near, org_id=org_id, embedding=vec_near, embedding_model="bge-m3",
+            expected_revision=1,
         )
     )
     await store.upsert(
-        UpsertRequest(memory_id=mem_far, org_id=org_id, embedding=vec_far, embedding_model="bge-m3")
+        UpsertRequest(memory_id=mem_far, org_id=org_id, embedding=vec_far, embedding_model="bge-m3", expected_revision=1)
     )
     hits = await store.search(
         SearchRequest(

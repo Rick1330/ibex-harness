@@ -16,9 +16,18 @@ from app.dedup.persist import (
     ExactHashLookup,
     RetrievalBump,
     find_active_by_content_hash,
-    increment_retrieval_count,
+    increment_retrieval_count_session,
 )
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.exceptions import (
+    DuplicateMemoryError,
+    EmbeddingServiceError,
+    StaleLifecycleError,
+    ValidationError,
+)
+from app.lifecycle import (
+    enqueue_memory_lifecycle_event,
+    require_extraction_session,
+)
 from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
 from app.write.embed_context import reset_write_org_id, set_write_org_id
@@ -122,6 +131,13 @@ class MemoryWriteOrchestrator:
         self, command: CreateMemoryCommand, ctx: WriteContext
     ) -> WriteOutcome:
         async with self._factory() as session, session.begin():
+            await require_extraction_session(
+                session,
+                org_id=command.org_id,
+                agent_id=command.agent_id,
+                session_id=command.session_id,
+                expected_revision=command.expected_session_revision,
+            )
             memory = await insert_memory_session(session, command=command, ctx=ctx)
             await insert_labels_session(
                 session,
@@ -129,6 +145,13 @@ class MemoryWriteOrchestrator:
             )
             memory = await reload_memory_session(
                 session, org_id=command.org_id, memory_id=memory.id
+            )
+            await enqueue_memory_lifecycle_event(
+                session,
+                org_id=command.org_id,
+                memory_id=memory.id,
+                revision=memory.lifecycle_revision,
+                event_type="quarantined",
             )
         return WriteOutcome(
             kind=WriteOutcomeKind.QUARANTINED,
@@ -141,9 +164,7 @@ class MemoryWriteOrchestrator:
         memory = await self._insert_active_memory(command, ctx)
         return self._created_outcome(memory, ctx)
 
-    async def _insert_active_memory(
-        self, command: CreateMemoryCommand, ctx: WriteContext
-    ):
+    async def _insert_active_memory(self, command: CreateMemoryCommand, ctx: WriteContext):
         if ctx.content_hash is None:
             msg = "content_hash required for active persist"
             raise RuntimeError(msg)
@@ -152,11 +173,16 @@ class MemoryWriteOrchestrator:
         except IntegrityError as exc:
             await self._raise_duplicate_on_hash_violation(command, ctx, exc)
 
-    async def _insert_active_memory_tx(
-        self, command: CreateMemoryCommand, ctx: WriteContext
-    ):
+    async def _insert_active_memory_tx(self, command: CreateMemoryCommand, ctx: WriteContext):
         escalation_count = 0
         async with self._factory() as session, session.begin():
+            await require_extraction_session(
+                session,
+                org_id=command.org_id,
+                agent_id=command.agent_id,
+                session_id=command.session_id,
+                expected_revision=command.expected_session_revision,
+            )
             memory = await insert_memory_session(session, command=command, ctx=ctx)
             try:
                 await insert_labels_session(
@@ -170,6 +196,13 @@ class MemoryWriteOrchestrator:
             )
             memory = await reload_memory_session(
                 session, org_id=command.org_id, memory_id=memory.id
+            )
+            await enqueue_memory_lifecycle_event(
+                session,
+                org_id=command.org_id,
+                memory_id=memory.id,
+                revision=memory.lifecycle_revision,
+                event_type="created",
             )
         if escalation_count:
             ESCALATIONS_INSERTED.inc(escalation_count)
@@ -205,6 +238,11 @@ class MemoryWriteOrchestrator:
         ctx: WriteContext,
     ) -> int:
         for target_id in ctx.pending_supersede_targets:
+            expected_revision = ctx.pending_supersede_revisions.get(target_id)
+            if expected_revision is None:
+                raise StaleLifecycleError(
+                    f"Missing observed lifecycle revision for supersede target {target_id}"
+                )
             await apply_supersession_session(
                 session,
                 SupersedeApply(
@@ -212,11 +250,10 @@ class MemoryWriteOrchestrator:
                     agent_id=command.agent_id,
                     new_memory_id=memory_id,
                     target_memory_id=target_id,
+                    expected_revision=expected_revision,
                 ),
             )
-        escalations = escalations_from_decisions(
-            command.org_id, memory_id, ctx.conflict_decisions
-        )
+        escalations = escalations_from_decisions(command.org_id, memory_id, ctx.conflict_decisions)
         return await insert_escalations_session(session, escalations)
 
     def _created_outcome(self, memory, ctx: WriteContext) -> WriteOutcome:
@@ -234,9 +271,7 @@ class MemoryWriteOrchestrator:
             embedding_model=embedding_model,
         )
 
-    async def _handle_hash_race(
-        self, command: CreateMemoryCommand, content_hash: str
-    ) -> UUID:
+    async def _handle_hash_race(self, command: CreateMemoryCommand, content_hash: str) -> UUID:
         existing = await find_active_by_content_hash(
             self._factory,
             ExactHashLookup(
@@ -248,10 +283,17 @@ class MemoryWriteOrchestrator:
         if existing is None:
             msg = "unique violation without existing active memory"
             raise RuntimeError(msg)
-        await increment_retrieval_count(
-            self._factory,
-            RetrievalBump(org_id=command.org_id, memory_id=existing),
-        )
+        async with self._factory() as session, session.begin():
+            await require_extraction_session(
+                session,
+                org_id=command.org_id,
+                agent_id=command.agent_id,
+                session_id=command.session_id,
+                expected_revision=command.expected_session_revision,
+            )
+            await increment_retrieval_count_session(
+                session, RetrievalBump(org_id=command.org_id, memory_id=existing)
+            )
         logger.info(
             "content_hash race resolved org_id=%s agent_id=%s winner=%s",
             command.org_id,

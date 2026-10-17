@@ -24,10 +24,13 @@ class CandidateMemory:
     memory_id: UUID
     content: str
     interval: ValidityInterval
+    lifecycle_revision: int
     confidence: float = 0.80
 
     def __post_init__(self) -> None:
         _require_unit_interval(self.confidence, "confidence")
+        if self.lifecycle_revision < 1:
+            raise ValueError("lifecycle_revision must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +66,7 @@ class ConflictEvaluation:
 
     @property
     def supersede_targets(self) -> list[UUID]:
-        return [
-            d.candidate_id
-            for d in self.decisions
-            if d.outcome == ConflictOutcome.SUPERSEDES
-        ]
+        return [d.candidate_id for d in self.decisions if d.outcome == ConflictOutcome.SUPERSEDES]
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,5 +75,6 @@ class SupersedeApply:
     agent_id: UUID
     new_memory_id: UUID
     target_memory_id: UUID
+    expected_revision: int
     confidence: float = 0.90
     closed_at: datetime | None = None
