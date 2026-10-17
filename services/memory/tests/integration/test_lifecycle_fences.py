@@ -19,14 +19,16 @@ from app.conflict.persist import apply_supersession_session
 from app.conflict.types import SupersedeApply
 from app.exceptions import StaleLifecycleError
 from app.lifecycle import (
-    ExtractionSessionFence,
     ForgetMemory,
     forget_memory_session,
-    require_extraction_session,
 )
+from app.pipeline.context import WriteContext
+from app.pipeline.write import WritePipeline
 from app.schemas.memories import ForgetMemoryRequest
 from app.vectorstore.base import SearchMode, SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
+from app.write.models import CreateMemoryCommand
+from app.write.orchestrator import MemoryWriteOrchestrator
 from tests.integration.conftest import seed_org_agent_memory, with_service_org, zero_embedding
 
 pytestmark = pytest.mark.integration
@@ -244,6 +246,7 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
         session_factory, content="extraction fence parent fixture"
     )
     session_id = uuid4()
+    content = "stale session revision must never persist"
     content_hash = f"stale-{uuid4()}"
     await _execute_sql(
         session_factory,
@@ -259,15 +262,22 @@ async def test_stale_extraction_session_revision_fails_before_memory_insert(
         "UPDATE ibex_core.sessions SET status='abandoned' WHERE id=:id AND org_id=:org",
         {"id": str(session_id), "org": str(org_id)},
     )
-    fence = ExtractionSessionFence(
+    command = CreateMemoryCommand(
         org_id=org_id,
         agent_id=agent_id,
+        content=content,
         session_id=session_id,
-        expected_revision=1,
+        expected_session_revision=1,
     )
-    async with session_factory() as session, session.begin():
-        with pytest.raises(StaleLifecycleError):
-            await require_extraction_session(session, fence)
+    ctx = WriteContext(
+        org_id=org_id,
+        agent_id=agent_id,
+        content=content,
+        content_hash=content_hash,
+    )
+    orchestrator = MemoryWriteOrchestrator(WritePipeline([]), session_factory)
+    with pytest.raises(StaleLifecycleError):
+        await orchestrator._persist_active(command, ctx)
     count = await _scalar(
         session_factory,
         org_id,
