@@ -25,6 +25,66 @@ func (r *ProxyRegistry) initBillingMetrics() {
 		Name: "ibex_proxy_budget_lru_size",
 		Help: "Current number of orgs in the budget LRU.",
 	})
+	r.budgetReservations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_budget_reservations_total",
+		Help: "Durable budget reservation outcomes on the proxy admission path.",
+	}, []string{"outcome"})
+	r.budgetReservationSec = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "ibex_proxy_budget_reservation_duration_seconds",
+		Help:    "Wall time of durable budget reservation claims and settlements.",
+		Buckets: LatencyBuckets,
+	})
+	for _, outcome := range []string{
+		BudgetReservationClaimed, BudgetReservationNoCap, BudgetReservationExceeded,
+		BudgetReservationInProgress, BudgetReservationConflict, BudgetReservationUnavailable,
+		BudgetReservationFinalizedComplete, BudgetReservationFinalizedEstimated,
+		BudgetReservationFinalizeFailed, BudgetReservationReleased, BudgetReservationReleaseFailed,
+	} {
+		r.budgetReservations.WithLabelValues(outcome)
+	}
+}
+
+// Budget reservation outcome labels (bounded; never org/key labeled).
+const (
+	BudgetReservationClaimed            = "claimed"
+	BudgetReservationNoCap              = "no_cap"
+	BudgetReservationExceeded           = "exceeded"
+	BudgetReservationInProgress         = "in_progress"
+	BudgetReservationConflict           = "conflict"
+	BudgetReservationUnavailable        = "unavailable"
+	BudgetReservationFinalizedComplete  = "finalized_complete"
+	BudgetReservationFinalizedEstimated = "finalized_estimated"
+	BudgetReservationFinalizeFailed     = "finalize_failed"
+	BudgetReservationReleased           = "released"
+	BudgetReservationReleaseFailed      = "release_failed"
+)
+
+// IncBudgetReservation records a durable budget reservation outcome.
+func (r *ProxyRegistry) IncBudgetReservation(outcome string) {
+	if r == nil || r.budgetReservations == nil {
+		return
+	}
+	r.budgetReservations.WithLabelValues(boundBudgetReservationOutcome(outcome)).Inc()
+}
+
+// ObserveBudgetReservationDurationSeconds records claim/settle wall time.
+func (r *ProxyRegistry) ObserveBudgetReservationDurationSeconds(seconds float64) {
+	if r == nil || r.budgetReservationSec == nil {
+		return
+	}
+	r.budgetReservationSec.Observe(seconds)
+}
+
+func boundBudgetReservationOutcome(outcome string) string {
+	switch outcome {
+	case BudgetReservationClaimed, BudgetReservationNoCap, BudgetReservationExceeded,
+		BudgetReservationInProgress, BudgetReservationConflict, BudgetReservationUnavailable,
+		BudgetReservationFinalizedComplete, BudgetReservationFinalizedEstimated,
+		BudgetReservationFinalizeFailed, BudgetReservationReleased, BudgetReservationReleaseFailed:
+		return outcome
+	default:
+		return BudgetReservationUnavailable
+	}
 }
 
 // IncBudgetCacheHit records a budget cache hit.

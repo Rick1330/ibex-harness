@@ -91,6 +91,8 @@ func (r *ProxyRegistry) authAndSessionCollectors() []prometheus.Collector {
 		r.budgetDeny,
 		r.budgetInvalidate,
 		r.budgetLRUSize,
+		r.budgetReservations,
+		r.budgetReservationSec,
 		r.sessionGetOrCreate,
 		r.sessionGetOrCreateSec,
 		r.sessionCheckpoint,

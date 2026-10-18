@@ -46,6 +46,8 @@ type ProxyRegistry struct {
 	budgetDeny                    prometheus.Counter
 	budgetInvalidate              prometheus.Counter
 	budgetLRUSize                 prometheus.Gauge
+	budgetReservations            *prometheus.CounterVec
+	budgetReservationSec          prometheus.Histogram
 	sessionGetOrCreate            *prometheus.CounterVec
 	sessionGetOrCreateSec         prometheus.Histogram
 	sessionCheckpoint             *prometheus.CounterVec
