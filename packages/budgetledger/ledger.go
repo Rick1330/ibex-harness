@@ -354,7 +354,7 @@ func (l *PostgresLedger) resetHeldRow(ctx context.Context, tx *sql.Tx, in claimR
 	var id uuid.UUID
 	var version int64
 	// Static SQL; every request-controlled value is passed through QueryRowContext arguments.
-	err := tx.QueryRowContext(ctx, resetReservationSQL, // NOSONAR — static SQL with bound arguments.
+	err := tx.QueryRowContext(ctx, resetReservationSQL, // nosemgrep -- static query, bound args only. NOSONAR
 		in.period.id, in.req.EstimatedCents, leaseInterval(l.lease),
 		row.id, in.principal.OrgID, in.principal.AgentID, in.req.Key, row.version).Scan(&id, &version)
 	if err != nil {
@@ -374,7 +374,7 @@ func claimFresh(ctx context.Context, tx *sql.Tx, in claimFreshParams) (ClaimOutc
 	var id uuid.UUID
 	var version int64
 	// Static SQL; every request-controlled value is passed through QueryRowContext arguments.
-	err = tx.QueryRowContext(ctx, insertReservationSQL, // NOSONAR — static SQL with bound arguments.
+	err = tx.QueryRowContext(ctx, insertReservationSQL, // nosemgrep -- static query, bound args only. NOSONAR
 		in.principal.OrgID, in.principal.AgentID, in.period.id, in.req.Key, in.req.RequestHash,
 		in.req.EstimatedCents, leaseInterval(in.lease)).Scan(&id, &version)
 	if errors.Is(err, sql.ErrNoRows) {

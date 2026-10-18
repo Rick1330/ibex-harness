@@ -1,6 +1,6 @@
 module github.com/Rick1330/ibex-harness/tools
 
-go 1.26.0
+go 1.26.9
 
 require (
 	golang.org/x/vuln v1.1.4

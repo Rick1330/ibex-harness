@@ -131,24 +131,12 @@ func (h chatCompletionHandler) completeAndRespond(
 
 func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteErrorArgs) {
 	p, claim, provReq, err := args.p, args.claim, args.provReq, args.err
-	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
-		h.releaseBudget(p.r.Context(), "canceled")
-		return
-	}
-	// Request already done (deadline/other) — surface primary failure, never fallback.
-	if p.r.Context().Err() != nil {
-		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: args.requestID,
-			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
-		})
+	if h.exitPrimaryCompleteError(args, err) {
 		return
 	}
 	elig := provider.FallbackEligible(err, provReq)
 	if !elig.Eligible {
-		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: args.requestID,
-			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
-		})
+		h.writePrimaryProviderFailure(args, err)
 		return
 	}
 	fb, ok := h.tryFallbackComplete(p, provReq, elig.Reason)
@@ -157,10 +145,7 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteEr
 			h.releaseBudget(p.r.Context(), "canceled")
 			return
 		}
-		h.writeProviderFailure(providerFailureParams{
-			w: p.w, r: p.r, err: err, requestID: args.requestID,
-			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
-		})
+		h.writePrimaryProviderFailure(args, err)
 		return
 	}
 	if fb.r != nil {
@@ -174,6 +159,30 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteEr
 			FallbackModel: fb.model,
 			Reason:        fb.reason,
 		},
+	})
+}
+
+// exitPrimaryCompleteError handles canceled and already-finished requests,
+// reporting whether the caller must stop. It runs before any fallback logic so
+// a dead client never triggers provider work.
+func (h chatCompletionHandler) exitPrimaryCompleteError(args primaryCompleteErrorArgs, err error) bool {
+	p := args.p
+	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
+		h.releaseBudget(p.r.Context(), "canceled")
+		return true
+	}
+	// Request already done (deadline/other) — surface primary failure, never fallback.
+	if p.r.Context().Err() != nil {
+		h.writePrimaryProviderFailure(args, err)
+		return true
+	}
+	return false
+}
+
+func (h chatCompletionHandler) writePrimaryProviderFailure(args primaryCompleteErrorArgs, err error) {
+	h.writeProviderFailure(providerFailureParams{
+		w: args.p.w, r: args.p.r, err: err, requestID: args.requestID,
+		parsed: args.p.parsed, providerName: args.p.prov.Name(), claim: args.claim,
 	})
 }
 

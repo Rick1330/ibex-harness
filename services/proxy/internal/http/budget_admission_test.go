@@ -646,8 +646,8 @@ func TestUnit_MaxTokensFromParsed(t *testing.T) {
 	if got := maxTokensFromParsed(nil); got != 0 {
 		t.Fatalf("nil parsed: %d", got)
 	}
-	max := 64
-	if got := maxTokensFromParsed(&llm.ChatCompletionRequest{MaxTokens: &max}); got != 64 {
+	explicit := 64
+	if got := maxTokensFromParsed(&llm.ChatCompletionRequest{MaxTokens: &explicit}); got != 64 {
 		t.Fatalf("explicit parsed: %d", got)
 	}
 }

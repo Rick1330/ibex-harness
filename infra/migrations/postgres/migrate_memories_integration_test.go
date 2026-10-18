@@ -476,27 +476,49 @@ func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	head, headDirty, err := Version(dsn)
-	if err != nil || headDirty || head < 45 {
-		t.Fatalf("head version = (%d, dirty=%v, err=%v), want >= 45", head, headDirty, err)
-	}
+	head := requireHeadVersionAtLeast(t, dsn, 45)
 	downToVersion(t, dsn, 44)
-	v, dirty, err := Version(dsn)
-	if err != nil || dirty || v != 44 {
-		t.Fatalf("version after clean down = (%d, dirty=%v, err=%v), want (44, false, nil)", v, dirty, err)
-	}
+	requireVersion(t, dsn, 44)
 	ctx := context.Background()
 	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
 	memoryID := seedMemory(t, ctx, memorySeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "lifecycle-down-guard"})
+	seedLegacyDeletedMemory(t, ctx, db, memoryID)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up after clean down: %v", err)
+	}
+	requireReconciledLifecycle(t, ctx, db, memoryID)
+	requireGuardedDownRefused(t, ctx, db, dsn, head)
+}
+
+func requireHeadVersionAtLeast(t *testing.T, dsn string, minVersion uint) uint {
+	t.Helper()
+	head, headDirty, err := Version(dsn)
+	if err != nil || headDirty || head < minVersion {
+		t.Fatalf("head version = (%d, dirty=%v, err=%v), want >= %d", head, headDirty, err, minVersion)
+	}
+	return head
+}
+
+func requireVersion(t *testing.T, dsn string, want uint) {
+	t.Helper()
+	v, dirty, err := Version(dsn)
+	if err != nil || dirty || v != want {
+		t.Fatalf("version = (%d, dirty=%v, err=%v), want (%d, false, nil)", v, dirty, err, want)
+	}
+}
+
+func seedLegacyDeletedMemory(t *testing.T, ctx context.Context, db *sql.DB, memoryID string) {
+	t.Helper()
 	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE ibex_core.memories SET status = 'deleted', deleted_at = NOW() WHERE id = $1::uuid`, memoryID)
 		return err
 	}); err != nil {
 		t.Fatalf("create legacy deleted state: %v", err)
 	}
-	if err := Up(dsn); err != nil {
-		t.Fatalf("up after clean down: %v", err)
-	}
+}
+
+func requireReconciledLifecycle(t *testing.T, ctx context.Context, db *sql.DB, memoryID string) {
+	t.Helper()
 	var tombstoned bool
 	var revision int64
 	if err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
@@ -507,6 +529,10 @@ func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
 	if !tombstoned || revision != 1 {
 		t.Fatalf("reconciled state = (tombstoned=%v, revision=%d), want (true, 1)", tombstoned, revision)
 	}
+}
+
+func requireGuardedDownRefused(t *testing.T, ctx context.Context, db *sql.DB, dsn string, head uint) {
+	t.Helper()
 	downSQL, err := migrationFiles.ReadFile("000045_memory_lifecycle.down.sql")
 	if err != nil {
 		t.Fatalf("read down migration: %v", err)
@@ -521,8 +547,5 @@ func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
 		t.Fatalf("guarded down error = %v, want refusal", err)
 	}
 	_ = tx.Rollback()
-	v, dirty, err = Version(dsn)
-	if err != nil || dirty || v != head {
-		t.Fatalf("version after refused down = (%d, dirty=%v, err=%v), want (%d, false, nil)", v, dirty, err, head)
-	}
+	requireVersion(t, dsn, head)
 }

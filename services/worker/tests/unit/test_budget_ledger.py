@@ -203,7 +203,8 @@ def test_reservation_key_and_fingerprint_stability() -> None:
     )
     assert first == second
     assert first != third
-    assert len(first) == 64 and first.islower()
+    assert len(first) == 64
+    assert first.islower()
 
 
 def test_token_heuristic_counts_unicode_code_points() -> None:
@@ -262,8 +263,9 @@ async def test_claim_denied_without_rate_card(org_session) -> None:
     install, _ = org_session
     install(_Session(_Result(), _period_row(), _Result({"version": "", "prices": []})))
     ledger = mod._AsyncBudgetLedger(object())
+    request = _claim_request()
     with pytest.raises(BudgetAdmissionDeniedError) as err:
-        await ledger.claim(_claim_request())
+        await ledger.claim(request)
     assert err.value.kind == "no_rate_card"
 
 
@@ -376,7 +378,8 @@ async def test_claim_expired_lease_reclaims_with_cap_check(org_session) -> None:
     )
     ledger = mod._AsyncBudgetLedger(object())
     claim = await ledger.claim(request)
-    assert claim is not None and claim.version == 5
+    assert claim is not None
+    assert claim.version == 5
 
     install(
         _Session(
@@ -398,16 +401,18 @@ async def test_claim_wraps_sqlalchemy_errors(org_session) -> None:
     install, _ = org_session
     install(_FailingSession(SQLAlchemyError("down")))
     ledger = mod._AsyncBudgetLedger(object())
+    request = _claim_request()
     with pytest.raises(BudgetLedgerUnavailableError):
-        await ledger.claim(_claim_request())
+        await ledger.claim(request)
 
 
 @pytest.mark.asyncio
 async def test_claim_rejects_invalid_key(org_session) -> None:
     ledger = mod._AsyncBudgetLedger(object())
     for key, request_hash in (("", "hash"), ("x" * 257, "hash"), ("key", "")):
+        request = _claim_request(key=key, request_hash=request_hash)
         with pytest.raises(BudgetLedgerError, match="invalid"):
-            await ledger.claim(_claim_request(key=key, request_hash=request_hash))
+            await ledger.claim(request)
 
 
 @pytest.mark.asyncio
@@ -572,8 +577,9 @@ async def test_claim_in_progress_when_insert_races(org_session) -> None:
         )
     )
     ledger = mod._AsyncBudgetLedger(object())
+    request = _claim_request()
     with pytest.raises(BudgetAdmissionDeniedError) as err:
-        await ledger.claim(_claim_request())
+        await ledger.claim(request)
     assert err.value.kind == "in_progress"
     assert err.value.retry_after == 1
 
@@ -610,8 +616,9 @@ async def test_finalize_wraps_sqlalchemy_errors(org_session) -> None:
     install, _ = org_session
     install(_FailingSession(SQLAlchemyError("down")))
     ledger = mod._AsyncBudgetLedger(object())
+    claim = _claim_token()
     with pytest.raises(BudgetLedgerUnavailableError):
-        await ledger.finalize(_claim_token(), input_tokens=1, output_tokens=1)
+        await ledger.finalize(claim, input_tokens=1, output_tokens=1)
 
 
 @pytest.mark.asyncio
@@ -619,8 +626,9 @@ async def test_release_wraps_sqlalchemy_errors(org_session) -> None:
     install, _ = org_session
     install(_FailingSession(SQLAlchemyError("down")))
     ledger = mod._AsyncBudgetLedger(object())
+    claim = _claim_token()
     with pytest.raises(BudgetLedgerUnavailableError):
-        await ledger.release(_claim_token())
+        await ledger.release(claim)
 
 
 @pytest.mark.asyncio
@@ -649,15 +657,17 @@ def test_stored_rates_requires_both_columns() -> None:
 @pytest.mark.asyncio
 async def test_write_helpers_raise_closed_on_rowcount_miss() -> None:
     claim = _claim_token()
+    finish_session = _Session(_Result(rowcount=0))
     with pytest.raises(BudgetLedgerClaimClosedError):
         await mod._write_finalized(
-            _Session(_Result(rowcount=0)),
+            finish_session,
             claim,
             amount=5,
             completeness=mod.COMPLETENESS_COMPLETE,
         )
+    release_session = _Session(_Result(rowcount=0))
     with pytest.raises(BudgetLedgerClaimClosedError):
-        await mod._write_released(_Session(_Result(rowcount=0)), claim)
+        await mod._write_released(release_session, claim)
 
 
 @pytest.mark.asyncio

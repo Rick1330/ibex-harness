@@ -439,7 +439,8 @@ async def test_sweep_leaves_fresh_reclaim_claimed(pg_factory) -> None:
 
         await ledger.expire_stale(grace_seconds=0, batch_limit=100)
         row = await _fetch_reservation(pg_factory, org_id, first.key)
-        assert row is not None and row["state"] == "claimed"
+        assert row is not None
+        assert row["state"] == "claimed"
     finally:
         await _delete_seed(pg_factory, org_id, agent_id)
 
@@ -538,8 +539,10 @@ async def test_cross_tenant_isolation_and_service_account_sweep(
         assert expired >= 2
         row_a = await _fetch_reservation(pg_factory, org_a, "extraction:shared")
         row_b = await _fetch_reservation(pg_factory, org_b, "extraction:shared")
-        assert row_a is not None and row_a["state"] == "expired"
-        assert row_b is not None and row_b["state"] == "expired"
+        assert row_a is not None
+        assert row_b is not None
+        assert row_a["state"] == "expired"
+        assert row_b["state"] == "expired"
     finally:
         monkeypatch.undo()
         await _delete_seed(pg_factory, org_a, agent_a)

@@ -1,14 +1,11 @@
 -- budget-reservation.v1 (provisional, implemented-local): durable admission
 -- holds behind the existing hard_cap enforcement. A reservation exists only
--- while the organization has an active hard_cap budget period; organizations
--- without hard caps keep the cache-only middleware behavior and create no rows.
--- finalized rows are the durable audit record; release/expire keep the history
--- (rows are never deleted by the application roles; agent deletion cascades as
--- the table owner during organization teardown, like the sibling agent tables).
--- price_* columns capture the matched rate at claim time so worker settlement
--- and idempotent replay never depend on the currently published rate card. The
--- Go proxy settles with explicit measured amounts and leaves them NULL; keys
--- are service-namespaced so only the owning service settles a row.
+-- while the organization has an active hard_cap budget period, and rows are
+-- never deleted by the application roles; release and expire keep the history.
+-- agent_id cascades during organization teardown like the sibling agent tables.
+-- The price columns capture the matched rate at claim time so worker settlement
+-- and idempotent replay do not depend on the currently published rate card;
+-- the Go proxy settles with explicit measured amounts and leaves them NULL.
 CREATE TABLE ibex_core.budget_reservations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES ibex_core.organizations(id),
@@ -18,8 +15,8 @@ CREATE TABLE ibex_core.budget_reservations (
     request_hash TEXT NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
     state TEXT NOT NULL CHECK (state IN ('claimed', 'finalized', 'released', 'expired')),
     amount_estimated_cents BIGINT NOT NULL CHECK (amount_estimated_cents >= 0),
-    price_input_cents_per_1k INTEGER CHECK (price_input_cents_per_1k IS NULL OR price_input_cents_per_1k >= 0),
-    price_output_cents_per_1k INTEGER CHECK (price_output_cents_per_1k IS NULL OR price_output_cents_per_1k >= 0),
+    price_input_cents_per_1k INTEGER CHECK (price_input_cents_per_1k >= 0),
+    price_output_cents_per_1k INTEGER CHECK (price_output_cents_per_1k >= 0),
     amount_final_cents BIGINT CHECK (amount_final_cents >= 0),
     finalized_completeness TEXT CHECK (finalized_completeness IN ('complete', 'estimated')),
     lease_expires_at TIMESTAMPTZ,

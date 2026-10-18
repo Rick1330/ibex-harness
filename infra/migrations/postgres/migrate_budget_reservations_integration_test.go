@@ -15,7 +15,6 @@ import (
 // budgetReservationsFixture seeds two orgs with agents plus one active
 // hard_cap budget period per org for the budget-reservation schema tests.
 type budgetReservationsFixture struct {
-	ctx              context.Context
 	db               *sql.DB
 	orgA, orgB       string
 	agentA, agentB   string
@@ -27,7 +26,7 @@ func openBudgetReservationsFixture(t *testing.T) budgetReservationsFixture {
 	ctx, db := setupBillingDB(t)
 	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
 	return budgetReservationsFixture{
-		ctx: ctx, db: db,
+		db:   db,
 		orgA: orgA, orgB: orgB,
 		agentA:  lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgA, slug: "agent-a"}),
 		agentB:  lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgB, slug: "agent-b"}),
@@ -44,10 +43,10 @@ type reservationSeed struct {
 	key      string
 }
 
-func (f budgetReservationsFixture) insertClaimedBudgetReservation(t *testing.T, seed reservationSeed) {
+func (f budgetReservationsFixture) insertClaimedBudgetReservation(ctx context.Context, t *testing.T, seed reservationSeed) {
 	t.Helper()
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, `
+	err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 			INSERT INTO ibex_core.budget_reservations
 				(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 				 state, amount_estimated_cents, price_input_cents_per_1k, price_output_cents_per_1k,
@@ -64,18 +63,19 @@ func (f budgetReservationsFixture) insertClaimedBudgetReservation(t *testing.T, 
 
 func TestBudgetReservations_SchemaAndRLSCrossTenant(t *testing.T) {
 	f := openBudgetReservationsFixture(t)
-	assertCoreTableExists(t, f.ctx, f.db, "budget_reservations")
-	assertCoreTableRLS(t, f.ctx, coreTableRLSCheck{
+	ctx := context.Background()
+	assertCoreTableExists(t, ctx, f.db, "budget_reservations")
+	assertCoreTableRLS(t, ctx, coreTableRLSCheck{
 		db: f.db, table: "budget_reservations", expect: coreTableRLSFlags{enabled: true, forced: true},
 	})
 
-	f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "key-a"})
-	f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgB, agentID: f.agentB, periodID: f.periodB, key: "key-b"})
+	f.insertClaimedBudgetReservation(ctx, t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "key-a"})
+	f.insertClaimedBudgetReservation(ctx, t, reservationSeed{orgID: f.orgB, agentID: f.agentB, periodID: f.periodB, key: "key-b"})
 
 	// ibex_app sees only its own org (fail closed with no org context).
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: "", want: 0})
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgA, want: 1})
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgB, want: 1})
+	assertTableCount(t, ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: "", want: 0})
+	assertTableCount(t, ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgA, want: 1})
+	assertTableCount(t, ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgB, want: 1})
 }
 
 // budgetConstraintCase carries a complete insert statement whose literals
@@ -88,12 +88,13 @@ type budgetConstraintCase struct {
 
 func TestBudgetReservations_CheckConstraints(t *testing.T) {
 	f := openBudgetReservationsFixture(t)
+	ctx := context.Background()
 	hash := strings.Repeat("b", 64)
-	assertBudgetConstraintCases(t, f, hash)
-	assertBudgetInsertRejections(t, f, hash)
+	assertBudgetConstraintCases(ctx, t, f, hash)
+	assertBudgetInsertRejections(ctx, t, f, hash)
 }
 
-func assertBudgetConstraintCases(t *testing.T, f budgetReservationsFixture, hash string) {
+func assertBudgetConstraintCases(ctx context.Context, t *testing.T, f budgetReservationsFixture, hash string) {
 	t.Helper()
 	cases := []budgetConstraintCase{
 		{
@@ -139,8 +140,8 @@ func assertBudgetConstraintCases(t *testing.T, f budgetReservationsFixture, hash
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-				_, e := tx.ExecContext(f.ctx, `
+			err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+				_, e := tx.ExecContext(ctx, `
 					INSERT INTO ibex_core.budget_reservations
 						(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 						 state, amount_estimated_cents, amount_final_cents, finalized_completeness, lease_expires_at)
@@ -153,11 +154,11 @@ func assertBudgetConstraintCases(t *testing.T, f budgetReservationsFixture, hash
 	}
 }
 
-func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, hash string) {
+func assertBudgetInsertRejections(ctx context.Context, t *testing.T, f budgetReservationsFixture, hash string) {
 	t.Helper()
 	t.Run("malformed request hash", func(t *testing.T) {
-		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-			_, e := tx.ExecContext(f.ctx, `
+		err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `
 				INSERT INTO ibex_core.budget_reservations
 					(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 					 state, amount_estimated_cents, lease_expires_at)
@@ -169,8 +170,8 @@ func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, has
 	})
 
 	t.Run("overlong reservation key", func(t *testing.T) {
-		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-			_, e := tx.ExecContext(f.ctx, `
+		err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `
 				INSERT INTO ibex_core.budget_reservations
 					(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 					 state, amount_estimated_cents, lease_expires_at)
@@ -183,8 +184,8 @@ func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, has
 	})
 
 	t.Run("unknown budget period", func(t *testing.T) {
-		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-			_, e := tx.ExecContext(f.ctx, `
+		err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `
 				INSERT INTO ibex_core.budget_reservations
 					(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 					 state, amount_estimated_cents, lease_expires_at)
@@ -197,9 +198,9 @@ func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, has
 	})
 
 	t.Run("duplicate org agent key", func(t *testing.T) {
-		f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "duplicate-key"})
-		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-			_, e := tx.ExecContext(f.ctx, `
+		f.insertClaimedBudgetReservation(ctx, t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "duplicate-key"})
+		err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `
 				INSERT INTO ibex_core.budget_reservations
 					(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 					 state, amount_estimated_cents, lease_expires_at)
@@ -211,8 +212,8 @@ func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, has
 	})
 
 	t.Run("negative stored rate", func(t *testing.T) {
-		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-			_, e := tx.ExecContext(f.ctx, `
+		err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(ctx, `
 				INSERT INTO ibex_core.budget_reservations
 					(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
 					 state, amount_estimated_cents, price_input_cents_per_1k, lease_expires_at)
@@ -229,15 +230,16 @@ func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, has
 // with the table owner's privileges (application roles hold no DELETE grant).
 func TestBudgetReservations_AgentDeleteCascades(t *testing.T) {
 	f := openBudgetReservationsFixture(t)
-	f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "cascade-key"})
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, e := tx.ExecContext(f.ctx, `DELETE FROM ibex_core.agents WHERE id = $1::uuid`, f.agentA)
+	ctx := context.Background()
+	f.insertClaimedBudgetReservation(ctx, t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "cascade-key"})
+	err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, `DELETE FROM ibex_core.agents WHERE id = $1::uuid`, f.agentA)
 		return e
 	})
 	if err != nil {
 		t.Fatalf("delete agent: %v", err)
 	}
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgA, want: 0})
+	assertTableCount(t, ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgA, want: 0})
 }
 
 func TestBudgetReservations_MigrationDown(t *testing.T) {
