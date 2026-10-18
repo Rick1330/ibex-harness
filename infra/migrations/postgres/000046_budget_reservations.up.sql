@@ -35,9 +35,9 @@ CREATE INDEX idx_budget_reservations_lease
 ALTER TABLE ibex_core.budget_reservations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.budget_reservations FORCE ROW LEVEL SECURITY;
 CREATE POLICY budget_reservations_isolation ON ibex_core.budget_reservations
-    USING (organization_id = NULLIF(current_setting('app.current_org_id', true), '')::uuid);
--- No DELETE: rows are the durable accounting record; the reaper runs as the
--- BYPASSRLS service role and only transitions state.
+    USING (ibex_core.rls_org_visible(organization_id));
+-- No DELETE: rows are the durable accounting record; the reaper runs with the
+-- service-account GUC (rls_org_visible) and only transitions state.
 GRANT SELECT, INSERT, UPDATE ON ibex_core.budget_reservations TO ibex_app;
 GRANT SELECT, INSERT, UPDATE ON ibex_core.budget_reservations TO ibex_service;
 COMMENT ON TABLE ibex_core.budget_reservations IS 'budget-reservation.v1 durable admission holds for hard_cap organizations; scoped to org + agent + reservation key';
