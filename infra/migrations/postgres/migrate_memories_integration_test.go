@@ -476,9 +476,11 @@ func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	if err := Down(dsn); err != nil {
-		t.Fatalf("clean down of 000045: %v", err)
+	head, headDirty, err := Version(dsn)
+	if err != nil || headDirty || head < 45 {
+		t.Fatalf("head version = (%d, dirty=%v, err=%v), want >= 45", head, headDirty, err)
 	}
+	downToVersion(t, dsn, 44)
 	v, dirty, err := Version(dsn)
 	if err != nil || dirty || v != 44 {
 		t.Fatalf("version after clean down = (%d, dirty=%v, err=%v), want (44, false, nil)", v, dirty, err)
@@ -520,7 +522,7 @@ func TestMemoryLifecycleDownCleanAndGuarded(t *testing.T) {
 	}
 	_ = tx.Rollback()
 	v, dirty, err = Version(dsn)
-	if err != nil || dirty || v != 45 {
-		t.Fatalf("version after refused down = (%d, dirty=%v, err=%v), want (45, false, nil)", v, dirty, err)
+	if err != nil || dirty || v != head {
+		t.Fatalf("version after refused down = (%d, dirty=%v, err=%v), want (%d, false, nil)", v, dirty, err, head)
 	}
 }
