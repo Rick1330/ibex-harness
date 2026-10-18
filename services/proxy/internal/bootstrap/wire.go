@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/billing"
+	"github.com/Rick1330/ibex-harness/packages/budgetledger"
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/contextclient"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -381,6 +382,10 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 	if err != nil {
 		return routerAssembleParts{}, fmt.Errorf("termination idempotency ledger: %w", err)
 	}
+	budgetLedger, err := budgetledger.NewOptionalPostgresLedger(in.infra.pgDB, in.cfg.BudgetReservationLease)
+	if err != nil {
+		return routerAssembleParts{}, fmt.Errorf("budget reservation ledger: %w", err)
+	}
 	mpCache, modelRouter, agentDefaults, err := buildModelPolicyRuntime(modelPolicyRuntimeInput{
 		PGDB:    in.infra.pgDB,
 		Base:    providerReg,
@@ -396,7 +401,8 @@ func buildRouterAssembleParts(in finishAssembledCoreInput) (routerAssembleParts,
 	}
 	return routerAssembleParts{
 		in: in, providerReg: providerReg, tokenizerReg: tokenizerReg,
-		idempStore: idempStore, terminationLedger: terminationLedger, traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
+		idempStore: idempStore, terminationLedger: terminationLedger, budgetLedger: budgetLedger,
+		traceWriter: optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter),
 		modelRouter: modelRouter, agentDefaults: agentDefaults, mpCache: mpCache,
 		budgetCache: budgetCache, usageFactWriter: optionalUsageFactWriter(in.cfg.ClickHouseDSN, in.log, in.reg, nil),
 	}, nil
@@ -408,6 +414,7 @@ type routerAssembleParts struct {
 	tokenizerReg      *tokenizer.Registry
 	idempStore        idempotency.Store
 	terminationLedger idempotency.Ledger
+	budgetLedger      budgetledger.Ledger
 	traceWriter       *ibexch.Writer
 	modelRouter       proxyhttp.ProviderResolver
 	agentDefaults     modelpolicy.AgentDefaultLoader
@@ -434,6 +441,7 @@ func assembledRouterDeps(p routerAssembleParts) proxyhttp.RouterDeps {
 		ResponsePipeline:  buildResponsePipeline(in.log, in.reg, in.cfg.ContextEmbedMetadata),
 		IdempotencyStore:  p.idempStore,
 		TerminationLedger: p.terminationLedger,
+		BudgetLedger:      p.budgetLedger,
 		ContextClient:     in.infra.ctxClients.client,
 		TurnBuffer:        in.infra.sessionStack.turnBuffer,
 		ExtractionEnqueue: extractionenqueue.New(extractionenqueue.Config{

@@ -79,6 +79,7 @@ type envConfig struct {
 	ClickHouseFlushMS         int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
 	IdempotencyTTL            time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
 	IdempotencyRedisTO        time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
+	BudgetReservationLease    time.Duration     `env:"IBEX_BUDGET_RESERVATION_LEASE"`
 	ExtractionTurnsTTL        time.Duration     `env:"IBEX_EXTRACTION_TURNS_TTL"`
 	WorkerEnqueueBaseURL      string            `env:"IBEX_WORKER_ENQUEUE_BASE_URL"`
 	WorkerEnqueueAPIToken     ibexconfig.Secret `env:"IBEX_WORKER_ENQUEUE_API_TOKEN" secret:"true"`
@@ -111,6 +112,7 @@ func buildProxyConfig(envCfg envConfig) (Config, error) {
 	}
 
 	cfg := baseProxyConfig(envCfg, level)
+	cfg.BudgetReservationLease = envCfg.BudgetReservationLease
 	sh, err := selfHostedConfigFromEnv(envCfg)
 	if err != nil {
 		return Config{}, err

@@ -58,6 +58,9 @@ func (c Config) validateIdempotency() error {
 	if c.IdempotencyRedisTimeout <= 0 {
 		return fmt.Errorf("IBEX_IDEMPOTENCY_REDIS_TIMEOUT must be positive")
 	}
+	if c.BudgetReservationLease < minBudgetReservationLease || c.BudgetReservationLease > maxBudgetReservationLease {
+		return fmt.Errorf("IBEX_BUDGET_RESERVATION_LEASE must be between 1m and 24h")
+	}
 	return nil
 }
 

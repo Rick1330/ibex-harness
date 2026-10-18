@@ -9,6 +9,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/billing"
+	"github.com/Rick1330/ibex-harness/packages/budgetledger"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
@@ -79,6 +80,9 @@ type RouterDeps struct {
 	TraceWriter       TraceWriter
 	IdempotencyStore  idempotency.Store
 	TerminationLedger idempotency.Ledger
+	// BudgetLedger durably reserves hard-cap admission holds before provider
+	// calls (nil disables; GAP-006 provisional budget-reservation.v1 slice).
+	BudgetLedger budgetledger.Ledger
 	// ContextClient is the fail-open Assemble client from bootstrap (nil when
 	// IBEX_CONTEXT_GRPC_TARGET is empty). Gated by Config.ContextEnabled.
 	// Production passes *contextclient.Client; tests may supply fakes.
@@ -199,6 +203,7 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry, mo
 		traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
 		idempotencyStore:         deps.IdempotencyStore,
 		terminationLedger:        deps.TerminationLedger,
+		budgetLedger:             deps.BudgetLedger,
 		idempotencyTimeout:       deps.Config.IdempotencyRedisTimeout,
 		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.Config.IdempotencyRedisTimeout),
 		contextClient:            deps.ContextClient,
@@ -282,6 +287,7 @@ type chatCompletionHandler struct {
 	budgetCache              *billing.Cache
 	idempotencyStore         idempotency.Store
 	terminationLedger        idempotency.Ledger
+	budgetLedger             budgetledger.Ledger
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler

@@ -95,6 +95,11 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 	if !h.applyCredentialOverride(p.w, p.r, p.prov, &provReq) {
 		return
 	}
+	var budgetOK bool
+	p.r, budgetOK = h.claimBudgetAdmission(p.w, p.r, p.prov.Name(), provReq.Model, provReq.Messages, maxTokensFromParsed(p.parsed))
+	if !budgetOK {
+		return
+	}
 	h.completeAndRespond(p, claim, provReq)
 }
 
@@ -121,6 +126,7 @@ func (h chatCompletionHandler) completeAndRespond(
 func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteErrorArgs) {
 	p, claim, provReq, err := args.p, args.claim, args.provReq, args.err
 	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
+		h.releaseBudget(p.r.Context(), "canceled")
 		return
 	}
 	// Request already done (deadline/other) — surface primary failure, never fallback.
@@ -142,6 +148,7 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteEr
 	fb, ok := h.tryFallbackComplete(p, provReq, elig.Reason)
 	if !ok {
 		if errors.Is(p.r.Context().Err(), context.Canceled) {
+			h.releaseBudget(p.r.Context(), "canceled")
 			return
 		}
 		h.writeProviderFailure(providerFailureParams{
@@ -312,6 +319,7 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 		// openaicompatible leaves Response.Usage nil; recover from forwarded JSON.
 		usage = httpsession.UsageFromJSON(out)
 	}
+	h.settleBudgetOutcome(p.r.Context(), p.resp.StatusCode, p.providerName, checkpointModel(p.parsed, p.audit), usage)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
 		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: usage,
@@ -386,10 +394,16 @@ func (h chatCompletionHandler) streamCheckpointHook(
 			IsComplete: res.complete,
 			ErrorCode:  errCode,
 		})
+		if res.complete {
+			h.settleBudgetOutcome(ctx, http.StatusOK, providerName, checkpointModel(parsed, audit), res.usage)
+			return
+		}
+		h.releaseBudget(ctx, "stream_incomplete")
 	}
 }
 
 func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
+	h.releaseBudget(p.r.Context(), "provider_failure")
 	mapped, write := provider.MapError(p.err)
 	if !write || mapped == nil {
 		return

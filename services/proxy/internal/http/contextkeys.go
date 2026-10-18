@@ -27,6 +27,7 @@ const (
 	ctxKeyContextAssembleMeta
 	ctxKeyProviderDurationMs
 	ctxKeyPolicySnapshot
+	ctxKeyBudgetReservation
 )
 
 // WithRequestID stores the request ID on the context.
@@ -173,6 +174,18 @@ func withContextAssembleMeta(ctx context.Context, meta contextAssembleMeta) cont
 func contextAssembleMetaFromContext(ctx context.Context) (contextAssembleMeta, bool) {
 	meta, ok := ctx.Value(ctxKeyContextAssembleMeta).(contextAssembleMeta)
 	return meta, ok
+}
+
+func withBudgetReservation(ctx context.Context, res *budgetReservation) context.Context {
+	return context.WithValue(ctx, ctxKeyBudgetReservation, res)
+}
+
+func budgetReservationFromContext(ctx context.Context) *budgetReservation {
+	res, ok := ctx.Value(ctxKeyBudgetReservation).(*budgetReservation)
+	if !ok {
+		return nil
+	}
+	return res
 }
 
 func withProviderDurationMs(ctx context.Context, ms int64) context.Context {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/billing"
+	"github.com/Rick1330/ibex-harness/packages/budgetledger"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -52,6 +53,7 @@ type protectedRouteDeps struct {
 	traceWriter              TraceWriter
 	idempotencyStore         idempotency.Store
 	terminationLedger        idempotency.Ledger
+	budgetLedger             budgetledger.Ledger
 	idempotencyTimeout       time.Duration
 	idempotencyCommitTimeout time.Duration
 	contextClient            contextAssembler
@@ -218,6 +220,7 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		traceWriter:              deps.traceWriter,
 		usageFactWriter:          deps.usageFactWriter,
 		budgetCache:              deps.budgetCache,
+		budgetLedger:             deps.budgetLedger,
 		idempotencyStore:         deps.idempotencyStore,
 		terminationLedger:        deps.terminationLedger,
 		idempotencyTimeout:       deps.idempotencyTimeout,
