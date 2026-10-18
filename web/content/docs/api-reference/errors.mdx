@@ -80,6 +80,7 @@ Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 | 403 | `SNAPSHOT_ORG_MISMATCH` | Policy snapshot is bound to a different organization |
 | 403 | `SNAPSHOT_AGENT_MISMATCH` | Policy snapshot is bound to a different agent |
 | 403 | `SNAPSHOT_KEY_UNKNOWN` | Policy snapshot names an unknown signing key |
+| 402 | `BUDGET_EXCEEDED` | Org hard-cap spend is exhausted for the active budget period |
 | 405 | `METHOD_NOT_ALLOWED` | Wrong HTTP method for route |
 | 413 | `PAYLOAD_TOO_LARGE` | Body exceeds `IBEX_MAX_REQUEST_BODY_BYTES` (1 MiB) |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Chat POST without `application/json` |
@@ -95,6 +96,7 @@ Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 | 503 | `SERVICE_DEGRADED` | Auth ValidateToken failed unexpectedly / deadline |
 | 503 | `AUTH_UNAVAILABLE` | Auth ValidateAgent transport failure |
 | 503 | `SNAPSHOT_UNAVAILABLE` | Policy snapshot issuance or verification could not complete; retry later |
+| 503 | `BUDGET_UNAVAILABLE` | Hard-cap admission hold could not be reserved (ledger unavailable, competing owner, or missing rate card); `Retry-After` when a lease is active |
 | 500 | `INTERNAL_ERROR` | Unhandled server fault |
 
 ## Provider / upstream errors
