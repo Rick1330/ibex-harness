@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,6 +9,7 @@ import pytest
 from app.budget_ledger import (
     BudgetAdmissionDeniedError,
     BudgetClaim,
+    BudgetClaimRequest,
     BudgetLedgerError,
     BudgetLedgerUnavailableError,
     budget_reservation_key,
@@ -45,12 +45,12 @@ class FakeBudgetLedger:
         self.claim_error = claim_error
         self.finalize_error = finalize_error
         self.release_error = release_error
-        self.claim_calls: list[dict[str, Any]] = []
+        self.claim_calls: list[BudgetClaimRequest] = []
         self.finalize_calls: list[tuple[BudgetClaim, int, int]] = []
         self.released: list[BudgetClaim] = []
 
-    def claim(self, **kwargs: Any) -> BudgetClaim | None:
-        self.claim_calls.append(kwargs)
+    def claim(self, request: BudgetClaimRequest) -> BudgetClaim | None:
+        self.claim_calls.append(request)
         if self.claim_error is not None:
             raise self.claim_error
         return self.claim_result
@@ -104,6 +104,27 @@ def test_no_ledger_wired_skips_admission() -> None:
     assert provider.calls == 1
 
 
+def test_no_claim_transport_failure_skips_release() -> None:
+    ledger = FakeBudgetLedger(claim_result=None)
+    job = make_job(JobParts(provider=FailingProvider(), budget_ledger=ledger))
+    with pytest.raises(ExtractionTransportError, match="provider down"):
+        run_batch_extraction(job)
+    assert ledger.released == []
+
+
+def test_oversized_turns_content_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.extraction.batch as batch_mod
+
+    monkeypatch.setattr(
+        batch_mod,
+        "format_batch_user_content",
+        lambda pending: "x" * (batch_mod.MAX_BATCH_CONTENT_BYTES + 1),
+    )
+    job = make_job(JobParts(provider=FakeProvider()))
+    with pytest.raises(ValueError, match="byte cap"):
+        run_batch_extraction(job)
+
+
 def test_no_hard_cap_claim_none_still_extracts() -> None:
     ledger = FakeBudgetLedger(claim_result=None)
     job = make_job(JobParts(budget_ledger=ledger))
@@ -136,19 +157,19 @@ def test_owned_claim_settles_with_measured_usage() -> None:
     result = run_batch_extraction(job)
     assert result.skipped is None
     (claim_call,) = ledger.claim_calls
-    assert claim_call["org_id"] == job.org_id
-    assert claim_call["agent_id"] == job.agent_id
-    assert claim_call["key"] == key
-    assert claim_call["request_hash"] == expected_hash
-    assert claim_call["provider"] == "openai"
-    assert claim_call["model"] == "gpt-4o-mini"
+    assert claim_call.org_id == job.org_id
+    assert claim_call.agent_id == job.agent_id
+    assert claim_call.key == key
+    assert claim_call.request_hash == expected_hash
+    assert claim_call.provider == "openai"
+    assert claim_call.model == "gpt-4o-mini"
     expected_tokens = estimate_prompt_tokens(
         system_prompt=EXTRACTION_SYSTEM_PROMPT_BATCH,
         user_content=format_batch_user_content(turns),
     )
     assert (
-        claim_call["input_tokens"],
-        claim_call["output_tokens"],
+        claim_call.input_tokens,
+        claim_call.output_tokens,
     ) == expected_tokens
     assert len(ledger.finalize_calls) == 1
     _, input_tokens, output_tokens = ledger.finalize_calls[0]
@@ -186,6 +207,26 @@ def test_unavailable_ledger_is_retryable() -> None:
     )
     job = make_job(JobParts(provider=provider, budget_ledger=ledger))
     with pytest.raises(ExtractionTransportError, match="budget admission unavailable"):
+        run_batch_extraction(job)
+    assert provider.calls == 0
+
+
+def test_in_progress_claim_is_retryable() -> None:
+    provider = FakeProvider()
+    ledger = FakeBudgetLedger(
+        claim_error=BudgetAdmissionDeniedError("in_progress", retry_after=3)
+    )
+    job = make_job(JobParts(provider=provider, budget_ledger=ledger))
+    with pytest.raises(ExtractionTransportError, match="budget admission in progress"):
+        run_batch_extraction(job)
+    assert provider.calls == 0
+
+
+def test_conflict_claim_is_permanent() -> None:
+    provider = FakeProvider()
+    ledger = FakeBudgetLedger(claim_error=BudgetAdmissionDeniedError("conflict"))
+    job = make_job(JobParts(provider=provider, budget_ledger=ledger))
+    with pytest.raises(BudgetAdmissionDeniedError, match="conflict"):
         run_batch_extraction(job)
     assert provider.calls == 0
 

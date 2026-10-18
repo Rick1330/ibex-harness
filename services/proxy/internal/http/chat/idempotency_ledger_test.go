@@ -84,6 +84,58 @@ func durableChatRequest(org, agent uuid.UUID, key string) (*http.Request, *llm.C
 	return req, &llm.ChatCompletionRequest{Model: "gpt-test", Messages: []llm.Message{{Role: "user", Content: "hello"}}}
 }
 
+type recordingIDStore struct {
+	released  bool
+	committed bool
+}
+
+func (s *recordingIDStore) Claim(context.Context, idempotency.Token, idempotency.Fingerprint) (idempotency.Outcome, error) {
+	return idempotency.Outcome{}, nil
+}
+
+func (s *recordingIDStore) Commit(context.Context, idempotency.Token, idempotency.Record) error {
+	s.committed = true
+	return nil
+}
+
+func (s *recordingIDStore) Release(context.Context, idempotency.Token, idempotency.Fingerprint) error {
+	s.released = true
+	return nil
+}
+
+func TestAbandonLedgerPathReleasesWithoutFinalize(t *testing.T) {
+	fake := &chatLedgerFake{}
+	id := durableChatID(t, fake)
+	claim := &Claim{OrgID: uuid.New(), Key: "abandon-key", Ledger: &idempotency.ClaimToken{ID: uuid.New(), Version: 1}}
+	id.Abandon(claim)
+	if !fake.released || fake.finalized {
+		t.Fatalf("released=%v finalized=%v", fake.released, fake.finalized)
+	}
+}
+
+func TestAbandonNilClaimIsNoop(t *testing.T) {
+	id := durableChatID(t, &chatLedgerFake{})
+	id.Abandon(nil)
+}
+
+func TestAbandonPrefersStoreWhenClaimHasNoLedgerToken(t *testing.T) {
+	ledger := &chatLedgerFake{}
+	store := &recordingIDStore{}
+	id := Idempotency{
+		Ledger: ledger, Store: store,
+		Metrics: metrics.NewProxy("chat-abandon-test"), Log: logger.Discard("chat-abandon-test"),
+		Timeout: time.Second,
+	}
+	claim := &Claim{OrgID: uuid.New(), Key: "abandon-key", FP: idempotency.Fingerprint("fp")}
+	id.Abandon(claim)
+	if !store.released || store.committed {
+		t.Fatalf("store released=%v committed=%v", store.released, store.committed)
+	}
+	if ledger.released || ledger.finalized {
+		t.Fatalf("ledger released=%v finalized=%v", ledger.released, ledger.finalized)
+	}
+}
+
 func TestDurableChatLedgerOwnedAndFinalized(t *testing.T) {
 	org, agent := uuid.New(), uuid.New()
 	fake := &chatLedgerFake{outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimOwned, Claim: idempotency.ClaimToken{ID: uuid.New(), Version: 1}}}

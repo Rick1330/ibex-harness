@@ -16,7 +16,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 import app.budget_ledger as ledger_module
-from app.budget_ledger import BudgetAdmissionDeniedError, _AsyncBudgetLedger
+from app.budget_ledger import (
+    BudgetAdmissionDeniedError,
+    BudgetClaimRequest,
+    BudgetLedgerClaimClosedError,
+    _AsyncBudgetLedger,
+)
 from app.config import Settings
 from app.db import (
     create_engine,
@@ -199,7 +204,7 @@ async def _claim(ledger: _AsyncBudgetLedger, org_id: UUID, agent_id: UUID, **ove
         "output_tokens": 200,
     }
     params.update(overrides)
-    return await ledger.claim(**params)
+    return await ledger.claim(BudgetClaimRequest(**params))
 
 
 async def _fetch_reservation(factory: async_sessionmaker, org_id: UUID, key: str) -> dict | None:
@@ -208,7 +213,8 @@ async def _fetch_reservation(factory: async_sessionmaker, org_id: UUID, key: str
             _sql(
                 """
                 SELECT state, amount_estimated_cents, amount_final_cents,
-                       finalized_completeness, lease_expires_at, version
+                       finalized_completeness, price_input_cents_per_1k,
+                       price_output_cents_per_1k, lease_expires_at, version
                 FROM ibex_core.budget_reservations
                 WHERE organization_id = :org_id AND reservation_key = :key
                 """
@@ -217,6 +223,24 @@ async def _fetch_reservation(factory: async_sessionmaker, org_id: UUID, key: str
         )
         row = result.mappings().first()
         return dict(row) if row is not None else None
+
+
+async def _publish_rate_card_version(
+    factory: async_sessionmaker, org_id: UUID, *, prices: list[dict]
+) -> None:
+    async with session_as_service_account(factory) as session:
+        await session.execute(
+            _sql(
+                """
+                INSERT INTO ibex_billing.rate_card_versions
+                    (rate_card_id, org_id, version, prices)
+                SELECT id, org_id, 2, CAST(:prices AS jsonb)
+                FROM ibex_billing.rate_cards
+                WHERE org_id = :org_id AND status = 'published'
+                """
+            ),
+            {"org_id": org_id, "prices": json.dumps(prices)},
+        )
 
 
 async def _expire_lease(factory: async_sessionmaker, org_id: UUID, key: str) -> None:
@@ -340,6 +364,82 @@ async def test_claim_finalize_estimated_without_usage(pg_factory) -> None:
         assert row["state"] == "finalized"
         assert row["amount_final_cents"] == row["amount_estimated_cents"]
         assert row["finalized_completeness"] == "estimated"
+    finally:
+        await _delete_seed(pg_factory, org_id, agent_id)
+
+
+@pytest.mark.asyncio
+async def test_finalize_uses_claim_time_rates_after_repricing(pg_factory) -> None:
+    org_id, agent_id = await _seed_full_org(pg_factory, cap_cents=10_000)
+    try:
+        ledger = _AsyncBudgetLedger(pg_factory, lease_seconds=_LEASE_SECONDS)
+        claim = await _claim(ledger, org_id, agent_id)
+        assert claim is not None
+        row = await _fetch_reservation(pg_factory, org_id, claim.key)
+        assert row is not None
+        assert (row["price_input_cents_per_1k"], row["price_output_cents_per_1k"]) == (10, 30)
+
+        await _publish_rate_card_version(
+            pg_factory,
+            org_id,
+            prices=[
+                {
+                    "provider": "openai",
+                    "model_pattern": "gpt-4o*",
+                    "input_cents_per_1k": 100,
+                    "output_cents_per_1k": 100,
+                }
+            ],
+        )
+        assert await ledger.finalize(claim, input_tokens=100, output_tokens=200) == "complete"
+        assert await ledger.finalize(claim, input_tokens=100, output_tokens=200) == "complete"
+        row = await _fetch_reservation(pg_factory, org_id, claim.key)
+        assert row is not None
+        assert row["amount_final_cents"] == 7
+    finally:
+        await _delete_seed(pg_factory, org_id, agent_id)
+
+
+@pytest.mark.asyncio
+async def test_terminal_replay_fenced_by_version(pg_factory) -> None:
+    org_id, agent_id = await _seed_full_org(pg_factory, cap_cents=10_000)
+    try:
+        ledger = _AsyncBudgetLedger(pg_factory, lease_seconds=_LEASE_SECONDS)
+        first = await _claim(ledger, org_id, agent_id)
+        assert first is not None
+        assert await ledger.finalize(first, input_tokens=100, output_tokens=200) == "complete"
+
+        reclaimed = await _claim(ledger, org_id, agent_id)
+        assert reclaimed is not None
+        assert reclaimed.claim_id == first.claim_id
+        assert reclaimed.version > first.version
+
+        # The old owner's identical settlement must not replay against the newer owner.
+        with pytest.raises(BudgetLedgerClaimClosedError):
+            await ledger.finalize(first, input_tokens=100, output_tokens=200)
+
+        await ledger.release(reclaimed)
+        with pytest.raises(BudgetLedgerClaimClosedError):
+            await ledger.release(first)
+    finally:
+        await _delete_seed(pg_factory, org_id, agent_id)
+
+
+@pytest.mark.asyncio
+async def test_sweep_leaves_fresh_reclaim_claimed(pg_factory) -> None:
+    org_id, agent_id = await _seed_full_org(pg_factory, cap_cents=10_000)
+    try:
+        ledger = _AsyncBudgetLedger(pg_factory, lease_seconds=_LEASE_SECONDS)
+        first = await _claim(ledger, org_id, agent_id)
+        assert first is not None
+        await _expire_lease(pg_factory, org_id, first.key)
+        reclaimed = await _claim(ledger, org_id, agent_id)
+        assert reclaimed is not None
+        assert reclaimed.version == first.version + 1
+
+        await ledger.expire_stale(grace_seconds=0, batch_limit=100)
+        row = await _fetch_reservation(pg_factory, org_id, first.key)
+        assert row is not None and row["state"] == "claimed"
     finally:
         await _delete_seed(pg_factory, org_id, agent_id)
 

@@ -85,4 +85,10 @@ var invalidProxyConfigCases = []struct {
 	{name: "idempotency redis timeout zero", mutate: func(c *Config) {
 		c.IdempotencyRedisTimeout = 0
 	}},
+	{name: "budget lease below minimum", mutate: func(c *Config) {
+		c.BudgetReservationLease = 30 * time.Second
+	}},
+	{name: "budget lease above maximum", mutate: func(c *Config) {
+		c.BudgetReservationLease = 25 * time.Hour
+	}},
 }

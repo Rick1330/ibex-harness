@@ -36,16 +36,25 @@ func openBudgetReservationsFixture(t *testing.T) budgetReservationsFixture {
 	}
 }
 
-func (f budgetReservationsFixture) insertClaimedBudgetReservation(t *testing.T, orgID, agentID, periodID, key string) {
+// reservationSeed selects the tenant scope of a seeded reservation row.
+type reservationSeed struct {
+	orgID    string
+	agentID  string
+	periodID string
+	key      string
+}
+
+func (f budgetReservationsFixture) insertClaimedBudgetReservation(t *testing.T, seed reservationSeed) {
 	t.Helper()
 	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(f.ctx, `
 			INSERT INTO ibex_core.budget_reservations
 				(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
-				 state, amount_estimated_cents, lease_expires_at)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'claimed', 25,
+				 state, amount_estimated_cents, price_input_cents_per_1k, price_output_cents_per_1k,
+				 lease_expires_at)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'claimed', 25, 10, 30,
 				NOW() + interval '5 minutes')`,
-			orgID, agentID, periodID, key, strings.Repeat("a", 64))
+			seed.orgID, seed.agentID, seed.periodID, seed.key, strings.Repeat("a", 64))
 		return err
 	})
 	if err != nil {
@@ -60,8 +69,8 @@ func TestBudgetReservations_SchemaAndRLSCrossTenant(t *testing.T) {
 		db: f.db, table: "budget_reservations", expect: coreTableRLSFlags{enabled: true, forced: true},
 	})
 
-	f.insertClaimedBudgetReservation(t, f.orgA, f.agentA, f.periodA, "key-a")
-	f.insertClaimedBudgetReservation(t, f.orgB, f.agentB, f.periodB, "key-b")
+	f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "key-a"})
+	f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgB, agentID: f.agentB, periodID: f.periodB, key: "key-b"})
 
 	// ibex_app sees only its own org (fail closed with no org context).
 	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: "", want: 0})
@@ -80,7 +89,12 @@ type budgetConstraintCase struct {
 func TestBudgetReservations_CheckConstraints(t *testing.T) {
 	f := openBudgetReservationsFixture(t)
 	hash := strings.Repeat("b", 64)
+	assertBudgetConstraintCases(t, f, hash)
+	assertBudgetInsertRejections(t, f, hash)
+}
 
+func assertBudgetConstraintCases(t *testing.T, f budgetReservationsFixture, hash string) {
+	t.Helper()
 	cases := []budgetConstraintCase{
 		{
 			name:   "unknown state",
@@ -137,7 +151,10 @@ func TestBudgetReservations_CheckConstraints(t *testing.T) {
 			requireBudgetSQLState(t, err, tc.code)
 		})
 	}
+}
 
+func assertBudgetInsertRejections(t *testing.T, f budgetReservationsFixture, hash string) {
+	t.Helper()
 	t.Run("malformed request hash", func(t *testing.T) {
 		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
 			_, e := tx.ExecContext(f.ctx, `
@@ -180,7 +197,7 @@ func TestBudgetReservations_CheckConstraints(t *testing.T) {
 	})
 
 	t.Run("duplicate org agent key", func(t *testing.T) {
-		f.insertClaimedBudgetReservation(t, f.orgA, f.agentA, f.periodA, "duplicate-key")
+		f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "duplicate-key"})
 		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
 			_, e := tx.ExecContext(f.ctx, `
 				INSERT INTO ibex_core.budget_reservations
@@ -192,6 +209,35 @@ func TestBudgetReservations_CheckConstraints(t *testing.T) {
 		})
 		requireBudgetSQLState(t, err, "23505")
 	})
+
+	t.Run("negative stored rate", func(t *testing.T) {
+		err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
+			_, e := tx.ExecContext(f.ctx, `
+				INSERT INTO ibex_core.budget_reservations
+					(organization_id, agent_id, budget_period_id, reservation_key, request_hash,
+					 state, amount_estimated_cents, price_input_cents_per_1k, lease_expires_at)
+				VALUES ($1::uuid, $2::uuid, $3::uuid, 'negative-rate', $4, 'claimed', 10, -1,
+					NOW() + interval '5 minutes')`, f.orgA, f.agentA, f.periodA, hash)
+			return e
+		})
+		requireBudgetSQLState(t, err, "23514")
+	})
+}
+
+// TestBudgetReservations_AgentDeleteCascades locks in the teardown contract:
+// organization deletion removes agents, and the FK cascades reservation rows
+// with the table owner's privileges (application roles hold no DELETE grant).
+func TestBudgetReservations_AgentDeleteCascades(t *testing.T) {
+	f := openBudgetReservationsFixture(t)
+	f.insertClaimedBudgetReservation(t, reservationSeed{orgID: f.orgA, agentID: f.agentA, periodID: f.periodA, key: "cascade-key"})
+	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(f.ctx, `DELETE FROM ibex_core.agents WHERE id = $1::uuid`, f.agentA)
+		return e
+	})
+	if err != nil {
+		t.Fatalf("delete agent: %v", err)
+	}
+	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "budget_reservations", orgID: f.orgA, want: 0})
 }
 
 func TestBudgetReservations_MigrationDown(t *testing.T) {

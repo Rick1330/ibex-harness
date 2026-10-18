@@ -380,6 +380,22 @@ func (id Idempotency) releaseLedger(claim *Claim) {
 	}
 }
 
+// Abandon releases a pending claim without committing a response. Used on
+// fail-closed exits before the provider call (credentials, budget admission):
+// a retry with the same Idempotency-Key must not see IDEMPOTENCY_IN_PROGRESS.
+func (id Idempotency) Abandon(claim *Claim) {
+	if claim == nil {
+		return
+	}
+	if id.Ledger != nil && claim.Ledger != nil {
+		id.releaseLedger(claim)
+		return
+	}
+	if id.Store != nil {
+		id.release(claim)
+	}
+}
+
 // FinishCapture commits a captured response, or releases when the capture was
 // capped (nil body is not treated as an empty successful body).
 func (id Idempotency) FinishCapture(claim *Claim, cw *CapturingWriter) {

@@ -47,3 +47,8 @@ func (h chatCompletionHandler) finishIdempotency(claim *idempotencyClaim, status
 func (h chatCompletionHandler) finishIdempotencyCapture(claim *idempotencyClaim, cw *capturingWriter) {
 	h.idemp().FinishCapture(claim, cw)
 }
+
+// abandonIdempotency releases a pending claim on pre-provider fail-closed exits.
+func (h chatCompletionHandler) abandonIdempotency(claim *idempotencyClaim) {
+	h.idemp().Abandon(claim)
+}

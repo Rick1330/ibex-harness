@@ -224,7 +224,7 @@ UPDATE ibex_core.budget_reservations
    AND version = $5 AND state = 'claimed'`
 
 const reservationStateSQL = `
-SELECT state, amount_final_cents, finalized_completeness
+SELECT state, amount_final_cents, finalized_completeness, version
   FROM ibex_core.budget_reservations
  WHERE id = $1 AND organization_id = $2 AND agent_id = $3 AND reservation_key = $4`
 
@@ -266,7 +266,9 @@ func (l *PostgresLedger) claimInTx(ctx context.Context, tx *sql.Tx, p Principal,
 		return ClaimOutcome{}, err
 	}
 	if !exists {
-		return claimFresh(ctx, tx, claimFreshParams{principal: p, req: req, period: period})
+		return claimFresh(ctx, tx, claimFreshParams{
+			principal: p, req: req, period: period, lease: l.lease,
+		})
 	}
 	return l.resolveExisting(ctx, tx, claimResolution{principal: p, req: req, period: period, row: row})
 }
@@ -299,6 +301,13 @@ type claimFreshParams struct {
 	principal Principal
 	req       ClaimRequest
 	period    activePeriod
+	lease     time.Duration
+}
+
+// liveClaimLease reports whether the row is a claimed hold whose lease is
+// still valid, so the key cannot be reclaimed yet.
+func liveClaimLease(row reservationRow) bool {
+	return row.state == "claimed" && row.lease.Valid && row.lease.Time.After(time.Now().UTC())
 }
 
 func (l *PostgresLedger) resolveExisting(ctx context.Context, tx *sql.Tx, in claimResolution) (ClaimOutcome, error) {
@@ -306,17 +315,17 @@ func (l *PostgresLedger) resolveExisting(ctx context.Context, tx *sql.Tx, in cla
 	if row.requestHash != in.req.RequestHash {
 		return ClaimOutcome{Kind: ClaimConflict}, nil
 	}
-	if row.state == "claimed" && row.lease.Valid && row.lease.Time.After(time.Now().UTC()) {
+	if liveClaimLease(row) {
 		return ClaimOutcome{Kind: ClaimInProgress, RetryAfter: time.Until(row.lease.Time)}, nil
 	}
 	// Expired claim or terminal row: the key is reclaimable. Capacity is
 	// enforced against every other live hold in the period.
-	otherHolds, err := activeHoldCents(ctx, tx, in.principal, in.period.id, row.id)
+	otherHolds, err := activeHoldCents(ctx, tx, holdQuery{principal: in.principal, periodID: in.period.id, excludeID: row.id})
 	if err != nil {
 		return ClaimOutcome{}, err
 	}
 	if in.period.spentCents+otherHolds+in.req.EstimatedCents > in.period.capCents {
-		if err := expireStaleClaim(ctx, tx, in.principal, in.req.Key, row); err != nil {
+		if err := expireStaleClaim(ctx, tx, staleClaim{principal: in.principal, key: in.req.Key, row: row}); err != nil {
 			return ClaimOutcome{}, err
 		}
 		return exceededOutcome(in.period, otherHolds), nil
@@ -324,11 +333,18 @@ func (l *PostgresLedger) resolveExisting(ctx context.Context, tx *sql.Tx, in cla
 	return l.resetHeldRow(ctx, tx, in, row)
 }
 
-func expireStaleClaim(ctx context.Context, tx *sql.Tx, p Principal, key string, row reservationRow) error {
-	if row.state != "claimed" {
+type staleClaim struct {
+	principal Principal
+	key       string
+	row       reservationRow
+}
+
+func expireStaleClaim(ctx context.Context, tx *sql.Tx, in staleClaim) error {
+	if in.row.state != "claimed" {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, expireStaleClaimSQL, row.id, p.OrgID, p.AgentID, key, row.version); err != nil {
+	if _, err := tx.ExecContext(ctx, expireStaleClaimSQL,
+		in.row.id, in.principal.OrgID, in.principal.AgentID, in.key, in.row.version); err != nil {
 		return fmt.Errorf("budgetledger: expire stale claim: %w", err)
 	}
 	return nil
@@ -337,17 +353,18 @@ func expireStaleClaim(ctx context.Context, tx *sql.Tx, p Principal, key string, 
 func (l *PostgresLedger) resetHeldRow(ctx context.Context, tx *sql.Tx, in claimResolution, row reservationRow) (ClaimOutcome, error) {
 	var id uuid.UUID
 	var version int64
-	err := tx.QueryRowContext(ctx, resetReservationSQL,
+	// Static SQL; every request-controlled value is passed through QueryRowContext arguments.
+	err := tx.QueryRowContext(ctx, resetReservationSQL, // NOSONAR — static SQL with bound arguments.
 		in.period.id, in.req.EstimatedCents, leaseInterval(l.lease),
 		row.id, in.principal.OrgID, in.principal.AgentID, in.req.Key, row.version).Scan(&id, &version)
 	if err != nil {
 		return ClaimOutcome{}, fmt.Errorf("budgetledger: reset reservation: %w", err)
 	}
-	return ownedOutcome(in.principal, in.req, in.period.id, id, version), nil
+	return ownedOutcome(in.principal, in.req, reservationRef{periodID: in.period.id, id: id, version: version}), nil
 }
 
 func claimFresh(ctx context.Context, tx *sql.Tx, in claimFreshParams) (ClaimOutcome, error) {
-	holds, err := activeHoldCents(ctx, tx, in.principal, in.period.id, uuid.Nil)
+	holds, err := activeHoldCents(ctx, tx, holdQuery{principal: in.principal, periodID: in.period.id})
 	if err != nil {
 		return ClaimOutcome{}, err
 	}
@@ -356,9 +373,10 @@ func claimFresh(ctx context.Context, tx *sql.Tx, in claimFreshParams) (ClaimOutc
 	}
 	var id uuid.UUID
 	var version int64
-	err = tx.QueryRowContext(ctx, insertReservationSQL,
+	// Static SQL; every request-controlled value is passed through QueryRowContext arguments.
+	err = tx.QueryRowContext(ctx, insertReservationSQL, // NOSONAR — static SQL with bound arguments.
 		in.principal.OrgID, in.principal.AgentID, in.period.id, in.req.Key, in.req.RequestHash,
-		in.req.EstimatedCents, leaseInterval(0)).Scan(&id, &version)
+		in.req.EstimatedCents, leaseInterval(in.lease)).Scan(&id, &version)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Defensive: the per-org admission lock makes this unreachable, but a
 		// concurrent owner must never be admitted twice.
@@ -367,13 +385,19 @@ func claimFresh(ctx context.Context, tx *sql.Tx, in claimFreshParams) (ClaimOutc
 	if err != nil {
 		return ClaimOutcome{}, fmt.Errorf("budgetledger: insert reservation: %w", err)
 	}
-	return ownedOutcome(in.principal, in.req, in.period.id, id, version), nil
+	return ownedOutcome(in.principal, in.req, reservationRef{periodID: in.period.id, id: id, version: version}), nil
 }
 
-func ownedOutcome(p Principal, req ClaimRequest, periodID, id uuid.UUID, version int64) ClaimOutcome {
+type reservationRef struct {
+	periodID uuid.UUID
+	id       uuid.UUID
+	version  int64
+}
+
+func ownedOutcome(p Principal, req ClaimRequest, ref reservationRef) ClaimOutcome {
 	return ClaimOutcome{Kind: ClaimOwned, Reservation: Reservation{
-		ID: id, Principal: p, Key: req.Key, RequestHash: req.RequestHash,
-		PeriodID: periodID, Version: version,
+		ID: ref.id, Principal: p, Key: req.Key, RequestHash: req.RequestHash,
+		PeriodID: ref.periodID, Version: ref.version,
 	}}
 }
 
@@ -396,10 +420,18 @@ func (l *PostgresLedger) Finalize(ctx context.Context, claim Reservation, amount
 		return tx.ExecContext(ctx, finalizeReservationSQL, amountFinalCents, string(completeness),
 			claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.Version)
 	}, func(settled settledRow) bool {
-		return settled.state == "finalized" && settled.finalCents.Valid &&
-			settled.finalCents.Int64 == amountFinalCents &&
-			settled.marker.Valid && settled.marker.String == string(completeness)
+		// Only this claim's own transition (version+1) may replay; a newer
+		// owner that reclaimed the key must never receive a false success.
+		return settled.version == claim.Version+1 && finalizedMatches(settled, amountFinalCents, completeness)
 	})
+}
+
+// finalizedMatches reports whether the terminal row carries exactly the
+// settlement this call intended to persist.
+func finalizedMatches(settled settledRow, amountFinalCents int64, completeness Completeness) bool {
+	return settled.state == "finalized" && settled.finalCents.Valid &&
+		settled.finalCents.Int64 == amountFinalCents &&
+		settled.marker.Valid && settled.marker.String == string(completeness)
 }
 
 // Release drops an owned hold without a finalized amount. It is idempotent
@@ -412,7 +444,9 @@ func (l *PostgresLedger) Release(ctx context.Context, claim Reservation) error {
 		return tx.ExecContext(ctx, releaseReservationSQL,
 			claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key, claim.Version)
 	}, func(settled settledRow) bool {
-		return settled.state == "released"
+		// Mirrors Finalize: only the claiming owner's own release (version+1)
+		// is an idempotent repeat.
+		return settled.version == claim.Version+1 && settled.state == "released"
 	})
 }
 
@@ -421,6 +455,7 @@ type settledRow struct {
 	state      string
 	finalCents sql.NullInt64
 	marker     sql.NullString
+	version    int64
 }
 
 func (l *PostgresLedger) settle(ctx context.Context, claim Reservation, exec func(*sql.Tx) (sql.Result, error), idempotent func(settledRow) bool) error {
@@ -451,7 +486,7 @@ func loadReservationState(ctx context.Context, tx *sql.Tx, claim Reservation) (s
 	var settled settledRow
 	row := tx.QueryRowContext(ctx, reservationStateSQL,
 		claim.ID, claim.Principal.OrgID, claim.Principal.AgentID, claim.Key)
-	err := row.Scan(&settled.state, &settled.finalCents, &settled.marker)
+	err := row.Scan(&settled.state, &settled.finalCents, &settled.marker, &settled.version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return settledRow{}, fmt.Errorf("%w: row missing", ErrClaimClosed)
 	}
@@ -486,9 +521,15 @@ func loadReservation(ctx context.Context, tx *sql.Tx, p Principal, key string) (
 	return row, true, nil
 }
 
-func activeHoldCents(ctx context.Context, tx *sql.Tx, p Principal, periodID, excludeID uuid.UUID) (int64, error) {
+type holdQuery struct {
+	principal Principal
+	periodID  uuid.UUID
+	excludeID uuid.UUID
+}
+
+func activeHoldCents(ctx context.Context, tx *sql.Tx, q holdQuery) (int64, error) {
 	var cents int64
-	err := tx.QueryRowContext(ctx, activeHoldCentsSQL, p.OrgID, periodID, excludeID).Scan(&cents)
+	err := tx.QueryRowContext(ctx, activeHoldCentsSQL, q.principal.OrgID, q.periodID, q.excludeID).Scan(&cents)
 	if err != nil {
 		return 0, fmt.Errorf("budgetledger: sum active holds: %w", err)
 	}

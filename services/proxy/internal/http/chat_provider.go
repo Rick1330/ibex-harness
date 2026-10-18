@@ -86,6 +86,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, claim *idempotencyClaim) {
 	ctx := p.r.Context()
 	if errors.Is(ctx.Err(), context.Canceled) {
+		h.abandonIdempotency(claim)
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
@@ -93,11 +94,16 @@ func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, c
 	provReq.Messages = inj.Messages
 	p.r = p.r.WithContext(withContextAssembleMeta(ctx, inj.Meta))
 	if !h.applyCredentialOverride(p.w, p.r, p.prov, &provReq) {
+		h.abandonIdempotency(claim)
 		return
 	}
 	var budgetOK bool
-	p.r, budgetOK = h.claimBudgetAdmission(p.w, p.r, p.prov.Name(), provReq.Model, provReq.Messages, maxTokensFromParsed(p.parsed))
+	p.r, budgetOK = h.claimBudgetAdmission(p.w, p.r, budgetAdmissionInput{
+		provider: p.prov.Name(), model: provReq.Model,
+		messages: provReq.Messages, maxTokens: maxTokensFromParsed(p.parsed),
+	})
 	if !budgetOK {
+		h.abandonIdempotency(claim)
 		return
 	}
 	h.completeAndRespond(p, claim, provReq)
@@ -156,6 +162,10 @@ func (h chatCompletionHandler) handlePrimaryCompleteError(args primaryCompleteEr
 			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
 		})
 		return
+	}
+	if fb.r != nil {
+		// Carry the re-priced fallback hold (context) into settlement.
+		p.r = fb.r
 	}
 	h.finishProviderResponse(finishProviderArgs{
 		p: p, claim: claim, prov: fb.prov, resp: fb.resp,
@@ -319,7 +329,10 @@ func (h chatCompletionHandler) writeJSONSuccess(p providerSuccessParams, out []b
 		// openaicompatible leaves Response.Usage nil; recover from forwarded JSON.
 		usage = httpsession.UsageFromJSON(out)
 	}
-	h.settleBudgetOutcome(p.r.Context(), p.resp.StatusCode, p.providerName, checkpointModel(p.parsed, p.audit), usage)
+	h.settleBudgetOutcome(p.r.Context(), budgetSettlement{
+		status: p.resp.StatusCode, provider: p.providerName,
+		model: checkpointModel(p.parsed, p.audit), usage: usage,
+	})
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
 		Model: checkpointModel(p.parsed, p.audit), Provider: p.providerName, Usage: usage,
@@ -394,11 +407,13 @@ func (h chatCompletionHandler) streamCheckpointHook(
 			IsComplete: res.complete,
 			ErrorCode:  errCode,
 		})
-		if res.complete {
-			h.settleBudgetOutcome(ctx, http.StatusOK, providerName, checkpointModel(parsed, audit), res.usage)
-			return
-		}
-		h.releaseBudget(ctx, "stream_incomplete")
+		// An incomplete stream still consumed provider capacity: settle the
+		// measured usage (or the stored estimate) instead of dropping the hold
+		// as unspent. The STREAM_INCOMPLETE checkpoint marker is unchanged.
+		h.settleBudgetOutcome(ctx, budgetSettlement{
+			status: http.StatusOK, provider: providerName,
+			model: checkpointModel(parsed, audit), usage: res.usage,
+		})
 	}
 }
 

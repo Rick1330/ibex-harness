@@ -18,7 +18,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.budget_ledger import (
+    BudgetAdmissionDeniedError,
     BudgetClaim,
+    BudgetClaimRequest,
     BudgetLedger,
     BudgetLedgerError,
     BudgetLedgerUnavailableError,
@@ -173,26 +175,31 @@ def _admit_budget(
         system_prompt=EXTRACTION_SYSTEM_PROMPT_BATCH,
         user_content=user_content,
     )
-    try:
-        return ledger.claim(
-            org_id=job.org_id,
-            agent_id=job.agent_id,
-            key=budget_reservation_key(
-                session_id=job.session_id, first_turn_index=pending[0].turn_index
-            ),
-            request_hash=fingerprint_extraction_call(
-                provider=job.provider.name,
-                model=model,
-                system_prompt=EXTRACTION_SYSTEM_PROMPT_BATCH,
-                user_content=user_content,
-            ),
+    request = BudgetClaimRequest(
+        org_id=job.org_id,
+        agent_id=job.agent_id,
+        key=budget_reservation_key(
+            session_id=job.session_id, first_turn_index=pending[0].turn_index
+        ),
+        request_hash=fingerprint_extraction_call(
             provider=job.provider.name,
             model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-        )
+            system_prompt=EXTRACTION_SYSTEM_PROMPT_BATCH,
+            user_content=user_content,
+        ),
+        provider=job.provider.name,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+    try:
+        return ledger.claim(request)
     except BudgetLedgerUnavailableError as exc:
         raise ExtractionTransportError("budget admission unavailable") from exc
+    except BudgetAdmissionDeniedError as exc:
+        if exc.kind == "in_progress":
+            raise ExtractionTransportError("budget admission in progress") from exc
+        raise
 
 
 def _settle_budget(job: BatchJob, claim: BudgetClaim | None, call: ExtractionCall) -> None:

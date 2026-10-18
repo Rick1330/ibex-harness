@@ -12,7 +12,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/budgetledger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/http/chat"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
@@ -50,15 +49,29 @@ type budgetReservation struct {
 	settled        bool
 }
 
+// budgetAdmissionInput carries the priced request shape for admission.
+type budgetAdmissionInput struct {
+	provider  string
+	model     string
+	messages  []provider.Message
+	maxTokens int
+}
+
+// budgetSettlement carries the post-provider outcome for the owned hold.
+type budgetSettlement struct {
+	status   int
+	provider string
+	model    string
+	usage    *provider.Usage
+}
+
 // claimBudgetAdmission takes a durable hard-cap hold before the provider call.
 // Orgs without an active hard_cap period keep the cache-only middleware path.
 // On false a fail-closed response has already been written.
 func (h chatCompletionHandler) claimBudgetAdmission(
 	w http.ResponseWriter,
 	r *http.Request,
-	providerName, model string,
-	messages []provider.Message,
-	maxTokens int,
+	in budgetAdmissionInput,
 ) (*http.Request, bool) {
 	if h.budgetLedger == nil || h.budgetCache == nil {
 		return r, true
@@ -78,8 +91,8 @@ func (h chatCompletionHandler) claimBudgetAdmission(
 		return r, true
 	}
 	estimate, ok := estimateAdmissionCents(estimateAdmissionInput{
-		card: snap.PublishedCard, provider: providerName, model: model,
-		messages: messages, maxTokens: maxTokens,
+		card: snap.PublishedCard, provider: in.provider, model: in.model,
+		messages: in.messages, maxTokens: in.maxTokens,
 	})
 	if !ok {
 		h.writeBudgetAdmissionUnavailable(w, r, budgetEstimateDetail)
@@ -91,7 +104,14 @@ func (h chatCompletionHandler) claimBudgetAdmission(
 	if !ok {
 		return r, false
 	}
-	return h.applyBudgetClaim(r, w, out, estimate, snap)
+	return h.applyBudgetClaim(r, w, budgetApproval{out: out, estimate: estimate, snap: snap})
+}
+
+// budgetApproval bundles one successful claim call with its pricing context.
+type budgetApproval struct {
+	out      budgetledger.ClaimOutcome
+	estimate int64
+	snap     billing.BudgetSnapshot
 }
 
 // budgetAdmissionIDs resolves the tenant principal and reservation key; a
@@ -108,6 +128,20 @@ func budgetAdmissionIDs(r *http.Request) (budgetledger.Principal, string, string
 	return budgetledger.Principal{OrgID: orgID, AgentID: agentID}, key, ""
 }
 
+// claimHoldTimed runs one bounded ledger claim and records its latency.
+func (h chatCompletionHandler) claimHoldTimed(
+	ctx context.Context,
+	p budgetledger.Principal,
+	req budgetledger.ClaimRequest,
+) (budgetledger.ClaimOutcome, error) {
+	claimCtx, cancel := context.WithTimeout(ctx, budgetAdmissionTimeout)
+	defer cancel()
+	start := time.Now()
+	out, err := h.budgetLedger.Claim(claimCtx, p, req)
+	h.metrics.ObserveBudgetReservationDurationSeconds(time.Since(start).Seconds())
+	return out, err
+}
+
 // claimDurableHold runs the timed claim call and logs failures. ok=false means
 // the caller must stop; the error response is written here.
 func (h chatCompletionHandler) claimDurableHold(
@@ -116,11 +150,7 @@ func (h chatCompletionHandler) claimDurableHold(
 	p budgetledger.Principal,
 	w http.ResponseWriter,
 ) (budgetledger.ClaimOutcome, bool) {
-	ctx, cancel := context.WithTimeout(r.Context(), budgetAdmissionTimeout)
-	defer cancel()
-	start := time.Now()
-	out, err := h.budgetLedger.Claim(ctx, p, req)
-	h.metrics.ObserveBudgetReservationDurationSeconds(time.Since(start).Seconds())
+	out, err := h.claimHoldTimed(r.Context(), p, req)
 	if err != nil {
 		h.metrics.IncBudgetReservation(metrics.BudgetReservationUnavailable)
 		if h.log != nil {
@@ -133,64 +163,114 @@ func (h chatCompletionHandler) claimDurableHold(
 	return out, true
 }
 
+// budgetClaimMetric maps a claim kind onto its reservation outcome series.
+func budgetClaimMetric(kind budgetledger.ClaimKind) string {
+	switch kind {
+	case budgetledger.ClaimOwned:
+		return metrics.BudgetReservationClaimed
+	case budgetledger.ClaimNoCap:
+		return metrics.BudgetReservationNoCap
+	case budgetledger.ClaimExceeded:
+		return metrics.BudgetReservationExceeded
+	case budgetledger.ClaimInProgress:
+		return metrics.BudgetReservationInProgress
+	case budgetledger.ClaimConflict:
+		return metrics.BudgetReservationConflict
+	default:
+		return metrics.BudgetReservationUnavailable
+	}
+}
+
 // applyBudgetClaim maps the typed claim outcome onto the request or an error.
 func (h chatCompletionHandler) applyBudgetClaim(
 	r *http.Request,
 	w http.ResponseWriter,
-	out budgetledger.ClaimOutcome,
-	estimate int64,
-	snap billing.BudgetSnapshot,
+	in budgetApproval,
 ) (*http.Request, bool) {
-	switch out.Kind {
+	h.metrics.IncBudgetReservation(budgetClaimMetric(in.out.Kind))
+	switch in.out.Kind {
 	case budgetledger.ClaimOwned:
-		h.metrics.IncBudgetReservation(metrics.BudgetReservationClaimed)
-		res := &budgetReservation{claim: out.Reservation, estimatedCents: estimate, card: snap.PublishedCard}
+		res := &budgetReservation{
+			claim: in.out.Reservation, estimatedCents: in.estimate, card: in.snap.PublishedCard,
+		}
 		return r.WithContext(withBudgetReservation(r.Context(), res)), true
 	case budgetledger.ClaimNoCap:
-		h.metrics.IncBudgetReservation(metrics.BudgetReservationNoCap)
 		return r, true
 	case budgetledger.ClaimExceeded:
-		h.metrics.IncBudgetReservation(metrics.BudgetReservationExceeded)
 		h.metrics.IncBudgetDeny()
-		h.writeBudgetExceeded(w, r, out.RemainingCents)
+		h.writeBudgetExceeded(w, r, in.out.RemainingCents)
 		return r, false
 	case budgetledger.ClaimInProgress:
-		h.metrics.IncBudgetReservation(metrics.BudgetReservationInProgress)
-		if out.RetryAfter > 0 {
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(out.RetryAfter.Seconds())+1))
+		if in.out.RetryAfter > 0 {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(in.out.RetryAfter.Seconds())+1))
 		}
 		h.writeBudgetAdmissionUnavailable(w, r, budgetInProgressDetail)
 		return r, false
 	case budgetledger.ClaimConflict:
-		h.metrics.IncBudgetReservation(metrics.BudgetReservationConflict)
 		h.writeBudgetAdmissionUnavailable(w, r, budgetConflictDetail)
 		return r, false
 	default:
-		h.metrics.IncBudgetReservation(metrics.BudgetReservationUnavailable)
 		h.writeBudgetAdmissionUnavailable(w, r, budgetClaimDetail)
 		return r, false
 	}
 }
 
+// rebudgetForFallback replaces the primary hold with one priced for the
+// fallback model before the hop runs. ok=false means the fallback must be
+// skipped (fail closed); no response is written because the primary provider
+// failure still surfaces to the client.
+func (h chatCompletionHandler) rebudgetForFallback(
+	r *http.Request,
+	in budgetAdmissionInput,
+) (*http.Request, bool) {
+	res := budgetReservationFromContext(r.Context())
+	if res == nil || h.budgetLedger == nil {
+		return r, true
+	}
+	principal, key, invalidDetail := budgetAdmissionIDs(r)
+	if invalidDetail != "" {
+		return r, false
+	}
+	estimate, ok := estimateAdmissionCents(estimateAdmissionInput{
+		card: res.card, provider: in.provider, model: in.model,
+		messages: in.messages, maxTokens: in.maxTokens,
+	})
+	if !ok {
+		return r, false
+	}
+	h.releaseBudget(r.Context(), "fallback_reprice")
+	out, err := h.claimHoldTimed(r.Context(), principal, budgetledger.ClaimRequest{
+		Key: key, RequestHash: budgetledger.HashRequest([]byte(key)), EstimatedCents: estimate,
+	})
+	if err != nil {
+		h.metrics.IncBudgetReservation(metrics.BudgetReservationUnavailable)
+		return r, false
+	}
+	h.metrics.IncBudgetReservation(budgetClaimMetric(out.Kind))
+	if out.Kind == budgetledger.ClaimExceeded {
+		h.metrics.IncBudgetDeny()
+	}
+	if out.Kind != budgetledger.ClaimOwned {
+		return r, false
+	}
+	next := &budgetReservation{claim: out.Reservation, estimatedCents: estimate, card: res.card}
+	return r.WithContext(withBudgetReservation(r.Context(), next)), true
+}
+
 // settleBudgetOutcome finalizes the hold after a completed provider call.
 // Transient statuses (429/5xx) release so a retry can fit, mirroring the
 // idempotency commit rules.
-func (h chatCompletionHandler) settleBudgetOutcome(
-	ctx context.Context,
-	status int,
-	providerName, model string,
-	usage *provider.Usage,
-) {
+func (h chatCompletionHandler) settleBudgetOutcome(ctx context.Context, in budgetSettlement) {
 	res := budgetReservationFromContext(ctx)
 	if res == nil || res.settled {
 		return
 	}
 	res.settled = true
-	if !chat.ShouldCommit(status) {
+	if !chat.ShouldCommit(in.status) {
 		h.releaseReservation(ctx, res, "transient_status")
 		return
 	}
-	amount, completeness := budgetFinalAmount(res, providerName, model, usage)
+	amount, completeness := budgetFinalAmount(res, in.provider, in.model, in.usage)
 	opCtx, cancel := budgetOpContext(ctx)
 	defer cancel()
 	if err := h.budgetLedger.Finalize(opCtx, res.claim, amount, completeness); err != nil {
@@ -235,7 +315,7 @@ func (h chatCompletionHandler) releaseReservation(ctx context.Context, res *budg
 // budgetFinalAmount prefers measured usage; a provider without usage settles at
 // the admission estimate with an explicit estimated marker.
 func budgetFinalAmount(res *budgetReservation, providerName, model string, usage *provider.Usage) (int64, budgetledger.Completeness) {
-	if usage == nil || (usage.InputTokens <= 0 && usage.OutputTokens <= 0) {
+	if !hasMeasuredUsage(usage) {
 		return res.estimatedCents, budgetledger.CompletenessEstimated
 	}
 	cents, _, ok := estimateCostChecked(estimateCostInput{
@@ -248,14 +328,19 @@ func budgetFinalAmount(res *budgetReservation, providerName, model string, usage
 	return cents, budgetledger.CompletenessComplete
 }
 
-// budgetOpContext detaches settlement from the request context: the response is
-// already written, but the ledger transition must complete.
-func budgetOpContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	base := context.Background()
-	if id, ok := reqid.FromContext(ctx); ok {
-		base = reqid.WithRequestID(base, id)
+// hasMeasuredUsage reports whether the provider returned any usable tokens.
+func hasMeasuredUsage(usage *provider.Usage) bool {
+	if usage == nil {
+		return false
 	}
-	return context.WithTimeout(base, budgetSettleTimeout)
+	return usage.InputTokens > 0 || usage.OutputTokens > 0
+}
+
+// budgetOpContext detaches settlement from request cancellation: the response
+// is already written, but the ledger transition must complete. Request-scoped
+// values (request id, trace context) are preserved for log correlation.
+func budgetOpContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), budgetSettleTimeout)
 }
 
 func budgetReservationKey(ctx context.Context) string {

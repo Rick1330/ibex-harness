@@ -10,10 +10,12 @@ import (
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/billing"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/google/uuid"
 )
 
@@ -68,6 +70,54 @@ func TestUnit_writeProviderFailure_transport(t *testing.T) {
 	rec := writeProviderFailureRec(t, errors.New("connection refused"))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status: %d", rec.Code)
+	}
+}
+
+func TestDispatchProviderCompletion_AbandonsOnCanceledContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h := chatCompletionHandler{log: logger.Discard("proxy")}
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	h.dispatchProviderCompletion(chatForwardParams{r: r}, nil)
+}
+
+func TestDispatchProviderCompletion_AbandonsWhenCredentialOverrideFails(t *testing.T) {
+	t.Parallel()
+	h := chatCompletionHandler{
+		log: logger.Discard("proxy"), credentialResolver: &stubCredentialResolver{},
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	h.dispatchProviderCompletion(chatForwardParams{
+		w: rec, r: r, parsed: &llm.ChatCompletionRequest{Model: "gpt-4o"},
+		prov: &captureProvider{name: "openai"},
+	}, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDispatchProviderCompletion_AbandonsWhenBudgetAdmissionFails(t *testing.T) {
+	t.Parallel()
+	ledger := &fakeBudgetLedger{}
+	h := admissionHandler(t, ledger, hardCapSnapshot(billing.CardVersion{}))
+	h.log = logger.Discard("proxy")
+	rec := httptest.NewRecorder()
+	r := budgetRequest(uuid.New(), uuid.New())
+	h.dispatchProviderCompletion(chatForwardParams{
+		w: rec, r: r,
+		parsed: &llm.ChatCompletionRequest{
+			Model:    "mock-1",
+			Messages: []llm.Message{{Role: "user", Content: "hi"}},
+		},
+		prov: &captureProvider{name: "mock"},
+	}, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(ledger.claims) != 0 {
+		t.Fatalf("claims=%d want 0 without a rate card", len(ledger.claims))
 	}
 }
 

@@ -17,6 +17,7 @@ from app import budget_ledger as mod
 from app.budget_ledger import (
     BudgetAdmissionDeniedError,
     BudgetClaim,
+    BudgetClaimRequest,
     BudgetLedgerClaimClosedError,
     BudgetLedgerError,
     BudgetLedgerUnavailableError,
@@ -139,8 +140,8 @@ def _card_row() -> _Result:
     return _Result({"version": "3", "prices": _CARD_JSON})
 
 
-def _claim_kwargs() -> dict:
-    return {
+def _claim_request(**overrides) -> BudgetClaimRequest:
+    base = {
         "org_id": uuid4(),
         "agent_id": uuid4(),
         "key": "extraction:00000000-0000-0000-0000-000000000001:3",
@@ -150,6 +151,23 @@ def _claim_kwargs() -> dict:
         "input_tokens": 100,
         "output_tokens": 200,
     }
+    base.update(overrides)
+    return BudgetClaimRequest(**base)
+
+
+def _claim_row(claim: BudgetClaim, **overrides) -> dict:
+    base = {
+        "id": claim.claim_id,
+        "state": "claimed",
+        "amount_estimated_cents": 5,
+        "amount_final_cents": None,
+        "finalized_completeness": None,
+        "version": claim.version,
+        "price_input_cents_per_1k": 10,
+        "price_output_cents_per_1k": 30,
+    }
+    base.update(overrides)
+    return base
 
 
 def _claim_token(**overrides) -> BudgetClaim:
@@ -221,13 +239,21 @@ def test_estimate_cost_ceils_per_component_and_requires_version() -> None:
     assert _estimate_cost(negative, "openai", "gpt-4o-mini", 1, 1) is None
 
 
+def test_match_price_skips_other_providers_and_blank_patterns() -> None:
+    matching = _PriceRow("openai", "gpt-4o*", 10, 30)
+    blank = _PriceRow("openai", "   ", 1, 1)
+    other = _PriceRow("anthropic", "claude*", 2, 2)
+    assert mod._match_price((other, blank, matching), "OpenAI", "gpt-4o-mini") == matching
+    assert mod._match_price((other,), "openai", "gpt-4o-mini") is None
+
+
 @pytest.mark.asyncio
 async def test_claim_returns_none_without_hard_cap(org_session) -> None:
     install, _ = org_session
     session = _Session(_Result(), _Result(None))
     install(session)
     ledger = mod._AsyncBudgetLedger(object())
-    assert await ledger.claim(**_claim_kwargs()) is None
+    assert await ledger.claim(_claim_request()) is None
     assert len(session.calls) == 2  # advisory lock + period lookup
 
 
@@ -237,14 +263,14 @@ async def test_claim_denied_without_rate_card(org_session) -> None:
     install(_Session(_Result(), _period_row(), _Result({"version": "", "prices": []})))
     ledger = mod._AsyncBudgetLedger(object())
     with pytest.raises(BudgetAdmissionDeniedError) as err:
-        await ledger.claim(**_claim_kwargs())
+        await ledger.claim(_claim_request())
     assert err.value.kind == "no_rate_card"
 
 
 @pytest.mark.asyncio
 async def test_claim_fresh_owned_and_exceeded(org_session) -> None:
     install, _ = org_session
-    kwargs = _claim_kwargs()
+    request = _claim_request()
     claim_id = uuid4()
     install(
         _Session(
@@ -257,11 +283,11 @@ async def test_claim_fresh_owned_and_exceeded(org_session) -> None:
         )
     )
     ledger = mod._AsyncBudgetLedger(object(), lease_seconds=30)
-    claim = await ledger.claim(**kwargs)
+    claim = await ledger.claim(request)
     assert claim is not None
     assert claim.claim_id == claim_id
     assert claim.version == 1
-    assert claim.key == kwargs["key"]
+    assert claim.key == request.key
 
     install(
         _Session(
@@ -273,14 +299,14 @@ async def test_claim_fresh_owned_and_exceeded(org_session) -> None:
         )
     )
     with pytest.raises(BudgetAdmissionDeniedError) as err:
-        await ledger.claim(**kwargs)
+        await ledger.claim(request)
     assert err.value.kind == "exceeded"
 
 
 @pytest.mark.asyncio
 async def test_claim_existing_conflict_and_in_progress(org_session) -> None:
     install, _ = org_session
-    kwargs = _claim_kwargs()
+    request = _claim_request()
     install(
         _Session(
             _Result(),
@@ -300,7 +326,7 @@ async def test_claim_existing_conflict_and_in_progress(org_session) -> None:
     )
     ledger = mod._AsyncBudgetLedger(object())
     with pytest.raises(BudgetAdmissionDeniedError) as conflict:
-        await ledger.claim(**kwargs)
+        await ledger.claim(request)
     assert conflict.value.kind == "conflict"
 
     install(
@@ -311,7 +337,7 @@ async def test_claim_existing_conflict_and_in_progress(org_session) -> None:
             _Result(
                 {
                     "id": uuid4(),
-                    "request_hash": kwargs["request_hash"],
+                    "request_hash": request.request_hash,
                     "state": "claimed",
                     "lease_active": True,
                     "retry_after": 42,
@@ -321,7 +347,7 @@ async def test_claim_existing_conflict_and_in_progress(org_session) -> None:
         )
     )
     with pytest.raises(BudgetAdmissionDeniedError) as in_progress:
-        await ledger.claim(**kwargs)
+        await ledger.claim(request)
     assert in_progress.value.kind == "in_progress"
     assert in_progress.value.retry_after == 42
 
@@ -329,10 +355,10 @@ async def test_claim_existing_conflict_and_in_progress(org_session) -> None:
 @pytest.mark.asyncio
 async def test_claim_expired_lease_reclaims_with_cap_check(org_session) -> None:
     install, _ = org_session
-    kwargs = _claim_kwargs()
+    request = _claim_request()
     row = {
         "id": uuid4(),
-        "request_hash": kwargs["request_hash"],
+        "request_hash": request.request_hash,
         "state": "claimed",
         "lease_active": False,
         "retry_after": 1,
@@ -349,7 +375,7 @@ async def test_claim_expired_lease_reclaims_with_cap_check(org_session) -> None:
         )
     )
     ledger = mod._AsyncBudgetLedger(object())
-    claim = await ledger.claim(**kwargs)
+    claim = await ledger.claim(request)
     assert claim is not None and claim.version == 5
 
     install(
@@ -363,7 +389,7 @@ async def test_claim_expired_lease_reclaims_with_cap_check(org_session) -> None:
         )
     )
     with pytest.raises(BudgetAdmissionDeniedError) as err:
-        await ledger.claim(**kwargs)
+        await ledger.claim(request)
     assert err.value.kind == "exceeded"
 
 
@@ -373,7 +399,7 @@ async def test_claim_wraps_sqlalchemy_errors(org_session) -> None:
     install(_FailingSession(SQLAlchemyError("down")))
     ledger = mod._AsyncBudgetLedger(object())
     with pytest.raises(BudgetLedgerUnavailableError):
-        await ledger.claim(**_claim_kwargs())
+        await ledger.claim(_claim_request())
 
 
 @pytest.mark.asyncio
@@ -381,54 +407,44 @@ async def test_claim_rejects_invalid_key(org_session) -> None:
     ledger = mod._AsyncBudgetLedger(object())
     for key, request_hash in (("", "hash"), ("x" * 257, "hash"), ("key", "")):
         with pytest.raises(BudgetLedgerError, match="invalid"):
-            await ledger.claim(**_claim_kwargs() | {"key": key, "request_hash": request_hash})
+            await ledger.claim(_claim_request(key=key, request_hash=request_hash))
 
 
 @pytest.mark.asyncio
 async def test_finalize_measured_complete(org_session) -> None:
     install, _ = org_session
     claim = _claim_token()
-    install(
-        _Session(
-            _Result(
-                {
-                    "id": claim.claim_id,
-                    "state": "claimed",
-                    "amount_estimated_cents": 5,
-                    "amount_final_cents": None,
-                    "finalized_completeness": None,
-                    "version": claim.version,
-                }
-            ),
-            _card_row(),
-            _Result(rowcount=1),
-        )
-    )
+    session = _Session(_Result(_claim_row(claim)), _Result(rowcount=1))
+    install(session)
     ledger = mod._AsyncBudgetLedger(object())
     completeness = await ledger.finalize(claim, input_tokens=100, output_tokens=200)
     assert completeness == mod.COMPLETENESS_COMPLETE
+    # Claim-time rates (10/30 per 1k) price 100/200 tokens at 1 + 6 cents.
+    assert session.calls[-1][1]["amount"] == 7  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_finalize_uses_stored_rate_columns(org_session) -> None:
+    install, _ = org_session
+    claim = _claim_token()
+    stored = _claim_row(claim, price_input_cents_per_1k=50, price_output_cents_per_1k=100)
+    session = _Session(_Result(stored), _Result(rowcount=1))
+    install(session)
+    ledger = mod._AsyncBudgetLedger(object())
+    assert (
+        await ledger.finalize(claim, input_tokens=100, output_tokens=200)
+        == mod.COMPLETENESS_COMPLETE
+    )
+    # 100@50/1k -> 5, 200@100/1k -> 20; no rate-card reload participates.
+    assert session.calls[-1][1]["amount"] == 25  # type: ignore[index]
+    assert len(session.calls) == 2
 
 
 @pytest.mark.asyncio
 async def test_finalize_falls_back_to_estimate_and_replays(org_session) -> None:
     install, _ = org_session
     claim = _claim_token()
-    install(
-        _Session(
-            _Result(
-                {
-                    "id": claim.claim_id,
-                    "state": "claimed",
-                    "amount_estimated_cents": 5,
-                    "amount_final_cents": None,
-                    "finalized_completeness": None,
-                    "version": claim.version,
-                }
-            ),
-            _card_row(),
-            _Result(rowcount=1),
-        )
-    )
+    install(_Session(_Result(_claim_row(claim)), _Result(rowcount=1)))
     ledger = mod._AsyncBudgetLedger(object())
     assert (
         await ledger.finalize(claim, input_tokens=0, output_tokens=0)
@@ -438,16 +454,14 @@ async def test_finalize_falls_back_to_estimate_and_replays(org_session) -> None:
     install(
         _Session(
             _Result(
-                {
-                    "id": claim.claim_id,
-                    "state": "finalized",
-                    "amount_estimated_cents": 5,
-                    "amount_final_cents": 5,
-                    "finalized_completeness": mod.COMPLETENESS_ESTIMATED,
-                    "version": claim.version + 1,
-                }
-            ),
-            _card_row(),
+                _claim_row(
+                    claim,
+                    state="finalized",
+                    amount_final_cents=5,
+                    finalized_completeness=mod.COMPLETENESS_ESTIMATED,
+                    version=claim.version + 1,
+                )
+            )
         )
     )
     assert (
@@ -458,16 +472,30 @@ async def test_finalize_falls_back_to_estimate_and_replays(org_session) -> None:
     install(
         _Session(
             _Result(
-                {
-                    "id": claim.claim_id,
-                    "state": "finalized",
-                    "amount_estimated_cents": 5,
-                    "amount_final_cents": 9,
-                    "finalized_completeness": mod.COMPLETENESS_COMPLETE,
-                    "version": claim.version + 1,
-                }
-            ),
-            _card_row(),
+                _claim_row(
+                    claim,
+                    state="finalized",
+                    amount_final_cents=9,
+                    finalized_completeness=mod.COMPLETENESS_COMPLETE,
+                    version=claim.version + 1,
+                )
+            )
+        )
+    )
+    with pytest.raises(BudgetLedgerClaimClosedError):
+        await ledger.finalize(claim, input_tokens=0, output_tokens=0)
+
+    install(
+        _Session(
+            _Result(
+                _claim_row(
+                    claim,
+                    state="finalized",
+                    amount_final_cents=5,
+                    finalized_completeness=mod.COMPLETENESS_ESTIMATED,
+                    version=claim.version + 2,
+                )
+            )
         )
     )
     with pytest.raises(BudgetLedgerClaimClosedError):
@@ -483,21 +511,7 @@ async def test_finalize_closed_on_stale_version_or_missing_row(org_session) -> N
     with pytest.raises(BudgetLedgerClaimClosedError):
         await ledger.finalize(claim, input_tokens=1, output_tokens=1)
 
-    install(
-        _Session(
-            _Result(
-                {
-                    "id": claim.claim_id,
-                    "state": "claimed",
-                    "amount_estimated_cents": 5,
-                    "amount_final_cents": None,
-                    "finalized_completeness": None,
-                    "version": claim.version + 5,
-                }
-            ),
-            _card_row(),
-        )
-    )
+    install(_Session(_Result(_claim_row(claim, version=claim.version + 5))))
     with pytest.raises(BudgetLedgerClaimClosedError):
         await ledger.finalize(claim, input_tokens=1, output_tokens=1)
 
@@ -506,19 +520,16 @@ async def test_finalize_closed_on_stale_version_or_missing_row(org_session) -> N
 async def test_release_idempotent_and_closed(org_session) -> None:
     install, _ = org_session
     claim = _claim_token()
-    release_row = {
-        "id": claim.claim_id,
-        "state": "released",
-        "amount_estimated_cents": 5,
-        "amount_final_cents": None,
-        "finalized_completeness": None,
-        "version": claim.version + 1,
-    }
+    release_row = _claim_row(claim, state="released", version=claim.version + 1)
     install(_Session(_Result(release_row)))
     ledger = mod._AsyncBudgetLedger(object())
     await ledger.release(claim)
 
     install(_Session(_Result(release_row | {"state": "finalized"})))
+    with pytest.raises(BudgetLedgerClaimClosedError):
+        await ledger.release(claim)
+
+    install(_Session(_Result(release_row | {"version": claim.version + 2})))
     with pytest.raises(BudgetLedgerClaimClosedError):
         await ledger.release(claim)
 
@@ -531,23 +542,122 @@ async def test_release_idempotent_and_closed(org_session) -> None:
 async def test_release_transitions_claimed_row(org_session) -> None:
     install, _ = org_session
     claim = _claim_token()
+    install(_Session(_Result(_claim_row(claim)), _Result(rowcount=1)))
+    ledger = mod._AsyncBudgetLedger(object())
+    await ledger.release(claim)
+
+
+def test_decode_card_none_is_empty() -> None:
+    assert _decode_card(None) == ()
+
+
+@pytest.mark.asyncio
+async def test_load_card_missing_row_is_empty() -> None:
+    ledger = mod._AsyncBudgetLedger(object())
+    card = await ledger._load_card(_Session(_Result(None)), uuid4())
+    assert card == _Card(version="", prices=())
+
+
+@pytest.mark.asyncio
+async def test_claim_in_progress_when_insert_races(org_session) -> None:
+    install, _ = org_session
     install(
         _Session(
-            _Result(
-                {
-                    "id": claim.claim_id,
-                    "state": "claimed",
-                    "amount_estimated_cents": 5,
-                    "amount_final_cents": None,
-                    "finalized_completeness": None,
-                    "version": claim.version,
-                }
-            ),
-            _Result(rowcount=1),
+            _Result(),
+            _period_row(),
+            _card_row(),
+            _Result(None),
+            _Result(None, scalar=0),
+            _Result(None),
         )
     )
     ledger = mod._AsyncBudgetLedger(object())
-    await ledger.release(claim)
+    with pytest.raises(BudgetAdmissionDeniedError) as err:
+        await ledger.claim(_claim_request())
+    assert err.value.kind == "in_progress"
+    assert err.value.retry_after == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_reset_miss_is_unavailable(org_session) -> None:
+    install, _ = org_session
+    request = _claim_request()
+    row = {
+        "id": uuid4(),
+        "request_hash": request.request_hash,
+        "state": "claimed",
+        "lease_active": False,
+        "retry_after": 1,
+        "version": 4,
+    }
+    install(
+        _Session(
+            _Result(),
+            _period_row(),
+            _card_row(),
+            _Result(row),
+            _Result(None, scalar=0),
+            _Result(None),
+        )
+    )
+    ledger = mod._AsyncBudgetLedger(object())
+    with pytest.raises(BudgetLedgerError, match="reset reservation failed"):
+        await ledger.claim(request)
+
+
+@pytest.mark.asyncio
+async def test_finalize_wraps_sqlalchemy_errors(org_session) -> None:
+    install, _ = org_session
+    install(_FailingSession(SQLAlchemyError("down")))
+    ledger = mod._AsyncBudgetLedger(object())
+    with pytest.raises(BudgetLedgerUnavailableError):
+        await ledger.finalize(_claim_token(), input_tokens=1, output_tokens=1)
+
+
+@pytest.mark.asyncio
+async def test_release_wraps_sqlalchemy_errors(org_session) -> None:
+    install, _ = org_session
+    install(_FailingSession(SQLAlchemyError("down")))
+    ledger = mod._AsyncBudgetLedger(object())
+    with pytest.raises(BudgetLedgerUnavailableError):
+        await ledger.release(_claim_token())
+
+
+@pytest.mark.asyncio
+async def test_expire_stale_reraises_ledger_errors(service_session) -> None:
+    install, _ = service_session
+    install(_FailingSession(BudgetLedgerError("boom")))
+    ledger = mod._AsyncBudgetLedger(object())
+    with pytest.raises(BudgetLedgerError, match="boom"):
+        await ledger.expire_stale(grace_seconds=1, batch_limit=1)
+
+
+def test_stored_rates_requires_both_columns() -> None:
+    assert (
+        mod._stored_rates({"price_input_cents_per_1k": None, "price_output_cents_per_1k": 30})
+        is None
+    )
+    assert (
+        mod._stored_rates({"price_input_cents_per_1k": 10, "price_output_cents_per_1k": None})
+        is None
+    )
+    assert mod._stored_rates(
+        {"price_input_cents_per_1k": 10, "price_output_cents_per_1k": 30}
+    ) == (10, 30)
+
+
+@pytest.mark.asyncio
+async def test_write_helpers_raise_closed_on_rowcount_miss() -> None:
+    claim = _claim_token()
+    with pytest.raises(BudgetLedgerClaimClosedError):
+        await mod._write_finalized(
+            _Session(_Result(rowcount=0)),
+            claim,
+            amount=5,
+            completeness=mod.COMPLETENESS_COMPLETE,
+        )
+    with pytest.raises(BudgetLedgerClaimClosedError):
+        await mod._write_released(_Session(_Result(rowcount=0)), claim)
 
 
 @pytest.mark.asyncio
@@ -565,6 +675,14 @@ async def test_expire_stale_service_account_and_validation(service_session) -> N
     install(_FailingSession(SQLAlchemyError("down")))
     with pytest.raises(BudgetLedgerUnavailableError):
         await ledger.expire_stale(grace_seconds=1, batch_limit=1)
+
+
+def test_expire_stale_sql_rechecks_version_and_lease() -> None:
+    # The sweep's UPDATE must re-assert both the observed version and staleness
+    # so a row reclaimed between SELECT and UPDATE is never expired.
+    sql = mod._EXPIRE_STALE_SQL
+    assert "r.version = stale.version" in sql
+    assert "r.lease_expires_at <= NOW() - CAST(:grace AS interval)" in sql
 
 
 @pytest.mark.asyncio
@@ -611,7 +729,7 @@ class _StubCore:
     async def ping(self) -> None:
         self.calls.append("ping")
 
-    async def claim(self, **kwargs: object) -> object:
+    async def claim(self, request: object) -> object:
         self.calls.append("claim")
         return self.claim_result
 
@@ -635,7 +753,7 @@ def test_sync_facade_delegates_to_core() -> None:
     stub.claim_result = claim
 
     facade.ping()
-    assert facade.claim(**_claim_kwargs()) is claim
+    assert facade.claim(_claim_request()) is claim
     assert facade.finalize(claim, input_tokens=1, output_tokens=1) == (
         mod.COMPLETENESS_COMPLETE
     )
