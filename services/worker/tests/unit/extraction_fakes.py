@@ -167,6 +167,7 @@ class JobParts:
     clickhouse_dsn: str | None = None
     org_id: UUID | None = None
     session_id: UUID | None = None
+    budget_ledger: object | None = None
 
 
 def completed_store(*, last_extracted_turn: int = -1) -> FakeSessionStore:
@@ -208,4 +209,5 @@ def make_job(parts: JobParts | None = None) -> BatchJob:
         memory_writer=cfg.writer or RecordingWriter(),  # type: ignore[arg-type]
         clickhouse_dsn=cfg.clickhouse_dsn,
         session_store=cfg.session_store or completed_store(),
+        budget_ledger=cfg.budget_ledger,  # type: ignore[arg-type]
     )

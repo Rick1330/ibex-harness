@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.budget_ledger import PostgresBudgetLedger
 from app.celery_app import celery_app
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
@@ -43,12 +44,13 @@ def _memory_writer(settings: Settings) -> HttpMemoryWriter:
 
 def _require_session_store(
     settings: Settings,
-) -> tuple[SessionStore, AsyncEngine]:
+) -> tuple[SessionStore, AsyncEngine, async_sessionmaker[AsyncSession]]:
     """SessionStore is mandatory for turn-tracking correctness (ADR-0065)."""
     if not settings.database_url:
         raise ValueError("database_url is required for extract_session_memories")
     engine = create_engine(settings)
-    return PostgresSessionStore(create_session_factory(engine)), engine
+    factory = create_session_factory(engine)
+    return PostgresSessionStore(factory), engine, factory
 
 
 def _dispose_engine(engine: AsyncEngine | None) -> None:
@@ -90,7 +92,7 @@ def extract_session_memories(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     engine: AsyncEngine | None = None
     try:
         # SessionStore setup stays inside try so writer.close() always runs.
-        session_store, engine = _require_session_store(settings)
+        session_store, engine, session_factory = _require_session_store(settings)
         result = run_batch_extraction(
             BatchJob(
                 org_id=org_id,
@@ -101,6 +103,7 @@ def extract_session_memories(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
                 memory_writer=writer,
                 clickhouse_dsn=settings.clickhouse_dsn,
                 session_store=session_store,
+                budget_ledger=PostgresBudgetLedger(session_factory),
             )
         )
         return _task_payload(result)

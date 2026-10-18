@@ -132,6 +132,8 @@ def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.Monkey
         "app.tasks.extraction.get_settings",
         lambda: _task_settings(db_url="postgresql+asyncpg://u:p@localhost/db")(),
     )
+    ledger = object()
+    seen_jobs: list[BatchJob] = []
     monkeypatch.setattr("app.tasks.extraction.load_active_extraction_provider", lambda: object())
     monkeypatch.setattr(
         "app.tasks.extraction.HttpMemoryWriter",
@@ -139,12 +141,18 @@ def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.Monkey
     )
     monkeypatch.setattr(
         "app.tasks.extraction._require_session_store",
-        lambda _s: (_Store(), None),
+        lambda _s: (_Store(), None, object()),
     )
     monkeypatch.setattr(
-        "app.tasks.extraction.run_batch_extraction",
-        lambda _job: BatchRunResult(2, 1),
+        "app.tasks.extraction.PostgresBudgetLedger",
+        lambda _f: ledger,
     )
+
+    def _capture(job: BatchJob) -> BatchRunResult:
+        seen_jobs.append(job)
+        return BatchRunResult(2, 1)
+
+    monkeypatch.setattr("app.tasks.extraction.run_batch_extraction", _capture)
     payload = extract_session_memories.run(
         org_id=str(uuid4()),
         agent_id=str(uuid4()),
@@ -157,6 +165,7 @@ def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.Monkey
         "turns_processed": 1,
         "skipped": None,
     }
+    assert seen_jobs[0].budget_ledger is ledger
     assert closed["n"] == 1
 
 
@@ -178,7 +187,7 @@ def test_extract_task_closes_writer_on_error(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr(
         "app.tasks.extraction._require_session_store",
-        lambda _s: (object(), None),
+        lambda _s: (object(), None, object()),
     )
     monkeypatch.setattr(
         "app.tasks.extraction.run_batch_extraction",

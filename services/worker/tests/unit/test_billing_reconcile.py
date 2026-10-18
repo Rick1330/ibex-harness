@@ -11,11 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from redis.exceptions import RedisError
 
+from app.budget_ledger import BudgetLedgerUnavailableError
 from app.tasks.billing_reconcile import (
     BudgetPeriodWindow,
     ClickHouseQueryError,
     HttpClickHouseQuerier,
     SqlAlchemySpendStore,
+    budget_reservation_sweep,
     budget_spent_rollup,
     reconcile_usage_actuals,
     run_budget_spent_rollup,
@@ -552,3 +554,49 @@ async def test_sqlalchemy_spend_store_list_update_aclose(monkeypatch: Any) -> No
         assert "spent_cents_cached" in str(session.execute.await_args_list[1].args[0])
     await store.aclose()
     engine.dispose.assert_awaited_once()
+
+
+def test_budget_reservation_sweep_skips_without_dsn(monkeypatch: Any) -> None:
+    class _Settings:
+        database_url = None
+
+    monkeypatch.setattr("app.tasks.billing_reconcile.get_settings", lambda: _Settings())
+    out = budget_reservation_sweep.run()
+    assert out == {"status": "skipped", "reason": "missing_dsn"}
+
+
+def test_budget_reservation_sweep_runs_with_deps(monkeypatch: Any) -> None:
+    class FakeLedger:
+        def __init__(self, factory: Any) -> None:
+            del factory
+
+        def expire_stale(self, *, grace_seconds: int, batch_limit: int) -> int:
+            assert grace_seconds == 3600
+            assert batch_limit == 500
+            return 2
+
+    class FakeEngine:
+        async def dispose(self) -> None:
+            return None
+
+    class _Settings:
+        database_url = "postgresql+asyncpg://u:p@localhost/db"
+
+    monkeypatch.setattr("app.tasks.billing_reconcile.get_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.create_engine", lambda settings: FakeEngine()
+    )
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.create_session_factory", lambda engine: object()
+    )
+    monkeypatch.setattr(
+        "app.tasks.billing_reconcile.PostgresBudgetLedger", FakeLedger
+    )
+    out = budget_reservation_sweep.run()
+    assert out == {"status": "ok", "expired": 2}
+
+
+def test_budget_reservation_sweep_autoretry_configured() -> None:
+    assert BudgetLedgerUnavailableError in budget_reservation_sweep.autoretry_for
+    assert budget_reservation_sweep.retry_backoff is True
+    assert budget_reservation_sweep.retry_jitter is True

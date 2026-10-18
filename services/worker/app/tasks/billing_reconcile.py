@@ -13,11 +13,17 @@ import httpx
 from redis.exceptions import RedisError
 from sqlalchemy import text
 
+from app.budget_ledger import BudgetLedgerUnavailableError, PostgresBudgetLedger
 from app.celery_app import celery_app
 from app.config import get_settings
 from app.db import create_engine, create_session_factory, session_as_service_account
 from app.extraction.clickhouse_traces import _http_endpoint, shared_clickhouse_client
-from app.task_names import TASK_BUDGET_SPENT_ROLLUP, TASK_RECONCILE_USAGE_ACTUALS
+from app.extraction.session_store import _run_coro
+from app.task_names import (
+    TASK_BUDGET_RESERVATION_SWEEP,
+    TASK_BUDGET_SPENT_ROLLUP,
+    TASK_RECONCILE_USAGE_ACTUALS,
+)
 from app.tasks.base import IbexTask
 
 logger = logging.getLogger(__name__)
@@ -25,6 +31,8 @@ logger = logging.getLogger(__name__)
 _BUDGET_CHANNEL_PREFIX = "budget_updates:"
 _BUDGET_EVENT_VERSION = 1
 _REDIS_SOCKET_TIMEOUT_SECONDS = 1.0
+_REAPER_GRACE_SECONDS = 3600
+_REAPER_BATCH_LIMIT = 500
 
 
 class ClickHouseQueryError(Exception):
@@ -289,3 +297,38 @@ def budget_spent_rollup(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
         aclose = getattr(invalidator, "aclose", None)
         if aclose is not None:
             asyncio.run(aclose())
+
+
+@celery_app.task(
+    bind=True,
+    base=IbexTask,
+    name=TASK_BUDGET_RESERVATION_SWEEP,
+    queue="maintenance",
+    soft_time_limit=300,
+    time_limit=600,
+    autoretry_for=(BudgetLedgerUnavailableError,),
+    retry_backoff=True,
+    retry_jitter=True,
+    max_retries=5,
+)
+def budget_reservation_sweep(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
+    """Expire stale claimed holds past the lease plus a safety grace.
+
+    Expired leases already stop counting toward the cap; this keeps the
+    durable rows coherent for audit after a crashed worker never settled.
+    """
+    del self, kwargs
+    settings = get_settings()
+    db_url = getattr(settings, "database_url", None)
+    if not db_url:
+        logger.info("budget_reservation_sweep skipped: missing database url")
+        return {"status": "skipped", "reason": "missing_dsn"}
+    engine = create_engine(settings)
+    try:
+        ledger = PostgresBudgetLedger(create_session_factory(engine))
+        expired = ledger.expire_stale(
+            grace_seconds=_REAPER_GRACE_SECONDS, batch_limit=_REAPER_BATCH_LIMIT
+        )
+        return {"status": "ok", "expired": expired}
+    finally:
+        _run_coro(engine.dispose())
