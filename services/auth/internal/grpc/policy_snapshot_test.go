@@ -56,11 +56,33 @@ func assertIssueParams(t *testing.T, issuer *fakePolicyIssuer, want issueExpecta
 		t.Fatalf("issuer calls = %d, want 1", issuer.calls)
 	}
 	got := issuer.got
-	if got.OrgID != want.orgID || got.AgentID != want.agentID || got.SubjectID != want.subjectID {
-		t.Fatalf("issue params = %+v", got)
+	if got.OrgID != want.orgID {
+		t.Fatalf("org = %q, want %q", got.OrgID, want.orgID)
+	}
+	if got.AgentID != want.agentID {
+		t.Fatalf("agent = %q, want %q", got.AgentID, want.agentID)
+	}
+	if got.SubjectID != want.subjectID {
+		t.Fatalf("subject = %q, want %q", got.SubjectID, want.subjectID)
 	}
 	if got.Permissions != want.permissions {
 		t.Fatalf("permissions = %d, want %d", got.Permissions, want.permissions)
+	}
+}
+
+func assertVerifiedClaims(t *testing.T, claims policysnapshot.Claims, want issueExpectations) {
+	t.Helper()
+	if claims.OrgID != want.orgID {
+		t.Fatalf("claims org = %q, want %q", claims.OrgID, want.orgID)
+	}
+	if claims.AgentID != want.agentID {
+		t.Fatalf("claims agent = %q, want %q", claims.AgentID, want.agentID)
+	}
+	if claims.SubjectID != want.subjectID {
+		t.Fatalf("claims subject = %q, want %q", claims.SubjectID, want.subjectID)
+	}
+	if claims.Permissions != want.permissions {
+		t.Fatalf("claims permissions = %d, want %d", claims.Permissions, want.permissions)
 	}
 }
 
@@ -290,9 +312,7 @@ func TestIssuePolicySnapshotEnvelopeVerifies(t *testing.T) {
 	}, agentID)
 	claims := verifyIssuedEnvelope(t, key, env, orgID, agentID)
 
-	if claims.OrgID != orgID || claims.AgentID != agentID || claims.SubjectID != userID || claims.Permissions != 7 {
-		t.Fatalf("claims = %+v", claims)
-	}
+	assertVerifiedClaims(t, claims, issueExpectations{orgID: orgID, agentID: agentID, subjectID: userID, permissions: 7})
 	if claims.Epoch != 4 {
 		t.Fatalf("epoch = %d, want 4", claims.Epoch)
 	}

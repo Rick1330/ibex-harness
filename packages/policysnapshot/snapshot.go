@@ -6,6 +6,7 @@ package policysnapshot
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,15 +160,11 @@ func (c Claims) marshalClaims() ([]byte, error) {
 
 func (c Claims) computeDigest() (string, error) {
 	c.Digest = ""
-	raw, err := c.marshalClaims()
+	payload, err := c.canonicalPayload()
 	if err != nil {
 		return "", err
 	}
-	_, digest, err := canonicaljson.Digest(raw)
-	if err != nil {
-		return "", fmt.Errorf("%w: canonicalize claims: %v", ErrMalformed, err)
-	}
-	return digest, nil
+	return hex.EncodeToString(sha256Sum(payload)), nil
 }
 
 func (c Claims) canonicalPayload() ([]byte, error) {

@@ -57,11 +57,11 @@ func Load() (Config, error) {
 
 func (c Config) Validate() error {
 	checks := []func() error{
-		func() error { return validateEnvironment(c.Environment) },
-		func() error { return validateServiceName(c.ServiceName) },
+		func() error { return validateEnvironment(c) },
+		func() error { return validateServiceName(c) },
 		func() error { return validateTCPPort("IBEX_PORT", c.Port) },
 		func() error { return validateTCPPort("IBEX_GRPC_PORT", c.GRPCPort) },
-		func() error { return validatePostgresDSN(c.PostgresDSN) },
+		func() error { return validatePostgresDSN(c) },
 		func() error { return validateCredentialsMasterKey(c) },
 		func() error { return validateTOTPSessionConfig(c) },
 		func() error { return validateAuthServiceToken(c) },
@@ -127,15 +127,15 @@ func requiresAuthServiceToken(c Config) bool {
 	return c.TOTPEnabled || strings.TrimSpace(c.JWTPrivateKeyPEM) != ""
 }
 
-func validateServiceName(name string) error {
-	if strings.TrimSpace(name) == "" {
+func validateServiceName(c Config) error {
+	if strings.TrimSpace(c.ServiceName) == "" {
 		return fmt.Errorf("IBEX_SERVICE_NAME must not be empty")
 	}
 	return nil
 }
 
-func validatePostgresDSN(dsn string) error {
-	if dsn == "" {
+func validatePostgresDSN(c Config) error {
+	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
 	return nil
@@ -176,8 +176,8 @@ func validateCredentialsMasterKey(c Config) error {
 	return nil
 }
 
-func validateEnvironment(env string) error {
-	switch env {
+func validateEnvironment(c Config) error {
+	switch c.Environment {
 	case "development", "staging", "production":
 		return nil
 	default:

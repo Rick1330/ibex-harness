@@ -128,11 +128,20 @@ func requireMutationVerifyErr(t *testing.T, tc mutationVerifyCase, want error) {
 	}
 }
 
-// verifyAt verifies an org-1 mutation-class request at the given clock time.
-func verifyAt(t *testing.T, set KeySet, now time.Time, envelope Envelope, class Class) error {
+// verifyAtCase bundles the inputs for an org-1 mutation/read verification at a
+// given clock time.
+type verifyAtCase struct {
+	set      KeySet
+	now      time.Time
+	envelope Envelope
+	class    Class
+}
+
+// verifyAt verifies an org-1 request for the given case's class and clock.
+func verifyAt(t *testing.T, tc verifyAtCase) error {
 	t.Helper()
-	_, err := mustVerify(t, set, verifyOpts{now: now}, VerifyParams{
-		Envelope: envelope, ExpectedOrgID: "org-1", Class: class,
+	_, err := mustVerify(t, tc.set, verifyOpts{now: tc.now}, VerifyParams{
+		Envelope: tc.envelope, ExpectedOrgID: "org-1", Class: tc.class,
 	})
 	return err
 }

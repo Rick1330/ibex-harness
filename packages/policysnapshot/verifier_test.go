@@ -219,7 +219,7 @@ func TestVerifyFreshnessBoundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			requireExpiredOutcome(t, verifyAt(t, set, baseTime.Add(tc.offset), envelope, tc.class), tc.wantErr)
+			requireExpiredOutcome(t, verifyAt(t, verifyAtCase{set: set, now: baseTime.Add(tc.offset), envelope: envelope, class: tc.class}), tc.wantErr)
 		})
 	}
 }
@@ -237,7 +237,7 @@ func TestVerifyFutureIssuedBoundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			requireExpiredOutcome(t, verifyAt(t, set, baseTime.Add(tc.offset), envelope, ClassMutation), tc.wantErr)
+			requireExpiredOutcome(t, verifyAt(t, verifyAtCase{set: set, now: baseTime.Add(tc.offset), envelope: envelope, class: ClassMutation}), tc.wantErr)
 		})
 	}
 }
@@ -258,7 +258,7 @@ func TestVerifyExpiry(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			requireExpiredOutcome(t, verifyAt(t, set, baseTime.Add(tc.offset), envelope, ClassMutation), tc.wantErr)
+			requireExpiredOutcome(t, verifyAt(t, verifyAtCase{set: set, now: baseTime.Add(tc.offset), envelope: envelope, class: ClassMutation}), tc.wantErr)
 		})
 	}
 }
