@@ -6,13 +6,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	ibexconfig "github.com/Rick1330/ibex-harness/packages/config"
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/fence"
@@ -273,5 +276,81 @@ func TestIntegration_OpenRuntime_UnreachableClickHouseFailsClosed(t *testing.T) 
 	if err == nil {
 		_ = closeRuntime(rt)
 		t.Fatal("unreachable clickhouse must fail closed")
+	}
+}
+
+// relayConfig builds the connected-runtime configuration for the success-path
+// cases: a long poll interval keeps the loop idle after its first cycle, and
+// Port "0" binds an ephemeral health/metrics surface.
+func relayConfig(t *testing.T) config.Config {
+	t.Helper()
+	return config.Config{
+		PostgresDSN:      ibexconfig.Secret(relaytest.DSN()),
+		ClickHouseDSN:    ibexconfig.Secret(relaytest.ClickHouseDSN(t)),
+		PollInterval:     time.Hour,
+		BatchSize:        16,
+		MaxAttempts:      3,
+		RecoverAfter:     time.Minute,
+		OperationTimeout: 5 * time.Second,
+		ErrorBackoff:     time.Second,
+		ShutdownTimeout:  10 * time.Second,
+		Port:             "0",
+	}
+}
+
+// TestIntegration_OpenRuntime_BuildsWithRealDependencies exercises the success
+// path of the real wiring (role-pinned pool + fence checker + live ClickHouse
+// sink + relay) and asserts closeRuntime releases both dependencies cleanly.
+func TestIntegration_OpenRuntime_BuildsWithRealDependencies(t *testing.T) {
+	_ = relaytest.OpenMigratedDB(t)
+	rt, err := openRuntime(context.Background(), relayConfig(t), ibexmetrics.NewRelay("test-relay"))
+	if err != nil {
+		t.Fatalf("openRuntime: %v", err)
+	}
+	if rt.db == nil {
+		t.Fatal("openRuntime must populate db")
+	}
+	if rt.sink == nil {
+		t.Fatal("openRuntime must populate sink")
+	}
+	if rt.relay == nil {
+		t.Fatal("openRuntime must populate relay")
+	}
+	if err := closeRuntime(rt); err != nil {
+		t.Fatalf("closeRuntime: %v", err)
+	}
+}
+
+// TestIntegration_ServeRelay_StartsAndDrainsCleanly drives the full process
+// lifecycle against real dependencies: start the loop + HTTP surface, signal
+// shutdown, and assert a clean exit code. This covers the connected serveRelay
+// and closeRuntime success branches that unit fakes cannot reach.
+func TestIntegration_ServeRelay_StartsAndDrainsCleanly(t *testing.T) {
+	_ = relaytest.OpenMigratedDB(t)
+	cfg := relayConfig(t)
+	reg := ibexmetrics.NewRelay("relay-it")
+	rt, err := openRuntime(context.Background(), cfg, reg)
+	if err != nil {
+		t.Fatalf("openRuntime: %v", err)
+	}
+
+	signalCh := make(chan os.Signal, 1)
+	done := make(chan int, 1)
+	go func() { done <- serveRelay(cfg, logger.Discard("relay-it"), reg, rt, signalCh) }()
+
+	// Wait for the loop to complete at least one real recover/claim cycle before
+	// signalling. A fixed sleep could let SIGTERM cancel the first cycle on a
+	// slow runner while the exit-code check still passed; the batches counter
+	// only has a series once a cycle has actually completed.
+	waitFor(t, func() bool { return metricSeriesCount(t, reg, "ibex_relay_batches_total") > 0 })
+	signalCh <- syscall.SIGTERM
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("serveRelay exit code = %d, want 0", code)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("serveRelay did not shut down within deadline")
 	}
 }

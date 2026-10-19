@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox/clickhousesink"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 )
 
@@ -64,5 +67,19 @@ func TestRelayHTTPServer_Routes(t *testing.T) {
 	server.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "shutdown in progress") {
 		t.Fatalf("/ready while draining: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+type pingErrCHConn struct{ fakeCHConn }
+
+func (pingErrCHConn) Ping(context.Context) error { return errors.New("dial tcp: connection refused") }
+
+func TestClickHousePingChecker_UnreachableFails(t *testing.T) {
+	sink, err := clickhousesink.New(pingErrCHConn{}, noopFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clickHousePingChecker(&runtime{sink: sink})(t.Context()); err == nil {
+		t.Fatal("unreachable clickhouse must fail the check")
 	}
 }

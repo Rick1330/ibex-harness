@@ -30,43 +30,42 @@ func TestRunBootstrap_DisabledExitsCleanly(t *testing.T) {
 	}
 }
 
-func TestRunBootstrap_EnabledWithoutDSNsFailsClosed(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("IBEX_RELAY_ENABLED", "true")
-	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "")
-	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "")
-	if code := runBootstrap(nil, nil); code != 1 {
-		t.Fatalf("missing DSNs must fail closed, got %d", code)
+func TestRunBootstrap_FailsClosed(t *testing.T) {
+	enabledDSNs := map[string]string{
+		"IBEX_RELAY_ENABLED":        "true",
+		"IBEX_RELAY_POSTGRES_DSN":   "postgres://relay:pw@127.0.0.1:1/ibex?sslmode=disable",
+		"IBEX_RELAY_CLICKHOUSE_DSN": "clickhouse://ibex:ibex@127.0.0.1:1/ibex",
+	}
+	cases := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"enabled without DSNs", map[string]string{"IBEX_ENV": "development", "IBEX_RELAY_ENABLED": "true", "IBEX_RELAY_POSTGRES_DSN": "", "IBEX_RELAY_CLICKHOUSE_DSN": ""}},
+		{"unreachable dependencies", mergeEnv(map[string]string{"IBEX_ENV": "development", "IBEX_RELAY_OPERATION_TIMEOUT": "1s"}, enabledDSNs)},
+		{"missing environment", map[string]string{"IBEX_ENV": ""}},
+		{"unknown environment", map[string]string{"IBEX_ENV": "prod"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			if code := runBootstrap(nil, nil); code != 1 {
+				t.Fatalf("expected fail closed, got %d", code)
+			}
+		})
 	}
 }
 
-func TestRunBootstrap_UnreachablePostgresFailsClosed(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("IBEX_RELAY_ENABLED", "true")
-	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "postgres://relay:pw@127.0.0.1:1/ibex?sslmode=disable")
-	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "clickhouse://ibex:ibex@127.0.0.1:1/ibex")
-	t.Setenv("IBEX_RELAY_OPERATION_TIMEOUT", "1s")
-	if code := runBootstrap(nil, nil); code != 1 {
-		t.Fatalf("unreachable postgres must fail closed, got %d", code)
+func mergeEnv(base, extra map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(extra))
+	for key, value := range base {
+		merged[key] = value
 	}
-}
-
-func TestRunBootstrap_MissingEnvironmentFailsClosed(t *testing.T) {
-	t.Setenv("IBEX_ENV", "")
-	if code := runBootstrap(nil, nil); code != 1 {
-		t.Fatalf("missing IBEX_ENV must fail closed, got %d", code)
+	for key, value := range extra {
+		merged[key] = value
 	}
-}
-
-func TestRunBootstrap_TelemetryConfigFailsClosed(t *testing.T) {
-	t.Setenv("IBEX_ENV", "development")
-	t.Setenv("IBEX_RELAY_ENABLED", "true")
-	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "postgres://relay:pw@127.0.0.1:1/ibex?sslmode=disable")
-	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "clickhouse://ibex:ibex@127.0.0.1:1/ibex")
-	t.Setenv("OTEL_SAMPLE_RATIO", "not-a-ratio")
-	if code := runBootstrap(nil, nil); code != 1 {
-		t.Fatalf("invalid telemetry config must fail closed, got %d", code)
-	}
+	return merged
 }
 
 func TestInitRelayTelemetry_EmptyServiceNameFailsClosed(t *testing.T) {
@@ -77,10 +76,13 @@ func TestInitRelayTelemetry_EmptyServiceNameFailsClosed(t *testing.T) {
 	}
 }
 
-func TestRunBootstrap_UnknownEnvironmentFailsClosed(t *testing.T) {
-	t.Setenv("IBEX_ENV", "prod")
-	if code := runBootstrap(nil, nil); code != 1 {
-		t.Fatalf("unknown IBEX_ENV must fail closed, got %d", code)
+// TestInitRelayTelemetry_InvalidSampleRatioFailsClosed asserts the telemetry
+// configuration error directly, so it cannot pass because runtime startup later
+// failed on unreachable dependencies.
+func TestInitRelayTelemetry_InvalidSampleRatioFailsClosed(t *testing.T) {
+	t.Setenv("OTEL_SAMPLE_RATIO", "not-a-ratio")
+	if _, err := initRelayTelemetry(context.Background(), config.Config{ServiceName: "relay-test"}, logger.Discard("relay-test")); err == nil {
+		t.Fatal("invalid OTEL_SAMPLE_RATIO must fail telemetry config")
 	}
 }
 

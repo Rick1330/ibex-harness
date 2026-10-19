@@ -128,3 +128,11 @@ func TestNewSessionFenceChecker_RequiresDependencies(t *testing.T) {
 		t.Fatal("nil metrics must be rejected")
 	}
 }
+
+func TestCheckFence_NilOrgFailsClosed(t *testing.T) {
+	checker, _ := newTestChecker(t)
+	err := checker.CheckFence(context.Background(), uuid.Nil, sessionFence(uuid.New().String()))
+	if !errors.Is(err, evidenceoutbox.ErrUnsupportedFenceResource) {
+		t.Fatalf("nil org must fail closed, got %v", err)
+	}
+}
