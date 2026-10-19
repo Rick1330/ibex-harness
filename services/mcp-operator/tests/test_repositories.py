@@ -137,13 +137,15 @@ async def test_query_evidence_applies_filters_and_truncation() -> None:
     assert result["count"] == 1
     assert result["truncated"] is True
     sql, params = session.calls[0]
-    assert "trace_id = :trace_id" in sql
-    assert "session_id = :session_id" in sql
-    assert "request_id = :request_id" in sql
-    assert "error_code = :error_code" in sql
-    assert "status <> 'ok'" in sql
+    assert ":trace_id IS NULL OR trace_id = :trace_id" in sql
+    assert ":session_id IS NULL OR session_id = :session_id" in sql
+    assert ":request_id IS NULL OR request_id = :request_id" in sql
+    assert ":error_code IS NULL OR error_code = :error_code" in sql
+    assert ":status = 'error' AND status <> 'ok'" in sql
     assert params["limit"] == 2
     assert params["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
+    assert params["session_id"] == str(SESSION_ID)
+    assert params["status"] == "error"
 
 
 @pytest.mark.asyncio
@@ -161,9 +163,10 @@ async def test_query_evidence_ok_status_and_no_truncation() -> None:
     )
     assert result["count"] == 1
     assert result["truncated"] is False
-    sql, _ = session.calls[0]
-    assert "status = 'ok'" in sql
-    assert "trace_id = :trace_id" not in sql
+    sql, params = session.calls[0]
+    assert ":status = 'ok' AND status = 'ok'" in sql
+    assert params["trace_id"] is None
+    assert params["status"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -177,8 +180,10 @@ async def test_budget_active_only_adds_window() -> None:
     )
     assert result["periods"][0]["cap_cents"] == 5000
     assert result["periods"][0]["period_id"] == str(SESSION_ID)
-    sql, _ = session.calls[0]
+    sql, params = session.calls[0]
+    assert "NOT :active_only" in sql
     assert "period_start <= NOW() AND period_end > NOW()" in sql
+    assert params["active_only"] is True
 
 
 @pytest.mark.asyncio
@@ -191,5 +196,6 @@ async def test_budget_without_active_filter() -> None:
         limit=5,  # type: ignore[arg-type]
     )
     assert result == {"periods": [], "count": 0, "truncated": False}
-    sql, _ = session.calls[0]
-    assert "NOW()" not in sql
+    sql, params = session.calls[0]
+    assert "NOT :active_only" in sql
+    assert params["active_only"] is False

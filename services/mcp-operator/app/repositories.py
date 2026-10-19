@@ -98,31 +98,28 @@ async def query_evidence(
     status: str | None,
     limit: int,
 ) -> dict[str, Any]:
-    clauses = ["org_id = :org_id"]
-    params: dict[str, Any] = {"org_id": str(org_id), "limit": limit + 1}
-    if trace_id is not None:
-        clauses.append("trace_id = :trace_id")
-        params["trace_id"] = trace_id
-    if session_id is not None:
-        clauses.append("session_id = :session_id")
-        params["session_id"] = str(session_id)
-    if request_id is not None:
-        clauses.append("request_id = :request_id")
-        params["request_id"] = request_id
-    if error_code is not None:
-        clauses.append("error_code = :error_code")
-        params["error_code"] = error_code
-    if status == "ok":
-        clauses.append("status = 'ok'")
-    elif status == "error":
-        clauses.append("status <> 'ok'")
-    where = " AND ".join(clauses)
     result = await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"SELECT {_RUN_COLUMNS} FROM ibex_core.evidence_runs "  # nosec B608 - fixed clauses, bound params
-            f"WHERE {where} ORDER BY started_at DESC, id DESC LIMIT :limit"
+            f"SELECT {_RUN_COLUMNS} FROM ibex_core.evidence_runs "  # nosec B608 - module constants, bound params
+            "WHERE org_id = :org_id "
+            "AND (:trace_id IS NULL OR trace_id = :trace_id) "
+            "AND (:session_id IS NULL OR session_id = :session_id) "
+            "AND (:request_id IS NULL OR request_id = :request_id) "
+            "AND (:error_code IS NULL OR error_code = :error_code) "
+            "AND (:status IS NULL "
+            "OR (:status = 'ok' AND status = 'ok') "
+            "OR (:status = 'error' AND status <> 'ok')) "
+            "ORDER BY started_at DESC, id DESC LIMIT :limit"
         ),
-        params,
+        {
+            "org_id": str(org_id),
+            "trace_id": trace_id,
+            "session_id": str(session_id) if session_id is not None else None,
+            "request_id": request_id,
+            "error_code": error_code,
+            "status": status,
+            "limit": limit + 1,
+        },
     )
     rows = result.mappings().all()
     truncated = len(rows) > limit
@@ -141,17 +138,15 @@ async def get_budget_periods(
     active_only: bool,
     limit: int,
 ) -> dict[str, Any]:
-    clauses = ["org_id = :org_id"]
-    params: dict[str, Any] = {"org_id": str(org_id), "limit": limit + 1}
-    if active_only:
-        clauses.append("period_start <= NOW() AND period_end > NOW()")
-    where = " AND ".join(clauses)
     result = await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"SELECT {_BUDGET_COLUMNS} FROM ibex_billing.budget_periods "  # nosec B608 - fixed clauses, bound params
-            f"WHERE {where} ORDER BY period_start DESC LIMIT :limit"
+            f"SELECT {_BUDGET_COLUMNS} FROM ibex_billing.budget_periods "  # nosec B608 - module constants, bound params
+            "WHERE org_id = :org_id "
+            "AND (NOT :active_only "
+            "OR (period_start <= NOW() AND period_end > NOW())) "
+            "ORDER BY period_start DESC LIMIT :limit"
         ),
-        params,
+        {"org_id": str(org_id), "active_only": active_only, "limit": limit + 1},
     )
     rows = result.mappings().all()
     truncated = len(rows) > limit
