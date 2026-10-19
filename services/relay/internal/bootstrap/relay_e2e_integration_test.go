@@ -307,8 +307,14 @@ func TestIntegration_OpenRuntime_BuildsWithRealDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openRuntime: %v", err)
 	}
-	if rt.db == nil || rt.sink == nil || rt.relay == nil {
-		t.Fatal("openRuntime must populate db, sink, and relay")
+	if rt.db == nil {
+		t.Fatal("openRuntime must populate db")
+	}
+	if rt.sink == nil {
+		t.Fatal("openRuntime must populate sink")
+	}
+	if rt.relay == nil {
+		t.Fatal("openRuntime must populate relay")
 	}
 	if err := closeRuntime(rt); err != nil {
 		t.Fatalf("closeRuntime: %v", err)
@@ -332,9 +338,11 @@ func TestIntegration_ServeRelay_StartsAndDrainsCleanly(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- serveRelay(cfg, logger.Discard("relay-it"), reg, rt, signalCh) }()
 
-	// Let the loop complete at least one real recover/claim cycle before
-	// signalling; both the signal and the drain are bounded by the select below.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the loop to complete at least one real recover/claim cycle before
+	// signalling. A fixed sleep could let SIGTERM cancel the first cycle on a
+	// slow runner while the exit-code check still passed; the batches counter
+	// only has a series once a cycle has actually completed.
+	waitFor(t, func() bool { return metricSeriesCount(t, reg, "ibex_relay_batches_total") > 0 })
 	signalCh <- syscall.SIGTERM
 
 	select {

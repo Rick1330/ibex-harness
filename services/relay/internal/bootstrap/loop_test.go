@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -260,14 +261,19 @@ func TestRunLoop_BacksOffAfterFailureAndStopsOnCancel(t *testing.T) {
 	stopRelayLoop(t, cancel, done)
 }
 
-type blockingRelay struct{ started chan struct{} }
+type blockingRelay struct {
+	started chan struct{}
+	once    sync.Once
+}
 
 func (b *blockingRelay) RecoverInFlight(context.Context, time.Duration) (int64, error) {
 	return 0, nil
 }
 
 func (b *blockingRelay) ProcessBatch(ctx context.Context) (evidenceoutbox.RelayBatchResult, error) {
-	close(b.started)
+	// The loop can call ProcessBatch again if this call returns while the parent
+	// context is still active, so close started at most once.
+	b.once.Do(func() { close(b.started) })
 	<-ctx.Done()
 	return evidenceoutbox.RelayBatchResult{}, nil
 }

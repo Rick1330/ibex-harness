@@ -40,11 +40,10 @@ func TestRunBootstrap_FailsClosed(t *testing.T) {
 		name string
 		env  map[string]string
 	}{
-		{"enabled without DSNs", map[string]string{"IBEX_ENV": "development", "IBEX_RELAY_ENABLED": "true"}},
+		{"enabled without DSNs", map[string]string{"IBEX_ENV": "development", "IBEX_RELAY_ENABLED": "true", "IBEX_RELAY_POSTGRES_DSN": "", "IBEX_RELAY_CLICKHOUSE_DSN": ""}},
 		{"unreachable dependencies", mergeEnv(map[string]string{"IBEX_ENV": "development", "IBEX_RELAY_OPERATION_TIMEOUT": "1s"}, enabledDSNs)},
 		{"missing environment", map[string]string{"IBEX_ENV": ""}},
 		{"unknown environment", map[string]string{"IBEX_ENV": "prod"}},
-		{"invalid telemetry config", mergeEnv(map[string]string{"IBEX_ENV": "development", "OTEL_SAMPLE_RATIO": "not-a-ratio"}, enabledDSNs)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,6 +73,16 @@ func TestInitRelayTelemetry_EmptyServiceNameFailsClosed(t *testing.T) {
 	_, err := initRelayTelemetry(context.Background(), config.Config{ServiceName: ""}, logger.Discard("relay-test"))
 	if err == nil {
 		t.Fatal("empty service name must fail telemetry config")
+	}
+}
+
+// TestInitRelayTelemetry_InvalidSampleRatioFailsClosed asserts the telemetry
+// configuration error directly, so it cannot pass because runtime startup later
+// failed on unreachable dependencies.
+func TestInitRelayTelemetry_InvalidSampleRatioFailsClosed(t *testing.T) {
+	t.Setenv("OTEL_SAMPLE_RATIO", "not-a-ratio")
+	if _, err := initRelayTelemetry(context.Background(), config.Config{ServiceName: "relay-test"}, logger.Discard("relay-test")); err == nil {
+		t.Fatal("invalid OTEL_SAMPLE_RATIO must fail telemetry config")
 	}
 }
 
