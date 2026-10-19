@@ -23,10 +23,23 @@ if [[ -z "${CANONICAL_DSN}" ]]; then
 fi
 export IBEX_IDEMPOTENCY_CONFORMANCE_DSN="${CANONICAL_DSN}"
 
+# This script only runs where a migrated DSN is provided, so treat a missing
+# DSN or an unreachable database as a hard failure: a silent skip would remove
+# the GAP-001 evidence gate.
+export IBEX_IDEMPOTENCY_CONFORMANCE_REQUIRED=1
+
 cd "$SUITE_DIR"
 # The only source builds here are the first-party path wheels (ibex-async-db,
 # ibex-idempotency); every third-party dependency is resolved from the frozen
 # lockfile, so no untrusted setup script runs.
 uv sync --frozen --extra dev  # NOSONAR shell:S8541
 .venv/bin/ruff check tests
+.venv/bin/pytest -q
+
+# The shared ledger adapter's unit tests ship with the package; the conformance
+# suite's `testpaths` only sees its own tests/ directory, so run them here to
+# keep them in CI.
+cd "$ROOT/packages/ibex_idempotency"
+uv sync --frozen --extra dev  # NOSONAR shell:S8541
+.venv/bin/ruff check src tests
 .venv/bin/pytest -q

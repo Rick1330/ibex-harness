@@ -1,7 +1,11 @@
 """Real-PostgreSQL fixtures for the request-idempotency-core.v1 conformance suite.
 
 The suite assumes the database has already been migrated to head (CI applies the
-migrations before invoking pytest). It fails closed when no DSN is configured.
+migrations before invoking pytest). By default a missing DSN or an unreachable
+PostgreSQL is a *skip* so the suite can be collected on a developer laptop
+without a database. When ``IBEX_IDEMPOTENCY_CONFORMANCE_REQUIRED=1`` is set (the
+CI conformance job does this) the same conditions *fail* instead: a silently
+skipped suite would remove the evidence gate the issue depends on.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 _DSN_ENV = ("IBEX_IDEMPOTENCY_CONFORMANCE_DSN", "POSTGRES_TEST_DSN", "IBEX_MEMORY_DATABASE_URL")
+_REQUIRED = os.getenv("IBEX_IDEMPOTENCY_CONFORMANCE_REQUIRED") == "1"
 
 
 def _raw_dsn() -> str | None:
@@ -43,6 +48,8 @@ def conformance_target() -> AsyncDatabaseTarget:
     """
     raw = _raw_dsn()
     if not raw:
+        if _REQUIRED:
+            pytest.fail("conformance DSN required but not set", pytrace=False)
         pytest.skip("IBEX_IDEMPOTENCY_CONFORMANCE_DSN / POSTGRES_TEST_DSN not set")
     return parse_async_database_url(raw)
 
@@ -61,6 +68,8 @@ async def engine(conformance_target: AsyncDatabaseTarget) -> AsyncIterator[Async
             )
     except Exception as exc:  # noqa: BLE001 — environment probe
         await eng.dispose()
+        if _REQUIRED:
+            pytest.fail(f"postgres required but not available: {exc}", pytrace=False)
         pytest.skip(f"postgres not available: {exc}")
     yield eng
     await eng.dispose()

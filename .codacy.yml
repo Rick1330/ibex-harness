@@ -14,6 +14,7 @@ exclude_paths:
   # Pytest uses assert for expectations; Codacy flags S101/Bandit B101 in test bodies.
   - "services/**/tests/**"
   - "packages/**/tests/**"
+  - "infra/tests/**"
   # Codacy .codacy.yml exclude_paths can only ignore whole files/globs, not a
   # single finding. The Opengrep SSRF false positive on the allowlisted
   # fetch() in services/console/src/lib/api/transport.ts is suppressed inline
@@ -27,6 +28,7 @@ exclude_paths:
   - "packages/directive/store_integration_test.go"
   - "packages/session/store_integration_test.go"
   - "packages/evidenceoutbox/store_integration_test.go"
+  - "packages/idempotency/ledger_postgres_integration_test.go"
   - "services/auth/internal/repository/provider_credentials_integration_test.go"
   # ClickHouse / Postgres migrations are not T-SQL. Codacy still runs TSQLLint
   # on *.sql despite engines.tsqllint.enabled=false; SET QUOTED_IDENTIFIER would

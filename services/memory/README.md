@@ -100,7 +100,10 @@ documented error envelopes rather than silently widening scope.
   stored `2xx` response; a reused key with a different body returns
   `409 IDEMPOTENCY_CONFLICT`; an active claim returns `409 IDEMPOTENCY_IN_PROGRESS`
   with `Retry-After`. When a key is supplied and Postgres is unavailable the write
-  fails closed with `503 IDEMPOTENCY_UNAVAILABLE`.
+  fails closed with `503 IDEMPOTENCY_UNAVAILABLE`. A keyed write whose memory row
+  is committed but whose claim cannot be finalized (the ledger is retried for
+  transient outages) also fails closed with `503` rather than returning a `2xx`
+  over an unfinished claim.
 - Observability: Prometheus job `memory` (:8005), Grafana dashboard `memory.json`
 
 ## HNSW benches

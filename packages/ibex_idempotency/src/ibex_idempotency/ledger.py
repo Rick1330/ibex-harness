@@ -121,7 +121,7 @@ class PostgresIdempotencyLedger:
                 probe = result.mappings().one()
                 if not all(probe.values()):
                     raise LedgerError("idempotency ledger is not ready")
-        except SQLAlchemyError as exc:
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
             raise _unavailable_error(exc) from exc
 
     async def claim(
@@ -145,7 +145,7 @@ class PostgresIdempotencyLedger:
                 return await self._resolve_row(row, fresh=fresh, context=context)
         except IntegrityError as exc:
             raise _as_ledger_error(exc) from exc
-        except SQLAlchemyError as exc:
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
             raise _unavailable_error(exc) from exc
 
     async def _insert_or_load(self, context: _ResolveContext) -> tuple[Any, bool]:
@@ -292,7 +292,7 @@ class PostgresIdempotencyLedger:
                 )
                 if result.rowcount != 1:
                     raise LedgerConflictError("claim is no longer owned")
-        except SQLAlchemyError as exc:
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
             raise _unavailable_error(exc) from exc
 
     async def release(self, claim: ClaimToken) -> None:
@@ -311,7 +311,7 @@ class PostgresIdempotencyLedger:
                 )
                 if result.rowcount != 1:
                     raise LedgerConflictError("claim is no longer owned")
-        except SQLAlchemyError as exc:
+        except (SQLAlchemyError, OSError, TimeoutError) as exc:
             raise _unavailable_error(exc) from exc
 
     def _lease_interval(self) -> timedelta:
@@ -325,12 +325,13 @@ def _as_ledger_error(exc: IntegrityError) -> LedgerError:
     return LedgerError("idempotency ledger rejected claim")
 
 
-def _unavailable_error(exc: SQLAlchemyError) -> LedgerError:
+def _unavailable_error(exc: BaseException) -> LedgerError:
     """Map any driver/connection failure to a fail-closed ``LedgerError``.
 
     Without this, a refused connection or timed-out query escapes as a raw
-    ``OperationalError``; callers that only catch ``LedgerError`` would then
-    surface a 500 instead of the intended 503 ``IDEMPOTENCY_UNAVAILABLE``.
+    ``OperationalError`` (or an ``OSError`` / ``TimeoutError`` from pool
+    checkout); callers that only catch ``LedgerError`` would then surface a 500
+    instead of the intended 503 ``IDEMPOTENCY_UNAVAILABLE``.
     """
     return LedgerError(f"idempotency ledger unavailable: {type(exc).__name__}")
 

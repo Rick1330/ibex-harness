@@ -244,7 +244,7 @@ def test_create_memory_duplicate_release_error_still_returns_domain_error(client
     assert resp.json()["detail"]["code"] == "DUPLICATE_CONTENT"
 
 
-def test_create_memory_commit_failure_still_returns_201(client) -> None:
+def test_create_memory_finalize_failure_fails_closed(client) -> None:
     http, mock_orch = client
 
     class _FailingFinalizeLedger(_FakeLedger):
@@ -258,8 +258,10 @@ def test_create_memory_commit_failure_still_returns_201(client) -> None:
     )
     with http:
         resp = _post_memory(http, idempotency_key="key-1")
-    assert resp.status_code == 201
-    assert resp.json()["data"]["content"] == "hello"
+    # A committed write must not be reported as completed while its ledger
+    # claim is still open: the endpoint fails closed instead of returning 201.
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "IDEMPOTENCY_UNAVAILABLE"
 
 
 def test_create_memory_idempotency_hit(client) -> None:

@@ -33,4 +33,8 @@ POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable 
   bash infra/scripts/idempotency-conformance-ci.sh
 ```
 
-The suite skips (does not fail) when no DSN is set or PostgreSQL is unreachable.
+Run directly with `pytest` and no DSN, the suite skips (does not fail) so it can
+be collected without a database. `infra/scripts/idempotency-conformance-ci.sh`
+sets `IBEX_IDEMPOTENCY_CONFORMANCE_REQUIRED=1`, which turns a missing DSN or an
+unreachable PostgreSQL into a failure so a silent skip can never remove the
+evidence gate in CI.

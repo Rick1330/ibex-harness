@@ -10,6 +10,7 @@ without dedupe.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from ibex_idempotency import (
     KIND_REPLAY,
     ClaimOutcome,
     ClaimToken,
+    LedgerConflictError,
     LedgerError,
     LedgerValidationError,
     PostgresIdempotencyLedger,
@@ -49,6 +51,22 @@ from app.write.labels import MemoryLabelInput, resolve_write_labels
 from app.write.models import CreateMemoryCommand, WriteOutcome
 
 logger = logging.getLogger(__name__)
+
+# Recoverable finalization: a committed keyed write must not be reported as
+# completed while its ledger claim is still open, so retry transient ledger
+# outages a bounded number of times before failing closed with 503.
+_FINALIZE_ATTEMPTS = 3
+_FINALIZE_BACKOFF_SECONDS = 0.05
+
+
+def _idempotency_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "IDEMPOTENCY_UNAVAILABLE",
+            "message": "Idempotency ledger unavailable",
+        },
+    )
 
 
 class IdempotencyHandle:
@@ -133,12 +151,16 @@ def _reject_idempotency_conflict(outcome: ClaimOutcome) -> None:
             },
         )
     if outcome.kind == KIND_IN_PROGRESS:
+        headers = (
+            {"Retry-After": str(outcome.retry_after)} if outcome.retry_after is not None else None
+        )
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "IDEMPOTENCY_IN_PROGRESS",
                 "message": "Request with this idempotency key is in progress",
             },
+            headers=headers,
         )
 
 
@@ -176,13 +198,7 @@ async def _claim_idempotency_slot(
         ) from exc
     except LedgerError as exc:
         logger.warning("idempotency claim unavailable error_class=%s", type(exc).__name__)
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "IDEMPOTENCY_UNAVAILABLE",
-                "message": "Idempotency ledger unavailable",
-            },
-        ) from exc
+        raise _idempotency_unavailable() from exc
 
 
 async def begin_idempotency(
@@ -199,13 +215,7 @@ async def begin_idempotency(
     if not validated_key:
         return handle
     if ledger is None:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "IDEMPOTENCY_UNAVAILABLE",
-                "message": "Idempotency ledger unavailable",
-            },
-        )
+        raise _idempotency_unavailable()
     handle.ledger = ledger
     outcome = await _claim_idempotency_slot(
         ledger,
@@ -233,16 +243,37 @@ async def commit_idempotency(handle: IdempotencyHandle, *, status: int, body: by
         await handle.ledger.finalize(handle.claim, status=status, response=body)
 
 
-async def commit_idempotency_or_log(handle: IdempotencyHandle, *, status: int, body: bytes) -> None:
+async def commit_idempotency_fail_closed(
+    handle: IdempotencyHandle, *, status: int, body: bytes
+) -> None:
+    """Finalize a keyed write, retrying transient outages, then fail closed.
+
+    The memory row is committed before this runs. Swallowing a finalize failure
+    would return 201/202 over an unfinished claim: the response could not be
+    replayed and, after the lease expired, another claim could write a
+    duplicate. Retry the transient cases a bounded number of times; if the
+    ledger stays unavailable, surface 503 instead of a false success. A lost
+    claim (``LedgerConflictError``) is not retryable and fails closed at once.
+    """
     if not handle.active:
         return
-    try:
-        await commit_idempotency(handle, status=status, body=body)
-    except LedgerError as exc:
-        logger.warning(
-            "idempotency commit failed after successful write error_class=%s",
-            type(exc).__name__,
-        )
+    last: LedgerError | None = None
+    for attempt in range(_FINALIZE_ATTEMPTS):
+        try:
+            await commit_idempotency(handle, status=status, body=body)
+            return
+        except LedgerConflictError as exc:
+            last = exc
+            break
+        except LedgerError as exc:
+            last = exc
+            if attempt + 1 < _FINALIZE_ATTEMPTS:
+                await asyncio.sleep(_FINALIZE_BACKOFF_SECONDS * (2**attempt))
+    logger.warning(
+        "idempotency finalize failed after successful write error_class=%s",
+        type(last).__name__,
+    )
+    raise _idempotency_unavailable() from last
 
 
 def http_error_for_write(exc: BaseException) -> HTTPException:
@@ -360,7 +391,7 @@ async def finalize_quarantine_response(
         ),
         meta={"message": "Memory quarantined for review due to PII detection"},
     )
-    await commit_idempotency_or_log(
+    await commit_idempotency_fail_closed(
         idem, status=202, body=payload.model_dump_json().encode("utf-8")
     )
     return payload
@@ -380,7 +411,7 @@ async def finalize_created_response(
             processing_time_ms=ctx.elapsed_ms,
         ),
     )
-    await commit_idempotency_or_log(
+    await commit_idempotency_fail_closed(
         ctx.idem, status=201, body=payload.model_dump_json().encode("utf-8")
     )
     return payload

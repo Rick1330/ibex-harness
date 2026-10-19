@@ -310,24 +310,34 @@ def _operational_error(statement: str) -> OperationalError:
     return OperationalError(statement, {}, Exception("connection refused"))
 
 
+_DRIVER_ERRORS = [
+    _operational_error("INSERT"),
+    OSError("pool is closed"),
+    TimeoutError("pool checkout timed out"),
+]
+
+
+@pytest.mark.parametrize("error", _DRIVER_ERRORS)
 @pytest.mark.asyncio
-async def test_claim_maps_driver_error_to_ledger_error() -> None:
-    ledger = _ledger(_FailingSession(_operational_error("INSERT")))
+async def test_claim_maps_driver_error_to_ledger_error(error: Exception) -> None:
+    ledger = _ledger(_FailingSession(error))
     with pytest.raises(LedgerError):
         await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="k", request_hash=_HASH)
 
 
+@pytest.mark.parametrize("error", _DRIVER_ERRORS)
 @pytest.mark.asyncio
-async def test_finalize_maps_driver_error_to_ledger_error() -> None:
-    ledger = _ledger(_FailingSession(_operational_error("UPDATE")))
+async def test_finalize_maps_driver_error_to_ledger_error(error: Exception) -> None:
+    ledger = _ledger(_FailingSession(error))
     claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
     with pytest.raises(LedgerError):
         await ledger.finalize(claim, status=200, response=b"{}")
 
 
+@pytest.mark.parametrize("error", _DRIVER_ERRORS)
 @pytest.mark.asyncio
-async def test_release_maps_driver_error_to_ledger_error() -> None:
-    ledger = _ledger(_FailingSession(_operational_error("DELETE")))
+async def test_release_maps_driver_error_to_ledger_error(error: Exception) -> None:
+    ledger = _ledger(_FailingSession(error))
     claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
     with pytest.raises(LedgerError):
         await ledger.release(claim)

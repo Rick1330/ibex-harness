@@ -171,8 +171,10 @@ async def test_rls_hides_other_org_rows(
         visible = (
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT count(*) FROM ibex_core.idempotency_ledger"
-                )
+                    "SELECT count(*) FROM ibex_core.idempotency_ledger "
+                    "WHERE organization_id = :org_a"
+                ),
+                {"org_a": org_a},
             )
         ).scalar_one()
     assert visible == 0

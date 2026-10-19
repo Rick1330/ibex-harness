@@ -15,15 +15,17 @@ from ibex_idempotency import (
     KIND_REPLAY,
     ClaimOutcome,
     ClaimToken,
+    LedgerConflictError,
     LedgerError,
     LedgerValidationError,
 )
 
 from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
 from app.routers.memory_write_support import (
+    _FINALIZE_ATTEMPTS,
     begin_idempotency,
     commit_idempotency,
-    commit_idempotency_or_log,
+    commit_idempotency_fail_closed,
     http_error_for_write,
     release_idempotency,
 )
@@ -98,6 +100,7 @@ async def test_begin_idempotency_in_progress_is_409() -> None:
         await _begin(ledger)
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "IDEMPOTENCY_IN_PROGRESS"
+    assert exc.value.headers == {"Retry-After": "5"}
 
 
 @pytest.mark.asyncio
@@ -147,11 +150,37 @@ async def test_release_idempotency_swallows_ledger_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_commit_idempotency_or_log_swallows_ledger_error() -> None:
+async def test_commit_fail_closed_retries_then_returns_503(monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.memory_write_support._FINALIZE_BACKOFF_SECONDS", 0.0)
     ledger = AsyncMock()
     ledger.finalize = AsyncMock(side_effect=LedgerError("down"))
     handle = active_idempotency_handle(ledger=ledger)
-    await commit_idempotency_or_log(handle, status=201, body=b"{}")
+    with pytest.raises(HTTPException) as exc:
+        await commit_idempotency_fail_closed(handle, status=201, body=b"{}")
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "IDEMPOTENCY_UNAVAILABLE"
+    assert ledger.finalize.await_count == _FINALIZE_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_commit_fail_closed_recovers_on_transient_retry(monkeypatch) -> None:
+    monkeypatch.setattr("app.routers.memory_write_support._FINALIZE_BACKOFF_SECONDS", 0.0)
+    ledger = AsyncMock()
+    ledger.finalize = AsyncMock(side_effect=[LedgerError("blip"), None])
+    handle = active_idempotency_handle(ledger=ledger)
+    await commit_idempotency_fail_closed(handle, status=201, body=b"{}")
+    assert ledger.finalize.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_commit_fail_closed_does_not_retry_lost_claim() -> None:
+    ledger = AsyncMock()
+    ledger.finalize = AsyncMock(side_effect=LedgerConflictError("claim lost"))
+    handle = active_idempotency_handle(ledger=ledger)
+    with pytest.raises(HTTPException) as exc:
+        await commit_idempotency_fail_closed(handle, status=201, body=b"{}")
+    assert exc.value.status_code == 503
+    assert ledger.finalize.await_count == 1
 
 
 def test_http_error_for_write_maps_duplicate() -> None:
