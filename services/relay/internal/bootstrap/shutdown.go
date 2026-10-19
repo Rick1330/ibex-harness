@@ -7,10 +7,8 @@ import (
 	"net/http"
 	"os"
 	"sync/atomic"
-	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
 )
@@ -22,8 +20,6 @@ type shutdownOpts struct {
 	draining   *atomic.Bool
 	cancelLoop context.CancelFunc
 	loopDone   <-chan struct{}
-	relay      batchRelay
-	metrics    *ibexmetrics.RelayRegistry
 	rt         *runtime
 	signalCh   chan os.Signal
 }
@@ -87,8 +83,10 @@ func immediateRelayCleanup(opts shutdownOpts) {
 }
 
 // registerRelayShutdownHooks orders teardown: flip draining and stop the loop,
-// wait for the in-flight batch, release any claims we left in_flight, then
-// close the HTTP surface and dependencies.
+// wait for the in-flight batch, then close the HTTP surface and dependencies.
+// Claims abandoned by an interrupted batch are left to the loop's stale
+// recovery (RecoverAfter) on restart; releasing them here would also reset
+// claims owned by other relay instances.
 func registerRelayShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(context.Context) error {
 		opts.draining.Store(true)
@@ -102,17 +100,6 @@ func registerRelayShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 		case <-ctx.Done():
 			return fmt.Errorf("relay loop drain: %w", ctx.Err())
 		}
-	})
-	sd.Register(func(ctx context.Context) error {
-		recovered, err := opts.relay.RecoverInFlight(ctx, time.Nanosecond)
-		if err != nil {
-			return fmt.Errorf("release in-flight claims: %w", err)
-		}
-		if recovered > 0 {
-			opts.metrics.AddRecovered(int(recovered))
-			opts.log.InfoCtx(ctx, "released in-flight claims", "count", recovered)
-		}
-		return nil
 	})
 	sd.Register(func(ctx context.Context) error {
 		return opts.server.Shutdown(ctx)

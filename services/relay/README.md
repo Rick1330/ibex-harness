@@ -17,7 +17,7 @@ for hosted or HA use.
 | `internal/bootstrap/wire.go` | Role-pinned PostgreSQL pool, ClickHouse pilot sink, fence checker, relay wiring. |
 | `internal/bootstrap/loop.go` | Claim/deliver cycle, backoff, stale in-flight recovery. |
 | `internal/bootstrap/health.go` | `/health`, `/ready`, `/metrics`. |
-| `internal/bootstrap/shutdown.go` | Drain ordering, in-flight release, dependency close. |
+| `internal/bootstrap/shutdown.go` | Drain ordering, dependency close. |
 | `internal/config/` | Env var parsing, defaults, bounds, fail-closed validation. |
 | `internal/fence/` | Authoritative session fence checker over migration `000047`. |
 
@@ -30,7 +30,7 @@ is the process wrapper, fence authority client, and operational surface.
 - When enabled it requires both `IBEX_RELAY_POSTGRES_DSN` and `IBEX_RELAY_CLICKHOUSE_DSN`; a missing or unreachable dependency is a fatal startup error (exit `1`).
 - Each cycle recovers stale in-flight rows, claims a batch, and for each row: validates redaction class/fence/digest, checks the authoritative session fence, delivers through the fence-aware sink hook, then marks delivered or (on failure) failed/poison.
 - Fence `alive` delivers; `tombstoned`, `stale_version`, or `not_found` poisons the row (`ErrTombstonedResource`); a non-`session`/malformed fence poisons without retry (`ErrUnsupportedFenceResource`); database errors stay retryable.
-- Shutdown sets draining, cancels the loop, waits for the in-flight batch, releases remaining claims back to `pending`, then closes the HTTP surface and dependencies.
+- Shutdown sets draining, cancels the loop, waits for the in-flight batch, then closes the HTTP surface and dependencies. Claims abandoned by an interrupted batch are recovered by the next cycle's stale-recovery window (`IBEX_RELAY_RECOVER_AFTER`) rather than released at shutdown, which would also reset other instances' claims.
 
 ## Configuration
 

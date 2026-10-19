@@ -59,10 +59,15 @@ func loadEnvConfig() (envConfig, error) {
 
 func requireExplicitEnvironment() error {
 	raw, ok := os.LookupEnv("IBEX_ENV")
-	if !ok || strings.TrimSpace(raw) == "" {
+	if !ok {
 		return fmt.Errorf("IBEX_ENV must be set explicitly to development, staging, or production")
 	}
-	return nil
+	switch strings.TrimSpace(raw) {
+	case "development", "staging", "production":
+		return nil
+	default:
+		return fmt.Errorf("IBEX_ENV must be set explicitly to development, staging, or production")
+	}
 }
 
 func buildConfig(envCfg envConfig) (Config, error) {
@@ -124,18 +129,26 @@ func validateCountBounds(cfg Config) error {
 	return nil
 }
 
+// durationBound pairs an env-var name and its configured value with the
+// inclusive range the relay accepts.
+type durationBound struct {
+	env   string
+	value time.Duration
+	min   time.Duration
+	max   time.Duration
+}
+
 func validateDurationBounds(cfg Config) error {
-	if cfg.PollInterval < minPollInterval || cfg.PollInterval > maxPollInterval {
-		return fmt.Errorf("IBEX_RELAY_POLL_INTERVAL must be between %s and %s", minPollInterval, maxPollInterval)
+	bounds := []durationBound{
+		{"IBEX_RELAY_POLL_INTERVAL", cfg.PollInterval, minPollInterval, maxPollInterval},
+		{"IBEX_RELAY_RECOVER_AFTER", cfg.RecoverAfter, minRecoverAfter, maxRecoverAfter},
+		{"IBEX_RELAY_OPERATION_TIMEOUT", cfg.OperationTimeout, minOperationTimeout, maxOperationTimeout},
+		{"IBEX_RELAY_ERROR_BACKOFF", cfg.ErrorBackoff, minErrorBackoff, maxErrorBackoff},
 	}
-	if cfg.RecoverAfter < minRecoverAfter || cfg.RecoverAfter > maxRecoverAfter {
-		return fmt.Errorf("IBEX_RELAY_RECOVER_AFTER must be between %s and %s", minRecoverAfter, maxRecoverAfter)
-	}
-	if cfg.OperationTimeout < minOperationTimeout || cfg.OperationTimeout > maxOperationTimeout {
-		return fmt.Errorf("IBEX_RELAY_OPERATION_TIMEOUT must be between %s and %s", minOperationTimeout, maxOperationTimeout)
-	}
-	if cfg.ErrorBackoff < minErrorBackoff || cfg.ErrorBackoff > maxErrorBackoff {
-		return fmt.Errorf("IBEX_RELAY_ERROR_BACKOFF must be between %s and %s", minErrorBackoff, maxErrorBackoff)
+	for _, b := range bounds {
+		if b.value < b.min || b.value > b.max {
+			return fmt.Errorf("%s must be between %s and %s", b.env, b.min, b.max)
+		}
 	}
 	return nil
 }

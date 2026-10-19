@@ -7,6 +7,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
 )
 
@@ -29,13 +30,27 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		return 0
 	}
 
+	providers, err := initRelayTelemetry(ctx, cfg, log)
+	if err != nil {
+		return 1
+	}
+	defer func() {
+		if err := providers.Shutdown(context.Background()); err != nil {
+			log.ErrorCtx(context.Background(), "telemetry shutdown failed", "error", err)
+		}
+	}()
+
 	reg := ibexmetrics.NewRelay(cfg.ServiceName)
 	rt, err := openRuntime(ctx, cfg, reg)
 	if err != nil {
 		log.ErrorCtx(ctx, "relay runtime setup failed", "error", err)
 		return 1
 	}
+	return serveRelay(cfg, log, reg, rt, signalCh)
+}
 
+// serveRelay starts the poll loop and HTTP server, then blocks until shutdown.
+func serveRelay(cfg config.Config, log *logger.Logger, reg *ibexmetrics.RelayRegistry, rt *runtime, signalCh chan os.Signal) int {
 	draining := &atomic.Bool{}
 	loopCtx, cancelLoop := context.WithCancel(context.Background())
 	loopDone := make(chan struct{})
@@ -52,11 +67,25 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		draining:   draining,
 		cancelLoop: cancelLoop,
 		loopDone:   loopDone,
-		relay:      rt.relay,
-		metrics:    reg,
 		rt:         rt,
 		signalCh:   signalCh,
 	})
+}
+
+// initRelayTelemetry wires OTLP tracing so dependency spans are exported when
+// configured; without an endpoint it installs a no-op exporter.
+func initRelayTelemetry(ctx context.Context, cfg config.Config, log *logger.Logger) (*telemetry.Providers, error) {
+	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
+	if err != nil {
+		log.ErrorCtx(ctx, "telemetry config failed", "error", err)
+		return nil, err
+	}
+	providers, _, err := telemetry.InitTracer(ctx, telemetryCfg, bootstrapServiceName)
+	if err != nil {
+		log.ErrorCtx(ctx, "telemetry init failed", "error", err)
+		return nil, err
+	}
+	return providers, nil
 }
 
 func loadRelayRuntime() (config.Config, *logger.Logger, error) {

@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/fence"
+	"go.opentelemetry.io/otel"
 
 	// Register the lib/pq "postgres" driver used by sql.Open.
 	_ "github.com/lib/pq"
@@ -25,7 +27,29 @@ const relayRoleName = "ibex_evidence_relay"
 const (
 	relayMaxOpenConns = 4
 	relayMaxIdleConns = 2
+
+	// minPersistenceReserve/maxPersistenceReserve bound the slice of the
+	// operation timeout held back so a delivery that exhausts its deadline
+	// still has budget to record the failure or ack.
+	minPersistenceReserve = 500 * time.Millisecond
+	maxPersistenceReserve = 5 * time.Second
 )
+
+// deliveryDeadlineFor returns the per-delivery deadline: the operation timeout
+// minus a bounded reserve kept for failure/ack persistence.
+func deliveryDeadlineFor(operationTimeout time.Duration) time.Duration {
+	if operationTimeout <= 0 {
+		return 0
+	}
+	reserve := operationTimeout / 4
+	if reserve < minPersistenceReserve {
+		reserve = minPersistenceReserve
+	}
+	if reserve > maxPersistenceReserve {
+		reserve = maxPersistenceReserve
+	}
+	return operationTimeout - reserve
+}
 
 // runtime bundles the constructed relay dependencies for the process lifetime.
 type runtime struct {
@@ -47,13 +71,15 @@ func openRuntime(ctx context.Context, cfg config.Config, reg *ibexmetrics.RelayR
 		_ = db.Close()
 		return nil, err
 	}
-	sink, err := clickhousesink.Open(ctx, cfg.ClickHouseDSN.String(), checker)
+	chCtx, chCancel := context.WithTimeout(ctx, cfg.OperationTimeout)
+	sink, err := clickhousesink.Open(chCtx, cfg.ClickHouseDSN.String(), checker)
+	chCancel()
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	rt := &runtime{db: db, sink: sink}
-	relay, err := evidenceoutbox.NewRelay(db, newMetricsDeliverer(sink, reg), evidenceoutbox.RelayConfig{
+	relay, err := evidenceoutbox.NewRelay(db, newMetricsDeliverer(sink, reg, deliveryDeadlineFor(cfg.OperationTimeout)), evidenceoutbox.RelayConfig{
 		BatchSize:   cfg.BatchSize,
 		MaxAttempts: cfg.MaxAttempts,
 	})
@@ -141,20 +167,31 @@ func assertRelayRole(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// metricsDeliverer records delivery duration/outcome around the pilot sink.
+// metricsDeliverer records delivery duration/outcome around the pilot sink and
+// bounds each delivery so persistence always keeps a slice of the operation
+// timeout.
 type metricsDeliverer struct {
 	next    evidenceoutbox.TombstoneFencedDeliverer
 	metrics *ibexmetrics.RelayRegistry
+	timeout time.Duration
 }
 
-func newMetricsDeliverer(next evidenceoutbox.TombstoneFencedDeliverer, reg *ibexmetrics.RelayRegistry) *metricsDeliverer {
-	return &metricsDeliverer{next: next, metrics: reg}
+func newMetricsDeliverer(next evidenceoutbox.TombstoneFencedDeliverer, reg *ibexmetrics.RelayRegistry, timeout time.Duration) *metricsDeliverer {
+	return &metricsDeliverer{next: next, metrics: reg, timeout: timeout}
 }
 
 // DeliverWithTombstoneFence implements evidenceoutbox.TombstoneFencedDeliverer.
 func (d *metricsDeliverer) DeliverWithTombstoneFence(ctx context.Context, row evidenceoutbox.OutboxRow, f evidenceoutbox.TombstoneFence) error {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "relay.deliver")
+	defer span.End()
 	start := time.Now()
-	err := d.next.DeliverWithTombstoneFence(ctx, row, f)
+	deliverCtx := ctx
+	if d.timeout > 0 {
+		var cancel context.CancelFunc
+		deliverCtx, cancel = context.WithTimeout(ctx, d.timeout)
+		defer cancel()
+	}
+	err := d.next.DeliverWithTombstoneFence(deliverCtx, row, f)
 	result := ibexmetrics.RelayDeliveryOK
 	if err != nil {
 		result = ibexmetrics.RelayDeliveryError
@@ -174,19 +211,28 @@ func (d *metricsDeliverer) Deliver(ctx context.Context, row evidenceoutbox.Outbo
 }
 
 func closeRuntime(rt *runtime) error {
-	var firstErr error
 	if rt == nil {
 		return nil
 	}
-	if rt.sink != nil {
-		if err := rt.sink.Close(); err != nil {
-			firstErr = fmt.Errorf("close clickhouse sink: %w", err)
-		}
+	return errors.Join(closeSink(rt.sink), closeDB(rt.db))
+}
+
+func closeSink(sink *clickhousesink.Sink) error {
+	if sink == nil {
+		return nil
 	}
-	if rt.db != nil {
-		if err := rt.db.Close(); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("close postgres: %w", err)
-		}
+	if err := sink.Close(); err != nil {
+		return fmt.Errorf("close clickhouse sink: %w", err)
 	}
-	return firstErr
+	return nil
+}
+
+func closeDB(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	if err := db.Close(); err != nil {
+		return fmt.Errorf("close postgres: %w", err)
+	}
+	return nil
 }

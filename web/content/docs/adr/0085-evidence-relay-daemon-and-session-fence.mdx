@@ -28,7 +28,7 @@ That left two unresolved problems for the security-sensitive relay path:
 
 `services/relay` follows the existing Go service layout (`cmd/relay` entrypoint, `internal/{bootstrap,config,fence}`). The process is inert unless `IBEX_RELAY_ENABLED=true` (default `false`); a disabled daemon logs a documented reason and exits `0`. Enabling it requires both a PostgreSQL DSN and a ClickHouse DSN — startup fails closed (`exit 1`) rather than degrading to a partial runtime. When enabled, a missing or unreachable dependency is a fatal startup error, not a silent fallback.
 
-The runtime loops claim → fence-check → deliver (ClickHouse pilot sink) → finalize, recovers stale in-flight claims, retries with bounded jittered backoff, and dead-letters permanent failures. Shutdown drains, releases in-flight claims back to `pending`, and stops reporting readiness before closing dependencies.
+The runtime loops claim → fence-check → deliver (ClickHouse pilot sink) → finalize, recovers stale in-flight claims, retries with bounded jittered backoff, and dead-letters permanent failures. Shutdown stops claiming, drains the in-flight batch, and stops reporting readiness before closing dependencies; claims abandoned by an interrupted batch are left to the loop's stale-recovery window on restart rather than released at shutdown (releasing them would also reset claims owned by other relay instances). Dependency spans are emitted through the shared OpenTelemetry setup.
 
 ### 2. Least-privilege PostgreSQL identity pinned per connection
 
