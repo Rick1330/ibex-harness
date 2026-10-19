@@ -13,14 +13,14 @@ INTEGRATION_RAN=false
 
 echo "==> Unit coverage"
 go test -count=1 -coverprofile="$UNIT_OUT" \
-  ./packages/... ./services/auth/... ./services/proxy/...
+  ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
 
 echo "==> Integration coverage (requires POSTGRES_TEST_DSN or compose-test)"
 if [[ -z "${POSTGRES_TEST_DSN:-}" ]]; then
   echo "POSTGRES_TEST_DSN not set — skipping integration profile"
 else
   go test -tags=integration -count=1 -p 1 -coverprofile="$INT_OUT" \
-    ./packages/... ./services/auth/... ./services/proxy/... ./infra/...
+    ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/... ./infra/...
   if command -v gocovmerge >/dev/null 2>&1; then
     gocovmerge "$UNIT_OUT" "$INT_OUT" > "$MERGED_OUT"
   else

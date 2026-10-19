@@ -894,7 +894,7 @@ jobs:
       - name: Race detector (unit tests)
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/go-race.xml -- \
-            -race -timeout=120s -count=1 ./packages/... ./services/auth/... ./services/proxy/...
+            -race -timeout=120s -count=1 ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
       - name: Upload test results to Trunk (go-race)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -915,7 +915,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        service: [auth, proxy]
+        service: [auth, proxy, relay]
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -960,6 +960,67 @@ jobs:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
       - name: go build
         run: go build -o /dev/null ./services/${{ matrix.service }}/cmd/${{ matrix.service }}
+
+  relay-integration:
+    name: relay-integration
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: needs.changes.outputs.run_go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # pgvector 0.8.6 on PostgreSQL 16 — immutable pin of
+        # pgvector/pgvector:0.8.6-pg16 (mutable :pg16 must not be used in CI).
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/setup-gotestsum
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - name: Relay integration tests (fence authority + tombstone-fenced delivery)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: |
+          bash infra/scripts/go-test-gotestsum.sh test-results/junit/relay-integration.xml -- \
+            -tags=integration -count=1 -p 1 ./services/relay/...
+      - name: Upload test results to Trunk (relay-integration)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/trunk-upload-junit
+        with:
+          junit-paths: test-results/junit/relay-integration.xml
+          variant: relay-integration
+          org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
+        env:
+          TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
   embedder-test:
     name: embedder-test
@@ -1703,10 +1764,10 @@ jobs:
           golangci-lint run --config .golangci.depguard.yml ./packages/...
       - name: Run golangci-lint (base linters)
         run: |
-          golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
+          golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
       - name: Run golangci-lint (complexity — whole-files scoped)
         run: |
-          golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/...
+          golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
   go-fuzz:
     name: go-fuzz
     needs: changes
@@ -2097,7 +2158,7 @@ jobs:
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/coverage-unit.xml -- \
             -count=1 -coverprofile=coverage-go-unit.out \
-            ./packages/... ./services/auth/... ./services/proxy/...
+            ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
       - name: Upload test results to Trunk (coverage-unit)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -2112,7 +2173,7 @@ jobs:
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/coverage-integration.xml -- \
             -tags=integration -count=1 -p 1 -coverprofile=coverage-go-integration.out \
-            ./packages/... ./services/auth/... ./services/proxy/... ./infra/...
+            ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/... ./infra/...
       - name: Upload test results to Trunk (coverage-integration)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -2499,7 +2560,7 @@ jobs:
         run: bash .github/scripts/install-go-ci-tool.sh golang.org/x/vuln/cmd/govulncheck
       - name: Run govulncheck
         run: |
-          govulncheck ./packages/... ./services/auth/... ./services/proxy/...
+          govulncheck ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/...
 
   license-check:
     name: license-check
@@ -2530,7 +2591,7 @@ jobs:
         run: bash .github/scripts/install-go-ci-tool.sh github.com/google/go-licenses
       - name: Verify dependency licenses
         run: |
-          go-licenses check ./packages/... ./services/auth/... ./services/proxy/... \
+          go-licenses check ./packages/... ./services/auth/... ./services/proxy/... ./services/relay/... \
             --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,Unicode-DFS-2016,MPL-2.0
 
   ci-gate-repo:
@@ -2580,6 +2641,7 @@ jobs:
       - ratelimit-hierarchical-integration
       - go-race
       - go-services
+      - relay-integration
       - embedder-test
       - embedder-coverage
       - mcp-memory-test
@@ -2618,6 +2680,7 @@ jobs:
             "${{ needs.ratelimit-hierarchical-integration.result }}" \
             "${{ needs.go-race.result }}" \
             "${{ needs.go-services.result }}" \
+            "${{ needs.relay-integration.result }}" \
             "${{ needs.embedder-test.result }}" \
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
