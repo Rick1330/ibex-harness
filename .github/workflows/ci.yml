@@ -2161,6 +2161,9 @@ jobs:
       POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
       CLICKHOUSE_TEST_NATIVE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex
       CLICKHOUSE_MIGRATE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree
+      # The clickhouse migration integration tests insert over HTTP; the service
+      # maps host 8123 to the container HTTP port (see infra/compose/dev).
+      CLICKHOUSE_HTTP_PORT: "8123"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
