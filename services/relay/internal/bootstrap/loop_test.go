@@ -236,3 +236,23 @@ func TestDoubleBackoff(t *testing.T) {
 		t.Fatalf("zero: got %s", got)
 	}
 }
+
+func TestRunLoop_BacksOffAfterFailureAndStopsOnCancel(t *testing.T) {
+	stub := &stubRelay{batchErr: errors.New("claim failed")}
+	deps, _ := loopTestDeps(stub)
+	deps.cfg.ErrorBackoff = time.Millisecond
+	deps.cfg.PollInterval = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runLoop(ctx, deps)
+	}()
+	waitFor(t, func() bool { return stub.batchCalls.Load() >= 3 })
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop did not stop after cancel")
+	}
+}

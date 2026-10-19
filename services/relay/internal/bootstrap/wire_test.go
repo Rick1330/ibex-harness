@@ -183,3 +183,15 @@ func TestMetricsDeliverer_LegacyDeliverFailsClosedWithoutFence(t *testing.T) {
 		t.Fatalf("fenced legacy delivery: %v", err)
 	}
 }
+
+func TestCloseRuntime_NilAndEmptyRuntimeAreNoops(t *testing.T) {
+	if err := closeRuntime(nil); err != nil {
+		t.Fatalf("closeRuntime(nil): %v", err)
+	}
+	if err := closeSink(nil); err != nil {
+		t.Fatalf("closeSink(nil): %v", err)
+	}
+	if err := closeDB(nil); err != nil {
+		t.Fatalf("closeDB(nil): %v", err)
+	}
+}

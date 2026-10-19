@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	ibexconfig "github.com/Rick1330/ibex-harness/packages/config"
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/fence"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/relaytest"
 	"github.com/google/uuid"
@@ -253,5 +255,23 @@ func forceInFlightForOrg(t *testing.T, admin *sql.DB, orgID uuid.UUID) {
 		`UPDATE ibex_core.evidence_outbox SET delivery_status = 'in_flight', attempts = 1, claimed_at = NOW() - INTERVAL '1 hour' WHERE org_id = $1`,
 		orgID); err != nil {
 		t.Fatalf("force in-flight: %v", err)
+	}
+}
+
+// TestIntegration_OpenRuntime_UnreachableClickHouseFailsClosed drives the real
+// wiring (role-pinned pool + fence checker) against PostgreSQL and asserts it
+// fails closed — and closes the pool — when the ClickHouse pilot sink is
+// unreachable. The success path needs a live ClickHouse and is not covered here.
+func TestIntegration_OpenRuntime_UnreachableClickHouseFailsClosed(t *testing.T) {
+	_ = relaytest.OpenMigratedDB(t)
+	cfg := config.Config{
+		PostgresDSN:      ibexconfig.Secret(relaytest.DSN()),
+		ClickHouseDSN:    ibexconfig.Secret("clickhouse://ibex:ibex@127.0.0.1:1/ibex"),
+		OperationTimeout: time.Second,
+	}
+	rt, err := openRuntime(context.Background(), cfg, ibexmetrics.NewRelay("test-relay"))
+	if err == nil {
+		_ = closeRuntime(rt)
+		t.Fatal("unreachable clickhouse must fail closed")
 	}
 }

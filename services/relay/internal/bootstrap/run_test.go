@@ -1,6 +1,18 @@
 package bootstrap
 
-import "testing"
+import (
+	"context"
+	"os"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
+	"github.com/Rick1330/ibex-harness/packages/logger"
+	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
+)
 
 func TestRun_GateOffReturnsZero(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
@@ -36,5 +48,62 @@ func TestRunBootstrap_UnreachablePostgresFailsClosed(t *testing.T) {
 	t.Setenv("IBEX_RELAY_OPERATION_TIMEOUT", "1s")
 	if code := runBootstrap(nil, nil); code != 1 {
 		t.Fatalf("unreachable postgres must fail closed, got %d", code)
+	}
+}
+
+func TestRunBootstrap_MissingEnvironmentFailsClosed(t *testing.T) {
+	t.Setenv("IBEX_ENV", "")
+	if code := runBootstrap(nil, nil); code != 1 {
+		t.Fatalf("missing IBEX_ENV must fail closed, got %d", code)
+	}
+}
+
+func TestRunBootstrap_UnknownEnvironmentFailsClosed(t *testing.T) {
+	t.Setenv("IBEX_ENV", "prod")
+	if code := runBootstrap(nil, nil); code != 1 {
+		t.Fatalf("unknown IBEX_ENV must fail closed, got %d", code)
+	}
+}
+
+// noopDeliverer satisfies both relay deliverer interfaces without touching a
+// sink; the loop only needs it to be non-nil for the lifecycle test.
+type noopDeliverer struct{}
+
+func (noopDeliverer) Deliver(context.Context, evidenceoutbox.OutboxRow) error { return nil }
+
+func (noopDeliverer) DeliverWithTombstoneFence(context.Context, evidenceoutbox.OutboxRow, evidenceoutbox.TombstoneFence) error {
+	return nil
+}
+
+func TestServeRelay_StartsLoopAndShutsDownCleanly(t *testing.T) {
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	relay, err := evidenceoutbox.NewRelay(db, noopDeliverer{}, evidenceoutbox.RelayConfig{BatchSize: 1, MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := &runtime{db: db, sink: newTestSink(t), relay: relay}
+	cfg := config.Config{
+		ServiceName:      "relay-test",
+		Port:             "0",
+		PollInterval:     time.Hour,
+		BatchSize:        1,
+		MaxAttempts:      1,
+		RecoverAfter:     time.Second,
+		OperationTimeout: time.Second,
+		ErrorBackoff:     10 * time.Millisecond,
+		ShutdownTimeout:  5 * time.Second,
+	}
+	signalCh := make(chan os.Signal, 1)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		signalCh <- syscall.SIGTERM
+	}()
+
+	if code := serveRelay(cfg, logger.Discard("relay-test"), ibexmetrics.NewRelay("relay-test"), rt, signalCh); code != 0 {
+		t.Fatalf("serveRelay exit code: got %d want 0", code)
 	}
 }

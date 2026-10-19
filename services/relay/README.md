@@ -26,7 +26,7 @@ is the process wrapper, fence authority client, and operational surface.
 
 ## Behavior
 
-- When `IBEX_RELAY_ENABLED=false` (default) the daemon logs a reason and exits `0` without connecting to anything.
+- When `IBEX_RELAY_ENABLED=false` (default) the daemon logs a reason and exits `0` without connecting to anything. Configuration is still validated first, so a missing or invalid `IBEX_ENV` fails closed (exit `1`) before the disabled fast path.
 - When enabled it requires both `IBEX_RELAY_POSTGRES_DSN` and `IBEX_RELAY_CLICKHOUSE_DSN`; a missing or unreachable dependency is a fatal startup error (exit `1`).
 - Each cycle recovers stale in-flight rows, claims a batch, and for each row: validates redaction class/fence/digest, checks the authoritative session fence, delivers through the fence-aware sink hook, then marks delivered or (on failure) failed/poison.
 - Fence `alive` delivers; `tombstoned`, `stale_version`, or `not_found` poisons the row (`ErrTombstonedResource`); a non-`session`/malformed fence poisons without retry (`ErrUnsupportedFenceResource`); database errors stay retryable.

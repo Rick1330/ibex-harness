@@ -12,6 +12,9 @@ coverage:
     # Playwright/E2E harness binaries (not production code).
     - "services/proxy/cmd/hardcap-deny-fixture/**"
     - "services/**/cmd/**-fixture/**"
+    # Integration-only test harness (build tag `integration`); exercised by the
+    # relay-integration job but not instrumented by the coverage profile.
+    - "services/relay/internal/relaytest/**"
   flags:
     go:
       paths:
