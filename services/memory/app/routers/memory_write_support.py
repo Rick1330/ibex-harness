@@ -279,7 +279,8 @@ async def commit_idempotency_fail_closed(
                 # Full jitter over the exponential window so a shared outage
                 # does not synchronize every in-flight request onto the retry.
                 window = _FINALIZE_BACKOFF_SECONDS * (2**attempt)
-                await asyncio.sleep(random.uniform(0.0, window))
+                delay = random.uniform(0.0, window)  # nosec B311 - retry jitter
+                await asyncio.sleep(delay)
     logger.warning(
         "idempotency finalize failed after successful write error_class=%s",
         type(last).__name__,
