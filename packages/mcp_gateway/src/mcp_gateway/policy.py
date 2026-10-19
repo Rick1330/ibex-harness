@@ -45,7 +45,9 @@ class PolicyEvaluator(Protocol):
 class BitmapPolicyEvaluator:
     """Authorize by the caller's permission bitmap; deny by default."""
 
-    async def evaluate(self, principal: GatewayPrincipal, spec: ToolSpec) -> PolicyResult:
+    async def evaluate(  # NOSONAR python:S7503 - async contract for a future policy store
+        self, principal: GatewayPrincipal, spec: ToolSpec
+    ) -> PolicyResult:
         if spec.role != "read_only":  # defense in depth; registry already enforces this
             return PolicyResult(
                 decision=PolicyDecision.DENY,

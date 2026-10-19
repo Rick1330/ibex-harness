@@ -77,8 +77,10 @@ async def test_success_returns_sanitized_result_and_allows_audit() -> None:
 
 async def test_unknown_tool_fails_closed_with_audit() -> None:
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(audit=audit)
     with pytest.raises(ToolNotFoundError) as exc:
-        await _enforcer(audit=audit).invoke(_principal(), "nope", {})
+        await enforcer.invoke(principal, "nope", {})
     assert exc.value.code == "tool_not_found"
     event = audit.events[-1]
     assert event.tool_name == ""
@@ -95,10 +97,9 @@ async def test_missing_scope_is_denied_and_executor_not_called() -> None:
 
     audit = InMemoryAuditEmitter()
     principal = _principal(permissions=TRACE_READ)
+    enforcer = _enforcer(executor, audit=audit)
     with pytest.raises(PermissionDeniedError):
-        await _enforcer(executor, audit=audit).invoke(
-            principal, "sample.get", {"resource_id": "r1"}
-        )
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert calls["n"] == 0
     event = audit.events[-1]
     assert event.decision == "deny"
@@ -114,15 +115,19 @@ async def test_caller_supplied_identity_is_rejected_as_unknown_arg() -> None:
         return {"resource_id": "r1", "status": "ok"}
 
     args = {"resource_id": "r1", "org_id": str(uuid4()), "agent_id": str(uuid4())}
+    principal = _principal()
+    enforcer = _enforcer(executor)
     with pytest.raises(InvalidParamsError):
-        await _enforcer(executor).invoke(_principal(), "sample.get", args)
+        await enforcer.invoke(principal, "sample.get", args)
     assert calls["n"] == 0
 
 
 async def test_missing_required_arg_is_invalid_params() -> None:
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(audit=audit)
     with pytest.raises(InvalidParamsError):
-        await _enforcer(audit=audit).invoke(_principal(), "sample.get", {})
+        await enforcer.invoke(principal, "sample.get", {})
     assert audit.events[-1].error_code == "invalid_params"
 
 
@@ -138,10 +143,10 @@ async def test_rate_limited_denies_before_read() -> None:
             return RateLimitOutcome(allowed=False, limit=10, remaining=0, reset_unix=0)
 
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(executor, audit=audit, rate_limiter=_Limiter())
     with pytest.raises(RateLimitedError):
-        await _enforcer(executor, audit=audit, rate_limiter=_Limiter()).invoke(
-            _principal(), "sample.get", {"resource_id": "r1"}
-        )
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert calls["n"] == 0
     assert audit.events[-1].error_code == "rate_limited"
 
@@ -152,10 +157,10 @@ async def test_rate_limit_authority_unavailable_fails_closed() -> None:
             raise RateLimitUnavailableError()
 
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(audit=audit, rate_limiter=_Limiter())
     with pytest.raises(RateLimitUnavailableError):
-        await _enforcer(audit=audit, rate_limiter=_Limiter()).invoke(
-            _principal(), "sample.get", {"resource_id": "r1"}
-        )
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert audit.events[-1].error_code == "rate_limit_unavailable"
 
 
@@ -178,10 +183,10 @@ async def test_backend_timeout_fails_closed() -> None:
         return {"resource_id": "r1", "status": "ok"}
 
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(slow, registry=_registry(_spec(timeout_ms=10)), audit=audit)
     with pytest.raises(BackendUnavailableError):
-        await _enforcer(slow, registry=_registry(_spec(timeout_ms=10)), audit=audit).invoke(
-            _principal(), "sample.get", {"resource_id": "r1"}
-        )
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert audit.events[-1].error_code == "backend_unavailable"
 
 
@@ -190,8 +195,10 @@ async def test_backend_error_propagates_as_gateway_error() -> None:
         raise BackendUnavailableError("db down")
 
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(fail, audit=audit)
     with pytest.raises(BackendUnavailableError):
-        await _enforcer(fail, audit=audit).invoke(_principal(), "sample.get", {"resource_id": "r1"})
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert audit.events[-1].error_code == "backend_unavailable"
 
 
@@ -201,10 +208,10 @@ async def test_policy_unavailable_denies_never_allows() -> None:
             raise RuntimeError("policy store down")
 
     audit = InMemoryAuditEmitter()
+    principal = _principal()
+    enforcer = _enforcer(audit=audit, policy=_Broken())
     with pytest.raises(PolicyUnavailableError):
-        await _enforcer(audit=audit, policy=_Broken()).invoke(
-            _principal(), "sample.get", {"resource_id": "r1"}
-        )
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     event = audit.events[-1]
     assert event.decision == "deny"
     assert event.error_code == "policy_unavailable"
@@ -215,8 +222,10 @@ async def test_policy_deny_maps_to_permission_denied() -> None:
         async def evaluate(self, principal, spec):
             return PolicyResult(PolicyDecision.DENY, "policy says no")
 
+    principal = _principal()
+    enforcer = _enforcer(policy=_Deny())
     with pytest.raises(PermissionDeniedError):
-        await _enforcer(policy=_Deny()).invoke(_principal(), "sample.get", {"resource_id": "r1"})
+        await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
 
 
 async def test_output_redaction_drops_unlisted_and_sensitive_keys() -> None:

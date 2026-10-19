@@ -128,5 +128,6 @@ async def test_abc_check_raises_not_implemented() -> None:
         async def check(self, org_id: UUID):
             return await OperatorRateLimiter.check(self, org_id)
 
+    limiter = _Stub()
     with pytest.raises(NotImplementedError):
-        await _Stub().check(ORG)
+        await limiter.check(ORG)

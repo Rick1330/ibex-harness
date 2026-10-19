@@ -43,8 +43,9 @@ def test_register_get_and_sorted_specs() -> None:
 
 def test_duplicate_name_rejected() -> None:
     registry = ToolRegistry([_spec()])
+    duplicate = _spec()
     with pytest.raises(ValueError, match="duplicate"):
-        registry.register(_spec())
+        registry.register(duplicate)
 
 
 def test_only_read_only_role_allowed() -> None:

@@ -42,8 +42,9 @@ class _FakeSession:
 
 
 def test_create_engine_requires_url() -> None:
+    settings = Settings(enabled=False)
     with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
-        create_engine(Settings(enabled=False))
+        create_engine(settings)
 
 
 @pytest.mark.asyncio

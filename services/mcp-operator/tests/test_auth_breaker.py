@@ -81,7 +81,8 @@ async def test_ready_bypasses_breaker() -> None:
 
 
 def test_breaker_rejects_bad_constructor_args() -> None:
+    validator = StaticTokenValidator({})
     with pytest.raises(ValueError, match="failure_threshold"):
-        BreakingTokenValidator(StaticTokenValidator({}), failure_threshold=0)
+        BreakingTokenValidator(validator, failure_threshold=0)
     with pytest.raises(ValueError, match="cooldown_seconds"):
-        BreakingTokenValidator(StaticTokenValidator({}), cooldown_seconds=0)
+        BreakingTokenValidator(validator, cooldown_seconds=0)

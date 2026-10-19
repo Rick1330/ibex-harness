@@ -118,8 +118,9 @@ async def test_dispatcher_maps_sqlalchemy_error_to_backend_unavailable(
     monkeypatch.setattr(tools, "session_with_org", failing_session)
 
     dispatcher = ToolDispatcher(session_factory=object())  # type: ignore[arg-type]
+    ctx = _ctx("run.get")
     with pytest.raises(BackendUnavailableError):
-        await dispatcher(_ctx("run.get"), {"run_id": RUN_ID})
+        await dispatcher(ctx, {"run_id": RUN_ID})
 
 
 @pytest.mark.asyncio

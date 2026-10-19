@@ -27,7 +27,9 @@ class LoggingOperatorAuditSink:
 
     name = "log"
 
-    async def write(self, event: ToolAuditEvent) -> None:
+    async def write(  # NOSONAR python:S7503 - async contract required by AuditSink
+        self, event: ToolAuditEvent
+    ) -> None:
         fields = event.as_log_fields()
         logger.info(
             "mcp_operator_tool_call request_id=%s org_id=%s agent_id=%s tool_name=%s "
@@ -47,7 +49,7 @@ class LoggingOperatorAuditSink:
             fields["latency_ms"],
         )
 
-    async def aclose(self) -> None:
+    async def aclose(self) -> None:  # NOSONAR python:S7503 - AuditSink lifecycle contract
         return None
 
 
