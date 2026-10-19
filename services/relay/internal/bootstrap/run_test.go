@@ -58,6 +58,25 @@ func TestRunBootstrap_MissingEnvironmentFailsClosed(t *testing.T) {
 	}
 }
 
+func TestRunBootstrap_TelemetryConfigFailsClosed(t *testing.T) {
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("IBEX_RELAY_ENABLED", "true")
+	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "postgres://relay:pw@127.0.0.1:1/ibex?sslmode=disable")
+	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "clickhouse://ibex:ibex@127.0.0.1:1/ibex")
+	t.Setenv("OTEL_SAMPLE_RATIO", "not-a-ratio")
+	if code := runBootstrap(nil, nil); code != 1 {
+		t.Fatalf("invalid telemetry config must fail closed, got %d", code)
+	}
+}
+
+func TestInitRelayTelemetry_EmptyServiceNameFailsClosed(t *testing.T) {
+	t.Setenv("OTEL_SERVICE_NAME", "")
+	_, err := initRelayTelemetry(context.Background(), config.Config{ServiceName: ""}, logger.Discard("relay-test"))
+	if err == nil {
+		t.Fatal("empty service name must fail telemetry config")
+	}
+}
+
 func TestRunBootstrap_UnknownEnvironmentFailsClosed(t *testing.T) {
 	t.Setenv("IBEX_ENV", "prod")
 	if code := runBootstrap(nil, nil); code != 1 {

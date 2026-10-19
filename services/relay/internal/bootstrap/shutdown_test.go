@@ -174,3 +174,38 @@ func TestAwaitRelayShutdown_DrainFailureReturnsOne(t *testing.T) {
 		t.Fatalf("drain failure must exit 1, got %d", code)
 	}
 }
+
+type errCloseCHConn struct{ fakeCHConn }
+
+func (errCloseCHConn) Close() error { return errors.New("close failed") }
+
+func TestCloseSink_CloseErrorIsWrapped(t *testing.T) {
+	sink, err := clickhousesink.New(errCloseCHConn{}, noopFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closeSink(sink); err == nil {
+		t.Fatal("close error must surface")
+	}
+}
+
+func TestRunWithShutdown_ServerErrorExitsOne(t *testing.T) {
+	loopDone := make(chan struct{})
+	close(loopDone)
+	opts, _ := baseShutdownOpts(t, 5*time.Second, loopDone)
+	opts.server = &http.Server{Addr: "invalid addr"}
+	if code := runWithShutdown(opts); code != 1 {
+		t.Fatalf("server error must exit 1, got %d", code)
+	}
+}
+
+func TestRunWithShutdown_NilSignalChannelServerErrorExitsOne(t *testing.T) {
+	loopDone := make(chan struct{})
+	close(loopDone)
+	opts, _ := baseShutdownOpts(t, 5*time.Second, loopDone)
+	opts.signalCh = nil
+	opts.server = &http.Server{Addr: "invalid addr"}
+	if code := runWithShutdown(opts); code != 1 {
+		t.Fatalf("server error must exit 1, got %d", code)
+	}
+}

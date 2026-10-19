@@ -195,3 +195,21 @@ func TestCloseRuntime_NilAndEmptyRuntimeAreNoops(t *testing.T) {
 		t.Fatalf("closeDB(nil): %v", err)
 	}
 }
+
+func TestOpenRelayDB_EmptyDSNFailsClosed(t *testing.T) {
+	if _, err := openRelayDB(context.Background(), "   ", time.Second); err == nil {
+		t.Fatal("empty DSN must fail closed")
+	}
+}
+
+func TestAssertRelayRole_QueryErrorIsWrapped(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	mock.ExpectQuery("SELECT current_user").WillReturnError(errors.New("connection reset"))
+	if err := assertRelayRole(context.Background(), db); err == nil {
+		t.Fatal("query failure must surface")
+	}
+}
