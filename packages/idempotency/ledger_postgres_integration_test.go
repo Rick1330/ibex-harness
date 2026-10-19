@@ -113,120 +113,127 @@ func newTestLedger(t *testing.T, db *sql.DB, lease time.Duration) *PostgresLedge
 	return ledger
 }
 
-func claimOrFatal(t *testing.T, ledger *PostgresLedger, p Principal, key, hash string) ClaimOutcome {
-	t.Helper()
-	out, err := ledger.Claim(context.Background(), p, key, hash)
+// ledgerFixture bundles the per-test subject (ledger plus the org/agent
+// principal) with assertion helpers, so each test reads as a sequence of
+// intent-revealing calls and no helper needs a long argument list.
+type ledgerFixture struct {
+	t      *testing.T
+	ledger *PostgresLedger
+	org    Principal
+}
+
+func newLedgerFixture(t *testing.T, lease time.Duration) ledgerFixture {
+	db := openLedgerDB(t)
+	p, _ := seedPrincipal(t, db)
+	return ledgerFixture{t: t, ledger: newTestLedger(t, db, lease), org: p}
+}
+
+func newLedgerFixtureFor(t *testing.T, db *sql.DB, org Principal, lease time.Duration) ledgerFixture {
+	return ledgerFixture{t: t, ledger: newTestLedger(t, db, lease), org: org}
+}
+
+func (f ledgerFixture) claim(key, hash string) ClaimOutcome {
+	f.t.Helper()
+	out, err := f.ledger.Claim(context.Background(), f.org, key, hash)
 	if err != nil {
-		t.Fatalf("claim %q: %v", key, err)
+		f.t.Fatalf("claim %q: %v", key, err)
 	}
 	return out
 }
 
-func finalizeOrFatal(t *testing.T, ledger *PostgresLedger, claim ClaimToken, status int, body string) {
-	t.Helper()
-	if err := ledger.Finalize(context.Background(), claim, status, []byte(body)); err != nil {
-		t.Fatalf("finalize: %v", err)
+func (f ledgerFixture) finalize(claim ClaimToken, status int, body string) {
+	f.t.Helper()
+	if err := f.ledger.Finalize(context.Background(), claim, status, []byte(body)); err != nil {
+		f.t.Fatalf("finalize: %v", err)
 	}
 }
 
-func releaseOrFatal(t *testing.T, ledger *PostgresLedger, claim ClaimToken) {
-	t.Helper()
-	if err := ledger.Release(context.Background(), claim); err != nil {
-		t.Fatalf("release: %v", err)
+func (f ledgerFixture) release(claim ClaimToken) {
+	f.t.Helper()
+	if err := f.ledger.Release(context.Background(), claim); err != nil {
+		f.t.Fatalf("release: %v", err)
 	}
 }
 
-func requireClaimKind(t *testing.T, got ClaimOutcome, want ClaimKind) {
-	t.Helper()
+func (f ledgerFixture) requireKind(got ClaimOutcome, want ClaimKind) {
+	f.t.Helper()
 	if got.Kind != want {
-		t.Fatalf("kind = %q, want %q", got.Kind, want)
+		f.t.Fatalf("kind = %q, want %q", got.Kind, want)
 	}
 }
 
-func requireReplay(t *testing.T, got ClaimOutcome, status int, body string) {
-	t.Helper()
-	requireClaimKind(t, got, ClaimReplay)
+func (f ledgerFixture) requireReplay(got ClaimOutcome, status int, body string) {
+	f.t.Helper()
+	f.requireKind(got, ClaimReplay)
 	if got.Status != status {
-		t.Fatalf("status = %d, want %d", got.Status, status)
+		f.t.Fatalf("status = %d, want %d", got.Status, status)
 	}
 	if string(got.Response) != body {
-		t.Fatalf("response = %q, want %q", got.Response, body)
+		f.t.Fatalf("response = %q, want %q", got.Response, body)
 	}
 }
 
-func requireConflict(t *testing.T, err error) {
-	t.Helper()
+func (f ledgerFixture) requireConflict(err error) {
+	f.t.Helper()
 	if !errors.Is(err, ErrLedgerConflict) {
-		t.Fatalf("err = %v, want ErrLedgerConflict", err)
+		f.t.Fatalf("err = %v, want ErrLedgerConflict", err)
 	}
 }
 
 func TestIntegration_PostgresLedger_ClaimFinalizeReplay(t *testing.T) {
-	db := openLedgerDB(t)
-	p, _ := seedPrincipal(t, db)
-	ledger := newTestLedger(t, db, 2*time.Minute)
+	f := newLedgerFixture(t, 2*time.Minute)
 	hash := HashRequest([]byte(`{"body":"a"}`))
 
-	claim := claimOrFatal(t, ledger, p, "k-finalize", hash)
-	requireClaimKind(t, claim, ClaimOwned)
-	finalizeOrFatal(t, ledger, claim.Claim, 201, `{"id":"m1"}`)
+	claim := f.claim("k-finalize", hash)
+	f.requireKind(claim, ClaimOwned)
+	f.finalize(claim.Claim, 201, `{"id":"m1"}`)
 
-	replay := claimOrFatal(t, ledger, p, "k-finalize", hash)
-	requireReplay(t, replay, 201, `{"id":"m1"}`)
-	requireConflict(t, ledger.Finalize(context.Background(), claim.Claim, 201, []byte(`{"id":"m1"}`)))
+	f.requireReplay(f.claim("k-finalize", hash), 201, `{"id":"m1"}`)
+	f.requireConflict(f.ledger.Finalize(context.Background(), claim.Claim, 201, []byte(`{"id":"m1"}`)))
 }
 
 func TestIntegration_PostgresLedger_ConflictOnDifferentHash(t *testing.T) {
-	db := openLedgerDB(t)
-	p, _ := seedPrincipal(t, db)
-	ledger := newTestLedger(t, db, 2*time.Minute)
+	f := newLedgerFixture(t, 2*time.Minute)
 
-	claimOrFatal(t, ledger, p, "k-conflict", HashRequest([]byte("a")))
-	out := claimOrFatal(t, ledger, p, "k-conflict", HashRequest([]byte("b")))
-	requireClaimKind(t, out, ClaimConflict)
+	f.claim("k-conflict", HashRequest([]byte("a")))
+	f.requireKind(f.claim("k-conflict", HashRequest([]byte("b"))), ClaimConflict)
 }
 
 func TestIntegration_PostgresLedger_InProgressThenReclaimFencesStaleOwner(t *testing.T) {
-	db := openLedgerDB(t)
-	p, _ := seedPrincipal(t, db)
-	ledger := newTestLedger(t, db, 150*time.Millisecond)
+	f := newLedgerFixture(t, 150*time.Millisecond)
 	hash := HashRequest([]byte("a"))
 
-	first := claimOrFatal(t, ledger, p, "k-lease", hash)
-	active := claimOrFatal(t, ledger, p, "k-lease", hash)
+	first := f.claim("k-lease", hash)
+	active := f.claim("k-lease", hash)
 	if active.Kind != ClaimInProgress || active.RetryAfter <= 0 {
 		t.Fatalf("active = %+v, want in_progress with retry_after", active)
 	}
 
 	time.Sleep(250 * time.Millisecond)
-	reclaimed := claimOrFatal(t, ledger, p, "k-lease", hash)
-	requireClaimKind(t, reclaimed, ClaimOwned)
+	reclaimed := f.claim("k-lease", hash)
+	f.requireKind(reclaimed, ClaimOwned)
 	if reclaimed.Claim.Version <= first.Claim.Version {
 		t.Fatalf("reclaim version = %d, want > %d", reclaimed.Claim.Version, first.Claim.Version)
 	}
-	requireConflict(t, ledger.Finalize(context.Background(), first.Claim, 200, []byte("stale")))
-	finalizeOrFatal(t, ledger, reclaimed.Claim, 200, "fresh")
+	f.requireConflict(f.ledger.Finalize(context.Background(), first.Claim, 200, []byte("stale")))
+	f.finalize(reclaimed.Claim, 200, "fresh")
 }
 
 func TestIntegration_PostgresLedger_ReleaseAndStaleRelease(t *testing.T) {
-	db := openLedgerDB(t)
-	p, _ := seedPrincipal(t, db)
-	ledger := newTestLedger(t, db, 2*time.Minute)
+	f := newLedgerFixture(t, 2*time.Minute)
 	hash := HashRequest([]byte("a"))
 
-	claim := claimOrFatal(t, ledger, p, "k-release", hash)
-	releaseOrFatal(t, ledger, claim.Claim)
-	requireConflict(t, ledger.Release(context.Background(), claim.Claim))
+	claim := f.claim("k-release", hash)
+	f.release(claim.Claim)
+	f.requireConflict(f.ledger.Release(context.Background(), claim.Claim))
 
 	// A released key can be claimed again as a brand new owner.
-	requireClaimKind(t, claimOrFatal(t, ledger, p, "k-release", hash), ClaimOwned)
+	f.requireKind(f.claim("k-release", hash), ClaimOwned)
 }
 
 func TestIntegration_PostgresLedger_RejectsInvalidClaim(t *testing.T) {
-	db := openLedgerDB(t)
-	p, _ := seedPrincipal(t, db)
-	ledger := newTestLedger(t, db, 2*time.Minute)
-	if _, err := ledger.Claim(context.Background(), p, "", HashRequest([]byte("a"))); !errors.Is(err, ErrInvalidLedgerClaim) {
+	f := newLedgerFixture(t, 2*time.Minute)
+	if _, err := f.ledger.Claim(context.Background(), f.org, "", HashRequest([]byte("a"))); !errors.Is(err, ErrInvalidLedgerClaim) {
 		t.Fatalf("err = %v, want ErrInvalidLedgerClaim", err)
 	}
 }
@@ -255,11 +262,11 @@ func assertSharedKeyVisible(t *testing.T, db *sql.DB, orgID uuid.UUID, want int)
 func TestIntegration_PostgresLedger_RLSCrossOrgIsolation(t *testing.T) {
 	db := openLedgerDB(t)
 	orgA, orgB := seedPrincipal(t, db)
-	ledger := newTestLedger(t, db, 2*time.Minute)
 	hash := HashRequest([]byte("same"))
 
 	for _, org := range []Principal{orgA, orgB} {
-		requireClaimKind(t, claimOrFatal(t, ledger, org, "shared-key", hash), ClaimOwned)
+		f := newLedgerFixtureFor(t, db, org, 2*time.Minute)
+		f.requireKind(f.claim("shared-key", hash), ClaimOwned)
 	}
 
 	// A raw org-scoped read under ibex_app RLS sees exactly one row per org.
