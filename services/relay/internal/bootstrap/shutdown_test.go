@@ -47,27 +47,36 @@ func newTestSink(t *testing.T) *clickhousesink.Sink {
 	return sink
 }
 
-func TestRunWithShutdown_GracefulDrainStopsAndCloses(t *testing.T) {
+// baseShutdownOpts builds a shutdownOpts with a diskless DB and a signal
+// channel; callers set cancelLoop and the drain timeout they need.
+func baseShutdownOpts(t *testing.T, timeout time.Duration, loopDone chan struct{}) (shutdownOpts, chan os.Signal) {
+	t.Helper()
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	loopDone := make(chan struct{})
-	close(loopDone)
-	var draining atomic.Bool
-	canceled := make(chan struct{})
 	signalCh := make(chan os.Signal, 1)
+	var draining atomic.Bool
 	opts := shutdownOpts{
-		cfg:        config.Config{ShutdownTimeout: 5 * time.Second},
+		cfg:        config.Config{ShutdownTimeout: timeout},
 		log:        logger.Discard("relay-test"),
 		server:     &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler()},
 		draining:   &draining,
-		cancelLoop: func() { close(canceled) },
+		cancelLoop: func() {},
 		loopDone:   loopDone,
 		rt:         &runtime{db: db, sink: newTestSink(t)},
 		signalCh:   signalCh,
 	}
+	return opts, signalCh
+}
+
+func TestRunWithShutdown_GracefulDrainStopsAndCloses(t *testing.T) {
+	loopDone := make(chan struct{})
+	close(loopDone)
+	opts, signalCh := baseShutdownOpts(t, 5*time.Second, loopDone)
+	canceled := make(chan struct{})
+	opts.cancelLoop = func() { close(canceled) }
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		signalCh <- syscall.SIGTERM
@@ -77,7 +86,7 @@ func TestRunWithShutdown_GracefulDrainStopsAndCloses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code: %d", code)
 	}
-	if !draining.Load() {
+	if !opts.draining.Load() {
 		t.Fatal("draining flag must be set")
 	}
 	select {
@@ -88,24 +97,8 @@ func TestRunWithShutdown_GracefulDrainStopsAndCloses(t *testing.T) {
 }
 
 func TestRunWithShutdown_DrainTimeoutExitsNonZero(t *testing.T) {
-	db, _, err := sqlmock.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
 	loopDone := make(chan struct{})
-	var draining atomic.Bool
-	signalCh := make(chan os.Signal, 1)
-	opts := shutdownOpts{
-		cfg:        config.Config{ShutdownTimeout: 50 * time.Millisecond},
-		log:        logger.Discard("relay-test"),
-		server:     &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler()},
-		draining:   &draining,
-		cancelLoop: func() {},
-		loopDone:   loopDone,
-		rt:         &runtime{db: db, sink: newTestSink(t)},
-		signalCh:   signalCh,
-	}
+	opts, signalCh := baseShutdownOpts(t, 50*time.Millisecond, loopDone)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		signalCh <- syscall.SIGTERM

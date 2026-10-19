@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
+	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- non-security backoff jitter
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"

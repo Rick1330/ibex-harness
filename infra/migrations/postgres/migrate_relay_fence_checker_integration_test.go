@@ -11,7 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const relayFenceFn = "ibex_core.evidence_outbox_check_session_fence"
+const (
+	relayFenceSignature = "ibex_core.evidence_outbox_check_session_fence(uuid,uuid,bigint)"
+	relayFenceCall      = "SELECT ibex_core.evidence_outbox_check_session_fence($1::uuid, $2::uuid, $3)"
+)
 
 type relayFenceFixture struct {
 	db        *sql.DB
@@ -75,7 +78,7 @@ func (f *relayFenceFixture) checkFence(t *testing.T, orgID, resourceID string, v
 	t.Helper()
 	var out string
 	if err := f.db.QueryRowContext(f.ctx,
-		`SELECT `+relayFenceFn+`($1::uuid, $2::uuid, $3)`, orgID, resourceID, version,
+		relayFenceCall, orgID, resourceID, version,
 	).Scan(&out); err != nil {
 		t.Fatalf("check fence: %v", err)
 	}
@@ -116,7 +119,7 @@ func TestRelayFenceChecker_DefinitionAndGrants(t *testing.T) {
 		FROM pg_proc p
 		JOIN pg_roles r ON r.oid = p.proowner
 		WHERE p.oid = $1::regprocedure`,
-		relayFenceFn+"(uuid,uuid,bigint)").Scan(&owner, &securityDefiner, &volatility)
+		relayFenceSignature).Scan(&owner, &securityDefiner, &volatility)
 	if err != nil {
 		t.Fatalf("read function definition: %v", err)
 	}
@@ -139,7 +142,7 @@ func assertFenceExecutePrivilege(t *testing.T, f *relayFenceFixture, role string
 	var got bool
 	if err := f.db.QueryRowContext(f.ctx,
 		`SELECT has_function_privilege($1, $2, 'EXECUTE')`,
-		role, relayFenceFn+"(uuid,uuid,bigint)",
+		role, relayFenceSignature,
 	).Scan(&got); err != nil {
 		t.Fatalf("has_function_privilege(%s): %v", role, err)
 	}
@@ -210,7 +213,7 @@ func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, f *relayFenceFixtur
 	}
 	var outcome string
 	if err := conn.QueryRowContext(f.ctx,
-		`SELECT `+relayFenceFn+`($1::uuid, $2::uuid, $3)`, f.orgID, f.sessionID, 1,
+		relayFenceCall, f.orgID, f.sessionID, 1,
 	).Scan(&outcome); err != nil {
 		t.Fatalf("relay role must execute fence check: %v", err)
 	}
@@ -229,7 +232,7 @@ func assertAppRoleCannotExecuteFence(t *testing.T, f *relayFenceFixture) {
 	conn := f.connAs(t, "SET ROLE ibex_app")
 	var outcome string
 	err := conn.QueryRowContext(f.ctx,
-		`SELECT `+relayFenceFn+`($1::uuid, $2::uuid, $3)`, f.orgID, f.sessionID, 1,
+		relayFenceCall, f.orgID, f.sessionID, 1,
 	).Scan(&outcome)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("ibex_app must not execute fence check, got outcome=%q err=%v", outcome, err)
@@ -241,7 +244,7 @@ func TestRelayFenceChecker_DownRemovesFunction(t *testing.T) {
 
 	var exists bool
 	if err := f.db.QueryRowContext(f.ctx,
-		`SELECT to_regprocedure($1) IS NOT NULL`, relayFenceFn+"(uuid,uuid,bigint)",
+		`SELECT to_regprocedure($1) IS NOT NULL`, relayFenceSignature,
 	).Scan(&exists); err != nil {
 		t.Fatalf("to_regprocedure: %v", err)
 	}
@@ -253,7 +256,7 @@ func TestRelayFenceChecker_DownRemovesFunction(t *testing.T) {
 		t.Fatalf("down: %v", err)
 	}
 	if err := f.db.QueryRowContext(f.ctx,
-		`SELECT to_regprocedure($1) IS NOT NULL`, relayFenceFn+"(uuid,uuid,bigint)",
+		`SELECT to_regprocedure($1) IS NOT NULL`, relayFenceSignature,
 	).Scan(&exists); err != nil {
 		t.Fatalf("to_regprocedure after down: %v", err)
 	}

@@ -59,6 +59,12 @@ func (d *recordingFencedDeliverer) delivered() []string {
 	return append([]string(nil), d.rows...)
 }
 
+func (d *recordingFencedDeliverer) reset() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.rows = nil
+}
+
 type integrationFencedDeliverer struct {
 	inner *recordingFencedDeliverer
 }
@@ -164,6 +170,7 @@ func TestIntegration_RelayDeliversFencedRowAndPoisonsTombstoned(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	assertDelivered(t, batch, persisted.OutboxIDs, h.recorder)
+	h.recorder.reset()
 
 	relaytest.SoftDeleteSession(t, admin, sessionID)
 	persisted2, err := h.store.PersistRun(ctx, fencedRunInput(orgID, sessionID, 1))
