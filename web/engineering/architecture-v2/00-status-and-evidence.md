@@ -22,6 +22,7 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 | Context assembly | `provisional` | The caller-authentication limitation and deadline discrepancy remain open. |
 | Extraction workers | `provisional` | Queue durability and exactly-once projection effects are not certified. |
 | MCP memory tools | `provisional` | Logging-only audit is not evidence-grade audit. |
+| MCP operator gateway (GAP-009) | `shipped-local` / default-off | Read-only metadata tools only; bitmap authz without PolicySnapshot evaluation; logging-first audit. Not operator readiness or hosted support. |
 | Management API/Console | `provisional` | Mounted routes are not production operator readiness. |
 | DecisionService/GLiNER | `design-intent` | No runtime, contract, benchmark, registry, or acceptance evidence exists. |
 | Graph/A2A/marketplace/sandbox | `deferred` | These are not current dependencies. |
@@ -31,6 +32,8 @@ A claim becomes `shipped-accepted` only when the ledger contains:
 ADR-0084 and original issue #935 (closed; historical context) define the first G0/G1/G2 contract packet for verified principal propagation, token-bound agent selection, protected-profile verifier readiness, tenant-bound idempotency, evidence acknowledgement/redaction, and relay/sink profile boundaries. On 2026-10-10, Rick1330, acting across all roles, accepted the five contract shapes recorded in the registry. This freezes contract text and safety semantics only; it does not claim runtime implementation, hosted/HA support, production readiness, or G1-G4 completion.
 
 Issue #955 and PR #956 are the environment-automation chronology. Issue #957 tracks the owner-acceptance documentation change. The exact acceptance artifact is `21-g0-owner-decision-record.md`; it records the decision date, acting assignment, local/protected profile defaults, limitations, and 2026-11-10 review date. No separate independent reviewer is named there.
+
+Issue #1013 and ADR-0086 add the read-only operator gateway: `packages/mcp_gateway` (transport-agnostic enforcement) and `services/mcp-operator` (default-off FastMCP surface). This is `shipped-local` evidence for the read-only subset of `mcp-gateway-policy.v1`; it does not accept the contract, close GAP-009, or certify policy-store enforcement, durable rich-field audit, or hosted/HA operation. The Resource/action PolicySnapshot evaluator remains unwired and is recorded as an open hole.
 
 ### Owner confirmation log
 

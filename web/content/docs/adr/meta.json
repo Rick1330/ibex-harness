@@ -83,6 +83,7 @@
     "0082-d2-metadata-trace-read-contract",
     "0083-d2-publication-query-lifecycle-contract",
     "0084-g0-principal-agent-binding-and-idempotency",
-    "0085-evidence-relay-daemon-and-session-fence"
+    "0085-evidence-relay-daemon-and-session-fence",
+    "0086-mcp-operator-gateway"
   ]
 }

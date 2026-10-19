@@ -16,3 +16,5 @@
 ## Required gates
 
 Cross-tenant matrix, RLS/connection-pool tests, Redis/vector/ClickHouse/object isolation, anti-enumeration, prompt-injection and poisoning corpus, tool replay/approval, SSRF, secret leakage, deletion/legal-hold, failover/chaos, and evidence crash/replay tests are release gates. A model classifier may strengthen a gate but cannot replace deterministic enforcement.
+
+MCP operator gateway (SEC-003/SEC-004/SEC-005): the read-only tools are unit-gated for deny-by-default scope checks, schema-only arguments (caller identity cannot be supplied), metadata-only redaction, typed fail-closed errors, and audit emission; the live-PostgreSQL suite gates explicit `org_id` filtering plus `app.current_org_id` RLS and cross-tenant `not_found`. Tool descriptions and results are treated as data. Mutation, step-up, policy-store outage, and descriptor-change gates remain unimplemented.

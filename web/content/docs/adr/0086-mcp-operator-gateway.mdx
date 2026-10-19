@@ -1,0 +1,88 @@
+---
+title: "Read-only MCP operator gateway and gateway-side authorization boundary (local, default-off)"
+description: "Proposed record for a gated, read-only MCP operator surface that enforces principal binding, typed scopes, tenant scope, limits, and output redaction at the gateway, using the existing permission bitmap as the authority while PolicySnapshot evaluation remains deferred."
+---
+
+{/* markdownlint-disable MD025 */}
+
+# ADR-0086: Read-only MCP operator gateway and gateway-side authorization boundary (local, default-off)
+
+- **Status:** proposed for owner review; `implemented-local` in issue [#1013](https://github.com/Rick1330/ibex-harness/issues/1013). This ADR is not an acceptance record and GAP-009 remains open.
+- **Date:** 2026-10-19
+- **Owners:** Operator/Platform + Security/Privacy; Rick1330 acting across roles; no independent reviewer named.
+- **Scope:** a single default-off, read-only MCP operator gateway, the shared enforcement core it is built on, its typed scope model mapped onto the existing permission bitmap, its tenant-scoped reads, and its fail-closed taxonomy
+- **Supersedes:** none; narrows the `mcp-gateway-policy.v1` registry entry from `not_implemented` to a local, default-off implementation without accepting the contract.
+
+## Context
+
+The `mcp-gateway-policy.v1` registry entry was a `not_implemented` placeholder, and the operator/MCP boundary had no gateway. The only MCP surface was `services/mcp-memory` (ADR-0050), which serves memory tools and therefore conflates the memory-serving boundary with the operator surface the gap register keeps separate. `mcp-runtime-tools.v1` did not exist in the repository at all.
+
+That left three unresolved problems for an operator-facing MCP boundary:
+
+1. There was no gateway-side enforcement of who a tool call is authorized for. Principal binding, typed scopes, tenant scope, per-call limits, and output redaction were either absent or would have to be re-implemented ad hoc per tool.
+2. There was no versioned, inspectable description of the tools a gateway exposes, their declared capabilities, or their per-call bounds, so a tool surface could not be reviewed or diffed.
+3. There was no fail-closed taxonomy: unknown tools, missing scopes, unavailable policy, malformed arguments, and backend outages had no defined, stable, deny-by-default behavior.
+
+## Decision
+
+### 1. Add `services/mcp-operator` as a deployable process, default off
+
+`services/mcp-operator` follows the existing Python service layout (`app/` package, FastMCP over FastAPI, `Dockerfile`). The process exposes no operator surface unless `IBEX_MCP_OPERATOR_ENABLED=true` (default `false`); a disabled daemon serves no MCP mount and the service advertises no tools. Enabling it in a protected profile (`staging`/`production`) requires Redis (rate-limit authority) and a public HTTPS resource URL, and startup fails closed otherwise. Transport is Streamable HTTP only; stdio is not implemented by this service.
+
+### 2. Put the enforcement core in `packages/mcp_gateway`
+
+The reusable enforcement core — typed scope model, versioned tool registry with a canonical descriptor hash, the ordered enforcement pipeline, output redaction, and the typed fail-closed error taxonomy — lives in `packages/mcp_gateway`, following the `packages/authclient` convention. `services/mcp-operator` is a thin FastMCP daemon over it. The `packages/README.md` "no new top-level package until a second consumer" guidance yields here because the `mcp-gateway-policy.v1` contract is itself the reason for the seam: authorization logic must be unit-testable outside the MCP transport, and the intended second consumer is the eventual convergence of `services/mcp-memory` onto the same core. This is recorded rather than assumed.
+
+### 3. Typed scopes are aliases over the existing permission bitmap
+
+The gateway does not invent an authorization vocabulary. Typed scopes are named aliases over the repository's permission bits (`packages/permissions`), and the enforcement decision is `has_permission(principal.permissions, required_bit)` computed from the AuthService-validated token only:
+
+- `operator.read` → `OPERATOR_METADATA_READ` (1<<19)
+- `runs.read` → `TRACE_READ` (1<<24)
+- `evidence.read` → `OPERATOR_REDACTED_READ` (1<<38)
+- `budget.read` → `BILLING_READ` (1<<33)
+
+The caller can never supply its own `org_id` or agent identity; tool input schemas (`additionalProperties: false`) reject unknown arguments, and tenant scope is bound from the verified token. Tool annotations are metadata only and never authorize.
+
+### 4. PolicySnapshot evaluation is deferred, and the deferral is visible
+
+No Python PolicySnapshot verifier and no resource/action `Check` API exist, so the gateway cannot delegate authorization to a policy snapshot today. The authorization authority is therefore the permission bitmap. This is recorded explicitly in `mcp-gateway-policy.v1` and the gap register so the authority limit is visible rather than silent, and the pipeline has a single enforcement point (`PolicyEvaluator`) so a future Python PolicySnapshot verifier can be attached without re-architecting the gateway. A configured-but-unavailable policy evaluator must deny; it must never allow.
+
+### 5. Read-only tools only, over tenant-scoped reads
+
+The initial tool set is read-only: `session.get`, `run.get`, `evidence.query`, and `budget.get`. These read `ibex_core.sessions`, `ibex_core.evidence_runs`, and `ibex_billing.budget_periods` under a transaction bound with `SET LOCAL ROLE ibex_app` and `app.current_org_id`, so RLS is enforced in addition to explicit `org_id` predicates. `evidence.query` serves only the `OPERATOR_REDACTED_READ` tier (sanitized metadata, never raw payloads). Mutating tools are forbidden because no accepted contract for them exists.
+
+### 6. Fail-closed taxonomy and non-blocking audit
+
+The pipeline is ordered and deny-by-default: resolve verified principal → resolve tool (`tool_not_found`) → bitmap policy (`permission_denied`; `policy_unavailable` when a configured evaluator is unavailable) → input schema validation (`invalid_params`) → org rate limit (`rate_limited`/`rate_limit_unavailable`) → tenant-scoped read (session opened only after all checks pass) → output redaction → metadata-only audit. A backend outage is `backend_unavailable` (503). Per-call timeouts and row caps bound every read. Audit is asynchronous and never blocks a read (AGENTS.md §6.1): operator reads emit a metadata-only `ibex.mcp_tool_calls` row (principal, tool, latency, outcome) with descriptor hash/scope/decision carried in structured logs and are not wrapped in the durable-before-ack evidence envelope, which applies to mutating evidence runs.
+
+## What this does not authorize
+
+This record is deliberately narrow. It does **not**:
+
+- accept `mcp-gateway-policy.v1` or any G1–G7 registry entry, or promote any row to `accepted`;
+- authorize any mutating MCP tool;
+- authorize a Python PolicySnapshot verifier/issuer or any resource/action policy authority (deferred; the authority hole stays visible);
+- authorize admin, service-account, or RLS-bypass queries behind operator tools;
+- make operator reads durable-before-ack evidence, or close GAP-009;
+- enable the gateway by default in any profile.
+
+## Evidence
+
+- `packages/mcp_gateway` unit suites cover scope evaluation, unknown tools, schema rejection, principal binding that ignores caller-supplied identity, fail-closed policy/backend behavior, row caps, redaction, and descriptor-hash stability.
+- `services/mcp-operator` unit and integration suites cover per-tool end-to-end reads, cross-tenant isolation (org A cannot read org B, no existence leak), policy-unavailable denial, and gate-disabled absence under `ibex_app` RLS on real PostgreSQL.
+- The `mcp-gateway-policy.v1` registry entry is updated to record the local, read-only, default-off implementation, the fail-closed taxonomy, and the deferred PolicySnapshot path; it is not marked accepted.
+- `18-gap-register.md` GAP-009 evidence is refreshed and remains open; no acceptance is declared.
+
+These are local results. They are not hosted/HA, restore, or production-enablement evidence.
+
+## Alternatives considered
+
+- **Extend `services/mcp-memory` with operator tools.** Rejected: it conflates the memory-serving and operator boundaries the gap register keeps separate, and entangles the memory tool contract with the operator surface.
+- **Build a Go MCP service.** Rejected: it diverges from the repository's only MCP implementation (Python/FastMCP), re-solves MCP transport for no benefit, and would not be testable against the existing MCP tooling.
+- **Keep the enforcement logic inside the service.** Rejected: authorization logic must be unit-testable outside the MCP transport, and the contract justifies the shared core.
+- **Wire a Python PolicySnapshot authority now.** Rejected: no Python verifier or `Check` API exists, so it would be a fake seam. The enforcement point is built so it can be attached later.
+
+## Review and expiry
+
+Owner review is required before any status change, contract acceptance, or production enablement. Review/expiry is 2026-11-10, or earlier on a material authority, scope, tool-surface, or policy change.

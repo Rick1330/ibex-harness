@@ -1,0 +1,191 @@
+"""ASGI bearer auth middleware for the MCP operator surface (fail closed).
+
+Pure ASGI — ``BaseHTTPMiddleware`` breaks Streamable HTTP streaming. The validator
+is resolved via a provider so it can be wired during lifespan.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from urllib.parse import urlsplit
+from uuid import UUID
+
+from mcp_gateway import ToolAuditEvent
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from app.audit import AsyncAuditEmitter
+from app.auth import TokenValidator, parse_authorization_header
+from app.config import Settings
+from app.errors import AuthFailedError, AuthUnavailableError
+from app.principal import set_principal
+
+logger = logging.getLogger(__name__)
+
+ValidatorProvider = Callable[[], TokenValidator | None]
+AuditProvider = Callable[[], AsyncAuditEmitter | None]
+
+_WWW_AUTHENTICATE = 'Bearer realm="ibex-mcp-operator", resource_metadata="{metadata_url}"'
+# ClickHouse org_id is non-null; unknown identity uses the nil UUID sentinel.
+AUTH_AUDIT_ORG_UNKNOWN = UUID("00000000-0000-0000-0000-000000000000")
+
+
+@dataclass(frozen=True, slots=True)
+class BearerAuthConfig:
+    settings: Settings
+    get_validator: ValidatorProvider
+    get_audit: AuditProvider | None = None
+    protected_prefixes: tuple[str, ...] = ("/mcp",)
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthError:
+    status: int
+    code: str
+    message: str
+    www_authenticate: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AsgiCall:
+    scope: Scope
+    receive: Receive
+    send: Send
+
+
+@dataclass(frozen=True, slots=True)
+class _RejectRequest:
+    call: _AsgiCall
+    error: _AuthError
+    started: float
+
+
+class BearerAuthMiddleware:
+    """Validates the bearer token and binds a token-derived principal."""
+
+    def __init__(self, app: ASGIApp, config: BearerAuthConfig) -> None:
+        self.app = app
+        self.settings = config.settings
+        self.get_validator = config.get_validator
+        self.get_audit = config.get_audit or (lambda: None)
+        self.protected_prefixes = config.protected_prefixes
+        self._metadata_url = (
+            _origin_from_resource(config.settings.resource_url)
+            + "/.well-known/oauth-protected-resource"
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path") or ""
+        if not _path_is_protected(path, self.protected_prefixes):
+            await self.app(scope, receive, send)
+            return
+
+        call = _AsgiCall(scope=scope, receive=receive, send=send)
+        started = time.perf_counter()
+        validator = self.get_validator()
+        if validator is None:
+            await self._reject(
+                _RejectRequest(
+                    call=call,
+                    error=_AuthError(
+                        status=503,
+                        code="auth_unavailable",
+                        message="authentication service unavailable",
+                    ),
+                    started=started,
+                )
+            )
+            return
+
+        request = Request(scope, receive)
+        try:
+            token = parse_authorization_header(request.headers.get("authorization"))
+            principal = await validator.validate(token)
+            set_principal(principal)
+        except AuthFailedError as exc:
+            await self._reject(
+                _RejectRequest(
+                    call=call,
+                    error=_AuthError(
+                        status=401,
+                        code=exc.code,
+                        message=exc.message,
+                        www_authenticate=_WWW_AUTHENTICATE.format(metadata_url=self._metadata_url),
+                    ),
+                    started=started,
+                )
+            )
+            return
+        except AuthUnavailableError as exc:
+            await self._reject(
+                _RejectRequest(
+                    call=call,
+                    error=_AuthError(status=503, code=exc.code, message=exc.message),
+                    started=started,
+                )
+            )
+            return
+
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            set_principal(None)
+
+    async def _reject(self, req: _RejectRequest) -> None:
+        self._emit_auth_audit(req.error.code, started=req.started)
+        await _send_error(req.call, req.error)
+
+    def _emit_auth_audit(self, error_code: str, *, started: float) -> None:
+        audit = self.get_audit()
+        if audit is None:
+            return
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        audit.emit(
+            ToolAuditEvent(
+                request_id=str(uuid.uuid4()),
+                org_id=AUTH_AUDIT_ORG_UNKNOWN,
+                tool_name="auth",
+                decision="deny",
+                success=False,
+                error_code=error_code,
+                latency_ms=latency_ms,
+            )
+        )
+
+
+def _path_is_protected(path: str, prefixes: tuple[str, ...]) -> bool:
+    for prefix in prefixes:
+        if path == prefix or path.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def _origin_from_resource(resource_url: str) -> str:
+    url = resource_url.rstrip("/")
+    if url.endswith("/mcp"):
+        return url[: -len("/mcp")] or url
+    parts = urlsplit(url)
+    if parts.scheme and parts.netloc:
+        return parts.scheme + "://" + parts.netloc
+    return url
+
+
+async def _send_error(call: _AsgiCall, error: _AuthError) -> None:
+    headers: dict[str, str] = {"content-type": "application/json"}
+    if error.www_authenticate is not None:
+        headers["www-authenticate"] = error.www_authenticate
+    response = JSONResponse(
+        status_code=error.status,
+        content={"error": {"code": error.code, "message": error.message}},
+        headers=headers,
+    )
+    await response(call.scope, call.receive, call.send)

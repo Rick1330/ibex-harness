@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-gateway"
+version = "0.1.0"
+description = "Shared, transport-agnostic enforcement core for the read-only IBEX MCP operator gateway (GAP-009)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "authclient",
+  "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mcp_gateway*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.uv.sources]
+authclient = { path = "../authclient" }
