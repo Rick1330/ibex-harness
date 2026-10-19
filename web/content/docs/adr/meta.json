@@ -81,6 +81,8 @@
     "0080-ibex-console-service-rename",
     "0081-fail-closed-proxy-runtime-controls",
     "0082-d2-metadata-trace-read-contract",
-    "0083-d2-publication-query-lifecycle-contract"
+    "0083-d2-publication-query-lifecycle-contract",
+    "0084-g0-principal-agent-binding-and-idempotency",
+    "0085-evidence-relay-daemon-and-session-fence"
   ]
 }

@@ -386,6 +386,28 @@ Auth stores ciphertext only. Management API validate-before-store then calls `Cr
 
 ---
 
+## 10b) Relay Service Variables (GAP-011, issue #1002)
+
+Used by: **relay** (`services/relay`). Default-off evidence relay daemon. See
+[ADR-0085](../content/docs/adr/0085-evidence-relay-daemon-and-session-fence.mdx).
+
+| Variable | Required | Default | Description | Security Notes |
+|----------|----------|---------|-------------|----------------|
+| `IBEX_ENV` | Yes | (none; required explicitly) | Runtime profile: `development`, `staging`, or `production` | Missing/empty is rejected |
+| `IBEX_RELAY_ENABLED` | No | `false` | Explicit gate. Disabled exits `0` without connecting. Accepts `1/true/yes/on` or `0/false/no/off` | Enabling requires both DSNs; fail closed otherwise |
+| `IBEX_RELAY_POSTGRES_DSN` | When enabled | (empty) | Outbox authority; pool is pinned to `ibex_evidence_relay` per connection and `current_user` is asserted at startup | **Secret.** Login role must be a member of `ibex_evidence_relay` (deployment prerequisite) |
+| `IBEX_RELAY_CLICKHOUSE_DSN` | When enabled | (empty) | Projection sink (non-production pilot; G4-gated) | **Secret.** |
+| `IBEX_RELAY_POLL_INTERVAL` | No | `2s` | Idle poll interval | Bounds `500ms`–`5m` |
+| `IBEX_RELAY_BATCH_SIZE` | No | `32` | Rows claimed per cycle | Bounds `1`–`256` |
+| `IBEX_RELAY_MAX_ATTEMPTS` | No | `8` | Attempts before a row is poisoned | Bounds `1`–`100` |
+| `IBEX_RELAY_RECOVER_AFTER` | No | `60s` | Stale in-flight recovery age | Bounds `1s`–`1h` |
+| `IBEX_RELAY_OPERATION_TIMEOUT` | No | `30s` | Per-cycle dependency deadline | Bounds `1s`–`5m` |
+| `IBEX_RELAY_ERROR_BACKOFF` | No | `5s` | Error backoff base (doubles, capped at `1m`) | Bounds `500ms`–`1m` |
+| `IBEX_PORT` | No | `8081` | HTTP listen port (`/health`, `/ready`, `/metrics`) | |
+| `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain; releases in-flight claims before exit | |
+
+---
+
 ## 11) Context / Memory / Embedding / Tokenizer Variables
 
 **Phase timing (planning baseline):** embedder + tokenizer → **2.5**; memory substrate → **3**;
@@ -798,6 +820,7 @@ Each service should also have its own `.env.example` in its directory, e.g.:
 
 - `services/proxy/.env.example`
 - `services/auth/.env.example`
+- `services/relay/.env.example`
 - `services/memory/.env.example`
 - etc.
 

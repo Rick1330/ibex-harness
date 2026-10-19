@@ -162,6 +162,42 @@ Copy `services/proxy/.env.example` and `services/auth/.env.example` before runni
 
 Run `make db-migrate` after compose is healthy.
 
+## Relay
+
+The evidence relay daemon is **default-off** and is not part of the certified compose
+profile. See [ADR-0085](/docs/adr/0085-evidence-relay-daemon-and-session-fence) and
+`services/relay/README.md`.
+
+<ParamTable
+  params={[
+    {
+      name: 'IBEX_RELAY_ENABLED',
+      type: 'boolean',
+      description: 'Explicit gate. Disabled exits 0 without connecting; enabling requires both DSNs.',
+      defaultValue: 'false',
+    },
+    {
+      name: 'IBEX_RELAY_POSTGRES_DSN',
+      type: 'string (postgres://…)',
+      required: true,
+      description:
+        'Outbox authority. Pinned to role `ibex_evidence_relay` per connection; membership is a deployment prerequisite.',
+    },
+    {
+      name: 'IBEX_RELAY_CLICKHOUSE_DSN',
+      type: 'string (clickhouse://…)',
+      required: true,
+      description: 'Projection sink (non-production pilot; G4-gated).',
+    },
+    {
+      name: 'IBEX_PORT',
+      type: 'integer',
+      description: 'HTTP port for /health, /ready, and /metrics.',
+      defaultValue: '8081',
+    },
+  ]}
+/>
+
 ## Redis
 
 <ParamTable
@@ -223,4 +259,5 @@ Every analytics query must filter `org_id` — see [Traces and ClickHouse](/docs
 ```bash
 cp services/proxy/.env.example services/proxy/.env
 cp services/auth/.env.example services/auth/.env
+cp services/relay/.env.example services/relay/.env
 ```
