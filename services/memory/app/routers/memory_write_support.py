@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -275,7 +276,10 @@ async def commit_idempotency_fail_closed(
         except LedgerError as exc:
             last = exc
             if attempt + 1 < _FINALIZE_ATTEMPTS:
-                await asyncio.sleep(_FINALIZE_BACKOFF_SECONDS * (2**attempt))
+                # Full jitter over the exponential window so a shared outage
+                # does not synchronize every in-flight request onto the retry.
+                window = _FINALIZE_BACKOFF_SECONDS * (2**attempt)
+                await asyncio.sleep(random.uniform(0.0, window))
     logger.warning(
         "idempotency finalize failed after successful write error_class=%s",
         type(last).__name__,
