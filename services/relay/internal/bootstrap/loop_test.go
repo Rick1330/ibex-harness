@@ -119,13 +119,26 @@ func TestRunLoop_ExitsAfterCancelDuringPoll(t *testing.T) {
 	stub := &stubRelay{}
 	deps, _ := loopTestDeps(stub)
 	deps.cfg.PollInterval = time.Hour
+	cancel, done := startRelayLoop(t, deps)
+	waitFor(t, func() bool { return stub.batchCalls.Load() == 1 })
+	stopRelayLoop(t, cancel, done)
+}
+
+// startRelayLoop runs runLoop in a goroutine and returns its cancel func and a
+// channel closed when the loop returns.
+func startRelayLoop(t *testing.T, deps loopDeps) (context.CancelFunc, <-chan struct{}) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		runLoop(ctx, deps)
 	}()
-	waitFor(t, func() bool { return stub.batchCalls.Load() == 1 })
+	return cancel, done
+}
+
+func stopRelayLoop(t *testing.T, cancel context.CancelFunc, done <-chan struct{}) {
+	t.Helper()
 	cancel()
 	select {
 	case <-done:
@@ -242,17 +255,7 @@ func TestRunLoop_BacksOffAfterFailureAndStopsOnCancel(t *testing.T) {
 	deps, _ := loopTestDeps(stub)
 	deps.cfg.ErrorBackoff = time.Millisecond
 	deps.cfg.PollInterval = time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		runLoop(ctx, deps)
-	}()
+	cancel, done := startRelayLoop(t, deps)
 	waitFor(t, func() bool { return stub.batchCalls.Load() >= 3 })
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("loop did not stop after cancel")
-	}
+	stopRelayLoop(t, cancel, done)
 }
