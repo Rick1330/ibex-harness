@@ -259,3 +259,45 @@ func TestRunLoop_BacksOffAfterFailureAndStopsOnCancel(t *testing.T) {
 	waitFor(t, func() bool { return stub.batchCalls.Load() >= 3 })
 	stopRelayLoop(t, cancel, done)
 }
+
+type blockingRelay struct{ started chan struct{} }
+
+func (b *blockingRelay) RecoverInFlight(context.Context, time.Duration) (int64, error) {
+	return 0, nil
+}
+
+func (b *blockingRelay) ProcessBatch(ctx context.Context) (evidenceoutbox.RelayBatchResult, error) {
+	close(b.started)
+	<-ctx.Done()
+	return evidenceoutbox.RelayBatchResult{}, nil
+}
+
+func TestRunLoop_BreaksWhenCanceledDuringCycle(t *testing.T) {
+	stub := &blockingRelay{started: make(chan struct{})}
+	deps, _ := loopTestDeps(nil)
+	deps.relay = stub
+	cancel, done := startRelayLoop(t, deps)
+	select {
+	case <-stub.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("loop never started a batch")
+	}
+	stopRelayLoop(t, cancel, done)
+}
+
+func TestSleepUntil_NonPositiveWait(t *testing.T) {
+	if !sleepUntil(context.Background(), 0) {
+		t.Fatal("non-positive wait with live context must return true")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if sleepUntil(ctx, 0) {
+		t.Fatal("non-positive wait with canceled context must return false")
+	}
+}
+
+func TestDoubleBackoff_ClampsAtMax(t *testing.T) {
+	if got := doubleBackoff(loopMaxBackoff); got != loopMaxBackoff {
+		t.Fatalf("clamp: got %s want %s", got, loopMaxBackoff)
+	}
+}

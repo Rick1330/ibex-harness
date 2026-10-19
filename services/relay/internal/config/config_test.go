@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -194,5 +195,49 @@ func TestParseLogLevel(t *testing.T) {
 	}
 	if _, err := parseLogLevel("chatty"); err == nil {
 		t.Fatal("invalid level must error")
+	}
+}
+
+func TestRequireExplicitEnvironment_Unset(t *testing.T) {
+	orig, had := os.LookupEnv("IBEX_ENV")
+	if err := os.Unsetenv("IBEX_ENV"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv("IBEX_ENV", orig)
+		}
+	})
+	if err := requireExplicitEnvironment(); err == nil {
+		t.Fatal("unset IBEX_ENV must fail closed")
+	}
+}
+
+func TestParseEnabledFlag_Invalid(t *testing.T) {
+	if _, err := parseEnabledFlag("maybe", false); err == nil {
+		t.Fatal("invalid enabled flag must fail")
+	}
+}
+
+func TestLoad_InvalidEnabledFlag(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("IBEX_RELAY_ENABLED", "maybe")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid IBEX_RELAY_ENABLED must fail")
+	}
+}
+
+func TestParseEnabledFlag_EmptyUsesDefault(t *testing.T) {
+	got, err := parseEnabledFlag("", true)
+	if err != nil || !got {
+		t.Fatalf("empty flag must use default, got value=%v err=%v", got, err)
+	}
+}
+
+func TestLoad_InvalidShutdownTimeout(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("IBEX_SHUTDOWN_TIMEOUT", "not-a-duration")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid IBEX_SHUTDOWN_TIMEOUT must fail")
 	}
 }

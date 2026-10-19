@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,19 @@ func DSN() string {
 		return dsn
 	}
 	return defaultDSN
+}
+
+// ClickHouseDSN returns CLICKHOUSE_TEST_NATIVE_DSN (the clickhouse-go native DSN
+// consumed by clickhousesink.Open), skipping when it is not configured. The CI
+// coverage job provides a pinned ClickHouse service so the connected success
+// path is exercised under the merged profile.
+func ClickHouseDSN(t *testing.T) string {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_NATIVE_DSN"))
+	if dsn == "" {
+		t.Skip("CLICKHOUSE_TEST_NATIVE_DSN is not set")
+	}
+	return dsn
 }
 
 // OpenMigratedDB opens DSN, skips when PostgreSQL is unavailable, resets the

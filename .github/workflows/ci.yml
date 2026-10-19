@@ -2137,9 +2137,30 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      clickhouse:
+        # Immutable pin of clickhouse/clickhouse-server:24.8.14.39 (multi-arch
+        # index). Backs the relay connected-runtime coverage (openRuntime +
+        # serveRelay) so the success path is measured under the merged profile.
+        image: clickhouse/clickhouse-server:24.8.14.39@sha256:1ffa82edee000a42c09313bd9f1293d94c570aee74babc1b3ca9983a35fa597b
+        env:
+          CLICKHOUSE_DB: ibex
+          CLICKHOUSE_USER: default
+          # Non-empty password required for host access (empty → localhost-only).
+          CLICKHOUSE_PASSWORD: ibextest
+        ports:
+          - 8123:8123
+          - 9000:9000
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+          --health-start-period 15s
     env:
       POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
       POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+      CLICKHOUSE_TEST_NATIVE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex
+      CLICKHOUSE_MIGRATE_DSN: clickhouse://default:ibextest@127.0.0.1:9000?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2154,6 +2175,8 @@ jobs:
         run: buf generate
       - name: Migrate up
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - name: ClickHouse migrate up
+        run: bash infra/scripts/clickhouse-migrate.sh up
       - name: Go unit coverage
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/coverage-unit.xml -- \
