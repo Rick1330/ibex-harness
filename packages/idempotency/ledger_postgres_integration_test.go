@@ -122,58 +122,74 @@ func claimOrFatal(t *testing.T, ledger *PostgresLedger, p Principal, key, hash s
 	return out
 }
 
+func finalizeOrFatal(t *testing.T, ledger *PostgresLedger, claim ClaimToken, status int, body string) {
+	t.Helper()
+	if err := ledger.Finalize(context.Background(), claim, status, []byte(body)); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+}
+
+func releaseOrFatal(t *testing.T, ledger *PostgresLedger, claim ClaimToken) {
+	t.Helper()
+	if err := ledger.Release(context.Background(), claim); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+}
+
+func requireClaimKind(t *testing.T, got ClaimOutcome, want ClaimKind) {
+	t.Helper()
+	if got.Kind != want {
+		t.Fatalf("kind = %q, want %q", got.Kind, want)
+	}
+}
+
+func requireReplay(t *testing.T, got ClaimOutcome, status int, body string) {
+	t.Helper()
+	requireClaimKind(t, got, ClaimReplay)
+	if got.Status != status {
+		t.Fatalf("status = %d, want %d", got.Status, status)
+	}
+	if string(got.Response) != body {
+		t.Fatalf("response = %q, want %q", got.Response, body)
+	}
+}
+
+func requireConflict(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrLedgerConflict) {
+		t.Fatalf("err = %v, want ErrLedgerConflict", err)
+	}
+}
+
 func TestIntegration_PostgresLedger_ClaimFinalizeReplay(t *testing.T) {
 	db := openLedgerDB(t)
 	p, _ := seedPrincipal(t, db)
 	ledger := newTestLedger(t, db, 2*time.Minute)
-	ctx := context.Background()
 	hash := HashRequest([]byte(`{"body":"a"}`))
 
-	claim, err := ledger.Claim(ctx, p, "k-finalize", hash)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if claim.Kind != ClaimOwned {
-		t.Fatalf("kind = %q, want owned", claim.Kind)
-	}
-	if err := ledger.Finalize(ctx, claim.Claim, 201, []byte(`{"id":"m1"}`)); err != nil {
-		t.Fatalf("finalize: %v", err)
-	}
-	replay, err := ledger.Claim(ctx, p, "k-finalize", hash)
-	if err != nil {
-		t.Fatalf("replay claim: %v", err)
-	}
-	if replay.Kind != ClaimReplay || replay.Status != 201 || string(replay.Response) != `{"id":"m1"}` {
-		t.Fatalf("replay = %+v, want replay 201 body", replay)
-	}
-	if err := ledger.Finalize(ctx, claim.Claim, 201, []byte(`{"id":"m1"}`)); !errors.Is(err, ErrLedgerConflict) {
-		t.Fatalf("second finalize err = %v, want ErrLedgerConflict", err)
-	}
+	claim := claimOrFatal(t, ledger, p, "k-finalize", hash)
+	requireClaimKind(t, claim, ClaimOwned)
+	finalizeOrFatal(t, ledger, claim.Claim, 201, `{"id":"m1"}`)
+
+	replay := claimOrFatal(t, ledger, p, "k-finalize", hash)
+	requireReplay(t, replay, 201, `{"id":"m1"}`)
+	requireConflict(t, ledger.Finalize(context.Background(), claim.Claim, 201, []byte(`{"id":"m1"}`)))
 }
 
 func TestIntegration_PostgresLedger_ConflictOnDifferentHash(t *testing.T) {
 	db := openLedgerDB(t)
 	p, _ := seedPrincipal(t, db)
 	ledger := newTestLedger(t, db, 2*time.Minute)
-	ctx := context.Background()
 
-	if _, err := ledger.Claim(ctx, p, "k-conflict", HashRequest([]byte("a"))); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	out, err := ledger.Claim(ctx, p, "k-conflict", HashRequest([]byte("b")))
-	if err != nil {
-		t.Fatalf("claim conflict: %v", err)
-	}
-	if out.Kind != ClaimConflict {
-		t.Fatalf("kind = %q, want conflict", out.Kind)
-	}
+	claimOrFatal(t, ledger, p, "k-conflict", HashRequest([]byte("a")))
+	out := claimOrFatal(t, ledger, p, "k-conflict", HashRequest([]byte("b")))
+	requireClaimKind(t, out, ClaimConflict)
 }
 
 func TestIntegration_PostgresLedger_InProgressThenReclaimFencesStaleOwner(t *testing.T) {
 	db := openLedgerDB(t)
 	p, _ := seedPrincipal(t, db)
 	ledger := newTestLedger(t, db, 150*time.Millisecond)
-	ctx := context.Background()
 	hash := HashRequest([]byte("a"))
 
 	first := claimOrFatal(t, ledger, p, "k-lease", hash)
@@ -184,42 +200,26 @@ func TestIntegration_PostgresLedger_InProgressThenReclaimFencesStaleOwner(t *tes
 
 	time.Sleep(250 * time.Millisecond)
 	reclaimed := claimOrFatal(t, ledger, p, "k-lease", hash)
-	if reclaimed.Kind != ClaimOwned || reclaimed.Claim.Version <= first.Claim.Version {
-		t.Fatalf("reclaim = %+v, want owned with newer version than %d", reclaimed, first.Claim.Version)
+	requireClaimKind(t, reclaimed, ClaimOwned)
+	if reclaimed.Claim.Version <= first.Claim.Version {
+		t.Fatalf("reclaim version = %d, want > %d", reclaimed.Claim.Version, first.Claim.Version)
 	}
-	if err := ledger.Finalize(ctx, first.Claim, 200, []byte("stale")); !errors.Is(err, ErrLedgerConflict) {
-		t.Fatalf("stale finalize err = %v, want ErrLedgerConflict", err)
-	}
-	if err := ledger.Finalize(ctx, reclaimed.Claim, 200, []byte("fresh")); err != nil {
-		t.Fatalf("fresh finalize: %v", err)
-	}
+	requireConflict(t, ledger.Finalize(context.Background(), first.Claim, 200, []byte("stale")))
+	finalizeOrFatal(t, ledger, reclaimed.Claim, 200, "fresh")
 }
 
 func TestIntegration_PostgresLedger_ReleaseAndStaleRelease(t *testing.T) {
 	db := openLedgerDB(t)
 	p, _ := seedPrincipal(t, db)
 	ledger := newTestLedger(t, db, 2*time.Minute)
-	ctx := context.Background()
 	hash := HashRequest([]byte("a"))
 
-	claim, err := ledger.Claim(ctx, p, "k-release", hash)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	if err := ledger.Release(ctx, claim.Claim); err != nil {
-		t.Fatalf("release: %v", err)
-	}
-	if err := ledger.Release(ctx, claim.Claim); !errors.Is(err, ErrLedgerConflict) {
-		t.Fatalf("stale release err = %v, want ErrLedgerConflict", err)
-	}
+	claim := claimOrFatal(t, ledger, p, "k-release", hash)
+	releaseOrFatal(t, ledger, claim.Claim)
+	requireConflict(t, ledger.Release(context.Background(), claim.Claim))
+
 	// A released key can be claimed again as a brand new owner.
-	reclaimed, err := ledger.Claim(ctx, p, "k-release", hash)
-	if err != nil {
-		t.Fatalf("reclaim after release: %v", err)
-	}
-	if reclaimed.Kind != ClaimOwned {
-		t.Fatalf("kind = %q, want owned", reclaimed.Kind)
-	}
+	requireClaimKind(t, claimOrFatal(t, ledger, p, "k-release", hash), ClaimOwned)
 }
 
 func TestIntegration_PostgresLedger_RejectsInvalidClaim(t *testing.T) {
@@ -231,15 +231,15 @@ func TestIntegration_PostgresLedger_RejectsInvalidClaim(t *testing.T) {
 	}
 }
 
-// assertLedgerRowCount asserts, under ibex_app RLS, how many ledger rows with
-// key are visible to orgID. The superuser DSN bypasses RLS, so a raw read must
-// assume the non-superuser role to exercise the isolation policy.
-func assertLedgerRowCount(t *testing.T, db *sql.DB, orgID uuid.UUID, key string, want int) {
+// assertSharedKeyVisible asserts, under ibex_app RLS, how many `shared-key`
+// ledger rows are visible to orgID. The superuser DSN bypasses RLS, so the raw
+// read must assume the non-superuser role to exercise the isolation policy.
+func assertSharedKeyVisible(t *testing.T, db *sql.DB, orgID uuid.UUID, want int) {
 	t.Helper()
 	var n int
 	err := withAppRole(context.Background(), db, orgID, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(context.Background(),
-			`SELECT count(*) FROM ibex_core.idempotency_ledger WHERE dedupe_key=$1`, key,
+			`SELECT count(*) FROM ibex_core.idempotency_ledger WHERE dedupe_key='shared-key'`,
 		).Scan(&n)
 	})
 	if err != nil {
@@ -256,23 +256,13 @@ func TestIntegration_PostgresLedger_RLSCrossOrgIsolation(t *testing.T) {
 	db := openLedgerDB(t)
 	orgA, orgB := seedPrincipal(t, db)
 	ledger := newTestLedger(t, db, 2*time.Minute)
-	ctx := context.Background()
 	hash := HashRequest([]byte("same"))
 
-	for _, tc := range []struct {
-		name string
-		org  Principal
-	}{{"A", orgA}, {"B", orgB}} {
-		claim, err := ledger.Claim(ctx, tc.org, "shared-key", hash)
-		if err != nil {
-			t.Fatalf("claim %s: %v", tc.name, err)
-		}
-		if claim.Kind != ClaimOwned {
-			t.Fatalf("claim %s kind = %q, want owned (org-scoped row)", tc.name, claim.Kind)
-		}
+	for _, org := range []Principal{orgA, orgB} {
+		requireClaimKind(t, claimOrFatal(t, ledger, org, "shared-key", hash), ClaimOwned)
 	}
 
 	// A raw org-scoped read under ibex_app RLS sees exactly one row per org.
-	assertLedgerRowCount(t, db, orgA.OrgID, "shared-key", 1)
-	assertLedgerRowCount(t, db, orgB.OrgID, "shared-key", 1)
+	assertSharedKeyVisible(t, db, orgA.OrgID, 1)
+	assertSharedKeyVisible(t, db, orgB.OrgID, 1)
 }
