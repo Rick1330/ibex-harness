@@ -186,6 +186,45 @@ func waitFor(t *testing.T, cond func() bool) {
 	t.Fatal("condition not reached")
 }
 
+func TestRunOnce_PartialBatchRecordsCompletedWork(t *testing.T) {
+	stub := &stubRelay{
+		batchResult: evidenceoutbox.RelayBatchResult{Claimed: 2, Delivered: 1, Failed: 1},
+		batchErr:    errors.New("finalize failed"),
+	}
+	deps, reg := loopTestDeps(stub)
+	if err := runOnce(context.Background(), deps); err == nil {
+		t.Fatal("batch error must surface")
+	}
+	for name, want := range map[string]float64{
+		"ibex_relay_claimed_total":   2,
+		"ibex_relay_delivered_total": 1,
+		"ibex_relay_retried_total":   1,
+	} {
+		if got := metricValue(t, reg, name); got != want {
+			t.Fatalf("%s: got %v want %v", name, got, want)
+		}
+	}
+	if got := metricSeriesCount(t, reg, "ibex_relay_batches_total"); got != 1 {
+		t.Fatalf("batch result series: %d", got)
+	}
+}
+
+func TestWithJitter_WithinBounds(t *testing.T) {
+	d := 10 * time.Second
+	for i := 0; i < 200; i++ {
+		got := withJitter(d)
+		if got < d/2 || got >= d {
+			t.Fatalf("withJitter(%s) = %s, want [%s, %s)", d, got, d/2, d)
+		}
+	}
+	if got := withJitter(0); got != 0 {
+		t.Fatalf("withJitter(0) = %s, want 0", got)
+	}
+	if got := withJitter(time.Nanosecond); got != time.Nanosecond {
+		t.Fatalf("withJitter(ns) = %s, want 1ns", got)
+	}
+}
+
 func TestDoubleBackoff(t *testing.T) {
 	if got := doubleBackoff(time.Second); got != 2*time.Second {
 		t.Fatalf("got %s", got)

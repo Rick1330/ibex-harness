@@ -15,7 +15,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox/clickhousesink"
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/config"
 	"github.com/google/uuid"
 )
@@ -48,14 +47,12 @@ func newTestSink(t *testing.T) *clickhousesink.Sink {
 	return sink
 }
 
-func TestRunWithShutdown_GracefulDrainReleasesClaims(t *testing.T) {
-	reg := ibexmetrics.NewRelay("test-relay")
+func TestRunWithShutdown_GracefulDrainStopsAndCloses(t *testing.T) {
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	stub := &stubRelay{recoverN: 1}
 	loopDone := make(chan struct{})
 	close(loopDone)
 	var draining atomic.Bool
@@ -68,8 +65,6 @@ func TestRunWithShutdown_GracefulDrainReleasesClaims(t *testing.T) {
 		draining:   &draining,
 		cancelLoop: func() { close(canceled) },
 		loopDone:   loopDone,
-		relay:      stub,
-		metrics:    reg,
 		rt:         &runtime{db: db, sink: newTestSink(t)},
 		signalCh:   signalCh,
 	}
@@ -90,16 +85,9 @@ func TestRunWithShutdown_GracefulDrainReleasesClaims(t *testing.T) {
 	default:
 		t.Fatal("loop must be canceled")
 	}
-	if stub.recoverCalls.Load() != 1 || stub.recoverOlder != time.Nanosecond {
-		t.Fatalf("release calls=%d olderThan=%s", stub.recoverCalls.Load(), stub.recoverOlder)
-	}
-	if got := metricValue(t, reg, "ibex_relay_recovered_total"); got != 1 {
-		t.Fatalf("recovered metric: got %v want 1", got)
-	}
 }
 
 func TestRunWithShutdown_DrainTimeoutExitsNonZero(t *testing.T) {
-	reg := ibexmetrics.NewRelay("test-relay")
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -115,8 +103,6 @@ func TestRunWithShutdown_DrainTimeoutExitsNonZero(t *testing.T) {
 		draining:   &draining,
 		cancelLoop: func() {},
 		loopDone:   loopDone,
-		relay:      &stubRelay{},
-		metrics:    reg,
 		rt:         &runtime{db: db, sink: newTestSink(t)},
 		signalCh:   signalCh,
 	}

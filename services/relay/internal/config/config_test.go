@@ -41,26 +41,51 @@ func TestLoad_RequiresExplicitEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoad_EnabledRequiresDSNs(t *testing.T) {
+func TestLoad_RejectsUnknownEnvironment(t *testing.T) {
+	t.Setenv("IBEX_RELAY_ENABLED", "false")
+	for _, raw := range []string{"prod", "test", "Production"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("IBEX_ENV", raw)
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "IBEX_ENV") {
+				t.Fatalf("env %q must be rejected, got %v", raw, err)
+			}
+		})
+	}
+}
+
+func TestLoad_EnabledRequiresPostgresDSN(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("IBEX_RELAY_ENABLED", "true")
 	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "")
-	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "")
+	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "clickhouse://ibex:ibex@ch:9000/ibex")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "IBEX_RELAY_POSTGRES_DSN") {
 		t.Fatalf("want postgres DSN error, got %v", err)
 	}
+}
 
+func TestLoad_EnabledRequiresClickHouseDSN(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("IBEX_RELAY_ENABLED", "true")
 	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "postgres://relay:pw@db:5432/ibex?sslmode=disable")
+	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "IBEX_RELAY_CLICKHOUSE_DSN") {
 		t.Fatalf("want clickhouse DSN error, got %v", err)
 	}
+}
 
+func TestLoad_EnabledWithBothDSNs(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("IBEX_RELAY_ENABLED", "true")
+	t.Setenv("IBEX_RELAY_POSTGRES_DSN", "postgres://relay:pw@db:5432/ibex?sslmode=disable")
 	t.Setenv("IBEX_RELAY_CLICKHOUSE_DSN", "clickhouse://ibex:ibex@ch:9000/ibex")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if !cfg.Enabled || cfg.PostgresDSN.String() == "" || cfg.ClickHouseDSN.String() == "" {
+	if !cfg.Enabled {
+		t.Fatal("relay must be enabled")
+	}
+	if cfg.PostgresDSN.String() == "" || cfg.ClickHouseDSN.String() == "" {
 		t.Fatalf("enabled config: %+v", cfg)
 	}
 }

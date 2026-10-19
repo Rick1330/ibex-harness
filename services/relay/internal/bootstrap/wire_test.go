@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
@@ -113,7 +114,7 @@ func (f *fakeFencedDeliverer) DeliverWithTombstoneFence(_ context.Context, _ evi
 func TestMetricsDeliverer_RecordsSuccessAndFailure(t *testing.T) {
 	reg := ibexmetrics.NewRelay("test-relay")
 	inner := &fakeFencedDeliverer{}
-	d := newMetricsDeliverer(inner, reg)
+	d := newMetricsDeliverer(inner, reg, 0)
 	row := evidenceoutbox.OutboxRow{OrgID: uuid.New()}
 	fence := evidenceoutbox.TombstoneFence{ResourceType: "session", ResourceID: uuid.New().String(), ResourceVersion: 1}
 
@@ -132,9 +133,46 @@ func TestMetricsDeliverer_RecordsSuccessAndFailure(t *testing.T) {
 	}
 }
 
+func TestMetricsDeliverer_BoundsDeliveryDeadline(t *testing.T) {
+	reg := ibexmetrics.NewRelay("test-relay")
+	d := newMetricsDeliverer(blockingFencedDeliverer{}, reg, 40*time.Millisecond)
+	fence := evidenceoutbox.TombstoneFence{ResourceType: "session", ResourceID: uuid.New().String(), ResourceVersion: 1}
+	err := d.DeliverWithTombstoneFence(context.Background(), evidenceoutbox.OutboxRow{OrgID: uuid.New()}, fence)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want deadline exceeded, got %v", err)
+	}
+}
+
+func TestDeliveryDeadlineFor_ReservesPersistenceBudget(t *testing.T) {
+	cases := []struct {
+		op   time.Duration
+		want time.Duration
+	}{
+		{0, 0},
+		{time.Second, 500 * time.Millisecond},
+		{10 * time.Second, 7500 * time.Millisecond},
+		{time.Minute, 55 * time.Second},
+	}
+	for _, tc := range cases {
+		if got := deliveryDeadlineFor(tc.op); got != tc.want {
+			t.Fatalf("deliveryDeadlineFor(%s) = %s, want %s", tc.op, got, tc.want)
+		}
+		if tc.op > 0 && deliveryDeadlineFor(tc.op) >= tc.op {
+			t.Fatalf("delivery deadline for %s must leave a reserve", tc.op)
+		}
+	}
+}
+
+type blockingFencedDeliverer struct{}
+
+func (blockingFencedDeliverer) DeliverWithTombstoneFence(ctx context.Context, _ evidenceoutbox.OutboxRow, _ evidenceoutbox.TombstoneFence) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func TestMetricsDeliverer_LegacyDeliverFailsClosedWithoutFence(t *testing.T) {
 	reg := ibexmetrics.NewRelay("test-relay")
-	d := newMetricsDeliverer(&fakeFencedDeliverer{}, reg)
+	d := newMetricsDeliverer(&fakeFencedDeliverer{}, reg, 0)
 	if err := d.Deliver(context.Background(), evidenceoutbox.OutboxRow{}); err == nil {
 		t.Fatal("fence-less delivery must fail closed")
 	}

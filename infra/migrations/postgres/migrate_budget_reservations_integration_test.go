@@ -250,9 +250,9 @@ func TestBudgetReservations_MigrationDown(t *testing.T) {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	if err := Down(dsn); err != nil {
-		t.Fatalf("down: %v", err)
-	}
+	// Down rolls back exactly one step; roll back past this migration so later
+	// migrations (e.g. 000047) do not leave budget_reservations in place.
+	downToVersion(t, dsn, 45)
 	ctx := context.Background()
 	var exists bool
 	err := db.QueryRowContext(ctx, `

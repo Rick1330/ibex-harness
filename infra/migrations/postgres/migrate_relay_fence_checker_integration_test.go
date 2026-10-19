@@ -176,18 +176,31 @@ func TestRelayFenceChecker_FenceOutcomes(t *testing.T) {
 	}
 }
 
-func TestRelayFenceChecker_RoleIsolation(t *testing.T) {
-	f := newRelayFenceFixture(t)
-
+// connAs opens a dedicated connection and switches it to a role via the given
+// literal statement (e.g. "SET ROLE ibex_evidence_relay").
+func (f *relayFenceFixture) connAs(t *testing.T, statement string) *sql.Conn {
+	t.Helper()
 	conn, err := f.db.Conn(f.ctx)
 	if err != nil {
 		t.Fatalf("conn: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-
-	if _, err := conn.ExecContext(f.ctx, `SET ROLE ibex_evidence_relay`); err != nil {
-		t.Fatalf("set role relay: %v", err)
+	if _, err := conn.ExecContext(f.ctx, statement); err != nil {
+		t.Fatalf("role switch %q: %v", statement, err)
 	}
+	return conn
+}
+
+func TestRelayFenceChecker_RoleIsolation(t *testing.T) {
+	f := newRelayFenceFixture(t)
+	assertRelayRoleCanFenceButNotReadSessions(t, f)
+	assertAppRoleCannotExecuteFence(t, f)
+}
+
+func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, f *relayFenceFixture) {
+	t.Helper()
+	conn := f.connAs(t, "SET ROLE ibex_evidence_relay")
+
 	var current string
 	if err := conn.QueryRowContext(f.ctx, `SELECT current_user`).Scan(&current); err != nil {
 		t.Fatalf("current_user: %v", err)
@@ -205,23 +218,17 @@ func TestRelayFenceChecker_RoleIsolation(t *testing.T) {
 		t.Fatalf("relay role outcome: got %q want alive", outcome)
 	}
 	var count int
-	err = conn.QueryRowContext(f.ctx, `SELECT COUNT(*) FROM ibex_core.sessions`).Scan(&count)
+	err := conn.QueryRowContext(f.ctx, `SELECT COUNT(*) FROM ibex_core.sessions`).Scan(&count)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("relay role must not read sessions directly, got count=%d err=%v", count, err)
 	}
-	if _, err := conn.ExecContext(f.ctx, `RESET ROLE`); err != nil {
-		t.Fatalf("reset role: %v", err)
-	}
+}
 
-	appConn, err := f.db.Conn(f.ctx)
-	if err != nil {
-		t.Fatalf("app conn: %v", err)
-	}
-	t.Cleanup(func() { _ = appConn.Close() })
-	if _, err := appConn.ExecContext(f.ctx, `SET ROLE ibex_app`); err != nil {
-		t.Fatalf("set role app: %v", err)
-	}
-	err = appConn.QueryRowContext(f.ctx,
+func assertAppRoleCannotExecuteFence(t *testing.T, f *relayFenceFixture) {
+	t.Helper()
+	conn := f.connAs(t, "SET ROLE ibex_app")
+	var outcome string
+	err := conn.QueryRowContext(f.ctx,
 		`SELECT `+relayFenceFn+`($1::uuid, $2::uuid, $3)`, f.orgID, f.sessionID, 1,
 	).Scan(&outcome)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
