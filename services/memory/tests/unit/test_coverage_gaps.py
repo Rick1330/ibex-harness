@@ -354,16 +354,15 @@ def test_http_error_for_write_maps_embedding() -> None:
 async def test_begin_idempotency_conflict_and_in_progress() -> None:
     from ibex_idempotency import KIND_CONFLICT, KIND_IN_PROGRESS, ClaimOutcome
 
-    from app.routers.memory_write_support import begin_idempotency
+    from app.routers.memory_write_support import Principal, begin_idempotency
 
     ledger = AsyncMock()
     ledger.claim = AsyncMock(return_value=ClaimOutcome(kind=KIND_CONFLICT))
-    org_id = uuid4()
+    principal = Principal(org_id=uuid4(), agent_id=uuid4())
     with pytest.raises(HTTPException) as exc:
         await begin_idempotency(
             ledger=ledger,
-            org_id=org_id,
-            agent_id=uuid4(),
+            principal=principal,
             idempotency_key="k",
             request_hash="fp",
         )
@@ -373,8 +372,7 @@ async def test_begin_idempotency_conflict_and_in_progress() -> None:
     with pytest.raises(HTTPException) as exc:
         await begin_idempotency(
             ledger=ledger,
-            org_id=org_id,
-            agent_id=uuid4(),
+            principal=principal,
             idempotency_key="k",
             request_hash="fp",
         )

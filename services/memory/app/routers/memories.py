@@ -49,6 +49,7 @@ from app.routers.memory_search_support import (
 )
 from app.routers.memory_write_support import (
     CreatedResponseContext,
+    Principal,
     begin_idempotency,
     finalize_created_response,
     finalize_quarantine_response,
@@ -90,8 +91,7 @@ async def create_memory(
     start = time.perf_counter()
     idem = await begin_idempotency(
         ledger=ctx.idempotency_ledger,
-        org_id=ctx.token.org_id,
-        agent_id=request.agent_id,
+        principal=Principal(org_id=ctx.token.org_id, agent_id=request.agent_id),
         idempotency_key=ctx.idempotency_key,
         request_hash=fingerprint_request(
             contract=IDEMPOTENCY_CONTRACT,

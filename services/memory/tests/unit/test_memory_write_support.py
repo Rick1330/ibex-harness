@@ -23,6 +23,7 @@ from ibex_idempotency import (
 from app.exceptions import DuplicateMemoryError, StaleLifecycleError, ValidationError
 from app.routers.memory_write_support import (
     _FINALIZE_ATTEMPTS,
+    Principal,
     begin_idempotency,
     commit_idempotency,
     commit_idempotency_fail_closed,
@@ -40,8 +41,7 @@ def _owned() -> ClaimOutcome:
 async def _begin(ledger, **overrides):
     kwargs = {
         "ledger": ledger,
-        "org_id": uuid4(),
-        "agent_id": uuid4(),
+        "principal": Principal(org_id=uuid4(), agent_id=uuid4()),
         "idempotency_key": "k",
         "request_hash": "f" * 64,
     }

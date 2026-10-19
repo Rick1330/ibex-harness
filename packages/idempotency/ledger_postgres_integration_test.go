@@ -113,6 +113,15 @@ func newTestLedger(t *testing.T, db *sql.DB, lease time.Duration) *PostgresLedge
 	return ledger
 }
 
+func claimOrFatal(t *testing.T, ledger *PostgresLedger, p Principal, key, hash string) ClaimOutcome {
+	t.Helper()
+	out, err := ledger.Claim(context.Background(), p, key, hash)
+	if err != nil {
+		t.Fatalf("claim %q: %v", key, err)
+	}
+	return out
+}
+
 func TestIntegration_PostgresLedger_ClaimFinalizeReplay(t *testing.T) {
 	db := openLedgerDB(t)
 	p, _ := seedPrincipal(t, db)
@@ -167,23 +176,14 @@ func TestIntegration_PostgresLedger_InProgressThenReclaimFencesStaleOwner(t *tes
 	ctx := context.Background()
 	hash := HashRequest([]byte("a"))
 
-	first, err := ledger.Claim(ctx, p, "k-lease", hash)
-	if err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	active, err := ledger.Claim(ctx, p, "k-lease", hash)
-	if err != nil {
-		t.Fatalf("active claim: %v", err)
-	}
+	first := claimOrFatal(t, ledger, p, "k-lease", hash)
+	active := claimOrFatal(t, ledger, p, "k-lease", hash)
 	if active.Kind != ClaimInProgress || active.RetryAfter <= 0 {
 		t.Fatalf("active = %+v, want in_progress with retry_after", active)
 	}
 
 	time.Sleep(250 * time.Millisecond)
-	reclaimed, err := ledger.Claim(ctx, p, "k-lease", hash)
-	if err != nil {
-		t.Fatalf("reclaim: %v", err)
-	}
+	reclaimed := claimOrFatal(t, ledger, p, "k-lease", hash)
 	if reclaimed.Kind != ClaimOwned || reclaimed.Claim.Version <= first.Claim.Version {
 		t.Fatalf("reclaim = %+v, want owned with newer version than %d", reclaimed, first.Claim.Version)
 	}

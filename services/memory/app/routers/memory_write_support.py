@@ -91,6 +91,14 @@ class IdempotencyHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class Principal:
+    """Verified tenant + agent identity for a memory write."""
+
+    org_id: UUID
+    agent_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
 class ClaimTarget:
     """Identity of a single ledger claim: org + agent + key + request hash."""
 
@@ -204,8 +212,7 @@ async def _claim_idempotency_slot(
 async def begin_idempotency(
     *,
     ledger: PostgresIdempotencyLedger | None,
-    org_id: UUID,
-    agent_id: UUID,
+    principal: Principal,
     idempotency_key: str | None,
     request_hash: str,
 ) -> IdempotencyHandle | JSONResponse:
@@ -220,8 +227,8 @@ async def begin_idempotency(
     outcome = await _claim_idempotency_slot(
         ledger,
         ClaimTarget(
-            org_id=org_id,
-            agent_id=agent_id,
+            org_id=principal.org_id,
+            agent_id=principal.agent_id,
             key=validated_key,
             request_hash=request_hash,
         ),

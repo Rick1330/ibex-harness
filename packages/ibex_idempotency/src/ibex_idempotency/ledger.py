@@ -24,7 +24,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import TextClause, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -44,6 +44,27 @@ KIND_OWNED = "owned"
 KIND_REPLAY = "replay"
 KIND_CONFLICT = "conflict"
 KIND_IN_PROGRESS = "in_progress"
+
+# Terminal mutations share the same version/state fence, so they only differ in
+# the statement and parameters.
+_FINALIZE_CLAIM_SQL = text(
+    """
+    UPDATE ibex_core.idempotency_ledger
+    SET state='finalized', status_code=:status, response_payload=:response,
+        lease_expires_at=NULL, version=version+1, updated_at=NOW()
+    WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
+      AND dedupe_key=:key AND request_hash=:request_hash
+      AND version=:version AND state='claimed'
+    """
+)
+_RELEASE_CLAIM_SQL = text(
+    """
+    DELETE FROM ibex_core.idempotency_ledger
+    WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
+      AND dedupe_key=:key AND request_hash=:request_hash
+      AND version=:version AND state='claimed'
+    """
+)
 
 
 class LedgerError(RuntimeError):
@@ -275,40 +296,21 @@ class PostgresIdempotencyLedger:
         )
 
     async def finalize(self, claim: ClaimToken, *, status: int, response: bytes) -> None:
-        try:
-            async with self._session_scope(str(claim.org_id)) as session:
-                result = await session.execute(
-                    text(
-                        """
-                        UPDATE ibex_core.idempotency_ledger
-                        SET state='finalized', status_code=:status, response_payload=:response,
-                            lease_expires_at=NULL, version=version+1, updated_at=NOW()
-                        WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
-                          AND dedupe_key=:key AND request_hash=:request_hash
-                          AND version=:version AND state='claimed'
-                        """
-                    ),
-                    _claim_params(claim) | {"status": status, "response": response},
-                )
-                if result.rowcount != 1:
-                    raise LedgerConflictError("claim is no longer owned")
-        except (SQLAlchemyError, OSError, TimeoutError) as exc:
-            raise _unavailable_error(exc) from exc
+        await self._mutate_claim(
+            claim,
+            _FINALIZE_CLAIM_SQL,
+            _claim_params(claim) | {"status": status, "response": response},
+        )
 
     async def release(self, claim: ClaimToken) -> None:
+        await self._mutate_claim(claim, _RELEASE_CLAIM_SQL, _claim_params(claim))
+
+    async def _mutate_claim(
+        self, claim: ClaimToken, statement: TextClause, params: dict[str, Any]
+    ) -> None:
         try:
             async with self._session_scope(str(claim.org_id)) as session:
-                result = await session.execute(
-                    text(
-                        """
-                        DELETE FROM ibex_core.idempotency_ledger
-                        WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
-                          AND dedupe_key=:key AND request_hash=:request_hash
-                          AND version=:version AND state='claimed'
-                        """
-                    ),
-                    _claim_params(claim),
-                )
+                result = await session.execute(statement, params)
                 if result.rowcount != 1:
                     raise LedgerConflictError("claim is no longer owned")
         except (SQLAlchemyError, OSError, TimeoutError) as exc:
