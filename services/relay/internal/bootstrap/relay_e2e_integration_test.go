@@ -16,7 +16,6 @@ import (
 	"github.com/Rick1330/ibex-harness/services/relay/internal/fence"
 	"github.com/Rick1330/ibex-harness/services/relay/internal/relaytest"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 func fencedRunInput(orgID, sessionID uuid.UUID, version int64) evidenceoutbox.RunInput {
@@ -227,7 +226,7 @@ func TestIntegration_RecoverInFlightWithPinnedRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("persist: %v", err)
 	}
-	forceInFlight(t, admin, persisted.OutboxIDs)
+	forceInFlightForOrg(t, admin, orgID)
 
 	recovered, err := h.relay.RecoverInFlight(ctx, time.Nanosecond)
 	if err != nil {
@@ -245,13 +244,14 @@ func TestIntegration_RecoverInFlightWithPinnedRole(t *testing.T) {
 	}
 }
 
-func forceInFlight(t *testing.T, admin *sql.DB, ids []uuid.UUID) {
+// forceInFlightForOrg marks every outbox row for the org as an abandoned
+// in-flight claim. The migrated schema is reset per test, so the org's rows are
+// exactly those persisted by the test.
+func forceInFlightForOrg(t *testing.T, admin *sql.DB, orgID uuid.UUID) {
 	t.Helper()
-	_, err := admin.ExecContext(context.Background(), // nosemgrep: go.lang.security.audit.sqli.tainted-sql-string
-		`UPDATE ibex_core.evidence_outbox
-		 SET delivery_status = 'in_flight', attempts = 1, claimed_at = NOW() - INTERVAL '1 hour'
-		 WHERE id = ANY($1)`, pq.Array(ids))
-	if err != nil {
+	if _, err := admin.ExecContext(context.Background(),
+		`UPDATE ibex_core.evidence_outbox SET delivery_status = 'in_flight', attempts = 1, claimed_at = NOW() - INTERVAL '1 hour' WHERE org_id = $1`,
+		orgID); err != nil {
 		t.Fatalf("force in-flight: %v", err)
 	}
 }

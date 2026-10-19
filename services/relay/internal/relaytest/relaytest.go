@@ -78,10 +78,9 @@ func SeedOrgWithSession(t *testing.T, db *sql.DB, slug string) (orgID, sessionID
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
 		t.Fatalf("service account: %v", err)
 	}
-	orgName := "relay-test-org-" + slug
-	if err := tx.QueryRowContext(ctx, // nosemgrep: go.lang.security.audit.sqli.tainted-sql-string
-		`INSERT INTO ibex_core.organizations (name, slug) VALUES ($1, $2) RETURNING id`,
-		orgName, slug).Scan(&orgID); err != nil {
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO ibex_core.organizations (name, slug) VALUES ('relay-test-org-' || $2, $2) RETURNING id`,
+		slug, slug).Scan(&orgID); err != nil {
 		t.Fatalf("org: %v", err)
 	}
 	var userID uuid.UUID

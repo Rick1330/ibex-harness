@@ -2,8 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand/v2" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- non-security backoff jitter
+	"math/big"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/evidenceoutbox"
@@ -115,7 +116,11 @@ func withJitter(d time.Duration) time.Duration {
 		return d
 	}
 	half := d / 2
-	return half + time.Duration(rand.Int64N(int64(half)))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(half)))
+	if err != nil {
+		return d
+	}
+	return half + time.Duration(n.Int64())
 }
 
 func doubleBackoff(v time.Duration) time.Duration {
