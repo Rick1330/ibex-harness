@@ -73,6 +73,16 @@ class IdempotencyHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class ClaimTarget:
+    """Identity of a single ledger claim: org + agent + key + request hash."""
+
+    org_id: UUID
+    agent_id: UUID
+    key: str
+    request_hash: str
+
+
+@dataclass(frozen=True, slots=True)
 class CreatedResponseContext:
     outcome: WriteOutcome
     org_id: UUID
@@ -148,16 +158,15 @@ def _finalize_idempotency_claim(
 
 async def _claim_idempotency_slot(
     ledger: PostgresIdempotencyLedger,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    key: str,
-    request_hash: str,
+    target: ClaimTarget,
 ) -> ClaimOutcome:
     """Atomically claim the idempotency key in PostgreSQL (or fail closed)."""
     try:
         return await ledger.claim(
-            org_id=org_id, agent_id=agent_id, key=key, request_hash=request_hash
+            org_id=target.org_id,
+            agent_id=target.agent_id,
+            key=target.key,
+            request_hash=target.request_hash,
         )
     except LedgerValidationError as exc:
         logger.warning("idempotency claim rejected error_class=%s", type(exc).__name__)
@@ -199,7 +208,13 @@ async def begin_idempotency(
         )
     handle.ledger = ledger
     outcome = await _claim_idempotency_slot(
-        ledger, org_id=org_id, agent_id=agent_id, key=validated_key, request_hash=request_hash
+        ledger,
+        ClaimTarget(
+            org_id=org_id,
+            agent_id=agent_id,
+            key=validated_key,
+            request_hash=request_hash,
+        ),
     )
     return _finalize_idempotency_claim(outcome, handle)
 

@@ -43,6 +43,15 @@ async def _session_as_app_org(factory: async_sessionmaker, org_id: str):
         yield session
 
 
+def _app_org_scope(factory: async_sessionmaker):
+    """Bind the shared ledger's ``SessionScope`` signature (org_id only)."""
+
+    def _scope(org_id: str):
+        return _session_as_app_org(factory, org_id)
+
+    return _scope
+
+
 @pytest_asyncio.fixture
 async def pg_factory(migrated_postgres: str):
     engine: AsyncEngine = create_engine(Settings(database_url=migrated_postgres))
@@ -106,7 +115,7 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
     await _seed_org_agent(pg_factory, org_b, agent_b)
     try:
         ledger = PostgresIdempotencyLedger(
-            pg_factory, lease_seconds=30, session_scope=_session_as_app_org
+            pg_factory, lease_seconds=30, session_scope=_app_org_scope(pg_factory)
         )
         hash_a = "a" * 64
         hash_b = "b" * 64

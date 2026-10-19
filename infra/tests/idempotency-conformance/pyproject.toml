@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Cross-runtime conformance suite for the request-idempotency-core.v1 PostgreSQL ledger"
 requires-python = ">=3.12"
 dependencies = [
+  "ibex-async-db",
   "ibex-idempotency",
   "sqlalchemy[asyncio]>=2.0.0",
   "asyncpg>=0.29.0",
@@ -17,6 +18,7 @@ dev = [
 ]
 
 [tool.uv.sources]
+ibex-async-db = { path = "../../../packages/ibex_async_db" }
 ibex-idempotency = { path = "../../../packages/ibex_idempotency" }
 
 [tool.ruff]

@@ -24,6 +24,9 @@ fi
 export IBEX_IDEMPOTENCY_CONFORMANCE_DSN="${CANONICAL_DSN}"
 
 cd "$SUITE_DIR"
-uv sync --frozen --extra dev
+# The only source builds here are the first-party path wheels (ibex-async-db,
+# ibex-idempotency); every third-party dependency is resolved from the frozen
+# lockfile, so no untrusted setup script runs.
+uv sync --frozen --extra dev  # NOSONAR shell:S8541
 .venv/bin/ruff check tests
 .venv/bin/pytest -q

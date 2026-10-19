@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from ibex_async_db import AsyncDatabaseTarget, parse_async_database_url
 from ibex_idempotency import PostgresIdempotencyLedger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -24,32 +25,33 @@ from sqlalchemy.ext.asyncio import (
 _DSN_ENV = ("IBEX_IDEMPOTENCY_CONFORMANCE_DSN", "POSTGRES_TEST_DSN", "IBEX_MEMORY_DATABASE_URL")
 
 
-def _async_dsn() -> str | None:
+def _raw_dsn() -> str | None:
     for name in _DSN_ENV:
         raw = os.getenv(name)
-        if not raw:
-            continue
-        if raw.startswith("postgresql+asyncpg://"):
+        if raw:
             return raw
-        if raw.startswith("postgres://"):
-            return "postgresql+asyncpg://" + raw[len("postgres://") :]
-        if raw.startswith("postgresql://"):
-            return "postgresql+asyncpg://" + raw[len("postgresql://") :]
-        return raw
     return None
 
 
 @pytest.fixture(scope="session")
-def conformance_dsn() -> str:
-    dsn = _async_dsn()
-    if not dsn:
+def conformance_target() -> AsyncDatabaseTarget:
+    """Parse the first configured DSN into an asyncpg URL + SSL connect_args.
+
+    ``sslmode`` (as used by the CI libpq DSN) is not a valid asyncpg connect
+    kwarg; ``parse_async_database_url`` translates it and strips it so the engine
+    can actually connect instead of erroring into a silent skip.
+    """
+    raw = _raw_dsn()
+    if not raw:
         pytest.skip("IBEX_IDEMPOTENCY_CONFORMANCE_DSN / POSTGRES_TEST_DSN not set")
-    return dsn
+    return parse_async_database_url(raw)
 
 
 @pytest_asyncio.fixture
-async def engine(conformance_dsn: str) -> AsyncIterator[AsyncEngine]:
-    eng = create_async_engine(conformance_dsn)
+async def engine(conformance_target: AsyncDatabaseTarget) -> AsyncIterator[AsyncEngine]:
+    eng = create_async_engine(
+        conformance_target.url, connect_args=dict(conformance_target.connect_args)
+    )
     try:
         async with eng.connect() as conn:
             await conn.execute(
@@ -76,33 +78,33 @@ async def ledger(
     yield PostgresIdempotencyLedger(session_factory, lease_seconds=1.0)
 
 
+async def _scalar_id(session: AsyncSession, statement: str, params: dict[str, object]) -> UUID:
+    result = await session.execute(
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            statement
+        ),
+        params,
+    )
+    return result.scalar_one()  # type: ignore[no-any-return]
+
+
 async def _seed_org_agent(session: AsyncSession) -> tuple[UUID, UUID]:
     suffix = uuid4().hex
-    org_id = (
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "INSERT INTO ibex_core.organizations (name, slug) "
-                "VALUES (:name, :slug) RETURNING id"
-            ),
-            {"name": "conformance", "slug": f"conformance-{suffix}"},
-        )
-    ).scalar_one()
-    agent_id = (
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "INSERT INTO ibex_core.agents (org_id, name, slug) "
-                "VALUES (:org_id, :name, :slug) RETURNING id"
-            ),
-            {"org_id": org_id, "name": "conformance-agent", "slug": f"conformance-agent-{suffix}"},
-        )
-    ).scalar_one()
+    org_id = await _scalar_id(
+        session,
+        "INSERT INTO ibex_core.organizations (name, slug) VALUES (:name, :slug) RETURNING id",
+        {"name": "conformance", "slug": f"conformance-{suffix}"},
+    )
+    agent_id = await _scalar_id(
+        session,
+        "INSERT INTO ibex_core.agents (org_id, name, slug) "
+        "VALUES (:org_id, :name, :slug) RETURNING id",
+        {"org_id": org_id, "name": "conformance-agent", "slug": f"conformance-agent-{suffix}"},
+    )
     return org_id, agent_id
 
 
-@pytest_asyncio.fixture
-async def principal(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> tuple[UUID, UUID]:
+async def _seed_principal(session_factory: async_sessionmaker[AsyncSession]) -> tuple[UUID, UUID]:
     """Seed and return one (org_id, agent_id) under the service-account scope."""
     async with session_factory() as session, session.begin():
         await session.execute(
@@ -110,19 +112,14 @@ async def principal(
                 "SELECT set_config('app.is_service_account', 'true', true)"
             )
         )
-        org_id, agent_id = await _seed_org_agent(session)
-    return org_id, agent_id
+        return await _seed_org_agent(session)
 
 
 @pytest_asyncio.fixture
-async def second_principal(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> tuple[UUID, UUID]:
-    async with session_factory() as session, session.begin():
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        org_id, agent_id = await _seed_org_agent(session)
-    return org_id, agent_id
+async def principal(session_factory: async_sessionmaker[AsyncSession]) -> tuple[UUID, UUID]:
+    return await _seed_principal(session_factory)
+
+
+@pytest_asyncio.fixture
+async def second_principal(session_factory: async_sessionmaker[AsyncSession]) -> tuple[UUID, UUID]:
+    return await _seed_principal(session_factory)

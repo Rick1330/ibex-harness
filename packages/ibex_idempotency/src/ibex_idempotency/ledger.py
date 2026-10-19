@@ -25,7 +25,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ibex_idempotency.sessions import (
@@ -105,21 +105,24 @@ class PostgresIdempotencyLedger:
 
     async def ping(self) -> None:
         """Verify the ledger table is present and writable without a tenant claim."""
-        async with self._probe_scope() as session:
-            result = await session.execute(
-                text(
-                    """
-                    SELECT to_regclass('ibex_core.idempotency_ledger') IS NOT NULL AS table_exists,
-                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'SELECT') AS can_select,
-                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'INSERT') AS can_insert,
-                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'UPDATE') AS can_update,
-                           has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'DELETE') AS can_delete
-                    """
-                )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            )
-            probe = result.mappings().one()
-            if not all(probe.values()):
-                raise LedgerError("idempotency ledger is not ready")
+        try:
+            async with self._probe_scope() as session:
+                result = await session.execute(
+                    text(
+                        """
+                        SELECT to_regclass('ibex_core.idempotency_ledger') IS NOT NULL AS table_exists,
+                               has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'SELECT') AS can_select,
+                               has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'INSERT') AS can_insert,
+                               has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'UPDATE') AS can_update,
+                               has_table_privilege(current_user, 'ibex_core.idempotency_ledger', 'DELETE') AS can_delete
+                        """
+                    )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                )
+                probe = result.mappings().one()
+                if not all(probe.values()):
+                    raise LedgerError("idempotency ledger is not ready")
+        except SQLAlchemyError as exc:
+            raise _unavailable_error(exc) from exc
 
     async def claim(
         self, *, org_id: UUID, agent_id: UUID, key: str, request_hash: str
@@ -142,6 +145,8 @@ class PostgresIdempotencyLedger:
                 return await self._resolve_row(row, fresh=fresh, context=context)
         except IntegrityError as exc:
             raise _as_ledger_error(exc) from exc
+        except SQLAlchemyError as exc:
+            raise _unavailable_error(exc) from exc
 
     async def _insert_or_load(self, context: _ResolveContext) -> tuple[Any, bool]:
         inserted = (
@@ -270,38 +275,44 @@ class PostgresIdempotencyLedger:
         )
 
     async def finalize(self, claim: ClaimToken, *, status: int, response: bytes) -> None:
-        async with self._session_scope(str(claim.org_id)) as session:
-            result = await session.execute(
-                text(
-                    """
-                    UPDATE ibex_core.idempotency_ledger
-                    SET state='finalized', status_code=:status, response_payload=:response,
-                        lease_expires_at=NULL, version=version+1, updated_at=NOW()
-                    WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
-                      AND dedupe_key=:key AND request_hash=:request_hash
-                      AND version=:version AND state='claimed'
-                    """
-                ),
-                _claim_params(claim) | {"status": status, "response": response},
-            )
-            if result.rowcount != 1:
-                raise LedgerConflictError("claim is no longer owned")
+        try:
+            async with self._session_scope(str(claim.org_id)) as session:
+                result = await session.execute(
+                    text(
+                        """
+                        UPDATE ibex_core.idempotency_ledger
+                        SET state='finalized', status_code=:status, response_payload=:response,
+                            lease_expires_at=NULL, version=version+1, updated_at=NOW()
+                        WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
+                          AND dedupe_key=:key AND request_hash=:request_hash
+                          AND version=:version AND state='claimed'
+                        """
+                    ),
+                    _claim_params(claim) | {"status": status, "response": response},
+                )
+                if result.rowcount != 1:
+                    raise LedgerConflictError("claim is no longer owned")
+        except SQLAlchemyError as exc:
+            raise _unavailable_error(exc) from exc
 
     async def release(self, claim: ClaimToken) -> None:
-        async with self._session_scope(str(claim.org_id)) as session:
-            result = await session.execute(
-                text(
-                    """
-                    DELETE FROM ibex_core.idempotency_ledger
-                    WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
-                      AND dedupe_key=:key AND request_hash=:request_hash
-                      AND version=:version AND state='claimed'
-                    """
-                ),
-                _claim_params(claim),
-            )
-            if result.rowcount != 1:
-                raise LedgerConflictError("claim is no longer owned")
+        try:
+            async with self._session_scope(str(claim.org_id)) as session:
+                result = await session.execute(
+                    text(
+                        """
+                        DELETE FROM ibex_core.idempotency_ledger
+                        WHERE id=:id AND organization_id=:org_id AND agent_id=:agent_id
+                          AND dedupe_key=:key AND request_hash=:request_hash
+                          AND version=:version AND state='claimed'
+                        """
+                    ),
+                    _claim_params(claim),
+                )
+                if result.rowcount != 1:
+                    raise LedgerConflictError("claim is no longer owned")
+        except SQLAlchemyError as exc:
+            raise _unavailable_error(exc) from exc
 
     def _lease_interval(self) -> timedelta:
         return timedelta(seconds=self._lease_seconds)
@@ -312,6 +323,16 @@ def _as_ledger_error(exc: IntegrityError) -> LedgerError:
     if sqlstate == _FOREIGN_KEY_VIOLATION:
         return LedgerValidationError("idempotency ledger claim references unknown rows")
     return LedgerError("idempotency ledger rejected claim")
+
+
+def _unavailable_error(exc: SQLAlchemyError) -> LedgerError:
+    """Map any driver/connection failure to a fail-closed ``LedgerError``.
+
+    Without this, a refused connection or timed-out query escapes as a raw
+    ``OperationalError``; callers that only catch ``LedgerError`` would then
+    surface a 500 instead of the intended 503 ``IDEMPOTENCY_UNAVAILABLE``.
+    """
+    return LedgerError(f"idempotency ledger unavailable: {type(exc).__name__}")
 
 
 def _validate_claim(key: str, request_hash: str) -> None:

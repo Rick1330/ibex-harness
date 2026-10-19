@@ -39,7 +39,8 @@ def _hash(seed: str) -> str:
 async def test_claim_finalize_replay(ledger, principal) -> None:
     org_id, agent_id = principal
     outcome = await ledger.claim(org_id=org_id, agent_id=agent_id, key="k", request_hash=_hash("a"))
-    assert outcome.kind == KIND_OWNED and outcome.claim is not None
+    assert outcome.kind == KIND_OWNED
+    assert outcome.claim is not None
 
     await ledger.finalize(outcome.claim, status=201, response=b'{"id":"m1"}')
 
@@ -79,7 +80,8 @@ async def test_live_claim_reports_in_progress(ledger, principal) -> None:
         org_id=org_id, agent_id=agent_id, key="k4", request_hash=_hash("a")
     )
     assert outcome.kind == KIND_IN_PROGRESS
-    assert outcome.retry_after is not None and outcome.retry_after >= 1
+    assert outcome.retry_after is not None
+    assert outcome.retry_after >= 1
 
 
 @pytest.mark.asyncio
@@ -108,7 +110,8 @@ async def test_crash_replay_recovers_after_lease_expiry(
     claim = await crashed.claim(
         org_id=org_id, agent_id=agent_id, key="crash", request_hash=_hash("c")
     )
-    assert claim.kind == KIND_OWNED and claim.claim is not None
+    assert claim.kind == KIND_OWNED
+    assert claim.claim is not None
     # No finalize: the process "dies" here. A restarted ledger reclaims the lease.
     await asyncio.sleep(1.5)
 
@@ -117,7 +120,8 @@ async def test_crash_replay_recovers_after_lease_expiry(
         org_id=org_id, agent_id=agent_id, key="crash", request_hash=_hash("c")
     )
     assert recovered.kind == KIND_OWNED
-    assert recovered.claim is not None and recovered.claim.version > claim.claim.version
+    assert recovered.claim is not None
+    assert recovered.claim.version > claim.claim.version
 
     # The stale owner can no longer finalize; the new owner can, and replay works.
     with pytest.raises(LedgerConflictError):
@@ -126,7 +130,8 @@ async def test_crash_replay_recovers_after_lease_expiry(
     replay = await restarted.claim(
         org_id=org_id, agent_id=agent_id, key="crash", request_hash=_hash("c")
     )
-    assert replay.kind == KIND_REPLAY and replay.response == b'{"recovered":true}'
+    assert replay.kind == KIND_REPLAY
+    assert replay.response == b'{"recovered":true}'
 
 
 @pytest.mark.asyncio
@@ -150,6 +155,13 @@ async def test_rls_hides_other_org_rows(
     await ledger.claim(org_id=org_a, agent_id=agent_a, key="rls", request_hash=_hash("a"))
 
     async with session_factory() as session, session.begin():
+        # Assume the non-superuser role so FORCE RLS is enforced; the test DSN
+        # connects as the superuser, which would otherwise bypass the policy.
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SET LOCAL ROLE ibex_app"
+            )
+        )
         await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 "SELECT set_config('app.current_org_id', :org, true)"
@@ -202,4 +214,5 @@ async def test_agent_scope_is_part_of_key(ledger, session_factory, principal) ->
     second = await ledger.claim(
         org_id=org_id, agent_id=other_agent, key="agent-scope", request_hash=_hash("a")
     )
-    assert first.kind == KIND_OWNED and second.kind == KIND_OWNED
+    assert first.kind == KIND_OWNED
+    assert second.kind == KIND_OWNED

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import FrozenInstanceError
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from ibex_idempotency import (
     KIND_CONFLICT,
@@ -21,6 +21,8 @@ from ibex_idempotency import (
     LedgerValidationError,
     PostgresIdempotencyLedger,
 )
+
+_HASH = "a" * 64
 
 
 class _Row(dict):
@@ -55,6 +57,17 @@ class _FakeSession:
         return self._results.pop(0)
 
 
+class _FailingSession(_FakeSession):
+    """Session whose every statement fails at the driver boundary."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__([])
+        self._error = error
+
+    async def execute(self, statement, params=None):  # type: ignore[no-untyped-def]
+        raise self._error
+
+
 def _scope(session: _FakeSession):
     @asynccontextmanager
     async def _cm(_org_id: str):
@@ -71,16 +84,18 @@ def _probe_scope(session: _FakeSession):
     return _cm
 
 
-def _row(state: str, request_hash: str, *, status: int | None = None, version: int = 1, lease=None):
-    return _Row(
+def _row(state: str, request_hash: str, **overrides: object) -> _Row:
+    row = _Row(
         id=uuid4(),
         request_hash=request_hash,
         state=state,
-        status_code=status,
+        status_code=None,
         response_payload=b'{"ok":true}' if state == "finalized" else None,
-        lease_expires_at=lease,
-        version=version,
+        lease_expires_at=None,
+        version=1,
     )
+    row.update(overrides)
+    return row
 
 
 def _ledger(session: _FakeSession, *, lease_seconds: float = 120.0) -> PostgresIdempotencyLedger:
@@ -89,64 +104,74 @@ def _ledger(session: _FakeSession, *, lease_seconds: float = 120.0) -> PostgresI
     )
 
 
-@pytest.mark.asyncio
-async def test_claim_fresh_returns_owned() -> None:
-    session = _FakeSession([_Result(_row("claimed", "a" * 64))])
-    outcome = await _ledger(session).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
+async def _claim(session: _FakeSession, *, key: str = "k", request_hash: str = _HASH):
+    return await _ledger(session).claim(
+        org_id=uuid4(), agent_id=uuid4(), key=key, request_hash=request_hash
     )
-    assert outcome.kind == KIND_OWNED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("results", "kind", "status", "response"),
+    [
+        ([_Result(_row("claimed", _HASH))], KIND_OWNED, None, None),
+        (
+            [_Result(None), _Result(_row("finalized", _HASH, status_code=201, version=2))],
+            KIND_REPLAY,
+            201,
+            b'{"ok":true}',
+        ),
+        ([_Result(_row("claimed", "b" * 64))], KIND_CONFLICT, None, None),
+        (
+            [
+                _Result(None),
+                _Result(
+                    _row(
+                        "claimed",
+                        _HASH,
+                        lease_expires_at=datetime.now(tz=UTC) + timedelta(seconds=30),
+                    )
+                ),
+            ],
+            KIND_IN_PROGRESS,
+            None,
+            None,
+        ),
+    ],
+)
+async def test_claim_maps_row_to_outcome(results, kind, status, response) -> None:
+    outcome = await _claim(_FakeSession(results))
+    assert outcome.kind == kind
     assert outcome.claim is not None
+    assert outcome.status == status
+    assert outcome.response == response
 
 
 @pytest.mark.asyncio
-async def test_claim_replays_finalized_response() -> None:
+async def test_claim_reports_positive_retry_hint_within_lease() -> None:
+    future = datetime.now(tz=UTC) + timedelta(seconds=30)
     session = _FakeSession(
-        [_Result(None), _Result(_row("finalized", "a" * 64, status=201, version=2))]
+        [_Result(None), _Result(_row("claimed", _HASH, lease_expires_at=future))]
     )
-    outcome = await _ledger(session).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-    )
-    assert outcome.kind == KIND_REPLAY
-    assert outcome.status == 201
-    assert outcome.response == b'{"ok":true}'
-
-
-@pytest.mark.asyncio
-async def test_claim_reports_conflict_on_hash_mismatch() -> None:
-    session = _FakeSession([_Result(_row("claimed", "b" * 64))])
-    outcome = await _ledger(session).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-    )
-    assert outcome.kind == KIND_CONFLICT
-
-
-@pytest.mark.asyncio
-async def test_claim_reports_in_progress_within_lease() -> None:
-    import datetime as dt
-
-    future = dt.datetime.now(tz=dt.UTC) + timedelta(seconds=30)
-    session = _FakeSession([_Result(None), _Result(_row("claimed", "a" * 64, lease=future))])
-    outcome = await _ledger(session).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-    )
+    outcome = await _claim(session)
     assert outcome.kind == KIND_IN_PROGRESS
-    assert outcome.retry_after is not None and outcome.retry_after >= 1
+    assert outcome.retry_after is not None
+    assert outcome.retry_after >= 1
 
 
 @pytest.mark.asyncio
 async def test_claim_rejects_invalid_claim() -> None:
-    session = _FakeSession([])
+    ledger = _ledger(_FakeSession([]))
     with pytest.raises(LedgerError):
-        await _ledger(session).claim(org_id=uuid4(), agent_id=uuid4(), key="", request_hash="x")
+        await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="", request_hash="x")
 
 
 @pytest.mark.asyncio
 async def test_finalize_raises_conflict_when_not_owned() -> None:
-    session = _FakeSession([_Result(None, rowcount=0)])
-    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", "a" * 64, version=1)
+    ledger = _ledger(_FakeSession([_Result(None, rowcount=0)]))
+    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
     with pytest.raises(LedgerConflictError):
-        await _ledger(session).finalize(claim, status=201, response=b"{}")
+        await ledger.finalize(claim, status=201, response=b"{}")
 
 
 def test_as_ledger_error_maps_foreign_key_to_validation() -> None:
@@ -167,7 +192,7 @@ def test_as_ledger_error_maps_foreign_key_to_validation() -> None:
 
 
 def test_claim_token_is_immutable() -> None:
-    token = ClaimToken(uuid4(), uuid4(), uuid4(), "k", "a" * 64, version=1)
+    token = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
     with pytest.raises(FrozenInstanceError):
         token.version = 2  # type: ignore[misc]
     assert isinstance(token.claim_id, UUID)
@@ -219,12 +244,13 @@ async def test_ping_fails_closed_when_privilege_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_claim_binds_lease_as_timedelta() -> None:
-    session = _FakeSession([_Result(_row("claimed", "a" * 64))])
+    session = _FakeSession([_Result(_row("claimed", _HASH))])
     await _ledger(session, lease_seconds=30).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
+        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash=_HASH
     )
     _, params = session.calls[0]
-    assert params is not None and params["lease"] == timedelta(seconds=30)
+    assert params is not None
+    assert params["lease"] == timedelta(seconds=30)
 
 
 @pytest.mark.asyncio
@@ -235,15 +261,14 @@ async def test_claim_reclaims_expired_lease() -> None:
     session = _FakeSession(
         [
             _Result(None),
-            _Result(_row("claimed", "a" * 64, version=2, lease=expired)),
+            _Result(_row("claimed", _HASH, version=2, lease_expires_at=expired)),
             _Result(_Row(version=3)),
         ]
     )
-    outcome = await _ledger(session).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-    )
+    outcome = await _claim(session)
     assert outcome.kind == KIND_OWNED
-    assert outcome.claim is not None and outcome.claim.version == 3
+    assert outcome.claim is not None
+    assert outcome.claim.version == 3
 
 
 @pytest.mark.asyncio
@@ -252,36 +277,57 @@ async def test_claim_lost_reclaim_race_reports_in_progress() -> None:
 
     expired = dt.datetime.now(tz=dt.UTC) - timedelta(seconds=1)
     session = _FakeSession(
-        [_Result(None), _Result(_row("claimed", "a" * 64, lease=expired)), _Result(None)]
+        [_Result(None), _Result(_row("claimed", _HASH, lease_expires_at=expired)), _Result(None)]
     )
-    outcome = await _ledger(session).claim(
-        org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-    )
+    outcome = await _claim(session)
     assert outcome.kind == KIND_IN_PROGRESS
     assert outcome.retry_after == 1
 
 
 @pytest.mark.asyncio
 async def test_claim_missing_row_raises() -> None:
-    session = _FakeSession([_Result(None), _Result(None)])
+    ledger = _ledger(_FakeSession([_Result(None), _Result(None)]))
     with pytest.raises(LedgerError, match="disappeared"):
-        await _ledger(session).claim(
-            org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-        )
+        await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="k", request_hash=_HASH)
 
 
 @pytest.mark.asyncio
 async def test_claim_unsupported_state_raises() -> None:
-    session = _FakeSession([_Result(None), _Result(_row("failed_terminal", "a" * 64))])
+    ledger = _ledger(_FakeSession([_Result(None), _Result(_row("failed_terminal", _HASH))]))
     with pytest.raises(LedgerError, match="unsupported"):
-        await _ledger(session).claim(
-            org_id=uuid4(), agent_id=uuid4(), key="k", request_hash="a" * 64
-        )
+        await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="k", request_hash=_HASH)
 
 
 @pytest.mark.asyncio
 async def test_release_raises_conflict_when_not_owned() -> None:
-    session = _FakeSession([_Result(None, rowcount=0)])
-    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", "a" * 64, version=1)
+    ledger = _ledger(_FakeSession([_Result(None, rowcount=0)]))
+    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
     with pytest.raises(LedgerConflictError):
-        await _ledger(session).release(claim)
+        await ledger.release(claim)
+
+
+def _operational_error(statement: str) -> OperationalError:
+    return OperationalError(statement, {}, Exception("connection refused"))
+
+
+@pytest.mark.asyncio
+async def test_claim_maps_driver_error_to_ledger_error() -> None:
+    ledger = _ledger(_FailingSession(_operational_error("INSERT")))
+    with pytest.raises(LedgerError):
+        await ledger.claim(org_id=uuid4(), agent_id=uuid4(), key="k", request_hash=_HASH)
+
+
+@pytest.mark.asyncio
+async def test_finalize_maps_driver_error_to_ledger_error() -> None:
+    ledger = _ledger(_FailingSession(_operational_error("UPDATE")))
+    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
+    with pytest.raises(LedgerError):
+        await ledger.finalize(claim, status=200, response=b"{}")
+
+
+@pytest.mark.asyncio
+async def test_release_maps_driver_error_to_ledger_error() -> None:
+    ledger = _ledger(_FailingSession(_operational_error("DELETE")))
+    claim = ClaimToken(uuid4(), uuid4(), uuid4(), "k", _HASH, version=1)
+    with pytest.raises(LedgerError):
+        await ledger.release(claim)

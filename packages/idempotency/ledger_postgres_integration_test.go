@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -78,6 +79,29 @@ func seedPrincipal(t *testing.T, db *sql.DB) (Principal, Principal) {
 		t.Fatalf("commit: %v", err)
 	}
 	return a, b
+}
+
+// withAppRole runs fn inside a transaction that assumes the non-superuser
+// ibex_app role, so FORCE RLS actually applies. The test DSN connects as the
+// superuser (which bypasses RLS), mirroring
+// infra/migrations/postgres/migrate_integration_test.go and
+// packages/evidenceoutbox/store_rls_integration_test.go.
+func withAppRole(ctx context.Context, db *sql.DB, orgID uuid.UUID, fn func(*sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL ROLE ibex_app`); err != nil {
+		return fmt.Errorf("set role ibex_app: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID.String()); err != nil {
+		return fmt.Errorf("set org: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func newTestLedger(t *testing.T, db *sql.DB, lease time.Duration) *PostgresLedger {
@@ -207,6 +231,25 @@ func TestIntegration_PostgresLedger_RejectsInvalidClaim(t *testing.T) {
 	}
 }
 
+// assertLedgerRowCount asserts, under ibex_app RLS, how many ledger rows with
+// key are visible to orgID. The superuser DSN bypasses RLS, so a raw read must
+// assume the non-superuser role to exercise the isolation policy.
+func assertLedgerRowCount(t *testing.T, db *sql.DB, orgID uuid.UUID, key string, want int) {
+	t.Helper()
+	var n int
+	err := withAppRole(context.Background(), db, orgID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(),
+			`SELECT count(*) FROM ibex_core.idempotency_ledger WHERE dedupe_key=$1`, key,
+		).Scan(&n)
+	})
+	if err != nil {
+		t.Fatalf("count ledger rows for org %s: %v", orgID, err)
+	}
+	if n != want {
+		t.Fatalf("org %s row count = %d, want %d", orgID, n, want)
+	}
+}
+
 // TestIntegration_PostgresLedger_RLSCrossOrgIsolation proves the ledger is
 // scoped per (org, agent, key): the same key in two orgs never collides.
 func TestIntegration_PostgresLedger_RLSCrossOrgIsolation(t *testing.T) {
@@ -216,43 +259,20 @@ func TestIntegration_PostgresLedger_RLSCrossOrgIsolation(t *testing.T) {
 	ctx := context.Background()
 	hash := HashRequest([]byte("same"))
 
-	claimA, err := ledger.Claim(ctx, orgA, "shared-key", hash)
-	if err != nil {
-		t.Fatalf("claim A: %v", err)
-	}
-	if claimA.Kind != ClaimOwned {
-		t.Fatalf("claim A kind = %q, want owned", claimA.Kind)
-	}
-	claimB, err := ledger.Claim(ctx, orgB, "shared-key", hash)
-	if err != nil {
-		t.Fatalf("claim B: %v", err)
-	}
-	if claimB.Kind != ClaimOwned {
-		t.Fatalf("claim B kind = %q, want owned (org-scoped row)", claimB.Kind)
+	for _, tc := range []struct {
+		name string
+		org  Principal
+	}{{"A", orgA}, {"B", orgB}} {
+		claim, err := ledger.Claim(ctx, tc.org, "shared-key", hash)
+		if err != nil {
+			t.Fatalf("claim %s: %v", tc.name, err)
+		}
+		if claim.Kind != ClaimOwned {
+			t.Fatalf("claim %s kind = %q, want owned (org-scoped row)", tc.name, claim.Kind)
+		}
 	}
 
-	// A raw org-scoped read sees exactly one row per org.
-	countForOrg := func(p Principal) int {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			t.Fatalf("begin: %v", err)
-		}
-		defer func() { _ = tx.Rollback() }()
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, p.OrgID.String()); err != nil {
-			t.Fatalf("set org: %v", err)
-		}
-		var n int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*) FROM ibex_core.idempotency_ledger WHERE dedupe_key='shared-key'`,
-		).Scan(&n); err != nil {
-			t.Fatalf("count: %v", err)
-		}
-		return n
-	}
-	if got := countForOrg(orgA); got != 1 {
-		t.Fatalf("org A row count = %d, want 1", got)
-	}
-	if got := countForOrg(orgB); got != 1 {
-		t.Fatalf("org B row count = %d, want 1", got)
-	}
+	// A raw org-scoped read under ibex_app RLS sees exactly one row per org.
+	assertLedgerRowCount(t, db, orgA.OrgID, "shared-key", 1)
+	assertLedgerRowCount(t, db, orgB.OrgID, "shared-key", 1)
 }

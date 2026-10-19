@@ -141,6 +141,11 @@ wheels = [
 ]
 
 [[package]]
+name = "ibex-async-db"
+version = "0.1.0"
+source = { directory = "../../../packages/ibex_async_db" }
+
+[[package]]
 name = "ibex-idempotency"
 version = "0.1.0"
 source = { directory = "../../../packages/ibex_idempotency" }
@@ -163,6 +168,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "asyncpg" },
+    { name = "ibex-async-db" },
     { name = "ibex-idempotency" },
     { name = "sqlalchemy", extra = ["asyncio"] },
 ]
@@ -177,6 +183,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "ibex-async-db", directory = "../../../packages/ibex_async_db" },
     { name = "ibex-idempotency", directory = "../../../packages/ibex_idempotency" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
