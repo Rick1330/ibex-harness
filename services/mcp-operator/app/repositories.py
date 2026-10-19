@@ -17,18 +17,6 @@ from mcp_gateway import NotFoundError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_SESSION_COLUMNS = (
-    "id, status, model, provider, agent_id, turn_count, "
-    "total_input_tokens, total_output_tokens, created_at, updated_at, completed_at"
-)
-
-_RUN_COLUMNS = (
-    "id, trace_id, request_id, status, error_code, completeness, capture_mode, "
-    "sample_decision, schema_version, agent_id, session_id, started_at, ended_at"
-)
-
-_BUDGET_COLUMNS = "id, period_start, period_end, cap_cents, spent_cents_cached, enforcement_mode"
-
 
 def _iso(value: Any) -> str | None:
     if value is None:
@@ -48,8 +36,10 @@ def _uuid_or_none(value: Any) -> str | None:
 
 async def get_session(session: AsyncSession, *, org_id: UUID, session_id: UUID) -> dict[str, Any]:
     result = await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"SELECT {_SESSION_COLUMNS} FROM ibex_core.sessions "  # nosec B608 - module constants, bound params
+        text(
+            "SELECT id, status, model, provider, agent_id, turn_count, "
+            "total_input_tokens, total_output_tokens, created_at, updated_at, "
+            "completed_at FROM ibex_core.sessions "
             "WHERE org_id = :org_id AND id = :session_id AND deleted_at IS NULL "
             "LIMIT 1"
         ),
@@ -75,8 +65,10 @@ async def get_session(session: AsyncSession, *, org_id: UUID, session_id: UUID) 
 
 async def get_run(session: AsyncSession, *, org_id: UUID, run_id: UUID) -> dict[str, Any]:
     result = await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"SELECT {_RUN_COLUMNS} FROM ibex_core.evidence_runs "  # nosec B608 - module constants, bound params
+        text(
+            "SELECT id, trace_id, request_id, status, error_code, completeness, "
+            "capture_mode, sample_decision, schema_version, agent_id, session_id, "
+            "started_at, ended_at FROM ibex_core.evidence_runs "
             "WHERE org_id = :org_id AND id = :run_id LIMIT 1"
         ),
         {"org_id": str(org_id), "run_id": str(run_id)},
@@ -99,16 +91,22 @@ async def query_evidence(
     limit: int,
 ) -> dict[str, Any]:
     result = await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"SELECT {_RUN_COLUMNS} FROM ibex_core.evidence_runs "  # nosec B608 - module constants, bound params
+        text(
+            "SELECT id, trace_id, request_id, status, error_code, completeness, "
+            "capture_mode, sample_decision, schema_version, agent_id, session_id, "
+            "started_at, ended_at FROM ibex_core.evidence_runs "
             "WHERE org_id = :org_id "
-            "AND (:trace_id IS NULL OR trace_id = :trace_id) "
-            "AND (:session_id IS NULL OR session_id = :session_id) "
-            "AND (:request_id IS NULL OR request_id = :request_id) "
-            "AND (:error_code IS NULL OR error_code = :error_code) "
-            "AND (:status IS NULL "
-            "OR (:status = 'ok' AND status = 'ok') "
-            "OR (:status = 'error' AND status <> 'ok')) "
+            "AND (CAST(:trace_id AS text) IS NULL "
+            "OR trace_id = CAST(:trace_id AS text)) "
+            "AND (CAST(:session_id AS uuid) IS NULL "
+            "OR session_id = CAST(:session_id AS uuid)) "
+            "AND (CAST(:request_id AS text) IS NULL "
+            "OR request_id = CAST(:request_id AS text)) "
+            "AND (CAST(:error_code AS text) IS NULL "
+            "OR error_code = CAST(:error_code AS text)) "
+            "AND (CAST(:status AS text) IS NULL "
+            "OR (CAST(:status AS text) = 'ok' AND status = 'ok') "
+            "OR (CAST(:status AS text) = 'error' AND status <> 'ok')) "
             "ORDER BY started_at DESC, id DESC LIMIT :limit"
         ),
         {
@@ -139,10 +137,11 @@ async def get_budget_periods(
     limit: int,
 ) -> dict[str, Any]:
     result = await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            f"SELECT {_BUDGET_COLUMNS} FROM ibex_billing.budget_periods "  # nosec B608 - module constants, bound params
+        text(
+            "SELECT id, period_start, period_end, cap_cents, spent_cents_cached, "
+            "enforcement_mode FROM ibex_billing.budget_periods "
             "WHERE org_id = :org_id "
-            "AND (NOT :active_only "
+            "AND (NOT CAST(:active_only AS boolean) "
             "OR (period_start <= NOW() AND period_end > NOW())) "
             "ORDER BY period_start DESC LIMIT :limit"
         ),

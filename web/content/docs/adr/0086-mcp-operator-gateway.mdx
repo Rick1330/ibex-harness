@@ -37,10 +37,10 @@ The reusable enforcement core — typed scope model, versioned tool registry wit
 
 The gateway does not invent an authorization vocabulary. Typed scopes are named aliases over the repository's permission bits (`packages/permissions`), and the enforcement decision is `has_permission(principal.permissions, required_bit)` computed from the AuthService-validated token only:
 
-- `operator.read` → `OPERATOR_METADATA_READ` (1<<19)
-- `runs.read` → `TRACE_READ` (1<<24)
-- `evidence.read` → `OPERATOR_REDACTED_READ` (1<<38)
-- `budget.read` → `BILLING_READ` (1<<33)
+- `operator.read` → `OPERATOR_METADATA_READ` (`1<<19`)
+- `runs.read` → `TRACE_READ` (`1<<24`)
+- `evidence.read` → `OPERATOR_REDACTED_READ` (`1<<38`)
+- `budget.read` → `BILLING_READ` (`1<<33`)
 
 The caller can never supply its own `org_id` or agent identity; tool input schemas (`additionalProperties: false`) reject unknown arguments, and tenant scope is bound from the verified token. Tool annotations are metadata only and never authorize.
 
