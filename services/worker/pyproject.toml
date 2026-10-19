@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "ibex-async-db",
+  "ibex-idempotency",
   "celery>=5.4,<6",
   "kombu>=5.4,<6",
   "pydantic>=2.0.0",
@@ -66,3 +67,4 @@ exclude-newer = "7 days"
 
 [tool.uv.sources]
 ibex-async-db = { path = "../../packages/ibex_async_db" }
+ibex-idempotency = { path = "../../packages/ibex_idempotency" }

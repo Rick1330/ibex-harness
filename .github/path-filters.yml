@@ -17,7 +17,13 @@ python:
   - 'infra/scripts/api-*.sh'
   - 'infra/scripts/coverage-api-gate.sh'
   - 'infra/scripts/build-apierror-py-wheel.sh'
+  - 'infra/scripts/build-ibex-idempotency-wheel.sh'
+  - 'infra/scripts/idempotency-conformance-ci.sh'
+  - 'infra/tests/idempotency-conformance/**'
   - 'packages/apierror_py/**'
+  - 'packages/authclient/**'
+  - 'packages/ibex_async_db/**'
+  - 'packages/ibex_idempotency/**'
 go:
   - 'services/**'
   - 'packages/**'

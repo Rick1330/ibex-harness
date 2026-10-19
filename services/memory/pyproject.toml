@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
   "authclient",
   "ibex-async-db",
+  "ibex-idempotency",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "pydantic>=2.0.0",
@@ -82,6 +83,7 @@ override-dependencies = [
 [tool.uv.sources]
 authclient = { path = "../../packages/authclient" }
 ibex-async-db = { path = "../../packages/ibex_async_db" }
+ibex-idempotency = { path = "../../packages/ibex_idempotency" }
 en-core-web-md = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl" }
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 

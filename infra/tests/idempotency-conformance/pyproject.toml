@@ -1,0 +1,28 @@
+[project]
+name = "ibex-idempotency-conformance"
+version = "0.1.0"
+description = "Cross-runtime conformance suite for the request-idempotency-core.v1 PostgreSQL ledger"
+requires-python = ">=3.12"
+dependencies = [
+  "ibex-idempotency",
+  "sqlalchemy[asyncio]>=2.0.0",
+  "asyncpg>=0.29.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.0",
+]
+
+[tool.uv.sources]
+ibex-idempotency = { path = "../../../packages/ibex_idempotency" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

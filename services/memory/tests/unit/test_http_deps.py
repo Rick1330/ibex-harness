@@ -13,7 +13,7 @@ from app.auth.errors import AuthFailedError
 from app.deps import (
     get_embedding_client,
     get_feedback_service,
-    get_idempotency_store,
+    get_idempotency_ledger,
     get_memory_cache_writer,
     get_read_repository,
     get_redis,
@@ -144,13 +144,13 @@ def test_get_memory_cache_writer_optional() -> None:
 
 def test_get_idempotency_and_redis_from_state() -> None:
     state = MemoryAppState()
-    sentinel_store = object()
+    sentinel_ledger = object()
     sentinel_redis = object()
-    state.idempotency_store = sentinel_store  # type: ignore[assignment]
+    state.idempotency_ledger = sentinel_ledger  # type: ignore[assignment]
     state.redis = sentinel_redis  # type: ignore[assignment]
     request = MagicMock()
     request.app.state.memory = state
-    assert get_idempotency_store(request) is sentinel_store
+    assert get_idempotency_ledger(request) is sentinel_ledger
     assert get_redis(request) is sentinel_redis
 
 

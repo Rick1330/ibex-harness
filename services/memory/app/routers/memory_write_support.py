@@ -1,4 +1,12 @@
-"""HTTP helpers for POST /v1/memories (idempotency + error mapping)."""
+"""HTTP helpers for POST /v1/memories (idempotency + error mapping).
+
+Idempotency is enforced by the shared PostgreSQL ledger
+(``ibex_idempotency`` / ``request-idempotency-core.v1``), scoped to
+``(organization_id, agent_id, dedupe_key)``. The previous Redis store is gone:
+when the caller supplies ``X-Idempotency-Key`` the endpoint either admits the
+claim, replays the stored response, or fails closed with 503 — it never writes
+without dedupe.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +17,16 @@ from uuid import UUID
 
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
-from redis.exceptions import RedisError
+from ibex_idempotency import (
+    KIND_CONFLICT,
+    KIND_IN_PROGRESS,
+    KIND_REPLAY,
+    ClaimOutcome,
+    ClaimToken,
+    LedgerError,
+    LedgerValidationError,
+    PostgresIdempotencyLedger,
+)
 
 from app.exceptions import (
     DuplicateMemoryError,
@@ -18,7 +35,6 @@ from app.exceptions import (
     StaleLifecycleError,
     ValidationError,
 )
-from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyToken
 from app.schemas.limits import MAX_IDEMPOTENCY_KEY_LENGTH
 from app.schemas.memories import (
     CreateMemoryMeta,
@@ -38,22 +54,22 @@ logger = logging.getLogger(__name__)
 class IdempotencyHandle:
     """Claim state for a single create-memory request."""
 
-    __slots__ = ("fingerprint", "store", "token")
+    __slots__ = ("claim", "ledger", "request_hash")
 
     def __init__(
         self,
         *,
-        store: object | None,
-        token: IdempotencyToken | None,
-        fingerprint: str,
+        ledger: PostgresIdempotencyLedger | None,
+        claim: ClaimToken | None,
+        request_hash: str,
     ) -> None:
-        self.store = store
-        self.token = token
-        self.fingerprint = fingerprint
+        self.ledger = ledger
+        self.claim = claim
+        self.request_hash = request_hash
 
     @property
     def active(self) -> bool:
-        return self.token is not None and self.store is not None
+        return self.claim is not None and self.ledger is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +82,7 @@ class CreatedResponseContext:
 
 
 def parse_idempotency_key(raw: str | None) -> str | None:
-    """Validate X-Idempotency-Key before it is used in Redis keys."""
+    """Validate X-Idempotency-Key before it is used in a ledger claim."""
     if raw is None:
         return None
     key = raw.strip()
@@ -85,20 +101,20 @@ def parse_idempotency_key(raw: str | None) -> str | None:
     return key
 
 
-def _replay_cached_response(claim: ClaimOutcome) -> JSONResponse | None:
+def _replay_cached_response(outcome: ClaimOutcome) -> JSONResponse | None:
     """Return stored response body when this idempotency key already completed."""
-    if claim.kind == ClaimKind.HIT and claim.record is not None:
+    if outcome.kind == KIND_REPLAY and outcome.response is not None:
         return JSONResponse(
-            status_code=claim.record.status,
-            content=json.loads(claim.record.body.decode("utf-8")),
+            status_code=outcome.status or 200,
+            content=json.loads(outcome.response.decode("utf-8")),
             headers={"X-Idempotency-Replayed": "true"},
         )
     return None
 
 
-def _reject_idempotency_conflict(claim: ClaimOutcome) -> None:
+def _reject_idempotency_conflict(outcome: ClaimOutcome) -> None:
     """Raise when the same key is reused with a different body or still in flight."""
-    if claim.kind == ClaimKind.CONFLICT:
+    if outcome.kind == KIND_CONFLICT:
         raise HTTPException(
             status_code=409,
             detail={
@@ -106,7 +122,7 @@ def _reject_idempotency_conflict(claim: ClaimOutcome) -> None:
                 "message": "Idempotency key reused with different request",
             },
         )
-    if claim.kind == ClaimKind.IN_PROGRESS:
+    if outcome.kind == KIND_IN_PROGRESS:
         raise HTTPException(
             status_code=409,
             detail={
@@ -117,76 +133,89 @@ def _reject_idempotency_conflict(claim: ClaimOutcome) -> None:
 
 
 def _finalize_idempotency_claim(
-    claim: ClaimOutcome,
+    outcome: ClaimOutcome,
     handle: IdempotencyHandle,
 ) -> IdempotencyHandle | JSONResponse:
     """Map claim outcome to either a replay response or an active write handle."""
-    replay = _replay_cached_response(claim)
+    replay = _replay_cached_response(outcome)
     if replay is not None:
         return replay
-    _reject_idempotency_conflict(claim)
+    _reject_idempotency_conflict(outcome)
+    if outcome.claim is not None:
+        handle.claim = outcome.claim
     return handle
 
 
 async def _claim_idempotency_slot(
-    store: object,
-    token: IdempotencyToken,
-    fingerprint: str,
+    ledger: PostgresIdempotencyLedger,
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+    key: str,
+    request_hash: str,
 ) -> ClaimOutcome:
-    """Atomically claim the idempotency key in Redis (or fail closed)."""
+    """Atomically claim the idempotency key in PostgreSQL (or fail closed)."""
     try:
-        return await store.claim(token, fingerprint)
-    except (OSError, RedisError) as exc:
-        logger.warning(
-            "idempotency claim unavailable error_class=%s",
-            type(exc).__name__,
+        return await ledger.claim(
+            org_id=org_id, agent_id=agent_id, key=key, request_hash=request_hash
         )
+    except LedgerValidationError as exc:
+        logger.warning("idempotency claim rejected error_class=%s", type(exc).__name__)
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "VALIDATION_ERROR", "message": "Invalid agent for memory scope"},
+        ) from exc
+    except LedgerError as exc:
+        logger.warning("idempotency claim unavailable error_class=%s", type(exc).__name__)
         raise HTTPException(
             status_code=503,
             detail={
                 "code": "IDEMPOTENCY_UNAVAILABLE",
-                "message": "Idempotency store unavailable",
+                "message": "Idempotency ledger unavailable",
             },
         ) from exc
 
 
 async def begin_idempotency(
     *,
-    store: object | None,
+    ledger: PostgresIdempotencyLedger | None,
     org_id: UUID,
+    agent_id: UUID,
     idempotency_key: str | None,
-    fingerprint: str,
+    request_hash: str,
 ) -> IdempotencyHandle | JSONResponse:
     """Claim idempotency slot, replay cached result, or return handle for a new write."""
-    handle = IdempotencyHandle(store=store, token=None, fingerprint=fingerprint)
+    handle = IdempotencyHandle(ledger=ledger, claim=None, request_hash=request_hash)
     validated_key = parse_idempotency_key(idempotency_key)
-    if not validated_key or store is None:
+    if not validated_key:
         return handle
-    handle.token = IdempotencyToken(org_id=org_id, key=validated_key)
-    claim = await _claim_idempotency_slot(store, handle.token, fingerprint)
-    return _finalize_idempotency_claim(claim, handle)
+    if ledger is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "IDEMPOTENCY_UNAVAILABLE",
+                "message": "Idempotency ledger unavailable",
+            },
+        )
+    handle.ledger = ledger
+    outcome = await _claim_idempotency_slot(
+        ledger, org_id=org_id, agent_id=agent_id, key=validated_key, request_hash=request_hash
+    )
+    return _finalize_idempotency_claim(outcome, handle)
 
 
 async def release_idempotency(handle: IdempotencyHandle) -> None:
     if not handle.active:
         return
     try:
-        await handle.store.release(handle.token, handle.fingerprint)
-    except (OSError, RedisError) as exc:
-        logger.warning(
-            "idempotency release failed error_class=%s",
-            type(exc).__name__,
-        )
+        await handle.ledger.release(handle.claim)
+    except LedgerError as exc:
+        logger.warning("idempotency release failed error_class=%s", type(exc).__name__)
 
 
 async def commit_idempotency(handle: IdempotencyHandle, *, status: int, body: bytes) -> None:
     if handle.active:
-        await handle.store.commit(
-            handle.token,
-            fingerprint=handle.fingerprint,
-            status=status,
-            body=body,
-        )
+        await handle.ledger.finalize(handle.claim, status=status, response=body)
 
 
 async def commit_idempotency_or_log(handle: IdempotencyHandle, *, status: int, body: bytes) -> None:
@@ -194,7 +223,7 @@ async def commit_idempotency_or_log(handle: IdempotencyHandle, *, status: int, b
         return
     try:
         await commit_idempotency(handle, status=status, body=body)
-    except (OSError, RedisError) as exc:
+    except LedgerError as exc:
         logger.warning(
             "idempotency commit failed after successful write error_class=%s",
             type(exc).__name__,

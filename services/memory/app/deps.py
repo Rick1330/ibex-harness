@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Annotated, TypeVar
 
 from fastapi import Depends, Header, HTTPException, Request
+from ibex_idempotency import PostgresIdempotencyLedger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
@@ -110,8 +111,8 @@ def get_embedding_client(request: Request):
     )
 
 
-def get_idempotency_store(request: Request):
-    return _optional_memory_component(request, "idempotency_store")
+def get_idempotency_ledger(request: Request):
+    return _optional_memory_component(request, "idempotency_ledger")
 
 
 def get_redis(request: Request):
@@ -122,7 +123,7 @@ def get_redis(request: Request):
 class CreateMemoryContext:
     token: ValidateResult
     orchestrator: MemoryWriteOrchestrator
-    idempotency_store: object | None
+    idempotency_ledger: PostgresIdempotencyLedger | None
     idempotency_key: str | None
 
 
@@ -188,13 +189,13 @@ def get_hot_memory_context(
 def get_create_memory_context(
     token: Annotated[ValidateResult, Depends(require_memory_write)],
     orchestrator: Annotated[MemoryWriteOrchestrator, Depends(get_write_orchestrator)],
-    idempotency_store: Annotated[object | None, Depends(get_idempotency_store)],
+    idempotency_ledger: Annotated[PostgresIdempotencyLedger | None, Depends(get_idempotency_ledger)],
     idempotency_key: Annotated[str | None, Header(alias="X-Idempotency-Key")] = None,
 ) -> CreateMemoryContext:
     return CreateMemoryContext(
         token=token,
         orchestrator=orchestrator,
-        idempotency_store=idempotency_store,
+        idempotency_ledger=idempotency_ledger,
         idempotency_key=idempotency_key,
     )
 

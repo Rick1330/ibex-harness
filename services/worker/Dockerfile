@@ -24,11 +24,15 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app/services/worker
 
 COPY packages/ibex_async_db /app/packages/ibex_async_db
-RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db
+COPY packages/ibex_idempotency /app/packages/ibex_idempotency
+RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_idempotency
 COPY services/worker/pyproject.toml services/worker/uv.lock ./
 
-RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package ibex-async-db \
-    && uv pip install --no-index --find-links /wheels "ibex-async-db==0.1.0"
+RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
+    --no-install-package ibex-async-db --no-install-package ibex-idempotency \
+    && uv pip install --no-deps --no-index --find-links /wheels \
+    "ibex-async-db==0.1.0" "ibex-idempotency==0.1.0"
 
 FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
 

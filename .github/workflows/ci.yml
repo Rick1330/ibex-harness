@@ -1011,6 +1011,12 @@ jobs:
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/relay-integration.xml -- \
             -tags=integration -count=1 -p 1 ./services/relay/...
+      - name: Idempotency ledger integration tests (real PostgreSQL)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: |
+          bash infra/scripts/go-test-gotestsum.sh test-results/junit/idempotency-ledger-integration.xml -- \
+            -tags=integration -count=1 -p 1 ./packages/idempotency/...
       - name: Upload test results to Trunk (relay-integration)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -1426,6 +1432,55 @@ jobs:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-integration-test-ci.sh
+
+  idempotency-conformance:
+    name: idempotency-conformance
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # pgvector 0.8.6 on PostgreSQL 16 — immutable pin of
+        # pgvector/pgvector:0.8.6-pg16 (mutable :pg16 must not be used in CI).
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - name: request-idempotency-core.v1 conformance suite
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          IBEX_IDEMPOTENCY_CONFORMANCE_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+        run: bash infra/scripts/idempotency-conformance-ci.sh
 
   memory-security-integration:
     name: memory-security-integration

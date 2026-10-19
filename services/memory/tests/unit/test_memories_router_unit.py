@@ -8,7 +8,15 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from redis.exceptions import RedisError
+from ibex_idempotency import (
+    KIND_CONFLICT,
+    KIND_IN_PROGRESS,
+    KIND_OWNED,
+    KIND_REPLAY,
+    ClaimOutcome,
+    ClaimToken,
+    LedgerError,
+)
 
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
@@ -25,13 +33,6 @@ from app.exceptions import (
     MemoryOrganizationUnavailableError,
     StaleLifecycleError,
     ValidationError,
-)
-from app.idempotency.redis_store import (
-    ClaimKind,
-    ClaimOutcome,
-    IdempotencyRecord,
-    IdempotencyState,
-    pending_record,
 )
 from app.main import create_app
 from app.permissions import MEMORY_WRITE
@@ -60,10 +61,15 @@ def _post_memory(
     )
 
 
-def _with_idempotency_store(http: TestClient, store: object) -> None:
-    from app.deps import get_idempotency_store
+def _with_idempotency_ledger(http: TestClient, ledger: object) -> None:
+    from app.deps import get_idempotency_ledger
 
-    http.app.dependency_overrides[get_idempotency_store] = lambda: store
+    http.app.dependency_overrides[get_idempotency_ledger] = lambda: ledger
+
+
+def _owned_outcome() -> ClaimOutcome:
+    claim = ClaimToken(uuid4(), ORG, AGENT, "key-1", "f" * 64, version=1)
+    return ClaimOutcome(kind=KIND_OWNED, claim=claim)
 
 
 def _memory_row():
@@ -85,20 +91,20 @@ def client() -> TestClient:
     return TestClient(app), mock_orch
 
 
-class _FakeStore:
+class _FakeLedger:
     def __init__(self, claim_outcome) -> None:
         self.claim_outcome = claim_outcome
-        self.committed: list[tuple] = []
-        self.released: list[tuple] = []
+        self.finalized: list[tuple] = []
+        self.released: list[object] = []
 
-    async def claim(self, _token, fp):
+    async def claim(self, *, org_id, agent_id, key, request_hash):
         return self.claim_outcome
 
-    async def commit(self, token, *, fingerprint, status, body):
-        self.committed.append((token, fingerprint, status, body))
+    async def finalize(self, claim, *, status, response):
+        self.finalized.append((claim, status, response))
 
-    async def release(self, token, fp):
-        self.released.append((token, fp))
+    async def release(self, claim):
+        self.released.append(claim)
 
 
 def test_create_memory_201(client) -> None:
@@ -225,12 +231,12 @@ def test_create_memory_request_validation_metadata_depth(client) -> None:
 def test_create_memory_duplicate_release_error_still_returns_domain_error(client) -> None:
     http, mock_orch = client
 
-    class _FailingReleaseStore(_FakeStore):
-        async def release(self, token, fp):
-            raise RedisError("down")
+    class _FailingReleaseLedger(_FakeLedger):
+        async def release(self, claim):
+            raise LedgerError("down")
 
-    store = _FailingReleaseStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
+    ledger = _FailingReleaseLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
     mock_orch.create = AsyncMock(side_effect=DuplicateMemoryError(uuid4()))
     with http:
         resp = _post_memory(http, content="dup", idempotency_key="key-1")
@@ -241,12 +247,12 @@ def test_create_memory_duplicate_release_error_still_returns_domain_error(client
 def test_create_memory_commit_failure_still_returns_201(client) -> None:
     http, mock_orch = client
 
-    class _FailingCommitStore(_FakeStore):
-        async def commit(self, token, *, fingerprint, status, body):
-            raise RedisError("down")
+    class _FailingFinalizeLedger(_FakeLedger):
+        async def finalize(self, claim, *, status, response):
+            raise LedgerError("down")
 
-    store = _FailingCommitStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
+    ledger = _FailingFinalizeLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
     mock_orch.create = AsyncMock(
         return_value=WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_memory_row())
     )
@@ -258,13 +264,8 @@ def test_create_memory_commit_failure_still_returns_201(client) -> None:
 
 def test_create_memory_idempotency_hit(client) -> None:
     http, mock_orch = client
-    completed = IdempotencyRecord(
-        fingerprint="ignored",
-        state=IdempotencyState.COMPLETED,
-        status=201,
-        body=b'{"data":{"content":"cached"}}',
-    )
-    _with_idempotency_store(http, _FakeStore(ClaimOutcome(kind=ClaimKind.HIT, record=completed)))
+    replay = ClaimOutcome(kind=KIND_REPLAY, status=201, response=b'{"data":{"content":"cached"}}')
+    _with_idempotency_ledger(http, _FakeLedger(replay))
     with http:
         resp = _post_memory(http, idempotency_key="key-1")
     assert resp.status_code == 201
@@ -274,9 +275,7 @@ def test_create_memory_idempotency_hit(client) -> None:
 
 def test_create_memory_idempotency_conflict(client) -> None:
     http, _mock_orch = client
-    _with_idempotency_store(
-        http, _FakeStore(ClaimOutcome(kind=ClaimKind.CONFLICT, record=pending_record("fp")))
-    )
+    _with_idempotency_ledger(http, _FakeLedger(ClaimOutcome(kind=KIND_CONFLICT)))
     with http:
         resp = _post_memory(http, idempotency_key="key-1")
     assert resp.status_code == 409
@@ -285,9 +284,8 @@ def test_create_memory_idempotency_conflict(client) -> None:
 
 def test_create_memory_idempotency_in_progress(client) -> None:
     http, _mock_orch = client
-    _with_idempotency_store(
-        http,
-        _FakeStore(ClaimOutcome(kind=ClaimKind.IN_PROGRESS, record=pending_record("fp"))),
+    _with_idempotency_ledger(
+        http, _FakeLedger(ClaimOutcome(kind=KIND_IN_PROGRESS, retry_after=5))
     )
     with http:
         resp = _post_memory(http, idempotency_key="key-1")
@@ -306,19 +304,19 @@ def test_create_memory_idempotency_in_progress(client) -> None:
 )
 def test_create_memory_error_releases_idempotency(client, side_effect, expected_status) -> None:
     http, mock_orch = client
-    store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
+    ledger = _FakeLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
     mock_orch.create = AsyncMock(side_effect=side_effect)
     with http:
         resp = _post_memory(http, content="x", idempotency_key="key-1")
     assert resp.status_code == expected_status
-    assert len(store.released) == 1
+    assert len(ledger.released) == 1
 
 
 def test_create_memory_unexpected_error_releases_idempotency(client) -> None:
     http, mock_orch = client
-    store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
+    ledger = _FakeLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
     mock_orch.create = AsyncMock(side_effect=RuntimeError("boom"))
     with TestClient(http.app, raise_server_exceptions=False) as client_no_raise:
         resp = client_no_raise.post(
@@ -333,13 +331,13 @@ def test_create_memory_unexpected_error_releases_idempotency(client) -> None:
     detail = resp.json()["detail"]
     assert detail["code"] == "INTERNAL_ERROR"
     assert detail["message"] == "Memory write failed"
-    assert len(store.released) == 1
+    assert len(ledger.released) == 1
 
 
 def test_create_memory_quarantine_commits_idempotency(client) -> None:
     http, mock_orch = client
-    store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
+    ledger = _FakeLedger(_owned_outcome())
+    _with_idempotency_ledger(http, ledger)
     row = replace(_memory_row(), status="quarantined", pii_detected=True)
     mock_orch.create = AsyncMock(
         return_value=WriteOutcome(kind=WriteOutcomeKind.QUARANTINED, memory=row)
@@ -347,8 +345,8 @@ def test_create_memory_quarantine_commits_idempotency(client) -> None:
     with http:
         resp = _post_memory(http, content="Contact Jordan", idempotency_key="key-1")
     assert resp.status_code == 202
-    assert len(store.committed) == 1
-    assert store.committed[0][2] == 202
+    assert len(ledger.finalized) == 1
+    assert ledger.finalized[0][1] == 202
 
 
 def test_forget_returns_success_when_post_commit_cache_invalidation_fails(

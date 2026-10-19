@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -823,6 +823,23 @@ version = "0.1.0"
 source = { directory = "../../packages/ibex_async_db" }
 
 [[package]]
+name = "ibex-idempotency"
+version = "0.1.0"
+source = { directory = "../../packages/ibex_idempotency" }
+dependencies = [
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "ibex-memory"
 version = "0.1.0"
 source = { editable = "." }
@@ -836,6 +853,7 @@ dependencies = [
     { name = "grpcio" },
     { name = "httpx" },
     { name = "ibex-async-db" },
+    { name = "ibex-idempotency" },
     { name = "presidio-analyzer" },
     { name = "presidio-anonymizer" },
     { name = "prometheus-client" },
@@ -873,6 +891,7 @@ requires-dist = [
     { name = "grpcio", specifier = ">=1.62.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "ibex-async-db", directory = "../../packages/ibex_async_db" },
+    { name = "ibex-idempotency", directory = "../../packages/ibex_idempotency" },
     { name = "presidio-analyzer", specifier = ">=2.2.0" },
     { name = "presidio-anonymizer", specifier = ">=2.2.0" },
     { name = "prometheus-client", specifier = ">=0.20.0" },

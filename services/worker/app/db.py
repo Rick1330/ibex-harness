@@ -1,12 +1,14 @@
-"""Async SQLAlchemy engine / session helpers for worker dead-letter persistence."""
+"""Async SQLAlchemy engine / session helpers for worker dead-letter persistence.
+
+The service-account session helpers are the shared implementations from
+``ibex_idempotency`` (re-exported here under their historical names) so the
+worker and the memory service scope RLS identically for the idempotency ledger.
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 from ibex_async_db import parse_async_database_url
-from sqlalchemy import text
+from ibex_idempotency.sessions import service_account_session, service_org_session
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,6 +17,17 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import Settings
+
+# Historical aliases retained for existing worker imports.
+session_as_service_account = service_account_session
+session_as_service_org = service_org_session
+
+__all__ = [
+    "create_engine",
+    "create_session_factory",
+    "session_as_service_account",
+    "session_as_service_org",
+]
 
 
 def create_engine(settings: Settings) -> AsyncEngine:
@@ -31,48 +44,3 @@ def create_engine(settings: Settings) -> AsyncEngine:
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-
-
-@asynccontextmanager
-async def session_as_service_account(
-    factory: async_sessionmaker[AsyncSession],
-) -> AsyncIterator[AsyncSession]:
-    """Open a transaction with service-account GUC (no tenant RLS on failed_tasks)."""
-    async with factory() as session:
-        try:
-            async with session.begin():
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SELECT set_config('app.is_service_account', 'true', true)"
-                    )
-                )
-                yield session
-        except Exception:
-            await session.rollback()
-            raise
-
-
-@asynccontextmanager
-async def session_as_service_org(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: str,
-) -> AsyncIterator[AsyncSession]:
-    """Service-account + org GUC (privacy RLS requires current_org_id)."""
-    async with factory() as session:
-        try:
-            async with session.begin():
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SELECT set_config('app.is_service_account', 'true', true)"
-                    )
-                )
-                await session.execute(
-                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SELECT set_config('app.current_org_id', :org_id, true)"
-                    ),
-                    {"org_id": org_id},
-                )
-                yield session
-        except Exception:
-            await session.rollback()
-            raise

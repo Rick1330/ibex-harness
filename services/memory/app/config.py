@@ -177,7 +177,7 @@ class Settings(BaseSettings):
     redis_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("IBEX_MEMORY_REDIS_URL", "REDIS_URL"),
-        description="Redis URL for hot cache + idempotency (optional)",
+        description="Redis URL for hot cache (optional)",
     )
     redis_timeout_seconds: float = Field(default=0.5, gt=0)
 
@@ -187,9 +187,6 @@ class Settings(BaseSettings):
         description="Auth service gRPC target for ValidateToken",
     )
     auth_timeout_ms: int = Field(default=50, ge=1)
-
-    idempotency_ttl_seconds: int = Field(default=86400, ge=60)
-    idempotency_pending_ttl_seconds: int = Field(default=540, ge=60)
 
     memory_cache_ttl_seconds: int = Field(default=3600, ge=60)
 

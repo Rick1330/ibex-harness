@@ -233,9 +233,7 @@ async def test_cache_failure_does_not_fail_write(
 
 @pytest.mark.asyncio
 async def test_idempotency_replay(http_context) -> None:
-    if not _redis_url():
-        pytest.skip("REDIS_URL not set")
-
+    # Durability comes from the Postgres ledger; no Redis required.
     client, _org_id, agent_id, _probe = http_context
     key = str(uuid4())
     headers = {
@@ -252,3 +250,12 @@ async def test_idempotency_replay(http_context) -> None:
     assert second.status_code == 201
     assert second.headers.get("x-idempotency-replayed") == "true"
     assert first.json()["data"]["id"] == second.json()["data"]["id"]
+
+    # Same key with a different body is a conflict, not a silent replay.
+    conflict = await client.post(
+        "/v1/memories",
+        headers=headers,
+        json={"agent_id": str(agent_id), "content": f"{HTTP_IDEMPOTENT_WRITE_CONTENT} changed"},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "IDEMPOTENCY_CONFLICT"

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from ibex_idempotency import PostgresIdempotencyLedger
 from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -22,7 +23,6 @@ from app.db import create_engine, create_session_factory
 from app.feedback.service import MemoryFeedbackService
 from app.http_metrics import HTTPMetricsMiddleware
 from app.http_validation import request_validation_error_handler
-from app.idempotency.redis_store import RedisIdempotencyStore
 from app.pii.service import PiiService
 from app.probes import probe_router
 from app.read.hot_cache import MemoryHotCacheReader
@@ -48,7 +48,7 @@ class MemoryAppState:
     store: PgVectorStore | None = field(default=None, repr=False)
     validator: TokenValidator | None = field(default=None, repr=False)
     redis: Redis | None = field(default=None, repr=False)
-    idempotency_store: RedisIdempotencyStore | None = field(default=None, repr=False)
+    idempotency_ledger: PostgresIdempotencyLedger | None = field(default=None, repr=False)
     write_orchestrator: MemoryWriteOrchestrator | None = field(default=None, repr=False)
     read_repository: MemoryReadRepository | None = field(default=None, repr=False)
     hot_cache_reader: MemoryHotCacheReader | None = field(default=None, repr=False)
@@ -62,7 +62,6 @@ class MemoryAppState:
 class _RedisResources:
     client: Redis | None
     cache_writer: MemoryCacheWriter | None
-    idempotency_store: RedisIdempotencyStore | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +131,7 @@ async def _memory_service_lifespan(
     state.session_factory = session_factory
     state.store = store
     state.pii = pii
+    state.idempotency_ledger = PostgresIdempotencyLedger(session_factory)
 
     redis = _configure_redis(cfg, state)
     embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}
@@ -158,7 +158,7 @@ async def _memory_service_lifespan(
 
 def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
     if not cfg.redis_url:
-        return _RedisResources(client=None, cache_writer=None, idempotency_store=None)
+        return _RedisResources(client=None, cache_writer=None)
 
     redis_client = Redis.from_url(
         cfg.redis_url,
@@ -168,17 +168,7 @@ def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
     state.redis = redis_client
     cache_writer = MemoryCacheWriter(redis_client, cfg)
     state.cache_writer = cache_writer
-    idempotency_store = RedisIdempotencyStore(
-        redis_client,
-        ttl_seconds=cfg.idempotency_ttl_seconds,
-        pending_ttl_seconds=cfg.idempotency_pending_ttl_seconds,
-    )
-    state.idempotency_store = idempotency_store
-    return _RedisResources(
-        client=redis_client,
-        cache_writer=cache_writer,
-        idempotency_store=idempotency_store,
-    )
+    return _RedisResources(client=redis_client, cache_writer=cache_writer)
 
 
 def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:

@@ -14,7 +14,6 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-import app.idempotency_ledger as ledger_module
 from app.config import Settings
 from app.db import (
     create_engine,
@@ -45,10 +44,9 @@ async def _session_as_app_org(factory: async_sessionmaker, org_id: str):
 
 
 @pytest_asyncio.fixture
-async def pg_factory(migrated_postgres: str, monkeypatch: pytest.MonkeyPatch):
+async def pg_factory(migrated_postgres: str):
     engine: AsyncEngine = create_engine(Settings(database_url=migrated_postgres))
     factory = create_session_factory(engine)
-    monkeypatch.setattr(ledger_module, "session_as_service_org", _session_as_app_org)
     try:
         yield factory
     finally:
@@ -107,7 +105,9 @@ async def test_ledger_real_postgres_isolates_organizations_and_allows_release(pg
     await _seed_org_agent(pg_factory, org_a, agent_a)
     await _seed_org_agent(pg_factory, org_b, agent_b)
     try:
-        ledger = PostgresIdempotencyLedger(pg_factory, lease_seconds=30)
+        ledger = PostgresIdempotencyLedger(
+            pg_factory, lease_seconds=30, session_scope=_session_as_app_org
+        )
         hash_a = "a" * 64
         hash_b = "b" * 64
 

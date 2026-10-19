@@ -17,9 +17,9 @@ Track B–C skeleton.
 | POST | `/v1/memories/{memory_id}/feedback` | Positive/negative/neutral feedback with scope validation |
 
 All reads/writes require the appropriate permission and explicit `org_id`/agent scope. Active
-rows only are returned; cross-tenant identifiers do not become existence oracles. Redis is
-required for idempotency/hot-cache behavior, Postgres/pgvector for durable reads, and the
-embedder for vector writes. Quarantine, conflict, deduplication, and cache failures use the
+rows only are returned; cross-tenant identifiers do not become existence oracles. Postgres/pgvector
+is required for durable reads and for `X-Idempotency-Key` writes (durable ledger), the embedder for
+vector writes, and Redis only for optional hot-cache behavior. Quarantine, conflict, deduplication, and cache failures use the
 documented error envelopes rather than silently widening scope.
 
 ## Status
@@ -94,7 +94,13 @@ documented error envelopes rather than silently widening scope.
 - `memory_conflict_escalations` table (migration `000019`)
 - Migration `000020` — `memory_conflict_escalations.status` enum type (follow-up to `000019`; PR #649)
 - Auth: gRPC `ValidateToken` (`IBEX_AUTH_GRPC_ADDR`); permission `memory:write`
-- Idempotency: `X-Idempotency-Key` via Redis (`idempotency:{org_id}:{key}`)
+- Idempotency: `X-Idempotency-Key` via the tenant-scoped PostgreSQL
+  `ibex_core.idempotency_ledger` (`(org, agent, key)` scope; shared
+  `ibex-idempotency` package / `request-idempotency-core.v1`). Replay returns the
+  stored `2xx` response; a reused key with a different body returns
+  `409 IDEMPOTENCY_CONFLICT`; an active claim returns `409 IDEMPOTENCY_IN_PROGRESS`
+  with `Retry-After`. When a key is supplied and Postgres is unavailable the write
+  fails closed with `503 IDEMPOTENCY_UNAVAILABLE`.
 - Observability: Prometheus job `memory` (:8005), Grafana dashboard `memory.json`
 
 ## HNSW benches
