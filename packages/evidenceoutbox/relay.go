@@ -38,6 +38,11 @@ type TombstoneFencedDeliverer interface {
 // applying it to the projection.
 var ErrTombstonedResource = errors.New("evidenceoutbox: resource is tombstoned or stale")
 
+// ErrUnsupportedFenceResource reports a tombstone fence whose resource type has
+// no authoritative lifecycle checker in this deployment; Relay records the row
+// as poison without retrying because replay can never make the fence checkable.
+var ErrUnsupportedFenceResource = errors.New("evidenceoutbox: unsupported fence resource type")
+
 var (
 	errRedactionUnclassified   = errors.New("evidenceoutbox: payload redaction class is unclassified")
 	errRedactionProhibited     = errors.New("evidenceoutbox: payload redaction class is prohibited")
@@ -260,6 +265,7 @@ func isPermanentDeliveryFailure(err error) bool {
 		errors.Is(err, errTombstoneFenceMissing) ||
 		errors.Is(err, errTombstoneFenceInvalid) ||
 		errors.Is(err, errFencedDeliveryRequired) ||
+		errors.Is(err, ErrUnsupportedFenceResource) ||
 		errors.Is(err, ErrTombstonedResource)
 }
 

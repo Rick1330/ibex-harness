@@ -47,6 +47,8 @@ func (c *fakeConn) Exec(_ context.Context, _ string, args ...any) error {
 	return c.err
 }
 
+func (c *fakeConn) Ping(context.Context) error { return c.err }
+
 func (c *fakeConn) Close() error { return nil }
 
 type fakeFence struct{ err error }
@@ -58,6 +60,23 @@ func (f fakeFence) CheckFence(context.Context, uuid.UUID, evidenceoutbox.Tombsto
 func TestNewRequiresAuthoritativeFenceChecker(t *testing.T) {
 	if _, err := New(&fakeConn{}, nil); err == nil {
 		t.Fatal("expected fence checker requirement")
+	}
+}
+
+func TestPingReportsConnectionError(t *testing.T) {
+	sink, err := New(&fakeConn{}, fakeFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Ping(context.Background()); err != nil {
+		t.Fatalf("healthy ping: %v", err)
+	}
+	down, err := New(&fakeConn{err: errors.New("clickhouse unavailable")}, fakeFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := down.Ping(context.Background()); err == nil {
+		t.Fatal("expected ping error")
 	}
 }
 

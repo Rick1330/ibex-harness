@@ -233,6 +233,12 @@ func TestUnit_ProcessBatch_DeliverFailureOutcomes(t *testing.T) {
 			name: "poison_at_max", attempts: 2, maxAttempts: 2,
 			wantPoisoned: 1, markStatus: StatusPoison,
 		},
+		{
+			name: "poison_on_unsupported_fence_resource", attempts: 1, maxAttempts: 5,
+			wantPoisoned: 1, markStatus: StatusPoison,
+			deliverErr:  fmt.Errorf("relay fence: %w", ErrUnsupportedFenceResource),
+			wantErrText: "relay fence: evidenceoutbox: unsupported fence resource type",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -249,6 +255,8 @@ type deliverFailureCase struct {
 	wantFailed   int
 	wantPoisoned int
 	markStatus   string
+	deliverErr   error
+	wantErrText  string
 }
 
 func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
@@ -258,7 +266,13 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	d := &stubDeliverer{err: errors.New("sink down")}
+	deliverErr := tc.deliverErr
+	wantErrText := tc.wantErrText
+	if deliverErr == nil {
+		deliverErr = errors.New("sink down")
+		wantErrText = "sink down"
+	}
+	d := &stubDeliverer{err: deliverErr}
 	relay, err := NewRelay(db, d, RelayConfig{BatchSize: 1, MaxAttempts: tc.maxAttempts})
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +295,7 @@ func runDeliverFailureCase(t *testing.T, tc deliverFailureCase) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`evidence_outbox_mark_failure`).
-		WithArgs(id, tc.attempts, tc.markStatus, "sink down", sqlmock.AnyArg()).
+		WithArgs(id, tc.attempts, tc.markStatus, wantErrText, sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
 	mock.ExpectCommit()
 

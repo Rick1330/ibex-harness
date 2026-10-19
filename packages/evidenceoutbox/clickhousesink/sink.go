@@ -29,6 +29,7 @@ type FenceChecker interface {
 type sinkConn interface {
 	QueryRow(ctx context.Context, query string, args ...any) driver.Row
 	Exec(ctx context.Context, query string, args ...any) error
+	Ping(ctx context.Context) error
 	Close() error
 }
 
@@ -78,6 +79,9 @@ func Open(ctx context.Context, dsn string, fences FenceChecker) (*Sink, error) {
 
 // Close closes the underlying ClickHouse connection.
 func (s *Sink) Close() error { return s.conn.Close() }
+
+// Ping probes the underlying ClickHouse connection for readiness checks.
+func (s *Sink) Ping(ctx context.Context) error { return s.conn.Ping(ctx) }
 
 // DeliverWithTombstoneFence implements evidenceoutbox.TombstoneFencedDeliverer.
 func (s *Sink) DeliverWithTombstoneFence(ctx context.Context, row evidenceoutbox.OutboxRow, fence evidenceoutbox.TombstoneFence) error {
