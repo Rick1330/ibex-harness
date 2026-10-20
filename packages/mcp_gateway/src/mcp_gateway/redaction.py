@@ -10,17 +10,10 @@ fails closed rather than returning an incomplete or mis-shaped record silently.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from mcp_gateway.errors import GatewayError
-
-_SCALAR_CHECKS: dict[str, Any] = {
-    "string": lambda value: isinstance(value, str),
-    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
-    "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
-    "boolean": lambda value: isinstance(value, bool),
-}
 
 
 class RedactionError(GatewayError):
@@ -60,6 +53,15 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
     }
 )
 
+_CHECKERS: dict[str, Callable[[Any], bool]] = {
+    "object": lambda value: isinstance(value, Mapping),
+    "array": lambda value: isinstance(value, (list, tuple)),
+    "string": lambda value: isinstance(value, str),
+    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+    "boolean": lambda value: isinstance(value, bool),
+}
+
 
 def sanitize_output(
     payload: Mapping[str, Any] | None, output_schema: Mapping[str, Any]
@@ -72,50 +74,61 @@ def sanitize_output(
 
 
 def _sanitize_object(payload: Mapping[str, Any], schema: Mapping[str, Any]) -> dict[str, Any]:
-    properties = schema.get("properties", {})
-    if not isinstance(properties, Mapping):
-        raise RedactionError("output schema is missing properties")
+    properties = _properties(schema)
     result: dict[str, Any] = {}
     for key, value in payload.items():
         key_str = str(key)
-        if key_str in SENSITIVE_KEYS or key_str not in properties:
-            continue
-        prop_schema = properties[key_str]
-        if not isinstance(prop_schema, Mapping):
+        prop_schema = properties.get(key_str)
+        if key_str in SENSITIVE_KEYS or not isinstance(prop_schema, Mapping):
             continue
         result[key_str] = _sanitize_value(value, prop_schema)
-    required = schema.get("required", [])
-    if isinstance(required, (list, tuple)):
-        missing = [str(key) for key in required if str(key) not in result]
-        if missing:
-            raise RedactionError(
-                f"tool result missing required fields: {', '.join(sorted(missing))}"
-            )
+    _require_keys(schema, result)
     return result
+
+
+def _sanitize_array(value: list[Any] | tuple[Any, ...], schema: Mapping[str, Any]) -> list[Any]:
+    item_schema = schema.get("items", {})
+    if not isinstance(item_schema, Mapping):
+        raise RedactionError("array schema is missing items")
+    return [_sanitize_value(item, item_schema) for item in value]
 
 
 def _sanitize_value(value: Any, schema: Mapping[str, Any]) -> Any:
     types = _schema_types(schema)
     if value is None:
-        if "null" in types:
-            return None
-        raise RedactionError("tool result field is null but not nullable")
-    if "object" in types:
-        if not isinstance(value, Mapping):
-            raise RedactionError("expected an object in tool result")
+        if "null" not in types:
+            raise RedactionError("tool result field is null but not nullable")
+        return None
+    matched = _first_match(value, types)
+    if matched == "object":
         return _sanitize_object(value, schema)
-    if "array" in types:
-        if not isinstance(value, (list, tuple)):
-            raise RedactionError("expected an array in tool result")
-        item_schema = schema.get("items", {})
-        if not isinstance(item_schema, Mapping):
-            raise RedactionError("array schema is missing items")
-        return [_sanitize_value(item, item_schema) for item in value]
+    if matched == "array":
+        return _sanitize_array(value, schema)
+    return value
+
+
+def _first_match(value: Any, types: list[str]) -> str:
     for schema_type in types:
-        check = _SCALAR_CHECKS.get(schema_type)
+        check = _CHECKERS.get(schema_type)
         if check is not None and check(value):
-            return value
+            return schema_type
     raise RedactionError("tool result field has an unexpected type")
+
+
+def _properties(schema: Mapping[str, Any]) -> Mapping[str, Any]:
+    properties = schema.get("properties", {})
+    if not isinstance(properties, Mapping):
+        raise RedactionError("output schema is missing properties")
+    return properties
+
+
+def _require_keys(schema: Mapping[str, Any], result: Mapping[str, Any]) -> None:
+    required = schema.get("required", [])
+    if not isinstance(required, (list, tuple)):
+        return
+    missing = [str(key) for key in required if str(key) not in result]
+    if missing:
+        raise RedactionError(f"tool result missing required fields: {', '.join(sorted(missing))}")
 
 
 def _schema_types(schema: Mapping[str, Any]) -> list[str]:
