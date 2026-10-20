@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.dependency_metrics import REDIS_DURATION
+from app.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,8 @@ class RedisOperatorLimiter(OperatorRateLimiter):
         key = self.redis_key(org_id, unix_minute=unix_minute)
         started = time.perf_counter()
         try:
-            count = int(await self._script(keys=[key], args=[KEY_TTL_SECONDS]))
+            with get_tracer().start_as_current_span("redis.rate_limit"):
+                count = int(await self._script(keys=[key], args=[KEY_TTL_SECONDS]))
         except (OSError, RedisError) as exc:
             RATE_LIMIT_ERRORS.inc()
             if self._fail_closed:

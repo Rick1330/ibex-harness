@@ -19,6 +19,7 @@ from prometheus_client import Counter, Gauge
 from app.auth import TokenValidator
 from app.dependency_metrics import AUTH_DURATION, AUTH_ERRORS
 from app.errors import AuthFailedError, AuthUnavailableError
+from app.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,8 @@ class BreakingTokenValidator(TokenValidator):
     async def _call_inner(self, access_token: str) -> GatewayPrincipal:
         started = time.perf_counter()
         try:
-            result = await self._inner.validate(access_token)
+            with get_tracer().start_as_current_span("auth.validate"):
+                result = await self._inner.validate(access_token)
         except AuthFailedError:
             # Invalid token is not an upstream outage — do not trip the breaker.
             self._record_outcome(success=True)

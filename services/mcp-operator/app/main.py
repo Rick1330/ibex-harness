@@ -27,12 +27,14 @@ from app.auth_breaker import (
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
 from app.http_metrics import HTTPMetricsMiddleware
+from app.logging import configure_logging
 from app.middleware import BearerAuthConfig, BearerAuthMiddleware
 from app.probes import probe_router
 from app.ratelimit import OperatorRateLimiter, RedisOperatorLimiter, build_operator_rate_limiter
 from app.server import McpServerWiring, build_mcp_server
 from app.state import AppState
 from app.tools import ToolDispatcher, build_registry
+from app.tracing import TracingMiddleware, configure_tracing, shutdown_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,8 @@ def create_app(
 ) -> FastAPI:
     cfg = settings or get_settings()
     injected = deps or CreateAppDeps()
+    configure_logging()
+    configure_tracing(cfg.otel_endpoint)
     state = AppState(enabled=cfg.enabled)
     audit = AsyncAuditEmitter(
         injected.audit_sink or build_operator_audit_sink(cfg.clickhouse_url),
@@ -106,6 +110,7 @@ def create_app(
             ),
         )
     application.add_middleware(HTTPMetricsMiddleware)
+    application.add_middleware(TracingMiddleware)
     return application
 
 
@@ -196,6 +201,7 @@ async def _shutdown(runtime: _Runtime, validator: TokenValidator | None) -> None
         await runtime.limiter.aclose()
     if runtime.owned_engine and runtime.engine is not None:
         await runtime.engine.dispose()
+    shutdown_tracing()
     logger.info("mcp-operator shutdown complete")
 
 

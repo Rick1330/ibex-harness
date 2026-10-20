@@ -16,6 +16,8 @@ if [[ ! -f "$MCP_DIR/uv.lock" ]]; then
 fi
 
 WHEEL_DIR="$MCP_DIR/.wheels"
+rm -rf "$WHEEL_DIR"
+mkdir -p "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-authclient-wheel.sh" "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-mcp-gateway-wheel.sh" "$WHEEL_DIR"
 bash "$ROOT/infra/scripts/build-ibex-async-db-wheel.sh" "$WHEEL_DIR"
@@ -26,5 +28,7 @@ uv sync --frozen --no-build --extra dev --no-install-project \
   --no-install-package authclient \
   --no-install-package mcp-gateway \
   --no-install-package ibex-async-db
-uv pip install --no-cache --force-reinstall --no-index --no-deps --find-links "$WHEEL_DIR" \
-  "authclient" "mcp-gateway" "ibex-async-db"
+uv pip install --no-cache --force-reinstall --no-index --no-deps \
+  "$WHEEL_DIR"/authclient-*.whl \
+  "$WHEEL_DIR"/mcp_gateway-*.whl \
+  "$WHEEL_DIR"/ibex_async_db-*.whl

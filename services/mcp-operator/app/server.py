@@ -50,7 +50,33 @@ def build_mcp_server(wiring: McpServerWiring) -> FastMCP:
     )
     _register_tools(mcp, wiring.enforcer)
     bind_declared_schemas(mcp, wiring.registry)
+    _install_dispatch_guard(mcp, wiring.enforcer)
     return mcp
+
+
+def _install_dispatch_guard(mcp: FastMCP, enforcer: GatewayEnforcer) -> None:
+    """Route every tools/call through the gateway, including malformed input.
+
+    FastMCP validates arguments (and rejects unknown tools) before a handler runs,
+    which would bypass the gateway's typed errors and audit events. Replacing the
+    manager's call path keeps one validation authority: the gateway.
+    """
+    manager = mcp._tool_manager
+
+    async def dispatch(
+        name: str,
+        arguments: dict[str, Any],
+        context: Any = None,
+        convert_result: bool = False,
+    ) -> Any:
+        del context
+        result = await _invoke(enforcer, name, arguments or {})
+        tool = manager.get_tool(name)
+        if convert_result and tool is not None:
+            return tool.fn_metadata.convert_result(result)
+        return result
+
+    manager.call_tool = dispatch  # type: ignore[method-assign]
 
 
 def bind_declared_schemas(mcp: FastMCP, registry: ToolRegistry) -> None:

@@ -26,6 +26,11 @@ _MAX_TIMEOUT_MS = 30_000
 _MAX_ROW_LIMIT = 1_000
 
 
+def _validate_bounds(name: str, value: int, maximum: int) -> None:
+    if not 1 <= int(value) <= maximum:
+        raise ValueError(f"{name} must be in 1..{maximum}")
+
+
 def _validate_name(name: str) -> None:
     if not name or not name.strip():
         raise ValueError("tool name must be non-empty")
@@ -51,18 +56,14 @@ class ToolSpec:
 
     def __post_init__(self) -> None:
         _validate_name(self.name)
-        if not self.version:
-            raise ValueError("tool version must be non-empty")
+        if not self.version or not self.description:
+            raise ValueError("tool version and description must be non-empty")
         if self.role != READ_ONLY_ROLE:
             raise ValueError(f"only {READ_ONLY_ROLE!r} tools may be registered")
-        if not 1 <= int(self.timeout_ms) <= _MAX_TIMEOUT_MS:
-            raise ValueError(f"timeout_ms must be in 1..{_MAX_TIMEOUT_MS}")
-        if not 1 <= int(self.row_limit) <= _MAX_ROW_LIMIT:
-            raise ValueError(f"row_limit must be in 1..{_MAX_ROW_LIMIT}")
+        _validate_bounds("timeout_ms", self.timeout_ms, _MAX_TIMEOUT_MS)
+        _validate_bounds("row_limit", self.row_limit, _MAX_ROW_LIMIT)
         if not isinstance(self.args_model, type) or not issubclass(self.args_model, BaseModel):
             raise TypeError("args_model must be a pydantic BaseModel subclass")
-        if not self.description:
-            raise ValueError("tool description must be non-empty")
 
     @property
     def input_schema(self) -> dict[str, Any]:

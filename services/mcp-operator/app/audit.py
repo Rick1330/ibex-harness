@@ -8,9 +8,10 @@ deferral. The default sink is logging-only unless a ClickHouse URL is configured
 
 from __future__ import annotations
 
-import json
 import logging
+from urllib.parse import unquote, urlsplit, urlunsplit
 
+import httpx
 from mcp_gateway import AuditSink, ToolAuditEvent
 from mcp_gateway.audit import AsyncAuditEmitter
 
@@ -31,7 +32,7 @@ class LoggingOperatorAuditSink:
     async def write(  # NOSONAR python:S7503 - async contract required by AuditSink
         self, event: ToolAuditEvent
     ) -> None:
-        logger.info(json.dumps({"event": "mcp_operator_tool_call", **event.as_log_fields()}))
+        logger.info("mcp_operator_tool_call", extra=event.as_log_fields())
 
     async def aclose(self) -> None:  # NOSONAR python:S7503 - AuditSink lifecycle contract
         return None
@@ -42,19 +43,26 @@ class ClickHouseOperatorAuditSink:
 
     name = "clickhouse"
 
-    def __init__(self, base_url: str, *, timeout_seconds: float = 2.0) -> None:
-        import httpx
-
-        self._base_url = base_url.rstrip("/")
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout_seconds: float = 2.0,
+        mirror: AuditSink | None = None,
+    ) -> None:
+        self._base_url, self._auth = _split_base_url(base_url)
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
+        self._mirror = mirror or LoggingOperatorAuditSink()
 
     async def write(self, event: ToolAuditEvent) -> None:
+        await self._mirror.write(event)
         row = event.as_clickhouse_row()
         try:
             response = await self._client.post(
                 self._base_url,
                 params={"query": _INSERT_QUERY},
                 json=row,
+                auth=self._auth,
             )
         except Exception:  # noqa: BLE001 - never surface a URL that may carry credentials
             raise RuntimeError("clickhouse audit write failed") from None
@@ -62,7 +70,24 @@ class ClickHouseOperatorAuditSink:
             raise RuntimeError(f"clickhouse audit write failed status={response.status_code}")
 
     async def aclose(self) -> None:
+        await self._mirror.aclose()
         await self._client.aclose()
+
+
+def _split_base_url(url: str) -> tuple[str, httpx.BasicAuth | None]:
+    parts = urlsplit(url.strip())
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError("clickhouse URL must be http(s) with a host")
+    if parts.scheme == "http" and parts.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("clickhouse credentials require HTTPS outside local development")
+    host = parts.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = host if parts.port is None else f"{host}:{parts.port}"
+    auth = None
+    if parts.username is not None or parts.password is not None:
+        auth = httpx.BasicAuth(unquote(parts.username or ""), unquote(parts.password or ""))
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), auth
 
 
 def build_operator_audit_sink(clickhouse_url: str) -> AuditSink:

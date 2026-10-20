@@ -54,7 +54,9 @@ async def test_clickhouse_sink_posts_json_each_row() -> None:
         status_code = 200
 
     class _Client:
-        async def post(self, url: str, *, params: object, json: object) -> _Response:
+        async def post(
+            self, url: str, *, params: object, json: object, auth: object = None
+        ) -> _Response:
             captured["url"] = url
             captured["params"] = params
             captured["json"] = json
@@ -63,12 +65,12 @@ async def test_clickhouse_sink_posts_json_each_row() -> None:
         async def aclose(self) -> None:
             captured["closed"] = True
 
-    sink = ClickHouseOperatorAuditSink("http://clickhouse:8123")
+    sink = ClickHouseOperatorAuditSink("http://127.0.0.1:8123")
     sink._client = _Client()  # type: ignore[assignment]
     await sink.write(_event())
     await sink.aclose()
 
-    assert captured["url"] == "http://clickhouse:8123"
+    assert captured["url"] == "http://127.0.0.1:8123"
     assert "mcp_tool_calls" in str(captured["params"])
     row = captured["json"]
     assert isinstance(row, dict)
@@ -80,13 +82,13 @@ async def test_clickhouse_sink_posts_json_each_row() -> None:
 @pytest.mark.asyncio
 async def test_clickhouse_sink_hides_transport_error_details() -> None:
     class _Client:
-        async def post(self, url: str, *, params: object, json: object):
+        async def post(self, url: str, *, params: object, json: object, auth: object = None):
             raise RuntimeError("connection to http://default:secret@clickhouse:8123 failed")
 
         async def aclose(self) -> None:
             return None
 
-    sink = ClickHouseOperatorAuditSink("http://clickhouse:8123")
+    sink = ClickHouseOperatorAuditSink("http://127.0.0.1:8123")
     sink._client = _Client()  # type: ignore[assignment]
     with pytest.raises(RuntimeError) as excinfo:
         await sink.write(_event())
@@ -99,13 +101,15 @@ async def test_clickhouse_sink_reports_status_without_body() -> None:
         status_code = 500
 
     class _Client:
-        async def post(self, url: str, *, params: object, json: object) -> _Response:
+        async def post(
+            self, url: str, *, params: object, json: object, auth: object = None
+        ) -> _Response:
             return _Response()
 
         async def aclose(self) -> None:
             return None
 
-    sink = ClickHouseOperatorAuditSink("http://clickhouse:8123")
+    sink = ClickHouseOperatorAuditSink("http://127.0.0.1:8123")
     sink._client = _Client()  # type: ignore[assignment]
     with pytest.raises(RuntimeError, match="status=500"):
         await sink.write(_event())
@@ -127,3 +131,15 @@ def test_log_fields_include_caller_identity() -> None:
     fields = event.as_log_fields()
     assert fields["principal_id"] == "user-1"
     assert fields["token_id"] == "token-1"
+
+
+def test_clickhouse_credentials_are_moved_out_of_the_url() -> None:
+    sink = ClickHouseOperatorAuditSink("http://default:secret@127.0.0.1:8123/db")
+    assert "secret" not in sink._base_url
+    assert sink._base_url == "http://127.0.0.1:8123/db"
+    assert sink._auth is not None
+
+
+def test_clickhouse_rejects_cleartext_credentials_off_localhost() -> None:
+    with pytest.raises(ValueError, match="HTTPS"):
+        ClickHouseOperatorAuditSink("http://default:secret@clickhouse.example.com:8123")

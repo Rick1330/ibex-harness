@@ -175,13 +175,13 @@ def test_allowed_hosts_handles_ports_and_ipv6() -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_uuid_reaches_gateway_typed_error() -> None:
-    from mcp.server.fastmcp.exceptions import ToolError
+    from app.errors import ToolCallError
 
     audit = InMemoryAuditEmitter()
     mcp, _ = _build(audit=audit)
     set_principal(GatewayPrincipal(org_id=ORG, permissions=(1 << 19), agent_id=AGENT))
     try:
-        with pytest.raises(ToolError, match="invalid_params"):
+        with pytest.raises(ToolCallError, match="invalid_params"):
             await mcp.call_tool("session.get", {"session_id": "not-a-uuid"})
     finally:
         set_principal(None)
@@ -192,12 +192,12 @@ async def test_invalid_uuid_reaches_gateway_typed_error() -> None:
 
 @pytest.mark.asyncio
 async def test_out_of_range_limit_reaches_gateway_typed_error() -> None:
-    from mcp.server.fastmcp.exceptions import ToolError
+    from app.errors import ToolCallError
 
     mcp, _ = _build()
     set_principal(GatewayPrincipal(org_id=ORG, permissions=(1 << 33), agent_id=AGENT))
     try:
-        with pytest.raises(ToolError, match="invalid_params"):
+        with pytest.raises(ToolCallError, match="invalid_params"):
             await mcp.call_tool("budget.get", {"limit": 500})
     finally:
         set_principal(None)

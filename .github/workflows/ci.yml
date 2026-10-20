@@ -1543,6 +1543,15 @@ jobs:
     permissions:
       contents: read
     services:
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       postgres:
         # pgvector 0.8.6 on PostgreSQL 16 — same immutable pin as idempotency-conformance.
         image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
@@ -1584,6 +1593,7 @@ jobs:
         env:
           IBEX_MCP_OPERATOR_TEST_DATABASE_URL: postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex
           POSTGRES_TEST_DSN: postgres://ibex:ibex@127.0.0.1:5432/ibex?sslmode=disable
+          IBEX_MCP_OPERATOR_TEST_REDIS_URL: redis://127.0.0.1:6379/0
         run: bash infra/scripts/mcp-operator-integration-ci.sh
 
   memory-security-integration:

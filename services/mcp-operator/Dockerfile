@@ -47,8 +47,10 @@ RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
         --no-install-package authclient \
         --no-install-package mcp-gateway \
         --no-install-package ibex-async-db \
-    && uv pip install --no-cache --force-reinstall --no-index --no-deps --find-links /wheels \
-        "authclient" "mcp-gateway" "ibex-async-db"
+    && uv pip install --no-cache --force-reinstall --no-index --no-deps \
+        /wheels/authclient-*.whl \
+        /wheels/mcp_gateway-*.whl \
+        /wheels/ibex_async_db-*.whl
 
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #

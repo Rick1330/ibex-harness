@@ -176,3 +176,45 @@ def test_disabled_gateway_has_no_mcp_surface() -> None:
     with client:
         assert client.post("/mcp", json={}).status_code == 404
         assert client.get("/health").status_code == 200
+
+
+def test_malformed_session_id_is_typed_and_audited() -> None:
+    client, sink = make_app()
+    with client:
+        headers = _handshake(client, TOKEN_A)
+        called = _call(client, headers, "session.get", {"session_id": "not-a-uuid"})
+    assert "invalid_params" in called.text
+    assert '"isError":true' in called.text.replace(" ", "")
+    assert any(event.error_code == "invalid_params" for event in sink.events)
+
+
+def test_missing_required_argument_is_typed_and_audited() -> None:
+    client, sink = make_app()
+    with client:
+        headers = _handshake(client, TOKEN_A)
+        called = _call(client, headers, "session.get", {})
+    assert "invalid_params" in called.text
+    assert any(event.error_code == "invalid_params" for event in sink.events)
+
+
+def test_extra_argument_is_typed_and_audited() -> None:
+    client, sink = make_app()
+    with client:
+        headers = _handshake(client, TOKEN_A)
+        called = _call(
+            client,
+            headers,
+            "session.get",
+            {"session_id": str(SESSION_ID), "org_id": "other-org"},
+        )
+    assert "invalid_params" in called.text
+    assert any(event.error_code == "invalid_params" for event in sink.events)
+
+
+def test_unknown_tool_is_typed_and_audited() -> None:
+    client, sink = make_app()
+    with client:
+        headers = _handshake(client, TOKEN_A)
+        called = _call(client, headers, "session.delete", {"session_id": str(SESSION_ID)})
+    assert "tool_not_found" in called.text
+    assert any(event.error_code == "tool_not_found" for event in sink.events)

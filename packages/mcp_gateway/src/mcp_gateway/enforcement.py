@@ -127,30 +127,7 @@ class GatewayEnforcer:
         started = time.perf_counter()
         audit = _AuditState()
         try:
-            spec = self._registry.get(tool_name)
-            if spec is None:
-                raise ToolNotFoundError(f"unknown tool {tool_name!r}")
-            audit.spec = spec
-
-            policy_result = await self._evaluate_policy(principal, spec)
-            audit.decision = policy_result.decision.value
-            audit.scope_ok = policy_result.scope_satisfied
-            if not policy_result.allowed:
-                raise PermissionDeniedError(policy_result.reason)
-
-            parsed = self._validate_args(spec, args)
-            await self._enforce_rate_limit(principal)
-
-            ctx = ToolContext(
-                principal=principal,
-                spec=spec,
-                request_id=request_id,
-                trace_id=trace_id,
-            )
-            raw = await self._execute(ctx, parsed)
-            result = sanitize_output(raw, spec.output_schema)
-            audit.success = True
-            return result
+            return await self._run_pipeline(principal, tool_name, args, request_id, trace_id, audit)
         except TimeoutError as exc:
             audit.error_code = BackendUnavailableError.code
             raise BackendUnavailableError(f"tool {tool_name!r} timed out") from exc
@@ -162,6 +139,46 @@ class GatewayEnforcer:
             raise
         finally:
             self._emit_audit(principal, request_id, started, audit)
+
+    async def _run_pipeline(
+        self,
+        principal: GatewayPrincipal,
+        tool_name: str,
+        args: Mapping[str, Any] | None,
+        request_id: str,
+        trace_id: str | None,
+        audit: _AuditState,
+    ) -> dict[str, Any]:
+        spec = self._require_spec(tool_name, audit)
+        await self._authorize(principal, spec, audit)
+        parsed = self._validate_args(spec, args)
+        await self._enforce_rate_limit(principal)
+        ctx = ToolContext(
+            principal=principal,
+            spec=spec,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        raw = await self._execute(ctx, parsed)
+        result = sanitize_output(raw, spec.output_schema)
+        audit.success = True
+        return result
+
+    def _require_spec(self, tool_name: str, audit: _AuditState) -> ToolSpec:
+        spec = self._registry.get(tool_name)
+        if spec is None:
+            raise ToolNotFoundError(f"unknown tool {tool_name!r}")
+        audit.spec = spec
+        return spec
+
+    async def _authorize(
+        self, principal: GatewayPrincipal, spec: ToolSpec, audit: _AuditState
+    ) -> None:
+        policy_result = await self._evaluate_policy(principal, spec)
+        audit.decision = policy_result.decision.value
+        audit.scope_ok = policy_result.scope_satisfied
+        if not policy_result.allowed:
+            raise PermissionDeniedError(policy_result.reason)
 
     async def _evaluate_policy(self, principal: GatewayPrincipal, spec: ToolSpec) -> PolicyResult:
         try:

@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     rate_limit_org_overrides: str = Field(default="")
     clickhouse_url: str = Field(default="")
     audit_queue_size: int = Field(default=1024, ge=1, le=100_000)
+    otel_endpoint: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "IBEX_OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT"
+        ),
+    )
 
     @property
     def rate_limit_org_override_map(self) -> dict[UUID, int]:

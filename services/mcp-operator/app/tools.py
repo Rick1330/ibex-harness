@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app import repositories
 from app.db import session_with_org
 from app.dependency_metrics import DB_DURATION, DB_ERRORS
+from app.tracing import get_tracer
 
 TOOL_VERSION = "1.0.0"
 TOOL_TIMEOUT_MS = 2_000
@@ -275,8 +276,9 @@ class ToolDispatcher:
         tool = ctx.spec.name
         started = time.perf_counter()
         try:
-            async with session_with_org(self._factory, str(ctx.org_id)) as session:
-                return await handler(session, ctx, args)
+            with get_tracer().start_as_current_span("db.read", attributes={"tool": tool}):
+                async with session_with_org(self._factory, str(ctx.org_id)) as session:
+                    return await handler(session, ctx, args)
         except SQLAlchemyError as exc:
             DB_ERRORS.labels(tool=tool).inc()
             raise BackendUnavailableError("database unavailable") from exc
