@@ -33,6 +33,7 @@ from mcp_gateway.errors import (
     PermissionDeniedError,
     PolicyUnavailableError,
     RateLimitedError,
+    RateLimitUnavailableError,
     ToolNotFoundError,
 )
 from mcp_gateway.policy import BitmapPolicyEvaluator, PolicyDecision, PolicyEvaluator, PolicyResult
@@ -98,9 +99,13 @@ class CallContext:
     trace_id: str | None = None
 
 
+_RATE_LIMIT_ERROR_CODES = frozenset({RateLimitedError.code, RateLimitUnavailableError.code})
+
+
 @dataclass(slots=True)
 class _AuditState:
     spec: ToolSpec | None = None
+    requested_tool_name: str = ""
     decision: str = PolicyDecision.DENY.value
     scope_ok: bool = False
     success: bool = False
@@ -179,6 +184,7 @@ class GatewayEnforcer:
             self._emit_audit(invocation.principal, invocation.request_id, started, audit)
 
     async def _run_pipeline(self, invocation: _Invocation, audit: _AuditState) -> dict[str, Any]:
+        audit.requested_tool_name = invocation.tool_name
         await self._enforce_rate_limit(invocation.principal)
         spec = self._require_spec(invocation.tool_name, audit)
         await self._authorize(invocation.principal, spec, audit)
@@ -248,7 +254,7 @@ class GatewayEnforcer:
                 agent_id=principal.agent_id,
                 principal_id=principal.principal_id,
                 token_id=principal.token_id,
-                tool_name=spec.name if spec is not None else "",
+                tool_name=_audit_tool_name(spec, audit),
                 tool_version=spec.version if spec is not None else "",
                 descriptor_hash=descriptor_hash(spec) if spec is not None else "",
                 scope=spec.scope.value if spec is not None else "",
@@ -259,6 +265,14 @@ class GatewayEnforcer:
                 latency_ms=latency_ms,
             )
         )
+
+
+def _audit_tool_name(spec: ToolSpec | None, audit: _AuditState) -> str:
+    if spec is not None:
+        return spec.name
+    if audit.error_code in _RATE_LIMIT_ERROR_CODES:
+        return audit.requested_tool_name
+    return ""
 
 
 def _first_validation_message(exc: ValidationError) -> str:

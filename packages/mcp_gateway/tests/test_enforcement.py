@@ -151,6 +151,7 @@ async def test_rate_limited_denies_before_read() -> None:
         await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert calls["n"] == 0
     assert audit.events[-1].error_code == "rate_limited"
+    assert audit.events[-1].tool_name == "sample.get"
 
 
 async def test_rate_limit_precedes_tool_lookup_and_authorization() -> None:
@@ -171,6 +172,7 @@ async def test_rate_limit_precedes_tool_lookup_and_authorization() -> None:
         await enforcer.invoke(under_scoped, "sample.get", {})
     assert limiter.orgs == [under_scoped.org_id]
     assert audit.events[-1].error_code == "rate_limited"
+    assert audit.events[-1].tool_name == "sample.get"
 
     with pytest.raises(RateLimitedError):
         await enforcer.invoke(under_scoped, "unknown.tool", {})
@@ -188,6 +190,7 @@ async def test_rate_limit_authority_unavailable_fails_closed() -> None:
     with pytest.raises(RateLimitUnavailableError):
         await enforcer.invoke(principal, "sample.get", {"resource_id": "r1"})
     assert audit.events[-1].error_code == "rate_limit_unavailable"
+    assert audit.events[-1].tool_name == "sample.get"
 
 
 async def test_rate_limiter_sees_principal_org() -> None:
