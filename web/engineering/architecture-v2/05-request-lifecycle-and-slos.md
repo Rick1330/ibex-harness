@@ -22,7 +22,7 @@ The former documents contain incompatible 20 ms, 40 ms, 45 ms, 50 ms, and 100 ms
 - **Context compilation: p95 ≤50 ms / p99 ≤100 ms are targets pending measurement.** They are not ratified SLOs until a workload-qualified benchmark is published.
 - Provider first byte, stream tail, and total platform-added latency: separate SLIs.
 
-The proxy budget has two evidence layers: a blocking PR-time relative Go benchmark gate (warm-path means against a same-runner `main` baseline, 20% tolerance) and scheduled/manual full-chat k6 runs as the intended p99 evidence path. The Go gate is not p99 evidence and does not prove hosted performance. Published history currently contains no recent passing full-chat p99 run, so this remains an owned target rather than a measured production SLO.
+The proxy budget has two evidence layers: a blocking PR-time relative Go benchmark gate (warm-path means against a same-runner fresh base branch from `github.base_ref`, normally `main`, with 20% tolerance) and scheduled/manual full-chat k6 runs as the intended p99 evidence path. The Go gate is not p99 evidence and does not prove hosted performance. Published history currently contains no recent passing full-chat p99 run, so this remains an owned target rather than a measured production SLO.
 
 Every future measurement must publish workload, model/tokenizer, tenant size, warm/cold state, concurrency, hardware, queue time, error policy, and artifact/config digests.
 

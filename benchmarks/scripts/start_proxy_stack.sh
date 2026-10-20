@@ -125,9 +125,11 @@ if ! curl -fsS --max-time 1 "http://127.0.0.1:${BENCH_PROXY_PORT}/health" >/dev/
 fi
 
 warmup_status=""
+warmup_body="$(mktemp)"
+trap 'rm -f "$warmup_body"' EXIT
 for attempt in $(seq 1 30); do
   warmup_key="bench-warmup-$(date +%s%N)-${attempt}"
-  warmup_status="$(curl -sS -o /tmp/bench-warmup-body \
+  warmup_status="$(curl -sS -o "$warmup_body" \
     -w '%{http_code}' \
     -X POST "http://127.0.0.1:${BENCH_PROXY_PORT}/v1/chat/completions" \
     -H 'Content-Type: application/json' \
@@ -144,7 +146,7 @@ for attempt in $(seq 1 30); do
 done
 
 echo "benchmark warmup chat failed after 30 attempts (last status: ${warmup_status:-none})" >&2
-cat /tmp/bench-warmup-body >&2 2>/dev/null || true
+cat "$warmup_body" >&2 2>/dev/null || true
 tail -n 50 /tmp/bench-auth.log >&2 || true
 tail -n 50 /tmp/bench-proxy.log >&2 || true
 exit 1

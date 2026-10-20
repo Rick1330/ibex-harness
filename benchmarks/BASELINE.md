@@ -2,9 +2,9 @@
 
 The benchmark baseline is pinned by `benchmarks/data-schema/baseline.json`.
 
-- `proxy_overhead_p99_ms` is the hard SLA target and should remain `< 20ms`; it is a policy ceiling, not a measured percentile.
+- `proxy_overhead_p99_ms` is the hard SLA target and should remain `≤20 ms`; it is a policy ceiling, not a measured percentile.
 - `max_regression_pct` is set to `20%` and applies to the pinned `synthetic_rate_limit_us` stage baseline. k6 p99 is gated absolutely against the SLA, never as a percentage of a cross-run value.
-- `synthetic_rate_limit_us` is the measured `BenchmarkStageRateLimit` mean (ns/op → µs) for the hierarchical Lua limiter stage. The regression gate fails when latest `stages.synthetic_rate_limit_us` is missing/zero or when `%Δ` vs this pin exceeds `max_regression_pct`. This is a stage microbench envelope (miniredis), not a full-path SLA — full proxy overhead remains the Phase 2 **p99 &lt; 20ms** gate.
+- `synthetic_rate_limit_us` is the measured `BenchmarkStageRateLimit` mean (ns/op → µs) for the hierarchical Lua limiter stage. The regression gate fails when latest `stages.synthetic_rate_limit_us` is missing/zero or when `%Δ` vs this pin exceeds `max_regression_pct`. This is a stage microbench envelope (miniredis), not a full-path SLA — full proxy overhead remains the Phase 2 **p99 ≤20 ms** gate.
 - Baseline updates must happen in an explicit PR with rationale and measurement notes.
 
 When intentionally updating the baseline:
@@ -29,4 +29,4 @@ The blocking `benchmark-gate` job in `.github/workflows/ci.yml` (wired into `ci-
 
 No numeric cross-runner baseline is pinned for this gate. Pinning one would import runner speed (observed multi-run variance of 2–3x) into the policy; the base run is the control. Gate evidence is uploaded as the `go-benchmark-gate` artifact and includes the `base_ref` and tolerance.
 
-The same caution applies to k6: PR comments use the PR's selected profile (normally `smoke`), while main/PR data publishes use `fast`/`full`. Local, PR, and hosted p99 values are not interchangeable; compare only runs from the same profile and environment, and use the absolute `< 20ms` SLO for pass/fail.
+The same caution applies to k6: PR comments use the PR's selected profile (normally `smoke`), while main/PR data publishes use `fast`/`full`. Local, PR, and hosted p99 values are not interchangeable; compare only runs from the same profile and environment, and use the absolute `≤20 ms` SLO for pass/fail.

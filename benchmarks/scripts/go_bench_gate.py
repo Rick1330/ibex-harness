@@ -18,15 +18,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from go_bench_parser import BenchSample, GateInputError, parse_benchmark_line
 from go_bench_results import (
     METRICS,
-    BenchSample,
     BenchSummary,
-    GateInputError,
     load_samples,
     pct_change,
-    parse_benchmark_line,
     summarize,
+)
+
+__all__ = (
+    "BenchSample",
+    "BenchSummary",
+    "Check",
+    "GateInputError",
+    "build_checks",
+    "format_summary",
+    "load_samples",
+    "main",
+    "parse_args",
+    "parse_benchmark_line",
+    "pct_change",
+    "summarize",
+    "write_result",
 )
 
 DEFAULT_BENCHMARKS = ("BenchmarkProxyOverhead", "BenchmarkProxyChatOverhead")

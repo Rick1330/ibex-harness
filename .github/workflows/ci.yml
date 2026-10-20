@@ -938,16 +938,7 @@ jobs:
           set -euo pipefail
           go test ./benchmarks/go/...
           python benchmarks/scripts/test_pipeline.py
-      - name: Run PR-head Go benchmarks
-        run: |
-          set -euo pipefail
-          mkdir -p benchmarks/output
-          out="$GITHUB_WORKSPACE/benchmarks/output"
-          go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=5 \
-            > "$out/go-bench-head.txt"
-          go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
-            -benchmem -count=5 >> "$out/go-bench-head.txt"
-      - name: Run base-branch Go benchmarks
+      - name: Prepare base-branch worktree
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
@@ -955,27 +946,47 @@ jobs:
           base_ref="${BASE_REF:-main}"
           git fetch --no-tags origin "${base_ref}:refs/remotes/origin/${base_ref}"
           base_dir="$RUNNER_TEMP/ibex-benchmark-base"
+          rm -rf "$base_dir"
           git worktree add --detach "$base_dir" "origin/${base_ref}"
           (
             cd "$base_dir/packages/proto"
             buf generate
           )
+          mkdir -p benchmarks/output
           out="$GITHUB_WORKSPACE/benchmarks/output"
-          (
-            cd "$base_dir"
-            go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=5 \
-              > "$out/go-bench-base.txt"
-            go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
-              -benchmem -count=5 >> "$out/go-bench-base.txt"
-          )
-      - name: Enforce Go benchmark regression gate
+          : > "$out/go-bench-head.txt"
+          : > "$out/go-bench-base.txt"
+      - name: Run alternating PR-head and base-branch Go benchmarks
         run: |
           set -euo pipefail
-          base_ref="${{ github.base_ref }}"
+          out="$GITHUB_WORKSPACE/benchmarks/output"
+          base_dir="$RUNNER_TEMP/ibex-benchmark-base"
+          for _ in 1 2 3 4 5; do
+            go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=1 \
+              >> "$out/go-bench-head.txt"
+            (
+              cd "$base_dir"
+              go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=1 \
+                >> "$out/go-bench-base.txt"
+            )
+            go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
+              -benchmem -count=1 >> "$out/go-bench-head.txt"
+            (
+              cd "$base_dir"
+              go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
+                -benchmem -count=1 >> "$out/go-bench-base.txt"
+            )
+          done
+      - name: Enforce Go benchmark regression gate
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base_ref="${BASE_REF:-main}"
           python benchmarks/scripts/go_bench_gate.py \
             --base benchmarks/output/go-bench-base.txt \
             --head benchmarks/output/go-bench-head.txt \
-            --base-ref "origin/${base_ref:-main}" \
+            --base-ref "origin/${base_ref}" \
             --tolerance-pct 20 \
             --output benchmarks/output/go-bench-gate.json \
             | tee -a "$GITHUB_STEP_SUMMARY"
