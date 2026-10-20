@@ -85,8 +85,10 @@ def _validated_url(url: str) -> SplitResult:
     parts = urlsplit(url.strip())
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ValueError("clickhouse URL must be http(s) with a host")
-    if parts.scheme == "http" and parts.hostname not in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("clickhouse requires HTTPS outside local development")
+    has_credentials = parts.username is not None or parts.password is not None
+    is_local = parts.hostname in {"localhost", "127.0.0.1", "::1"}
+    if parts.scheme == "http" and has_credentials and not is_local:
+        raise ValueError("clickhouse credentials require HTTPS outside local development")
     return parts
 
 
