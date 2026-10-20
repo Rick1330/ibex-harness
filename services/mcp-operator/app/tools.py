@@ -125,87 +125,94 @@ class BudgetGetArgs(BaseModel):
     limit: int = Field(default=20, ge=1, le=BUDGET_MAX_LIMIT)
 
 
-def build_registry() -> ToolRegistry:
-    return ToolRegistry(
-        [
-            ToolSpec(
-                name="session.get",
-                version=TOOL_VERSION,
-                scope=Scope.OPERATOR_READ,
-                description="Return redacted metadata for one session in the caller's org.",
-                args_model=SessionGetArgs,
-                output_schema=_object_schema(
-                    _SESSION_PROPERTIES,
-                    [
-                        "session_id",
-                        "status",
-                        "turn_count",
-                        "total_input_tokens",
-                        "total_output_tokens",
-                    ],
-                ),
-                timeout_ms=TOOL_TIMEOUT_MS,
-                row_limit=1,
-            ),
-            ToolSpec(
-                name="run.get",
-                version=TOOL_VERSION,
-                scope=Scope.RUNS_READ,
-                description="Return redacted metadata for one evidence run in the caller's org.",
-                args_model=RunGetArgs,
-                output_schema=_object_schema(
-                    _RUN_PROPERTIES, ["run_id", "status", "trace_id", "request_id"]
-                ),
-                timeout_ms=TOOL_TIMEOUT_MS,
-                row_limit=1,
-            ),
-            ToolSpec(
-                name="evidence.query",
-                version=TOOL_VERSION,
-                scope=Scope.EVIDENCE_READ,
-                description="List redacted evidence-run metadata in the caller's org.",
-                args_model=EvidenceQueryArgs,
-                output_schema=_object_schema(
-                    {
-                        "runs": {
-                            "type": "array",
-                            "items": _object_schema(
-                                _EVIDENCE_ITEM_PROPERTIES, ["run_id", "status"]
-                            ),
-                        },
-                        "count": {"type": "integer"},
-                        "truncated": {"type": "boolean"},
-                    },
-                    ["runs", "count", "truncated"],
-                ),
-                timeout_ms=TOOL_TIMEOUT_MS,
-                row_limit=EVIDENCE_MAX_LIMIT,
-            ),
-            ToolSpec(
-                name="budget.get",
-                version=TOOL_VERSION,
-                scope=Scope.BUDGET_READ,
-                description="Return billing budget periods for the caller's org (cached cents).",
-                args_model=BudgetGetArgs,
-                output_schema=_object_schema(
-                    {
-                        "periods": {
-                            "type": "array",
-                            "items": _object_schema(
-                                _PERIOD_PROPERTIES,
-                                ["period_id", "cap_cents", "spent_cents_cached"],
-                            ),
-                        },
-                        "count": {"type": "integer"},
-                        "truncated": {"type": "boolean"},
-                    },
-                    ["periods", "count", "truncated"],
-                ),
-                timeout_ms=TOOL_TIMEOUT_MS,
-                row_limit=BUDGET_MAX_LIMIT,
-            ),
-        ]
+def _session_spec() -> ToolSpec:
+    return ToolSpec(
+        name="session.get",
+        version=TOOL_VERSION,
+        scope=Scope.OPERATOR_READ,
+        description="Return redacted metadata for one session in the caller's org.",
+        args_model=SessionGetArgs,
+        output_schema=_object_schema(
+            _SESSION_PROPERTIES,
+            [
+                "session_id",
+                "status",
+                "turn_count",
+                "total_input_tokens",
+                "total_output_tokens",
+            ],
+        ),
+        timeout_ms=TOOL_TIMEOUT_MS,
+        row_limit=1,
     )
+
+
+def _run_spec() -> ToolSpec:
+    return ToolSpec(
+        name="run.get",
+        version=TOOL_VERSION,
+        scope=Scope.RUNS_READ,
+        description="Return redacted metadata for one evidence run in the caller's org.",
+        args_model=RunGetArgs,
+        output_schema=_object_schema(
+            _RUN_PROPERTIES, ["run_id", "status", "trace_id", "request_id"]
+        ),
+        timeout_ms=TOOL_TIMEOUT_MS,
+        row_limit=1,
+    )
+
+
+def _evidence_spec() -> ToolSpec:
+    return ToolSpec(
+        name="evidence.query",
+        version=TOOL_VERSION,
+        scope=Scope.EVIDENCE_READ,
+        description="List redacted evidence-run metadata in the caller's org.",
+        args_model=EvidenceQueryArgs,
+        output_schema=_object_schema(
+            {
+                "runs": {
+                    "type": "array",
+                    "items": _object_schema(_EVIDENCE_ITEM_PROPERTIES, ["run_id", "status"]),
+                },
+                "count": {"type": "integer"},
+                "truncated": {"type": "boolean"},
+            },
+            ["runs", "count", "truncated"],
+        ),
+        timeout_ms=TOOL_TIMEOUT_MS,
+        row_limit=EVIDENCE_MAX_LIMIT,
+    )
+
+
+def _budget_spec() -> ToolSpec:
+    return ToolSpec(
+        name="budget.get",
+        version=TOOL_VERSION,
+        scope=Scope.BUDGET_READ,
+        description="Return billing budget periods for the caller's org (cached cents).",
+        args_model=BudgetGetArgs,
+        output_schema=_object_schema(
+            {
+                "periods": {
+                    "type": "array",
+                    "items": _object_schema(
+                        _PERIOD_PROPERTIES,
+                        ["period_id", "cap_cents", "spent_cents_cached"],
+                    ),
+                },
+                "count": {"type": "integer"},
+                "truncated": {"type": "boolean"},
+            },
+            ["periods", "count", "truncated"],
+        ),
+        timeout_ms=TOOL_TIMEOUT_MS,
+        row_limit=BUDGET_MAX_LIMIT,
+    )
+
+
+def build_registry() -> ToolRegistry:
+    return ToolRegistry([_session_spec(), _run_spec(), _evidence_spec(), _budget_spec()])
 
 
 _Handler = Callable[[AsyncSession, ToolContext, Mapping[str, Any]], Awaitable[Mapping[str, Any]]]

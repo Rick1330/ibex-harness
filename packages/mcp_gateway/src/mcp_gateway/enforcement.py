@@ -83,6 +83,15 @@ class ToolExecutor(Protocol):
     async def __call__(self, ctx: ToolContext, args: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _Invocation:
+    principal: GatewayPrincipal
+    tool_name: str
+    args: Mapping[str, Any] | None
+    request_id: str
+    trace_id: str | None
+
+
 @dataclass(slots=True)
 class _AuditState:
     spec: ToolSpec | None = None
@@ -123,11 +132,17 @@ class GatewayEnforcer:
         request_id: str | None = None,
         trace_id: str | None = None,
     ) -> dict[str, Any]:
-        request_id = request_id or str(uuid4())
+        invocation = _Invocation(
+            principal=principal,
+            tool_name=tool_name,
+            args=args,
+            request_id=request_id or str(uuid4()),
+            trace_id=trace_id,
+        )
         started = time.perf_counter()
         audit = _AuditState()
         try:
-            return await self._run_pipeline(principal, tool_name, args, request_id, trace_id, audit)
+            return await self._run_pipeline(invocation, audit)
         except TimeoutError as exc:
             audit.error_code = BackendUnavailableError.code
             raise BackendUnavailableError(f"tool {tool_name!r} timed out") from exc
@@ -138,26 +153,18 @@ class GatewayEnforcer:
             audit.error_code = "internal_error"
             raise
         finally:
-            self._emit_audit(principal, request_id, started, audit)
+            self._emit_audit(principal, invocation.request_id, started, audit)
 
-    async def _run_pipeline(
-        self,
-        principal: GatewayPrincipal,
-        tool_name: str,
-        args: Mapping[str, Any] | None,
-        request_id: str,
-        trace_id: str | None,
-        audit: _AuditState,
-    ) -> dict[str, Any]:
-        spec = self._require_spec(tool_name, audit)
-        await self._authorize(principal, spec, audit)
-        parsed = self._validate_args(spec, args)
-        await self._enforce_rate_limit(principal)
+    async def _run_pipeline(self, invocation: _Invocation, audit: _AuditState) -> dict[str, Any]:
+        spec = self._require_spec(invocation.tool_name, audit)
+        await self._authorize(invocation.principal, spec, audit)
+        parsed = self._validate_args(spec, invocation.args)
+        await self._enforce_rate_limit(invocation.principal)
         ctx = ToolContext(
-            principal=principal,
+            principal=invocation.principal,
             spec=spec,
-            request_id=request_id,
-            trace_id=trace_id,
+            request_id=invocation.request_id,
+            trace_id=invocation.trace_id,
         )
         raw = await self._execute(ctx, parsed)
         result = sanitize_output(raw, spec.output_schema)

@@ -90,8 +90,9 @@ async def test_clickhouse_sink_hides_transport_error_details() -> None:
 
     sink = ClickHouseOperatorAuditSink("http://127.0.0.1:8123")
     sink._client = _Client()  # type: ignore[assignment]
+    event = _event()
     with pytest.raises(RuntimeError) as excinfo:
-        await sink.write(_event())
+        await sink.write(event)
     assert "secret" not in str(excinfo.value)
 
 
@@ -111,8 +112,9 @@ async def test_clickhouse_sink_reports_status_without_body() -> None:
 
     sink = ClickHouseOperatorAuditSink("http://127.0.0.1:8123")
     sink._client = _Client()  # type: ignore[assignment]
+    event = _event()
     with pytest.raises(RuntimeError, match="status=500"):
-        await sink.write(_event())
+        await sink.write(event)
 
 
 def test_log_fields_include_caller_identity() -> None:

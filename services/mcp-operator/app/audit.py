@@ -9,7 +9,7 @@ deferral. The default sink is logging-only unless a ClickHouse URL is configured
 from __future__ import annotations
 
 import logging
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
 import httpx
 from mcp_gateway import AuditSink, ToolAuditEvent
@@ -75,19 +75,30 @@ class ClickHouseOperatorAuditSink:
 
 
 def _split_base_url(url: str) -> tuple[str, httpx.BasicAuth | None]:
+    parts = _validated_url(url)
+    netloc = _netloc(parts)
+    auth = _basic_auth(parts)
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), auth
+
+
+def _validated_url(url: str) -> SplitResult:
     parts = urlsplit(url.strip())
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ValueError("clickhouse URL must be http(s) with a host")
     if parts.scheme == "http" and parts.hostname not in {"localhost", "127.0.0.1", "::1"}:
-        raise ValueError("clickhouse credentials require HTTPS outside local development")
-    host = parts.hostname
-    if ":" in host:
-        host = f"[{host}]"
-    netloc = host if parts.port is None else f"{host}:{parts.port}"
-    auth = None
-    if parts.username is not None or parts.password is not None:
-        auth = httpx.BasicAuth(unquote(parts.username or ""), unquote(parts.password or ""))
-    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), auth
+        raise ValueError("clickhouse requires HTTPS outside local development")
+    return parts
+
+
+def _netloc(parts: SplitResult) -> str:
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return host if parts.port is None else f"{host}:{parts.port}"
+
+
+def _basic_auth(parts: SplitResult) -> httpx.BasicAuth | None:
+    if parts.username is None and parts.password is None:
+        return None
+    return httpx.BasicAuth(unquote(parts.username or ""), unquote(parts.password or ""))
 
 
 def build_operator_audit_sink(clickhouse_url: str) -> AuditSink:

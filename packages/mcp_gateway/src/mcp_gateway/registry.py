@@ -26,9 +26,24 @@ _MAX_TIMEOUT_MS = 30_000
 _MAX_ROW_LIMIT = 1_000
 
 
+def _validate_identity(version: str, description: str) -> None:
+    if not version or not description:
+        raise ValueError("tool version and description must be non-empty")
+
+
+def _validate_role(role: str) -> None:
+    if role != READ_ONLY_ROLE:
+        raise ValueError(f"only {READ_ONLY_ROLE!r} tools may be registered")
+
+
 def _validate_bounds(name: str, value: int, maximum: int) -> None:
     if not 1 <= int(value) <= maximum:
         raise ValueError(f"{name} must be in 1..{maximum}")
+
+
+def _validate_args_model(args_model: type[BaseModel]) -> None:
+    if not isinstance(args_model, type) or not issubclass(args_model, BaseModel):
+        raise TypeError("args_model must be a pydantic BaseModel subclass")
 
 
 def _validate_name(name: str) -> None:
@@ -56,14 +71,11 @@ class ToolSpec:
 
     def __post_init__(self) -> None:
         _validate_name(self.name)
-        if not self.version or not self.description:
-            raise ValueError("tool version and description must be non-empty")
-        if self.role != READ_ONLY_ROLE:
-            raise ValueError(f"only {READ_ONLY_ROLE!r} tools may be registered")
+        _validate_identity(self.version, self.description)
+        _validate_role(self.role)
         _validate_bounds("timeout_ms", self.timeout_ms, _MAX_TIMEOUT_MS)
         _validate_bounds("row_limit", self.row_limit, _MAX_ROW_LIMIT)
-        if not isinstance(self.args_model, type) or not issubclass(self.args_model, BaseModel):
-            raise TypeError("args_model must be a pydantic BaseModel subclass")
+        _validate_args_model(self.args_model)
 
     @property
     def input_schema(self) -> dict[str, Any]:
