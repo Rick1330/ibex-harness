@@ -16,3 +16,15 @@ When intentionally updating the baseline:
 5. Include justification and raw bench numbers in the PR description.
 
 Do **not** hand-edit `web/public/benchmarks/benchmark-data.json`; `benchmark.yml` republishes history from aggregated runs.
+
+## PR-time Go benchmark gate
+
+The blocking `benchmark-gate` job in `.github/workflows/ci.yml` (wired into `ci-gate-go`) compares PR-head medians with a fresh base-branch run **on the same runner**:
+
+- Base ref: `origin/<base_ref>` (normally `origin/main`), checked out into a temporary git worktree after the head run.
+- Samples: 5 per benchmark; the gate uses the median `ns/op`, `B/op`, and `allocs/op`.
+- Tolerance: 20% regression; missing or malformed benchmark output fails the job.
+- Scope: `BenchmarkProxyOverhead` (warm proxy stage path) and `BenchmarkProxyChatOverhead` (full mock-provider chat).
+- This is relative, same-runner evidence for warm-path **means**, not p99. The scheduled/manual full-chat k6 profile is the p99 measurement path; no recent passing full-chat run is in the published history.
+
+No numeric cross-runner baseline is pinned for this gate. Pinning one would import runner speed (observed multi-run variance of 2–3x) into the policy; the base run is the control. Gate evidence is uploaded as the `go-benchmark-gate` artifact and includes the `base_ref` and tolerance.

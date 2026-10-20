@@ -23,23 +23,25 @@ Performance is a product requirement for IBEX Harness:
 
 These numbers exclude upstream LLM provider latency.
 
-- Proxy overhead:
-  - p95 ≤ 20ms
-  - p99 ≤ 60ms
+- Proxy enforcement overhead (mock provider, warm auth/rate-limit/directive caches, context assembly disabled):
+  - **p99 ≤ 20ms (ratified local/protected-profile target)**
+  - SLI: request accept to response headers; excludes provider time, post-header stream time, cold caches, and hosted/reference performance
 - Auth validation:
   - cache hit p95 ≤ 2ms
   - cache miss p95 ≤ 20ms
 - Rate limiting check:
   - p95 ≤ 5ms
-- Context assembly RPC (end-to-end):
-  - p95 ≤ 50ms
-  - p99 ≤ 100ms
+- Context assembly RPC:
+  - 40ms client deadline (internal timeout, not an SLO)
+  - p95 ≤ 50ms / p99 ≤ 100ms are unmeasured targets, not ratified SLOs
 - Streaming:
   - per-chunk processing overhead should be near-zero (avoid per-chunk allocations)
 
 ### 2.2 Context assembly budgets
 
-- Total assembly p95 ≤ 50ms, p99 ≤ 100ms
+These are targets pending a workload-qualified measurement. The 40ms client deadline is an internal timeout and is not a substitute for an SLO.
+
+- Total assembly p95 ≤ 50ms, p99 ≤ 100ms (unmeasured targets)
 - Cold retrieval (vector search) budget: ≤ 30ms (typical)
 - Ranking + packing budget: ≤ 15ms (100 candidates)
 - Formatting budget: ≤ 5ms
@@ -112,6 +114,8 @@ Benchmark output to track:
 **Regression policy:**
 
 - >20% regression in ns/op or allocs/op is a merge blocker unless justified with a documented reason and compensating improvement.
+- PRs run `BenchmarkProxyOverhead` and `BenchmarkProxyChatOverhead` (5 samples, medians) against a fresh `main` run on the same CI runner. The blocking `benchmark-gate` job uses a 20% tolerance and fails on missing/malformed benchmark output. This gate compares warm-path means; it is not p99 evidence.
+- Scheduled/manual full-chat k6 remains the p99 measurement path for the ratified ≤20ms budget; no recent passing full-chat run is recorded.
 
 ### 4.2 Python perf tests (context/memory)
 
@@ -195,11 +199,12 @@ Workflow:
 
 ## 6) Performance Regression Gates
 
-### 6.1 CI regression checks (recommended)
+### 6.1 CI regression checks (implemented)
 
-- Go benchmarks run on main nightly (not every PR), with historical tracking
-- Compare current benchmark result to baseline
-- Alert on regression, open automated issue
+- Every Go-affecting PR runs the blocking relative Go benchmark gate in `ci.yml`; `ci-gate-go` includes it in its required results.
+- The base comparison is a fresh `main` worktree benchmarked on the same runner, not a pinned cross-runner number. The gate records `base_ref`, tolerance, and per-metric results in `go-bench-gate.json`.
+- `benchmark.yml` remains the scheduled/manual p99 and published-history path; the Go gate does not replace k6.
+- The scheduled k6 gate alerts/fails on p99 >20ms or >20% regression against `benchmarks/data-schema/baseline.json` where that workflow is enabled.
 
 ### 6.2 Staging load tests
 

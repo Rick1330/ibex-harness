@@ -906,6 +906,90 @@ jobs:
         env:
           TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}
 
+  benchmark-gate:
+    name: benchmark-gate
+    needs: [changes, proto-contract]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.run_go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs (PR head)
+        working-directory: packages/proto
+        run: buf generate
+      - name: Run benchmark pipeline unit tests
+        run: |
+          set -euo pipefail
+          go test ./benchmarks/go/...
+          python benchmarks/scripts/test_pipeline.py
+      - name: Run PR-head Go benchmarks
+        run: |
+          set -euo pipefail
+          mkdir -p benchmarks/output
+          out="$GITHUB_WORKSPACE/benchmarks/output"
+          go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=5 \
+            > "$out/go-bench-head.txt"
+          go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
+            -benchmem -count=5 >> "$out/go-bench-head.txt"
+      - name: Run base-branch Go benchmarks
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base_ref="${BASE_REF:-main}"
+          git fetch --no-tags origin "${base_ref}:refs/remotes/origin/${base_ref}"
+          base_dir="$RUNNER_TEMP/ibex-benchmark-base"
+          git worktree add --detach "$base_dir" "origin/${base_ref}"
+          (
+            cd "$base_dir/packages/proto"
+            buf generate
+          )
+          out="$GITHUB_WORKSPACE/benchmarks/output"
+          (
+            cd "$base_dir"
+            go test ./benchmarks/go -run=^$ -bench='^BenchmarkProxyOverhead$' -benchmem -count=5 \
+              > "$out/go-bench-base.txt"
+            go test ./services/proxy/internal/http -run=^$ -bench='^BenchmarkProxyChatOverhead$' \
+              -benchmem -count=5 >> "$out/go-bench-base.txt"
+          )
+      - name: Enforce Go benchmark regression gate
+        run: |
+          set -euo pipefail
+          base_ref="${{ github.base_ref }}"
+          python benchmarks/scripts/go_bench_gate.py \
+            --base benchmarks/output/go-bench-base.txt \
+            --head benchmarks/output/go-bench-head.txt \
+            --base-ref "origin/${base_ref:-main}" \
+            --tolerance-pct 20 \
+            --output benchmarks/output/go-bench-gate.json \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload benchmark gate evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-benchmark-gate
+          path: |
+            benchmarks/output/go-bench-base.txt
+            benchmarks/output/go-bench-head.txt
+            benchmarks/output/go-bench-gate.json
+          if-no-files-found: warn
+
   go-services:
     name: go-services
     needs: [changes, proto-contract]
@@ -2835,6 +2919,7 @@ jobs:
       - security-integration
       - ratelimit-hierarchical-integration
       - go-race
+      - benchmark-gate
       - go-services
       - relay-integration
       - embedder-test
@@ -2877,6 +2962,7 @@ jobs:
             "${{ needs.security-integration.result }}" \
             "${{ needs.ratelimit-hierarchical-integration.result }}" \
             "${{ needs.go-race.result }}" \
+            "${{ needs.benchmark-gate.result }}" \
             "${{ needs.go-services.result }}" \
             "${{ needs.relay-integration.result }}" \
             "${{ needs.embedder-test.result }}" \

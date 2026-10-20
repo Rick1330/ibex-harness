@@ -28,6 +28,12 @@ Methodology: [ADR-0034](/docs/adr/0034-performance-methodology) (proxy),
 Published proxy data is committed via the benchmark bot after successful **main** collects
 (`benchmark_main_complete` → artifact `benchmark-data`).
 
+Go-affecting PRs also run the blocking `benchmark-gate` job in `ci.yml`. It medians 5 samples of
+`BenchmarkProxyOverhead` and `BenchmarkProxyChatOverhead`, benchmarks a temporary `main` worktree
+on the same runner, and fails on a >20% regression or missing output. This gate is warm-path mean
+evidence, not p99; the scheduled/manual full-chat k6 profile remains the p99 evidence path. See
+[`BASELINE.md`](BASELINE.md).
+
 ### Suite contract (multi-bench)
 
 Each suite keeps its own JSON file and bot modules. Shared seams:

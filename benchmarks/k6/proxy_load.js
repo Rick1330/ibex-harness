@@ -1,4 +1,5 @@
 /* global __ENV */
+import exec from "k6/execution";
 import http from "k6/http";
 import { check, sleep } from "k6";
 
@@ -38,6 +39,8 @@ function probeHealth() {
 function probeChat() {
   const headers = {
     "Content-Type": "application/json",
+    // Durable PostgreSQL idempotency is enabled in the benchmark profile.
+    "Idempotency-Key": `bench-${exec.vu.idInTest}-${exec.scenario.iterationInTest}`,
   };
   if (TOKEN) {
     headers.Authorization = `Bearer ${TOKEN}`;
