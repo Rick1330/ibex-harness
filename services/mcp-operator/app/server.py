@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp_gateway import GatewayEnforcer, GatewayError, ToolRegistry
+from mcp_gateway import CallContext, GatewayEnforcer, GatewayError, ToolRegistry
 from pydantic import ConfigDict
 
 from app.errors import to_tool_call_error
@@ -150,7 +150,7 @@ async def _invoke(enforcer: GatewayEnforcer, tool_name: str, raw: dict[str, Any]
             principal,
             tool_name,
             raw,
-            request_id=str(uuid.uuid4()),
+            call=CallContext(request_id=str(uuid.uuid4())),
         )
     except GatewayError as exc:
         raise to_tool_call_error(exc) from exc

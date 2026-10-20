@@ -92,6 +92,12 @@ class _Invocation:
     trace_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class CallContext:
+    request_id: str = ""
+    trace_id: str | None = None
+
+
 @dataclass(slots=True)
 class _AuditState:
     spec: ToolSpec | None = None
@@ -129,15 +135,15 @@ class GatewayEnforcer:
         tool_name: str,
         args: Mapping[str, Any] | None,
         *,
-        request_id: str | None = None,
-        trace_id: str | None = None,
+        call: CallContext | None = None,
     ) -> dict[str, Any]:
+        context = call or CallContext()
         invocation = _Invocation(
             principal=principal,
             tool_name=tool_name,
             args=args,
-            request_id=request_id or str(uuid4()),
-            trace_id=trace_id,
+            request_id=context.request_id or str(uuid4()),
+            trace_id=context.trace_id,
         )
         started = time.perf_counter()
         audit = _AuditState()
