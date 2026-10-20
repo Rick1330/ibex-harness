@@ -18,6 +18,19 @@ There is a material documentation contradiction that should be resolved before u
 
 Until the owner/reviewer and status records are reconciled, the correct operational label is **contract-shape accepted in one dated artifact; GAP-001–003 and runtime implementation remain open/provisional in the controlling gap register**.
 
+## 2026-10-20 addendum
+
+The owner/reviewer contradiction above is now reconciled in the controlling documents: `00-status-and-evidence.md`, `03-contract-registry.md`, `18-gap-register.md`, and `21-g0-owner-decision-record.md` all record the same 2026-10-10 contract-shape acceptance by Rick1330 as acting owner, with no independent reviewer named and a 2026-11-10 review date. This addendum does not promote any runtime GAP.
+
+Updates since the original audit:
+
+- **GAP-004:** the proxy enforcement-overhead target is ratified at p99 ≤20 ms for the warm, mock-provider local/protected profile. PR #1018 merged the blocking same-runner relative Go benchmark gate (warm-path means, 20% tolerance) on 2026-10-20. No hosted/reference p99 measurement exists, so GAP-004 remains open.
+- **GAP-009:** the read-only operator gateway is `shipped-local` and default-off; PolicySnapshot resource/action evaluation, durable rich-field audit, and hosted evidence remain open.
+- **GAP-011:** the evidence relay daemon (#1002) is deployable but default-off; ClickHouse remains a G4-gated pilot and hosted/HA recovery evidence is absent.
+- **Decisions 4–8:** `18-gap-register.md` now records explicit pending/bounded dispositions. No contract aliasing, missing package fields, `required_evidence=false` gate, or hosted Responses support is inferred.
+
+The audit conclusion is unchanged: the repository is not G0-approved for runtime, hosted, HA, or production readiness, and no GAP is closed by this addendum.
+
 ## Verification performed
 
 `make check` passed at the audited checkout:

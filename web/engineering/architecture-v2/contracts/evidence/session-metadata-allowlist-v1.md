@@ -1,6 +1,6 @@
 # Session Evidence Metadata Allowlist v1
 
-**Status:** Proposed runtime binding for PR C; the accepted evidence contract remains the shape in `web/engineering/architecture-v2/21-g0-owner-decision-record.md`. This artifact does not enable the relay or certify hosted/production operation.
+**Status:** Proposed runtime binding from the evidence-hardening slice; the accepted evidence contract remains the shape in `web/engineering/architecture-v2/21-g0-owner-decision-record.md`. This artifact does not enable the relay or certify hosted/production operation.
 
 The session producer may assign `metadata` only after `session/evidence.SanitizeRunInput` copies the values below and validates a tenant-scoped active PostgreSQL session fence. The sanitizer is positive-list: fields not listed here are never copied into a metadata-class row. If a listed value fails its structural check, the value is omitted and the entire row is classified `redacted`; missing tenant, agent, session, request, trace identity, producer proof, or matching fence withholds the row. Previously redacted or prohibited input cannot be upgraded to metadata.
 
