@@ -41,7 +41,7 @@ RATE_LIMIT_ERRORS = METRICS.errors
 RATE_LIMIT_REJECTED = METRICS.rejected
 
 
-def _SPAN(name: str):
+def _span(name: str):
     return get_tracer().start_as_current_span(name)
 
 
@@ -77,7 +77,7 @@ class RedisOperatorLimiter(RedisCalendarMinuteRateLimiter[RateLimitOutcome], Ope
             unavailable_error=RateLimitUnavailableError,
             result_factory=RateLimitOutcome,
             metrics=METRICS,
-            span=_SPAN,
+            span=_span,
             log_label="mcp operator",
         )
 
