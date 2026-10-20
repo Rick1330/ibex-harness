@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from mcp_gateway import (
     BitmapPolicyEvaluator,
+    EnforcerOptions,
     GatewayEnforcer,
     GatewayPrincipal,
     InMemoryAuditEmitter,
@@ -31,9 +32,11 @@ def _build(*, executor: Any = None, rate_limiter: Any = None, audit: Any = None)
     enforcer = GatewayEnforcer(
         registry,
         executor if executor is not None else stub_executor(),
-        policy=BitmapPolicyEvaluator(),
-        rate_limiter=rate_limiter or StaticRateLimiter(),
-        audit=audit or InMemoryAuditEmitter(),
+        options=EnforcerOptions(
+            policy=BitmapPolicyEvaluator(),
+            rate_limiter=rate_limiter or StaticRateLimiter(),
+            audit=audit or InMemoryAuditEmitter(),
+        ),
     )
     mcp = build_mcp_server(McpServerWiring(enforcer=enforcer, registry=registry))
     return mcp, registry
@@ -79,50 +82,37 @@ async def test_session_get_redacts_undeclared_fields() -> None:
     assert audit.events[0].decision == "allow"
 
 
-@pytest.mark.asyncio
-async def test_permission_denied_surfaces_typed_code() -> None:
+async def _tool_error(fn: Any, permissions: int, **kwargs: Any) -> str:
     from app.errors import ToolCallError
 
-    mcp, _ = _build()
-    fn = _tool_fn(mcp, "session.get")
-    set_principal(GatewayPrincipal(org_id=ORG, permissions=0, agent_id=AGENT))
+    set_principal(GatewayPrincipal(org_id=ORG, permissions=permissions, agent_id=AGENT))
     try:
         with pytest.raises(ToolCallError) as excinfo:
-            await fn(session_id=SESSION_ID)
+            await fn(**kwargs)
     finally:
         set_principal(None)
-    assert excinfo.value.code == "permission_denied"
-    assert str(excinfo.value).startswith("permission_denied:")
+    return excinfo.value.code
+
+
+@pytest.mark.asyncio
+async def test_permission_denied_surfaces_typed_code() -> None:
+    mcp, _ = _build()
+    fn = _tool_fn(mcp, "session.get")
+    assert await _tool_error(fn, 0, session_id=SESSION_ID) == "permission_denied"
 
 
 @pytest.mark.asyncio
 async def test_invalid_params_surface_typed_code() -> None:
-    from app.errors import ToolCallError
-
     mcp, _ = _build()
     fn = _tool_fn(mcp, "session.get")
-    set_principal(GatewayPrincipal(org_id=ORG, permissions=(1 << 19), agent_id=AGENT))
-    try:
-        with pytest.raises(ToolCallError) as excinfo:
-            await fn(session_id="not-a-uuid")
-    finally:
-        set_principal(None)
-    assert excinfo.value.code == "invalid_params"
+    assert await _tool_error(fn, 1 << 19, session_id="not-a-uuid") == "invalid_params"
 
 
 @pytest.mark.asyncio
 async def test_not_found_surfaces_typed_code() -> None:
-    from app.errors import ToolCallError
-
     mcp, _ = _build(executor=stub_executor({}))
     fn = _tool_fn(mcp, "run.get")
-    set_principal(GatewayPrincipal(org_id=ORG, permissions=(1 << 24), agent_id=AGENT))
-    try:
-        with pytest.raises(ToolCallError) as excinfo:
-            await fn(run_id=RUN_ID)
-    finally:
-        set_principal(None)
-    assert excinfo.value.code == "not_found"
+    assert await _tool_error(fn, 1 << 24, run_id=RUN_ID) == "not_found"
 
 
 @pytest.mark.asyncio

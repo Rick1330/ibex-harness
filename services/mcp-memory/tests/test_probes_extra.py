@@ -43,7 +43,8 @@ def test_ready_503_when_auth_unreachable() -> None:
         available=False,
     )
     application = create_app(
-        settings=settings, deps=CreateAppDeps(validator=validator, agent_verifier=AllowAllAgentVerifier())
+        settings=settings,
+        deps=CreateAppDeps(validator=validator, agent_verifier=AllowAllAgentVerifier()),
     )
     with TestClient(application) as client:
         resp = client.get("/ready")
@@ -59,7 +60,8 @@ def test_ready_recovers_when_auth_becomes_available() -> None:
         available=False,
     )
     application = create_app(
-        settings=settings, deps=CreateAppDeps(validator=validator, agent_verifier=AllowAllAgentVerifier())
+        settings=settings,
+        deps=CreateAppDeps(validator=validator, agent_verifier=AllowAllAgentVerifier()),
     )
     with TestClient(application) as client:
         assert client.get("/ready").status_code == 503

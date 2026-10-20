@@ -112,7 +112,11 @@ def test_unauthorized_request_increments_metrics() -> None:
     )
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=validator,
+            audit_sink=MemoryAuditSink(),
+            agent_verifier=AllowAllAgentVerifier(),
+        ),
     )
     before = _counter_value(
         "ibex_mcp_http_requests_total",

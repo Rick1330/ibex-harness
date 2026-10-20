@@ -44,9 +44,7 @@ def test_iso_mcp_01_org_scoped_cross_org_agent_denied_via_validate_agent(
             arguments={"query": "cross-tenant", "agent_id": agent_b},
         ),
     )
-    assert_permission_denied(
-        search, sink=sink, tool_name="search_memory", events_before=before
-    )
+    assert_permission_denied(search, sink=sink, tool_name="search_memory", events_before=before)
     assert_no_memory_outbound(outbound)
 
     before = len(sink.events)
@@ -60,7 +58,5 @@ def test_iso_mcp_01_org_scoped_cross_org_agent_denied_via_validate_agent(
             arguments={"content": "must not write across orgs", "agent_id": agent_b},
         ),
     )
-    assert_permission_denied(
-        write, sink=sink, tool_name="write_memory", events_before=before
-    )
+    assert_permission_denied(write, sink=sink, tool_name="write_memory", events_before=before)
     assert_no_memory_outbound(outbound)

@@ -15,7 +15,7 @@ import redis as redis_sync
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from app.ratelimit import KEY_TTL_SECONDS, RedisMcpLimiter
+from app.ratelimit import KEY_TTL_SECONDS, McpLimiterOptions, RedisMcpLimiter
 
 pytestmark = pytest.mark.integration
 
@@ -47,7 +47,7 @@ async def test_redis_limiter_live_reject_ttl_and_concurrency(require_redis: str)
     org = uuid4()
     org_b = uuid4()
     client: Redis = Redis.from_url(require_redis, decode_responses=True)
-    limiter = RedisMcpLimiter(client, default_rpm=3, owned=True)
+    limiter = RedisMcpLimiter(client, options=McpLimiterOptions(default_rpm=3, owned=True))
     key = RedisMcpLimiter.redis_key(org)
     key_b = RedisMcpLimiter.redis_key(org_b)
     try:

@@ -53,6 +53,8 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
     }
 )
 
+_SUPPORTED_TYPES = frozenset({"object", "array", "string", "integer", "number", "boolean", "null"})
+
 _CHECKERS: dict[str, Callable[[Any], bool]] = {
     "object": lambda value: isinstance(value, Mapping),
     "array": lambda value: isinstance(value, (list, tuple)),
@@ -134,7 +136,13 @@ def _require_keys(schema: Mapping[str, Any], result: Mapping[str, Any]) -> None:
 def _schema_types(schema: Mapping[str, Any]) -> list[str]:
     raw = schema.get("type")
     if isinstance(raw, str):
-        return [raw]
-    if isinstance(raw, (list, tuple)):
-        return [item for item in raw if isinstance(item, str)]
-    raise RedactionError("output schema field is missing a type")
+        types = [raw]
+    elif isinstance(raw, (list, tuple)):
+        if not raw or any(not isinstance(item, str) for item in raw):
+            raise RedactionError("output schema has an unsupported type shape")
+        types = list(raw)
+    else:
+        raise RedactionError("output schema field is missing a type")
+    if any(schema_type not in _SUPPORTED_TYPES for schema_type in types):
+        raise RedactionError("output schema has an unsupported type")
+    return types

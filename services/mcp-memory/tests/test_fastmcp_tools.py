@@ -105,8 +105,6 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     assert confidence.get("minimum") == 0.0
     assert confidence.get("maximum") == 1.0
 
-
-
     feedback = by_name["record_feedback"].inputSchema
     assert feedback.get("additionalProperties") is False
     assert set(feedback["properties"]["feedback"].get("enum", [])) == {

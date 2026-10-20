@@ -195,17 +195,13 @@ def assert_permission_denied(
     assert "not_found" not in blob
     new_events = sink.events[events_before:]
     assert any(
-        e.tool_name == tool_name
-        and e.success is False
-        and e.error_code == "permission_denied"
+        e.tool_name == tool_name and e.success is False and e.error_code == "permission_denied"
         for e in new_events
     ), new_events
 
 
 def assert_no_memory_outbound(counter: MemoryOutboundCounter) -> None:
-    assert counter.count == 0, (
-        f"expected zero outbound memory HTTP on deny; got {counter.count}"
-    )
+    assert counter.count == 0, f"expected zero outbound memory HTTP on deny; got {counter.count}"
 
 
 def assert_tool_ok(resp: object) -> None:

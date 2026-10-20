@@ -12,7 +12,7 @@ from authclient.permissions import OPERATOR_METADATA_READ, TRACE_READ
 from support import SAMPLE_OUTPUT_SCHEMA, SampleArgs
 
 from mcp_gateway.audit import InMemoryAuditEmitter
-from mcp_gateway.enforcement import GatewayEnforcer, RateLimitOutcome
+from mcp_gateway.enforcement import EnforcerOptions, GatewayEnforcer, RateLimitOutcome
 from mcp_gateway.errors import (
     BackendUnavailableError,
     InvalidParamsError,
@@ -57,8 +57,10 @@ def _enforcer(executor=_ok_executor, *, registry=None, audit=None, **kwargs) -> 
     return GatewayEnforcer(
         registry or _registry(),
         executor,
-        audit=audit if audit is not None else InMemoryAuditEmitter(),
-        **kwargs,
+        options=EnforcerOptions(
+            audit=audit if audit is not None else InMemoryAuditEmitter(),
+            **kwargs,
+        ),
     )
 
 

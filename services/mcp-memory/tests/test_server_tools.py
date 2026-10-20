@@ -49,9 +49,7 @@ async def test_invoke_search_and_write_emits_audit() -> None:
                 request=_ToolRequest(
                     tool_name="search_memory",
                     raw={"query": "hello"},
-                    runner=lambda raw: _run_verified_tool(
-                        raw, client, _ALLOW, _SEARCH_TOOL
-                    ),
+                    runner=lambda raw: _run_verified_tool(raw, client, _ALLOW, _SEARCH_TOOL),
                 ),
             )
         )
@@ -62,9 +60,7 @@ async def test_invoke_search_and_write_emits_audit() -> None:
                 request=_ToolRequest(
                     tool_name="write_memory",
                     raw={"content": "note"},
-                    runner=lambda raw: _run_verified_tool(
-                        raw, client, _ALLOW, _WRITE_TOOL
-                    ),
+                    runner=lambda raw: _run_verified_tool(raw, client, _ALLOW, _WRITE_TOOL),
                 ),
             )
         )

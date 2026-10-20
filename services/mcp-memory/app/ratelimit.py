@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from mcp_runtime.ratelimit import (
@@ -11,6 +12,7 @@ from mcp_runtime.ratelimit import (
     NoopRateLimiter,
     RateLimitResult,
     RedisCalendarMinuteRateLimiter,
+    RedisLimiterConfig,
     build_rate_limit_metrics,
     parse_org_rpm_overrides,
     redis_key,
@@ -46,27 +48,30 @@ class NoopMcpLimiter(NoopRateLimiter[RateLimitResult], McpRateLimiter):
         NoopRateLimiter.__init__(self, default_rpm=default_rpm)
 
 
+@dataclass(frozen=True, slots=True)
+class McpLimiterOptions:
+    default_rpm: int = 120
+    org_overrides: dict[UUID, int] | None = None
+    owned: bool = True
+    fail_closed: bool = False
+
+
 class RedisMcpLimiter(RedisCalendarMinuteRateLimiter[RateLimitResult], McpRateLimiter):
-    def __init__(
-        self,
-        redis: Redis,
-        *,
-        default_rpm: int = 120,
-        org_overrides: dict[UUID, int] | None = None,
-        owned: bool = True,
-        fail_closed: bool = False,
-    ) -> None:
+    def __init__(self, redis: Redis, *, options: McpLimiterOptions | None = None) -> None:
+        opts = options or McpLimiterOptions()
         RedisCalendarMinuteRateLimiter.__init__(
             self,
             redis,
-            key_scope="mcp",
-            default_rpm=default_rpm,
-            org_overrides=org_overrides,
-            owned=owned,
-            fail_closed=fail_closed,
-            unavailable_error=RateLimitUnavailableError,
-            metrics=METRICS,
-            log_label="mcp",
+            config=RedisLimiterConfig(
+                key_scope="mcp",
+                default_rpm=opts.default_rpm,
+                org_overrides=opts.org_overrides,
+                owned=opts.owned,
+                fail_closed=opts.fail_closed,
+                unavailable_error=RateLimitUnavailableError,
+                metrics=METRICS,
+                log_label="mcp",
+            ),
         )
 
     @staticmethod
@@ -87,8 +92,10 @@ def build_mcp_rate_limiter(
     client: Redis = Redis.from_url(url, decode_responses=True)
     return RedisMcpLimiter(
         client,
-        default_rpm=default_rpm,
-        org_overrides=org_overrides,
-        owned=True,
-        fail_closed=fail_closed,
+        options=McpLimiterOptions(
+            default_rpm=default_rpm,
+            org_overrides=org_overrides,
+            owned=True,
+            fail_closed=fail_closed,
+        ),
     )

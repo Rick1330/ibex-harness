@@ -81,15 +81,24 @@ def _split_base_url(url: str) -> tuple[str, httpx.BasicAuth | None]:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), auth
 
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
 def _validated_url(url: str) -> SplitResult:
     parts = urlsplit(url.strip())
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ValueError("clickhouse URL must be http(s) with a host")
-    has_credentials = parts.username is not None or parts.password is not None
-    is_local = parts.hostname in {"localhost", "127.0.0.1", "::1"}
-    if parts.scheme == "http" and has_credentials and not is_local:
+    if _cleartext_credentials(parts):
         raise ValueError("clickhouse credentials require HTTPS outside local development")
     return parts
+
+
+def _cleartext_credentials(parts: SplitResult) -> bool:
+    if parts.scheme != "http":
+        return False
+    if parts.username is None and parts.password is None:
+        return False
+    return parts.hostname not in _LOCAL_HOSTS
 
 
 def _netloc(parts: SplitResult) -> str:

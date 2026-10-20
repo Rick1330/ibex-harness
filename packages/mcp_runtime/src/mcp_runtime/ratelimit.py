@@ -92,33 +92,33 @@ class NoopRateLimiter[ResultT](CalendarMinuteRateLimiter[ResultT]):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RedisLimiterConfig:
+    key_scope: str
+    default_rpm: int = 120
+    org_overrides: dict[UUID, int] | None = None
+    owned: bool = True
+    fail_closed: bool = False
+    unavailable_error: type[Exception] = RuntimeError
+    result_factory: Callable[..., Any] = RateLimitResult
+    metrics: RateLimitMetrics | None = None
+    span: Callable[[str], AbstractContextManager[Any]] = lambda _name: nullcontext()
+    log_label: str = "mcp"
+
+
 class RedisCalendarMinuteRateLimiter[ResultT](CalendarMinuteRateLimiter[ResultT]):
-    def __init__(
-        self,
-        redis: Redis,
-        *,
-        key_scope: str,
-        default_rpm: int = 120,
-        org_overrides: dict[UUID, int] | None = None,
-        owned: bool = True,
-        fail_closed: bool = False,
-        unavailable_error: type[Exception] = RuntimeError,
-        result_factory: Callable[..., ResultT] = RateLimitResult,
-        metrics: RateLimitMetrics | None = None,
-        span: Callable[[str], AbstractContextManager[Any]] = lambda _name: nullcontext(),
-        log_label: str = "mcp",
-    ) -> None:
+    def __init__(self, redis: Redis, *, config: RedisLimiterConfig) -> None:
         self._redis = redis
-        self._key_scope = key_scope
-        self._default_rpm = max(1, default_rpm)
-        self._org_overrides = org_overrides or {}
-        self._owned = owned
-        self._fail_closed = fail_closed
-        self._unavailable_error = unavailable_error
-        self._result_factory = result_factory
-        self._metrics = metrics
-        self._span = span
-        self._log_label = log_label
+        self._key_scope = config.key_scope
+        self._default_rpm = max(1, config.default_rpm)
+        self._org_overrides = config.org_overrides or {}
+        self._owned = config.owned
+        self._fail_closed = config.fail_closed
+        self._unavailable_error = config.unavailable_error
+        self._result_factory = config.result_factory
+        self._metrics = config.metrics
+        self._span = config.span
+        self._log_label = config.log_label
         self._script = self._redis.register_script(INCR_EXPIRE_LUA)
 
     def effective_limit(self, org_id: UUID) -> int:

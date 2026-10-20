@@ -16,6 +16,7 @@ from tests.fixtures import (
     SESSION_ID,
     TOKEN_A,
     TOKEN_NO_SCOPE,
+    AppOptions,
     StaticRateLimiter,
     disabled_settings,
     make_app,
@@ -92,7 +93,7 @@ def test_mcp_invalid_token() -> None:
 
 
 def test_auth_unavailable_fails_closed() -> None:
-    client, _ = make_app(validator=static_validator(available=False))
+    client, _ = make_app(AppOptions(validator=static_validator(available=False)))
     with client:
         resp = client.post(
             "/mcp",
@@ -104,7 +105,7 @@ def test_auth_unavailable_fails_closed() -> None:
 
 
 def test_ready_reports_unavailable_auth() -> None:
-    client, _ = make_app(validator=static_validator(available=False))
+    client, _ = make_app(AppOptions(validator=static_validator(available=False)))
     with client:
         ready = client.get("/ready")
     assert ready.status_code == 503
@@ -153,7 +154,7 @@ def test_tool_call_without_scope_is_error() -> None:
 
 
 def test_tool_call_rate_limited() -> None:
-    client, sink = make_app(rate_limiter=StaticRateLimiter(allowed=False))
+    client, sink = make_app(AppOptions(rate_limiter=StaticRateLimiter(allowed=False)))
     with client:
         headers = _handshake(client, TOKEN_A)
         called = _call(client, headers, "budget.get", {"active_only": True, "limit": 5})
@@ -170,7 +171,7 @@ def test_audit_records_successful_call() -> None:
 
 
 def test_disabled_gateway_has_no_mcp_surface() -> None:
-    client, _ = make_app(settings=disabled_settings(), executor=None, validator=None)
+    client, _ = make_app(AppOptions(settings=disabled_settings(), executor=None, validator=None))
     with client:
         assert client.post("/mcp", json={}).status_code == 404
         assert client.get("/health").status_code == 200

@@ -99,6 +99,13 @@ async def seeded(seed_engine: AsyncEngine) -> AsyncIterator[Seeded]:
 
 
 async def _seed(conn: object, ids: Seeded) -> None:
+    await _seed_orgs(conn, ids)
+    await _seed_agents(conn, ids)
+    await _seed_sessions(conn, ids)
+    await _seed_runs_and_budgets(conn, ids)
+
+
+async def _seed_orgs(conn: object, ids: Seeded) -> None:
     for org, slug in (
         (ids.org_a, f"op-a-{ids.org_a.hex[:8]}"),
         (ids.org_b, f"op-b-{ids.org_b.hex[:8]}"),
@@ -107,6 +114,9 @@ async def _seed(conn: object, ids: Seeded) -> None:
             text("INSERT INTO ibex_core.organizations (id, name, slug) VALUES (:id, :name, :slug)"),
             {"id": str(org), "name": slug, "slug": slug},
         )
+
+
+async def _seed_agents(conn: object, ids: Seeded) -> None:
     for agent, org, slug in (
         (ids.agent_a, ids.org_a, f"agent-a-{ids.agent_a.hex[:8]}"),
         (ids.agent_b, ids.org_b, f"agent-b-{ids.agent_b.hex[:8]}"),
@@ -118,6 +128,9 @@ async def _seed(conn: object, ids: Seeded) -> None:
             ),
             {"id": str(agent), "org_id": str(org), "name": slug, "slug": slug},
         )
+
+
+async def _seed_sessions(conn: object, ids: Seeded) -> None:
     for session_id, org, agent in (
         (ids.session_a, ids.org_a, ids.agent_a),
         (ids.session_b, ids.org_b, ids.agent_b),
@@ -129,6 +142,9 @@ async def _seed(conn: object, ids: Seeded) -> None:
             ),
             {"id": str(session_id), "org_id": str(org), "agent_id": str(agent)},
         )
+
+
+async def _seed_runs_and_budgets(conn: object, ids: Seeded) -> None:
     for run_id, org, agent, session_id, request_id, trace_id in (
         (
             ids.run_a,

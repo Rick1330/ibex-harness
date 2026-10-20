@@ -107,6 +107,13 @@ class _AuditState:
     error_code: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class EnforcerOptions:
+    policy: PolicyEvaluator | None = None
+    rate_limiter: RateLimiter | None = None
+    audit: AuditEmitter | None = None
+
+
 class GatewayEnforcer:
     """Transport-agnostic enforcement pipeline."""
 
@@ -115,15 +122,14 @@ class GatewayEnforcer:
         registry: ToolRegistry,
         executor: ToolExecutor,
         *,
-        policy: PolicyEvaluator | None = None,
-        rate_limiter: RateLimiter | None = None,
-        audit: AuditEmitter | None = None,
+        options: EnforcerOptions | None = None,
     ) -> None:
+        opts = options or EnforcerOptions()
         self._registry = registry
         self._executor = executor
-        self._policy = policy or BitmapPolicyEvaluator()
-        self._rate_limiter = rate_limiter
-        self._audit = audit or NullAuditEmitter()
+        self._policy = opts.policy or BitmapPolicyEvaluator()
+        self._rate_limiter = opts.rate_limiter
+        self._audit = opts.audit or NullAuditEmitter()
 
     @property
     def registry(self) -> ToolRegistry:
@@ -145,13 +151,24 @@ class GatewayEnforcer:
             request_id=context.request_id or str(uuid4()),
             trace_id=context.trace_id,
         )
-        started = time.perf_counter()
-        audit = _AuditState()
+        return await self._invoke_with_audit(
+            invocation,
+            started=time.perf_counter(),
+            audit=_AuditState(),
+        )
+
+    async def _invoke_with_audit(
+        self,
+        invocation: _Invocation,
+        *,
+        started: float,
+        audit: _AuditState,
+    ) -> dict[str, Any]:
         try:
             return await self._run_pipeline(invocation, audit)
         except TimeoutError as exc:
             audit.error_code = BackendUnavailableError.code
-            raise BackendUnavailableError(f"tool {tool_name!r} timed out") from exc
+            raise BackendUnavailableError(f"tool {invocation.tool_name!r} timed out") from exc
         except GatewayError as exc:
             audit.error_code = exc.code
             raise
@@ -159,7 +176,7 @@ class GatewayEnforcer:
             audit.error_code = "internal_error"
             raise
         finally:
-            self._emit_audit(principal, invocation.request_id, started, audit)
+            self._emit_audit(invocation.principal, invocation.request_id, started, audit)
 
     async def _run_pipeline(self, invocation: _Invocation, audit: _AuditState) -> dict[str, Any]:
         spec = self._require_spec(invocation.tool_name, audit)

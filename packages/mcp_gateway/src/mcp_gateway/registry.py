@@ -46,13 +46,20 @@ def _validate_args_model(args_model: type[BaseModel]) -> None:
         raise TypeError("args_model must be a pydantic BaseModel subclass")
 
 
-def _validate_name(name: str) -> None:
+def _name_error(name: str) -> str | None:
     if not name or not name.strip():
-        raise ValueError("tool name must be non-empty")
+        return "tool name must be non-empty"
     if len(name) > 64:
-        raise ValueError("tool name must be <= 64 characters")
+        return "tool name must be <= 64 characters"
     if any(ch.isspace() for ch in name):
-        raise ValueError("tool name must not contain whitespace")
+        return "tool name must not contain whitespace"
+    return None
+
+
+def _validate_name(name: str) -> None:
+    error = _name_error(name)
+    if error is not None:
+        raise ValueError(error)
 
 
 @dataclass(frozen=True, slots=True)

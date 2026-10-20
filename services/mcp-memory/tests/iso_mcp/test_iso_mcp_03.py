@@ -33,9 +33,7 @@ def test_iso_mcp_03_suspended_agent_denied_on_search_and_write(
             arguments={"query": "suspended-agent"},
         ),
     )
-    assert_permission_denied(
-        search, sink=sink, tool_name="search_memory", events_before=before
-    )
+    assert_permission_denied(search, sink=sink, tool_name="search_memory", events_before=before)
 
     before = len(sink.events)
     write = tools_call(
@@ -47,6 +45,4 @@ def test_iso_mcp_03_suspended_agent_denied_on_search_and_write(
             arguments={"content": "must not write for suspended agent"},
         ),
     )
-    assert_permission_denied(
-        write, sink=sink, tool_name="write_memory", events_before=before
-    )
+    assert_permission_denied(write, sink=sink, tool_name="write_memory", events_before=before)

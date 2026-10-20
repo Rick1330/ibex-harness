@@ -9,7 +9,7 @@ import pytest
 from mcp_gateway import RateLimitUnavailableError
 from redis.asyncio import Redis
 
-from app.ratelimit import KEY_TTL_SECONDS, RedisOperatorLimiter
+from app.ratelimit import KEY_TTL_SECONDS, OperatorLimiterOptions, RedisOperatorLimiter
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +43,9 @@ async def _cleanup(redis: Redis, org_id) -> None:
 
 async def test_shared_counter_rejects_after_org_limit(redis: Redis) -> None:
     org = uuid4()
-    limiter = RedisOperatorLimiter(redis, default_rpm=2, owned=False, fail_closed=True)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=2, owned=False, fail_closed=True)
+    )
     try:
         assert (await limiter.check(org)).allowed is True
         assert (await limiter.check(org)).allowed is True
@@ -56,8 +58,12 @@ async def test_shared_counter_rejects_after_org_limit(redis: Redis) -> None:
 
 async def test_counter_is_shared_across_limiter_instances(redis: Redis) -> None:
     org = uuid4()
-    first = RedisOperatorLimiter(redis, default_rpm=2, owned=False, fail_closed=True)
-    second = RedisOperatorLimiter(redis, default_rpm=2, owned=False, fail_closed=True)
+    first = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=2, owned=False, fail_closed=True)
+    )
+    second = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=2, owned=False, fail_closed=True)
+    )
     try:
         await first.check(org)
         await first.check(org)
@@ -68,7 +74,9 @@ async def test_counter_is_shared_across_limiter_instances(redis: Redis) -> None:
 
 async def test_counter_expires_on_the_window(redis: Redis) -> None:
     org = uuid4()
-    limiter = RedisOperatorLimiter(redis, default_rpm=5, owned=False, fail_closed=True)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=5, owned=False, fail_closed=True)
+    )
     try:
         await limiter.check(org)
         key = limiter.redis_key(org)
@@ -81,7 +89,9 @@ async def test_counter_expires_on_the_window(redis: Redis) -> None:
 async def test_counters_are_isolated_by_org(redis: Redis) -> None:
     org_a = uuid4()
     org_b = uuid4()
-    limiter = RedisOperatorLimiter(redis, default_rpm=1, owned=False, fail_closed=True)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=1, owned=False, fail_closed=True)
+    )
     try:
         assert (await limiter.check(org_a)).allowed is True
         assert (await limiter.check(org_a)).allowed is False
@@ -98,7 +108,9 @@ async def test_unavailable_store_fails_closed() -> None:
         socket_connect_timeout=0.2,
         socket_timeout=0.2,
     )
-    limiter = RedisOperatorLimiter(unavailable, default_rpm=5, owned=True, fail_closed=True)
+    limiter = RedisOperatorLimiter(
+        unavailable, options=OperatorLimiterOptions(default_rpm=5, owned=True, fail_closed=True)
+    )
     try:
         with pytest.raises(RateLimitUnavailableError):
             await limiter.check(uuid4())

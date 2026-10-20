@@ -46,40 +46,31 @@ def test_protected_profile_requires_redis() -> None:
         )
 
 
+def _production_settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "enabled": True,
+        "env": "production",
+        "database_url": "postgresql+asyncpg://u:p@db/ibex",
+        "redis_url": "redis://db:6379/0",
+        "resource_url": "https://mcp.example.com/mcp",
+        "auth_server_url": "https://auth.example.com",
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
+
+
 def test_production_requires_https_public_urls() -> None:
     with pytest.raises(ValueError, match="must use https"):
-        Settings(
-            enabled=True,
-            env="production",
-            database_url="postgresql+asyncpg://u:p@db/ibex",
-            redis_url="redis://db:6379/0",
-            resource_url="http://mcp.example.com/mcp",
-            auth_server_url="https://auth.example.com",
-        )
+        _production_settings(resource_url="http://mcp.example.com/mcp")
 
 
 def test_production_rejects_loopback_host() -> None:
     with pytest.raises(ValueError, match="loopback host"):
-        Settings(
-            enabled=True,
-            env="production",
-            database_url="postgresql+asyncpg://u:p@db/ibex",
-            redis_url="redis://db:6379/0",
-            resource_url="https://127.0.0.1/mcp",
-            auth_server_url="https://auth.example.com",
-        )
+        _production_settings(resource_url="https://127.0.0.1/mcp")
 
 
 def test_production_accepts_public_https() -> None:
-    settings = Settings(
-        enabled=True,
-        env="production",
-        database_url="postgresql+asyncpg://u:p@db/ibex",
-        redis_url="redis://db:6379/0",
-        resource_url="https://mcp.example.com/mcp",
-        auth_server_url="https://auth.example.com",
-        clickhouse_url="http://clickhouse.internal:8123",
-    )
+    settings = _production_settings(clickhouse_url="http://clickhouse.internal:8123")
     assert settings.protected_profile is True
 
 

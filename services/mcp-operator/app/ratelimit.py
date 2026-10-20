@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from mcp_gateway import RateLimitOutcome, RateLimitUnavailableError
@@ -12,6 +13,7 @@ from mcp_runtime.ratelimit import (
     NoopRateLimiter,
     RateLimitMetrics,
     RedisCalendarMinuteRateLimiter,
+    RedisLimiterConfig,
     build_rate_limit_metrics,
     parse_org_rpm_overrides,
     redis_key,
@@ -56,29 +58,32 @@ class NoopOperatorLimiter(NoopRateLimiter[RateLimitOutcome], OperatorRateLimiter
         NoopRateLimiter.__init__(self, default_rpm=default_rpm, result_factory=RateLimitOutcome)
 
 
+@dataclass(frozen=True, slots=True)
+class OperatorLimiterOptions:
+    default_rpm: int = 120
+    org_overrides: dict[UUID, int] | None = None
+    owned: bool = True
+    fail_closed: bool = False
+
+
 class RedisOperatorLimiter(RedisCalendarMinuteRateLimiter[RateLimitOutcome], OperatorRateLimiter):
-    def __init__(
-        self,
-        redis: Redis,
-        *,
-        default_rpm: int = 120,
-        org_overrides: dict[UUID, int] | None = None,
-        owned: bool = True,
-        fail_closed: bool = False,
-    ) -> None:
+    def __init__(self, redis: Redis, *, options: OperatorLimiterOptions | None = None) -> None:
+        opts = options or OperatorLimiterOptions()
         RedisCalendarMinuteRateLimiter.__init__(
             self,
             redis,
-            key_scope="mcp_operator",
-            default_rpm=default_rpm,
-            org_overrides=org_overrides,
-            owned=owned,
-            fail_closed=fail_closed,
-            unavailable_error=RateLimitUnavailableError,
-            result_factory=RateLimitOutcome,
-            metrics=METRICS,
-            span=_span,
-            log_label="mcp operator",
+            config=RedisLimiterConfig(
+                key_scope="mcp_operator",
+                default_rpm=opts.default_rpm,
+                org_overrides=opts.org_overrides,
+                owned=opts.owned,
+                fail_closed=opts.fail_closed,
+                unavailable_error=RateLimitUnavailableError,
+                result_factory=RateLimitOutcome,
+                metrics=METRICS,
+                span=_span,
+                log_label="mcp operator",
+            ),
         )
 
     @staticmethod
@@ -104,8 +109,10 @@ def build_operator_rate_limiter(
     )
     return RedisOperatorLimiter(
         client,
-        default_rpm=default_rpm,
-        org_overrides=org_overrides,
-        owned=True,
-        fail_closed=fail_closed,
+        options=OperatorLimiterOptions(
+            default_rpm=default_rpm,
+            org_overrides=org_overrides,
+            owned=True,
+            fail_closed=fail_closed,
+        ),
     )

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI
-from mcp_gateway import BitmapPolicyEvaluator, GatewayEnforcer
+from mcp_gateway import BitmapPolicyEvaluator, EnforcerOptions, GatewayEnforcer
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.audit import AsyncAuditEmitter, AuditSink, build_operator_audit_sink
@@ -142,9 +142,11 @@ def _build_mcp_app(deps: _McpBuildConfig) -> Any | None:
     enforcer = GatewayEnforcer(
         registry,
         executor,
-        policy=BitmapPolicyEvaluator(),
-        rate_limiter=deps.limiter,
-        audit=deps.audit,
+        options=EnforcerOptions(
+            policy=BitmapPolicyEvaluator(),
+            rate_limiter=deps.limiter,
+            audit=deps.audit,
+        ),
     )
     return build_mcp_server(
         McpServerWiring(

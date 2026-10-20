@@ -43,7 +43,11 @@ def test_create_app_warns_when_memory_url_unset(caplog: pytest.LogCaptureFixture
     with caplog.at_level(logging.WARNING):
         application = create_app(
             settings=_settings(memory_http_url=""),
-            deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
+            deps=CreateAppDeps(
+                validator=validator,
+                audit_sink=MemoryAuditSink(),
+                agent_verifier=AllowAllAgentVerifier(),
+            ),
         )
     assert any("IBEX_MEMORY_HTTP_URL unset" in r.message for r in caplog.records)
     with TestClient(application) as client:
@@ -59,7 +63,11 @@ def test_create_app_builds_owned_memory_client() -> None:
             memory_http_url="http://memory.internal",
             memory_timeout_ms=1500,
         ),
-        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=validator,
+            audit_sink=MemoryAuditSink(),
+            agent_verifier=AllowAllAgentVerifier(),
+        ),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200
@@ -95,7 +103,9 @@ def test_create_app_keeps_injected_breaker() -> None:
     breaker = BreakingTokenValidator(inner, failure_threshold=2, cooldown_seconds=1.0)
     application = create_app(
         settings=_settings(),
-        deps=CreateAppDeps(validator=breaker, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=breaker, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()
+        ),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200
@@ -125,7 +135,11 @@ def test_create_app_closes_owned_redis_limiter() -> None:
     )
     application = create_app(
         settings=_settings(redis_url="redis://127.0.0.1:9/0"),
-        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=validator,
+            audit_sink=MemoryAuditSink(),
+            agent_verifier=AllowAllAgentVerifier(),
+        ),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200

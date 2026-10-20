@@ -60,9 +60,7 @@ def _app(*, memory_client=None) -> tuple[TestClient, MemoryAuditSink]:
             TOKEN_B: ValidateResult(
                 org_id=ORG_B, permissions=MEMORY_READ | MEMORY_WRITE, agent_id=AGENT
             ),
-            TOKEN_READ_ONLY: ValidateResult(
-                org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT
-            ),
+            TOKEN_READ_ONLY: ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT),
         }
     )
     sink = MemoryAuditSink()
@@ -71,8 +69,7 @@ def _app(*, memory_client=None) -> tuple[TestClient, MemoryAuditSink]:
         deps=CreateAppDeps(
             validator=validator,
             audit_sink=sink,
-            memory_client=memory_client
-            or stub_memory_client(org_id=ORG, agent_id=AGENT),
+            memory_client=memory_client or stub_memory_client(org_id=ORG, agent_id=AGENT),
             agent_verifier=AllowAllAgentVerifier(),
         ),
     )
@@ -173,7 +170,11 @@ def test_auth_unavailable_fail_closed() -> None:
     validator = StaticTokenValidator({}, available=False)
     application = create_app(
         settings=settings,
-        deps=CreateAppDeps(validator=validator, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()),
+        deps=CreateAppDeps(
+            validator=validator,
+            audit_sink=MemoryAuditSink(),
+            agent_verifier=AllowAllAgentVerifier(),
+        ),
     )
     with TestClient(application) as client:
         resp = client.post(
@@ -250,9 +251,7 @@ def _capturing_org_b_memory() -> tuple[object, list[httpx.Request]]:
 
 def _mcp_session(client: TestClient, token: str) -> dict[str, str]:
     headers = _mcp_headers(token, PROTOCOL_VERSION_LATEST)
-    init = client.post(
-        "/mcp", headers=headers, json=_initialize_payload(PROTOCOL_VERSION_LATEST)
-    )
+    init = client.post("/mcp", headers=headers, json=_initialize_payload(PROTOCOL_VERSION_LATEST))
     assert init.status_code in (200, 202), init.text
     client.post(
         "/mcp",
@@ -305,11 +304,7 @@ def _assert_tool_error(
         denied = [e for e in sink.events if e.error_code == "permission_denied"]
         assert denied, f"expected permission_denied audit; events={sink.events!r}"
     else:
-        assert (
-            "permission_denied" in blob
-            or "permission" in blob
-            or "not authorized" in blob
-        )
+        assert "permission_denied" in blob or "permission" in blob or "not authorized" in blob
 
 
 def _assert_org_b_outbound(outbound: list[httpx.Request], *, expected_calls: int) -> None:

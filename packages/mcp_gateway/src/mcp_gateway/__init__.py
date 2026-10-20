@@ -18,6 +18,7 @@ from mcp_gateway.audit import (
 )
 from mcp_gateway.enforcement import (
     CallContext,
+    EnforcerOptions,
     GatewayEnforcer,
     RateLimiter,
     RateLimitOutcome,
@@ -67,6 +68,7 @@ __all__ = [
     "BackendUnavailableError",
     "BitmapPolicyEvaluator",
     "CallContext",
+    "EnforcerOptions",
     "GatewayEnforcer",
     "GatewayError",
     "GatewayPrincipal",

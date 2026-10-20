@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -172,23 +173,26 @@ def disabled_settings(**overrides: Any) -> Settings:
     return Settings(**defaults)
 
 
-def make_app(
-    *,
-    settings: Settings | None = None,
-    executor: Any | None = None,
-    validator: Any | None = None,
-    rate_limiter: OperatorRateLimiter | None = None,
-    sink: CapturingAuditSink | None = None,
-) -> tuple[TestClient, CapturingAuditSink]:
-    cfg = settings or make_settings()
-    capture = sink or CapturingAuditSink()
+@dataclass(frozen=True, slots=True)
+class AppOptions:
+    settings: Settings | None = None
+    executor: Any | None = None
+    validator: Any | None = None
+    rate_limiter: OperatorRateLimiter | None = None
+    sink: CapturingAuditSink | None = None
+
+
+def make_app(options: AppOptions | None = None) -> tuple[TestClient, CapturingAuditSink]:
+    opts = options or AppOptions()
+    cfg = opts.settings or make_settings()
+    capture = opts.sink or CapturingAuditSink()
     application = create_app(
         settings=cfg,
         deps=CreateAppDeps(
-            validator=validator or static_validator(),
-            rate_limiter=rate_limiter,
+            validator=opts.validator or static_validator(),
+            rate_limiter=opts.rate_limiter,
             audit_sink=capture,
-            executor=executor if executor is not None else stub_executor(),
+            executor=opts.executor if opts.executor is not None else stub_executor(),
         ),
     )
     return TestClient(application), capture

@@ -86,3 +86,33 @@ def test_nested_required_key_fails_closed() -> None:
     }
     with pytest.raises(RedactionError, match="missing required"):
         sanitize_output({"detail": {}}, schema)
+
+
+def test_unsupported_schema_type_fails_closed() -> None:
+    schema = {
+        "type": "object",
+        "required": ["resource_id"],
+        "properties": {"resource_id": {"type": "date"}},
+    }
+    with pytest.raises(RedactionError, match="unsupported type"):
+        sanitize_output({"resource_id": "r1"}, schema)
+
+
+def test_malformed_type_array_fails_closed() -> None:
+    schema = {
+        "type": "object",
+        "required": ["resource_id"],
+        "properties": {"resource_id": {"type": ["string", 1]}},
+    }
+    with pytest.raises(RedactionError, match="unsupported type shape"):
+        sanitize_output({"resource_id": "r1"}, schema)
+
+
+def test_nullable_type_array_accepts_supported_pair() -> None:
+    schema = {
+        "type": "object",
+        "required": ["resource_id"],
+        "properties": {"resource_id": {"type": ["string", "null"]}},
+    }
+    assert sanitize_output({"resource_id": "r1"}, schema) == {"resource_id": "r1"}
+    assert sanitize_output({"resource_id": None}, schema) == {"resource_id": None}

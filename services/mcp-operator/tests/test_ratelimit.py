@@ -13,6 +13,7 @@ from app.ratelimit import (
     INCR_EXPIRE_LUA,
     KEY_TTL_SECONDS,
     NoopOperatorLimiter,
+    OperatorLimiterOptions,
     OperatorRateLimiter,
     RedisOperatorLimiter,
     build_operator_rate_limiter,
@@ -67,7 +68,9 @@ async def test_redis_limiter_rejects_over_limit() -> None:
     script = AsyncMock(side_effect=[1, 2, 3])
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisOperatorLimiter(redis, default_rpm=2, owned=False)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=2, owned=False)
+    )
 
     assert (await limiter.check(ORG)).allowed is True
     assert (await limiter.check(ORG)).allowed is True
@@ -82,7 +85,9 @@ async def test_redis_limiter_org_override() -> None:
     script = AsyncMock(side_effect=[1, 2])
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisOperatorLimiter(redis, default_rpm=100, org_overrides={ORG: 1}, owned=False)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=100, org_overrides={ORG: 1}, owned=False)
+    )
     assert (await limiter.check(ORG)).allowed is True
     assert (await limiter.check(ORG)).allowed is False
 
@@ -92,7 +97,9 @@ async def test_redis_limiter_fail_open_by_default() -> None:
     script = AsyncMock(side_effect=RedisError("down"))
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisOperatorLimiter(redis, default_rpm=1, owned=False)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=1, owned=False)
+    )
     assert (await limiter.check(ORG)).allowed is True
 
 
@@ -101,7 +108,9 @@ async def test_redis_limiter_fail_closed_when_configured() -> None:
     script = AsyncMock(side_effect=RedisError("down"))
     redis = MagicMock()
     redis.register_script.return_value = script
-    limiter = RedisOperatorLimiter(redis, default_rpm=1, owned=False, fail_closed=True)
+    limiter = RedisOperatorLimiter(
+        redis, options=OperatorLimiterOptions(default_rpm=1, owned=False, fail_closed=True)
+    )
     with pytest.raises(RateLimitUnavailableError):
         await limiter.check(ORG)
 

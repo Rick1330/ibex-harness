@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.probes import OPERATOR_SCOPES, build_protected_resource_metadata
-from tests.fixtures import disabled_settings, make_app, make_settings
+from tests.fixtures import AppOptions, disabled_settings, make_app, make_settings
 
 
 def test_build_protected_resource_metadata() -> None:
@@ -19,7 +19,7 @@ def test_build_protected_resource_metadata() -> None:
 
 
 def test_disabled_app_serves_health_and_ready_without_mcp() -> None:
-    client, _ = make_app(settings=disabled_settings(), executor=None, validator=None)
+    client, _ = make_app(AppOptions(settings=disabled_settings(), executor=None, validator=None))
     with client:
         assert client.get("/health").json() == {"status": "ok"}
         ready = client.get("/ready")
