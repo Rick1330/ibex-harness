@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from app.auth import GRPCTokenValidator
-from app.tracing import TracingMiddleware, configure_tracing
+from app.tracing import TracingMiddleware, _traces_endpoint, configure_tracing
 
 TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
 SPAN_ID = "00f067aa0ba902b7"
@@ -72,3 +72,19 @@ def test_auth_validation_emits_dependency_span(exporter: InMemorySpanExporter) -
     asyncio.run(validator.validate("opaque-token"))
     names = [s.name for s in exporter.get_finished_spans()]
     assert "auth.validate" in names
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        ("http://collector:4318", "http://collector:4318/v1/traces"),
+        ("http://collector:4318/", "http://collector:4318/v1/traces"),
+        ("http://collector:4318/v1/traces", "http://collector:4318/v1/traces"),
+        ("http://collector:4318/v1/traces/", "http://collector:4318/v1/traces"),
+        ("  http://collector:4318  ", "http://collector:4318/v1/traces"),
+        ("", ""),
+        ("   ", ""),
+    ],
+)
+def test_traces_endpoint_is_normalized(endpoint: str, expected: str) -> None:
+    assert _traces_endpoint(endpoint) == expected

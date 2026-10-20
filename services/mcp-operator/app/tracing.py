@@ -24,14 +24,25 @@ def configure_tracing(endpoint: str, *, service_name: str = "mcp-operator") -> T
     if _provider is not None:
         return _provider
     provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-    if endpoint.strip():
+    target = _traces_endpoint(endpoint)
+    if target:
         provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint.strip(), timeout=2))
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=target, timeout=2))
         )
     trace.set_tracer_provider(provider)
     set_global_textmap(TraceContextTextMapPropagator())
     _provider = provider
     return provider
+
+
+def _traces_endpoint(endpoint: str) -> str:
+    """Return the full OTLP/HTTP traces URL for a base or signal endpoint."""
+    target = endpoint.strip().rstrip("/")
+    if not target:
+        return ""
+    if not target.endswith("/v1/traces"):
+        target = f"{target}/v1/traces"
+    return target
 
 
 def shutdown_tracing() -> None:

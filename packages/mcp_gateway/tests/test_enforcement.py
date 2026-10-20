@@ -153,6 +153,30 @@ async def test_rate_limited_denies_before_read() -> None:
     assert audit.events[-1].error_code == "rate_limited"
 
 
+async def test_rate_limit_precedes_tool_lookup_and_authorization() -> None:
+    class _Limiter:
+        def __init__(self) -> None:
+            self.orgs = []
+
+        async def check(self, org_id):
+            self.orgs.append(org_id)
+            return RateLimitOutcome(allowed=False, limit=10, remaining=0, reset_unix=0)
+
+    limiter = _Limiter()
+    audit = InMemoryAuditEmitter()
+    enforcer = _enforcer(audit=audit, rate_limiter=limiter)
+    under_scoped = _principal(permissions=TRACE_READ)
+
+    with pytest.raises(RateLimitedError):
+        await enforcer.invoke(under_scoped, "sample.get", {})
+    assert limiter.orgs == [under_scoped.org_id]
+    assert audit.events[-1].error_code == "rate_limited"
+
+    with pytest.raises(RateLimitedError):
+        await enforcer.invoke(under_scoped, "unknown.tool", {})
+    assert limiter.orgs == [under_scoped.org_id, under_scoped.org_id]
+
+
 async def test_rate_limit_authority_unavailable_fails_closed() -> None:
     class _Limiter:
         async def check(self, org_id):

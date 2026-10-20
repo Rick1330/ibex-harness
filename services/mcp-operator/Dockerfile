@@ -1,10 +1,10 @@
 # IBEX MCP operator gateway — multi-stage, non-root, uv-managed.
 #
 # Build:
-#   docker build -t ibex-mcp-operator:local -f services/mcp-operator/Dockerfile .
+#   podman build -t ibex-mcp-operator:local -f services/mcp-operator/Dockerfile .
 #
 # Run (gateway is inert unless explicitly enabled):
-#   docker run --rm -p 8091:8091 \
+#   podman run --rm -p 8091:8091 \
 #     -e IBEX_ENV=development \
 #     -e IBEX_MCP_OPERATOR_ENABLED=true \
 #     -e IBEX_MCP_OPERATOR_DATABASE_URL=postgresql+asyncpg://ibex_app:...@postgres:5432/ibex \
@@ -20,12 +20,13 @@ FROM ghcr.io/astral-sh/uv@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a6
 # --------------------------------------------------------------------------- #
 # Stage 2 — dependency install (wheels only; no sdist setup.py execution)      #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS deps
+FROM python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
     UV_NO_BUILD=1 \
+    UV_PYTHON=/usr/local/bin/python \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY --from=uv /uv /usr/local/bin/uv
@@ -45,12 +46,12 @@ RUN mkdir -p /wheels \
 COPY services/mcp-operator/pyproject.toml services/mcp-operator/uv.lock ./
 
 # Install third-party dependencies from lockfile (wheels only — Sonar S8541).
-RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
+RUN uv sync --python "$UV_PYTHON" --frozen --no-build --no-install-project --find-links /wheels \
         --no-install-package authclient \
         --no-install-package mcp-gateway \
         --no-install-package mcp-runtime \
         --no-install-package ibex-async-db \
-    && uv pip install --no-cache --force-reinstall --no-index --no-deps \
+    && uv pip install --python /app/.venv/bin/python --no-cache --force-reinstall --no-index --no-deps \
         /wheels/authclient-*.whl \
         /wheels/mcp_gateway-*.whl \
         /wheels/mcp_runtime-*.whl \
@@ -59,7 +60,7 @@ RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
 # --------------------------------------------------------------------------- #
-FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6efb AS runtime
+FROM python@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

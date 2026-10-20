@@ -2,10 +2,10 @@
 
 Pipeline (each stage fails closed):
 
-1. resolve tool from the registry (unknown -> ``tool_not_found``)
-2. evaluate policy (bitmap today; unavailable authority -> ``policy_unavailable``)
-3. validate arguments against the tool's JSON Schema (malformed -> ``invalid_params``)
-4. enforce the org rate limit (over -> ``rate_limited``; authority down -> fail closed)
+1. enforce the org rate limit (over -> ``rate_limited``; authority down -> fail closed)
+2. resolve tool from the registry (unknown -> ``tool_not_found``)
+3. evaluate policy (bitmap today; unavailable authority -> ``policy_unavailable``)
+4. validate arguments against the tool's JSON Schema (malformed -> ``invalid_params``)
 5. execute the read under the tool's per-call timeout (timeout -> ``backend_unavailable``)
 6. redact/sanitize the result against the declared output schema
 7. emit a metadata-only audit event (never blocks the read)
@@ -179,10 +179,10 @@ class GatewayEnforcer:
             self._emit_audit(invocation.principal, invocation.request_id, started, audit)
 
     async def _run_pipeline(self, invocation: _Invocation, audit: _AuditState) -> dict[str, Any]:
+        await self._enforce_rate_limit(invocation.principal)
         spec = self._require_spec(invocation.tool_name, audit)
         await self._authorize(invocation.principal, spec, audit)
         parsed = self._validate_args(spec, invocation.args)
-        await self._enforce_rate_limit(invocation.principal)
         ctx = ToolContext(
             principal=invocation.principal,
             spec=spec,
