@@ -25,6 +25,22 @@ def _clear_settings() -> None:
     get_settings.cache_clear()
 
 
+def _validator() -> StaticTokenValidator:
+    return StaticTokenValidator(
+        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
+    )
+
+
+def _deps(**overrides: object) -> CreateAppDeps:
+    values: dict[str, object] = {
+        "validator": _validator(),
+        "audit_sink": MemoryAuditSink(),
+        "agent_verifier": AllowAllAgentVerifier(),
+    }
+    values.update(overrides)
+    return CreateAppDeps(**values)  # type: ignore[arg-type]
+
+
 def _settings(**overrides: object) -> Settings:
     base = {
         "transport": "streamable_http",
@@ -37,17 +53,10 @@ def _settings(**overrides: object) -> Settings:
 
 
 def test_create_app_warns_when_memory_url_unset(caplog: pytest.LogCaptureFixture) -> None:
-    validator = StaticTokenValidator(
-        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-    )
     with caplog.at_level(logging.WARNING):
         application = create_app(
             settings=_settings(memory_http_url=""),
-            deps=CreateAppDeps(
-                validator=validator,
-                audit_sink=MemoryAuditSink(),
-                agent_verifier=AllowAllAgentVerifier(),
-            ),
+            deps=_deps(),
         )
     assert any("IBEX_MEMORY_HTTP_URL unset" in r.message for r in caplog.records)
     with TestClient(application) as client:
@@ -55,19 +64,12 @@ def test_create_app_warns_when_memory_url_unset(caplog: pytest.LogCaptureFixture
 
 
 def test_create_app_builds_owned_memory_client() -> None:
-    validator = StaticTokenValidator(
-        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-    )
     application = create_app(
         settings=_settings(
             memory_http_url="http://memory.internal",
             memory_timeout_ms=1500,
         ),
-        deps=CreateAppDeps(
-            validator=validator,
-            audit_sink=MemoryAuditSink(),
-            agent_verifier=AllowAllAgentVerifier(),
-        ),
+        deps=_deps(),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200
@@ -79,17 +81,9 @@ def test_create_app_builds_owned_memory_client() -> None:
 
 def test_create_app_keeps_injected_client() -> None:
     injected = stub_memory_client()
-    validator = StaticTokenValidator(
-        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-    )
     application = create_app(
         settings=_settings(memory_http_url="http://ignored"),
-        deps=CreateAppDeps(
-            validator=validator,
-            audit_sink=MemoryAuditSink(),
-            memory_client=injected,
-            agent_verifier=AllowAllAgentVerifier(),
-        ),
+        deps=_deps(memory_client=injected),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200
@@ -97,15 +91,10 @@ def test_create_app_keeps_injected_client() -> None:
 
 
 def test_create_app_keeps_injected_breaker() -> None:
-    inner = StaticTokenValidator(
-        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-    )
-    breaker = BreakingTokenValidator(inner, failure_threshold=2, cooldown_seconds=1.0)
+    breaker = BreakingTokenValidator(_validator(), failure_threshold=2, cooldown_seconds=1.0)
     application = create_app(
         settings=_settings(),
-        deps=CreateAppDeps(
-            validator=breaker, audit_sink=MemoryAuditSink(), agent_verifier=AllowAllAgentVerifier()
-        ),
+        deps=_deps(validator=breaker),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200
@@ -130,16 +119,9 @@ def test_create_app_builds_owned_agent_verifier() -> None:
 
 
 def test_create_app_closes_owned_redis_limiter() -> None:
-    validator = StaticTokenValidator(
-        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-    )
     application = create_app(
         settings=_settings(redis_url="redis://127.0.0.1:9/0"),
-        deps=CreateAppDeps(
-            validator=validator,
-            audit_sink=MemoryAuditSink(),
-            agent_verifier=AllowAllAgentVerifier(),
-        ),
+        deps=_deps(),
     )
     with TestClient(application) as client:
         assert client.get("/health").status_code == 200

@@ -138,11 +138,19 @@ def _schema_types(schema: Mapping[str, Any]) -> list[str]:
     if isinstance(raw, str):
         types = [raw]
     elif isinstance(raw, (list, tuple)):
-        if not raw or any(not isinstance(item, str) for item in raw):
-            raise RedactionError("output schema has an unsupported type shape")
-        types = list(raw)
+        types = _type_list(raw)
     else:
         raise RedactionError("output schema field is missing a type")
+    _require_supported_types(types)
+    return types
+
+
+def _type_list(raw: list[Any] | tuple[Any, ...]) -> list[str]:
+    if not raw or any(not isinstance(item, str) for item in raw):
+        raise RedactionError("output schema has an unsupported type shape")
+    return list(raw)
+
+
+def _require_supported_types(types: list[str]) -> None:
     if any(schema_type not in _SUPPORTED_TYPES for schema_type in types):
         raise RedactionError("output schema has an unsupported type")
-    return types
