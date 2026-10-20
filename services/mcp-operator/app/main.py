@@ -78,7 +78,7 @@ def create_app(
     )
     engine, owned_engine = _resolve_engine(cfg, injected)
     limiter, owned_limiter = _resolve_rate_limiter(cfg, injected.rate_limiter)
-    mcp = _build_mcp_app(cfg, injected, limiter, audit, engine)
+    mcp = _build_mcp_app(_McpBuildConfig(cfg, injected, limiter, audit, engine))
 
     runtime = _Runtime(
         state=state,
@@ -121,34 +121,37 @@ def _resolve_engine(cfg: Settings, injected: CreateAppDeps) -> tuple[AsyncEngine
     return engine, True
 
 
-def _build_mcp_app(
-    cfg: Settings,
-    injected: CreateAppDeps,
-    limiter: OperatorRateLimiter,
-    audit: AsyncAuditEmitter,
-    engine: AsyncEngine | None,
-) -> Any | None:
-    if not cfg.enabled:
+@dataclass(frozen=True, slots=True)
+class _McpBuildConfig:
+    cfg: Settings
+    injected: CreateAppDeps
+    limiter: OperatorRateLimiter
+    audit: AsyncAuditEmitter
+    engine: AsyncEngine | None
+
+
+def _build_mcp_app(deps: _McpBuildConfig) -> Any | None:
+    if not deps.cfg.enabled:
         return None
     registry = build_registry()
-    executor = injected.executor
+    executor = deps.injected.executor
     if executor is None:
-        if engine is None:  # pragma: no cover - guarded by config validation
+        if deps.engine is None:  # pragma: no cover - guarded by config validation
             raise RuntimeError("database engine is required for the operator gateway")
-        executor = ToolDispatcher(create_session_factory(engine))
+        executor = ToolDispatcher(create_session_factory(deps.engine))
     enforcer = GatewayEnforcer(
         registry,
         executor,
         policy=BitmapPolicyEvaluator(),
-        rate_limiter=limiter,
-        audit=audit,
+        rate_limiter=deps.limiter,
+        audit=deps.audit,
     )
     return build_mcp_server(
         McpServerWiring(
             enforcer=enforcer,
             registry=registry,
-            allow_test_hosts=cfg.env != "production",
-            resource_url=cfg.resource_url,
+            allow_test_hosts=deps.cfg.env != "production",
+            resource_url=deps.cfg.resource_url,
         )
     )
 

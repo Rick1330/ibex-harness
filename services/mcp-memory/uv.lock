@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -470,6 +470,7 @@ dependencies = [
     { name = "grpcio" },
     { name = "httpx" },
     { name = "mcp" },
+    { name = "mcp-runtime" },
     { name = "prometheus-client" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -497,6 +498,7 @@ requires-dist = [
     { name = "grpcio", specifier = ">=1.62.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mcp", specifier = ">=1.29.1,<2" },
+    { name = "mcp-runtime", directory = "../../packages/mcp_runtime" },
     { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -581,6 +583,27 @@ sdist = { url = "https://files.pythonhosted.org/packages/b5/48/0bb26fdfe7ac16875
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/04/d6b4fb82eefe9e81807aabca1ac98f460ae0883974b83a997aaa20c52545/mcp-1.29.1-py3-none-any.whl", hash = "sha256:b6310eeb59153300c4ab8b9aec4c52f4819a2d6a8e429eb43d908bed7c783648", size = 224653, upload-time = "2026-08-24T18:30:39.573Z" },
 ]
+
+[[package]]
+name = "mcp-runtime"
+version = "0.1.0"
+source = { directory = "../../packages/mcp_runtime" }
+dependencies = [
+    { name = "prometheus-client" },
+    { name = "redis" },
+    { name = "starlette" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "prometheus-client", specifier = ">=0.20.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "redis", specifier = ">=5.0.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+    { name = "starlette", specifier = ">=0.40.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "packaging"

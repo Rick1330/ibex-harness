@@ -127,11 +127,13 @@ async def test_query_evidence_applies_filters_and_truncation() -> None:
     result = await repositories.query_evidence(
         session,  # type: ignore[arg-type]
         org_id=ORG,
-        trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
-        session_id=SESSION_ID,
-        request_id="req-1",
-        error_code="E1",
-        status="error",
+        filters=repositories.EvidenceFilters(
+            trace_id="4bf92f3577b34da6a3ce929d0e0e4736",
+            session_id=SESSION_ID,
+            request_id="req-1",
+            error_code="E1",
+            status="error",
+        ),
         limit=1,
     )
     assert result["count"] == 1
@@ -155,11 +157,7 @@ async def test_query_evidence_ok_status_and_no_truncation() -> None:
     result = await repositories.query_evidence(
         session,  # type: ignore[arg-type]
         org_id=ORG,
-        trace_id=None,
-        session_id=None,
-        request_id=None,
-        error_code=None,
-        status="ok",
+        filters=repositories.EvidenceFilters(status="ok"),
         limit=10,
     )
     assert result["count"] == 1

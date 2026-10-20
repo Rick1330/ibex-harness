@@ -13,6 +13,7 @@ from authclient import validate as shared
 from mcp_gateway import GatewayPrincipal
 
 from app.errors import AuthFailedError, AuthUnavailableError
+from app.tracing import get_tracer
 
 READINESS_PROBE_SENTINEL = shared.READINESS_PROBE_SENTINEL
 
@@ -73,13 +74,15 @@ class GRPCTokenValidator(TokenValidator):
         self._inner = shared.GRPCTokenValidator(target, timeout_seconds)
 
     async def validate(self, access_token: str) -> GatewayPrincipal:
-        try:
-            return principal_from_shared(await self._inner.validate(access_token))
-        except (auth_errors.AuthFailedError, auth_errors.AuthUnavailableError) as exc:
-            raise _map_shared_error(exc) from exc
+        with get_tracer().start_as_current_span("auth.validate"):
+            try:
+                return principal_from_shared(await self._inner.validate(access_token))
+            except (auth_errors.AuthFailedError, auth_errors.AuthUnavailableError) as exc:
+                raise _map_shared_error(exc) from exc
 
     async def ready(self) -> bool:
-        return await self._inner.ready()
+        with get_tracer().start_as_current_span("auth.ready"):
+            return await self._inner.ready()
 
     async def aclose(self) -> None:
         await self._inner.aclose()

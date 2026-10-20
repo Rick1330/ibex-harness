@@ -57,15 +57,13 @@ def _handshake(client: Any, token: str, protocol_version: str = PROTOCOL_VERSION
     return headers
 
 
-def _call(
-    client: Any, headers: dict[str, str], name: str, arguments: dict[str, Any], request_id: int = 3
-):
+def _call(client: Any, headers: dict[str, str], name: str, arguments: dict[str, Any]):
     return client.post(
         "/mcp",
         headers=headers,
         json={
             "jsonrpc": "2.0",
-            "id": request_id,
+            "id": 3,
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
         },

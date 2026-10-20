@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "authclient",
+  "mcp-runtime",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "pydantic>=2.0.0",
@@ -52,6 +53,7 @@ omit = ["app/stdio_main.py"]
 
 [tool.uv.sources]
 authclient = { path = "../../packages/authclient" }
+mcp-runtime = { path = "../../packages/mcp_runtime" }
 
 [dependency-groups]
 dev = [

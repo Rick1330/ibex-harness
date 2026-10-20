@@ -9,6 +9,7 @@ evidence payloads.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -16,6 +17,8 @@ from uuid import UUID
 from mcp_gateway import NotFoundError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.tracing import get_tracer
 
 
 def _iso(value: Any) -> str | None:
@@ -34,8 +37,17 @@ def _uuid_or_none(value: Any) -> str | None:
     return str(value)
 
 
+async def _execute(session: AsyncSession, operation: str, statement: Any, params: dict[str, Any]):  # type: ignore[no-untyped-def]
+    with get_tracer().start_as_current_span(f"postgres.{operation}") as span:
+        span.set_attribute("db.system", "postgresql")
+        span.set_attribute("db.operation", operation)
+        return await session.execute(statement, params)
+
+
 async def get_session(session: AsyncSession, *, org_id: UUID, session_id: UUID) -> dict[str, Any]:
-    result = await session.execute(
+    result = await _execute(
+        session,
+        "get_session",
         text(
             "SELECT id, status, model, provider, agent_id, turn_count, "
             "total_input_tokens, total_output_tokens, created_at, updated_at, "
@@ -64,7 +76,9 @@ async def get_session(session: AsyncSession, *, org_id: UUID, session_id: UUID) 
 
 
 async def get_run(session: AsyncSession, *, org_id: UUID, run_id: UUID) -> dict[str, Any]:
-    result = await session.execute(
+    result = await _execute(
+        session,
+        "get_run",
         text(
             "SELECT id, trace_id, request_id, status, error_code, completeness, "
             "capture_mode, sample_decision, schema_version, agent_id, session_id, "
@@ -79,18 +93,25 @@ async def get_run(session: AsyncSession, *, org_id: UUID, run_id: UUID) -> dict[
     return _run_row(row)
 
 
+@dataclass(frozen=True, slots=True)
+class EvidenceFilters:
+    trace_id: str | None = None
+    session_id: UUID | None = None
+    request_id: str | None = None
+    error_code: str | None = None
+    status: str | None = None
+
+
 async def query_evidence(
     session: AsyncSession,
     *,
     org_id: UUID,
-    trace_id: str | None,
-    session_id: UUID | None,
-    request_id: str | None,
-    error_code: str | None,
-    status: str | None,
+    filters: EvidenceFilters,
     limit: int,
 ) -> dict[str, Any]:
-    result = await session.execute(
+    result = await _execute(
+        session,
+        "query_evidence",
         text(
             "SELECT id, trace_id, request_id, status, error_code, completeness, "
             "capture_mode, sample_decision, schema_version, agent_id, session_id, "
@@ -111,11 +132,11 @@ async def query_evidence(
         ),
         {
             "org_id": str(org_id),
-            "trace_id": trace_id,
-            "session_id": str(session_id) if session_id is not None else None,
-            "request_id": request_id,
-            "error_code": error_code,
-            "status": status,
+            "trace_id": filters.trace_id,
+            "session_id": str(filters.session_id) if filters.session_id is not None else None,
+            "request_id": filters.request_id,
+            "error_code": filters.error_code,
+            "status": filters.status,
             "limit": limit + 1,
         },
     )
@@ -136,7 +157,9 @@ async def get_budget_periods(
     active_only: bool,
     limit: int,
 ) -> dict[str, Any]:
-    result = await session.execute(
+    result = await _execute(
+        session,
+        "get_budget_periods",
         text(
             "SELECT id, period_start, period_end, cap_cents, spent_cents_cached, "
             "enforcement_mode FROM ibex_billing.budget_periods "

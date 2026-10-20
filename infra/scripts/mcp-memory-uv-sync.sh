@@ -15,9 +15,11 @@ fi
 
 WHEEL_DIR="$MCP_DIR/.wheels"
 bash "$(dirname "${BASH_SOURCE[0]}")/build-authclient-wheel.sh" "$WHEEL_DIR"
+bash "$(dirname "${BASH_SOURCE[0]}")/build-mcp-runtime-wheel.sh" "$WHEEL_DIR"
 
 cd "$MCP_DIR"
 uv sync --frozen --no-build --extra dev --no-install-project \
-  --find-links "$WHEEL_DIR" --no-install-package authclient
-uv pip install --no-cache --force-reinstall --no-index --find-links "$WHEEL_DIR" \
-  "authclient==0.1.5"
+  --find-links "$WHEEL_DIR" --no-install-package authclient \
+  --no-install-package mcp-runtime
+uv pip install --no-cache --force-reinstall --no-index --no-deps --find-links "$WHEEL_DIR" \
+  "authclient==0.1.5" "$WHEEL_DIR"/mcp_runtime-*.whl

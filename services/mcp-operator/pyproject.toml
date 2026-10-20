@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
   "authclient",
   "mcp-gateway",
+  "mcp-runtime",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "pydantic>=2.0.0",
@@ -57,6 +58,7 @@ target-version = "py312"
 [tool.uv.sources]
 authclient = { path = "../../packages/authclient" }
 mcp-gateway = { path = "../../packages/mcp_gateway" }
+mcp-runtime = { path = "../../packages/mcp_runtime" }
 ibex-async-db = { path = "../../packages/ibex_async_db" }
 
 [dependency-groups]

@@ -35,10 +35,11 @@ def configure_tracing(endpoint: str, *, service_name: str = "mcp-operator") -> T
 
 
 def shutdown_tracing() -> None:
-    global _provider
+    # The OpenTelemetry global tracer provider cannot be replaced after shutdown,
+    # so flush rather than shutdown. Tests and app factories may recreate the
+    # application in one process while the provider stays valid.
     if _provider is not None:
-        _provider.shutdown()
-        _provider = None
+        _provider.force_flush()
 
 
 def get_tracer() -> trace.Tracer:

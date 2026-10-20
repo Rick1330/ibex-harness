@@ -236,11 +236,13 @@ async def _evidence_query(
     return await repositories.query_evidence(
         session,
         org_id=ctx.org_id,
-        trace_id=args.get("trace_id"),
-        session_id=args.get("session_id"),
-        request_id=args.get("request_id"),
-        error_code=args.get("error_code"),
-        status=args.get("status"),
+        filters=repositories.EvidenceFilters(
+            trace_id=args.get("trace_id"),
+            session_id=args.get("session_id"),
+            request_id=args.get("request_id"),
+            error_code=args.get("error_code"),
+            status=args.get("status"),
+        ),
         limit=args["limit"],
     )
 

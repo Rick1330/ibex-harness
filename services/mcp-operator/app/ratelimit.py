@@ -1,71 +1,61 @@
-"""Org-scoped operator-gateway calendar-minute rate limiter.
-
-Twin of ``services/mcp-memory/app/ratelimit.py`` (and ``packages/ratelimit/window.go``):
-Lua INCR + EXPIRE-on-create (90s), key ``ratelimit:{org_id}:mcp_operator:{unix_minute}``.
-Development may fail open; protected profiles fail closed with
-``rate_limit_unavailable``.
-"""
+"""Org-scoped operator-gateway calendar-minute rate limiter."""
 
 from __future__ import annotations
 
-import logging
-import time
-from abc import ABC, abstractmethod
 from uuid import UUID
 
 from mcp_gateway import RateLimitOutcome, RateLimitUnavailableError
-from prometheus_client import Counter
+from mcp_runtime.ratelimit import (
+    INCR_EXPIRE_LUA,
+    KEY_TTL_SECONDS,
+    CalendarMinuteRateLimiter,
+    NoopRateLimiter,
+    RateLimitMetrics,
+    RedisCalendarMinuteRateLimiter,
+    build_rate_limit_metrics,
+    redis_key,
+)
 from redis.asyncio import Redis
-from redis.exceptions import RedisError
 
 from app.dependency_metrics import REDIS_DURATION
 from app.tracing import get_tracer
 
-logger = logging.getLogger(__name__)
+__all__ = [
+    "INCR_EXPIRE_LUA",
+    "KEY_TTL_SECONDS",
+    "NoopOperatorLimiter",
+    "OperatorRateLimiter",
+    "RedisOperatorLimiter",
+    "build_operator_rate_limiter",
+    "parse_org_rpm_overrides",
+]
 
-KEY_TTL_SECONDS = 90
-
-# Mirrors packages/ratelimit/window.go incrExpireLua exactly.
-INCR_EXPIRE_LUA = """
-local n = redis.call("INCR", KEYS[1])
-if n == 1 then
-  redis.call("EXPIRE", KEYS[1], ARGV[1])
-end
-return n
-"""
-
-RATE_LIMIT_ERRORS = Counter(
-    "ibex_mcp_operator_rate_limit_errors_total",
-    "Operator gateway rate-limit Redis failures",
+METRICS = build_rate_limit_metrics(prefix="ibex_mcp_operator", service="Operator gateway")
+METRICS = RateLimitMetrics(
+    errors=METRICS.errors,
+    rejected=METRICS.rejected,
+    duration=REDIS_DURATION.observe,
 )
-RATE_LIMIT_REJECTED = Counter(
-    "ibex_mcp_operator_rate_limit_rejected_total",
-    "Operator gateway tool calls rejected for exceeding org RPM",
-)
+RATE_LIMIT_ERRORS = METRICS.errors
+RATE_LIMIT_REJECTED = METRICS.rejected
 
 
-class OperatorRateLimiter(ABC):
-    @abstractmethod
-    async def check(self, org_id: UUID) -> RateLimitOutcome:
-        raise NotImplementedError
+def _SPAN(name: str):
+    return get_tracer().start_as_current_span(name)
 
 
-class NoopOperatorLimiter(OperatorRateLimiter):
+class OperatorRateLimiter(CalendarMinuteRateLimiter[RateLimitOutcome]):
+    pass
+
+
+class NoopOperatorLimiter(NoopRateLimiter[RateLimitOutcome], OperatorRateLimiter):
     """Always allow — used when no Redis URL is configured."""
 
     def __init__(self, *, default_rpm: int = 120) -> None:
-        self._default_rpm = max(1, default_rpm)
-
-    async def check(self, org_id: UUID) -> RateLimitOutcome:
-        del org_id
-        now = int(time.time())
-        reset = ((now // 60) + 1) * 60
-        return RateLimitOutcome(
-            allowed=True, limit=self._default_rpm, remaining=self._default_rpm, reset_unix=reset
-        )
+        NoopRateLimiter.__init__(self, default_rpm=default_rpm, result_factory=RateLimitOutcome)
 
 
-class RedisOperatorLimiter(OperatorRateLimiter):
+class RedisOperatorLimiter(RedisCalendarMinuteRateLimiter[RateLimitOutcome], OperatorRateLimiter):
     def __init__(
         self,
         redis: Redis,
@@ -75,59 +65,24 @@ class RedisOperatorLimiter(OperatorRateLimiter):
         owned: bool = True,
         fail_closed: bool = False,
     ) -> None:
-        self._redis = redis
-        self._default_rpm = max(1, default_rpm)
-        self._org_overrides = org_overrides or {}
-        self._owned = owned
-        self._fail_closed = fail_closed
-        self._script = self._redis.register_script(INCR_EXPIRE_LUA)
-
-    def effective_limit(self, org_id: UUID) -> int:
-        override = self._org_overrides.get(org_id)
-        if override is not None and override > 0:
-            return override
-        return self._default_rpm
+        RedisCalendarMinuteRateLimiter.__init__(
+            self,
+            redis,
+            key_scope="mcp_operator",
+            default_rpm=default_rpm,
+            org_overrides=org_overrides,
+            owned=owned,
+            fail_closed=fail_closed,
+            unavailable_error=RateLimitUnavailableError,
+            result_factory=RateLimitOutcome,
+            metrics=METRICS,
+            span=_SPAN,
+            log_label="mcp operator",
+        )
 
     @staticmethod
     def redis_key(org_id: UUID, *, unix_minute: int | None = None) -> str:
-        minute = unix_minute if unix_minute is not None else int(time.time()) // 60
-        return f"ratelimit:{org_id}:mcp_operator:{minute}"
-
-    async def check(self, org_id: UUID) -> RateLimitOutcome:
-        limit = self.effective_limit(org_id)
-        now = int(time.time())
-        unix_minute = now // 60
-        reset_unix = (unix_minute + 1) * 60
-        key = self.redis_key(org_id, unix_minute=unix_minute)
-        started = time.perf_counter()
-        try:
-            with get_tracer().start_as_current_span("redis.rate_limit"):
-                count = int(await self._script(keys=[key], args=[KEY_TTL_SECONDS]))
-        except (OSError, RedisError) as exc:
-            RATE_LIMIT_ERRORS.inc()
-            if self._fail_closed:
-                raise RateLimitUnavailableError() from exc
-            logger.warning(
-                "mcp operator rate limit redis fail-open development exception org_id=%s error_class=%s",
-                org_id,
-                type(exc).__name__,
-            )
-            return RateLimitOutcome(
-                allowed=True, limit=limit, remaining=limit, reset_unix=reset_unix
-            )
-        finally:
-            REDIS_DURATION.observe(time.perf_counter() - started)
-        if count > limit:
-            RATE_LIMIT_REJECTED.inc()
-            return RateLimitOutcome(allowed=False, limit=limit, remaining=0, reset_unix=reset_unix)
-        remaining = max(0, limit - count)
-        return RateLimitOutcome(
-            allowed=True, limit=limit, remaining=remaining, reset_unix=reset_unix
-        )
-
-    async def aclose(self) -> None:
-        if self._owned:
-            await self._redis.aclose()
+        return redis_key("mcp_operator", org_id, unix_minute=unix_minute)
 
 
 def build_operator_rate_limiter(

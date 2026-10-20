@@ -20,6 +20,7 @@ python:
   - 'infra/scripts/build-ibex-idempotency-wheel.sh'
   - 'infra/scripts/idempotency-conformance-ci.sh'
   - 'infra/scripts/build-mcp-gateway-wheel.sh'
+  - 'infra/scripts/build-mcp-runtime-wheel.sh'
   - 'infra/scripts/mcp-gateway-test-ci.sh'
   - 'infra/scripts/mcp-operator-*.sh'
   - 'infra/tests/idempotency-conformance/**'
@@ -28,6 +29,7 @@ python:
   - 'packages/ibex_async_db/**'
   - 'packages/ibex_idempotency/**'
   - 'packages/mcp_gateway/**'
+  - 'packages/mcp_runtime/**'
 go:
   - 'services/**'
   - 'packages/**'
