@@ -23,6 +23,7 @@ from mcp_runtime.ratelimit import (
     RateLimitResult,
     RedisCalendarMinuteRateLimiter,
     build_rate_limit_metrics,
+    parse_org_rpm_overrides,
     redis_key,
 )
 
@@ -42,6 +43,7 @@ __all__ = [
     "build_http_metrics",
     "build_rate_limit_metrics",
     "origin_from_resource",
+    "parse_org_rpm_overrides",
     "path_is_protected",
     "redis_key",
 ]

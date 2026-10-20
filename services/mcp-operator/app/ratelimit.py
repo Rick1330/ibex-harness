@@ -13,6 +13,7 @@ from mcp_runtime.ratelimit import (
     RateLimitMetrics,
     RedisCalendarMinuteRateLimiter,
     build_rate_limit_metrics,
+    parse_org_rpm_overrides,
     redis_key,
 )
 from redis.asyncio import Redis
@@ -108,45 +109,3 @@ def build_operator_rate_limiter(
         owned=True,
         fail_closed=fail_closed,
     )
-
-
-def parse_org_rpm_overrides(raw: str) -> dict[UUID, int]:
-    """Parse uuid=rpm,uuid2=rpm2 (same shape as IBEX_RATE_LIMIT_ORG_OVERRIDES)."""
-    out: dict[UUID, int] = {}
-    text = raw.strip()
-    if not text:
-        return out
-    for pair in text.split(","):
-        stripped = pair.strip()
-        if stripped:
-            org_id, rpm = _parse_org_rpm_pair(stripped)
-            out[org_id] = rpm
-    return out
-
-
-def _parse_org_rpm_pair(pair: str) -> tuple[UUID, int]:
-    org_s, sep, rpm_s = pair.partition("=")
-    if not sep:
-        msg = f"invalid pair {pair!r} (expected uuid=rpm)"
-        raise ValueError(msg)
-    return _parse_org_uuid(org_s, pair), _parse_rpm(rpm_s, pair)
-
-
-def _parse_org_uuid(org_s: str, pair: str) -> UUID:
-    try:
-        return UUID(org_s.strip())
-    except ValueError as exc:
-        msg = f"invalid org UUID in {pair!r}"
-        raise ValueError(msg) from exc
-
-
-def _parse_rpm(rpm_s: str, pair: str) -> int:
-    try:
-        rpm = int(rpm_s.strip())
-    except ValueError as exc:
-        msg = f"invalid RPM in {pair!r}"
-        raise ValueError(msg) from exc
-    if rpm < 1:
-        msg = f"invalid RPM in {pair!r}"
-        raise ValueError(msg)
-    return rpm
