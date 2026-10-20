@@ -24,8 +24,7 @@ const TOKEN = __ENV.IBEX_DEV_TOKEN || __ENV.K6_TOKEN || "";
 const AGENT_ID = __ENV.IBEX_DEV_AGENT_ID || __ENV.K6_AGENT_ID || "";
 // A run-scoped prefix keeps repeated runs against the same stack from replaying
 // durable-idempotency responses. CI supplies a workflow-unique value.
-const RUN_ID =
-  __ENV.K6_RUN_ID || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+const RUN_ID = __ENV.K6_RUN_ID || `${Date.now()}`;
 
 const chatBody = JSON.stringify({
   model: __ENV.K6_MODEL || "gpt-4o-mini",

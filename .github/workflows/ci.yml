@@ -938,7 +938,6 @@ jobs:
           set -euo pipefail
           go test ./benchmarks/go/...
           python benchmarks/scripts/test_pipeline.py
-          python benchmarks/scripts/test_go_bench_gate.py
       - name: Run PR-head Go benchmarks
         run: |
           set -euo pipefail

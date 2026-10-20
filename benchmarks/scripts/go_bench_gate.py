@@ -91,17 +91,20 @@ def parse_benchmark_line(line: str) -> BenchSample | None:
     )
 
 
-def load_samples(path: Path) -> dict[str, list[BenchSample]]:
+def _read_output(path: Path) -> str:
     if not path.is_file():
         raise GateInputError(f"benchmark output not found: {path}")
     try:
         # This path is an operator-supplied CLI argument, not network input;
         # the script has no request or LLM input surface.
-        text = path.read_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707  # nosemgrep
+        return path.read_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707  # nosemgrep
             encoding="utf-8"
         )
     except OSError as exc:
         raise GateInputError(f"cannot read benchmark output {path}: {exc}") from exc
+
+
+def _index_samples(text: str, path: Path) -> dict[str, list[BenchSample]]:
     by_name: dict[str, list[BenchSample]] = {}
     for line in text.splitlines():
         sample = parse_benchmark_line(line)
@@ -110,6 +113,10 @@ def load_samples(path: Path) -> dict[str, list[BenchSample]]:
     if not by_name:
         raise GateInputError(f"no benchmark samples found in {path}")
     return by_name
+
+
+def load_samples(path: Path) -> dict[str, list[BenchSample]]:
+    return _index_samples(_read_output(path), path)
 
 
 def summarize(samples: Iterable[BenchSample]) -> BenchSummary:
