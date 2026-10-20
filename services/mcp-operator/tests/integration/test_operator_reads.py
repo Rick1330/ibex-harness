@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 from mcp_gateway import GatewayPrincipal, NotFoundError, ToolContext
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.db import create_session_factory, session_with_org
 from app.tools import ToolDispatcher, build_registry
 from tests.integration.conftest import Seeded
 
@@ -77,3 +80,19 @@ async def test_budget_get_is_org_scoped(dispatcher: ToolDispatcher, seeded: Seed
     payload = await dispatcher(ctx, {"active_only": True, "limit": 10})
     assert payload["count"] == 1
     assert payload["periods"][0]["cap_cents"] == 5000
+
+
+@pytest.mark.asyncio
+async def test_budget_periods_rls_is_org_scoped(
+    operator_engine: AsyncEngine, seeded: Seeded
+) -> None:
+    factory = create_session_factory(operator_engine)
+    async with session_with_org(factory, str(seeded.org_a)) as session:
+        rows = (
+            await session.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    "SELECT org_id, cap_cents FROM ibex_billing.budget_periods"
+                )
+            )
+        ).all()
+    assert [(str(row.org_id), row.cap_cents) for row in rows] == [(str(seeded.org_a), 5000)]

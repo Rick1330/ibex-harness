@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from app.auth import GRPCTokenValidator
+from app.repositories import _execute
 from app.tracing import TracingMiddleware, _traces_endpoint, configure_tracing
 
 TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
@@ -70,8 +71,22 @@ def test_auth_validation_emits_dependency_span(exporter: InMemorySpanExporter) -
     validator = GRPCTokenValidator.__new__(GRPCTokenValidator)
     validator._inner = _Inner()  # type: ignore[attr-defined]
     asyncio.run(validator.validate("opaque-token"))
+    asyncio.run(validator.ready())
     names = [s.name for s in exporter.get_finished_spans()]
     assert "auth.validate" in names
+    assert "auth.ready" in names
+
+
+def test_repository_query_emits_postgres_span(exporter: InMemorySpanExporter) -> None:
+    class _Session:
+        async def execute(self, _statement: object, _params: object) -> str:
+            return "result"
+
+    result = asyncio.run(_execute(_Session(), "get_run", object(), {}))  # type: ignore[arg-type]
+    assert result == "result"
+    span = next(s for s in exporter.get_finished_spans() if s.name == "postgres.get_run")
+    assert span.attributes["db.system"] == "postgresql"
+    assert span.attributes["db.operation"] == "get_run"
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -18,6 +21,19 @@ from tests.integration.plan_assert import (
 )
 
 pytestmark = pytest.mark.integration
+
+_SCAN_FLUSH_TIMEOUT_SECONDS = 15.0
+_SCAN_FLUSH_POLL_SECONDS = 0.25
+
+
+async def _wait_for_hnsw_scan(engine: AsyncEngine, *, before: int) -> int:
+    """Wait for the search backend's pg_stat counters to flush."""
+    deadline = time.monotonic() + _SCAN_FLUSH_TIMEOUT_SECONDS
+    while True:
+        after = await hnsw_idx_scan_count(engine)
+        if after > before or time.monotonic() >= deadline:
+            return after
+        await asyncio.sleep(_SCAN_FLUSH_POLL_SECONDS)
 
 
 @pytest.mark.asyncio
@@ -38,7 +54,7 @@ async def test_hnsw_index_scan_at_runtime(
             min_similarity=0.0,
         )
     )
-    after = await hnsw_idx_scan_count(engine)
+    after = await _wait_for_hnsw_scan(engine, before=before)
 
     assert_hnsw_index_scanned(before=before, after=after)
     assert len(hits) >= 1
