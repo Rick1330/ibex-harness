@@ -23,8 +23,10 @@ transport.
   allowlist plus a sensitive-name deny-list); a missing required field fails
   closed.
 - **Enforcement** (`enforcement.py`) — the ordered, deny-by-default pipeline:
-  tool resolve → policy → schema validation → rate limit → timed read → redact →
-  audit (never blocks the read).
+  org rate limit → tool resolve → policy → schema validation → timed read → redact
+  → audit (never blocks the read). Rate limiting runs first so malformed or
+  unauthorized calls cannot bypass the org budget. A rate-limit failure still
+  records the requested tool name in the audit event.
 - **Audit** (`audit.py`) — metadata-only `ToolAuditEvent` plus a non-blocking
   `AsyncAuditEmitter`. Contains no payload content.
 
@@ -32,12 +34,12 @@ transport.
 
 | Condition | Code | HTTP-equivalent |
 | --- | --- | --- |
+| Rate limit exceeded | `rate_limited` | 429 |
+| Rate-limit authority down | `rate_limit_unavailable` | 503 |
 | Unknown tool | `tool_not_found` | 404 |
 | Missing scope / policy deny | `permission_denied` | 403 |
 | Policy authority unavailable | `policy_unavailable` | 403 |
 | Malformed arguments | `invalid_params` | 400 |
-| Rate limit exceeded | `rate_limited` | 429 |
-| Rate-limit authority down | `rate_limit_unavailable` | 503 |
 | Read backend down / timeout | `backend_unavailable` | 503 |
 | Output could not be redacted | `redaction_failed` | 500 |
 

@@ -23,11 +23,17 @@ All tools are `read_only`. No mutating tool can be registered. No tool accepts a
 
 ## Enforcement order (fail closed)
 
-`resolve tool → authorize (bitmap) → validate args → org rate limit → timed read →
-redact → audit`. Every failure maps to a typed code (`permission_denied`,
-`not_found`, `invalid_params`, `rate_limited`, `backend_unavailable`, …). Unknown
-or cross-tenant resources return `not_found` (404 semantics), never
-`permission_denied`, to avoid existence leaks.
+`org rate limit → resolve tool → authorize (bitmap) → validate args → timed read →
+redact → audit`. Rate limiting runs before tool lookup and authorization so a
+malformed or unauthorized call cannot bypass the org budget; the tradeoff is
+that unknown or under-scoped calls consume rate-limit budget. Rate-limit audit
+events retain the requested tool name.
+
+Every failure maps to a typed code (`rate_limited`, `rate_limit_unavailable`,
+`tool_not_found`, `permission_denied`, `policy_unavailable`, `invalid_params`,
+`backend_unavailable`, …). Unknown or cross-tenant resources return
+`tool_not_found` or `not_found` (404 semantics), never `permission_denied`, to
+avoid existence leaks.
 
 ## Authorization caveat (must remain visible)
 

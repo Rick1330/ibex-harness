@@ -18,7 +18,7 @@ Read-only tools precede write tools. Production stdio is disabled unless an expl
 
 ### Read-only operator gateway (local, default-off)
 
-`services/mcp-operator` (ADR-0086, issue #1013) mounts a Streamable HTTP MCP surface at `/mcp` only when `IBEX_MCP_OPERATOR_ENABLED=true`. It exposes four `read_only` tools — `session.get`, `run.get`, `evidence.query`, `budget.get` — each mapped to one typed scope over the existing permission bitmap (`operator.read`, `runs.read`, `evidence.read`, `budget.read`). Enforcement is shared with `packages/mcp_gateway` in this order: resolve tool → authorize → validate args → org rate limit → timed read → redact → audit.
+`services/mcp-operator` (ADR-0086, issue #1013) mounts a Streamable HTTP MCP surface at `/mcp` only when `IBEX_MCP_OPERATOR_ENABLED=true`. It exposes four `read_only` tools — `session.get`, `run.get`, `evidence.query`, `budget.get` — each mapped to one typed scope over the existing permission bitmap (`operator.read`, `runs.read`, `evidence.read`, `budget.read`). Enforcement is shared with `packages/mcp_gateway` in this order: org rate limit → resolve tool → authorize → validate args → timed read → redact → audit. Rate limiting runs first so malformed or unauthorized calls cannot bypass the org budget; unknown or under-scoped calls therefore consume budget.
 
 Identity is token-derived only; tool schemas reject unknown arguments, so callers cannot supply `org_id` or agent identity. Reads run as `ibex_app` with `app.current_org_id` bound and an explicit `org_id` predicate; cross-tenant or missing rows return `not_found`, not `permission_denied`. Output is metadata-only (schema allowlist plus sensitive-key deny-list). Audit is metadata-only and non-blocking; durable rich-field audit is deferred.
 
