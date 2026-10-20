@@ -204,7 +204,7 @@ Workflow:
 - Every Go-affecting PR runs the blocking relative Go benchmark gate in `ci.yml`; `ci-gate-go` includes it in its required results.
 - The base comparison is a fresh `main` worktree benchmarked on the same runner, not a pinned cross-runner number. The gate records `base_ref`, tolerance, and per-metric results in `go-bench-gate.json`.
 - `benchmark.yml` remains the scheduled/manual p99 and published-history path; the Go gate does not replace k6.
-- The scheduled k6 gate alerts/fails on p99 >20ms or >20% regression against `benchmarks/data-schema/baseline.json` where that workflow is enabled.
+- The scheduled k6 gate alerts/fails on absolute p99 >20ms; `benchmarks/data-schema/baseline.json`'s p99 value is a policy ceiling, not a cross-run measured baseline. Only the stage `synthetic_rate_limit_us` baseline is used for percentage regression.
 
 ### 6.2 Staging load tests
 

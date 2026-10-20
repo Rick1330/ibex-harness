@@ -270,15 +270,10 @@ def map_go_benchmarks(
 
 def build_metric_deltas(
     latest: dict[str, Any],
-    gate: dict[str, Any],
     baseline_sha: str,
     prev_runs: list[dict[str, Any]],
 ) -> dict[str, float | None]:
     deltas: dict[str, float | None] = {}
-    regression_pct = gate.get("regression_pct")
-    if isinstance(regression_pct, (int, float)):
-        deltas["k6.p99_ms"] = float(regression_pct)
-
     baseline_run = next((run for run in prev_runs if run.get("sha") == baseline_sha), None)
     if baseline_run is None:
         return deltas
@@ -326,7 +321,7 @@ def build_run_identity(
         "pr_number": latest.get("pr_number"),
         "run_url": str(latest.get("run_url") or ""),
         "status": str(gate.get("status") or "unknown"),
-        "regression_vs_baseline_pct": gate.get("regression_pct"),
+        "regression_vs_baseline_pct": None,
         "baseline_sha": baseline_sha or None,
         "profile": resolve_bench_profile(latest),
     }
@@ -349,7 +344,6 @@ def build_run_record(ctx: RunBuildContext) -> dict[str, Any]:
         "stages": map_stages(ctx.latest.get("stages", {})),
         "metric_deltas": build_metric_deltas(
             ctx.latest,
-            ctx.gate,
             ctx.baseline_sha,
             ctx.prev_runs,
         ),

@@ -160,6 +160,7 @@ docker run --rm --network host -v "$PWD:/work" -w /work \
   -e K6_USE_CHAT=1 \
   -e IBEX_DEV_TOKEN=ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY \
   -e IBEX_DEV_AGENT_ID=00000000-0000-0000-0000-000000000003 \
+  -e K6_RUN_ID="local-$(date +%s%N)" \
   -e K6_VUS=25 -e K6_DURATION=30s \
   grafana/k6:0.53.0 run benchmarks/k6/proxy_load.js \
   --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import math
 import shutil
 import sys
 import tempfile
@@ -38,7 +37,6 @@ validate_published_hnsw = load_module(
     SCRIPTS / "validate_published_hnsw.py",
 )
 benchmark_constants = load_module("benchmark_constants", SCRIPTS / "benchmark_constants.py")
-go_bench_gate = load_module("go_bench_gate", SCRIPTS / "go_bench_gate.py")
 
 
 def _minimal_benchmark_run(**overrides: object) -> dict[str, object]:
@@ -118,8 +116,8 @@ class AggregateMetricsTests(unittest.TestCase):
     def test_parse_go_bench_line_extracts_metrics(self) -> None:
         line = "BenchmarkProxyOverhead-8   	  200000	      8500 ns/op	     512 B/op	       8 allocs/op"
         row = aggregate_metrics.parse_go_bench_line(line)
-        self.assertIsNotNone(row)
-        assert row is not None
+        if row is None:
+            self.fail("expected a parsed Go benchmark line")
         self.assertEqual(row["name"], "BenchmarkProxyOverhead")
         self.assertAlmostEqual(row["metrics"]["ns_per_op"], 8500.0)
         self.assertAlmostEqual(row["metrics"]["bytes_per_op"], 512.0)
@@ -192,6 +190,7 @@ class RegressionGateTests(unittest.TestCase):
         names = {name for name, _, _, _ in checks}
         self.assertIn("stage rate_limit present", names)
         self.assertIn("stage rate_limit regression (%)", names)
+        self.assertNotIn("regression vs baseline (%)", names)
 
     def test_build_checks_fails_on_high_p99_and_error_rate(self) -> None:
         latest = regression_gate.normalize_latest(json.loads((TESTDATA / "latest-fail.json").read_text()))
@@ -240,159 +239,6 @@ class RegressionGateTests(unittest.TestCase):
             regression_gate.LATEST_PATH = out / "latest.json"
             regression_gate.BASELINE_PATH = out / "baseline.json"
             self.assertEqual(regression_gate.main(), 0)
-
-
-class GoBenchGateTests(unittest.TestCase):
-    def _write_output(self, path: Path, ns_values: dict[str, list[float]]) -> None:
-        lines: list[str] = []
-        for name, values in ns_values.items():
-            for value in values:
-                lines.append(
-                    f"{name}-8\t1000\t{value:.0f} ns/op\t200 B/op\t20 allocs/op"
-                )
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-    def test_parse_benchmark_line_extracts_metrics_and_strips_cpu_suffix(self) -> None:
-        sample = go_bench_gate.parse_benchmark_line(
-            "BenchmarkProxyOverhead-22\t1000\t611839 ns/op\t198194 B/op\t856 allocs/op"
-        )
-        assert sample is not None
-        self.assertEqual(sample.name, "BenchmarkProxyOverhead")
-        self.assertAlmostEqual(sample.ns_per_op, 611839.0)
-        self.assertAlmostEqual(sample.bytes_per_op, 198194.0)
-        self.assertAlmostEqual(sample.allocs_per_op, 856.0)
-
-    def test_parse_benchmark_line_ignores_non_benchmark_output(self) -> None:
-        self.assertIsNone(go_bench_gate.parse_benchmark_line("PASS"))
-        self.assertIsNone(go_bench_gate.parse_benchmark_line("BenchmarkBad 1 nope ns/op"))
-
-    def test_summarize_uses_median_across_samples(self) -> None:
-        samples = [
-            go_bench_gate.BenchSample("BenchmarkProxyOverhead", value, 200.0, 20.0)
-            for value in (100.0, 900.0, 200.0, 300.0, 400.0)
-        ]
-        summary = go_bench_gate.summarize(samples)
-        self.assertEqual(summary.samples, 5)
-        self.assertAlmostEqual(summary.ns_per_op, 300.0)
-
-    def test_build_checks_passes_within_tolerance(self) -> None:
-        base = {
-            name: go_bench_gate.BenchSummary(5, 1000.0, 200.0, 20.0)
-            for name in go_bench_gate.DEFAULT_BENCHMARKS
-        }
-        head = {
-            name: go_bench_gate.BenchSummary(5, 1199.0, 200.0, 20.0)
-            for name in go_bench_gate.DEFAULT_BENCHMARKS
-        }
-        checks = go_bench_gate.build_checks(base, head, go_bench_gate.DEFAULT_BENCHMARKS, 20.0)
-        self.assertTrue(all(check.passed for check in checks))
-
-    def test_build_checks_fails_on_latency_regression(self) -> None:
-        base = {
-            name: go_bench_gate.BenchSummary(5, 1000.0, 200.0, 20.0)
-            for name in go_bench_gate.DEFAULT_BENCHMARKS
-        }
-        head = {
-            name: go_bench_gate.BenchSummary(5, 1300.0, 200.0, 20.0)
-            for name in go_bench_gate.DEFAULT_BENCHMARKS
-        }
-        checks = go_bench_gate.build_checks(base, head, go_bench_gate.DEFAULT_BENCHMARKS, 20.0)
-        failed = [check for check in checks if not check.passed]
-        self.assertEqual([check.metric for check in failed], ["ns_per_op", "ns_per_op"])
-        self.assertEqual(
-            {check.benchmark for check in failed},
-            set(go_bench_gate.DEFAULT_BENCHMARKS),
-        )
-
-    def test_zero_base_reports_infinite_change_and_fails(self) -> None:
-        base = {
-            "BenchmarkProxyOverhead": go_bench_gate.BenchSummary(5, 0.0, 0.0, 0.0),
-        }
-        head = {
-            "BenchmarkProxyOverhead": go_bench_gate.BenchSummary(5, 100.0, 0.0, 0.0),
-        }
-        checks = go_bench_gate.build_checks(
-            base, head, ["BenchmarkProxyOverhead"], 20.0
-        )
-        self.assertEqual(
-            [check.metric for check in checks if not check.passed], ["ns_per_op"]
-        )
-        self.assertTrue(math.isinf(checks[0].change_pct))
-
-    def test_build_checks_fails_when_missing_benchmark(self) -> None:
-        base = {
-            "BenchmarkProxyOverhead": go_bench_gate.BenchSummary(5, 1000.0, 200.0, 20.0),
-        }
-        head = {
-            "BenchmarkProxyOverhead": go_bench_gate.BenchSummary(5, 1000.0, 200.0, 20.0),
-        }
-        with self.assertRaises(go_bench_gate.GateInputError):
-            go_bench_gate.build_checks(base, head, go_bench_gate.DEFAULT_BENCHMARKS, 20.0)
-
-    def test_main_writes_failure_result_and_exits_nonzero(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            base_path = root / "base.txt"
-            head_path = root / "head.txt"
-            result_path = root / "result.json"
-            self._write_output(
-                base_path,
-                {
-                    "BenchmarkProxyOverhead": [1000.0, 1000.0],
-                    "BenchmarkProxyChatOverhead": [1000.0, 1000.0],
-                },
-            )
-            self._write_output(
-                head_path,
-                {
-                    "BenchmarkProxyOverhead": [1500.0, 1500.0],
-                    "BenchmarkProxyChatOverhead": [1000.0, 1000.0],
-                },
-            )
-            self.assertEqual(
-                go_bench_gate.main(
-                    [
-                        "--base",
-                        str(base_path),
-                        "--head",
-                        str(head_path),
-                        "--output",
-                        str(result_path),
-                        "--base-ref",
-                        "origin/main",
-                    ]
-                ),
-                1,
-            )
-            payload = json.loads(result_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["status"], "fail")
-            self.assertEqual(payload["base_ref"], "origin/main")
-            failed = [row for row in payload["checks"] if not row["ok"]]
-            self.assertEqual(len(failed), 1)
-            self.assertEqual(failed[0]["metric"], "ns_per_op")
-
-    def test_main_returns_input_error_for_missing_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            head_path = root / "head.txt"
-            self._write_output(
-                head_path,
-                {
-                    "BenchmarkProxyOverhead": [1000.0],
-                    "BenchmarkProxyChatOverhead": [1000.0],
-                },
-            )
-            self.assertEqual(
-                go_bench_gate.main(
-                    [
-                        "--base",
-                        str(root / "missing.txt"),
-                        "--head",
-                        str(head_path),
-                    ]
-                ),
-                2,
-            )
 
 
 class BuildBenchmarkDataTests(unittest.TestCase):

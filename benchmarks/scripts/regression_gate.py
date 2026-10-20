@@ -68,7 +68,6 @@ def normalize_baseline(raw: dict[str, Any]) -> dict[str, Any]:
             "max_regression_pct": read_float(policy_raw.get("max_regression_pct"), 20.0),
         },
         "baseline": {
-            "proxy_overhead_p99_ms": read_float(base_raw.get("proxy_overhead_p99_ms")),
             "synthetic_rate_limit_us": read_float(base_raw.get("synthetic_rate_limit_us")),
         },
     }
@@ -104,9 +103,6 @@ def build_checks(latest: dict[str, Any], baseline: dict[str, Any]) -> list[Check
         )
     )
     checks.append(("error rate", k6["error_rate"], policy["max_error_rate"], k6["error_rate"] <= policy["max_error_rate"]))
-    if base["proxy_overhead_p99_ms"] > 0:
-        reg = pct_change(k6["p99_ms"], base["proxy_overhead_p99_ms"])
-        checks.append(("regression vs baseline (%)", reg, policy["max_regression_pct"], reg <= policy["max_regression_pct"]))
     rate_pin = base["synthetic_rate_limit_us"]
     rate_cur = latest["stages"]["synthetic_rate_limit_us"]
     if rate_pin > 0:
@@ -141,14 +137,7 @@ def format_check_lines(checks: list[Check]) -> tuple[bool, list[str]]:
     return ok, summary_lines
 
 
-def find_regression_pct(checks: list[Check]) -> float | None:
-    for name, cur, _, _ in checks:
-        if name == "regression vs baseline (%)":
-            return cur
-    return None
-
-
-def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bool, list[str], float | None]:
+def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bool, list[str]]:
     stage = latest["stages"]
     go_bench = latest["go_benchmarks"].get("BenchmarkProxyOverhead", {})
     allocs = float(go_bench.get("allocs_per_op", 0.0))
@@ -169,21 +158,17 @@ def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bo
     ]
     ok, check_lines = format_check_lines(checks)
     summary_lines.extend(check_lines)
-    return ok, summary_lines, find_regression_pct(checks)
+    return ok, summary_lines
 
 
-def resolve_gate_status(ok: bool, regression_pct: float | None) -> str:
-    if not ok:
-        return "fail"
-    if regression_pct is not None and regression_pct > 5.0:
-        return "regression"
-    return "pass"
+def resolve_gate_status(ok: bool) -> str:
+    return "pass" if ok else "fail"
 
 
-def write_gate_result(ok: bool, checks: list[Check], regression_pct: float | None) -> None:
+def write_gate_result(ok: bool, checks: list[Check]) -> None:
     payload = {
-        "status": resolve_gate_status(ok, regression_pct),
-        "regression_pct": regression_pct,
+        "status": resolve_gate_status(ok),
+        "regression_pct": None,
         "checks": [
             {"name": name, "value": cur, "limit": lim, "ok": passed}
             for name, cur, lim, passed in checks
@@ -196,8 +181,8 @@ def write_gate_result(ok: bool, checks: list[Check], regression_pct: float | Non
 def main() -> int:
     latest, baseline = load_inputs()
     checks = build_checks(latest, baseline)
-    ok, summary_lines, regression_pct = build_summary_lines(latest, checks)
-    write_gate_result(ok, checks, regression_pct)
+    ok, summary_lines = build_summary_lines(latest, checks)
+    write_gate_result(ok, checks)
     summary_text = "\n".join(summary_lines) + "\n"
     print(summary_text)
 

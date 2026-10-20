@@ -282,6 +282,7 @@ jobs:
             -e K6_USE_CHAT="${{ steps.knobs.outputs.k6_use_chat }}" \
             -e IBEX_DEV_TOKEN="${IBEX_DEV_TOKEN}" \
             -e IBEX_DEV_AGENT_ID="${IBEX_DEV_AGENT_ID}" \
+            -e K6_RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             "${docker_env_args[@]}" \
             -e K6_VUS="${{ steps.knobs.outputs.k6_vus }}" \
             -e K6_DURATION="${{ steps.knobs.outputs.k6_duration }}" \

@@ -908,8 +908,8 @@ jobs:
 
   benchmark-gate:
     name: benchmark-gate
-    needs: [changes, proto-contract]
-    if: github.event_name == 'pull_request' && needs.changes.outputs.run_go == 'true'
+    needs: [changes]
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.run_go == 'true' || needs.changes.outputs.benchmarks == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -938,6 +938,7 @@ jobs:
           set -euo pipefail
           go test ./benchmarks/go/...
           python benchmarks/scripts/test_pipeline.py
+          python benchmarks/scripts/test_go_bench_gate.py
       - name: Run PR-head Go benchmarks
         run: |
           set -euo pipefail
@@ -2952,7 +2953,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate Go gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" "${{ needs.changes.result }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go == 'true' || (github.event_name == 'pull_request' && needs.changes.outputs.benchmarks == 'true') }}" "${{ needs.changes.result }}" \
             "${{ needs.buf-lint.result }}" \
             "${{ needs.proto-contract.result }}" \
             "${{ needs.db-migrate-smoke.result }}" \
