@@ -51,8 +51,7 @@ async def test_clickhouse_sink_posts_json_each_row() -> None:
     captured: dict[str, object] = {}
 
     class _Response:
-        def raise_for_status(self) -> None:
-            return None
+        status_code = 200
 
     class _Client:
         async def post(self, url: str, *, params: object, json: object) -> _Response:
@@ -76,3 +75,55 @@ async def test_clickhouse_sink_posts_json_each_row() -> None:
     assert row["tool_name"] == "session.get"
     assert "content" not in row
     assert captured["closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_clickhouse_sink_hides_transport_error_details() -> None:
+    class _Client:
+        async def post(self, url: str, *, params: object, json: object):
+            raise RuntimeError("connection to http://default:secret@clickhouse:8123 failed")
+
+        async def aclose(self) -> None:
+            return None
+
+    sink = ClickHouseOperatorAuditSink("http://clickhouse:8123")
+    sink._client = _Client()  # type: ignore[assignment]
+    with pytest.raises(RuntimeError) as excinfo:
+        await sink.write(_event())
+    assert "secret" not in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_clickhouse_sink_reports_status_without_body() -> None:
+    class _Response:
+        status_code = 500
+
+    class _Client:
+        async def post(self, url: str, *, params: object, json: object) -> _Response:
+            return _Response()
+
+        async def aclose(self) -> None:
+            return None
+
+    sink = ClickHouseOperatorAuditSink("http://clickhouse:8123")
+    sink._client = _Client()  # type: ignore[assignment]
+    with pytest.raises(RuntimeError, match="status=500"):
+        await sink.write(_event())
+
+
+def test_log_fields_include_caller_identity() -> None:
+    from mcp_gateway import ToolAuditEvent
+
+    event = ToolAuditEvent(
+        request_id="req-2",
+        org_id=ORG,
+        tool_name="session.get",
+        decision="allow",
+        success=True,
+        latency_ms=4,
+        principal_id="user-1",
+        token_id="token-1",
+    )
+    fields = event.as_log_fields()
+    assert fields["principal_id"] == "user-1"
+    assert fields["token_id"] == "token-1"

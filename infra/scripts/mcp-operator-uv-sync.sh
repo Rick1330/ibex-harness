@@ -27,4 +27,4 @@ uv sync --frozen --no-build --extra dev --no-install-project \
   --no-install-package mcp-gateway \
   --no-install-package ibex-async-db
 uv pip install --no-cache --force-reinstall --no-index --no-deps --find-links "$WHEEL_DIR" \
-  "authclient==0.1.5" "mcp-gateway==0.1.0" "ibex-async-db==0.1.0"
+  "authclient" "mcp-gateway" "ibex-async-db"

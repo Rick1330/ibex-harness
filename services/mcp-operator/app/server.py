@@ -11,18 +11,16 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp_gateway import GatewayEnforcer, GatewayError, ToolRegistry
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict
 
 from app.errors import to_tool_call_error
 from app.principal import require_principal
-from app.tools import BUDGET_MAX_LIMIT, EVIDENCE_MAX_LIMIT
 
 _SERVER_INSTRUCTIONS = (
     "IBEX read-only operator MCP gateway (GAP-009). Four read tools return "
@@ -76,14 +74,14 @@ def _register_tools(mcp: FastMCP, enforcer: GatewayEnforcer) -> None:
         name="session.get",
         description="Return redacted metadata for one session in the caller's org.",
     )
-    async def session_get(session_id: UUID) -> str:
+    async def session_get(session_id: str) -> str:
         return await _invoke(enforcer, "session.get", {"session_id": session_id})
 
     @mcp.tool(
         name="run.get",
         description="Return redacted metadata for one evidence run in the caller's org.",
     )
-    async def run_get(run_id: UUID) -> str:
+    async def run_get(run_id: str) -> str:
         return await _invoke(enforcer, "run.get", {"run_id": run_id})
 
     @mcp.tool(
@@ -92,11 +90,11 @@ def _register_tools(mcp: FastMCP, enforcer: GatewayEnforcer) -> None:
     )
     async def evidence_query(
         trace_id: str | None = None,
-        session_id: UUID | None = None,
-        request_id: Annotated[str | None, Field(default=None, max_length=128)] = None,
-        error_code: Annotated[str | None, Field(default=None, max_length=64)] = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
+        error_code: str | None = None,
         status: str | None = None,
-        limit: Annotated[int, Field(default=25, ge=1, le=EVIDENCE_MAX_LIMIT)] = 25,
+        limit: int = 25,
     ) -> str:
         return await _invoke(
             enforcer,
@@ -115,10 +113,7 @@ def _register_tools(mcp: FastMCP, enforcer: GatewayEnforcer) -> None:
         name="budget.get",
         description="Return billing budget periods for the caller's org (cached cents).",
     )
-    async def budget_get(
-        active_only: bool = True,
-        limit: Annotated[int, Field(default=20, ge=1, le=BUDGET_MAX_LIMIT)] = 20,
-    ) -> str:
+    async def budget_get(active_only: bool = True, limit: int = 20) -> str:
         return await _invoke(enforcer, "budget.get", {"active_only": active_only, "limit": limit})
 
 

@@ -86,3 +86,36 @@ def test_breaker_rejects_bad_constructor_args() -> None:
         BreakingTokenValidator(validator, failure_threshold=0)
     with pytest.raises(ValueError, match="cooldown_seconds"):
         BreakingTokenValidator(validator, cooldown_seconds=0)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_reopens_breaker_instead_of_sticking_half_open() -> None:
+    import asyncio
+
+    class _CancelOnProbeValidator(TokenValidator):
+        def __init__(self) -> None:
+            self.fail = True
+
+        async def validate(self, access_token: str) -> GatewayPrincipal:
+            if self.fail:
+                raise AuthUnavailableError()
+            raise asyncio.CancelledError()
+
+        async def ready(self) -> bool:
+            return True
+
+        async def aclose(self) -> None:
+            return None
+
+    inner = _CancelOnProbeValidator()
+    breaker = BreakingTokenValidator(inner, failure_threshold=1, cooldown_seconds=30.0)
+    with pytest.raises(AuthUnavailableError):
+        await breaker.validate(TOKEN_A)
+    assert breaker.state == BreakerState.OPEN
+    inner.fail = False
+    breaker.force_cooldown_elapsed_for_tests()
+    with pytest.raises(asyncio.CancelledError):
+        await breaker.validate(TOKEN_A)
+    assert breaker.state == BreakerState.OPEN
+    with pytest.raises(AuthUnavailableError):
+        await breaker.validate(TOKEN_A)

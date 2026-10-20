@@ -25,7 +25,8 @@ FROM python@sha256:2333bd330d12de02514770b3585cad313644316047cdee24a7acfdece6de6
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
-    UV_NO_BUILD=1
+    UV_NO_BUILD=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -47,7 +48,7 @@ RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
         --no-install-package mcp-gateway \
         --no-install-package ibex-async-db \
     && uv pip install --no-cache --force-reinstall --no-index --no-deps --find-links /wheels \
-        "authclient==0.1.5" "mcp-gateway==0.1.0" "ibex-async-db==0.1.0"
+        "authclient" "mcp-gateway" "ibex-async-db"
 
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
@@ -70,7 +71,7 @@ RUN python -m pip uninstall --yes setuptools wheel || true \
 
 WORKDIR /app
 
-COPY --from=deps /app/services/mcp-operator/.venv ./.venv
+COPY --from=deps /app/.venv ./.venv
 COPY services/mcp-operator/app ./app
 
 USER 10001:10001
@@ -80,4 +81,4 @@ EXPOSE 8091
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')"]
 
-CMD ["sh", "-c", "uvicorn app.main:app --host \"${IBEX_MCP_OPERATOR_HOST}\" --port \"${IBEX_MCP_OPERATOR_PORT}\""]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host \"${IBEX_MCP_OPERATOR_HOST}\" --port \"${IBEX_MCP_OPERATOR_PORT}\""]

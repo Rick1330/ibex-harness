@@ -1,7 +1,7 @@
 """Metadata-only audit events and a non-blocking async emitter.
 
 Audit must never block a read (AGENTS.md §6.1). The event carries the fields an
-``evidence.tool_audit``-class row needs (principal, tool, descriptor hash, scope
+``ibex.mcp_tool_calls``-class row needs (principal, tool, descriptor hash, scope
 outcome, decision, latency) but contains no payload content.
 
 Two seams:
@@ -39,6 +39,8 @@ class ToolAuditEvent:
     scope_ok: bool = False
     error_code: str = ""
     agent_id: UUID | None = None
+    principal_id: str | None = None
+    token_id: str | None = None
     requested_at: datetime | None = None
 
     def normalized(self) -> ToolAuditEvent:
@@ -58,6 +60,8 @@ class ToolAuditEvent:
             scope_ok=self.scope_ok,
             error_code=self.error_code,
             agent_id=self.agent_id,
+            principal_id=self.principal_id,
+            token_id=self.token_id,
             requested_at=when,
         )
 
@@ -67,6 +71,8 @@ class ToolAuditEvent:
             "request_id": event.request_id,
             "org_id": str(event.org_id),
             "agent_id": str(event.agent_id) if event.agent_id is not None else "",
+            "principal_id": event.principal_id or "",
+            "token_id": event.token_id or "",
             "tool_name": event.tool_name,
             "tool_version": event.tool_version,
             "descriptor_hash": event.descriptor_hash,

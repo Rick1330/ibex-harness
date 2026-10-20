@@ -171,3 +171,33 @@ def test_allowed_hosts_handles_ports_and_ipv6() -> None:
         "mcp.example.com:*",
     ]
     assert _allowed_hosts("https://[::1]:8443/mcp") == ["[::1]:8443", "[::1]:*"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_uuid_reaches_gateway_typed_error() -> None:
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    audit = InMemoryAuditEmitter()
+    mcp, _ = _build(audit=audit)
+    set_principal(GatewayPrincipal(org_id=ORG, permissions=(1 << 19), agent_id=AGENT))
+    try:
+        with pytest.raises(ToolError, match="invalid_params"):
+            await mcp.call_tool("session.get", {"session_id": "not-a-uuid"})
+    finally:
+        set_principal(None)
+    assert len(audit.events) == 1
+    assert audit.events[0].success is False
+    assert audit.events[0].error_code == "invalid_params"
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_limit_reaches_gateway_typed_error() -> None:
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    mcp, _ = _build()
+    set_principal(GatewayPrincipal(org_id=ORG, permissions=(1 << 33), agent_id=AGENT))
+    try:
+        with pytest.raises(ToolError, match="invalid_params"):
+            await mcp.call_tool("budget.get", {"limit": 500})
+    finally:
+        set_principal(None)

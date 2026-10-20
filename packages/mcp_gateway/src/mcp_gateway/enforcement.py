@@ -199,6 +199,8 @@ class GatewayEnforcer:
                 request_id=request_id,
                 org_id=principal.org_id,
                 agent_id=principal.agent_id,
+                principal_id=principal.principal_id,
+                token_id=principal.token_id,
                 tool_name=spec.name if spec is not None else "",
                 tool_version=spec.version if spec is not None else "",
                 descriptor_hash=descriptor_hash(spec) if spec is not None else "",

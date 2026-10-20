@@ -131,3 +131,15 @@ async def test_abc_check_raises_not_implemented() -> None:
     limiter = _Stub()
     with pytest.raises(NotImplementedError):
         await limiter.check(ORG)
+
+
+def test_build_redis_sets_bounded_socket_timeouts() -> None:
+    limiter = build_operator_rate_limiter(
+        redis_url="redis://127.0.0.1:9/0",
+        default_rpm=10,
+        org_overrides={},
+    )
+    assert isinstance(limiter, RedisOperatorLimiter)
+    kwargs = limiter._redis.connection_pool.connection_kwargs
+    assert kwargs["socket_timeout"] == 1.0
+    assert kwargs["socket_connect_timeout"] == 1.0

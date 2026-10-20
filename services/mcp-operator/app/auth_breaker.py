@@ -7,6 +7,7 @@ single probe → closed on success / open on failure. Wraps ``validate`` only;
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -16,6 +17,7 @@ from mcp_gateway import GatewayPrincipal
 from prometheus_client import Counter, Gauge
 
 from app.auth import TokenValidator
+from app.dependency_metrics import AUTH_DURATION, AUTH_ERRORS
 from app.errors import AuthFailedError, AuthUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -82,11 +84,17 @@ class BreakingTokenValidator(TokenValidator):
         is_probe = self._reserve_or_reject()
         try:
             return await self._call_inner(access_token)
+        except asyncio.CancelledError:
+            # Cancellation is a BaseException; without this the breaker stays
+            # HALF_OPEN forever with no probe in flight.
+            self._trip_open_if_half_open()
+            raise
         finally:
             if is_probe:
                 self._release_probe_reservation()
 
     async def _call_inner(self, access_token: str) -> GatewayPrincipal:
+        started = time.perf_counter()
         try:
             result = await self._inner.validate(access_token)
         except AuthFailedError:
@@ -94,11 +102,15 @@ class BreakingTokenValidator(TokenValidator):
             self._record_outcome(success=True)
             raise
         except AuthUnavailableError:
+            AUTH_ERRORS.inc()
             self._record_outcome(success=False)
             raise
         except Exception:
+            AUTH_ERRORS.inc()
             self._trip_open_if_half_open()
             raise
+        finally:
+            AUTH_DURATION.observe(time.perf_counter() - started)
         self._record_outcome(success=True)
         return result
 

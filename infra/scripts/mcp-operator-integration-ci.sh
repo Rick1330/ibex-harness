@@ -8,8 +8,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MCP_DIR="$ROOT/services/mcp-operator"
 
 if [[ ! -f "$MCP_DIR/pyproject.toml" ]]; then
-  echo "services/mcp-operator not present — skipping mcp-operator integration tests"
-  exit 0
+  echo "services/mcp-operator not present — failing mcp-operator integration tests" >&2
+  exit 1
 fi
 
 DSN="${IBEX_MCP_OPERATOR_TEST_DATABASE_URL:-${POSTGRES_TEST_DSN:-}}"

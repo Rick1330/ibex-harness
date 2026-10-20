@@ -18,6 +18,8 @@ from prometheus_client import Counter
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from app.dependency_metrics import REDIS_DURATION
+
 logger = logging.getLogger(__name__)
 
 KEY_TTL_SECONDS = 90
@@ -96,6 +98,7 @@ class RedisOperatorLimiter(OperatorRateLimiter):
         unix_minute = now // 60
         reset_unix = (unix_minute + 1) * 60
         key = self.redis_key(org_id, unix_minute=unix_minute)
+        started = time.perf_counter()
         try:
             count = int(await self._script(keys=[key], args=[KEY_TTL_SECONDS]))
         except (OSError, RedisError) as exc:
@@ -110,6 +113,8 @@ class RedisOperatorLimiter(OperatorRateLimiter):
             return RateLimitOutcome(
                 allowed=True, limit=limit, remaining=limit, reset_unix=reset_unix
             )
+        finally:
+            REDIS_DURATION.observe(time.perf_counter() - started)
         if count > limit:
             RATE_LIMIT_REJECTED.inc()
             return RateLimitOutcome(allowed=False, limit=limit, remaining=0, reset_unix=reset_unix)
@@ -133,7 +138,12 @@ def build_operator_rate_limiter(
     url = redis_url.strip()
     if not url:
         return NoopOperatorLimiter(default_rpm=default_rpm)
-    client: Redis = Redis.from_url(url, decode_responses=True)
+    client: Redis = Redis.from_url(
+        url,
+        decode_responses=True,
+        socket_connect_timeout=1.0,
+        socket_timeout=1.0,
+    )
     return RedisOperatorLimiter(
         client,
         default_rpm=default_rpm,

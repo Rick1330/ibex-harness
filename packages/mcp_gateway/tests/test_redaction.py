@@ -57,3 +57,32 @@ def test_wrong_nested_type_fails_closed() -> None:
             {"resource_id": "r1", "status": "ok", "detail": "not-an-object"},
             SAMPLE_OUTPUT_SCHEMA,
         )
+
+
+def test_scalar_type_mismatch_fails_closed() -> None:
+    with pytest.raises(RedactionError, match="unexpected type"):
+        sanitize_output(
+            {"resource_id": {"nested": "leak"}, "status": "ok"},
+            SAMPLE_OUTPUT_SCHEMA,
+        )
+
+
+def test_non_nullable_scalar_rejects_null() -> None:
+    with pytest.raises(RedactionError, match="not nullable"):
+        sanitize_output({"resource_id": None, "status": "ok"}, SAMPLE_OUTPUT_SCHEMA)
+
+
+def test_nested_required_key_fails_closed() -> None:
+    schema = {
+        "type": "object",
+        "required": ["detail"],
+        "properties": {
+            "detail": {
+                "type": "object",
+                "required": ["id"],
+                "properties": {"id": {"type": "string"}},
+            }
+        },
+    }
+    with pytest.raises(RedactionError, match="missing required"):
+        sanitize_output({"detail": {}}, schema)

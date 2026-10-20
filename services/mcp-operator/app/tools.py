@@ -8,6 +8,7 @@ own tenant-scoped session so a denied call never touches the database.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal
 from uuid import UUID
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import repositories
 from app.db import session_with_org
+from app.dependency_metrics import DB_DURATION, DB_ERRORS
 
 TOOL_VERSION = "1.0.0"
 TOOL_TIMEOUT_MS = 2_000
@@ -270,11 +272,16 @@ class ToolDispatcher:
         handler = self._handlers.get(ctx.spec.name)
         if handler is None:  # pragma: no cover - registry/dispatcher drift guard
             raise BackendUnavailableError(f"no handler for tool {ctx.spec.name!r}")
+        tool = ctx.spec.name
+        started = time.perf_counter()
         try:
             async with session_with_org(self._factory, str(ctx.org_id)) as session:
                 return await handler(session, ctx, args)
         except SQLAlchemyError as exc:
+            DB_ERRORS.labels(tool=tool).inc()
             raise BackendUnavailableError("database unavailable") from exc
+        finally:
+            DB_DURATION.labels(tool=tool).observe(time.perf_counter() - started)
 
 
 __all__ = [

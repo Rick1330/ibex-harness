@@ -8,6 +8,7 @@ deferral. The default sink is logging-only unless a ClickHouse URL is configured
 
 from __future__ import annotations
 
+import json
 import logging
 
 from mcp_gateway import AuditSink, ToolAuditEvent
@@ -30,24 +31,7 @@ class LoggingOperatorAuditSink:
     async def write(  # NOSONAR python:S7503 - async contract required by AuditSink
         self, event: ToolAuditEvent
     ) -> None:
-        fields = event.as_log_fields()
-        logger.info(
-            "mcp_operator_tool_call request_id=%s org_id=%s agent_id=%s tool_name=%s "
-            "tool_version=%s descriptor_hash=%s scope=%s scope_ok=%s decision=%s "
-            "success=%s error_code=%s latency_ms=%s",
-            fields["request_id"],
-            fields["org_id"],
-            fields["agent_id"],
-            fields["tool_name"],
-            fields["tool_version"],
-            fields["descriptor_hash"],
-            fields["scope"],
-            fields["scope_ok"],
-            fields["decision"],
-            fields["success"],
-            fields["error_code"],
-            fields["latency_ms"],
-        )
+        logger.info(json.dumps({"event": "mcp_operator_tool_call", **event.as_log_fields()}))
 
     async def aclose(self) -> None:  # NOSONAR python:S7503 - AuditSink lifecycle contract
         return None
@@ -66,12 +50,16 @@ class ClickHouseOperatorAuditSink:
 
     async def write(self, event: ToolAuditEvent) -> None:
         row = event.as_clickhouse_row()
-        response = await self._client.post(
-            self._base_url,
-            params={"query": _INSERT_QUERY},
-            json=row,
-        )
-        response.raise_for_status()
+        try:
+            response = await self._client.post(
+                self._base_url,
+                params={"query": _INSERT_QUERY},
+                json=row,
+            )
+        except Exception:  # noqa: BLE001 - never surface a URL that may carry credentials
+            raise RuntimeError("clickhouse audit write failed") from None
+        if response.status_code >= 400:
+            raise RuntimeError(f"clickhouse audit write failed status={response.status_code}")
 
     async def aclose(self) -> None:
         await self._client.aclose()
