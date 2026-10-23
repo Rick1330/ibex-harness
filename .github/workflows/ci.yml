@@ -2054,6 +2054,9 @@ jobs:
           go-version-file: go.mod
       - name: Run Go fuzz smoke (chat request parser)
         run: go test -fuzz=FuzzParseChatCompletionRequest -fuzztime=30s ./services/proxy/internal/llm/
+      - name: Run Go fuzz smoke (JWT splitter and header validator)
+        if: ${{ !cancelled() }}
+        run: go test -fuzz=FuzzSplitJWTAndHeader -fuzztime=30s ./services/auth/internal/sessionjwt/
 
   trivy:
     name: trivy
