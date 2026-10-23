@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import statistics
 import sys
@@ -255,19 +256,24 @@ def _raise_error_rate_range(raw: str) -> None:
     )
 
 
-def main() -> int:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("stub", "live"), default="stub")
     parser.add_argument("--addr", default="127.0.0.1:9092")
     parser.add_argument("--rps", type=int, default=500)
     parser.add_argument("--duration", type=float, default=10.0)
+    parser.add_argument("--json", type=Path, help="Write the profile-tagged result to this path.")
     parser.add_argument(
         "--max-error-rate",
         type=_parse_error_rate,
         default=0.0,
         help="Fail when failed/attempted exceeds this fraction (default 0; range 0..1).",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = _parse_args()
 
     if args.profile == "stub":
         stats = asyncio.run(_run_stub(args.duration, args.rps))
@@ -296,6 +302,28 @@ def main() -> int:
         f"latencies mean_ms={mean:.3f} p50_ms={p50:.3f} "
         f"p95_ms={p95:.3f} p99_ms={p99:.3f}"
     )
+    if args.json is not None:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        args.json.write_text(
+            json.dumps(
+                {
+                    "profile": args.profile,
+                    "rps": args.rps,
+                    "duration_s": args.duration,
+                    "attempted": stats.attempted,
+                    "succeeded": stats.succeeded,
+                    "failed": stats.failed,
+                    "error_rate": error_rate,
+                    "mean_ms": mean,
+                    "p50_ms": p50,
+                    "p95_ms": p95,
+                    "p99_ms": p99,
+                },
+                indent=2,
+                allow_nan=False,
+            ) + "\n",
+            encoding="utf-8",
+        )
     if error_rate > args.max_error_rate:
         print(
             f"FAIL: error_rate {error_rate:.4f} exceeds max {args.max_error_rate:.4f}",

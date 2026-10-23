@@ -4,6 +4,7 @@ import {
   BENCHMARK_HUB_PAGE,
   CROSS_SUITE_COMPARE_PAGE,
   buildBenchmarkNavPages,
+  hasPublishedBenchmarkPages,
   suiteById,
   type SuiteNavPage,
 } from "@/lib/benchmarks/suites";
@@ -47,6 +48,7 @@ const hnswSuite = suiteById("hnsw");
 const rankingSuite = suiteById("rankingQuality");
 const writeSuite = suiteById("writePipeline");
 const extractionSuite = suiteById("extractionQuality");
+const contextSuite = suiteById("contextAssembly");
 
 const hnswOverview = hnswSuite.navPages.find((page) => page.name === "Overview")!;
 const rankingOverview = rankingSuite.navPages.find((page) => page.name === "Overview")!;
@@ -86,8 +88,11 @@ export const benchmarkPageTree: PageTree.Root = {
     suiteFolder(extractionSuite.label, extractionSuite.navPages, {
       index: extractionOverview,
     }),
+    ...(hasPublishedBenchmarkPages(contextSuite)
+      ? [suiteFolder(contextSuite.label, contextSuite.navPages)]
+      : []),
   ],
 };
 
-/** Flat leaf list for sitemap / mobile drawer (hub + all suite pages). */
+/** Flat leaf list for sitemap / mobile drawer (hub + available suite pages). */
 export const BENCHMARK_NAV_PAGES: readonly SuiteNavPage[] = buildBenchmarkNavPages();

@@ -1,9 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/source", () => ({
+  source: { getPages: () => [] },
+  blogSource: { getPages: () => [] },
+  roadmapSource: { getPages: () => [] },
+}));
+
+import sitemap from "@/app/sitemap";
 import { BENCHMARK_NAV_PAGES, benchmarkPageTree } from "@/lib/benchmark-page-tree";
 import {
+  BENCHMARK_GROUPS,
   BENCHMARK_SUITES,
+  buildBenchmarkNavPages,
   buildBenchmarkPageIcons,
+  suiteById,
+  suitesInGroup,
 } from "@/lib/benchmarks/suites";
 import { stagePercentileRows } from "@/lib/benchmarks/stage-metrics";
 import type { StageLatency } from "@/lib/benchmarks/types";
@@ -28,7 +39,33 @@ function collectUrls(node: {
 }
 
 describe("benchmark navigation", () => {
-  it("exposes hub plus every registered suite destination", () => {
+  it("resolves context assembly at its reserved data path and includes it in its group", () => {
+    const suite = suiteById("contextAssembly");
+    expect(suite.dataUrl).toBe("/benchmarks/context-assembly-benchmark-data.json");
+    expect(suite.basePath).toBe("/benchmarks/context-assembly");
+    expect(BENCHMARK_SUITES).toContain(suite);
+    expect(BENCHMARK_GROUPS.find((group) => group.id === suite.groupId)?.suiteIds)
+      .toContain("contextAssembly");
+    expect(suitesInGroup(suite.groupId)).toContain(suite);
+    expect(suite.navPages.map((page) => ({ name: page.name, url: page.url })))
+      .toEqual([{ name: "Overview", url: "/benchmarks/context-assembly" }]);
+  });
+
+  it("withholds the registered context Overview from the sidebar and sitemap", () => {
+    expect(collectUrls(benchmarkPageTree)).not.toContain("/benchmarks/context-assembly");
+    expect(benchmarkPageTree.children.map((node) => node.name))
+      .not.toContain("Context assembly");
+    expect(buildBenchmarkNavPages().map((page) => page.url))
+      .not.toContain("/benchmarks/context-assembly");
+    expect(BENCHMARK_NAV_PAGES.map((page) => page.url))
+      .not.toContain("/benchmarks/context-assembly");
+
+    const sitemapPaths = sitemap().map((page) => new URL(page.url).pathname);
+    expect(sitemapPaths).not.toContain("/benchmarks/context-assembly");
+    expect(sitemapPaths).toContain("/benchmarks/extraction-quality");
+  });
+
+  it("exposes hub plus every available suite destination", () => {
     const urls = BENCHMARK_NAV_PAGES.map((page) => page.url);
     expect(urls).toContain("/benchmarks");
     expect(urls).not.toContain("/benchmarks/proxy");
@@ -48,7 +85,8 @@ describe("benchmark navigation", () => {
     expect(urls).toContain("/benchmarks/extraction-quality/history");
     expect(urls).toContain("/benchmarks/extraction-quality/compare");
     expect(urls).toContain("/benchmarks/suites-compare");
-    // hub Overview + suites compare + 5 proxy leaves + 4 hnsw + 3 ranking + 3 write + 3 extraction = 20
+    expect(urls).not.toContain("/benchmarks/context-assembly");
+    // hub Overview + suites compare + 5 proxy + 4 hnsw + 3 ranking + 3 write + 3 extraction
     expect(BENCHMARK_NAV_PAGES).toHaveLength(20);
   });
 
@@ -63,14 +101,14 @@ describe("benchmark navigation", () => {
     expect(icons["/benchmarks/extraction-quality/compare"]).toBeTruthy();
   });
 
-  it("builds a page tree that includes every suite overview", () => {
+  it("builds a page tree that includes every available suite overview", () => {
     const urls = collectUrls(benchmarkPageTree);
     expect(urls).toContain("/benchmarks");
     expect(urls).toContain("/benchmarks/memory");
     expect(urls).toContain("/benchmarks/memory/ranking-quality");
     expect(urls).toContain("/benchmarks/extraction-quality");
     for (const suite of BENCHMARK_SUITES) {
-      if (suite.id === "proxy") {
+      if (suite.id === "proxy" || suite.id === "contextAssembly") {
         continue;
       }
       const overview = suite.navPages.find((page) => page.name === "Overview");
@@ -79,7 +117,7 @@ describe("benchmark navigation", () => {
     }
   });
 
-  it("lists Overview plus every suite in one nested tree (no root switcher)", () => {
+  it("lists Overview plus available suites in one nested tree (no root switcher)", () => {
     const roots = benchmarkPageTree.children.filter(
       (node) => node.type === "folder" && node.root,
     );

@@ -1,0 +1,67 @@
+name: Context Benchmarks
+
+on:
+  schedule:
+    # Weekly stub suite (Sunday 06:00 UTC) after memory benches
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: context-benchmarks-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+permissions:
+  contents: read
+
+jobs:
+  collect-context-assembly-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Set up context stub runtime
+        run: |
+          bash infra/scripts/context-proto-gen.sh
+          bash infra/scripts/context-uv-sync.sh
+
+      - name: Run context-assembly stub gate
+        run: |
+          PYTHONPATH=packages/proto/gen/python:services/context \
+            services/context/.venv/bin/python benchmarks/context/assemble_load.py \
+            --profile stub --rps 500 --duration 10 \
+            --json web/public/benchmarks/context-assembly-benchmark-data.json
+
+      - name: Validate published context-assembly data
+        run: |
+          pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
+            --require-hashes \
+            -r .github/requirements/jsonschema.txt
+          python benchmarks/scripts/validate_published_context_assembly.py --strict \
+            web/public/benchmarks/context-assembly-benchmark-data.json
+
+      - name: Upload context-assembly published data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: context-assembly-benchmark-data
+          path: web/public/benchmarks/context-assembly-benchmark-data.json
+          retention-days: 14
+          if-no-files-found: error

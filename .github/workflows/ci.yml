@@ -938,6 +938,16 @@ jobs:
           set -euo pipefail
           go test ./benchmarks/go/...
           python benchmarks/scripts/test_pipeline.py
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Set up context artifact test runtime
+        run: |
+          bash infra/scripts/context-uv-sync.sh
+          uv pip install --python services/context/.venv/bin/python \
+            --only-binary :all: --require-hashes \
+            -r .github/requirements/jsonschema.txt
+      - name: Run context artifact unit tests
+        run: services/context/.venv/bin/python -m pytest benchmarks/scripts/test_context_assembly_artifact.py
       - name: Prepare base-branch worktree
         env:
           BASE_REF: ${{ github.base_ref }}

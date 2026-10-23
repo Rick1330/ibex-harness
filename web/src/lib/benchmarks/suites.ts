@@ -23,7 +23,8 @@ export type BenchmarkSuiteId =
   | "hnsw"
   | "rankingQuality"
   | "writePipeline"
-  | "extractionQuality";
+  | "extractionQuality"
+  | "contextAssembly";
 
 export type BenchmarkGroupId = "proxy" | "memory" | "quality";
 
@@ -160,16 +161,33 @@ export const EXTRACTION_QUALITY_SUITE: BenchmarkSuite = {
   ],
 };
 
+export const CONTEXT_ASSEMBLY_SUITE: BenchmarkSuite = {
+  id: "contextAssembly",
+  label: "Context assembly",
+  basePath: "/benchmarks/context-assembly",
+  dataUrl: "/benchmarks/context-assembly-benchmark-data.json",
+  groupId: "proxy",
+  icon: Layers,
+  navPages: [
+    {
+      name: "Overview",
+      url: "/benchmarks/context-assembly",
+      icon: LayoutDashboard,
+    },
+  ],
+};
+
 export const BENCHMARK_SUITES: readonly BenchmarkSuite[] = [
   PROXY_SUITE,
   HNSW_SUITE,
   RANKING_QUALITY_SUITE,
   WRITE_PIPELINE_SUITE,
   EXTRACTION_QUALITY_SUITE,
+  CONTEXT_ASSEMBLY_SUITE,
 ];
 
 export const BENCHMARK_GROUPS: readonly BenchmarkGroup[] = [
-  { id: "proxy", label: "Proxy", icon: Gauge, suiteIds: ["proxy"] },
+  { id: "proxy", label: "Proxy", icon: Gauge, suiteIds: ["proxy", "contextAssembly"] },
   {
     id: "memory",
     label: "Memory",
@@ -247,20 +265,26 @@ export function suiteForPathname(pathname: string): BenchmarkSuite | null {
   return null;
 }
 
-/** Flat leaf list for sitemap / mobile drawer (hub + all suite pages). Dedupes proxy hub URL. */
+export function hasPublishedBenchmarkPages(suite: BenchmarkSuite): boolean {
+  // Context's route is not implemented; its registry entry and data contract are live.
+  return suite.id !== "contextAssembly";
+}
+
+/** Flat leaf list for sitemap / mobile drawer (hub + available suite pages). Dedupes proxy hub URL. */
 export function buildBenchmarkNavPages(): readonly SuiteNavPage[] {
-  const pages: SuiteNavPage[] = [BENCHMARK_HUB_PAGE, CROSS_SUITE_COMPARE_PAGE];
-  const seen = new Set<string>([BENCHMARK_HUB_PAGE.url, CROSS_SUITE_COMPARE_PAGE.url]);
-  for (const suite of BENCHMARK_SUITES) {
-    for (const page of suite.navPages) {
-      if (seen.has(page.url)) {
-        continue;
-      }
-      seen.add(page.url);
-      pages.push(page);
+  const pages = [
+    BENCHMARK_HUB_PAGE,
+    CROSS_SUITE_COMPARE_PAGE,
+    ...BENCHMARK_SUITES.filter(hasPublishedBenchmarkPages).flatMap((suite) => suite.navPages),
+  ];
+  const seen = new Set<string>();
+  return pages.filter((page) => {
+    if (seen.has(page.url)) {
+      return false;
     }
-  }
-  return pages;
+    seen.add(page.url);
+    return true;
+  });
 }
 
 function collectLeafPageIcons(): Record<string, LucideIcon> {
