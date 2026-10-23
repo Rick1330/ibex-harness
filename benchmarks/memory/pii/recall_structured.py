@@ -5,11 +5,12 @@ Usage (from services/memory):
 
   uv run python ../../benchmarks/memory/pii/recall_structured.py
 
-Writes recall_structured.json beside this script.
+Writes recall_structured.json beside this script unless --output PATH is supplied.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import time
@@ -53,6 +54,12 @@ TARGET_RECALL = 0.95
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path, default=Path(__file__).with_name("recall_structured.json")
+    )
+    args = parser.parse_args()
+
     settings = Settings()
     svc = PiiService(settings)
     # Warmup
@@ -89,7 +96,7 @@ def main() -> int:
         "spacy_model": settings.pii_spacy_model,
         "misses": misses,
     }
-    path = Path(__file__).with_name("recall_structured.json")
+    path = args.output
     path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(out, indent=2))
     return 0 if out["pass"] else 1
