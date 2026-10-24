@@ -314,6 +314,14 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   background: #f2f2ed;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .quickstart-button,
+  .quickstart-button:hover {
+    transform: none;
+    transition: none;
+  }
+}
+
 .quickstart-link {
   display: inline-flex;
   align-items: center;

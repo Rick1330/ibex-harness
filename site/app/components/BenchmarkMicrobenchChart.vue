@@ -64,9 +64,15 @@ const ticks = computed(() => {
     : all
   return visible.map((tick, index) => ({
     ...tick,
-    align: index === 0 ? 'start' : index === visible.length - 1 ? 'end' : 'center',
+    align: tickAlign(index, visible.length),
   }))
 })
+
+function tickAlign(index: number, count: number): 'start' | 'end' | 'center' {
+  if (index === 0) return 'start'
+  if (index === count - 1) return 'end'
+  return 'center'
+}
 
 function tickLabel(value: number) {
   if (value >= 1_000_000) return `${formatNumber(value / 1_000_000, 0)} ms`

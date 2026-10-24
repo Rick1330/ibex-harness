@@ -20,7 +20,9 @@ export interface CodeToken {
   kind: CodeTokenKind
 }
 
-const TOKEN_PATTERN = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\$[A-Za-z_][A-Za-z0-9_]*|\b\d+(?:\.\d+)?\b/g
+// A quoted string of any of the three quote flavors, a shell-style variable,
+// or a decimal number.
+const TOKEN_PATTERN = /(["'`])(?:\\.|(?!\1)[^\\])*\1|\$[A-Za-z_]\w*|\b\d+(?:\.\d+)?\b/g
 
 const TS_KEYWORDS = new Set([
   'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
@@ -37,86 +39,107 @@ const PY_KEYWORDS = new Set([
   'True', 'try', 'while', 'with', 'yield',
 ])
 
-const STRUCTURED_PATTERN = /[{}()[\],;:.]|\b[A-Za-z_$][\w$]*(?=\s*\()|\b[A-Za-z_$][\w$]*(?=\s*:)|[=+\-*/%<>!&|?]+|\b[A-Za-z_$][\w$]*\b/g
-const SHELL_REST_PATTERN = /(?<![\w-])--?[A-Za-z][\w-]*|\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b|https?:\/\/[^\s"'`]+/g
+const PUNCTUATION = /^[{}()[\],;:.]$/
+const OPERATOR = /^[=+\-*/%<>!&|?]+$/
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
+// Identifiers followed by ( classify as calls, by : as property keys.
+const STRUCTURED_PATTERN = /[{}()[\],;:.]|[=+\-*/%<>!&|?]+|\b[A-Za-z_$][\w$]*(?=\s*[:(])|\b[A-Za-z_$][\w$]*\b/g
+// Flags, URLs, and bare uppercase words (HTTP verbs are promoted to keywords
+// in shellRestKind; other uppercase words stay plain).
+const SHELL_REST_PATTERN = /(?<![\w-])--?[A-Za-z][\w-]*|https?:\/\/[^\s"'`]+|\b[A-Z]{3,8}\b/g
+
+const SHELL_KEYWORDS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'])
+
+// Accumulates tokens over one source string so each tokenizer stays linear:
+// gaps before matches, matched segments, and the plain remainder all flow
+// through one cursor.
+function createTokenSink(source: string) {
+  const tokens: CodeToken[] = []
+  let cursor = 0
+  return {
+    tokens,
+    consumed: () => cursor,
+    textBefore(index: number) {
+      return source.slice(cursor, index)
+    },
+    advanceTo(index: number) {
+      cursor = index
+    },
+    push(token: CodeToken) {
+      tokens.push(token)
+      cursor += token.text.length
+    },
+    pushAll(newTokens: CodeToken[]) {
+      tokens.push(...newTokens)
+      cursor += newTokens.reduce((length, token) => length + token.text.length, 0)
+    },
+    pushPlain(text: string, kind: CodeTokenKind = 'plain') {
+      tokens.push({ text, kind })
+      cursor += text.length
+    },
+    pushRemainingPlain() {
+      if (cursor < source.length) {
+        tokens.push({ text: source.slice(cursor), kind: 'plain' })
+      }
+    },
+  }
+}
+
+function structuredKind(value: string, keywords: Set<string>, rest: string): CodeTokenKind {
+  if (PUNCTUATION.test(value)) return 'punctuation'
+  if (OPERATOR.test(value)) return 'operator'
+  if (keywords.has(value)) return 'keyword'
+  if (!IDENTIFIER.test(value)) return 'plain'
+  if (/^\s*\(/.test(rest)) return 'function'
+  if (/^\s*:/.test(rest)) return 'property'
+  return 'plain'
+}
 
 function tokenizeStructuredPlain(text: string, language: 'ts' | 'python'): CodeToken[] {
   const keywords = language === 'ts' ? TS_KEYWORDS : PY_KEYWORDS
-  const tokens: CodeToken[] = []
-  let cursor = 0
+  const sink = createTokenSink(text)
 
   for (const match of text.matchAll(STRUCTURED_PATTERN)) {
     const index = match.index ?? 0
-    if (index > cursor) {
-      tokens.push({ text: text.slice(cursor, index), kind: 'plain' })
-    }
-
-    const value = match[0]
-    const rest = text.slice(index + value.length)
-    let kind: CodeTokenKind = 'plain'
-
-    if (/^[{}()[\],;:.]$/.test(value)) {
-      kind = 'punctuation'
-    } else if (/^[=+\-*/%<>!&|?]+$/.test(value)) {
-      kind = 'operator'
-    } else if (keywords.has(value)) {
-      kind = 'keyword'
-    } else if (/^[A-Za-z_$][\w$]*$/.test(value)) {
-      if (/^\s*\(/.test(rest)) {
-        kind = 'function'
-      } else if (/^\s*:/.test(rest)) {
-        kind = 'property'
-      }
-    }
-
-    tokens.push({ text: value, kind })
-    cursor = index + value.length
+    const gap = sink.textBefore(index)
+    if (gap) sink.pushPlain(gap)
+    sink.advanceTo(index)
+    const rest = text.slice(index + match[0].length)
+    sink.push({ text: match[0], kind: structuredKind(match[0], keywords, rest) })
   }
 
-  if (cursor < text.length) {
-    tokens.push({ text: text.slice(cursor), kind: 'plain' })
-  }
-
-  return tokens
-}
-
-function tokenizeShellPlain(text: string, atLineStart: boolean): CodeToken[] {
-  const tokens: CodeToken[] = []
-  let rest = text
-
-  if (atLineStart) {
-    const command = rest.match(/^(\s*)([A-Za-z][\w.-]*)/)
-    if (command) {
-      if (command[1]) tokens.push({ text: command[1], kind: 'plain' })
-      tokens.push({ text: command[2]!, kind: 'command' })
-      rest = rest.slice(command[0].length)
-    }
-  }
-
-  return [...tokens, ...tokenizeShellRest(rest)]
-}
-
-function tokenizeShellRest(rest: string): CodeToken[] {
-  const tokens: CodeToken[] = []
-  let cursor = 0
-  for (const match of rest.matchAll(SHELL_REST_PATTERN)) {
-    const index = match.index ?? 0
-    if (index > cursor) {
-      tokens.push({ text: rest.slice(cursor, index), kind: 'plain' })
-    }
-    tokens.push({ text: match[0], kind: shellRestKind(match[0]) })
-    cursor = index + match[0].length
-  }
-  if (cursor < rest.length) {
-    tokens.push({ text: rest.slice(cursor), kind: 'plain' })
-  }
-  return tokens
+  sink.pushRemainingPlain()
+  return sink.tokens
 }
 
 function shellRestKind(value: string): CodeTokenKind {
   if (value.startsWith('http')) return 'string'
   if (value.startsWith('-')) return 'flag'
-  return 'keyword'
+  if (SHELL_KEYWORDS.has(value)) return 'keyword'
+  return 'plain'
+}
+
+function tokenizeShellPlain(text: string, atLineStart: boolean): CodeToken[] {
+  const sink = createTokenSink(text)
+
+  if (atLineStart) {
+    const command = text.match(/^(\s*)([A-Za-z][\w.-]*)/)
+    if (command) {
+      if (command[1]) sink.pushPlain(command[1])
+      sink.pushPlain(command[2]!, 'command')
+    }
+  }
+
+  for (const match of text.matchAll(SHELL_REST_PATTERN)) {
+    const index = match.index ?? 0
+    const gap = sink.textBefore(index)
+    if (gap) sink.pushPlain(gap)
+    sink.advanceTo(index)
+    sink.pushPlain(match[0], shellRestKind(match[0]))
+  }
+
+  sink.pushRemainingPlain()
+  return sink.tokens
 }
 
 function tokenizePlain(text: string, language: CodeLanguage, atLineStart: boolean): CodeToken[] {
@@ -154,23 +177,17 @@ function segmentKind(text: string): CodeTokenKind {
 }
 
 function tokenizeCodeSegments(line: string, language: CodeLanguage): CodeToken[] {
-  const tokens: CodeToken[] = []
-  let cursor = 0
+  const sink = createTokenSink(line)
 
   for (const match of line.matchAll(TOKEN_PATTERN)) {
     const index = match.index ?? 0
-
-    if (index > cursor) {
-      tokens.push(...tokenizePlain(line.slice(cursor, index), language, cursor === 0))
-    }
-
-    tokens.push({ text: match[0], kind: segmentKind(match[0]) })
-    cursor = index + match[0].length
+    const gap = sink.textBefore(index)
+    if (gap) sink.pushAll(tokenizePlain(gap, language, sink.consumed() === 0))
+    sink.advanceTo(index)
+    sink.push({ text: match[0], kind: segmentKind(match[0]) })
   }
 
-  if (cursor < line.length) {
-    tokens.push(...tokenizePlain(line.slice(cursor), language, cursor === 0))
-  }
-
-  return tokens
+  const remainder = sink.textBefore(line.length)
+  if (remainder) sink.pushAll(tokenizePlain(remainder, language, sink.consumed() === 0))
+  return sink.tokens
 }

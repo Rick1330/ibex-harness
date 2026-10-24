@@ -44,7 +44,7 @@ const thresholdLeft = computed(() => (props.threshold ? width(props.threshold.va
         <p class="m-0 font-mono text-[0.68rem] uppercase tracking-[0.1em] text-[var(--site-ink)]">{{ item.label }}</p>
         <p v-if="item.note" class="m-0 mt-0.5 text-[0.68rem] leading-snug text-[var(--site-muted)]">{{ item.note }}</p>
       </div>
-      <div class="relative h-2.5 overflow-hidden rounded-full bg-[var(--site-code-bg)]" role="img" :aria-label="`${item.label}: ${item.display}`">
+      <div class="relative h-2.5 overflow-hidden rounded-full bg-[var(--site-code-bg)]" aria-hidden="true">
         <div class="h-full rounded-full" :style="{ width: width(item.value), background: item.color ?? 'var(--site-signal)' }" />
         <div
           v-if="props.threshold"

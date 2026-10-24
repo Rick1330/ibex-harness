@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { nextTabIndex } from '~/utils/tabNavigation'
+
 const tabs = [
   { id: 'request', label: 'Request', icon: 'request' },
   { id: 'context', label: 'Context', icon: 'database' },
@@ -66,15 +68,7 @@ function move(event: KeyboardEvent, index: number) {
   if (!keys.includes(event.key)) return
 
   event.preventDefault()
-  const next = event.key === 'ArrowLeft'
-    ? (index - 1 + tabs.length) % tabs.length
-    : event.key === 'ArrowRight'
-      ? (index + 1) % tabs.length
-      : event.key === 'Home'
-        ? 0
-        : tabs.length - 1
-
-  select(tabs[next]!.id)
+  select(tabs[nextTabIndex(event.key, index, tabs.length)]!.id)
 }
 
 async function copyRequest() {
@@ -173,7 +167,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
                 </button>
               </div>
 
-              <div class="console-code" tabindex="0" role="region" aria-label="Example request headers and body">
+              <section class="console-code" tabindex="0" aria-label="Example request headers and body">
                 <div class="console-line">
                   <span class="console-ln">01</span>
                   <span><span class="console-key">Authorization</span><span class="console-punc">:</span> <span class="console-string">Bearer $IBEX_TOKEN</span></span>
@@ -222,7 +216,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
                   <span class="console-ln">12</span>
                   <span><span class="console-punc">}</span></span>
                 </div>
-              </div>
+              </section>
             </div>
 
             <div class="console-response">
@@ -294,7 +288,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
             <span class="console-rail-label">Token allocation</span>
             <span class="console-checks-count">100%</span>
           </div>
-          <div class="budget-bar" role="img" aria-label="Example context allocation: directive 18 percent, memory 34 percent, messages 38 percent, reserve 10 percent">
+          <div class="budget-bar" aria-hidden="true">
             <span
               v-for="(segment, index) in budgetSegments"
               :key="segment.label"
@@ -573,9 +567,10 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   overflow-wrap: anywhere;
 }
 
-.console-heading {
-  font-size: 0.98rem !important;
-  letter-spacing: -0.02em !important;
+/* Scoped to the summary so it outweighs .console-summary strong without !important. */
+.console-summary .console-heading {
+  font-size: 0.98rem;
+  letter-spacing: -0.02em;
 }
 
 .console-pill {

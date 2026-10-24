@@ -37,11 +37,14 @@ let drag: { x: number, y: number, translateX: number, translateY: number } | nul
 let pinch: { distance: number, scale: number, translateX: number, translateY: number, midpoint: { x: number, y: number } } | null = null
 
 const scaleLabel = computed(() => `${Math.round(scale.value * 100)}%`)
-const slug = computed(() => (props.title || 'ibex-diagram')
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, '-')
-  .replace(/^-+/, '')
-  .replace(/-+$/, '') || 'ibex-diagram')
+const slug = computed(() => {
+  const dashed = (props.title || 'ibex-diagram').toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  let start = 0
+  let end = dashed.length
+  while (start < end && dashed[start] === '-') start += 1
+  while (end > start && dashed[end - 1] === '-') end -= 1
+  return dashed.slice(start, end) || 'ibex-diagram'
+})
 
 const stageStyle = computed(() => ({
   width: `${naturalWidth.value}px`,
@@ -217,24 +220,27 @@ function panByArrowKey(event: KeyboardEvent) {
   if (event.key === 'ArrowDown') translateY.value -= step
 }
 
+function handleEscape(event: KeyboardEvent): boolean {
+  if (event.key !== 'Escape') return false
+  event.preventDefault()
+  onClose()
+  return true
+}
+
+function handleTabFocus(event: KeyboardEvent): boolean {
+  if (event.key !== 'Tab') return false
+  trapFocus(event)
+  return true
+}
+
+function handleSystemModifier(event: KeyboardEvent): boolean {
+  return event.metaKey || event.ctrlKey || event.altKey
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (!props.open) return
-
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    onClose()
-    return
-  }
-
-  if (event.key === 'Tab') {
-    trapFocus(event)
-    return
-  }
-
-  if (event.metaKey || event.ctrlKey || event.altKey) return
-
+  if (handleEscape(event) || handleTabFocus(event) || handleSystemModifier(event)) return
   if (applyZoomKey(event) || applyResetKey(event)) return
-
   if (event.key.startsWith('Arrow')) panByArrowKey(event)
 }
 
@@ -423,12 +429,11 @@ onBeforeUnmount(() => {
         @click.self="onClose"
         @keydown.escape="onClose"
       >
-        <div
+        <dialog
           ref="panel"
-          role="dialog"
-          aria-modal="true"
+          open
           :aria-labelledby="titleId"
-          class="flex h-full w-full flex-col overflow-hidden border border-[var(--site-line)] bg-[var(--site-bg)] shadow-[0_40px_120px_-30px_#000] sm:h-[94dvh] sm:max-w-[98vw] sm:rounded-2xl"
+          class="static m-0 flex h-full w-full flex-col overflow-hidden border border-[var(--site-line)] bg-[var(--site-bg)] p-0 text-[var(--site-ink)] shadow-[0_40px_120px_-30px_#000] sm:h-[94dvh] sm:max-w-[98vw] sm:rounded-2xl"
         >
           <header class="flex shrink-0 items-start gap-4 border-b border-[var(--site-line)] px-4 py-3 sm:px-6 sm:py-4">
             <div class="min-w-0 flex-1">
@@ -572,15 +577,14 @@ onBeforeUnmount(() => {
             >
               Scroll to zoom · drag to pan
             </p>
-            <p
+            <output
               v-if="notice"
               class="absolute bottom-3 right-4 m-0 rounded-md border border-[var(--site-line)] bg-[var(--site-surface)] px-3 py-1.5 text-xs text-[var(--site-ink)] shadow-lg"
-              role="status"
             >
               {{ notice }}
-            </p>
+            </output>
           </div>
-        </div>
+        </dialog>
       </div>
     </Transition>
   </Teleport>
@@ -591,6 +595,8 @@ onBeforeUnmount(() => {
   display: block;
   width: 100%;
   height: 100%;
-  max-width: none !important;
+  /* Mermaid emits max-width as an inline style on the svg; only !important
+     can override it, and the zoom-to-fit viewer must not be width-capped. */
+  max-width: none !important; /* NOSONAR */
 }
 </style>

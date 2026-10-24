@@ -93,10 +93,9 @@ onBeforeUnmount(() => {
       :aria-busy="state === 'loading' ? 'true' : 'false'"
     >
       <!-- eslint-disable-next-line vue/no-v-html -->
-      <div
+      <fieldset
         v-if="state === 'ready'"
-        class="mermaid-figure__svg"
-        role="group"
+        class="mermaid-figure__svg m-0 min-w-0 border-0 p-0"
         :aria-label="label"
         v-html="svg"
       />

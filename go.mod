@@ -1,6 +1,6 @@
 module github.com/Rick1330/ibex-harness
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/ClickHouse/clickhouse-go v1.5.4

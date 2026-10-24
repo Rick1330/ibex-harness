@@ -32,6 +32,7 @@ const contentTypes = new Map([
   ['.woff2', 'font/woff2'],
   ['.webmanifest', 'application/manifest+json'],
   ['.map', 'application/json; charset=utf-8'],
+  ['.wasm', 'application/wasm'],
 ])
 
 const redirects = []

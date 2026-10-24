@@ -204,6 +204,14 @@
   transform: translateY(-1px);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .hero-button,
+  .hero-button:hover {
+    transform: none;
+    transition: none;
+  }
+}
+
 .hero-button-primary {
   border-color: #d8ff4f;
   background: #d8ff4f;

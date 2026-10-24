@@ -14,9 +14,7 @@ let renderQueue: Promise<unknown> = Promise.resolve()
 let diagramSequence = 0
 
 function loadMermaid() {
-  if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(module => module.default)
-  }
+  mermaidPromise ??= import('mermaid').then(module => module.default)
   return mermaidPromise
 }
 
@@ -25,18 +23,37 @@ function readToken(name: string, fallback: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-function readThemeTokens(isDark: boolean) {
-  return {
-    ink: readToken('--site-ink', isDark ? '#f2f2ed' : '#0a0b0c'),
-    muted: readToken('--site-muted', isDark ? '#9a9d98' : '#5c605d'),
-    line: readToken('--site-line', isDark ? '#262a2d' : '#d8d8d0'),
-    lineStrong: readToken('--site-line-strong', isDark ? '#3a3f42' : '#b9bab2'),
-    surface: readToken('--site-surface', isDark ? '#101214' : '#f8f8f4'),
-    surfaceStrong: readToken('--site-surface-strong', isDark ? '#15181b' : '#ffffff'),
-    background: readToken('--site-bg', isDark ? '#090a0b' : '#f1f1ec'),
-    codeBackground: readToken('--site-code-bg', isDark ? '#141719' : '#e8e8e1'),
-    signal: readToken('--site-signal', isDark ? '#d8ff4f' : '#5f8f00'),
-  }
+interface ThemeTokens {
+  ink: string
+  muted: string
+  line: string
+  lineStrong: string
+  surface: string
+  surfaceStrong: string
+  background: string
+  codeBackground: string
+  signal: string
+}
+
+// cssVar name plus the dark and light fallbacks, in that order.
+const THEME_TOKEN_FALLBACKS: Record<keyof ThemeTokens, [cssVar: string, dark: string, light: string]> = {
+  ink: ['--site-ink', '#f2f2ed', '#0a0b0c'],
+  muted: ['--site-muted', '#9a9d98', '#5c605d'],
+  line: ['--site-line', '#262a2d', '#d8d8d0'],
+  lineStrong: ['--site-line-strong', '#3a3f42', '#b9bab2'],
+  surface: ['--site-surface', '#101214', '#f8f8f4'],
+  surfaceStrong: ['--site-surface-strong', '#15181b', '#ffffff'],
+  background: ['--site-bg', '#090a0b', '#f1f1ec'],
+  codeBackground: ['--site-code-bg', '#141719', '#e8e8e1'],
+  signal: ['--site-signal', '#d8ff4f', '#5f8f00'],
+}
+
+function readThemeTokens(isDark: boolean): ThemeTokens {
+  const shade = isDark ? 1 : 2
+  return Object.fromEntries(
+    (Object.keys(THEME_TOKEN_FALLBACKS) as (keyof ThemeTokens)[])
+      .map(key => [key, readToken(THEME_TOKEN_FALLBACKS[key][0], THEME_TOKEN_FALLBACKS[key][shade])]),
+  ) as unknown as ThemeTokens
 }
 
 function readFontFamily() {
@@ -149,8 +166,12 @@ function nextDiagramId(prefix: string) {
   return `${prefix}-${diagramSequence}`
 }
 
+const SVG_VIEWBOX = /<svg\b[^>]*\bviewBox="([^"]+)"/i
+const SVG_WIDTH = /<svg\b[^>]*\bwidth="([\d.]+)"/i
+const SVG_HEIGHT = /<svg\b[^>]*\bheight="([\d.]+)"/i
+
 function measure(svg: string) {
-  const viewBox = svg.match(/<svg\b[^>]*\bviewBox="([^"]+)"/i)?.[1]
+  const viewBox = SVG_VIEWBOX.exec(svg)?.[1]
   if (viewBox) {
     const parts = viewBox.split(/[\s,]+/).map(Number)
     if (parts.length === 4 && parts.every(Number.isFinite)) {
@@ -158,8 +179,8 @@ function measure(svg: string) {
     }
   }
   return {
-    width: Number(svg.match(/<svg\b[^>]*\bwidth="([\d.]+)"/i)?.[1]) || 800,
-    height: Number(svg.match(/<svg\b[^>]*\bheight="([\d.]+)"/i)?.[1]) || 600,
+    width: Number(SVG_WIDTH.exec(svg)?.[1]) || 800,
+    height: Number(SVG_HEIGHT.exec(svg)?.[1]) || 600,
   }
 }
 

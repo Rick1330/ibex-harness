@@ -136,12 +136,11 @@ onBeforeUnmount(() => {
         @click.self="onClose"
         @keydown.escape="onClose"
       >
-        <div
+        <dialog
           ref="panel"
-          role="dialog"
-          aria-modal="true"
+          open
           :aria-labelledby="titleId"
-          class="flex max-h-[94dvh] w-full flex-col overflow-hidden border border-[var(--site-line)] bg-[var(--site-bg)] shadow-[0_40px_120px_-30px_#000] sm:max-w-6xl sm:rounded-2xl"
+          class="static m-0 flex max-h-[94dvh] w-full flex-col overflow-hidden border border-[var(--site-line)] bg-[var(--site-bg)] p-0 text-[var(--site-ink)] shadow-[0_40px_120px_-30px_#000] sm:max-w-6xl sm:rounded-2xl"
         >
           <header class="flex shrink-0 items-start gap-4 border-b border-[var(--site-line)] px-5 py-4 sm:px-7 sm:py-5">
             <div class="min-w-0 flex-1">
@@ -259,7 +258,7 @@ onBeforeUnmount(() => {
               </p>
             </div>
           </div>
-        </div>
+        </dialog>
       </div>
     </Transition>
   </Teleport>

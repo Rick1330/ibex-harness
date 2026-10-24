@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { seriesColor } from '~/utils/series'
+
 export interface BenchmarkSeries {
   label: string
   values: number[]
@@ -48,7 +50,7 @@ const padding = computed(() => {
 
 const cleanSeries = computed(() => props.series.map((series, index) => ({
   ...series,
-  color: series.color ?? (index === 0 ? 'var(--chart-lime)' : index === 1 ? 'var(--chart-blue)' : index === 2 ? 'var(--chart-pink)' : 'var(--chart-violet)'),
+  color: series.color ?? seriesColor(index),
   digits: series.digits ?? 2,
   suffix: series.suffix ?? '',
   values: series.values.filter(value => Number.isFinite(value)),

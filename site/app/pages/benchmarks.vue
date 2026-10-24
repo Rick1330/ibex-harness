@@ -467,6 +467,17 @@ function signedPercent(value: number | null) {
   return `${sign}${formatNumber(value, 1)}%`
 }
 
+function comparisonTone(change: number | null, higherIsBetter: boolean): ModalComparisonMetric['tone'] {
+  if (change === null || Math.abs(change) < 0.0001) return 'same'
+  const improved = higherIsBetter ? change > 0 : change < 0
+  return improved ? 'better' : 'worse'
+}
+
+function comparisonSuffix(tone: ModalComparisonMetric['tone']): string {
+  if (tone === 'same') return ''
+  return tone === 'better' ? ' better' : ' worse'
+}
+
 function compareMetric(
   label: string,
   current: number,
@@ -475,16 +486,12 @@ function compareMetric(
 ): ModalComparisonMetric {
   const { digits = 1, unit = '', higherIsBetter = false } = options
   const change = percentChange(current, previous)
-  const tone: ModalComparisonMetric['tone'] = change === null || Math.abs(change) < 0.0001
-    ? 'same'
-    : (higherIsBetter ? change > 0 : change < 0)
-        ? 'better'
-        : 'worse'
+  const tone = comparisonTone(change, higherIsBetter)
   return {
     label,
     current: `${formatNumber(current, digits)}${unit}`,
     previous: previous === undefined ? '—' : `${formatNumber(previous, digits)}${unit}`,
-    change: change === null ? '—' : `${signedPercent(change)}${tone === 'same' ? '' : tone === 'better' ? ' better' : ' worse'}`,
+    change: change === null ? '—' : `${signedPercent(change)}${comparisonSuffix(tone)}`,
     tone,
   }
 }
@@ -660,9 +667,15 @@ function proxyStagesModal(): GraphModalState {
   }
 }
 
+function hnswModalTitle(kind: 'latency' | 'recall' | 'method'): string {
+  if (kind === 'recall') return 'Recall@10 detail'
+  if (kind === 'method') return 'Index and method detail'
+  return 'HNSW search latency detail'
+}
+
 function hnswModal(kind: 'latency' | 'recall' | 'method'): GraphModalState {
   const latestRow = hnswRows.value[hnswRows.value.length - 1]
-  const title = kind === 'recall' ? 'Recall@10 detail' : kind === 'method' ? 'Index and method detail' : 'HNSW search latency detail'
+  const title = hnswModalTitle(kind)
   return {
     ...blankModal(),
     eyebrow: '02 / Memory retrieval',
@@ -741,11 +754,17 @@ function rankingModal(row: number): GraphModalState {
   }
 }
 
+function writeModalTitle(kind: 'history' | 'latest' | 'gate'): string {
+  if (kind === 'latest') return 'Write latency detail'
+  if (kind === 'gate') return 'Write gate detail'
+  return 'Write latency history'
+}
+
 function writeModal(kind: 'history' | 'latest' | 'gate', row: number): GraphModalState {
   const run = writeRuns[row] ?? latestWrite
   const older = writeRuns[row + 1]
   const metrics = run.metrics
-  const title = kind === 'latest' ? 'Write latency detail' : kind === 'gate' ? 'Write gate detail' : 'Write latency history'
+  const title = writeModalTitle(kind)
   return {
     ...blankModal(),
     eyebrow: '04 / Write pipeline',
@@ -903,16 +922,28 @@ function openGoBenchmarks() {
   openGraph('go-benchmarks')
 }
 
+const HNSW_MODAL_KIND: Record<'latency' | 'recall' | 'method', ModalKind> = {
+  latency: 'hnsw-latency',
+  recall: 'hnsw-recall',
+  method: 'hnsw-method',
+}
+
 function openHnsw(kind: 'latency' | 'recall' | 'method') {
-  openGraph(kind === 'latency' ? 'hnsw-latency' : kind === 'recall' ? 'hnsw-recall' : 'hnsw-method')
+  openGraph(HNSW_MODAL_KIND[kind])
 }
 
 function openRanking() {
   openGraph('ranking')
 }
 
+const WRITE_MODAL_KIND: Record<'history' | 'latest' | 'gate', ModalKind> = {
+  history: 'write-history',
+  latest: 'write-latest',
+  gate: 'write-gate',
+}
+
 function openWrite(kind: 'history' | 'latest' | 'gate') {
-  openGraph(kind === 'history' ? 'write-history' : kind === 'latest' ? 'write-latest' : 'write-gate')
+  openGraph(WRITE_MODAL_KIND[kind])
 }
 
 function openExtraction(kind: 'categories' | 'summary') {
@@ -955,9 +986,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateViewport)
 })
 
+function microDigits(value: number): number {
+  if (value < 1) return 3
+  if (value < 10) return 2
+  return 1
+}
+
 function micro(ms: number) {
   const value = ms * 1000
-  const digits = value < 1 ? 3 : value < 10 ? 2 : 1
+  const digits = microDigits(value)
   return `${formatNumber(value, digits)} µs`
 }
 

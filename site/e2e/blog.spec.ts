@@ -25,7 +25,11 @@ test.describe('blog index', () => {
     expect(columnsBefore).toBe(2)
 
     await featured.locator('.blog-cover').hover()
-    await page.waitForTimeout(700)
+    // The hover animates the cover; wait for those transitions to settle
+    // instead of a fixed sleep.
+    await featured.locator('.blog-cover').evaluate(element =>
+      Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.then(() => undefined))),
+    )
 
     const after = await featured.boundingBox()
     expect(after).not.toBeNull()
@@ -42,10 +46,8 @@ test.describe('blog index', () => {
     const featured = page.locator('a[href^="/blog/"]').filter({ has: page.locator('.blog-cover') }).first()
     const cover = featured.locator('.blog-cover').first()
     await cover.hover()
-    await page.waitForTimeout(200)
 
-    const transform = await cover.evaluate(element => getComputedStyle(element).transform)
-    expect(transform).toBe('none')
+    await expect.poll(() => cover.evaluate(element => getComputedStyle(element).transform)).toBe('none')
   })
 
   test('mobile index does not overflow horizontally', async ({ page }) => {

@@ -42,8 +42,7 @@ const groups = [
 
     <div
       class="status-bar"
-      role="img"
-      :aria-label="`${implemented} implemented, ${provisional} provisional, ${proposed} proposed, ${deferred} deferred`"
+      aria-hidden="true"
     >
       <span
         v-for="index in implemented"

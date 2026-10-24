@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { tokenizeCodeLine, type CodeLanguage } from '~/utils/code'
+import { nextTabIndex } from '~/utils/tabNavigation'
 
 interface Snippet {
   label: string
@@ -88,15 +89,7 @@ function move(event: KeyboardEvent, index: number) {
   if (!keys.includes(event.key)) return
 
   event.preventDefault()
-  const next = event.key === 'ArrowLeft'
-    ? (index - 1 + snippets.length) % snippets.length
-    : event.key === 'ArrowRight'
-      ? (index + 1) % snippets.length
-      : event.key === 'Home'
-        ? 0
-        : snippets.length - 1
-
-  select(next)
+  select(nextTabIndex(event.key, index, snippets.length))
 }
 
 async function copyCode() {

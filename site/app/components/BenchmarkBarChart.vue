@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { seriesColor } from '~/utils/series'
+
 export interface BarSeries {
   label: string
   values: number[]
@@ -36,7 +38,7 @@ const padding = computed(() => (props.compact
 
 const cleanSeries = computed(() => props.series.map((entry, index) => ({
   ...entry,
-  color: entry.color ?? (index === 0 ? 'var(--chart-lime)' : index === 1 ? 'var(--chart-blue)' : index === 2 ? 'var(--chart-pink)' : 'var(--chart-violet)'),
+  color: entry.color ?? seriesColor(index),
   suffix: entry.suffix ?? '',
   digits: entry.digits ?? 1,
 })))
@@ -45,6 +47,14 @@ const count = computed(() => Math.max(1, props.labels.length))
 const innerWidth = computed(() => width - padding.value.left - padding.value.right)
 const innerHeight = computed(() => props.height - padding.value.top - padding.value.bottom)
 
+function stepFraction(fraction: number): number {
+  if (fraction <= 1) return 1
+  if (fraction <= 2) return 2
+  if (fraction <= 2.5) return 2.5
+  if (fraction <= 5) return 5
+  return 10
+}
+
 const ceiling = computed(() => {
   const values = cleanSeries.value.flatMap(entry => entry.values)
   if (props.threshold !== undefined) values.push(props.threshold)
@@ -52,7 +62,7 @@ const ceiling = computed(() => {
   const roughStep = largest / props.yTicks
   const magnitude = 10 ** Math.floor(Math.log10(roughStep))
   const fraction = roughStep / magnitude
-  const step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 2.5 ? 2.5 : fraction <= 5 ? 5 : 10) * magnitude
+  const step = stepFraction(fraction) * magnitude
   return Math.ceil(largest / step) * step
 })
 
