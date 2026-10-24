@@ -186,6 +186,28 @@ function zoomFactorFor(key: string) {
   return null
 }
 
+function applyZoomKey(event: KeyboardEvent): boolean {
+  const zoom = zoomFactorFor(event.key)
+  if (zoom === null) return false
+  event.preventDefault()
+  zoomFromCenter(zoom)
+  return true
+}
+
+function applyResetKey(event: KeyboardEvent): boolean {
+  if (event.key === '0') {
+    event.preventDefault()
+    fitAll()
+    return true
+  }
+  if (event.key === '1') {
+    event.preventDefault()
+    actualSize()
+    return true
+  }
+  return false
+}
+
 function panByArrowKey(event: KeyboardEvent) {
   event.preventDefault()
   const step = event.shiftKey ? 160 : 60
@@ -211,24 +233,7 @@ function onKeydown(event: KeyboardEvent) {
 
   if (event.metaKey || event.ctrlKey || event.altKey) return
 
-  const zoom = zoomFactorFor(event.key)
-  if (zoom !== null) {
-    event.preventDefault()
-    zoomFromCenter(zoom)
-    return
-  }
-
-  if (event.key === '0') {
-    event.preventDefault()
-    fitAll()
-    return
-  }
-
-  if (event.key === '1') {
-    event.preventDefault()
-    actualSize()
-    return
-  }
+  if (applyZoomKey(event) || applyResetKey(event)) return
 
   if (event.key.startsWith('Arrow')) panByArrowKey(event)
 }

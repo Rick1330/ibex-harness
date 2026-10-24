@@ -93,25 +93,30 @@ function tokenizeShellPlain(text: string, atLineStart: boolean): CodeToken[] {
     }
   }
 
+  return [...tokens, ...tokenizeShellRest(rest)]
+}
+
+function tokenizeShellRest(rest: string): CodeToken[] {
+  const tokens: CodeToken[] = []
   let cursor = 0
   for (const match of rest.matchAll(SHELL_REST_PATTERN)) {
     const index = match.index ?? 0
     if (index > cursor) {
       tokens.push({ text: rest.slice(cursor, index), kind: 'plain' })
     }
-
-    tokens.push({
-      text: match[0],
-      kind: match[0].startsWith('http') ? 'string' : match[0].startsWith('-') ? 'flag' : 'keyword',
-    })
+    tokens.push({ text: match[0], kind: shellRestKind(match[0]) })
     cursor = index + match[0].length
   }
-
   if (cursor < rest.length) {
     tokens.push({ text: rest.slice(cursor), kind: 'plain' })
   }
-
   return tokens
+}
+
+function shellRestKind(value: string): CodeTokenKind {
+  if (value.startsWith('http')) return 'string'
+  if (value.startsWith('-')) return 'flag'
+  return 'keyword'
 }
 
 function tokenizePlain(text: string, language: CodeLanguage, atLineStart: boolean): CodeToken[] {
@@ -128,16 +133,27 @@ export function isCommentLine(line: string, language: CodeLanguage) {
 
 export function tokenizeCodeLine(line: string, language: CodeLanguage): CodeToken[] {
   if (!line) return []
+  return isCommentLine(line, language)
+    ? tokenizeCommentLine(line)
+    : tokenizeCodeSegments(line, language)
+}
 
-  if (isCommentLine(line, language)) {
-    const trimmed = line.trimStart()
-    const indent = line.slice(0, line.length - trimmed.length)
-    return [
-      ...(indent ? [{ text: indent, kind: 'plain' as const }] : []),
-      { text: trimmed, kind: 'comment' },
-    ]
-  }
+function tokenizeCommentLine(line: string): CodeToken[] {
+  const trimmed = line.trimStart()
+  const indent = line.slice(0, line.length - trimmed.length)
+  return [
+    ...(indent ? [{ text: indent, kind: 'plain' as const }] : []),
+    { text: trimmed, kind: 'comment' },
+  ]
+}
 
+function segmentKind(text: string): CodeTokenKind {
+  if (text.startsWith('"') || text.startsWith("'") || text.startsWith('`')) return 'string'
+  if (text.startsWith('$')) return 'variable'
+  return 'number'
+}
+
+function tokenizeCodeSegments(line: string, language: CodeLanguage): CodeToken[] {
   const tokens: CodeToken[] = []
   let cursor = 0
 
@@ -148,15 +164,8 @@ export function tokenizeCodeLine(line: string, language: CodeLanguage): CodeToke
       tokens.push(...tokenizePlain(line.slice(cursor, index), language, cursor === 0))
     }
 
-    const text = match[0]
-    const kind: CodeTokenKind = text.startsWith('"') || text.startsWith("'") || text.startsWith('`')
-      ? 'string'
-      : text.startsWith('$')
-        ? 'variable'
-        : 'number'
-
-    tokens.push({ text, kind })
-    cursor = index + text.length
+    tokens.push({ text: match[0], kind: segmentKind(match[0]) })
+    cursor = index + match[0].length
   }
 
   if (cursor < line.length) {

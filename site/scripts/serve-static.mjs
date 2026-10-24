@@ -87,18 +87,26 @@ async function resolveAsset(urlPath) {
   return null
 }
 
+function isRedirect(match) {
+  return match !== null && (match.status === '301' || match.status === '302')
+}
+
+async function resolveServedAsset(match, pathname) {
+  if (match && match.status === '200') return resolveAsset(match.target)
+  return resolveAsset(pathname)
+}
+
 async function handle(request, response) {
   const pathname = new URL(request.url, `http://${request.headers.host}`).pathname
   const match = matchRedirect(pathname)
-  if (match && (match.status === '301' || match.status === '302')) {
+
+  if (isRedirect(match)) {
     response.writeHead(Number(match.status), { Location: match.target })
     response.end()
     return
   }
 
-  const asset = match && match.status === '200'
-    ? await resolveAsset(match.target)
-    : await resolveAsset(pathname)
+  const asset = await resolveServedAsset(match, pathname)
   if (asset) {
     const body = await readFile(asset)
     response.writeHead(200, { 'Content-Type': contentTypes.get(extname(asset)) ?? 'application/octet-stream' })
@@ -106,6 +114,10 @@ async function handle(request, response) {
     return
   }
 
+  await serveNotFound(response)
+}
+
+async function serveNotFound(response) {
   const notFound = await resolveAsset('/404.html')
   if (notFound) {
     const body = await readFile(notFound)

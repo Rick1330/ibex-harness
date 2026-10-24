@@ -511,22 +511,24 @@ function writePercentilesFor(run: typeof latestWrite): ModalMeterItem[] {
 const proxyModalLabels = computed(() => proxyHistory.value.map(run => formatDate(run.timestamp).replace(/, \d{4}$/, '')))
 const writeModalLabels = computed(() => writeHistory.value.map(run => formatDate(run.timestamp).replace(/, \d{4}$/, '')))
 
+const modalBuilders: Record<ModalKind, (row: number) => GraphModalState> = {
+  'proxy-latency': proxyLatencyModal,
+  'proxy-throughput': proxyThroughputModal,
+  'proxy-stages': () => proxyStagesModal(),
+  'go-benchmarks': () => goBenchmarksModal(),
+  'hnsw-latency': () => hnswModal('latency'),
+  'hnsw-recall': () => hnswModal('recall'),
+  'hnsw-method': () => hnswModal('method'),
+  ranking: rankingModal,
+  'write-history': row => writeModal('history', row),
+  'write-latest': row => writeModal('latest', row),
+  'write-gate': row => writeModal('gate', row),
+  'extraction-categories': row => extractionModal('categories', row),
+  'extraction-summary': row => extractionModal('summary', row),
+}
+
 function buildModal(kind: ModalKind, row: number): GraphModalState {
-  switch (kind) {
-    case 'proxy-latency': return proxyLatencyModal(row)
-    case 'proxy-throughput': return proxyThroughputModal(row)
-    case 'proxy-stages': return proxyStagesModal()
-    case 'go-benchmarks': return goBenchmarksModal()
-    case 'hnsw-latency': return hnswModal('latency')
-    case 'hnsw-recall': return hnswModal('recall')
-    case 'hnsw-method': return hnswModal('method')
-    case 'ranking': return rankingModal(row)
-    case 'write-history': return writeModal('history', row)
-    case 'write-latest': return writeModal('latest', row)
-    case 'write-gate': return writeModal('gate', row)
-    case 'extraction-categories': return extractionModal('categories', row)
-    case 'extraction-summary': return extractionModal('summary', row)
-  }
+  return modalBuilders[kind](row)
 }
 
 function proxyLatencyModal(row: number): GraphModalState {

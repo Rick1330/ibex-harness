@@ -75,10 +75,11 @@ fail_under = 95
 # Semgrep dependency-cooldown: refuse packages published within the last 7 days.
 exclude-newer = "7 days"
 # Security fixes must not wait out the cooldown: certifi ships emergency
-# releases for compromised-CA advisories (GHSA-6q48-6c7w-9gw2), so certifi
-# alone is exempt from the 7-day window (per-package cutoff in the far
-# future). Re-tighten if the certifi cadence slows.
-exclude-newer-package = { certifi = "2100-01-01T00:00:00Z" }
+# releases for compromised-CA advisories (GHSA-6q48-6c7w-9gw2) and filelock
+# carries an arbitrary-file-overwrite fix (CVE-2026-112940), so those two are
+# exempt from the 7-day window (per-package cutoffs in the far future).
+# Re-tighten if their cadence slows.
+exclude-newer-package = { certifi = "2100-01-01T00:00:00Z", filelock = "2100-01-01T00:00:00Z" }
 # Presidio 2.2.364 pins cryptography<49; CVE-2026-69247/69249 need >=50.0.0.
 # Override until Presidio raises its upper bound (operators we use are replace-only).
 override-dependencies = [

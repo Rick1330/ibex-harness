@@ -25,19 +25,104 @@ function readToken(name: string, fallback: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
 }
 
-function buildConfig(isDark: boolean, htmlLabels: boolean): MermaidConfig {
-  const ink = readToken('--site-ink', isDark ? '#f2f2ed' : '#0a0b0c')
-  const muted = readToken('--site-muted', isDark ? '#9a9d98' : '#5c605d')
-  const line = readToken('--site-line', isDark ? '#262a2d' : '#d8d8d0')
-  const lineStrong = readToken('--site-line-strong', isDark ? '#3a3f42' : '#b9bab2')
-  const surface = readToken('--site-surface', isDark ? '#101214' : '#f8f8f4')
-  const surfaceStrong = readToken('--site-surface-strong', isDark ? '#15181b' : '#ffffff')
-  const background = readToken('--site-bg', isDark ? '#090a0b' : '#f1f1ec')
-  const codeBackground = readToken('--site-code-bg', isDark ? '#141719' : '#e8e8e1')
-  const signal = readToken('--site-signal', isDark ? '#d8ff4f' : '#5f8f00')
-  const fontFamily = typeof document === 'undefined'
+function readThemeTokens(isDark: boolean) {
+  return {
+    ink: readToken('--site-ink', isDark ? '#f2f2ed' : '#0a0b0c'),
+    muted: readToken('--site-muted', isDark ? '#9a9d98' : '#5c605d'),
+    line: readToken('--site-line', isDark ? '#262a2d' : '#d8d8d0'),
+    lineStrong: readToken('--site-line-strong', isDark ? '#3a3f42' : '#b9bab2'),
+    surface: readToken('--site-surface', isDark ? '#101214' : '#f8f8f4'),
+    surfaceStrong: readToken('--site-surface-strong', isDark ? '#15181b' : '#ffffff'),
+    background: readToken('--site-bg', isDark ? '#090a0b' : '#f1f1ec'),
+    codeBackground: readToken('--site-code-bg', isDark ? '#141719' : '#e8e8e1'),
+    signal: readToken('--site-signal', isDark ? '#d8ff4f' : '#5f8f00'),
+  }
+}
+
+function readFontFamily() {
+  return typeof document === 'undefined'
     ? 'ui-sans-serif, system-ui, sans-serif'
     : getComputedStyle(document.body).fontFamily
+}
+
+function buildThemeCSS(isDark: boolean, signal: string) {
+  const shadow = isDark ? 'rgba(0, 0, 0, 0.45)' : 'rgba(10, 11, 12, 0.08)'
+  return `
+      .node rect, .node polygon, .node circle, .node ellipse, .node path { stroke-width: 1.2px; filter: drop-shadow(0 1px 1.5px ${shadow}); }
+      .nodeLabel { font-weight: 500; }
+      .cluster rect { stroke-width: 1.1px; }
+      .cluster-label .nodeLabel { color: ${signal}; fill: ${signal}; font-weight: 600; letter-spacing: 0.01em; }
+      .flowchart-link, .edgePath .path { stroke-width: 1.2px; }
+      .edgeLabel, .edgeLabel p { font-size: 12.5px; }
+    `
+}
+
+function buildThemeVariables(palette: ReturnType<typeof readThemeTokens>, fontFamily: string): MermaidConfig['themeVariables'] {
+  const {
+    ink, muted, line, lineStrong, surface, surfaceStrong,
+    background, codeBackground, signal,
+  } = palette
+  return {
+    fontFamily,
+    fontSize: '15px',
+    background,
+    mainBkg: surfaceStrong,
+    primaryColor: surfaceStrong,
+    primaryTextColor: ink,
+    primaryBorderColor: lineStrong,
+    secondaryColor: codeBackground,
+    tertiaryColor: surface,
+    lineColor: muted,
+    textColor: ink,
+    nodeTextColor: ink,
+    edgeLabelBackground: background,
+    clusterBkg: surface,
+    clusterBorder: line,
+    titleColor: ink,
+    nodeBorder: lineStrong,
+    actorBkg: surfaceStrong,
+    actorBorder: lineStrong,
+    actorTextColor: ink,
+    actorLineColor: lineStrong,
+    signalColor: ink,
+    signalTextColor: ink,
+    labelBoxBkgColor: surface,
+    labelBoxBorderColor: lineStrong,
+    labelTextColor: ink,
+    loopTextColor: ink,
+    noteBkgColor: codeBackground,
+    noteBorderColor: lineStrong,
+    noteTextColor: ink,
+    activationBkgColor: surface,
+    activationBorderColor: signal,
+    sectionBkgColor: surface,
+    altSectionBkgColor: background,
+    taskBkgColor: surfaceStrong,
+    taskBorderColor: lineStrong,
+    taskTextColor: ink,
+    activeTaskBkgColor: codeBackground,
+    activeTaskBorderColor: signal,
+    gridColor: line,
+    doneTaskBkgColor: codeBackground,
+    doneTaskBorderColor: lineStrong,
+    critBkgColor: codeBackground,
+    critBorderColor: signal,
+    todayLineColor: signal,
+    attributeBackgroundColorOdd: surface,
+    attributeBackgroundColorEven: codeBackground,
+    attributeTextColor: ink,
+    rowOdd: surface,
+    rowEven: codeBackground,
+  }
+}
+
+// Diagram-type options are theme-independent; the shared useMaxWidth keeps
+// every diagram responsive inside its container.
+const DIAGRAM_TYPE_OPTIONS = { useMaxWidth: true } as const
+
+function buildConfig(isDark: boolean, htmlLabels: boolean): MermaidConfig {
+  const palette = readThemeTokens(isDark)
+  const fontFamily = readFontFamily()
 
   return {
     startOnLoad: false,
@@ -46,97 +131,16 @@ function buildConfig(isDark: boolean, htmlLabels: boolean): MermaidConfig {
     darkMode: isDark,
     fontFamily,
     htmlLabels,
-    themeCSS: `
-      .node rect, .node polygon, .node circle, .node ellipse, .node path { stroke-width: 1.2px; filter: drop-shadow(0 1px 1.5px ${isDark ? 'rgba(0, 0, 0, 0.45)' : 'rgba(10, 11, 12, 0.08)'}); }
-      .nodeLabel { font-weight: 500; }
-      .cluster rect { stroke-width: 1.1px; }
-      .cluster-label .nodeLabel { color: ${signal}; fill: ${signal}; font-weight: 600; letter-spacing: 0.01em; }
-      .flowchart-link, .edgePath .path { stroke-width: 1.2px; }
-      .edgeLabel, .edgeLabel p { font-size: 12.5px; }
-    `,
-    themeVariables: {
-      fontFamily,
-      fontSize: '15px',
-      background,
-      mainBkg: surfaceStrong,
-      primaryColor: surfaceStrong,
-      primaryTextColor: ink,
-      primaryBorderColor: lineStrong,
-      secondaryColor: codeBackground,
-      tertiaryColor: surface,
-      lineColor: muted,
-      textColor: ink,
-      nodeTextColor: ink,
-      edgeLabelBackground: background,
-      clusterBkg: surface,
-      clusterBorder: line,
-      titleColor: ink,
-      nodeBorder: lineStrong,
-      actorBkg: surfaceStrong,
-      actorBorder: lineStrong,
-      actorTextColor: ink,
-      actorLineColor: lineStrong,
-      signalColor: ink,
-      signalTextColor: ink,
-      labelBoxBkgColor: surface,
-      labelBoxBorderColor: lineStrong,
-      labelTextColor: ink,
-      loopTextColor: ink,
-      noteBkgColor: codeBackground,
-      noteBorderColor: lineStrong,
-      noteTextColor: ink,
-      activationBkgColor: surface,
-      activationBorderColor: signal,
-      sectionBkgColor: surface,
-      altSectionBkgColor: background,
-      taskBkgColor: surfaceStrong,
-      taskBorderColor: lineStrong,
-      taskTextColor: ink,
-      activeTaskBkgColor: codeBackground,
-      activeTaskBorderColor: signal,
-      gridColor: line,
-      doneTaskBkgColor: codeBackground,
-      doneTaskBorderColor: lineStrong,
-      critBkgColor: codeBackground,
-      critBorderColor: signal,
-      todayLineColor: signal,
-      attributeBackgroundColorOdd: surface,
-      attributeBackgroundColorEven: codeBackground,
-      attributeTextColor: ink,
-      rowOdd: surface,
-      rowEven: codeBackground,
-    },
-    flowchart: {
-      useMaxWidth: true,
-      wrappingWidth: 260,
-      curve: 'basis',
-      nodeSpacing: 40,
-      rankSpacing: 48,
-      padding: 14,
-    },
-    sequence: {
-      useMaxWidth: true,
-      wrap: true,
-      mirrorActors: false,
-      actorMargin: 48,
-      messageMargin: 36,
-      noteMargin: 12,
-      boxMargin: 10,
-    },
-    gantt: {
-      useMaxWidth: true,
-      leftPadding: 96,
-      gridLineStartPadding: 40,
-      barHeight: 22,
-      barGap: 6,
-      topPadding: 56,
-      sectionFontSize: 12,
-    },
-    journey: { useMaxWidth: true },
-    timeline: { useMaxWidth: true },
-    class: { useMaxWidth: true },
-    state: { useMaxWidth: true },
-    er: { useMaxWidth: true },
+    themeCSS: buildThemeCSS(isDark, palette.signal),
+    themeVariables: buildThemeVariables(palette, fontFamily),
+    flowchart: { ...DIAGRAM_TYPE_OPTIONS, wrappingWidth: 260, curve: 'basis', nodeSpacing: 40, rankSpacing: 48, padding: 14 },
+    sequence: { ...DIAGRAM_TYPE_OPTIONS, wrap: true, mirrorActors: false, actorMargin: 48, messageMargin: 36, noteMargin: 12, boxMargin: 10 },
+    gantt: { ...DIAGRAM_TYPE_OPTIONS, leftPadding: 96, gridLineStartPadding: 40, barHeight: 22, barGap: 6, topPadding: 56, sectionFontSize: 12 },
+    journey: DIAGRAM_TYPE_OPTIONS,
+    timeline: DIAGRAM_TYPE_OPTIONS,
+    class: DIAGRAM_TYPE_OPTIONS,
+    state: DIAGRAM_TYPE_OPTIONS,
+    er: DIAGRAM_TYPE_OPTIONS,
   }
 }
 

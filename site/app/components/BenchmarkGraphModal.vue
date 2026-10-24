@@ -76,17 +76,14 @@ watch(() => props.open, (open) => {
   else document.body.style.overflow = previousOverflow
 })
 
-function onKeydown(event: KeyboardEvent) {
-  if (!props.open) return
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    onClose()
-    return
-  }
-  if (event.key !== 'Tab' || !panel.value) return
-
-  const focusable = [...panel.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+function focusableElements() {
+  if (!panel.value) return []
+  return [...panel.value.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')]
     .filter(element => element.offsetParent !== null)
+}
+
+function trapFocus(event: KeyboardEvent) {
+  const focusable = focusableElements()
   if (!focusable.length) return
   const first = focusable[0]!
   const last = focusable[focusable.length - 1]!
@@ -97,6 +94,16 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault()
     first.focus()
   }
+}
+
+function onKeydown(event: KeyboardEvent) {
+  if (!props.open) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    onClose()
+    return
+  }
+  if (event.key === 'Tab') trapFocus(event)
 }
 
 function onRowKeydown(event: KeyboardEvent, row: number) {
