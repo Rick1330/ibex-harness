@@ -4,7 +4,7 @@ Signed `policy-snapshot.v1` envelope contract: JCS-canonical claims, RSA PKCS#1 
 
 ## Contract and ownership
 
-This is a shared package, not a deployable process. It implements the authority accepted in the G0 owner decision record (`web/engineering/architecture-v2/21-g0-owner-decision-record.md` §2.1-2.2): AuthService is the sole issuer (`services/auth` `IssuePolicySnapshot`) and consumers verify locally before any effect. Entry points: `snapshot.go` (claims, envelope, digest, classification), `issuer.go`, `verifier.go`, `keys.go`.
+This is a shared package, not a deployable process. It implements the authority accepted in the G0 owner decision record (`engineering/architecture-v2/21-g0-owner-decision-record.md` §2.1-2.2): AuthService is the sole issuer (`services/auth` `IssuePolicySnapshot`) and consumers verify locally before any effect. Entry points: `snapshot.go` (claims, envelope, digest, classification), `issuer.go`, `verifier.go`, `keys.go`.
 
 Safety semantics:
 

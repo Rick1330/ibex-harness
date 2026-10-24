@@ -16,7 +16,7 @@ Your output must be:
 - **Maintainable** (consistent patterns, low complexity, clear naming)
 - **Tested** (unit + integration where relevant)
 - **Observable** (metrics/logs/traces for meaningful events)
-- **Framework-compliant** (FastAPI, Next.js App Router, Go layout)
+- **Framework-compliant** (FastAPI, Next.js App Router, Nuxt 4 + Docus, Go layout)
 
 ### Absolute prohibitions
 
@@ -48,9 +48,19 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Auth Service (Go)**: token validation, permission bitmap enforcement, JWT issuance/verification flows, revocation propagation.
 - **Workers (Python/Celery)**: memory extraction, embeddings, conflict resolution, fingerprinting, drift detection, notifications, garbage collection.
 - **Console (Next.js/TypeScript)**: the canonical operator application for sessions, traces, memories, directives, drift alerts, and billing/usage views. `services/dashboard/` is a temporary 4.P.0 compatibility shell, not a second Track D product.
+- **Public Site (Nuxt 4 + Docus)**: `site/` renders the landing page, docs, blog, releases, and benchmarks as a static Cloudflare Pages deployment. It is not the operator application.
 - **Data layer**: PostgreSQL + pgvector (OLTP), Redis (cache/streams/rate limits), ClickHouse (analytics/billing events), MinIO/S3 (archives).
 
 **Critical path latency requirement:** Proxy overhead must remain minimal; context assembly must be bounded with deadlines and fallbacks.
+
+### 1.1 Current repository reality (verify before relying on this file)
+
+- **Public site:** `site/` is Nuxt 4 + Docus. CI builds it and deploys `site/.output/public` to Cloudflare Pages project `ibex-harness-docs` through `.github/workflows/site-deploy.yml`. There is no public-site server runtime.
+- **Engineering docs:** `engineering/` is canonical. ADRs live in `engineering/adr/`; they are engineering records, not public docs pages. The public `/docs/adr` route redirects to the GitHub directory.
+- **Status vocabulary:** `site/app/data/ledger.ts` and `site/content/docs/02.architecture/05.status-and-evidence.md` must agree with `engineering/architecture-v2/00-status-and-evidence.md`. Never promote a claim beyond its recorded evidence.
+- **Stable CI gate name:** the public-site aggregate check is `ci-gate-web`. Path-filter outputs remain `run_web`, and the site build job displays as `site-build`. Do not rename protected check contexts without updating `.github/branch-protection-main.json` and the live GitHub rule.
+- **Consoles:** `services/console` is canonical; `services/dashboard` is a compatibility shell only.
+- **Content status:** phases 0–3.5 are shipped locally. Phase 4 remains in progress; hosted HA, measured p99 SLOs, restore drills, and end-to-end tenant-isolation acceptance are open. See the status ledger before making any availability claim.
 
 ---
 
@@ -266,13 +276,24 @@ If you change hot path code, include a benchmark or performance justification.
 - set `SET LOCAL app.current_org_id = ...` per transaction
 - avoid N+1 queries; use proper eager loading if needed
 
-### 7.3 Next.js App Router
+### 7.3 Next.js App Router (`services/console`, `services/dashboard`)
 
 - server components by default
 - `"use client"` only where needed (leaf interactive components)
 - do not import server-only modules into client components
 - every data view has loading/empty/error states
 - keep components small and focused
+
+### 7.4 Nuxt 4 + Docus (`site/`)
+
+- keep the public site static-first; do not add server-only secrets, privileged data access, or runtime dependencies
+- put reader-facing content under `site/content/`; put routes/components under `site/app/`
+- use root scripts (`pnpm site:*`) instead of inventing package-level workflows
+- build before link, redirect, and browser checks: `pnpm site:build && pnpm site:check && pnpm --filter site test:e2e`
+- use absolute internal links (`/docs/...`) in site content and components
+- record status frontmatter (`status`, `verifiedDate`, `sourceOfTruth`) when a page makes capability claims; keep the claim boundary aligned with the ledger
+- keep `site/public/_redirects` small and validated; every local target must resolve in the build output
+- do not publish ADR pages or roadmap archives as public routes; link to repository records instead
 
 ---
 
@@ -311,6 +332,8 @@ For any change:
 - add cross-tenant tests when data access is involved
 - update or add contract tests when interfaces change
 - add performance tests/benchmarks for hot path changes
+- for `site/` changes, run `pnpm site:typecheck`, `pnpm site:lint`, `pnpm site:build`, `pnpm site:check`, and `pnpm --filter site test:e2e`
+- for published content, run `pnpm --filter site check:claims` and update the status ledger when the claim boundary changes
 
 **Do not** rely on mocks for:
 
@@ -396,12 +419,13 @@ Before presenting changes, the agent must verify:
 ### Documentation
 
 - [ ] Docs updated if behavior/contracts changed
+- [ ] Public-site checks pass when `site/` or published content changed
 
 ---
 
 ## 13) Session Continuity (How Work Survives Context Loss)
 
-Agents should leave handoff notes at the end of a session or PR in the **session workspace** (`handoff.md` next to the clone; see `web/engineering/DEVELOPMENT_GUIDE.md` §12), not in the git repository.
+Agents should leave handoff notes at the end of a session or PR in the **session workspace** (`handoff.md` next to the clone; see `engineering/DEVELOPMENT_GUIDE.md` §12), not in the git repository.
 
 Minimum handoff:
 

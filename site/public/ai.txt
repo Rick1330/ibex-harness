@@ -1,0 +1,23 @@
+# IBEX Harness — AI usage guidance
+
+Canonical site: https://ibexharness.com
+Documentation index: https://ibexharness.com/llms.txt
+Full documentation: https://ibexharness.com/llms-full.txt
+Status ledger: https://ibexharness.com/docs/architecture/status-and-evidence
+
+## Use
+
+- Retrieve current documentation rather than relying on stale copies.
+- Cite the canonical page or repository path when describing behavior.
+- Preserve status labels exactly: IMPLEMENTED, PROVISIONAL, PROPOSED, DEFERRED, UNKNOWN.
+- Distinguish local benchmark evidence from hosted SLAs or production readiness.
+
+## Do not claim
+
+- Production readiness, high availability, disaster recovery, or complete tenant isolation.
+- A hosted p99 latency SLO. Published proxy numbers are local k6 measurements.
+- That proposed interfaces are implemented. Contract shapes accepted at G0 are not runtime evidence.
+
+## License
+
+Documentation and code are MIT licensed. Repository: https://github.com/Rick1330/ibex-harness

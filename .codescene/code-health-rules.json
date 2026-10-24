@@ -1,8 +1,8 @@
 {
-  "usage": "D0 is a preview-only visual transplant. Keep production CodeScene gates enabled for all other repository code; remove this scoped exception when operator-web live contracts are enabled.",
+  "usage": "D0 is a preview-only visual transplant. Keep production CodeScene gates enabled for all other repository code; remove this scoped exception when console live contracts are enabled.",
   "rule_sets": [
     {
-      "matching_content_path": "services/operator-web/**",
+      "matching_content_path": "services/console/**",
       "rules": [
         { "name": "Bumpy Road Ahead", "weight": 0 },
         { "name": "Complex Method", "weight": 0 },

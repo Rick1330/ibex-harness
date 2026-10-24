@@ -1,5 +1,5 @@
 packages:
-  - web
+  - site
   - packages/*
   - services/dashboard
   - services/console

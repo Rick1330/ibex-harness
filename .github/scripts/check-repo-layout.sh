@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALLOWED_TOP='^(web|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.github|\.git|_report|node_modules)$'
+ALLOWED_TOP='^(site|engineering|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.github|\.git|_report|node_modules)$'
 ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
 
 fail=0
@@ -18,7 +18,7 @@ for entry in *; do
       .editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|sonar-project.properties|.sonarcloud.properties|Makefile|go.mod|go.sum|osv-scanner.toml|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CLAUDE.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|CHANGELOG.md|README.md|node_modules|version-release.config.json|.version-release-manifest.json) ;;
       *)
         if [[ "$entry" =~ \.md$ ]] && ! [[ "$entry" =~ $ROOT_DOCS ]]; then
-          echo "Markdown at repo root not allowed: $entry (use web/engineering/)"
+          echo "Markdown at repo root not allowed: $entry (use engineering/)"
           fail=1
         else
           echo "Unexpected root file: $entry"
@@ -37,7 +37,7 @@ while IFS= read -r f; do
   if [[ "$f" == .github/* ]]; then
     continue
   fi
-  if [[ "$f" != web/* && "$f" != benchmarks/* && "$f" != AGENTS.md && "$f" != CLAUDE.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md && "$f" != CHANGELOG.md ]]; then
+  if [[ "$f" != site/* && "$f" != engineering/* && "$f" != benchmarks/* && "$f" != AGENTS.md && "$f" != CLAUDE.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md && "$f" != CHANGELOG.md ]]; then
     echo "Doc outside allowed paths: $f"
     fail=1
   fi

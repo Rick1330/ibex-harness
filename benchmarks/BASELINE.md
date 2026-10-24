@@ -15,7 +15,7 @@ When intentionally updating the baseline:
 4. Update `target_commit` / `baseline_sha` and other baseline values in `baseline.json` as needed.
 5. Include justification and raw bench numbers in the PR description.
 
-Do **not** hand-edit `web/public/benchmarks/benchmark-data.json`; `benchmark.yml` republishes history from aggregated runs.
+Do **not** hand-edit `site/public/benchmarks/benchmark-data.json`; `benchmark.yml` republishes history from aggregated runs.
 
 ## PR-time Go benchmark gate
 

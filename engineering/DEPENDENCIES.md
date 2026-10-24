@@ -1,0 +1,504 @@
+# IBEX Harness — Dependencies
+
+## 1) Purpose
+
+This document defines:
+
+- how we decide whether to add a dependency,
+- how we keep dependencies secure and up to date,
+- how we prevent “dependency bloat” (especially in SDKs and hot paths),
+- and the initial dependency inventory by service/module.
+
+IBEX Harness is a long-lived, security-sensitive system. Dependencies are a major source of:
+
+- supply-chain compromise risk,
+- hidden transitive bloat,
+- build instability,
+- performance regressions,
+- and maintenance debt.
+
+**Policy:** Adding a dependency is an architectural decision, not a convenience.
+
+---
+
+## 2) Dependency Selection Philosophy
+
+### 2.1 Core principles
+
+1. **Prefer standard libraries first**
+   - If the standard library can do it safely and clearly, use it.
+2. **Minimize transitive dependencies**
+   - A “small” dependency can pull in 50+ transitive dependencies.
+3. **Stability over novelty**
+   - Prefer mature libraries with stable APIs and strong adoption.
+4. **Security posture matters**
+   - A library with frequent CVEs or unclear maintainership is not acceptable.
+5. **Operational simplicity**
+   - Avoid dependencies that require new runtime services unless justified.
+6. **SDKs must be ultra-minimal**
+   - SDK dependency bloat becomes *your users’ problem*.
+
+### 2.2 Special rules for hot paths
+
+For latency-critical paths (proxy, context assembly):
+
+- dependencies must justify themselves with measurable value
+- avoid frameworks and heavy abstractions
+- prefer explicit code over “magic” libraries that add hidden overhead
+
+---
+
+## 3) Dependency Admission Process (Required)
+
+No dependency can be added without completing this checklist in the PR description.
+
+### 3.1 Admission checklist (must be answered)
+
+For dependency: **`<name>`** (version **`<x.y.z>`**)
+
+1) **Why is it needed?**
+
+   - What exact problem does it solve?
+   - What is the alternative using stdlib or existing deps?
+
+2) **Scope**
+
+   - Which service(s) / package(s) will use it?
+   - Is it in a hot path? (proxy/context/auth)
+
+3) **Security**
+
+   - Known CVEs in last 24 months?
+   - Security advisories policy / response track record?
+   - Does it handle untrusted input? (parsers, template engines)
+
+4) **Maintenance & maturity**
+
+   - Maintained in last 6 months?
+   - Bus factor (how many maintainers)?
+   - Adoption (is it widely used in production?)
+
+5) **Transitive dependency cost**
+
+   - How many transitive dependencies?
+   - What licenses are introduced?
+   - Does it increase bundle size (TypeScript)?
+
+6) **Performance**
+
+   - Any expected runtime cost (allocations, reflection, async overhead)?
+   - If in hot path, show micro-benchmark or rationale.
+
+7) **License**
+
+   - Must be compatible with our repo license strategy.
+   - Disallowed licenses are listed below.
+
+8) **Exit strategy**
+
+   - If this dependency is abandoned, what do we do?
+   - Can we replace it without rewriting the system?
+
+### 3.2 Approval rules
+
+- Non-hot path dependency: 1 maintainer approval
+- Hot path dependency (proxy/auth/context): 2 approvals + performance review
+- Any security/auth/crypto dependency: security review required
+- Any new runtime service (Kafka, new DB, etc.): ADR required
+
+---
+
+## 4) Lockfiles, Reproducibility, and Tooling
+
+### 4.1 Go
+
+- `go.mod` + `go.sum` are required and committed.
+- Use `govulncheck` in CI.
+- Prefer minimal dependencies; avoid “helper” packages that add little value.
+
+### 4.2 Python
+
+- Use `uv` for dependency management.
+- `pyproject.toml` declares direct dependencies.
+- `uv.lock` must be committed for reproducibility.
+- Use `pip-audit` or `uv pip audit` + OSV scanning in CI.
+
+### 4.3 TypeScript
+
+- The repository standard is **pnpm 9.15.9** with the root `pnpm-lock.yaml` and workspace manifests.
+- Use `pnpm install --frozen-lockfile --ignore-scripts`; do not introduce a competing `package-lock.json`.
+- Use `pnpm audit` plus OSV scanning where the workflow supports it.
+
+### 4.4 Docker base images
+
+- Pin base images by digest in production builds where feasible.
+- Scan images with Trivy in CI.
+- Maintain a documented baseline set of images (see Section 10).
+
+---
+
+## 5) Security & Update Policy
+
+### 5.1 Update cadence
+
+- Patch updates: weekly (automated PRs via Dependabot/Renovate)
+- Minor updates: monthly (or bundled with planned work)
+- Major updates: explicit evaluation + ADR if risk is meaningful
+
+### 5.2 Vulnerability remediation SLAs
+
+| Severity | Example | SLA | Notes |
+|----------|---------|-----|-------|
+| Critical | remote code execution, auth bypass | 24–48 hours | Emergency patch release allowed |
+| High | serious data leak risk | 7 days | Must be prioritized |
+| Medium | limited scope issue | 30 days | Planned |
+| Low | minor issues | best effort | Prefer batch updates |
+
+### 5.3 When a dependency becomes unsafe
+
+If a library is:
+
+- unmaintained,
+- repeatedly vulnerable,
+- or introduces unacceptable risk,
+
+We must:
+
+1. freeze updates (pin version)
+2. reduce usage surface
+3. plan replacement (issue + timeline)
+4. consider forking only if replacement is impossible and maintenance is feasible
+
+---
+
+## 6) License Policy
+
+### 6.1 Allowed licenses (typical)
+
+- MIT
+- Apache-2.0
+- BSD-2-Clause / BSD-3-Clause
+- ISC
+- Python Software Foundation License
+
+### 6.2 Disallowed / restricted licenses (default)
+
+- GPL / AGPL (unless explicitly approved for isolated tools)
+- “Commons Clause” or non-commercial restrictions
+- unclear/custom licenses
+
+If a dependency introduces a restricted license, an ADR is required.
+
+---
+
+## 7) Minimal Dependency Targets (by module type)
+
+### 7.1 SDKs (hard limit)
+
+SDKs are user-facing libraries. Dependency bloat is unacceptable.
+
+Targets:
+
+- Python SDK: ≤ 5 dependencies (excluding typing-extensions)
+- TypeScript SDK: ideally 0 runtime deps (types/build deps allowed)
+- Go SDK: stdlib + gRPC only
+
+### 7.2 Proxy/auth (Go hot path)
+
+Targets:
+
+- avoid frameworks
+- avoid heavy logging libraries (use stdlib `slog`)
+- keep concurrency and HTTP stack explicit
+
+### 7.3 Console
+
+Targets:
+
+- avoid heavy UI frameworks beyond Next.js + Tailwind
+- avoid large chart libs unless justified (bundle size budgets)
+- do not introduce “utility” libs for trivial helpers (prefer small local helpers)
+
+---
+
+## 8) Initial Dependency Inventory (Planned Baseline)
+
+This section defines the intended baseline dependency set. If implementation chooses differently, update this file and justify in PR/ADR.
+
+### 8.1 Go — Proxy service (services/proxy)
+
+Required:
+
+- Go stdlib (`net/http`, `context`, `crypto/*`, `encoding/json`, `time`, etc.)
+- `google.golang.org/grpc` (if proxy needs gRPC client)
+- Prometheus client for Go (metrics)
+- OpenTelemetry Go SDK (tracing)
+
+Allowed if justified (hot path review required):
+
+- `fasthttp` (provider-facing client side only) — only with benchmark justification
+- `golang.org/x/sync/errgroup` — accepted (small, stable)
+
+**Anthropic adapter (Phase 2.5 / ADR-0040):** use Go stdlib `net/http` in `packages/provider/anthropic/`, mirroring the OpenAI client. Do **not** add `github.com/anthropics/anthropic-sdk-go`.
+
+| Criterion | Decision |
+| --- | --- |
+| Why not SDK | Large transitive surface; SDK retries stack with ours (especially HTTP 529); stream iterators fight `provider.Response.Body io.ReadCloser` |
+| Stdlib sufficiency | Messages JSON + named SSE parse cleanly with `encoding/json` and a line-buffered translator |
+| Hot path | Explicit translate-pipe keeps TTFB and dual-write (ADR-0027) under control |
+| Exit | Revisit only with measured evidence that hand-rolled SSE/error handling is a maintenance liability |
+
+Avoid / disallow by default:
+
+- Gin/Echo/Fiber (frameworks)
+- heavyweight middleware frameworks
+- reflection-heavy routing libraries
+- Anthropic (or other LLM) official SDKs on the proxy hot path without ADR + evidence
+
+### 8.2 Go — Auth service (services/auth)
+
+Required:
+
+- Go stdlib
+- JWT library (if not using a minimal, audited implementation)
+  - Must be widely used and security-reviewed
+- Argon2 implementation (usually `golang.org/x/crypto/argon2`)
+- Prometheus + OpenTelemetry
+
+Avoid:
+
+- custom JWT parsing/signing
+- custom crypto helpers
+
+### 8.2.1 Go — Integration test harness (root module, `infra/testing/testutil`)
+
+**Dependency (planned):** `github.com/testcontainers/testcontainers-go` — **not yet in root `go.mod`** (Moby/docker transitive CVE and `repo-guards` layout blocked a root `internal/` path). Compose test stack is the supported path; testcontainers will land in an optional `infra/testing/` submodule in a follow-up PR.
+
+**Admission (summary, for when added):**
+
+1. **Why:** `TESTING_STRATEGY.md` requires real Postgres/Redis in integration tests; testcontainers provides self-contained local runs without compose.
+2. **Scope:** Integration-tagged tests only (`//go:build integration`); not linked into service binaries.
+3. **Security:** Pulls Docker client libraries; no runtime in production images; scan via `go mod` + OSV in CI.
+4. **Maintenance:** CNCF-affiliated project; widely used; active releases.
+5. **Transitive:** Docker/Moby client chain — acceptable for dev/test-only path.
+6. **Performance:** Container startup adds seconds locally; CI continues to use GHA service containers.
+7. **License:** MIT.
+8. **Exit:** Fall back to compose test stack (`make compose-test-up`) permanently supported.
+
+### 8.3 Python — Memory / API / Context / Embedder / Worker / MCP / Tokenizer services
+
+Preferred phase timing: embedder (+ optional tokenizer-service, MCP skeleton) **2.5**; memory **3**;
+worker + context + MCP tools **3.5**; management API **4**. See [`services/README.md`](../services/README.md).
+
+Required (typical, as each service lands):
+
+- FastAPI (HTTP services) / gRPC server libs (context)
+- Uvicorn/Gunicorn (runtime)
+- SQLAlchemy 2.0 + async driver (`asyncpg`)
+- Pydantic v2 (+ pydantic-settings)
+- Redis client (async)
+- Celery (worker) — preferred starting queue stack
+- Official `mcp` Python SDK (MCP memory server)
+- Hugging Face `tokenizers` (tokenizer-service path)
+- Presidio + spaCy (`en_core_web_md`) for memory write-path PII (m3.C.1 / ADR-0054)
+- OpenTelemetry Python SDK
+- Sentry SDK (optional)
+
+#### 8.3.1 Admission — Presidio + spaCy (m3.C.1)
+
+For dependencies: **presidio-analyzer** / **presidio-anonymizer** (2.2.x), **spacy** (3.8.x),
+**en-core-web-md** (3.8.0 wheel; **en-core-web-sm** locked for microbench only).
+
+1. **Why:** Two-tier PII (structured regex + NER) with per-finding confidence for quarantine.
+   Stdlib regex alone misses names/addresses required for GDPR-oriented write hygiene.
+2. **Scope:** `services/memory` write pipeline only (not proxy/auth hot path).
+3. **Security:** Processes untrusted user memory text; MIT-licensed Microsoft Presidio;
+   no external PII API. Semgrep still bans embedding ML stacks; spaCy CNN models only
+   (`trf` forbidden). Scan via Dependabot pip + OSV on `uv.lock`.
+4. **Maintenance:** Presidio and spaCy actively maintained; wide production adoption.
+5. **Transitive:** phonenumbers, thinc, numpy, etc. — accepted for the memory image;
+   not linked into Go services.
+6. **Performance:** NER-only microbench (`benchmarks/memory/pii/microbench_spacy_models.json`):
+   md p50 ≈ 3.7 ms / p95 ≈ 22 ms on sample texts vs write budget p95 200 ms (including
+   embedding). Prefer md over lg (~560 MB image) given similar NER for this use.
+7. **License:** MIT (Presidio, spaCy models).
+8. **Exit:** Replace with a remote AnalyzerEngine sidecar only if write-budget measurement
+   forces it; keep typed Anonymizer operators behind `app/pii/` interfaces.
+
+**CVE note:** Presidio Anonymizer 2.2.364 declares `cryptography>=48.0.1,<49`. CVEs
+CVE-2026-69247 / CVE-2026-69249 require `cryptography>=50.0.0`. This service pins and
+`[tool.uv] override-dependencies` forces `cryptography>=50.0.0` (replace-only operators;
+revisit when Presidio raises its upper bound).
+
+Embedding inference preference: call **TEI** (or hosted embedding APIs) behind a thin client rather than bundling heavy `sentence-transformers` into every service process. Local MiniLM remains valid for CPU/dev profiles.
+
+Avoid:
+
+- large “all-in-one” frameworks that add unrelated functionality
+- ORMs for ClickHouse (raw SQL preferred)
+- inventing a second auth stack for MCP (reuse Auth gRPC)
+
+### 8.4 TypeScript — Canonical Console (`services/console`)
+
+Required:
+
+- Next.js
+- React
+- TypeScript
+- Tailwind
+- TanStack Query
+- Zustand
+- Sentry (optional)
+- Observable Plot / Recharts (as needed)
+
+Avoid:
+
+- lodash (prefer native JS)
+- moment (prefer date-fns or Temporal polyfill if truly needed)
+- axios (prefer fetch)
+
+### 8.4.1 TypeScript — Proto stubs (`packages/proto`)
+
+**Dependency:** `@bufbuild/protobuf` ^2.14.0 (workspace dev/type resolution only; `gen/typescript` is gitignored).
+
+**Admission (summary):**
+
+1. **Why:** Buf `protoc-gen-es` emits TypeScript that imports `@bufbuild/protobuf`; without a workspace package, IDE and `tsc -p packages/proto/tsconfig.json` cannot resolve types locally or in CI after `buf generate`.
+2. **Scope:** `packages/proto` only; not linked into Go services or production runtime.
+3. **Security:** Buf-maintained runtime for generated message types; no untrusted input parsing in this package.
+4. **Maintenance:** Active Buf ecosystem; semver-aligned with `protoc-gen-es` / buf.gen.yaml pins.
+5. **Transitive:** Single direct dep; Apache-2.0.
+6. **Performance:** Typecheck-only / IDE; zero hot-path impact.
+7. **License:** Apache-2.0 (compatible).
+8. **Exit:** Remove workspace package if generated TS stubs are dropped or moved to committed artifacts with a different type strategy (see ADR-0004).
+
+---
+
+## 9) Dependency Scanning in CI (Required Gates)
+
+### 9.0 Unified scanning (active)
+
+- **OSV Scanner** (`osv-scan` in `.github/workflows/ci.yml`): recursive scan of `go.sum` and future lockfiles; fails on CRITICAL/HIGH; SARIF to GitHub Security.
+- **Dependabot** (`.github/dependabot.yml`): `github-actions` + root `gomod` at `/` (weekly),
+  plus **`pip` for `/services/memory`** (enabled for m3.C.1 / `uv.lock`). Automated dependency
+  PRs are the primary CVE remediation between CI runs.
+
+**Dependabot coverage** (add blocks in `.github/dependabot.yml` as lockfiles land):
+
+| Ecosystem | Directory | Status |
+|-----------|-----------|--------|
+| `pip` | `/services/memory` | **Enabled** (`pyproject.toml` + `uv.lock`) |
+| `pnpm` | `/` | **Enabled** via root `pnpm-lock.yaml`; canonical workspace package is `@ibex/console` |
+
+Also extend golangci-lint paths for new Go services (see [AGENTS.md](../AGENTS.md) and this guide). Bandit already covers `services/memory/app`.
+
+### 9.0.1 SCA remediation thresholds (OSPS-VM-05.01–05.03)
+
+| Severity | Policy | CI enforcement |
+| --- | --- | --- |
+| CRITICAL (known exploit) | Block merge; fix or documented waiver with ADR before release | OSV, Trivy, govulncheck fail PR |
+| HIGH | Block merge unless waived with issue + deadline | OSV, Trivy |
+| MEDIUM/LOW | Track via Dependabot; fix in normal sprint | Advisory only |
+| License violations | Block merge; replace dependency or obtain legal review | `license-check` job |
+
+**Pre-release:** No tagged release ships with open CRITICAL dependency findings in required scans. Waivers require a linked issue and expiry date in `DEPENDENCIES.md` or an ADR.
+
+### 9.0.2 SAST remediation thresholds (OSPS-VM-06.01–06.02)
+
+| Tool | Block merge when | Suppressions |
+| --- | --- | --- |
+| CodeQL | New error-severity findings on changed code | `.github/codeql/codeql-config.yml` + inline `lgtm` only with security review |
+| Semgrep (`.semgrep/rules/`) | Any ERROR rule match | Document in PR or rule comment |
+| golangci-lint | Lint errors on touched Go packages | No blanket disables |
+| gitleaks | Any secret match | Never suppress without rotation |
+
+All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../CONTRIBUTING.md#required-ci-checks).
+
+- OSV Scanner (replaces separate `govulncheck` in CI)
+- `golangci-lint` on `./services/auth/...` and `./services/proxy/...` (hard gate)
+
+### 9.2 Python
+
+- **Bandit** (`bandit` job): SAST on `services/*/app` (embedder, mcp-memory, memory).
+  Install from `.github/requirements/bandit.txt` (`--require-hashes`, `--only-binary :all:`).
+  Pin `bandit[sarif]==1.9.4` so `-f sarif` works for GitHub Code Scanning upload.
+  The `[sarif]` extra is CI-only (not service runtime). Alternatives (JSON converter
+  or skip upload) were rejected. Refresh hashes with `pip-compile --generate-hashes`
+  on `.github/requirements/bandit.in`.
+- Semgrep `p/python` + `.semgrep/rules/` (active in CI), including
+  `ibex-memory-no-ml-imports` (ERROR) under `services/memory/` — bans in-process
+  `torch` / `tensorflow` / `transformers` / `sentence_transformers` / `sklearn`
+  (call embedder HTTP). **Does not ban** Presidio or spaCy CNN models used for
+  write-path PII (ADR-0054); `en_core_web_trf` remains forbidden because it pulls
+  `transformers`.
+- Unit/coverage jobs: `memory-test` / `memory-coverage` (fail-under 90), wired into
+  `ci-gate-python` (and listed on `ci-gate-go` for cross-gate visibility).
+- Dependabot `pip` for `/services/memory` enabled (weekly) now that `uv.lock` includes
+  Presidio/spaCy for m3.C.1.
+
+### 9.3 Node/TypeScript
+
+- CodeQL `javascript` + Semgrep `p/typescript` (active)
+- Future: uncomment Dependabot `npm` when dashboard has `package-lock.json`
+
+### 9.4 Containers
+
+- **Trivy filesystem** scan on PR/push (`trivy` job): CRITICAL/HIGH, `ignore-unfixed: true`
+- **Trivy image** (`docker-publish.yml`): CRITICAL/HIGH on built `auth`, `proxy`, `embedder`, `mcp-memory`, and `memory` OCI artifacts
+- **Hadolint** on all `Dockerfile*` paths (`services/auth`, `services/proxy`, `services/embedder`, `services/mcp-memory`, `services/memory`)
+- **Future:** `trivy image` per built image when CI produces tagged images (see `.github/workflows/sbom.yml` for SBOM supply chain)
+- block critical CVEs unless explicitly waived with documented reason and deadline (ADR required)
+
+---
+
+## 10) Base Image Policy (Docker)
+
+Recommended baseline images:
+
+- Go build: `golang:1.21` (builder stage)
+- Go runtime: `gcr.io/distroless/static-debian11` (runtime stage)
+- Python runtime: `python:3.11-slim` (or distroless python if feasible)
+- Node build: `node:18-alpine` (build stage)
+- Node runtime (dashboard): `node:18-alpine` or Next.js recommended runtime
+
+Rules:
+
+- keep runtime images minimal
+- remove build tools from runtime
+- do not run as root in production images
+- pin image versions and consider digest pinning for prod
+
+---
+
+## 11) Documentation Requirements (Dependency Changes)
+
+Whenever a dependency is added/removed/majorly updated:
+
+- update this file (DEPENDENCIES.md)
+- update service README if it changes setup
+- update any ADR if it changes architecture
+- ensure CI scanning rules reflect the new dependency ecosystem
+
+---
+
+## 12) Common Failure Modes (and how we avoid them)
+
+1. **“Just add lodash”** → bundle bloat, security exposure
+   - policy: prefer local helpers
+
+2. **“Let’s add Kafka”** → operational complexity early
+   - policy: new runtime services require ADR + clear scaling justification
+
+3. **“Let’s add a convenient auth library”** → hidden security pitfalls
+   - policy: auth/crypto deps require security review
+
+4. **“Let’s add an ORM for ClickHouse”** → performance/expressiveness loss
+   - policy: raw SQL preferred for OLAP queries
+
+5. **SDKs pulling large deps** → user pain + conflicts
+   - policy: strict SDK dependency cap
+
+---
+
+Dependencies are a long-term commitment.
+The cheapest dependency is the one you never add.

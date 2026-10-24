@@ -1,5 +1,5 @@
 // Minimal HTTP fixture that mounts the real proxy BudgetMiddleware against an
-// exhausted hard-cap loader. Used by web/e2e/hard-cap-denial.spec.ts (journey #8).
+// exhausted hard-cap loader. Used by site/e2e/hard-cap-denial.spec.ts (journey #8).
 package main
 
 import (

@@ -72,7 +72,7 @@ def build_protected_resource_metadata(settings: Settings) -> dict[str, object]:
         "authorization_servers": [settings.auth_server_url],
         "bearer_methods_supported": ["header"],
         "scopes_supported": list(OPERATOR_SCOPES),
-        "resource_documentation": "https://ibexharness.com/docs/adr/0086-mcp-operator-gateway",
+        "resource_documentation": "https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0086-mcp-operator-gateway.md",
     }
 
 

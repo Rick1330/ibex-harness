@@ -93,7 +93,7 @@ jobs:
           console.log(`api_base_url ok: ${origin}`);
           NODE
 
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
 
       - name: Build operator static shell
         run: pnpm --filter dashboard build

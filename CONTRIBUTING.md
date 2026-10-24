@@ -19,7 +19,7 @@ Podman and restricted sandboxes are supported with:
 IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
 ```
 
-Run `make env-doctor` when ports, container networking, or injected `OTEL_*` variables make the environment behave unexpectedly. See [web/engineering/TOOLCHAIN.md](web/engineering/TOOLCHAIN.md) for the manifest and runtime details.
+Run `make env-doctor` when ports, container networking, or injected `OTEL_*` variables make the environment behave unexpectedly. See [engineering/TOOLCHAIN.md](engineering/TOOLCHAIN.md) for the manifest and runtime details.
 
 ## PR-only workflow
 
@@ -40,7 +40,7 @@ Emergency fixes use a short-lived `hotfix/*` branch and the same PR process—no
 
 ## Branch naming
 
-Use the conventions in [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) §6.1:
+Use the conventions in [engineering/DEVELOPMENT_GUIDE.md](engineering/DEVELOPMENT_GUIDE.md) §6.1:
 
 - `feature/IBEX-1234-short-description`
 - `fix/IBEX-1234-short-description`
@@ -63,7 +63,7 @@ Optional body with rationale, breaking changes, or ops notes.
 
 Examples: `feat(proxy): add request ID middleware`, `docs(adr): add branch protection policy`, `fix(ci): stabilize gitleaks scan`.
 
-Align with [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) where language-specific rules apply.
+Align with [engineering/CODING_STANDARDS.md](engineering/CODING_STANDARDS.md) where language-specific rules apply.
 
 ## Developer Certificate of Origin (DCO)
 
@@ -120,19 +120,20 @@ Repository hints for Copilot: [.github/instructions/ibex-harness.instructions.md
 
 ## Required CI checks
 
-Every PR must pass these **branch protection** status checks (stable gate names; see [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx)):
+Every PR must pass these **branch protection** status checks (stable gate names; see [ADR-0008](engineering/adr/0008-security-ci-gates.md)):
 
 | Check | Purpose |
 |-------|---------|
 | `ci-gate-repo` | Fast repo checks: layout, shellcheck, markdownlint, compose (when infra changes), go-mod-tidy/license (when Go changes) |
 | `ci-gate-go` | Go/proto lint, tests, smokes, coverage, govulncheck (auto-passes when no Go changes) |
 | `ci-gate-python` | Embedder + mcp-memory pytest/coverage (auto-passes when no Python service changes) |
-| `ci-gate-web` | Web build and static export guards (auto-passes when no web changes) |
-| `ci-gate-security` | Trivy, OSV, bandit, hadolint (auto-passes when no Go/web/deps changes) |
+| `ci-gate-web` | Public site build, lint, typecheck, claims, links, redirects, and browser checks (stable legacy gate name; auto-passes when no site changes) |
+| `ci-gate-security` | Trivy, OSV, bandit, hadolint (auto-passes when no Go/site/deps changes) |
+| `ci-gate-semgrep` | IBEX Semgrep rules (auto-passes when no Go/site changes) |
 | `gitleaks` | Secret scan (always runs) |
 | `semantic-pr-title` | Conventional PR title format |
 
-Path-filtered jobs (Go smokes, `web-build`, `trivy`, etc.) may be **skipped** on docs-only or single-area PRs; gate jobs still run and pass. Cross-cutting changes (`.github/workflows/**`, lockfiles) trigger the full matrix.
+Path-filtered jobs (Go smokes, `site-build`, `trivy`, etc.) may be **skipped** on docs-only or single-area PRs; gate jobs still run and pass. Cross-cutting changes (`.github/workflows/**`, lockfiles) trigger the full matrix.
 
 **Also run on many PRs (not merge-blocking):** `CodeQL`, `semgrep`, `dependency-review` (deps/lockfile PRs), individual job names under gates.
 
@@ -167,9 +168,9 @@ On every PR, [`.github/workflows/labeler.yml`](.github/workflows/labeler.yml) ap
 | Label | When applied |
 |-------|----------------|
 | `area/go` | `services/**`, `packages/**`, `go.mod`, `go.sum` |
-| `area/web` | `web/**` |
+| `area/web` | `site/**` |
 | `area/ci` | `.github/**` |
-| `area/benchmarks` | `benchmarks/**`, `web/public/benchmarks/**` |
+| `area/benchmarks` | `benchmarks/**`, `site/public/benchmarks/**` |
 | `area/docs` | `**/*.md`, `**/*.mdx` |
 | `area/infra` | `infra/**`, `osv-scanner.toml` |
 | `dependencies` | `go.mod`, `go.sum`, `pnpm-lock.yaml` |
@@ -223,16 +224,24 @@ python3 -c "import yaml; import pathlib; [yaml.safe_load(p.read_text()) for p in
 make compose-test-up
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable make coverage-report
 
+# Public site checks (build is required before link, redirect, and browser checks)
+pnpm site:typecheck
+pnpm site:lint
+pnpm site:build
+pnpm site:check
+pnpm --filter site exec playwright install chromium
+pnpm --filter site test:e2e
+
 # Phase 1.5 public site smoke (production default; override with IBEX_SITE_URL)
 make verify-phase15
-# IBEX_SITE_URL=http://localhost:3000 make verify-phase15   # local static export preview
+# IBEX_SITE_URL=http://localhost:3000 make verify-phase15   # local production preview
 
 # Phase 2.5 exit gate (packages + Python; add IBEX_VERIFY_PHASE25_E2E=1 for live multi-service)
 make verify-phase25
 make coverage-gate
 ```
 
-CI/security config changes: follow [AGENTS.md](AGENTS.md) and [web/engineering/SECURITY.md](web/engineering/SECURITY.md).
+CI/security config changes: follow [AGENTS.md](AGENTS.md) and [engineering/SECURITY.md](engineering/SECURITY.md).
 
 ## Good first issues
 
@@ -242,11 +251,11 @@ Typical starter work: docs typos, markdown/examples, small test additions, CONTR
 
 ## Testing policy
 
-IBEX Harness requires automated tests for behavior changes. This satisfies our [OpenSSF Best Practices](web/engineering/OPENSSF_BEST_PRACTICES.md) enrollment and is enforced in review.
+IBEX Harness requires automated tests for behavior changes. This satisfies our [OpenSSF Best Practices](engineering/OPENSSF_BEST_PRACTICES.md) enrollment and is enforced in review.
 
-**Policy:** When you add or materially change production behavior (handlers, stores, auth, proxy routing, security boundaries), add or extend tests in the same PR. Prefer the test pyramid in [web/engineering/TESTING_STRATEGY.md](web/engineering/TESTING_STRATEGY.md): unit tests for logic, integration tests for DB/Redis contracts, E2E only for user journeys.
+**Policy:** When you add or materially change production behavior (handlers, stores, auth, proxy routing, security boundaries), add or extend tests in the same PR. Prefer the test pyramid in [engineering/TESTING_STRATEGY.md](engineering/TESTING_STRATEGY.md): unit tests for logic, integration tests for DB/Redis contracts, E2E only for user journeys.
 
-**Bugfixes:** At least half of production bugfix PRs must include a regression test ([TESTING_STRATEGY.md §11.1](web/engineering/TESTING_STRATEGY.md#111-regression-tests-on-bugfixes)).
+**Bugfixes:** At least half of production bugfix PRs must include a regression test ([TESTING_STRATEGY.md §11.1](engineering/TESTING_STRATEGY.md#111-regression-tests-on-bugfixes)).
 
 **How to run tests locally:**
 
@@ -272,10 +281,10 @@ We treat compiler and linter warnings as defects. Merge-blocking and advisory to
 | --- | --- | --- |
 | `golangci-lint` | Go services and packages | `ci-gate-go` |
 | `buf lint` | Protobuf | `ci-gate-go` |
-| Semgrep (`.semgrep/rules/`) | Custom security rules | `ci-gate-security` / PR |
+| Semgrep (`.semgrep/rules/`) | Custom security rules | `ci-gate-semgrep` / PR |
 | CodeQL | Go, Python, JavaScript | [`codeql.yml`](.github/workflows/codeql.yml) |
 | `ruff` / `bandit` | Python (when present) | `ci-gate-security` |
-| ESLint / TypeScript | Dashboard and web | `ci-gate-web` |
+| ESLint / TypeScript | Dashboard and site | `ci-gate-web` |
 | `markdownlint-cli2` | Handwritten `*.md` / `*.mdc` (see exclusions below) | `ci-gate-repo` |
 | `govulncheck`, Trivy, OSV | Dependencies | `ci-gate-go` / `ci-gate-security` |
 
@@ -285,7 +294,7 @@ We treat compiler and linter warnings as defects. Merge-blocking and advisory to
 
 Machine-generated markdown is excluded from `markdownlint-cli2` via [`.markdownlint-cli2.jsonc`](.markdownlint-cli2.jsonc) `ignores` — not by hand-editing each release or bot PR. Today that includes root `CHANGELOG.md` (version release pipeline). Handwritten docs must still pass lint locally and in CI.
 
-Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseChatCompletionRequest`) run in CI when `run_go` is true. See [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx).
+Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseChatCompletionRequest`) run in CI when `run_go` is true. See [ADR-0008](engineering/adr/0008-security-ci-gates.md).
 
 **CodeQL (one-time, repo admin):** Disable GitHub **Default** CodeQL setup so the advanced [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) can upload SARIF (Settings → Code security → Code scanning → CodeQL → use Advanced / disable Default).
 
@@ -293,7 +302,7 @@ Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseC
 
 ## Pull request template
 
-Use [.github/pull_request_template.md](.github/pull_request_template.md). Include **Tracking issue** (`Closes #N`), What/Why, How, Testing, Security, and Docs sections per [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) §7. The linked issue must reference the PR (`Implementation PR: #…`) so CI can verify bidirectional tracking.
+Use [.github/pull_request_template.md](.github/pull_request_template.md). Include **Tracking issue** (`Closes #N`), What/Why, How, Testing, Security, and Docs sections per [engineering/DEVELOPMENT_GUIDE.md](engineering/DEVELOPMENT_GUIDE.md) §7. The linked issue must reference the PR (`Implementation PR: #…`) so CI can verify bidirectional tracking.
 
 ## Code ownership
 
@@ -305,8 +314,8 @@ See [.github/SECURITY.md](.github/SECURITY.md) for vulnerability reporting.
 
 ## Further reading
 
-- [web/engineering/GOVERNANCE.md](web/engineering/GOVERNANCE.md) — maintainers, roles, access review
-- [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
-- [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) — style and quality bar
-- [web/content/docs/adr/0003-branch-protection-and-merge-policy.mdx](web/content/docs/adr/0003-branch-protection-and-merge-policy.mdx) — branch protection policy
-- [web/content/docs/adr/0008-security-ci-gates.mdx](web/content/docs/adr/0008-security-ci-gates.mdx) — security scanning CI gates
+- [engineering/GOVERNANCE.md](engineering/GOVERNANCE.md) — maintainers, roles, access review
+- [engineering/DEVELOPMENT_GUIDE.md](engineering/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
+- [engineering/CODING_STANDARDS.md](engineering/CODING_STANDARDS.md) — style and quality bar
+- [engineering/adr/0003-branch-protection-and-merge-policy.md](engineering/adr/0003-branch-protection-and-merge-policy.md) — branch protection policy
+- [engineering/adr/0008-security-ci-gates.md](engineering/adr/0008-security-ci-gates.md) — security scanning CI gates

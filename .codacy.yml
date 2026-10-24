@@ -3,10 +3,8 @@
 # Wave 14 dev/build helper scripts use validated spawnSync (shell:false, absolute paths).
 exclude_paths:
   # D0 is a preview-only visual transplant; production contracts are gated before enablement.
-  - "services/operator-web/**"
-  # D0 is a preview-only visual transplant; production contracts are gated before enablement.
-  - "services/operator-web/**"
-  - "web/scripts/**"
+  - "services/console/**"
+  - "site/scripts/**"
   - ".github/tools/licenses/**"
   - "**/*.test.ts"
   - "**/*.test.tsx"

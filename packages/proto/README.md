@@ -8,7 +8,7 @@ Protobuf source of truth for IBEX Harness internal gRPC contracts.
 proto/ibex/<domain>/v1/*.proto
 ```
 
-Generated output (when run locally) goes to `gen/` and is **not committed** — see [ADR-0004](../../web/content/docs/adr/0004-protobuf-and-codegen-policy.mdx).
+Generated output (when run locally) goes to `gen/` and is **not committed** — see [ADR-0004](../../engineering/adr/0004-protobuf-and-codegen-policy.md).
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ make proto-gen
 | `gen/python/` | `protocolbuffers/python` |
 | `gen/typescript/` | `bufbuild/es` (needs `@bufbuild/protobuf` from this workspace package for IDE/tsc) |
 
-Generated files are **not committed** — see [ADR-0004](../../web/content/docs/adr/0004-protobuf-and-codegen-policy.mdx).
+Generated files are **not committed** — see [ADR-0004](../../engineering/adr/0004-protobuf-and-codegen-policy.md).
 
 ## Contract tests
 
@@ -58,7 +58,7 @@ CI runs both in the `proto-contract` job (ephemeral `buf generate`; `gen/` must 
 
 | Package | Status | Service | Source |
 |---------|--------|---------|--------|
-| `ibex.auth.v1` | **Shipped** | AuthService (`ValidateToken`, `ValidateAgent`, PAT lifecycle) | [ADR-0006](../../web/content/docs/adr/0006-auth-proto-contract.mdx) |
+| `ibex.auth.v1` | **Shipped** | AuthService (`ValidateToken`, `ValidateAgent`, PAT lifecycle) | [ADR-0006](../../engineering/adr/0006-auth-proto-contract.md) |
 | `ibex.context.v1` | **Implemented; rollout/auth coverage pending** | ContextAssemblyService | `proto/ibex/context/v1/context.proto`, `context_contract_test.go`, `services/context/app/server.py` |
 | Memory / other domains | Planned **3+** | As milestones require | Add under `proto/ibex/<domain>/v1/` with ADR when inventing a new domain |
 

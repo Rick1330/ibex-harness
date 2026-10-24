@@ -3,22 +3,24 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "web:dev": "turbo dev --filter=web",
-    "web:dev:clean": "pnpm --filter web dev:clean",
-    "web:build": "turbo build --filter=web",
-    "web:build:clean": "pnpm --filter web build:clean",
-    "web:start": "pnpm --filter web start",
-    "docs:dev": "pnpm web:dev",
-    "docs:dev:clean": "pnpm web:dev:clean",
-    "docs:build": "pnpm web:build",
-    "docs:build:clean": "pnpm web:build:clean",
-    "docs:start": "pnpm web:start"
+    "site:dev": "turbo dev --filter=site",
+    "site:build": "turbo build --filter=site",
+    "site:build:clean": "pnpm --filter site build",
+    "site:start": "pnpm --filter site preview",
+    "site:lint": "pnpm --filter site lint",
+    "site:typecheck": "pnpm --filter site typecheck",
+    "site:check": "pnpm --filter site check:claims && pnpm --filter site check:links && pnpm --filter site check:redirects",
+    "docs:dev": "pnpm site:dev",
+    "docs:build": "pnpm site:build",
+    "docs:build:clean": "pnpm site:build:clean",
+    "docs:start": "pnpm site:start"
   },
   "devDependencies": {
     "dompurify": "3.4.16",
     "sharp": "0.35.5",
     "turbo": "^2.10.9",
-    "undici": "8.11.2"
+    "undici": "8.11.2",
+    "wrangler": "4.151.3"
   },
   "pnpm": {
     "overrides": {
@@ -34,6 +36,13 @@
       "katex": "0.18.2",
       "postcss-selector-parser": "7.1.6",
       "source-map-js": "1.2.2"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "sharp",
+      "@parcel/watcher",
+      "unrs-resolver"
+    ]
   }
 }

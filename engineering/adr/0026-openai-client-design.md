@@ -1,0 +1,89 @@
+---
+title: "ADR-0026: OpenAI client design"
+description: "Architecture decision record 0026 — OpenAI HTTP client, retry policy, env contract, and proxy forwarding for Phase 2."
+adrId: "0026"
+status: "Accepted"
+date: "2026-07-12"
+authors: "IBEX Harness team"
+---
+
+::decision-banner{status="Accepted" date="2026-07-12" id="0026"}
+::
+
+# ADR-0026: OpenAI client design
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.1.2 OpenAI non-streaming client](/roadmap)
+
+## Context
+
+Milestone 2.1.1 shipped `packages/provider` with an empty registry. Phase 2 Goal 2.1 requires `POST /v1/chat/completions` with `stream=false` to return a real OpenAI completion. The first concrete adapter lives in `packages/provider/openai/` and is registered by the proxy at startup.
+
+Prior engineering docs (`ENVIRONMENT_VARIABLES.md` §9) described generic `IBEX_PROVIDER_*` variables that were never wired. Phase 2 is OpenAI-first; Anthropic env vars and multi-key live registration land in Phase 2.5 ([ADR-0040](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0040-anthropic-provider-adapter.md)).
+
+## Decision
+
+### 1) Environment contract
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `IBEX_LLM_MODE` | No | `mock` | `mock` = empty registry (501 for chat); `live` = register OpenAI |
+| `OPENAI_API_KEY` | When `live` | — | OpenAI API key (secret; never logged) |
+| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | API base URL |
+| `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Per-request HTTP timeout |
+| `OPENAI_MAX_RETRIES` | No | `3` | Retries on transient failures |
+| `OPENAI_RETRY_BASE_DELAY` | No | `500ms` | Exponential backoff base |
+
+`IBEX_PROVIDER_*` circuit-breaker variables remain documentation-only until multi-provider work.
+
+### 2) Retry policy
+
+Retry on HTTP 429, 500, 502, 503, 504 and retryable network errors. Do **not** retry 400, 401, 403, 404. Backoff: `min(base * 2^attempt + jitter, 30s)`. Honor `Retry-After` on 429 when present.
+
+### 3) HTTP transport
+
+Single shared `http.Client` per process with connection pooling (`MaxIdleConnsPerHost: 20`). Constructed once in `openai.New`.
+
+### 4) Request translation
+
+`services/proxy/internal/llm.ToProviderRequest` converts parsed chat bodies to `provider.Request`. OpenAI-specific JSON marshaling stays in `packages/provider/openai`. Directive injection is **not** in this client — see ADR-0025 §5 and milestone 2.3.3.
+
+Unknown top-level JSON fields from the chat parser are ignored. `provider.Request.PassthroughFields` merges permitted OpenAI fields (for example `top_p`) into the outbound body; `model`, `messages`, and `stream` cannot be overridden.
+
+### 5) Streaming
+
+Streaming is implemented in milestone 2.1.3. See [ADR-0027](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0027-streaming-dual-write.md) for dual-write, flush, and no-retry-after-start rules. The OpenAI client sets `Accept: text/event-stream` when `Request.Stream` is true and returns the live SSE body to the proxy.
+
+### 6) Error mapping
+
+- **Client:** returns `provider.ProviderError` for non-2xx HTTP responses; transport errors as wrapped errors.
+- **Shared mapper (2.1.5):** `provider.MapError` / `MapProviderError` → `apierror.Error`; proxy writes via `apierror.WriteHTTP`.
+- Pre-stream failures (including `stream=true` before first SSE byte) use the same mapper; mid-stream failures follow [ADR-0027](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0027-streaming-dual-write.md) verbatim close (no JSON swap).
+
+### 7) Observability
+
+OTel span `openai.Complete` with `provider.name` and `llm.model` attributes. Prometheus counters: `ibex_proxy_provider_requests_total{provider,status_class}`, `ibex_proxy_provider_retries_total{provider}`. Never log API keys, message content, or raw provider bodies.
+
+### 8) Supported models (Phase 2)
+
+`gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-3.5-turbo`.
+
+## Consequences
+
+**Positive:**
+
+- First end-to-end non-streaming forward with CI-safe `IBEX_LLM_MODE=mock`
+- Clear env contract for operators enabling live mode
+- Registry lookup lives in ProviderRoutingMiddleware (milestone 2.1.4); handler reads provider from context
+- Provider → IBEX envelope mapping centralized in `packages/provider` (milestone 2.1.5)
+
+**Negative:**
+
+- (none outstanding for error mapping; Phase 4 may add provider-specific nuance without changing the shared table)
+## References
+
+- [ADR-0025: LLM provider abstraction](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0025-llm-provider-abstraction.md)
+- [Provider adapters](/docs/proxy/provider-adapters)
+- [Milestone 2.1.2](/roadmap)

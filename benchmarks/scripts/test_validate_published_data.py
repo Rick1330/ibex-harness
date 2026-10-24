@@ -97,7 +97,7 @@ def _invalid_payload_cases() -> list[tuple[str, dict[str, object]]]:
 
 class ValidatePublishedDataTests(unittest.TestCase):
     def test_validate_published_data_accepts_seed_file(self) -> None:
-        seed = ROOT / "web/public/benchmarks/benchmark-data.json"
+        seed = ROOT / "site/public/benchmarks/benchmark-data.json"
         if not seed.exists():
             self.skipTest("published benchmark seed not available")
         validate_published_data.validate_payload(
@@ -110,12 +110,12 @@ class ValidatePublishedDataTests(unittest.TestCase):
 
     def test_compare_pr_benchmark_json_accepts_matching_payloads(self) -> None:
         compare = load_module("compare_pr_benchmark_json", SCRIPTS / "compare_pr_benchmark_json.py")
-        seed = ROOT / "web/public/benchmarks/benchmark-data.json"
+        seed = ROOT / "site/public/benchmarks/benchmark-data.json"
         if not seed.exists():
             self.skipTest("published benchmark seed not available")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            committed = root / "web/public/benchmarks"
+            committed = root / "site/public/benchmarks"
             artifact = root / "benchmarks/output"
             committed.mkdir(parents=True)
             artifact.mkdir(parents=True)
@@ -205,12 +205,12 @@ class ValidatePublishedDataTests(unittest.TestCase):
 
     def test_validate_published_hnsw_parse_args_strict_flag(self) -> None:
         path, strict = validate_published_hnsw.parse_args(
-            ["--strict", "web/public/benchmarks/hnsw-benchmark-data.json"]
+            ["--strict", "site/public/benchmarks/hnsw-benchmark-data.json"]
         )
-        if path != "web/public/benchmarks/hnsw-benchmark-data.json" or strict is not True:
+        if path != "site/public/benchmarks/hnsw-benchmark-data.json" or strict is not True:
             raise AssertionError("expected --strict path parse")
         path, strict = validate_published_hnsw.parse_args(
-            ["web/public/benchmarks/hnsw-benchmark-data.json"]
+            ["site/public/benchmarks/hnsw-benchmark-data.json"]
         )
         if strict is not False:
             raise AssertionError("expected non-strict default")

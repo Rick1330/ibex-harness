@@ -8,7 +8,7 @@ We follow:
 - **URL-based API versioning** for REST: `/v1`, `/v2`
 - **Additive evolution** for protobuf contracts (breaking changes require new package versions)
 
-Release notes are human-readable summaries of user-visible changes, security fixes, and migrations — not raw git logs. See [RELEASING.md](web/engineering/RELEASING.md) for the automated version release pipeline.
+Release notes are human-readable summaries of user-visible changes, security fixes, and migrations — not raw git logs. See [RELEASING.md](engineering/RELEASING.md) for the automated version release pipeline.
 
 ---
 
@@ -309,7 +309,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
-- Idempotency-Key Redis dedupe for non-streaming chat (m2.1.6): optional `Idempotency-Key` header, `idempotency:{org_id}:{key}` claim/commit in `packages/idempotency`, replay on hit, `409 IDEMPOTENCY_KEY_REUSE` / `IDEMPOTENCY_IN_PROGRESS`, fail-open on Redis errors ([ADR-0035](web/content/docs/adr/0035-chat-idempotency-key.mdx))
+- Idempotency-Key Redis dedupe for non-streaming chat (m2.1.6): optional `Idempotency-Key` header, `idempotency:{org_id}:{key}` claim/commit in `packages/idempotency`, replay on hit, `409 IDEMPOTENCY_KEY_REUSE` / `IDEMPOTENCY_IN_PROGRESS`, fail-open on Redis errors ([ADR-0035](engineering/adr/0035-chat-idempotency-key.md))
 - Proxy overhead latency benchmark (m2.6.1): real warm-path Go stage microbenches, `BenchmarkProxyChatOverhead` with mockllm, ADR-0034, auth/provider duration histograms, k6 `full` profile chat path (`K6_USE_CHAT=1`), pinned `baseline.json`
 - In-process mock LLM provider (`packages/provider/mockllm`): `IBEX_LLM_MODE=mock` returns immediate OpenAI-shaped JSON (smoke/chat 200 without OpenAI)
 - Async trace emitter (m2.5.3): proxy `assembleTrace` + post-response bounded-pool emit into ClickHouse `Writer` (success, incomplete stream, provider failure); auth/directive stage latency on context; never blocks LLM response on CH errors
@@ -318,17 +318,17 @@ Release notes are human-readable summaries of user-visible changes, security fix
 - Session idle-timeout sweeper (m2.4.4): proxy ticker marks stale `active` sessions `abandoned` under service-account RLS with advisory-lock multi-replica safety, Redis cache invalidation, metrics `ibex_proxy_session_sweeper_*`, and partial index `idx_sessions_active_updated_at` (migration `000011`)
 - Proxy session lifecycle (m2.4.3): resolve/mint `X-IBEX-Session-ID` as sticky `external_id` before LLM forward; Redis session-state cache; response header on stream + non-stream; async non-dropping `AppendCheckpoint` pool drained on shutdown
 - Session store (`packages/session`): Postgres `GetOrCreate` / `AppendCheckpoint` / `Complete` with org RLS; proxy constructs store when `POSTGRES_DSN` is set; metrics `ibex_proxy_session_*` (milestone 2.4.2)
-- Sessions and checkpoints schema (`ibex_core.sessions` + `checkpoints`): Phase 2 subset with FORCE RLS, composite tenant FKs, append-only checkpoints, and extraction index ([ADR-0032](web/content/docs/adr/0032-session-data-model.mdx); migration `000010`; milestone 2.4.1)
-- System prompt injection (`packages/injection`): pure `Inject` for `system_first` / `system_append` / `user_prepend`; proxy applies resolved directive to `provider.Request.Messages` before `Complete` ([ADR-0031](web/content/docs/adr/0031-system-prompt-injection.mdx); milestone 2.3.3)
+- Sessions and checkpoints schema (`ibex_core.sessions` + `checkpoints`): Phase 2 subset with FORCE RLS, composite tenant FKs, append-only checkpoints, and extraction index ([ADR-0032](engineering/adr/0032-session-data-model.md); migration `000010`; milestone 2.4.1)
+- System prompt injection (`packages/injection`): pure `Inject` for `system_first` / `system_append` / `user_prepend`; proxy applies resolved directive to `provider.Request.Messages` before `Complete` ([ADR-0031](engineering/adr/0031-system-prompt-injection.md); milestone 2.3.3)
 - Directive resolver (`packages/directive`): Redis cache keyed `{org_id}:directive:{agent_id}` with Postgres fallback and pub/sub invalidation on `directive_updates:{org_id}`; proxy middleware resolves after agent verify (content stashed on context for 2.3.3 injection); metrics `ibex_proxy_directive_*`
-- Directive schema (`ibex_core.directives` + `directive_versions`): immutable versions with `active_version_id` pointer, org RLS, 32KB content cap ([ADR-0030](web/content/docs/adr/0030-directive-versioning.mdx); migration `000009`)
+- Directive schema (`ibex_core.directives` + `directive_versions`): immutable versions with `active_version_id` pointer, org RLS, 32KB content cap ([ADR-0030](engineering/adr/0030-directive-versioning.md); migration `000009`)
 - Auth cache revoke hardening: tombstone installed before index removal; LRU lookup re-checks revocation before serving cached claims
-- Token revocation propagation (`packages/revocation`): auth PUBLISH + proxy SUBSCRIBE on `ibex:token:revocations` with `token_id` events and `InvalidateByTokenID` ([ADR-0029](web/content/docs/adr/0029-token-revocation-propagation.mdx)); metrics `ibex_auth_revocation_publish_total`, `ibex_proxy_revocation_invalidate_total`
-- Auth cache (`packages/authcache`): in-process invalid-token bloom + claims LRU for proxy `ValidateToken` ([ADR-0028](web/content/docs/adr/0028-auth-cache-design.mdx)); metrics `ibex_proxy_auth_cache_*`; header `X-IBEX-Auth-Cached` on LRU hits
+- Token revocation propagation (`packages/revocation`): auth PUBLISH + proxy SUBSCRIBE on `ibex:token:revocations` with `token_id` events and `InvalidateByTokenID` ([ADR-0029](engineering/adr/0029-token-revocation-propagation.md)); metrics `ibex_auth_revocation_publish_total`, `ibex_proxy_revocation_invalidate_total`
+- Auth cache (`packages/authcache`): in-process invalid-token bloom + claims LRU for proxy `ValidateToken` ([ADR-0028](engineering/adr/0028-auth-cache-design.md)); metrics `ibex_proxy_auth_cache_*`; header `X-IBEX-Auth-Cached` on LRU hits
 - PR push hygiene guidance (see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md)) encoding #350 CI/merge lessons
-- Provider error mapping (`provider.MapError` / `MapProviderError` → `apierror.Error`) with sanitized details and `Retry-After` on upstream 429 ([ADR-0026](web/content/docs/adr/0026-openai-client-design.mdx))
-- Provider routing middleware (`ChatParse` + `ProviderRouting`) extracts model→provider lookup from the chat handler ([ADR-0025](web/content/docs/adr/0025-llm-provider-abstraction.mdx))
-- OpenAI streaming SSE dual-write forwarder (`stream=true`) with `StreamAccumulator`, flush-per-event, and stream metrics ([ADR-0027](web/content/docs/adr/0027-streaming-dual-write.mdx))
+- Provider error mapping (`provider.MapError` / `MapProviderError` → `apierror.Error`) with sanitized details and `Retry-After` on upstream 429 ([ADR-0026](engineering/adr/0026-openai-client-design.md))
+- Provider routing middleware (`ChatParse` + `ProviderRouting`) extracts model→provider lookup from the chat handler ([ADR-0025](engineering/adr/0025-llm-provider-abstraction.md))
+- OpenAI streaming SSE dual-write forwarder (`stream=true`) with `StreamAccumulator`, flush-per-event, and stream metrics ([ADR-0027](engineering/adr/0027-streaming-dual-write.md))
 - OpenAI non-streaming provider adapter (`packages/provider/openai`) and proxy wiring for `POST /v1/chat/completions`
 - Public API reference documentation at [ibexharness.com/docs/api-reference](https://ibexharness.com/docs/api-reference)
 - Cosign-signed SBOM assets on tagged GitHub Releases

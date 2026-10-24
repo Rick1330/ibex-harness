@@ -41,7 +41,8 @@ go:
   - '.golangci.complexity.yml'
   - '.github/tools/**'
 web:
-  - 'web/**'
+  - 'site/**'
+  - 'engineering/**'
   - 'CHANGELOG.md'
   - 'package.json'
   - '.npmrc'
@@ -49,9 +50,9 @@ web:
   - 'pnpm-workspace.yaml'
   - 'turbo.json'
   - '.github/workflows/ci.yml'
-  - '.github/workflows/web-deploy.yml'
+  - '.github/workflows/site-deploy.yml'
   - '.github/workflows/operator-deploy.yml'
-  - '.github/actions/setup-pnpm-web/**'
+  - '.github/actions/setup-pnpm-node/**'
   - 'services/dashboard/**'
 console:
   - 'services/console/**'
@@ -71,7 +72,7 @@ deps:
   - 'pnpm-lock.yaml'
 benchmarks:
   - 'benchmarks/**'
-  - 'web/public/benchmarks/**'
+  - 'site/public/benchmarks/**'
   - '.github/workflows/benchmark.yml'
   - '.github/workflows/memory-benchmark.yml'
   - 'services/auth/**'
@@ -82,6 +83,7 @@ benchmarks:
 docs:
   - '**/*.md'
   - '**/*.mdx'
+  - 'site/content/**'
 compose:
   - 'infra/compose/**'
   - 'infra/monitoring/**'

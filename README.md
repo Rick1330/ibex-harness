@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Rick1330/ibexharness-benchmark-bot/main/docs/brand/ibex-mark-dark.png">
-    <img alt="IBEX Harness" src="https://raw.githubusercontent.com/Rick1330/ibexharness-benchmark-bot/main/docs/brand/ibex-mark-light.png" width="96" height="96">
+    <source media="(prefers-color-scheme: dark)" srcset="site/public/brand/ibex-mark-dark.png">
+    <img alt="IBEX Harness" src="site/public/brand/ibex-mark-light.png" width="96" height="96">
   </picture>
 </p>
 
@@ -12,8 +12,8 @@
 <p align="center">
   <a href="https://ibexharness.com">Docs</a> ·
   <a href="https://ibexharness.com/benchmarks">Benchmarks</a> ·
-  <a href="web/engineering/DEVELOPMENT_GUIDE.md">Developer guide</a> ·
-  <a href="web/engineering/SECURITY.md">Security</a>
+  <a href="engineering/DEVELOPMENT_GUIDE.md">Developer guide</a> ·
+  <a href="engineering/SECURITY.md">Security</a>
 </p>
 
 <p align="center">
@@ -28,11 +28,11 @@
 
 Phases **0–3.5 are shipped**. **Phase 4 is in progress**: Track P operator readiness is the prerequisite for redesigned Track D capability slices. The current repository contains mounted, tenant-scoped, read-only **4.D.1 context/overview** and **4.D.2 metadata-only trace list/detail** surfaces. These are **mounted-but-provisional**, not proof of production identity, deployment, hosted acceptance, full management APIs, raw provenance, replay, or operator actions.
 
-See the [current-state snapshot](https://ibexharness.com/roadmap/current-state), [service inventory](services/README.md), [package inventory](packages/README.md), and [operator architecture boundary](web/engineering/OPERATOR_PLATFORM_ARCHITECTURE.md).
+See the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence), [published benchmarks](https://ibexharness.com/benchmarks), [service inventory](services/README.md), [package inventory](packages/README.md), and [operator architecture boundary](engineering/OPERATOR_PLATFORM_ARCHITECTURE.md).
 
 ## Quick start
 
-Prerequisites are Docker Compose v2 or Podman Compose, GNU Make, and the versions defined in [`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
+Prerequisites are Docker Compose v2 or Podman Compose, GNU Make, and the versions defined in [`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](engineering/TOOLCHAIN.md).
 
 ```bash
 git clone https://github.com/Rick1330/ibex-harness.git
@@ -50,7 +50,7 @@ IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
 
 Use `make env-doctor` for runtime, port, DNS, and injected telemetry diagnostics. `make db-seed` remains an optional local-development step; never run it against production.
 
-For the complete setup, service startup matrix, test commands, and teardown procedure, read [DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md).
+For the complete setup, service startup matrix, test commands, and teardown procedure, read [DEVELOPMENT_GUIDE.md](engineering/DEVELOPMENT_GUIDE.md).
 
 ## Service and package navigation
 
@@ -70,11 +70,11 @@ For the complete setup, service startup matrix, test commands, and teardown proc
 
 ## Engineering and contribution docs
 
-- [Architecture](web/engineering/ARCHITECTURE.md)
-- [API documentation](web/engineering/API_DOCUMENTATION.md)
-- [Environment variables](web/engineering/ENVIRONMENT_VARIABLES.md)
-- [Security](web/engineering/SECURITY.md)
-- [Testing strategy](web/engineering/TESTING_STRATEGY.md)
+- [Architecture](engineering/ARCHITECTURE.md)
+- [API documentation](engineering/API_DOCUMENTATION.md)
+- [Environment variables](engineering/ENVIRONMENT_VARIABLES.md)
+- [Security](engineering/SECURITY.md)
+- [Testing strategy](engineering/TESTING_STRATEGY.md)
 - [Contributing](CONTRIBUTING.md)
 
 All status claims must distinguish **implemented**, **mounted-but-provisional**, **specified-not-implemented**, and **deferred**. Do not infer hosted readiness from local routes, fixtures, schemas, or design documents.

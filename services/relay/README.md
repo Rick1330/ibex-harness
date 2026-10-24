@@ -6,7 +6,7 @@ projection sink, and finalizes the row. It is **default-off** and is not certifi
 for hosted or HA use.
 
 - Status: `implemented-local` (issue [#1002](https://github.com/Rick1330/ibex-harness/issues/1002)); GAP-011 remains open.
-- Decision record: [ADR-0085](../../web/content/docs/adr/0085-evidence-relay-daemon-and-session-fence.mdx).
+- Decision record: [ADR-0085](../../engineering/adr/0085-evidence-relay-daemon-and-session-fence.md).
 
 ## Source entry points
 
@@ -87,4 +87,4 @@ plus the shared race, lint, coverage, govulncheck, and license jobs.
 - No relay-level tenant/agent allowlist, request-auth layer, or operator/admin endpoint.
 - The fence read, outbox write, and projection are not a single atomic transaction.
 - Chat acknowledgement is not response-bound, so durable-before-ack is not yet proven end to end.
-- GAP-005 and GAP-011 remain open; see the [gap register](../../web/engineering/architecture-v2/18-gap-register.md).
+- GAP-005 and GAP-011 remain open; see the [gap register](../../engineering/architecture-v2/18-gap-register.md).

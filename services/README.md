@@ -1,6 +1,6 @@
 # Runtime services
 
-> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`web/engineering/architecture-v2/README.md`](../web/engineering/architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
+> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`engineering/architecture-v2/README.md`](../engineering/architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
 
 Deployable runtime components for IBEX Harness. This inventory describes the current repository, not a promise that every mounted route is production-certified. Use these status terms consistently:
 
@@ -8,7 +8,7 @@ Deployable runtime components for IBEX Harness. This inventory describes the cur
 - **Mounted-but-provisional:** implementation is present, but hosted identity, deployment, rollout, or acceptance evidence is still open.
 - **Deferred:** no current implementation should be assumed.
 
-The public documentation site lives in [`web/`](../web/). The current phase snapshot is the [roadmap current state](https://ibexharness.com/roadmap/current-state).
+The public documentation site lives in [`site/`](../site/). The current capability boundary is the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
 
 ## Current services
 
