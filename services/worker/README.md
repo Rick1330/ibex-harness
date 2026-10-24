@@ -83,7 +83,7 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 | `REDIS_DB_RESULTS` | `3` | Result backend logical DB |
 | `IBEX_WORKER_DATABASE_URL` / `POSTGRES_DSN` | (none) | Postgres DSN for dead-letter persistence and durable enqueue idempotency; required when enqueue HTTP is enabled |
 | `IBEX_WORKER_METRICS_PORT` | `8006` | Prometheus `/metrics` HTTP port |
-| `IBEX_WORKER_ENQUEUE_PORT` | `8007` | Starlette port for `POST /internal/extraction/enqueue` and `GET /health` ([ADR-0072](/docs/adr/0072-extraction-enqueue-via-worker-http)) |
+| `IBEX_WORKER_ENQUEUE_PORT` | `8007` | Starlette port for `POST /internal/extraction/enqueue` and `GET /health` ([ADR-0072](../../engineering/adr/0072-extraction-enqueue-via-worker-http.md)) |
 | `IBEX_WORKER_ENQUEUE_HOST` | `127.0.0.1` | Bind host; compose sets `0.0.0.0` |
 | `IBEX_WORKER_ENQUEUE_API_TOKEN` | (none) | Static Bearer; **required to enable** enqueue HTTP (no non-empty default; missing/blank → server not started). Secret; never logged |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (none) | OTLP gRPC collector (optional) |
@@ -102,7 +102,7 @@ visibility.
 
 ## Observability (m3.5.A.2)
 
-- **OTel:** `IbexTask.__call__` wraps every task in a span (`ibex-worker` tracer). See [ADR-0062](/docs/adr/0062-worker-task-observability-dead-letter).
+- **OTel:** `IbexTask.__call__` wraps every task in a span (`ibex-worker` tracer). See [ADR-0062](../../engineering/adr/0062-worker-task-observability-dead-letter.md).
 - **Dead-letter:** `task_failure` signal persists exhausted-retry failures to `ibex_core.failed_tasks` and increments `ibex_worker_task_dead_letter_total{task_name}`.
 - **Metrics:** `GET :8006/metrics` when worker process is running (`ibex_process_up`, dead-letter counter).
 - **Enqueue HTTP:** `POST :8007/internal/extraction/enqueue` (static Bearer plus required `Idempotency-Key`, max 256 characters) admits `extract_session_memories` through the tenant-scoped PostgreSQL `ibex_core.idempotency_ledger` before Celery `apply_async`. The full normalized payload (org, agent, session, and every turn) is hashed; replay returns the original task ID, changed payloads return 409, active claims return 409 with `Retry-After`, and dispatch failures release the claim. If dispatch succeeds but `ledger.finalize` does not commit, the handler returns 503 and the claim may remain active for its 120-second lease. Same-key retries during that lease return 409 `idempotency_in_progress`; after expiry, a retry may reclaim the claim and dispatch the task again. If finalization committed but its response was lost, a retry replays the stored result instead. PostgreSQL configuration is required for this mutation surface; without it, the endpoint fails closed with 503. `GET :8007/ready` checks the enqueue token, PostgreSQL ledger, and Redis broker; it returns 503 when any dependency is unavailable. `GET :8007/health` stays **unauthenticated** (liveness only; no secrets), matching embedder `/health`. Without `IBEX_WORKER_ENQUEUE_API_TOKEN`, the enqueue server does not start.

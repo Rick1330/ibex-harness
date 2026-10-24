@@ -1,0 +1,2959 @@
+# IBEX Harness - API Documentation
+
+> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`engineering/architecture-v2/README.md`](architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
+> **Status boundary:** This page contains a mixture of verified Phase 1 service APIs and historical/specification reference material. Do not treat an endpoint section as proof that a route is mounted. The canonical authenticated UI is `services/console`; `site/` is public documentation; `services/dashboard/` is a temporary compatibility shell.
+
+## Implementation status and ownership
+
+| Surface | Status | Rule |
+|---|---|---|
+| Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`) | **Implemented** in the documented Phase 1 baseline | Auth service owns authentication and revocation. |
+| Proxy HTTP auth probes, health/readiness/metrics, and chat stub | **Implemented** only where verified by the Phase 1 service tests; the chat stub returns `501` | Do not infer operator product APIs from proxy routes. |
+| API service operator/session/CSRF/CORS/SSE foundations | **Mounted-but-provisional** | D1 context and Overview reads enforce the metadata-read permission and RLS-bound session scope. Verify canonical secure-cookie/origin policy, real AuthService-backed sessions, and staging evidence before production use. |
+| D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
+| Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
+| D2 metadata trace list/detail | **Mounted-but-provisional** | `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` are read-only, tenant-scoped, no-store metadata routes. Full provenance panels, content, score explanations, replay, and actions remain planned and unaccepted. |
+| Memory service create/search/forget routes | **Mounted but provisional for GAP-007 lifecycle** | Runtime route and local tests exist; migration, PostgreSQL/RLS integration evidence, review, and contract acceptance remain open. See provisional forget endpoint below. |
+| Sessions, agents, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
+
+### Contract ownership and validation
+
+The owning backend service is authoritative for each REST/gRPC/SSE contract. The console server-only DAL/BFF must authorize the session and organization, call the owner, validate responses at runtime, redact fields, and return minimal DTOs. CI must snapshot OpenAPI, generate the TypeScript client from the snapshot, fail on snapshot/client drift, and validate SSE envelopes including version, event ID, sequence, and `Last-Event-ID` resume semantics. Hand-maintained UI types and fixture routes are not API implementations.
+
+### D2 metadata trace reads (mounted, provisional)
+
+The current D2 slice exposes only metadata from the canonical evidence read model:
+
+| Method | Path | Query / response boundary |
+| --- | --- | --- |
+| `GET` | `/v1/operator/traces` | `limit`, `status`, `started_after`, `started_before`, and signed `cursor`; maximum seven-day range and 100 rows. |
+| `GET` | `/v1/operator/traces/{trace_id}` | Tenant-scoped metadata detail; cross-tenant and missing records use the same not-found boundary. |
+
+Both routes require an AuthService-backed operator session outside development, `OPERATOR_METADATA_READ`, an organization-bound database transaction, and `Cache-Control: no-store`. The response source is `postgres.evidence_runs`; `source_watermark` is currently `not_provided`, retention is `unknown`, and unavailable spans, candidates, score explanation, directives, tools, and content are explicit rather than fabricated. The contract is maintained by `services/api/openapi.snapshot.json`, `services/api/scripts/route_inventory.json`, and the Console runtime schemas. Local route/contract evidence is not hosted deployment or milestone acceptance evidence; see ADR-0082 and issue #905.
+
+### Operator contract boundary
+
+The first operator slice is limited to server-owned context, overview, platform health, and operator events. Exact deployed paths, hostnames, origins, and workflows are intentionally not asserted here until verified. Personalized RSC, BFF, export, and SSE responses default to request-time `no-store`; any cache exception requires an explicit tenant-safe key design and two-role/two-tenant cache tests. Cookie-authenticated mutations require CSRF protection; cross-origin deployments require exact credentialed CORS allowlists and Origin/Referer validation.
+
+### Security and hostile content
+
+Every operator request, stream, export, deletion, replay, and asynchronous job derives organization context from server-side claims and enforces membership, permissions, resource scope, and step-up where required. Browser-supplied `org_id` is not trusted. Prompt, tool, HTML, Markdown, link, memory, and export content is untrusted and must be rendered inert or sanitized. Secrets and bearer tokens are never returned in general list/read responses.
+
+---
+
+> **Operator platform contract:** The historical Phase 4 dashboard work is gated by Track P. The current D2 slice mounts only a versioned metadata trace list/detail read; the planned operator UI consumes generated, versioned contracts for identity, tenant scope, query state, trace/span/event evidence, SSE envelopes, privacy state, usage/cost facts, incidents, and operator actions. A permission constant or database table is not an API implementation.
+> **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
+>
+> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented** unless a mounted implementation record is called out above. See the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
+
+## 🎯 API Design Philosophy
+
+### Core Principles
+
+1. **Predictable**: Every endpoint follows the same patterns. Learn one endpoint, understand all of them.
+
+2. **Explicit over implicit**: Error responses tell you exactly what went wrong and how to fix it. No cryptic error codes.
+
+3. **Versioned from day one**: Breaking changes never affect existing integrations. Old versions supported for 12 months minimum after deprecation notice.
+
+4. **Idempotent where possible**: Safe to retry on network failure. Every write operation accepts an idempotency key.
+
+5. **Consistent pagination**: Every list endpoint uses the same cursor-based pagination. No offset pagination (breaks at scale and with concurrent writes).
+
+6. **Performance transparent**: Every response includes timing headers so clients can debug latency issues.
+
+---
+
+## Operator Evidence Plane Contract
+
+The planned operator UI is an investigation client over a canonical evidence plane. This is a specification, not evidence that an operator route is mounted. Every evidence record is intended to use stable `event_id` and `source` identity, `trace_id`, `span_id`, `parent_span_id`, explicit `session_id`, `turn_id`, `request_id`, `checkpoint_id`, `aggregate_seq`, `schema_version`, timestamps, operation kind, status/error, capture mode, sample decision, and completeness metadata. `trace_id` represents causal distributed execution; `session_id` represents conversation grouping; neither may be inferred from the other.
+
+### Planned operator API behavior (specification-only)
+
+| Requirement | Contract |
+|---|---|
+| Tenant scope | Server-derived organization context on every request, stream, export, deletion, replay, and asynchronous job. |
+| Lists | Cursor pagination, bounded time ranges, stable sort, filter-before-page semantics, and explicit matched/displayed counts. |
+| Query state | Typed filters, facets, autocomplete, URL serialization, and a shareable query that reproduces the same result set. |
+| Evidence state | `complete`, `partial`, `sampled`, `late`, `redacted`, `expired`, `deleted`, and `simulated` are explicit states, not inferred empty results. |
+| Sensitive data | Metadata and redacted views are default. Raw access is a distinct permission, recent-authentication requirement, and audit event. |
+| Streaming | SSE events include stream version, event ID, sequence, retry behavior, and `Last-Event-ID` resume semantics. |
+| Writes | High-impact actions use idempotency keys, dry-run/preview where applicable, approval context, before/after hashes, audit identity, and rollback pointer. |
+
+### Data lifecycle contract
+
+ClickHouse TTL is not the deletion SLA. Retention and deletion are governed by policy records, tombstones, per-store watermarks, encrypted object manifests, legal holds, and verifiable receipts. The API must report when an evidence record is unavailable because it was never captured, sampled, redacted, expired, or deleted. See [OPERATOR_PLATFORM_ARCHITECTURE.md](OPERATOR_PLATFORM_ARCHITECTURE.md) for the complete contract and [Phase 4 Track P](/roadmap/phase-4-multi-provider/tracks#track-p--operator-readiness-evidence--control-plane) for implementation milestones.
+
+### Mandatory `org_id` scope
+
+Every operator evidence endpoint, SSE stream, export job, deletion job, and replay request **must** derive organization context from authenticated server-side claims. Clients must not supply a trusted `org_id` query parameter without membership verification. Missing or ambiguous org context returns **401/403** — never cross-tenant data. List endpoints use cursor pagination with filter-before-page semantics and explicit `matched_count` / `returned_count`.
+
+### Trace read model (4.D.2 prerequisites)
+
+Trace detail responses must support nested spans and the following optional blocks when evidence exists:
+
+```json
+{
+  "trace_id": "…",
+  "session_id": "…",
+  "checkpoint_id": "…",
+  "assembly_metrics": { "retrieve_ms": 12, "rank_ms": 3, "pack_ms": 5 },
+  "directive_snapshot": { "version": "…", "hash": "…" },
+  "candidates": [
+    {
+      "memory_id": "…",
+      "retrieval_rank": 1,
+      "similarity": 0.91,
+      "final_rank": 2,
+      "delta_rank": 1,
+      "composite_score": 0.82,
+      "score_components": { "similarity": 0.40, "recency": 0.25, "confidence": 0.20, "trust": 0.10, "label": 0.05 },
+      "exclusion": "included",
+      "token_estimate": 120
+    }
+  ],
+  "completeness": "complete"
+}
+```
+
+When score payload version is interim, return `"score_schema": "interim_v1"` so the UI does not render a false five-component waterfall.
+
+### Operator SSE envelope
+
+Operator-event streams (distinct from provider token SSE per ADR-0027) use:
+
+```text
+id: {event_id}
+event: operator.evidence
+data: {"schema_version":"…","org_id":"…","aggregate_seq":42,"completeness":"partial",…}
+```
+
+Clients reconnect with `Last-Event-ID`. Server deduplicates by `event_id`.
+
+## 🌐 Base URLs and origins
+
+No production, staging, sandbox, docs, operator, or API hostname is asserted by this repository baseline. Configure origins through the approved topology ADR and environment manifests; do not copy example hostnames into clients or tests. Local service ports may be documented by the owning service only when verified.
+
+---
+
+## 🔑 Authentication
+
+### API Key Authentication (SDK and CLI)
+
+```http
+Authorization: Bearer ibex_pat_7f3k2m9x...
+```
+
+All SDK and programmatic API calls use Bearer token authentication. Token creation ownership and availability are service-specific; this reference does not prove that an IBEX Console route or dashboard flow is mounted.
+
+### Historical/specification example: session token authentication (operator UI)
+
+```http
+Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...
+X-IBEX-Session: {session_id}
+```
+
+The JWT lifetime, refresh-token lifetime, rotation/reuse behavior, and whether refresh is automatic are **not verified by this repository baseline**. Treat this example as a reference contract only; the AuthService-owned session implementation and environment configuration must establish the actual durations and refresh behavior before use.
+
+### Request Signing (Webhooks)
+
+Outbound webhooks are signed with HMAC-SHA256:
+
+```http
+X-IBEX-Signature: sha256={hmac_hex}
+X-IBEX-Timestamp: 1705312445
+```
+
+Verify: `HMAC-SHA256(secret, timestamp + "." + body)`
+
+---
+
+## 📋 Common patterns (reference contract)
+
+### Request Headers
+
+```http
+Authorization: Bearer {token}          -- Required
+Content-Type: application/json         -- Required for POST/PUT/PATCH
+X-Idempotency-Key: {uuid}             -- Optional, recommended for writes
+X-Request-ID: {uuid}                   -- Optional, for tracing
+Accept-Language: en                    -- Optional, for error messages
+```
+
+### Response Headers
+
+```http
+X-Request-ID: {uuid}                   -- Echo of request ID
+X-Trace-ID: {trace_id}                -- Distributed trace ID
+X-RateLimit-Limit: 1000               -- Requests allowed per minute
+X-RateLimit-Remaining: 987            -- Requests remaining this window
+X-RateLimit-Reset: 1705312500         -- Unix timestamp when window resets
+X-Response-Time: 42ms                 -- Server processing time
+X-IBEX-Version: 1.2.3                 -- API server version
+```
+
+### Pagination (Cursor-Based)
+
+All list endpoints use cursor pagination:
+
+```http
+GET /v1/memories?limit=50&cursor=eyJpZCI6IjEyMyJ9
+```
+
+Response:
+
+```json
+{
+  "data": [...],
+  "pagination": {
+    "has_more": true,
+    "next_cursor": "eyJpZCI6IjE3MyJ9",
+    "prev_cursor": "eyJpZCI6IjcyIn0",
+    "total_count": 1247
+  }
+}
+```
+
+**Why cursor over offset:**
+
+- Offset breaks when items are inserted/deleted during pagination
+- Cursor is stable: always returns correct next page
+- Cursor is efficient: no COUNT(*) needed (expensive at scale)
+
+### Error Response Format
+
+Every error uses this structure:
+
+```json
+{
+  "error": {
+    "code": "MEMORY_NOT_FOUND",
+    "message": "Memory with ID '550e8400-...' not found",
+    "detail": "The memory may have been deleted or you may not have permission to access it.",
+    "docs_url": "{public-docs-origin}/errors/MEMORY_NOT_FOUND",
+    "request_id": "req_7f3k2m9x",
+    "timestamp": "2024-01-15T10:30:45.123Z",
+    "field_errors": null
+  }
+}
+```
+
+**Validation errors** include field-level details. The `docs_url` shown below is a reference/example field only; `docs.ibexharness.com` is not a verified hostname and must not be copied into clients or deployment configuration:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "detail": "One or more fields failed validation",
+    "field_errors": [
+      {
+        "field": "content",
+        "code": "REQUIRED",
+        "message": "content is required and cannot be empty"
+      },
+      {
+        "field": "confidence",
+        "code": "RANGE_ERROR",
+        "message": "confidence must be between 0 and 1, got 1.5"
+      }
+    ]
+  }
+}
+```
+
+### Standard Error Codes
+
+```text
+HTTP 400 - Bad Request
+  VALIDATION_ERROR         -- Request body/params failed validation
+  INVALID_JSON             -- Malformed JSON in request body
+  MISSING_REQUIRED_FIELD   -- Required field not provided
+  INVALID_FIELD_VALUE      -- Field value out of allowed range/enum
+
+HTTP 405 - Method Not Allowed
+  METHOD_NOT_ALLOWED       -- HTTP method not supported for route
+
+HTTP 413 - Payload Too Large
+  PAYLOAD_TOO_LARGE        -- Request body exceeds configured limit (proxy: 1 MiB default)
+
+HTTP 415 - Unsupported Media Type
+  UNSUPPORTED_MEDIA_TYPE   -- Content-Type not supported (proxy chat POST requires application/json)
+
+HTTP 401 - Unauthorized
+  MISSING_TOKEN            -- No Authorization header
+  INVALID_TOKEN            -- Token not recognized
+  EXPIRED_TOKEN            -- Token has expired
+  REVOKED_TOKEN            -- Token has been revoked
+
+HTTP 403 - Forbidden
+  INSUFFICIENT_PERMISSIONS -- Token lacks required permission
+  ORG_SUSPENDED            -- Organization account suspended
+  QUOTA_EXCEEDED           -- Monthly quota exhausted
+  TIER_RESTRICTION         -- Feature not available on current tier
+
+HTTP 404 - Not Found
+  {RESOURCE}_NOT_FOUND     -- Specific resource not found
+  ROUTE_NOT_FOUND          -- API endpoint doesn't exist
+
+HTTP 409 - Conflict
+  DUPLICATE_CONTENT        -- Memory with same content exists
+  VERSION_CONFLICT         -- Optimistic lock conflict
+  STATE_CONFLICT           -- Resource in wrong state for operation
+
+HTTP 422 - Unprocessable Entity
+  CONTENT_TOO_LONG         -- Memory content exceeds limit
+  EMBEDDING_FAILED         -- Could not generate embedding
+  PII_DETECTED             -- PII detected, manual review required
+  INVALID_CREDENTIAL       -- Provider API key failed upstream validation (422)
+
+HTTP 429 - Too Many Requests
+  RATE_LIMIT_EXCEEDED      -- Per-minute rate limit hit
+  DAILY_LIMIT_EXCEEDED     -- Daily request limit hit
+  QUOTA_EXCEEDED           -- Monthly token quota exhausted
+
+HTTP 500 - Internal Server Error
+  INTERNAL_ERROR           -- Unexpected server error
+
+HTTP 501 - Not Implemented
+  PROVIDER_NOT_CONFIGURED  -- LLM provider not configured (Phase 1 proxy stub)
+  DATABASE_ERROR           -- Database operation failed
+  UPSTREAM_ERROR           -- External service error
+
+HTTP 503 - Service Unavailable
+  SERVICE_DEGRADED         -- Running in degraded mode
+  MAINTENANCE_MODE         -- Planned maintenance window
+```
+
+### Idempotency Keys
+
+For all POST requests that create or modify data:
+
+```http
+POST /v1/memories
+X-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+```
+
+**Behavior:**
+
+- First request: Execute and cache result for 24 hours
+- Duplicate request (same key, same endpoint): Return cached result
+- Different endpoint with same key: Treated as different request
+- Expired key (>24 hours): Execute normally
+
+**Response includes idempotency status:**
+
+```http
+X-Idempotency-Replayed: false  -- true if returning cached result
+```
+
+---
+
+## 🔌 API reference catalog (status-qualified)
+
+### API Version: v1
+
+All endpoints prefixed with `/v1/`
+
+---
+
+## Operator Shell API (4.D.1 — mounted, staging-provisional)
+
+The first D1 read routes use the authenticated operator access cookie. The API verifies the session, requires `operator:metadata:read`, derives the organization from verified session claims, and reads through the organization-bound PostgreSQL session/RLS policy. Clients must not supply an authoritative `org_id`. Responses are request-time and non-cacheable. Missing or out-of-scope organizations are returned as the same not-found result; database/read-budget failures fail closed as service-degraded responses.
+
+The development environment may verify its process-local signed session. Staging and production must use AuthService validation; local fixture/browser tests are not evidence of that external identity gate.
+
+### GET /v1/operator/context
+
+Returns the minimal server-derived organization and operator context: `schema_version` (`operator.context.v1`), `org_id`, `role` (`owner`, `admin`, `member`, `viewer`, or `null` if no current non-deleted membership row maps to the subject), `org_name`, `org_slug`, `org_status`, and timezone-aware `observed_at`.
+
+### GET /v1/operator/overview
+
+Returns `schema_version` (`operator.overview.v1`), organization identity/status, `observed_at`, `completeness: "complete"`, and `counts`: `active_users` (non-deleted users whose status is `active`), `agents` (non-deleted agents), and `active_agents` (non-deleted agents whose status is `active`). These are all-time organization counts, not filtered by the Console time-range control. The aggregate is bounded by a transaction-local 3-second statement timeout. The response intentionally excludes organization settings, credentials, and user/agent records.
+
+The canonical response models and path inventory are maintained in [`services/api/openapi.snapshot.json`](../services/api/openapi.snapshot.json) and generated route inventory. Local two-tenant RLS and Console browser evidence is recorded in [`D1_READINESS.md`](console/D1_READINESS.md); hosted AuthService, canonical-origin, four-role/two-tenant, performance, SSE drain, and rollback evidence is still required before 4.D.1 acceptance.
+
+---
+
+## Memories API
+
+### POST /v1/memories
+
+**Create a memory**
+
+Creates a new memory for an agent. Automatically handles deduplication, embedding generation, and conflict detection.
+
+**Pipeline backing** (Track C — shipped):
+
+| Status | Stages / steps |
+|--------|----------------|
+| **Implemented** (ADR-0054–0056) | `validate → PII → exact dedup → embed → near-dup → conflict` |
+| **Implemented** (ADR-0057, issue #620) | HTTP handler + **DB write** (insert + apply `pending_supersede_targets`) + unique-violation→bump/`409` + after-commit **cache update** + **index**/vector upsert |
+| **Implemented** (ADR-0048, issue #630) | Optional `labels[]` — transactional `memory_labels` insert; scalar `category` synced by DB trigger |
+
+Request/response shapes below are the **existing** contract — do not invent a parallel API.
+
+**Required Permission:** `memory:write`
+
+**Request:**
+
+```http
+POST /v1/memories
+Authorization: Bearer {token}
+Content-Type: application/json
+X-Idempotency-Key: {uuid}
+
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "content": "User prefers dark mode in all interfaces",
+  "category": "preference",
+  "confidence": 0.95,
+  "labels": [
+    { "label": "preference", "confidence": 0.95 },
+    { "label": "behavioral", "confidence": 0.72 }
+  ],
+  "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "expected_session_revision": 1,
+  "visibility": "agent",
+  "tags": ["ui", "preferences"],
+  "expires_at": "2025-01-15T10:30:00Z",
+  "metadata": {
+    "source_url": "https://example.com",
+    "extracted_at": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | UUID | Yes | Agent this memory belongs to |
+| `content` | string | Yes | Memory content (1-10,000 chars) |
+| `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual`. Ignored for label rows when `labels` is provided; used as fallback when `labels` is omitted |
+| `confidence` | float | No | 0.0-1.0. Default: 0.80. Used with scalar `category` when `labels` is omitted |
+| `labels` | object[] | No | Multi-label classification (1–5 labels). Each item: `label` (enum) + `confidence` (0.0–1.0). When omitted, one label is synthesized from `category` + `confidence`. `memories.category` in the response reflects the DB trigger winner (highest confidence; tie → `label` ASC) |
+| `session_id` | UUID | No | Source session; if set, it must be completed and not deleted, and `expected_session_revision` is required |
+| `expected_session_revision` | integer | Conditional | Required with `session_id`; positive source-session lifecycle revision, capped at `2^63 - 1` |
+| `visibility` | enum | No | `agent`, `org`, `session`. Default: `agent` |
+| `tags` | string[] | No | Searchable tags. Max 20 tags, 50 chars each |
+| `metadata` | object | No | Arbitrary JSON metadata. Max 10KB |
+| `pinned` | boolean | No | Always include in context. Default: false |
+| `valid_from` | ISO8601 datetime | No | World-time start of the fact (ADR-0047). Omitted → write path defaults to now. |
+| `valid_until` | ISO8601 datetime | No | Exclusive end of validity. Must be strictly after `valid_from` when both are set. |
+| `expires_at` | ISO8601 datetime | No | Soft-expiry cutoff for ordinary retrieval; does not tombstone the memory |
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "org_id": "123e4567-e89b-12d3-a456-426614174000",
+    "content": "User prefers dark mode in all interfaces",
+    "content_tokens": 8,
+    "category": "preference",
+    "confidence": 0.95,
+    "source": "user_provided",
+    "status": "active",
+    "visibility": "agent",
+    "pinned": false,
+    "tags": ["ui", "preferences"],
+    "retrieval_count": 0,
+    "usefulness_score": 0.50,
+    "pii_detected": false,
+    "injection_risk_score": 0.02,
+    "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "metadata": {
+      "source_url": "https://example.com"
+    },
+    "lifecycle_revision": 1,
+    "created_at": "2024-01-15T10:30:45.123Z",
+    "updated_at": "2024-01-15T10:30:45.123Z"
+  },
+  "meta": {
+    "deduplication": {
+      "is_duplicate": false,
+      "similar_memories": []
+    },
+    "processing_time_ms": 145
+  }
+}
+```
+
+**Response: 409 Conflict (Exact Duplicate)**
+
+```json
+{
+  "error": {
+    "code": "DUPLICATE_CONTENT",
+    "message": "A memory with identical content already exists",
+    "existing_memory_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+  }
+}
+```
+
+**Response: 202 Accepted (PII Detected)**
+
+```json
+{
+  "data": {
+    "id": "...",
+    "status": "quarantined",
+    "lifecycle_revision": 1,
+    "pii_detected": true
+  },
+  "meta": {
+    "message": "Memory quarantined for review due to PII detection"
+  }
+}
+```
+
+---
+
+### GET /v1/memories
+
+**List memories for an agent**
+
+**Required Permission:** `memory:read`
+
+**Request:**
+
+```http
+GET /v1/memories?agent_id={uuid}&limit=50&cursor={cursor}
+  &category=preference&status=active&tags=ui,preferences
+  &created_after=2024-01-01T00:00:00Z
+  &sort=created_at:desc
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_id` | UUID | Yes | Filter by agent |
+| `limit` | integer | No | 1-100, default 20 |
+| `cursor` | string | No | Pagination cursor |
+| `category` | enum | No | Filter by category |
+| `status` | enum | No | `active`, `archived`, `all`. Default: `active` |
+| `visibility` | enum | No | Filter by visibility scope |
+| `tags` | string | No | Comma-separated tags (AND logic) |
+| `search` | string | No | Full-text search in content |
+| `pinned_only` | boolean | No | Only return pinned memories |
+| `created_after` | ISO8601 | No | Filter by creation date |
+| `created_before` | ISO8601 | No | Filter by creation date |
+| `min_confidence` | float | No | Minimum confidence score |
+| `sort` | string | No | `created_at:desc`, `retrieval_count:desc`, `confidence:desc`. Default: `created_at:desc` |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "id": "a1b2c3d4-...",
+      "agent_id": "550e8400-...",
+      "content": "User prefers dark mode",
+      "category": "preference",
+      "confidence": 0.95,
+      "status": "active",
+      "tags": ["ui", "preferences"],
+      "retrieval_count": 47,
+      "usefulness_score": 0.82,
+      "created_at": "2024-01-15T10:30:45.123Z",
+      "last_retrieved_at": "2024-01-20T14:22:00.000Z"
+    }
+  ],
+  "pagination": {
+    "has_more": true,
+    "next_cursor": "eyJpZCI6ImExYjJjM2Q0In0",
+    "prev_cursor": null,
+    "total_count": 1247
+  }
+}
+```
+
+---
+
+### POST /v1/memories/{memory_id}/forget (provisional; GAP-007 / issue #995)
+
+This is the implemented per-memory tombstone operation in the current Python memory service. **It is provisional and not an accepted public lifecycle contract.** The older generic `DELETE /v1/memories/{memory_id}` section below is reference material and is not mounted by this service.
+
+**Authentication:** `memory:write` permission and an agent-scoped bearer token. `org_id` and `agent_id` are taken from verified token context, never from the request body.
+
+**Request:**
+
+```http
+POST /v1/memories/a1b2c3d4-e5f6-7890-abcd-ef1234567890/forget
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{"expected_revision": 4}
+```
+
+`expected_revision` is a required positive integer no greater than `2^63 - 1` (PostgreSQL `BIGINT` maximum). The service compares it under a row lock, advances the lifecycle revision, sets the terminal tombstone/deleted state, clears embedding fields, and inserts a redacted outbox event in the same PostgreSQL transaction. If the memory belongs to a source session, the same transaction also advances that session's lifecycle fence so extraction requests that captured its previous revision fail closed. Successful mutation invalidates the object and hot-cache entries best-effort after commit; database retrieval predicates remain authoritative.
+
+**Response: 200 OK**
+
+```json
+{"data":{"memory_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","revision":5,"tombstoned":true}}
+```
+
+**Errors:** `401 MISSING_TOKEN` when authentication is absent or invalid; `403 INSUFFICIENT_PERMISSIONS` when the verified token lacks `memory:write`; `403 AGENT_SCOPE_REQUIRED` when it is not agent-scoped; `404 NOT_FOUND` for a missing or out-of-scope memory; `409 STALE_LIFECYCLE_REVISION` when the expected revision is stale or already tombstoned; `422` for an invalid UUID or request body / non-positive `expected_revision`; `503 SERVICE_DEGRADED` when authentication is unavailable; and `503 DATABASE_UNAVAILABLE` when the database transaction cannot be completed. No content, embedding, or other memory body is returned in the lifecycle event. No lifecycle relay or downstream consumer is currently registered.
+
+Search and create responses include `lifecycle_revision` so a client can supply the revision precondition. `expires_at` is a soft visibility gate for ordinary retrieval and does not tombstone or erase a memory. The historical conflict-candidate mode remains internal and always excludes tombstones.
+
+---
+
+### GET /v1/memories/{memory_id}
+
+**Get a single memory**
+
+**Required Permission:** `memory:read`
+
+**Request:**
+
+```http
+GET /v1/memories/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Authorization: Bearer {token}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "agent_id": "550e8400-...",
+    "org_id": "123e4567-...",
+    "content": "User prefers dark mode in all interfaces",
+    "content_tokens": 8,
+    "category": "preference",
+    "subcategory": "visual",
+    "confidence": 0.95,
+    "source": "user_provided",
+    "source_trace_id": null,
+    "status": "active",
+    "visibility": "agent",
+    "pinned": false,
+    "tags": ["ui", "preferences"],
+    "retrieval_count": 47,
+    "usefulness_score": 0.82,
+    "positive_feedback_count": 12,
+    "negative_feedback_count": 1,
+    "pii_detected": false,
+    "injection_risk_score": 0.02,
+    "session_id": "7c9e6679-...",
+    "superseded_by": null,
+    "merged_into": null,
+    "metadata": {},
+    "created_at": "2024-01-15T10:30:45.123Z",
+    "updated_at": "2024-01-15T10:30:45.123Z",
+    "last_retrieved_at": "2024-01-20T14:22:00.000Z"
+  }
+}
+```
+
+**Response: 404 Not Found**
+
+```json
+{
+  "error": {
+    "code": "MEMORY_NOT_FOUND",
+    "message": "Memory 'a1b2c3d4-...' not found"
+  }
+}
+```
+
+---
+
+### PATCH /v1/memories/{memory_id}
+
+**Update a memory**
+
+Only updates provided fields. Partial updates only.
+
+**Required Permission:** `memory:write`
+
+**Request:**
+
+```http
+PATCH /v1/memories/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "content": "User strongly prefers dark mode in all interfaces",
+  "confidence": 0.99,
+  "tags": ["ui", "preferences", "confirmed"],
+  "pinned": true
+}
+```
+
+**Updatable Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | string | New content (triggers re-embedding) |
+| `category` | enum | Change category |
+| `confidence` | float | Update confidence score |
+| `tags` | string[] | Replace tag list |
+| `metadata` | object | Merge with existing metadata |
+| `pinned` | boolean | Toggle pinned status |
+| `visibility` | enum | Change visibility scope |
+
+**Note:** Updating `content` triggers:
+
+1. New embedding generation (async, ~100-500ms)
+2. Near-duplicate check against existing memories
+3. Conflict detection if near-duplicate found
+4. Memory version record creation
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-...",
+    "content": "User strongly prefers dark mode...",
+    "confidence": 0.99,
+    "tags": ["ui", "preferences", "confirmed"],
+    "pinned": true,
+    "updated_at": "2024-01-20T15:00:00.000Z"
+  },
+  "meta": {
+    "reembedding_scheduled": true,
+    "estimated_reembedding_ms": 200
+  }
+}
+```
+
+---
+
+### DELETE /v1/memories/{memory_id} (historical reference; not mounted by current memory service)
+
+The following generic soft-delete/permanent-delete schema is legacy reference material, not a route in the current Python memory service. For the provisional GAP-007 implementation, use the revision-fenced `POST /v1/memories/{memory_id}/forget` above; it does not expose a permanent-purge or legal-hold bypass.
+
+**Required Permission:** `memory:delete`
+
+**Request:**
+
+```http
+DELETE /v1/memories/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Authorization: Bearer {token}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-...",
+    "status": "deleted",
+    "deleted_at": "2024-01-20T15:00:00.000Z"
+  }
+}
+```
+
+**Permanent Deletion:**
+
+```http
+DELETE /v1/memories/a1b2c3d4-...?permanent=true
+X-MFA-Code: 123456
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-...",
+    "permanently_deleted": true,
+    "deletion_certificate_id": "cert_abc123",
+    "deleted_at": "2024-01-20T15:00:00.000Z"
+  }
+}
+```
+
+---
+
+### POST /v1/memories/search
+
+**Semantic search over memories (milestone 3.D.1 retrieval, 3.D.2 composite ranking)**
+
+Embeds the query via the embedder service, runs HNSW vector search through `VectorStore.search()`, and supplements with GIN full-text search when hydrated vector hits are sparse (`len(hydrated_vector_results) < limit`, per ADR-0058). Results are **ordered by composite rank** — a weighted sum of relevance, category-conditional recency, usefulness, confidence, and access frequency (`composite_score()` from Track B). **Do not re-sort client-side by `similarity`.**
+
+**Required Permission:** `memory:read`
+
+**Request:**
+
+```http
+POST /v1/memories/search
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "query": "What are the user's UI preferences?",
+  "limit": 10,
+  "min_similarity": 0.7,
+  "min_confidence": 0.0
+}
+```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_id` | UUID | Yes | Agent to search memories of |
+| `query` | string | Yes | Natural language query (1–10,000 chars) |
+| `limit` | integer | No | 1–50, default 10 |
+| `min_similarity` | float | No | 0.0–1.0 cosine similarity floor (passed to VectorStore) |
+| `min_confidence` | float | No | 0.0–1.0 memory confidence floor, default 0.0 |
+
+**Deferred:** `filters`, `session_id`, `include_archived`.
+
+**Response ordering (3.D.2):**
+
+| Field | Meaning |
+|-------|---------|
+| `rank` | 1-based position after **composite** ranking (authoritative order) |
+| `similarity` | **Retrieval-stage metric only** — cosine similarity for `source=vector`, raw `ts_rank_cd` for `source=full_text` supplemental hits. Not the composite score. |
+| `source` | `vector` or `full_text` |
+
+FTS supplemental hits use fixed relevance `0.5` inside `composite_score()` only; HTTP `similarity` still reports raw `ts_rank_cd`.
+
+**Example where `rank` order ≠ `similarity` order** (same agent, composite ranking applied):
+
+```json
+{
+  "data": {
+    "results": [
+      {
+        "memory": {
+          "id": "f1111111-1111-4111-8111-111111111111",
+          "category": "factual",
+          "content": "User requires dark mode in all dashboards"
+        },
+        "similarity": 0.88,
+        "rank": 1,
+        "source": "vector"
+      },
+      {
+        "memory": {
+          "id": "e2222222-2222-4222-8222-222222222222",
+          "category": "episodic",
+          "content": "User mentioned dark mode yesterday"
+        },
+        "similarity": 0.91,
+        "rank": 2,
+        "source": "vector"
+      }
+    ]
+  }
+}
+```
+
+Here the episodic memory has **higher cosine similarity** (0.91) but ranks **second** because composite scoring weights category-conditional recency and other factors — older factual memories can outrank fresher episodic hits at similar vector relevance.
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "results": [
+      {
+        "memory": {
+          "id": "a1b2c3d4-...",
+          "org_id": "550e8400-e29b-41d4-a716-446655440000",
+          "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+          "content": "User prefers dark mode in all interfaces",
+          "category": "preference",
+          "confidence": 0.95,
+          "status": "active",
+          "created_at": "2024-01-15T10:30:45.123Z",
+          "updated_at": "2024-01-15T10:30:45.123Z"
+        },
+        "similarity": 0.94,
+        "rank": 1,
+        "source": "vector"
+      }
+    ]
+  }
+}
+```
+
+**Errors:** `400` validation, `401`/`403` auth, `503` embedder unavailable (`EMBEDDING_FAILED`) or read path not configured.
+
+**Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}` — Grafana panel on Memory Service dashboard.
+
+**Toggle:** `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` (default `true`).
+
+---
+
+### POST /v1/memories/bulk
+
+**Bulk create memories**
+
+Creates up to 100 memories in a single request. Processed as individual memories with shared metadata.
+
+**Required Permission:** `memory:write`
+
+**Request:**
+
+```http
+POST /v1/memories/bulk
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "agent_id": "550e8400-...",
+  "memories": [
+    {
+      "content": "User prefers TypeScript over JavaScript",
+      "category": "preference",
+      "tags": ["programming"]
+    },
+    {
+      "content": "User's primary database is PostgreSQL",
+      "category": "factual",
+      "tags": ["infrastructure"]
+    }
+  ],
+  "options": {
+    "skip_duplicates": true,
+    "conflict_strategy": "newer_wins"
+  }
+}
+```
+
+**Response: 207 Multi-Status**
+
+```json
+{
+  "data": {
+    "created": 2,
+    "skipped": 0,
+    "failed": 0,
+    "results": [
+      {
+        "index": 0,
+        "status": "created",
+        "memory_id": "a1b2c3d4-..."
+      },
+      {
+        "index": 1,
+        "status": "created",
+        "memory_id": "b2c3d4e5-..."
+      }
+    ]
+  }
+}
+```
+
+---
+
+### POST /v1/memories/{memory_id}/feedback
+
+**Submit feedback on memory usefulness**
+
+Used to improve memory ranking over time. Called after agent uses a memory and outcome is known.
+
+**Required Permission:** `memory:write`
+
+**Request:**
+
+```http
+POST /v1/memories/a1b2c3d4-.../feedback
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "feedback": "positive",
+  "session_id": "7c9e6679-...",
+  "trace_id": "550e8400-...",
+  "notes": "Memory helped agent answer question correctly"
+}
+```
+
+**Request Fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `feedback` | enum | Yes | `positive`, `negative`, `neutral` |
+| `session_id` | UUID | No | Session where feedback applies |
+| `trace_id` | UUID | No | Specific trace where memory was used |
+| `notes` | string | No | Human notes about feedback |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "memory_id": "a1b2c3d4-...",
+    "feedback": "positive",
+    "new_usefulness_score": 0.88,
+    "total_positive_feedback": 13,
+    "total_negative_feedback": 1
+  }
+}
+```
+
+---
+
+## Sessions API
+
+### POST /v1/sessions
+
+**Create a new agent session**
+
+**Required Permission:** `session:create`
+
+**Request:**
+
+```http
+POST /v1/sessions
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "metadata": {
+    "environment": "production",
+    "client_version": "1.2.3"
+  },
+  "tags": ["customer-support", "tier-1"]
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "agent_id": "550e8400-...",
+    "org_id": "123e4567-...",
+    "status": "active",
+    "directive_version_id": "d4e5f6a7-...",
+    "started_at": "2024-01-20T15:00:00.000Z",
+    "last_heartbeat_at": "2024-01-20T15:00:00.000Z",
+    "checkpoint_sequence": 0,
+    "total_turns": 0,
+    "tags": ["customer-support", "tier-1"],
+    "metadata": {
+      "environment": "production",
+      "client_version": "1.2.3"
+    }
+  }
+}
+```
+
+---
+
+### GET /v1/sessions
+
+**List sessions**
+
+**Required Permission:** `session:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent_id` | UUID | No | Filter by agent |
+| `status` | enum | No | `active`, `suspended`, `completed`, `failed`, `all` |
+| `started_after` | ISO8601 | No | Filter by start time |
+| `started_before` | ISO8601 | No | Filter by start time |
+| `tags` | string | No | Comma-separated tags |
+| `limit` | integer | No | 1-100, default 20 |
+| `cursor` | string | No | Pagination cursor |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "id": "7c9e6679-...",
+      "agent_id": "550e8400-...",
+      "status": "completed",
+      "started_at": "2024-01-20T15:00:00.000Z",
+      "completed_at": "2024-01-20T15:45:00.000Z",
+      "total_turns": 24,
+      "total_tokens_used": 45230,
+      "total_memories_read": 87,
+      "total_memories_written": 3,
+      "error_count": 0
+    }
+  ],
+  "pagination": {
+    "has_more": false,
+    "next_cursor": null,
+    "total_count": 1
+  }
+}
+```
+
+---
+
+### GET /v1/sessions/{session_id}
+
+**Get session details**
+
+**Required Permission:** `session:read`
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "7c9e6679-...",
+    "agent_id": "550e8400-...",
+    "org_id": "123e4567-...",
+    "directive_version_id": "d4e5f6a7-...",
+    "status": "active",
+    "started_at": "2024-01-20T15:00:00.000Z",
+    "last_heartbeat_at": "2024-01-20T15:44:50.000Z",
+    "checkpoint_sequence": 5,
+    "last_checkpoint_at": "2024-01-20T15:40:00.000Z",
+    "loop_suspected": false,
+    "total_turns": 24,
+    "total_tokens_used": 45230,
+    "total_memories_read": 87,
+    "total_memories_written": 3,
+    "total_tool_calls": 12,
+    "error_count": 0,
+    "recovery_attempts": 0,
+    "client_sdk_version": "1.2.3",
+    "client_language": "python",
+    "environment": "production",
+    "tags": ["customer-support"],
+    "metadata": {}
+  }
+}
+```
+
+---
+
+### POST /v1/sessions/{session_id}/heartbeat
+
+**Send session heartbeat**
+
+Must be called every 10 seconds to keep session active. Called automatically by SDK.
+
+**Required Permission:** `session:create`
+
+**Request:**
+
+```http
+POST /v1/sessions/7c9e6679-.../heartbeat
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "turn_count": 24,
+  "tokens_used_delta": 1250
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "session_id": "7c9e6679-...",
+    "status": "active",
+    "next_heartbeat_required_by": "2024-01-20T15:45:30.000Z"
+  }
+}
+```
+
+**Response: 404 Not Found (Session Expired)**
+
+```json
+{
+  "error": {
+    "code": "SESSION_NOT_FOUND",
+    "message": "Session has expired or been terminated"
+  }
+}
+```
+
+---
+
+### POST /v1/sessions/{session_id}/checkpoint
+
+**Create session checkpoint**
+
+Saves current session state for crash recovery.
+
+**Required Permission:** `session:create`
+
+**Request:**
+
+```http
+POST /v1/sessions/7c9e6679-.../checkpoint
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "state": {
+    "conversation": [
+      {"role": "user", "content": "Help me debug this"},
+      {"role": "assistant", "content": "Sure, let me look..."}
+    ],
+    "pending_memories": [],
+    "completed_tools": [
+      {
+        "tool": "read_file",
+        "idempotency_key": "tool_abc123",
+        "result": "success"
+      }
+    ],
+    "plan_state": null,
+    "variables": {
+      "current_file": "main.py",
+      "debug_mode": true
+    }
+  }
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "checkpoint_id": "cp_abc123",
+    "session_id": "7c9e6679-...",
+    "sequence_number": 6,
+    "created_at": "2024-01-20T15:45:00.000Z",
+    "state_size_bytes": 2048,
+    "is_valid": true
+  }
+}
+```
+
+---
+
+### POST /v1/sessions/{session_id}/resume
+
+**Resume a suspended session**
+
+**Required Permission:** `session:create`
+
+**Request:**
+
+```http
+POST /v1/sessions/7c9e6679-.../resume
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "checkpoint_sequence": null
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "session_id": "7c9e6679-...",
+    "status": "active",
+    "checkpoint": {
+      "sequence_number": 5,
+      "state": {
+        "conversation": [...],
+        "pending_memories": [],
+        "completed_tools": [...],
+        "variables": {}
+      }
+    },
+    "ambiguities": [
+      {
+        "type": "tool_unknown_outcome",
+        "tool": "write_file",
+        "idempotency_key": "tool_xyz789",
+        "message": "Tool was in-flight at crash time. Verify outcome before proceeding."
+      }
+    ],
+    "resumed_at": "2024-01-20T16:00:00.000Z"
+  }
+}
+```
+
+---
+
+### POST /v1/sessions/{session_id}/terminate
+
+**Terminate a session**
+
+Marks an active session `completed` and may enqueue memory extraction from the Redis turn
+buffer (ADR-0072).
+
+**Path parameter:** `{session_id}` is the sticky **external_id** — the same value carried by
+`X-IBEX-Session-ID` on chat completions — **not** the Postgres row UUID `sessions.id`.
+(Earlier examples that looked like opaque row UUIDs were misleading.)
+
+**Required Permission:** `session:terminate`
+
+**Required Header:** `X-IBEX-Agent-ID` (same agent-scoping as chat; sessions are unique on
+`(org_id, agent_id, external_id)`).
+
+**Request:**
+
+```http
+POST /v1/sessions/sess_client_abc123/terminate
+Authorization: Bearer {token}
+X-IBEX-Agent-ID: 7c9e6679-...
+Content-Type: application/json
+
+{
+  "reason": "Task completed successfully",
+  "status": "completed"
+}
+```
+
+Only `status: "completed"` is supported. Calling terminate again on an already-completed
+session is safe and returns 200 with `final_status: "completed"`. If a previous extraction
+enqueue attempt did not complete, terminate will retry it (retained Redis turns); if enqueue
+already succeeded and the buffer was acknowledged, no additional work is enqueued.
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "session_id": "sess_client_abc123",
+    "final_status": "completed",
+    "terminated_at": "2024-01-20T16:30:00.000Z"
+  }
+}
+```
+
+`data.session_id` echoes the sticky external_id from the path.
+
+**Response: 404 Not Found** (missing, soft-deleted, or wrong org/agent scope — no existence leak)
+
+```json
+{
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Session not found",
+    "request_id": "req_..."
+  }
+}
+```
+
+---
+
+### GET /v1/sessions/{session_id}/replay
+
+**Get session replay data**
+
+Returns events for session replay in the planned operator UI (specification-only; this section does not prove that a route is mounted).
+
+**Required Permission:** `session:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `from_turn` | integer | Start from turn number |
+| `to_turn` | integer | End at turn number |
+| `event_types` | string | Filter event types (comma-separated) |
+| `limit` | integer | Max events to return |
+| `cursor` | string | Pagination cursor |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "session_id": "7c9e6679-...",
+    "events": [
+      {
+        "sequence_number": 1,
+        "event_type": "inference_request",
+        "timestamp": "2024-01-20T15:00:05.000Z",
+        "data": {
+          "messages": [...],
+          "model": "gpt-4-turbo",
+          "context_tokens": 2048
+        }
+      },
+      {
+        "sequence_number": 2,
+        "event_type": "memory_read",
+        "timestamp": "2024-01-20T15:00:05.042Z",
+        "data": {
+          "memory_ids": ["a1b2c3d4-..."],
+          "query": "user preferences",
+          "scores": [0.94]
+        }
+      },
+      {
+        "sequence_number": 3,
+        "event_type": "inference_response",
+        "timestamp": "2024-01-20T15:00:07.500Z",
+        "data": {
+          "completion_tokens": 342,
+          "latency_ms": 2458
+        }
+      }
+    ],
+    "pagination": {
+      "has_more": true,
+      "next_cursor": "eyJzZXEiOjN9"
+    }
+  }
+}
+```
+
+---
+
+## Agents API
+
+### POST /v1/agents
+
+**Create an agent**
+
+**Required Permission:** `agent:write`
+
+**Request:**
+
+```http
+POST /v1/agents
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "name": "Customer Support Agent",
+  "description": "Handles tier-1 customer support inquiries",
+  "slug": "customer-support",
+  "config": {
+    "memory_extraction_enabled": true,
+    "drift_detection_enabled": true,
+    "drift_sensitivity": 2.0,
+    "context_budget_tokens": 4000,
+    "max_memories_per_context": 20,
+    "loop_detection_threshold": 5
+  },
+  "tags": ["production", "support"]
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "org_id": "123e4567-...",
+    "name": "Customer Support Agent",
+    "description": "Handles tier-1 customer support inquiries",
+    "slug": "customer-support",
+    "status": "active",
+    "active_directive_version_id": null,
+    "config": {
+      "memory_extraction_enabled": true,
+      "drift_detection_enabled": true,
+      "drift_sensitivity": 2.0,
+      "context_budget_tokens": 4000,
+      "max_memories_per_context": 20,
+      "loop_detection_threshold": 5
+    },
+    "total_sessions": 0,
+    "total_memories": 0,
+    "total_tokens_used": 0,
+    "last_active_at": null,
+    "tags": ["production", "support"],
+    "created_at": "2024-01-20T15:00:00.000Z"
+  }
+}
+```
+
+---
+
+### GET /v1/agents
+
+**List agents**
+
+**Required Permission:** `agent:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `status` | enum | `active`, `paused`, `archived`, `all` |
+| `tags` | string | Filter by tags |
+| `search` | string | Search by name or description |
+| `limit` | integer | 1-100, default 20 |
+| `cursor` | string | Pagination cursor |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-...",
+      "name": "Customer Support Agent",
+      "slug": "customer-support",
+      "status": "active",
+      "total_sessions": 1247,
+      "total_memories": 8903,
+      "total_tokens_used": 45230000,
+      "last_active_at": "2024-01-20T14:55:00.000Z",
+      "tags": ["production", "support"],
+      "created_at": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "has_more": false,
+    "total_count": 1
+  }
+}
+```
+
+---
+
+### GET /v1/agents/{agent_id}
+
+**Get agent details**
+
+**Required Permission:** `agent:read`
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "550e8400-...",
+    "org_id": "123e4567-...",
+    "name": "Customer Support Agent",
+    "description": "Handles tier-1 customer support inquiries",
+    "slug": "customer-support",
+    "status": "active",
+    "active_directive_version_id": "d4e5f6a7-...",
+    "config": {...},
+    "total_sessions": 1247,
+    "total_memories": 8903,
+    "total_tokens_used": 45230000,
+    "last_active_at": "2024-01-20T14:55:00.000Z",
+    "tags": ["production", "support"],
+    "metadata": {},
+    "created_at": "2024-01-01T00:00:00.000Z",
+    "updated_at": "2024-01-15T10:00:00.000Z"
+  }
+}
+```
+
+---
+
+### PATCH /v1/agents/{agent_id}
+
+**Update an agent**
+
+**Required Permission:** `agent:write`
+
+**Request:**
+
+```http
+PATCH /v1/agents/550e8400-...
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "name": "Customer Support Agent v2",
+  "config": {
+    "context_budget_tokens": 6000
+  },
+  "tags": ["production", "support", "v2"]
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "550e8400-...",
+    "name": "Customer Support Agent v2",
+    "config": {
+      "memory_extraction_enabled": true,
+      "drift_detection_enabled": true,
+      "drift_sensitivity": 2.0,
+      "context_budget_tokens": 6000,
+      "max_memories_per_context": 20,
+      "loop_detection_threshold": 5
+    },
+    "tags": ["production", "support", "v2"],
+    "updated_at": "2024-01-20T16:00:00.000Z"
+  }
+}
+```
+
+---
+
+### POST /v1/agents/{agent_id}/pause
+
+**Pause an agent**
+
+Prevents new sessions from starting. Existing sessions continue until natural completion.
+
+**Required Permission:** `agent:write`
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "agent_id": "550e8400-...",
+    "status": "paused",
+    "active_sessions": 3,
+    "message": "Agent paused. 3 active sessions will complete normally."
+  }
+}
+```
+
+---
+
+### GET /v1/agents/{agent_id}/stats
+
+**Get agent statistics**
+
+**Required Permission:** `agent:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `period` | enum | `24h`, `7d`, `30d`, `90d`, `all` |
+| `granularity` | enum | `hour`, `day`, `week` |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "agent_id": "550e8400-...",
+    "period": "7d",
+    "summary": {
+      "total_sessions": 89,
+      "total_tokens": 1240000,
+      "total_memories_created": 234,
+      "total_memories_retrieved": 4521,
+      "avg_session_duration_seconds": 1247,
+      "avg_turns_per_session": 18.4,
+      "error_rate": 0.012,
+      "avg_context_assembly_ms": 42
+    },
+    "timeseries": [
+      {
+        "timestamp": "2024-01-14T00:00:00.000Z",
+        "sessions": 12,
+        "tokens": 180000,
+        "errors": 1
+      }
+    ],
+    "top_memories": [
+      {
+        "memory_id": "a1b2c3d4-...",
+        "content": "User prefers dark mode",
+        "retrieval_count_in_period": 47
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Directives API
+
+### POST /v1/directives
+
+**Create a directive**
+
+**Required Permission:** `directive:write`
+
+**Request:**
+
+```http
+POST /v1/directives
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "name": "Customer Support Directive",
+  "description": "Instructions for handling tier-1 support",
+  "initial_content": "You are a helpful customer support agent..."
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "f7a8b9c0-...",
+    "org_id": "123e4567-...",
+    "name": "Customer Support Directive",
+    "description": "Instructions for handling tier-1 support",
+    "total_versions": 1,
+    "active_version": {
+      "id": "d4e5f6a7-...",
+      "version_number": 1,
+      "status": "draft",
+      "content_tokens": 250,
+      "created_at": "2024-01-20T15:00:00.000Z"
+    },
+    "created_at": "2024-01-20T15:00:00.000Z"
+  }
+}
+```
+
+---
+
+### POST /v1/directives/{directive_id}/versions
+
+**Create a new directive version**
+
+**Required Permission:** `directive:write`
+
+**Request:**
+
+```http
+POST /v1/directives/f7a8b9c0-.../versions
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "content": "You are a helpful customer support agent for IBEX...",
+  "parent_version_id": "d4e5f6a7-...",
+  "change_summary": "Added escalation instructions",
+  "breaking_changes": false
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "e5f6a7b8-...",
+    "directive_id": "f7a8b9c0-...",
+    "version_number": 2,
+    "parent_version_id": "d4e5f6a7-...",
+    "status": "draft",
+    "content_tokens": 312,
+    "change_summary": "Added escalation instructions",
+    "breaking_changes": false,
+    "regression_test_status": "pending",
+    "created_at": "2024-01-20T16:00:00.000Z"
+  }
+}
+```
+
+---
+
+### POST /v1/directives/{directive_id}/versions/{version_id}/submit-review
+
+**Submit directive version for review**
+
+Triggers behavioral regression test suite.
+
+**Required Permission:** `directive:write`
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "version_id": "e5f6a7b8-...",
+    "status": "review",
+    "regression_test_status": "running",
+    "estimated_completion_seconds": 120,
+    "scenarios_to_run": 47
+  }
+}
+```
+
+---
+
+### POST /v1/directives/{directive_id}/versions/{version_id}/promote
+
+**Promote directive version to active**
+
+Requires: review approved, regression tests passed. Requires MFA for admin-level directives.
+
+**Required Permission:** `directive:promote`
+
+**Request:**
+
+```http
+POST /v1/directives/f7a8b9c0-.../versions/e5f6a7b8-.../promote
+Authorization: Bearer {token}
+X-MFA-Code: 123456
+Content-Type: application/json
+
+{
+  "rollout_strategy": "immediate",
+  "agent_ids": ["550e8400-..."]
+}
+```
+
+**Rollout Strategies:**
+
+| Strategy | Description |
+|----------|-------------|
+| `immediate` | All new sessions use new version immediately |
+| `new_sessions_only` | Existing sessions complete with old version |
+| `gradual` | 10% → 50% → 100% over time with monitoring |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "version_id": "e5f6a7b8-...",
+    "status": "active",
+    "activated_at": "2024-01-20T17:00:00.000Z",
+    "rollout": {
+      "strategy": "immediate",
+      "affected_agents": 1,
+      "previous_version_id": "d4e5f6a7-..."
+    }
+  }
+}
+```
+
+---
+
+### POST /v1/directives/{directive_id}/versions/{version_id}/revoke
+
+**Emergency revoke a directive version**
+
+Immediately switches all active sessions to fallback. Requires 2-person approval in enterprise tier.
+
+**Required Permission:** `directive:revoke`
+
+**Request:**
+
+```http
+POST /v1/directives/f7a8b9c0-.../versions/e5f6a7b8-.../revoke
+Authorization: Bearer {token}
+X-MFA-Code: 123456
+Content-Type: application/json
+
+{
+  "reason": "Security vulnerability discovered in instructions",
+  "approver_id": "user_abc123"
+}
+```
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "version_id": "e5f6a7b8-...",
+    "status": "revoked",
+    "revoked_at": "2024-01-20T17:30:00.000Z",
+    "affected_sessions": 47,
+    "sessions_transitioned_to_fallback": 47
+  }
+}
+```
+
+---
+
+### GET /v1/directives/{directive_id}/versions/{version_id}/diff
+
+**Get diff between directive versions**
+
+**Required Permission:** `directive:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `compare_to` | UUID | Version to compare against. Default: parent |
+| `format` | enum | `unified`, `split`. Default: `unified` |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "version_a": {
+      "id": "d4e5f6a7-...",
+      "version_number": 1
+    },
+    "version_b": {
+      "id": "e5f6a7b8-...",
+      "version_number": 2
+    },
+    "diff": {
+      "format": "unified",
+      "content": "--- version_1\n+++ version_2\n@@ -15,6 +15,12 @@\n ...",
+      "additions": 12,
+      "deletions": 3,
+      "token_delta": 62
+    },
+    "behavioral_comparison": {
+      "test_scenarios_run": 47,
+      "behavior_changed": 3,
+      "behavior_unchanged": 44,
+      "changes": [
+        {
+          "scenario": "Escalation request",
+          "before": "Attempted to resolve independently",
+          "after": "Correctly escalated to tier-2",
+          "assessment": "improvement"
+        }
+      ]
+    }
+  }
+}
+```
+
+---
+
+## Analytics API
+
+### GET /v1/analytics/overview
+
+**Get organization analytics overview**
+
+**Required Permission:** `trace:read`
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `period` | enum | `24h`, `7d`, `30d`, `90d` |
+| `agent_ids` | string | Comma-separated agent IDs |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "period": "7d",
+    "summary": {
+      "total_requests": 84721,
+      "total_tokens": 124000000,
+      "total_sessions": 1247,
+      "total_memories_created": 3421,
+      "avg_proxy_overhead_ms": 18,
+      "avg_context_assembly_ms": 41,
+      "p95_total_latency_ms": 2840,
+      "error_rate": 0.008,
+      "estimated_cost_usd": 124.50
+    },
+    "trends": {
+      "requests_change_pct": 12.4,
+      "tokens_change_pct": 8.7,
+      "error_rate_change_pct": -2.1
+    },
+    "top_agents": [
+      {
+        "agent_id": "550e8400-...",
+        "agent_name": "Customer Support",
+        "request_count": 45231,
+        "token_count": 67000000
+      }
+    ],
+    "model_distribution": {
+      "gpt-4-turbo": 0.65,
+      "gpt-3.5-turbo": 0.25,
+      "claude-3-opus": 0.10
+    }
+  }
+}
+```
+
+---
+
+### GET /v1/analytics/latency
+
+**Get latency breakdown analytics**
+
+**Required Permission:** `trace:read`
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "period": "24h",
+    "latency_breakdown": {
+      "proxy_overhead": {
+        "p50": 12,
+        "p95": 28,
+        "p99": 67
+      },
+      "context_assembly": {
+        "p50": 35,
+        "p95": 52,
+        "p99": 89
+      },
+      "auth_validation": {
+        "p50": 0.8,
+        "p95": 2.1,
+        "p99": 45
+      },
+      "rate_limit_check": {
+        "p50": 1.2,
+        "p95": 3.4,
+        "p99": 8.7
+      },
+      "provider_latency": {
+        "p50": 1240,
+        "p95": 3200,
+        "p99": 5800
+      }
+    },
+    "slow_requests": [
+      {
+        "trace_id": "...",
+        "total_latency_ms": 8920,
+        "provider_latency_ms": 7800,
+        "context_assembly_ms": 890,
+        "timestamp": "2024-01-20T14:22:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /v1/analytics/memory-performance
+
+**Get memory system performance analytics**
+
+**Required Permission:** `trace:read`
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "period": "7d",
+    "retrieval_stats": {
+      "total_retrievals": 427819,
+      "avg_memories_per_request": 5.1,
+      "avg_retrieval_latency_ms": 38,
+      "cache_hit_rate": 0.67,
+      "empty_result_rate": 0.04
+    },
+    "quality_stats": {
+      "avg_relevance_score": 0.84,
+      "positive_feedback_rate": 0.89,
+      "negative_feedback_rate": 0.04
+    },
+    "top_retrieved_memories": [
+      {
+        "memory_id": "a1b2c3d4-...",
+        "content_preview": "User prefers dark mode...",
+        "retrieval_count": 1247,
+        "avg_score": 0.91
+      }
+    ],
+    "memory_growth": {
+      "created_this_period": 3421,
+      "archived_this_period": 124,
+      "conflict_resolutions": 47,
+      "deduplication_saves": 891
+    }
+  }
+}
+```
+
+---
+
+## Tokens API
+
+Scoped Personal Access Tokens (PATs). The management API never writes the token hash
+table directly — create/list/revoke call AuthService gRPC. Permission strings map to the
+ADR-0009 bitmap (see Permissions Reference below).
+
+Auth gates: AuthService enforces `TokenCreate` (bit 36) for create/list and
+`TokenRevoke` (bit 37) / own-token for revoke. Elevation (granting bits the caller does
+not hold) returns `403 PERMISSION_ELEVATION_DENIED`. Cross-tenant access returns `404 NOT_FOUND`.
+
+### GET /v1/tokens
+
+**List tokens for the caller's organization** (cursor pagination; plaintext never returned).
+
+**Query:** `cursor` (opaque auth cursor), `limit` (1–100, default 50).
+
+**Response: 200 OK** — `CursorPage[TokenResponse]` (`data` + `pagination`).
+
+### POST /v1/tokens
+
+**Create a PAT** (plaintext returned exactly once).
+
+**Request:**
+
+```http
+POST /v1/tokens
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "name": "Production SDK Token",
+  "permissions": ["memory:read", "memory:write", "session:create"],
+  "expires_at": null,
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "allowed_ips": ["10.0.0.0/8"]
+}
+```
+
+Notes:
+
+- `user_id` is bound from the caller's verified token — never accepted in the body.
+- `allowed_ips` is **syntax-validated only** (invalid CIDR → `VALIDATION_ERROR`). Values are
+  **not persisted** and are omitted from all responses until Auth proto/schema enforcement lands.
+- Token type is always PAT (`ibex_pat_…` prefix).
+
+**Permissions Reference** (ADR-0009; string ↔ bit):
+
+```text
+memory:read                 bit 0
+memory:write                bit 1
+memory:delete               bit 2
+memory:bulk_export          bit 3
+directive:read              bit 8
+directive:write             bit 9
+directive:promote           bit 10   (MFA)
+directive:revoke            bit 11   (MFA)
+session:create              bit 16
+session:read                bit 17
+session:terminate           bit 18
+trace:read                  bit 24
+trace:export                bit 25
+admin:user_manage           bit 32
+admin:billing_read          bit 33
+admin:billing_manage        bit 34
+admin:org_manage            bit 35   (alias for OrgSettingsWrite)
+admin:token_create          bit 36
+admin:token_revoke          bit 37
+marketplace:publish         bit 40
+marketplace:install         bit 41
+federation:share            bit 48
+```
+
+Dropped (no backing bit): `agent:read`, `agent:write`, `admin:billing`, `admin:audit_log`.
+
+**Response: 201 Created**
+
+```json
+{
+  "id": "0190abcd-0000-7000-8000-000000000001",
+  "name": "Production SDK Token",
+  "token": "ibex_pat_0190abcd_…",
+  "prefix": "ibex_pat_0190abcd",
+  "permissions": ["memory:read", "memory:write", "session:create"],
+  "expires_at": null,
+  "created_at": "2024-01-20T15:00:00.000Z"
+}
+```
+
+Store the `token` field securely — it is not returned by list/get.
+
+### GET /v1/tokens/{token_id}
+
+**Get one token** by filtering Auth `ListTokens` (no GetToken RPC). Missing/cross-tenant → `404`.
+
+**Response: 200 OK** — `TokenResponse` (no plaintext; includes `prefix`, `is_revoked`, `revoked_at`).
+
+### DELETE /v1/tokens/{token_id}
+
+**Revoke a token** via `AuthService.RevokeToken` (Redis pub/sub propagation to proxy auth-cache).
+
+**Required permission (Auth):** `admin:token_revoke` (bit 37), or revoking one's own token.
+
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
+
+PATCH is not supported yet (follow-up issue).
+
+---
+
+## Provider Credentials API
+
+Org-scoped BYO LLM provider keys. Plaintext is accepted only on write, validated upstream, then sealed in Auth. Responses never include `api_key`, ciphertext, or wrapped DEKs.
+
+**Required permission:** `admin:org_manage` / OrgSettingsWrite (bit 35). Path `org_id` must match the bearer org (cross-tenant → `404 NOT_FOUND`).
+
+### GET /v1/organizations/{org_id}/providers
+
+**List** stored credentials (metadata only). This is a **bounded, non-paginated**
+exception: the response returns the full credentials metadata list for the org
+(no `limit`, `cursor`, or pagination fields).
+
+**Response: 200 OK**
+
+```json
+{
+  "credentials": [
+    {
+      "provider_name": "openai",
+      "status": "active",
+      "key_hint": "abcd",
+      "base_url": null,
+      "last_validated_at": "2026-09-10T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+### POST /v1/organizations/{org_id}/providers
+
+**Upsert** a credential. Body always includes plaintext `api_key`. Management API
+validates provider-specifically (≤5s total deadline, no redirects) then calls Auth
+`CreateProviderCredential`.
+
+Validation probes:
+
+| `provider_name` | Probe | Auth headers | Notes |
+| --- | --- | --- | --- |
+| `azure_openai` | `GET {base_url}/openai/models?api-version=…` | `api-key` | `base_url` **required** (`*.openai.azure.com`); missing/invalid → `422 INVALID_CREDENTIAL` |
+| `anthropic` | `GET {base}/v1/models` | `x-api-key`, `anthropic-version` | Default base `https://api.anthropic.com` |
+| others | `GET {base}/v1/models` | `Authorization: Bearer …` | Upstream rejection / unsafe destination → `422 INVALID_CREDENTIAL` |
+
+`vllm_self_hosted` may use plaintext `http://` only for literal loopback addresses;
+mesh/private/localhost names require HTTPS.
+
+```json
+{
+  "provider_name": "openai",
+  "api_key": "sk-…",
+  "base_url": null
+}
+```
+
+`provider_name`: `openai` | `anthropic` | `azure_openai` | `bedrock` | `vllm_self_hosted`.
+
+**Response: 201 Created** — metadata (`provider_name`, `status`, `key_hint`, optional `base_url`, `last_validated_at`). Upstream rejection → `422 INVALID_CREDENTIAL`.
+
+### DELETE /v1/organizations/{org_id}/providers/{provider_name}
+
+**Response: 204 No Content**. Missing/cross-tenant → `404 NOT_FOUND`.
+
+A separate re-validate endpoint is deferred.
+
+---
+
+## Rate Limits API (m4.B.2)
+
+Org- and agent-scoped **RPM** overrides for the proxy hierarchical limiter. Token-month ceilings are deferred ([#806](https://github.com/Rick1330/ibex-harness/issues/806)). There is **no** usage time-series endpoint in this milestone.
+
+**Authz:**
+- `GET` — any valid bearer for the path org (`require_token` + `assert_path_org`)
+- `PATCH` — owner/admin + `OrgSettingsWrite` (bit 35)
+
+Cross-tenant path org → `404 NOT_FOUND`.
+
+Platform default RPM: `IBEX_API_RATE_LIMIT_DEFAULT_RPM` (default `60`). Live `current_minute_requests` reads Redis key `ratelimit:{org_id}:rpm:{unix_minute}`; when Redis is unset/unavailable the field is `0`.
+
+After a successful `PATCH`, the API best-effort `PUBLISH`es `{"v":1,"org_id":"..."}` on `ratelimit_config_updates:{org_id}`. Publish failure does **not** roll back Postgres (30s proxy poll converges).
+
+### GET /v1/organizations/{org_id}/rate-limits
+
+**Response: 200 OK**
+
+```json
+{
+  "org_id": "550e8400-e29b-41d4-a716-446655440000",
+  "requests_per_minute": 120,
+  "source": "override",
+  "platform_default_rpm": 60,
+  "current_minute_requests": 3,
+  "agent_overrides": [
+    {
+      "agent_id": "550e8400-e29b-41d4-a716-446655440001",
+      "requests_per_minute": 30,
+      "source": "override"
+    }
+  ]
+}
+```
+
+### PATCH /v1/organizations/{org_id}/rate-limits
+
+```json
+{
+  "requests_per_minute": 120,
+  "clear_org_override": false,
+  "agent_overrides": [
+    { "agent_id": "550e8400-e29b-41d4-a716-446655440001", "requests_per_minute": 30 },
+    { "agent_id": "550e8400-e29b-41d4-a716-446655440002", "requests_per_minute": null }
+  ]
+}
+```
+
+- `requests_per_minute` — set org-level override (1..1_000_000); omit to leave unchanged
+- `clear_org_override: true` — delete org-level row (revert to platform default); cannot combine with `requests_per_minute`
+- `agent_overrides[].requests_per_minute: null` — clear that agent override
+
+**Response: 200 OK** — same shape as GET (effective limits after write).
+
+---
+
+## Model Policies API (m4.C.2)
+
+Org-scoped allow/deny globs for proxy model routing ([ADR-0075](adr/0075-per-org-model-routing-policy.md)).
+First match wins by `priority` ascending (`filepath.Match`); no matching row → allow any registered model.
+
+**Auth:** GET = bearer + path-org match; mutating = owner/admin `ORG_SETTINGS_WRITE` (`RequireOrgSettings`).
+Cross-tenant path org → **404**.
+
+### GET /v1/organizations/{org_id}/model-policies
+
+Cursor list (`priority`, `pattern`). Query: `cursor`, `limit` (1..100, default 50).
+
+**Response: 200 OK**
+
+```json
+{
+  "data": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440010",
+      "org_id": "550e8400-e29b-41d4-a716-446655440000",
+      "model_pattern": "claude-*",
+      "allowed": true,
+      "priority": 100,
+      "created_at": "2026-09-12T00:00:00.000Z",
+      "updated_at": "2026-09-12T00:00:00.000Z"
+    }
+  ],
+  "pagination": { "has_more": false, "next_cursor": null }
+}
+```
+
+### POST /v1/organizations/{org_id}/model-policies
+
+```json
+{ "model_pattern": "claude-*", "allowed": true, "priority": 100 }
+```
+
+**Response: 201 Created** — policy object. Duplicate pattern → `409 MODEL_POLICY_PATTERN_CONFLICT`.
+
+### GET /v1/organizations/{org_id}/model-policies/{policy_id}
+
+**Response: 200 OK** — single policy, or `404 NOT_FOUND`.
+
+### PATCH /v1/organizations/{org_id}/model-policies/{policy_id}
+
+Partial update: any of `model_pattern`, `allowed`, `priority`.
+
+**Response: 200 OK** — updated policy.
+
+### DELETE /v1/organizations/{org_id}/model-policies/{policy_id}
+
+**Response: 204 No Content**.
+
+After successful write, API best-effort PUBLISHes `{"v":1,"org_id":"..."}` to `model_policy_updates:{org_id}` (publish failure does not roll back Postgres).
+
+---
+
+## Organizations API
+
+### GET /v1/organizations/me
+
+**Get current organization**
+
+**Required Permission:** Any valid token
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "id": "123e4567-...",
+    "name": "Acme Corporation",
+    "slug": "acme-corp",
+    "tier": "pro",
+    "status": "active",
+    "created_at": "2024-01-01T00:00:00.000Z",
+    "usage": {
+      "current_period": {
+        "tokens_used": 45230000,
+        "token_quota": 100000000,
+        "token_usage_pct": 45.2,
+        "memory_count": 89030,
+        "memory_quota": 1000000,
+        "memory_usage_pct": 8.9
+      },
+      "period": "2024-01",
+      "resets_at": "2024-02-01T00:00:00.000Z"
+    },
+    "limits": {
+      "monthly_tokens": 100000000,
+      "max_memories": 1000000,
+      "max_agents": 50,
+      "requests_per_minute": 1000
+    }
+  }
+}
+```
+
+---
+
+### GET /v1/organizations/me/usage
+
+**Get detailed usage data**
+
+**Required Permission:** `admin:billing`
+
+**Query Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `period` | string | `YYYY-MM` format. Default: current month |
+| `breakdown` | enum | `agent`, `day`, `event_type` |
+
+**Response: 200 OK**
+
+```json
+{
+  "data": {
+    "period": "2024-01",
+    "total": {
+      "tokens": 45230000,
+      "memory_writes": 3421,
+      "memory_reads": 427819,
+      "sessions": 1247,
+      "api_calls": 84721
+    },
+    "by_agent": [
+      {
+        "agent_id": "550e8400-...",
+        "agent_name": "Customer Support",
+        "tokens": 23000000,
+        "memory_writes": 1847,
+        "sessions": 891
+      }
+    ],
+    "daily_breakdown": [
+      {
+        "date": "2024-01-15",
+        "tokens": 1847000,
+        "requests": 2841
+      }
+    ],
+    "estimated_cost_usd": 45.23
+  }
+}
+```
+
+---
+
+## Webhook API
+
+### POST /v1/webhooks
+
+**Register a webhook endpoint**
+
+**Required Permission:** `admin:token_create`
+
+**Request:**
+
+```http
+POST /v1/webhooks
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "url": "https://your-server.com/ibex-webhooks",
+  "events": [
+    "memory.created",
+    "memory.conflict_detected",
+    "session.failed",
+    "drift.detected",
+    "directive.promoted",
+    "quota.threshold_reached"
+  ],
+  "secret": "your_webhook_secret_here",
+  "agent_ids": ["550e8400-..."]
+}
+```
+
+**Available Events:**
+
+```text
+memory.created              -- New memory written
+memory.conflict_detected    -- Memory conflict requires review
+memory.deleted              -- Memory deleted
+session.started             -- New session started
+session.completed           -- Session completed normally
+session.failed              -- Session failed with error
+session.loop_detected       -- Agent loop detected
+session.suspended           -- Session heartbeat lost
+drift.detected              -- Behavioral drift detected
+drift.resolved              -- Drift alert resolved
+directive.submitted_review  -- Directive awaiting review
+directive.promoted          -- Directive made active
+directive.revoked           -- Directive emergency revoked
+quota.80_percent            -- 80% of monthly quota used
+quota.95_percent            -- 95% of monthly quota used
+quota.exceeded              -- Monthly quota exhausted
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "data": {
+    "id": "wh_abc123",
+    "url": "https://your-server.com/ibex-webhooks",
+    "events": ["memory.created", "drift.detected"],
+    "status": "active",
+    "created_at": "2024-01-20T15:00:00.000Z"
+  }
+}
+```
+
+---
+
+### Webhook Payload Format
+
+All webhooks use this envelope:
+
+```json
+{
+  "id": "evt_abc123",
+  "type": "drift.detected",
+  "api_version": "v1",
+  "created_at": "2024-01-20T15:30:00.000Z",
+  "org_id": "123e4567-...",
+  "data": {
+    "alert_id": "da_xyz789",
+    "agent_id": "550e8400-...",
+    "severity": "high",
+    "alerts": [
+      {
+        "feature": "tool_call_rate",
+        "baseline_value": 0.4,
+        "current_value": 0.87,
+        "z_score": 3.8
+      }
+    ]
+  }
+}
+```
+
+---
+
+## LLM Proxy API
+
+### POST /proxy/v1/chat/completions
+
+**Proxy OpenAI-compatible chat completion**
+
+Drop-in replacement for OpenAI's chat completions endpoint. Context and memory injection happen transparently.
+
+**Service route (direct proxy):** `POST /v1/chat/completions` — same handler; `/proxy` is the external gateway path prefix.
+
+**Phase 1 behavior:** Authenticated requests with valid JSON are parsed; response is **501 Not Implemented** with `PROVIDER_NOT_CONFIGURED` until Phase 2 provider forwarding. Malformed JSON returns **400** with `INVALID_JSON`.
+
+**Request:**
+
+```http
+POST /proxy/v1/chat/completions
+Authorization: Bearer {token}
+Content-Type: application/json
+X-IBEX-Agent-ID: 550e8400-e29b-41d4-a716-446655440000
+X-IBEX-Session-ID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+
+{
+  "model": "gpt-4-turbo",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What UI settings does the user prefer?"
+    }
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1000,
+  "stream": false
+}
+```
+
+**IBEX-Specific Headers:**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `X-IBEX-Agent-ID` | Yes | Agent making the request |
+| `X-IBEX-Session-ID` | No | Current session (creates new if absent) |
+| `X-IBEX-Skip-Memory` | No | `true` to disable memory injection |
+| `X-IBEX-Skip-Extraction` | No | `true` to disable memory extraction |
+| `X-IBEX-Directive-Override` | No | Override directive version ID |
+
+**IBEX response headers** (chat completions; set when context assembly was attempted):
+
+| Header | When present | Description |
+|--------|--------------|-------------|
+| `X-IBEX-Memories-Injected` | Assemble attempted | Count of memories included in the assembly (`0` on fallback) |
+| `X-IBEX-Context-Tokens` | Assemble attempted | Tokens used by assembled context (`0` on fallback) |
+| `X-IBEX-Context-Fallback` | Assemble attempted | `true` if assembly failed open (RPC/timeout/`empty` blob) and Phase 2 directive injection was used; `false` if assembled context was injected |
+
+These three headers are **omitted** when context assembly was not attempted: `IBEX_CONTEXT_ENABLED=false`, nil context client (empty `IBEX_CONTEXT_GRPC_TARGET`), or request header `X-IBEX-Skip-Memory` truthy.
+
+**Embedded `ibex` JSON** (non-streaming only; Phase 3.5.D.3): when `IBEX_CONTEXT_EMBED_METADATA=true` **and** Assemble was attempted for the request, the response body gains a top-level `ibex` object with the fields below. Omitted entirely (verbatim upstream body) when the flag is off, Assemble was not attempted, or the response is streaming (SSE remains headers-only).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `trace_id` | string | OTEL trace id (same source as `X-Trace-ID`); empty when no active span |
+| `session_id` | string | Durable session UUID when available; otherwise sticky `X-IBEX-Session-ID` external id |
+| `memories_injected` | int | Same count as `X-IBEX-Memories-Injected` |
+| `context_tokens_used` | int | Same count as `X-IBEX-Context-Tokens` |
+| `context_assembly_ms` | int | Wall ms for the Assemble RPC on this request (`0` when not measured) |
+| `proxy_overhead_ms` | int | Request wall ms since start minus provider `Complete` duration |
+
+**Response: 200 OK** (non-streaming)
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1705753845,
+  "model": "gpt-4-turbo",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Based on the available context, the user..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 2048,
+    "completion_tokens": 342,
+    "total_tokens": 2390
+  },
+  "ibex": {
+    "trace_id": "550e8400-...",
+    "session_id": "7c9e6679-...",
+    "memories_injected": 5,
+    "context_tokens_used": 1247,
+    "context_assembly_ms": 38,
+    "proxy_overhead_ms": 15
+  }
+}
+```
+
+**Response: 200 OK** (streaming, `stream: true`)
+
+```text
+data: {"id":"chatcmpl-abc123","choices":[{"delta":{"content":"Based"},...}]}
+
+data: {"id":"chatcmpl-abc123","choices":[{"delta":{"content":" on"},...}]}
+
+data: [DONE]
+```
+
+**Response: 429 Too Many Requests**
+
+```json
+{
+  "error": {
+    "message": "Rate limit exceeded",
+    "type": "rate_limit_error",
+    "code": "RATE_LIMIT_EXCEEDED"
+  }
+}
+```
+
+Response headers:
+
+```http
+Retry-After: 45
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1705753900
+```
+
+---
+
+### POST /proxy/v1/messages
+
+**Proxy Anthropic-compatible messages**
+
+Same behavior as OpenAI proxy but with Anthropic's message format.
+
+```http
+POST /proxy/v1/messages
+Authorization: Bearer {token}
+X-IBEX-Agent-ID: 550e8400-...
+anthropic-version: 2023-06-01
+Content-Type: application/json
+
+{
+  "model": "claude-3-opus-20240229",
+  "max_tokens": 1024,
+  "messages": [
+    {
+      "role": "user",
+      "content": "What are the user's preferences?"
+    }
+  ]
+}
+```
+
+---
+
+## gRPC API
+
+Internal gRPC contracts live under [packages/proto/proto/ibex/](../packages/proto/proto/ibex/). Generated stubs are produced locally (`make proto-gen`) and are not committed to git — see [ADR-0004](../engineering/adr/0004-protobuf-and-codegen-policy.md).
+
+### Auth Service (`ibex.auth.v1`)
+
+The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g. the LLM proxy). Source of truth: [packages/proto/proto/ibex/auth/v1/auth.proto](../packages/proto/proto/ibex/auth/v1/auth.proto). Contract policy: [ADR-0006](../engineering/adr/0006-auth-proto-contract.md).
+
+- **ValidateToken** — no caller metadata required (proxy hot path)
+  - **Request:** `access_token` — full `Authorization: Bearer ...` value
+  - **Response (success):** `org_id`, `permissions` (int64 bitmap), optional `agent_id`, `user_id`, `token_id`, `expires_at`
+  - **Errors:** `Unauthenticated` for invalid/revoked/expired tokens
+
+**Permission bitmap:** [ADR-0009](../engineering/adr/0009-permission-bitmap.md), `packages/permissions`. Admin bits: `TokenCreate` (36), `TokenRevoke` (37). Phase 2 proxy minimum: `ProxyChatCompletion`.
+
+**Management RPCs** (internal; milestone 1.1.4):
+
+| RPC | Caller | Notes |
+| --- | --- | --- |
+| `CreateToken` | `authorization: Bearer` + `TokenCreate` | `plaintext` returned once only |
+| `RevokeToken` | Bearer + `TokenRevoke` or own token | Cross-org → `NotFound` |
+| `ListTokens` | Bearer + `TokenCreate` | Metadata only; no hash/plaintext |
+
+Additional errors: `InvalidArgument`, `PermissionDenied`, `NotFound` per [ADR-0006](../engineering/adr/0006-auth-proto-contract.md).
+
+**Permission bitmap:** 64-bit `permissions` field per [ADR-0009](../engineering/adr/0009-permission-bitmap.md). Go source of truth: `packages/permissions`. Key admin bits for token management:
+
+| Bit | Constant | Required for |
+| --- | --- | --- |
+| 36 | `TokenCreate` | `CreateToken`, `ListTokens` (caller bearer in metadata) |
+| 37 | `TokenRevoke` | Revoking another user's token in the same org |
+
+**Phase 2 proxy minimum:** `permissions.ProxyChatCompletion` = `MemoryRead | SessionCreate | SessionRead`.
+
+Management RPCs (`CreateToken`, `RevokeToken`, `ListTokens`) are documented in milestone 1.1.4; callers must send gRPC metadata `authorization: Bearer <pat>` except for `ValidateToken`.
+
+### Context Assembly (`ibex.context.v1`)
+
+The Context Assembly Engine exposes a gRPC API consumed internally by the proxy. Not exposed publicly.
+
+### Proto Definition (context)
+
+```protobuf
+syntax = "proto3";
+package ibex.context.v1;
+
+service ContextAssemblyService {
+  // Assemble context for an inference call
+  rpc AssembleContext(AssembleContextRequest)
+      returns (AssembleContextResponse);
+
+  // Retrieve memories without full assembly
+  rpc SearchMemories(SearchMemoriesRequest)
+      returns (SearchMemoriesResponse);
+
+  // Update memory usefulness after outcome known
+  rpc RecordMemoryFeedback(RecordMemoryFeedbackRequest)
+      returns (RecordMemoryFeedbackResponse);
+}
+
+message AssembleContextRequest {
+  string agent_id = 1;
+  string org_id = 2;
+  string session_id = 3;
+  string query = 4;
+  string model = 5;
+  string directive_version_id = 6;
+  int32 available_tokens = 7;
+  repeated Message recent_messages = 8;
+  AssemblyOptions options = 9;
+}
+
+message AssemblyOptions {
+  bool skip_cold_memories = 1;
+  bool skip_hot_memories = 2;
+  float recency_weight = 3;
+  float relevance_weight = 4;
+  float usefulness_weight = 5;
+  float confidence_weight = 6;
+  int32 max_memories = 7;
+}
+
+message AssembleContextResponse {
+  string assembled_context = 1;
+  int32 tokens_used = 2;
+  int32 memories_included = 3;
+  repeated MemoryUsed memories_used = 4;
+  int32 directive_tokens = 5;
+  int32 history_tokens = 6;
+  int32 memory_tokens = 7;
+  AssemblyMetrics metrics = 8;
+}
+
+message AssemblyMetrics {
+  int32 budget_calculation_ms = 1;
+  int32 directive_load_ms = 2;
+  int32 hot_memory_retrieval_ms = 3;
+  int32 cold_memory_retrieval_ms = 4;
+  int32 ranking_ms = 5;
+  int32 packing_ms = 6;
+  int32 formatting_ms = 7;
+  int32 total_ms = 8;
+  int32 candidates_evaluated = 9;
+}
+
+message MemoryUsed {
+  string memory_id = 1;
+  float composite_score = 2;
+  float relevance_score = 3;
+  float recency_score = 4;
+  float usefulness_score = 5;
+  int32 rank = 6;
+  string category = 7;
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+}
+
+message SearchMemoriesRequest {
+  string agent_id = 1;
+  string org_id = 2;
+  string query = 3;
+  int32 limit = 4;
+  float min_similarity = 5;
+  repeated string categories = 6;
+  repeated string tags = 7;
+  string session_id = 8;
+}
+
+message SearchMemoriesResponse {
+  repeated Memory memories = 1;
+  int32 total_candidates = 2;
+  int32 search_time_ms = 3;
+}
+
+message Memory {
+  string id = 1;
+  string content = 2;
+  string category = 3;
+  float confidence = 4;
+  float composite_score = 5;
+  int32 retrieval_count = 6;
+  string created_at = 7;
+}
+
+message RecordMemoryFeedbackRequest {
+  repeated string memory_ids = 1;
+  string session_id = 2;
+  string trace_id = 3;
+  string org_id = 4;
+  string feedback = 5;  // "positive", "negative", "neutral"
+}
+
+message RecordMemoryFeedbackResponse {
+  bool success = 1;
+  repeated MemoryScoreUpdate updates = 2;
+}
+
+message MemoryScoreUpdate {
+  string memory_id = 1;
+  float previous_score = 2;
+  float new_score = 3;
+}
+```
+
+---
+
+## 📌 API Versioning Policy
+
+### Version Lifecycle
+
+```text
+v1 (current):  Fully supported
+v2 (future):   Announced when breaking changes needed
+```
+
+### Breaking vs Non-Breaking Changes
+
+**Non-breaking (no version bump):**
+
+- Adding new optional fields to requests
+- Adding new fields to responses
+- Adding new endpoints
+- Adding new enum values
+- Relaxing validation constraints
+
+**Breaking (requires version bump):**
+
+- Removing or renaming fields
+- Changing field types
+- Changing response structures
+- Adding required fields
+- Changing authentication behavior
+- Changing pagination format
+
+### Deprecation Process
+
+```text
+Month 0:   Breaking change identified
+Month 1:   New version launched, deprecation notice sent
+           Old version: Deprecation header added to responses
+Month 1-12: Both versions supported
+Month 12:  Old version receives no new features
+Month 13:  Old version returns 410 Gone with migration guide
+```
+
+**Deprecation Headers (reference example only; hostnames and dates require verification):**
+
+```http
+X-IBEX-Deprecation: true
+X-IBEX-Deprecation-Date: 2025-01-15
+X-IBEX-Sunset-Date: 2025-06-01
+X-IBEX-Successor: {api-origin}/v2/
+Link: <{public-docs-origin}/migration/v1-to-v2>; rel="deprecation"
+```
+
+---
+
+## 🧪 Testing Your Integration
+
+### Test Mode
+
+Add header to any request to run in test mode:
+
+```http
+X-IBEX-Test-Mode: true
+```
+
+**Test mode:**
+
+- Requests don't count toward quotas
+- No actual LLM calls (uses mock responses)
+- Data created in test namespace (auto-deleted after 24h)
+- Clearly marked in responses: `"test_mode": true`
+
+### Sandbox and API playground
+
+No sandbox hostname or live API playground is verified by the repository baseline. If either is provisioned later, document its owner, data isolation, credential policy, reset behavior, and approved origin in the environment record rather than treating this reference page as deployment evidence.
+
+## IBEX Console implementation checklist
+
+Before an operator route is called implemented, attach all of the following to the owning service and release record: OpenAPI snapshot and diff; generated-client freshness; runtime DTO validation tests; context/overview/health/events owner; permission and two-tenant negative tests; `no-store`/cache evidence; CSRF/CORS/cookie/security-header checks; SSE reconnect, deduplication, slow-client, and drain evidence; performance results; staged authenticated browser report; immutable artifact and rollback record.

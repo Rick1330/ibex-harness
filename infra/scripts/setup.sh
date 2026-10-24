@@ -18,11 +18,10 @@ bash "$ROOT_DIR/infra/scripts/dev-tool.sh" check-tools
 bash "$ROOT_DIR/infra/scripts/dev-tool.sh" env-doctor
 
 if ! command -v pnpm >/dev/null 2>&1; then
-  echo 'setup: pnpm is missing; install it using the OS recipe in web/engineering/TOOLCHAIN.md' >&2
+  echo 'setup: pnpm is missing; install it using the OS recipe in engineering/TOOLCHAIN.md' >&2
   exit 1
 fi
-pnpm install --frozen-lockfile --ignore-scripts
-pnpm --filter web run postinstall
+pnpm install --frozen-lockfile
 npm ci --prefix .github/markdownlint --ignore-scripts
 
 SETUP_PYTHON="$ROOT_DIR/.ibex/setup-venv/bin/python"

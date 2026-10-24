@@ -1,0 +1,160 @@
+---
+title: "ADR-0057: Memory write-path persistence and orchestration"
+description: "Architecture decision record 0057 — owns pipeline steps 7–9 (DB write, cache, index); insert+supersession transaction; unique-violation→bump; durable conflict escalations deferred to milestone 3.C.5."
+adrId: "0057"
+status: "Accepted"
+date: "2026-08-27"
+authors: "IBEX Harness team"
+---
+
+::decision-banner{status="Accepted" date="2026-08-27" id="0057"}
+::
+
+# ADR-0057: Memory write-path persistence and orchestration
+
+- **Status:** Accepted
+- **Date:** 2026-08-27
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.C.5 Write-path persistence & orchestration](/roadmap)
+- **Tracking issue:** [#620](https://github.com/Rick1330/ibex-harness/issues/620)
+
+## Context
+
+Track C ships a documented nine-step write pipeline
+([tracks](/roadmap)):
+
+`validate → PII → dedup → embed → near-dup → conflict → DB write → cache update → index`
+
+Milestones [3.C.1](/roadmap)–[3.C.3](/roadmap)
+implement stages 1–6 ([ADR-0054](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0054-memory-pii-presidio-in-process.md),
+[ADR-0055](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0055-memory-write-path-dedup.md),
+[ADR-0056](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0056-temporal-conflict-detection.md)).
+**No milestone owned steps 7–9.** Track D is read/ranking;
+[3.C.4](/roadmap)
+is multi-label only. Phase 3 exit gate [3.E.2](/roadmap)
+requires `POST /v1/memories` end-to-end.
+
+Also: `ESCALATE_PENDING` and `pending_supersede_targets` exist only on ephemeral
+`WriteContext` today — a conflict worker has nothing durable to poll.
+
+## Options considered
+
+### 1) Ownership of steps 7–9
+
+1. Expand 3.C.4 to include insert/cache/index — overloads multi-label scope.
+2. Pull write orchestration into Track D — Track D is read/ranking.
+3. **New milestone 3.C.5 before 3.C.4** (chosen). Multi-label attaches labels at
+   insert time and needs a real insert transaction.
+
+### 2) Insert + supersession transaction shape
+
+1. Staged writes with compensating actions on partial failure — complex; easy to
+   leave orphan edges or active duplicates.
+2. **Single Postgres transaction** wrapping insert + `apply_supersession` /
+   relationship edge writes (chosen). Cache and vector upsert run **after commit**
+   (best-effort / retryable); do not hold the DB txn open for Redis or ANN.
+
+### 3) Exact-hash unique violation (race after ADR-0055)
+
+Concurrent inserts against the partial unique index can fail after the exact-dedup
+stage passed. Options: surface a 500, or **map to the existing bump-retrieval path**
+and return the documented `409 DUPLICATE_CONTENT` / bump semantics. Chosen: **map
+to bump** — never a bare 500.
+
+### 4) Durable escalations for `ESCALATE_PENDING`
+
+1. Invent `pending_review` on `memories.status` — forbidden without migration;
+   ADR-0056 already rejected inventing it casually.
+2. New `relationship_type` like `contradicts_pending` — overloads the committed
+   graph with workflow state (`memory_relationships` has no status column).
+3. **Dedicated org-scoped table `memory_conflict_escalations`** (chosen design).
+   Worker polls `status = pending`. **Implementation deferred to milestone 3.C.5**
+   ([#620](https://github.com/Rick1330/ibex-harness/issues/620)); this ADR locks
+   the design so the gap is not silent.
+
+## Decision
+
+1. Milestone **3.C.5** owns steps 7–9 and the HTTP write handler that backs the
+   existing [`POST /v1/memories`](/docs/architecture/status-and-evidence) contract
+   (do not invent a new REST shape).
+2. Sequencing: `3.C.1 → 3.C.2 → 3.C.3 → **3.C.5** → 3.C.4`.
+3. After conflict stage returns, the orchestrator:
+   - Opens one DB transaction
+   - Inserts the new memory (gets DB-generated id)
+   - Applies each `pending_supersede_targets` id via
+     [`apply_supersession`](https://github.com/Rick1330/ibex-harness/blob/main/services/memory/app/conflict/persist.py)
+     (and inserts other edges as decided by conflict outcomes)
+   - Commits
+   - Then best-effort cache update + vector upsert/index refresh
+4. On unique violation for active `(org_id, agent_id, content_hash)`: call the
+   existing bump path and return `409` with `existing_memory_id` per API docs.
+5. Escalation durability — finalized schema (migration `000019`):
+
+   ```sql
+   CREATE TABLE ibex_core.memory_conflict_escalations (
+       id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       org_id              UUID NOT NULL REFERENCES ibex_core.organizations(id),
+       new_memory_id       UUID NOT NULL,
+       candidate_memory_id UUID NOT NULL,
+       conflict_type       TEXT NOT NULL,   -- ConflictOutcome (e.g. escalate_pending)
+       status              TEXT NOT NULL DEFAULT 'pending'
+                           CHECK (status IN ('pending', 'resolved', 'dismissed')),
+       subject_key         TEXT,
+       reason              TEXT,
+       created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       resolved_at         TIMESTAMPTZ,
+       resolved_by         UUID             -- nullable; future human/LLM consumer
+   );
+   ```
+
+   **Composite org-scoped FKs** on `(new_memory_id, org_id)` and
+   `(candidate_memory_id, org_id)` → `memories (id, org_id)` — same defense-in-depth
+   pattern as `memory_relationships` (000016) and `memory_labels` (000015). Prevents
+   cross-tenant edge attachment even if application code omits an `org_id` filter.
+
+   **RLS:** `ENABLE` + `FORCE` + `rls_org_visible(org_id)` — identical to sibling tables.
+
+   **Worker poll index:** partial index on `(org_id, created_at DESC) WHERE status = 'pending'`.
+
+   Rows are written **in the same transaction** as the new memory insert for
+   `ESCALATE_PENDING` decisions — an escalation must never be lost if the insert
+   succeeds. Do **not** add `pending_review` to `memories.status` (ADR-0056 rejected).
+
+6. **Unique-violation race** (concurrent identical content after exact-dedup pre-check):
+
+   Catch Postgres `23505` on `idx_memories_org_agent_content_hash_active` inside the
+   persist transaction, roll back, call the existing bump-retrieval path, and return
+   the same `409 DUPLICATE_CONTENT` + `existing_memory_id` shape as the pre-check path.
+   Callers cannot distinguish which path fired.
+
+7. **After-commit cache and index** (steps 8–9):
+
+   Run **strictly after** the DB transaction commits. **Synchronous inline
+   best-effort** — not Celery (memory service has no task queue). Failure to update
+   Redis or the vector index does not fail the HTTP write; log + metric + retry-worthy.
+
+   | Step | Target |
+   |------|--------|
+   | Object cache | `{org_id}:memory:{memory_id}` (JSON, TTL 3600s) |
+   | Hot sorted set | `{org_id}:hot_memories:{agent_id}` (ZADD composite_score, atomic trim top-50, TTL 3600s) — see [ADR-0059](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0059-hot-cache-read-path.md) |
+   | Vector index | `PgVectorStore.upsert` (UPDATE embedding on existing row) |
+
+   Skip after-commit for quarantined writes (no embedding) and exact-duplicate 409s.
+
+8. **HTTP wiring timing:** Stages 1–6 were built and testable as a pure pipeline
+   function without a DB insert path. Only with a real insert transaction does
+   `POST /v1/memories` make sense — wired in 3.C.5 per the existing API contract.
+
+## Consequences
+
+- 3.C.4 and 3.E.2 depended on 3.C.5 for a correct write product surface — **3.C.5 shipped** (ADR-0057); **3.C.4 multi-label write shipped** (ADR-0048).
+- Conflict workers gain a pollable escalation table when 3.C.5 lands; **consumption
+  is deferred** — tracked in [#627](https://github.com/Rick1330/ibex-harness/issues/627).
+- Worker poll query shape and partial-index `EXPLAIN` verification live in
+  `services/memory/tests/integration/test_premerge_guards.py`.
+
+## Implementation note (2026-08-28)
+
+Milestone [3.C.5](/roadmap) landed `POST /v1/memories`, transactional insert + supersession, after-commit cache/index, and `memory_conflict_escalations`. Milestone [3.C.4](/roadmap) adds optional `labels[]` in the same insert transaction (`insert_labels_session`); scalar `memories.category` remains trigger-maintained only.
+
+Milestone [3.D.2](/roadmap) wires the same `CompositeInputs` shape used by hot-cache ZADD into the search read path (`find_similar` composite ranking). Milestone [3.D.3](/roadmap) adds atomic top-50 trim and `MemoryHotCacheReader` ([ADR-0059](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0059-hot-cache-read-path.md)).

@@ -31,4 +31,4 @@ The local stack is not a production HA claim. Organization-wide HA, multi-AZ ret
 
 A new datastore, network boundary, GPU runtime, chart, or migration path requires source/test evidence, tenant/security review, and an ADR. Update this inventory and the affected service/package README in the same change.
 
-See [services inventory](../services/README.md), [package inventory](../packages/README.md), and [current roadmap state](../web/content/roadmap/current-state.mdx).
+See [services inventory](../services/README.md), [package inventory](../packages/README.md), and [current roadmap state](../engineering/roadmap-archive/legacy-roadmap/current-state.mdx).

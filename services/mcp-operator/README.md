@@ -3,7 +3,7 @@
 Read-only MCP resource server for operators (GAP-009). It exposes four
 metadata-only tools over Streamable HTTP, gated by bearer auth and the shared
 enforcement pipeline in [`packages/mcp_gateway`](../../packages/mcp_gateway). See
-[ADR-0086](../../web/content/docs/adr/0086-mcp-operator-gateway.mdx).
+[ADR-0086](../../engineering/adr/0086-mcp-operator-gateway.md).
 
 **Default off.** The process serves only `/health`, `/ready`, and `/metrics`
 until `IBEX_MCP_OPERATOR_ENABLED=true`. Transport is Streamable HTTP only; stdio

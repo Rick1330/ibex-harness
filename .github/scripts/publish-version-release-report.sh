@@ -36,7 +36,7 @@ if [[ "$step_outcome" != "success" ]]; then
     echo ""
     echo "The version release engine step did not succeed. Check the step logs above for auth, permissions, or conventional-commit errors."
     echo ""
-    echo "See [RELEASING.md](${server}/${repo}/blob/main/web/engineering/RELEASING.md) for workflow permissions and token setup."
+    echo "See [RELEASING.md](${server}/${repo}/blob/main/engineering/RELEASING.md) for workflow permissions and token setup."
   } >>"$GITHUB_STEP_SUMMARY"
   echo "::error::Version release engine step failed (outcome=${step_outcome})" >&2
   exit 1

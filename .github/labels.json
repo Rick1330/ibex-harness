@@ -7,7 +7,7 @@
   {
     "name": "area/web",
     "color": "5319E7",
-    "description": "Next.js web app, public site, dashboard"
+    "description": "Public site and published docs content"
   },
   {
     "name": "area/ci",

@@ -5,7 +5,7 @@
 #   make verify-phase25
 #   IBEX_VERIFY_PHASE25_E2E=1 make verify-phase25   # also run e2e-phase25 + observability-smoke
 #
-# Exit criteria mapping: web/content/roadmap/.../2.5.g7-phase25-exit-gate.mdx
+# Exit criteria mapping: engineering/roadmap-archive/legacy-roadmap/.../2.5.g7-phase25-exit-gate.mdx
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -70,7 +70,7 @@ section "Observability artifacts (ADR-0051)"
 [[ -f infra/compose/observability/docker-compose.yml ]] || fail "missing observability compose"
 [[ -f infra/monitoring/prometheus/prometheus.yml ]] || fail "missing prometheus.yml"
 [[ -f infra/monitoring/grafana/dashboards/proxy-critical-path.json ]] || fail "missing Proxy Critical Path dashboard"
-[[ -f web/content/docs/adr/0051-local-lgtm-observability-stack.mdx ]] || fail "missing ADR-0051"
+[[ -f engineering/adr/0051-local-lgtm-observability-stack.md ]] || fail "missing ADR-0051"
 pass "observability configs present"
 
 if [[ "${IBEX_VERIFY_PHASE25_E2E:-0}" == "1" ]]; then

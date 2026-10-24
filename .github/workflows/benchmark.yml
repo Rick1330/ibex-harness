@@ -10,7 +10,7 @@ on:
   pull_request:
     paths:
       - 'benchmarks/**'
-      - 'web/public/benchmarks/**'
+      - 'site/public/benchmarks/**'
       - '.github/workflows/benchmark.yml'
       - 'services/auth/**'
       - 'services/proxy/**'
@@ -107,7 +107,7 @@ jobs:
 
       - name: Validate published benchmark data on main
         run: |
-          path="web/public/benchmarks/benchmark-data.json"
+          path="site/public/benchmarks/benchmark-data.json"
           if [ -f "$path" ]; then
             python benchmarks/scripts/validate_published_data.py "$path"
           else
@@ -226,7 +226,7 @@ jobs:
 
       - name: Load previous benchmark history from repo
         run: |
-          src="web/public/benchmarks/benchmark-data.json"
+          src="site/public/benchmarks/benchmark-data.json"
           if [ -f "$src" ]; then
             cp "$src" benchmarks/output/prev-benchmark-data.json
             echo "Loaded previous benchmark history from ${src}"

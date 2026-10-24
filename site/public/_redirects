@@ -1,0 +1,33 @@
+# Public compatibility redirects. Keep this list small and documented.
+/status /docs/architecture/status-and-evidence 301
+/milestones /docs/architecture/status-and-evidence 301
+/search-index.json /docs 301
+/docs/changelog /releases 301
+/docs/changelog/* /releases 301
+/roadmap /docs/architecture/status-and-evidence 301
+/roadmap/* /docs/architecture/status-and-evidence 301
+/docs/roadmap /docs/architecture/status-and-evidence 301
+/docs/roadmap/* /docs/architecture/status-and-evidence 301
+
+# Architecture decisions are engineering records, not public docs pages.
+/docs/adr https://github.com/Rick1330/ibex-harness/tree/main/engineering/adr 301
+/docs/adr/* https://github.com/Rick1330/ibex-harness/tree/main/engineering/adr 301
+
+# Retired engineering pages never had stable public contracts,
+# but old inbound links should land on the closest current page.
+/docs/engineering/* /docs/architecture/status-and-evidence 301
+
+# Retired blog posts. Preserve inbound links without preserving stale claims.
+/blog/docs-site-and-roadmap-launch /blog 301
+/blog/phase-1-launch /blog/proxy-before-memory 301
+/blog/ibex-memory-lifecycle-map /blog/memory-write-path 301
+
+# Legacy docs slugs and component-era aliases.
+/docs/api_documentation /docs/api-reference/http-routes 301
+/docs/database_schema /docs/architecture/data-model 301
+/docs/agents /docs/getting-started/concepts 301
+/docs/auth/security-model /docs/security/overview 301
+/docs/api-reference/rest-endpoints /docs/api-reference/chat-completions 301
+/docs/api-reference/websocket /docs/api-reference/chat-completions 301
+/docs/memory/architecture /docs/memory/overview 301
+/docs/context/architecture /docs/context/overview 301

@@ -1,12 +1,12 @@
 # packages/
 
-> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`web/engineering/architecture-v2/README.md`](../web/engineering/architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
+> **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`engineering/architecture-v2/README.md`](../engineering/architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
 
 Shared libraries and contract artifacts (not deployable as standalone processes). Deployable runtimes live under [`services/`](../services/README.md).
 
 This inventory reflects the directories present at commit `e4525e3`. Existing packages are current/shipped unless explicitly marked otherwise; the separate planned section contains only packages that do not yet exist. Exact boundaries may change only with evidence and an ADR. See [Changing this inventory](#changing-this-inventory).
 
-Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md). Package boundary rules: [ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx).
+Scaffold guidance: [engineering/FILE_STRUCTURE.md](../engineering/FILE_STRUCTURE.md). Package boundary rules: [ADR-0020](../engineering/adr/0020-shared-package-boundaries.md).
 
 ---
 
@@ -24,32 +24,32 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | Directory | Role |
 | --- | --- |
 | `proto/` | Protobuf source of truth + buf codegen — [proto/README.md](proto/README.md) |
-| `permissions/` | 64-bit permission bitmap ([ADR-0009](../web/content/docs/adr/0009-permission-bitmap.mdx)) |
-| `crypto/` | Approved cryptography — Argon2id PHC, random, constant-time compare ([ADR-0010](../web/content/docs/adr/0010-cryptography-policy.mdx)) |
-| `ratelimit/` | Org-level Redis rate limiting — `Limiter`, `RedisSlider` ([ADR-0015](../web/content/docs/adr/0015-proxy-rate-limit-skeleton.mdx)) |
-| `reqid/` | Request ID generation (UUID v7), context propagation ([ADR-0017](../web/content/docs/adr/0017-request-id-strategy.mdx)) |
-| `shutdown/` | Graceful shutdown coordinator for auth and proxy ([ADR-0018](../web/content/docs/adr/0018-graceful-shutdown.mdx)) |
+| `permissions/` | 64-bit permission bitmap ([ADR-0009](../engineering/adr/0009-permission-bitmap.md)) |
+| `crypto/` | Approved cryptography — Argon2id PHC, random, constant-time compare ([ADR-0010](../engineering/adr/0010-cryptography-policy.md)) |
+| `ratelimit/` | Org-level Redis rate limiting — `Limiter`, `RedisSlider` ([ADR-0015](../engineering/adr/0015-proxy-rate-limit-skeleton.md)) |
+| `reqid/` | Request ID generation (UUID v7), context propagation ([ADR-0017](../engineering/adr/0017-request-id-strategy.md)) |
+| `shutdown/` | Graceful shutdown coordinator for auth and proxy ([ADR-0018](../engineering/adr/0018-graceful-shutdown.md)) |
 | `logger/` | Structured JSON logger with mandatory field schema ([AGENTS.md](../AGENTS.md) §10) |
-| `telemetry/` | OpenTelemetry tracer/meter init, HTTP span middleware ([ADR-0019](../web/content/docs/adr/0019-opentelemetry-provider-configuration.mdx)) |
-| `metrics/` | Canonical Prometheus metric registry ([ADR-0021](../web/content/docs/adr/0021-prometheus-metric-catalog.mdx)) |
-| `config/` | Typed env loading with aggregated validation ([ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx)) |
-| `apierror/` | Canonical HTTP/gRPC error codes and envelope ([ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx)) |
-| `session/` | Session store contract (intentional multi-consumer API — [ARCHITECTURE_LAYERING.md](../web/engineering/ARCHITECTURE_LAYERING.md)) |
+| `telemetry/` | OpenTelemetry tracer/meter init, HTTP span middleware ([ADR-0019](../engineering/adr/0019-opentelemetry-provider-configuration.md)) |
+| `metrics/` | Canonical Prometheus metric registry ([ADR-0021](../engineering/adr/0021-prometheus-metric-catalog.md)) |
+| `config/` | Typed env loading with aggregated validation ([ADR-0020](../engineering/adr/0020-shared-package-boundaries.md)) |
+| `apierror/` | Canonical HTTP/gRPC error codes and envelope ([ADR-0020](../engineering/adr/0020-shared-package-boundaries.md)) |
+| `session/` | Session store contract (intentional multi-consumer API — [ARCHITECTURE_LAYERING.md](../engineering/ARCHITECTURE_LAYERING.md)) |
 | `idempotency/` | Idempotency store contract (intentional multi-consumer API) |
 | `directive/` | Directive resolver contract (intentional multi-consumer API; rollout helpers may extend this in Phase 4.5) |
-| `injection/` | System-prompt injection strategies for chat messages ([ADR-0031](../web/content/docs/adr/0031-system-prompt-injection.mdx)) |
-| `authcache/` | Token validation LRU + bloom of invalids ([ADR-0028](../web/content/docs/adr/0028-auth-cache-design.mdx)) |
-| `revocation/` | Auth-cache revocation channel helpers ([ADR-0029](../web/content/docs/adr/0029-token-revocation-propagation.mdx)) |
+| `injection/` | System-prompt injection strategies for chat messages ([ADR-0031](../engineering/adr/0031-system-prompt-injection.md)) |
+| `authcache/` | Token validation LRU + bloom of invalids ([ADR-0028](../engineering/adr/0028-auth-cache-design.md)) |
+| `revocation/` | Auth-cache revocation channel helpers ([ADR-0029](../engineering/adr/0029-token-revocation-propagation.md)) |
 | `redissub/` | Shared Redis SUBSCRIBE helpers for revocation fan-out |
-| `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../web/content/docs/adr/0022-health-check-contract.mdx)) |
-| `provider/` | LLM provider abstraction and registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)); OpenAI + Anthropic adapters ([ADR-0040](../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)); capability registry; self-hosted adapter |
-| `tokenizer/` | Per-family token counting registry ([ADR-0043](../web/content/docs/adr/0043-tokenizer-registry.mdx)); tiktoken OpenAI families + claude estimate |
-| `responsepipeline/` | Non-streaming chat response decode / stage pipeline / re-encode ([ADR-0044](../web/content/docs/adr/0044-response-pipeline-non-streaming.mdx)); noop default, fail-open stages; optional `IBEXMetadataStage` embeds top-level `ibex` JSON (3.5.D.3) |
-| `embedder/` | Embedding interface + profile registry + stub + geometry validation ([ADR-0046](../web/content/docs/adr/0046-embedder-interface-registry.mdx)); inference in `services/embedder/` |
-| `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
+| `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../engineering/adr/0022-health-check-contract.md)) |
+| `provider/` | LLM provider abstraction and registry ([ADR-0025](../engineering/adr/0025-llm-provider-abstraction.md)); OpenAI + Anthropic adapters ([ADR-0040](../engineering/adr/0040-anthropic-provider-adapter.md)); capability registry; self-hosted adapter |
+| `tokenizer/` | Per-family token counting registry ([ADR-0043](../engineering/adr/0043-tokenizer-registry.md)); tiktoken OpenAI families + claude estimate |
+| `responsepipeline/` | Non-streaming chat response decode / stage pipeline / re-encode ([ADR-0044](../engineering/adr/0044-response-pipeline-non-streaming.md)); noop default, fail-open stages; optional `IBEXMetadataStage` embeds top-level `ibex` JSON (3.5.D.3) |
+| `embedder/` | Embedding interface + profile registry + stub + geometry validation ([ADR-0046](../engineering/adr/0046-embedder-interface-registry.md)); inference in `services/embedder/` |
+| `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../engineering/adr/0033-clickhouse-schema.md)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |
-| `circuitbreaker/` | Shared provider breaker (consecutive default + opt-in rolling window; [ADR-0076](../web/content/docs/adr/0076-circuit-breaker-per-provider.mdx)); optional wrap for context Assemble deferred |
-| `contextclient/` | Fail-open Go gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../web/content/docs/adr/0071-context-grpc-degradation-deadline.mdx)): `Assemble` never returns a Go `error` (`Fallback` flag); default **45ms** `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`; dial/wire in proxy bootstrap |
+| `circuitbreaker/` | Shared provider breaker (consecutive default + opt-in rolling window; [ADR-0076](../engineering/adr/0076-circuit-breaker-per-provider.md)); optional wrap for context Assemble deferred |
+| `contextclient/` | Fail-open Go gRPC client for `ContextAssemblyService.AssembleContext` (3.5.D.1 / [ADR-0071](../engineering/adr/0071-context-grpc-degradation-deadline.md)): `Assemble` never returns a Go `error` (`Fallback` flag); default **45ms** `IBEX_CONTEXT_ASSEMBLE_TIMEOUT`; dial/wire in proxy bootstrap |
 | `policysnapshot/` | Signed `policy-snapshot.v1` envelope contract (GAP-002 / owner decision record §2.1-2.2): JCS claims, RS256 issuer/verifier, key rotation/epoch, 30s mutation / 60s read freshness, 5s skew; AuthService authority. Package docs: [`policysnapshot/README.md`](policysnapshot/README.md) |
 | `evidenceoutbox/` | 4.P.2 evidence-scoped transactional outbox + durable evidence writers (runs/spans/metrics/scores/directive/tool/session_events); relay with crash/replay; does **not** absorb model-policy or org-deletion publication |
 

@@ -4,7 +4,7 @@ Go service for the IBEX Harness LLM proxy.
 
 ## Platform endpoints (no auth)
 
-- `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../web/content/docs/adr/0022-health-check-contract.mdx))
+- `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../engineering/adr/0022-health-check-contract.md))
 - `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`); advisory: `postgres` (`SELECT 1` when `POSTGRES_DSN` set), `selfhosted_llm` (`GET /models` when self-hosted enabled), `tokenizer` (ground-truth self-test when registry loaded)
 - `GET /metrics` — Prometheus text metrics
 
@@ -13,13 +13,13 @@ Go service for the IBEX Harness LLM proxy.
 All protected routes require:
 
 - `Authorization: Bearer <pat>`
-- `X-IBEX-Agent-ID: <uuid>` — must be an **active** agent owned by the token's org ([ADR-0016](../../web/content/docs/adr/0016-agent-identity-verification.mdx))
+- `X-IBEX-Agent-ID: <uuid>` — must be an **active** agent owned by the token's org ([ADR-0016](../../engineering/adr/0016-agent-identity-verification.md))
 
 - `GET /v1/internal/auth-probe` — returns `{org_id, permissions}` for the caller token
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
-- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; provider routing (default `IBEX_LLM_MODE=mock` → HTTP **200** for registered models; `live` + `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `IBEX_SELFHOSTED_ENABLED` for real upstream). Non-streaming success responses pass through `packages/responsepipeline` (typed decode → stages → re-encode; noop default preserves upstream bytes verbatim — [ADR-0044](../../web/content/docs/adr/0044-response-pipeline-non-streaming.mdx)). **501** `PROVIDER_NOT_CONFIGURED` means the **model is not in the registry**, not that forwarding is missing. Also: **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Mock is rejected when `IBEX_ENV=production`.
+- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; provider routing (default `IBEX_LLM_MODE=mock` → HTTP **200** for registered models; `live` + `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `IBEX_SELFHOSTED_ENABLED` for real upstream). Non-streaming success responses pass through `packages/responsepipeline` (typed decode → stages → re-encode; noop default preserves upstream bytes verbatim — [ADR-0044](../../engineering/adr/0044-response-pipeline-non-streaming.md)). **501** `PROVIDER_NOT_CONFIGURED` means the **model is not in the registry**, not that forwarding is missing. Also: **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../engineering/adr/0013-proxy-input-validation-and-error-envelope.md). Mock is rejected when `IBEX_ENV=production`.
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../web/content/docs/adr/0011-proxy-auth-client.mdx)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../web/content/docs/adr/0016-agent-identity-verification.mdx)). Parse: [ADR-0012](../../web/content/docs/adr/0012-proxy-request-normalization.mdx). Validation + envelope: [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Rate limiting: [ADR-0015](../../web/content/docs/adr/0015-proxy-rate-limit-skeleton.mdx), with current dependency-failure behavior in [ADR-0081](../../web/content/docs/adr/0081-fail-closed-proxy-runtime-controls.mdx). Directive resolve (m2.3.2): Redis cache with Postgres fallback via `POSTGRES_DSN` (`openProxyPostgres` / `directive.PostgresStore.Load`) when Redis is also configured. Session lifecycle (m2.4.3): when `POSTGRES_DSN` is set, chat resolves/mints sticky `X-IBEX-Session-ID` (= `sessions.external_id`, not row `id`), optionally via Redis key `session:{org_id}:{agent_id}:{external_id}`, echoes that external id on stream and non-stream responses (including GetOrCreate fail-open sticky-only), and enqueues `AppendCheckpoint` on a bounded non-dropping async pool (detached Background+timeout per task, drained on shutdown). GetOrCreate failures fail open (sticky header kept; checkpoint skipped). Idle sweeper (m2.4.4): background ticker marks stale `active` sessions `abandoned` (`IBEX_SESSION_IDLE_TIMEOUT` / `IBEX_SESSION_SWEEP_INTERVAL`), invalidates Redis session keys, and uses a Postgres advisory lock across replicas. Explicit `X-IBEX-Session-End` → `completed` may be wired later; idle path uses `abandoned`. Directive injection (m2.3.3): handler applies `packages/injection.Inject` (`system_first` / `system_append` / `user_prepend`) to `provider.Request.Messages` before `Complete` ([ADR-0031](../../web/content/docs/adr/0031-system-prompt-injection.mdx)); directive content is never logged. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`; configured rate-limit Redis operation failure → **503** `SERVICE_DEGRADED` before provider work.
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../engineering/adr/0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../engineering/adr/0016-agent-identity-verification.md)). Parse: [ADR-0012](../../engineering/adr/0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../engineering/adr/0013-proxy-input-validation-and-error-envelope.md). Rate limiting: [ADR-0015](../../engineering/adr/0015-proxy-rate-limit-skeleton.md), with current dependency-failure behavior in [ADR-0081](../../engineering/adr/0081-fail-closed-proxy-runtime-controls.md). Directive resolve (m2.3.2): Redis cache with Postgres fallback via `POSTGRES_DSN` (`openProxyPostgres` / `directive.PostgresStore.Load`) when Redis is also configured. Session lifecycle (m2.4.3): when `POSTGRES_DSN` is set, chat resolves/mints sticky `X-IBEX-Session-ID` (= `sessions.external_id`, not row `id`), optionally via Redis key `session:{org_id}:{agent_id}:{external_id}`, echoes that external id on stream and non-stream responses (including GetOrCreate fail-open sticky-only), and enqueues `AppendCheckpoint` on a bounded non-dropping async pool (detached Background+timeout per task, drained on shutdown). GetOrCreate failures fail open (sticky header kept; checkpoint skipped). Idle sweeper (m2.4.4): background ticker marks stale `active` sessions `abandoned` (`IBEX_SESSION_IDLE_TIMEOUT` / `IBEX_SESSION_SWEEP_INTERVAL`), invalidates Redis session keys, and uses a Postgres advisory lock across replicas. Explicit `X-IBEX-Session-End` → `completed` may be wired later; idle path uses `abandoned`. Directive injection (m2.3.3): handler applies `packages/injection.Inject` (`system_first` / `system_append` / `user_prepend`) to `provider.Request.Messages` before `Complete` ([ADR-0031](../../engineering/adr/0031-system-prompt-injection.md)); directive content is never logged. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`; configured rate-limit Redis operation failure → **503** `SERVICE_DEGRADED` before provider work.
 
 ## Middleware order
 
@@ -45,7 +45,7 @@ Protected responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X
 
 All responses include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` (configurable header names via env).
 
-Request IDs use **UUID v7** when generated ([ADR-0017](../../web/content/docs/adr/0017-request-id-strategy.mdx)). Valid inbound UUIDs (v4 or v7) on `IBEX_REQUEST_ID_HEADER` are honoured; invalid values are replaced. The same ID appears in JSON error `request_id` and is propagated to auth gRPC calls via `x-request-id` metadata (`packages/reqid`).
+Request IDs use **UUID v7** when generated ([ADR-0017](../../engineering/adr/0017-request-id-strategy.md)). Valid inbound UUIDs (v4 or v7) on `IBEX_REQUEST_ID_HEADER` are honoured; invalid values are replaced. The same ID appears in JSON error `request_id` and is propagated to auth gRPC calls via `x-request-id` metadata (`packages/reqid`).
 
 ## Configuration
 
@@ -84,11 +84,11 @@ See [.env.example](.env.example).
 | `OPENAI_API_KEY` | (empty) | Registers OpenAI when `live` and set |
 | `OPENAI_BASE_URL` | OpenAI default | Optional upstream base URL |
 | `IBEX_LLM_EXTRA_MODELS` | (empty) | Comma-separated extra OpenAI model IDs (require capability overlays) |
-| `ANTHROPIC_API_KEY` | (empty) | Registers Anthropic when `live` and set ([ADR-0040](../../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)) |
+| `ANTHROPIC_API_KEY` | (empty) | Registers Anthropic when `live` and set ([ADR-0040](../../engineering/adr/0040-anthropic-provider-adapter.md)) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic API base |
 | `ANTHROPIC_EXTRA_MODELS` | (empty) | Extra Claude model IDs (require capability overlays) |
-| `IBEX_MODEL_CAPABILITY_OVERLAYS` | (empty) | JSON array of `ModelCapability` rows for ExtraModels / self-hosted models ([ADR-0041](../../web/content/docs/adr/0041-model-capability-registry.mdx)) |
-| `IBEX_SELFHOSTED_ENABLED` | `false` | Register OpenAI-compatible self-hosted backend ([ADR-0042](../../web/content/docs/adr/0042-self-hosted-openai-compatible-adapter.mdx)) |
+| `IBEX_MODEL_CAPABILITY_OVERLAYS` | (empty) | JSON array of `ModelCapability` rows for ExtraModels / self-hosted models ([ADR-0041](../../engineering/adr/0041-model-capability-registry.md)) |
+| `IBEX_SELFHOSTED_ENABLED` | `false` | Register OpenAI-compatible self-hosted backend ([ADR-0042](../../engineering/adr/0042-self-hosted-openai-compatible-adapter.md)) |
 | `IBEX_SELFHOSTED_BASE_URL` | (empty) | Must end with `/v1` when enabled |
 | `IBEX_SELFHOSTED_MODELS` | (empty) | Comma-separated model IDs (require overlays with `provider:"openai"`) |
 | `IBEX_SELFHOSTED_API_KEY` | (empty) | Optional bearer; omitted when empty |
@@ -107,7 +107,7 @@ See [.env.example](.env.example).
 | `CLICKHOUSE_INSERT_BATCH_SIZE` | `500` | Trace insert batch size |
 | `CLICKHOUSE_INSERT_FLUSH_MS` | `200` | Trace flush interval |
 
-Full registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
+Full registry: [ENVIRONMENT_VARIABLES.md](../../engineering/ENVIRONMENT_VARIABLES.md).
 
 ## Context assembly (3.5.D)
 

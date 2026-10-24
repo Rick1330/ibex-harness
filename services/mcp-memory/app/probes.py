@@ -73,7 +73,7 @@ def build_protected_resource_metadata(settings: Settings) -> dict[str, object]:
         "authorization_servers": [settings.auth_server_url],
         "bearer_methods_supported": ["header"],
         "scopes_supported": ["memory:read", "memory:write"],
-        "resource_documentation": "https://ibexharness.com/docs/adr/0050-mcp-server-skeleton",
+        "resource_documentation": "https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0050-mcp-server-skeleton.md",
     }
 
 

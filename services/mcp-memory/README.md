@@ -39,4 +39,4 @@ bash infra/scripts/mcp-memory-test-ci.sh
 make test-clickhouse-migrate
 ```
 
-See [ADR-0050](../../web/content/docs/adr/0050-mcp-server-skeleton.mdx). The service is not an OAuth authorization server and does not provide per-agent rate limits.
+See [ADR-0050](../../engineering/adr/0050-mcp-server-skeleton.md). The service is not an OAuth authorization server and does not provide per-agent rate limits.

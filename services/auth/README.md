@@ -1,12 +1,12 @@
 # Auth service
 
-Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC `AuthService` ([ADR-0006](../../web/content/docs/adr/0006-auth-proto-contract.mdx), [ADR-0007](../../web/content/docs/adr/0007-auth-token-validation.mdx), [ADR-0009](../../web/content/docs/adr/0009-permission-bitmap.mdx)).
+Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC `AuthService` ([ADR-0006](../../engineering/adr/0006-auth-proto-contract.md), [ADR-0007](../../engineering/adr/0007-auth-token-validation.md), [ADR-0009](../../engineering/adr/0009-permission-bitmap.md)).
 
 ## Endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../web/content/docs/adr/0022-health-check-contract.mdx)) |
+| `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../engineering/adr/0022-health-check-contract.md)) |
 | `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
 | gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — listen for trusted proxy hosts (mTLS / internal net). `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
@@ -18,7 +18,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 
 ## Configuration
 
-See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md) §10.
+See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../engineering/ENVIRONMENT_VARIABLES.md) §10.
 
 | Variable | Required | Default |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |
 
-Provider credentials are implemented in the proto, gRPC handler, service, repository, Python authclient, and API facade. They require the configured master key/sealing provider, caller authorization, and tenant ownership. The proxy/API must never return plaintext credentials; retrieve only non-secret metadata after authorization. Full env registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
+Provider credentials are implemented in the proto, gRPC handler, service, repository, Python authclient, and API facade. They require the configured master key/sealing provider, caller authorization, and tenant ownership. The proxy/API must never return plaintext credentials; retrieve only non-secret metadata after authorization. Full env registry: [ENVIRONMENT_VARIABLES.md](../../engineering/ENVIRONMENT_VARIABLES.md).
 
 ## Testing
 

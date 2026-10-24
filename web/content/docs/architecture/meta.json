@@ -1,5 +1,0 @@
-{
-  "title": "Architecture",
-  "icon": "Boxes",
-  "pages": ["overview", "services", "data-model", "request-lifecycle"]
-}

@@ -35,7 +35,7 @@ documented error envelopes rather than silently widening scope.
 - Embedder HTTP client (`app/clients/embedding.py`) — `POST /v1/embed`, Bearer token,
   retries 429/502/503 + transport/timeout only; never logs texts/vectors/token
 - Config: `IBEX_MEMORY_*`, `IBEX_HNSW_EF_SEARCH`, `IBEX_RANK_WEIGHT_*`, embedder URL/token
-- ADR: [ADR-0053](../../web/content/docs/adr/0053-vector-store-abstraction.mdx)
+- ADR: [ADR-0053](../../engineering/adr/0053-vector-store-abstraction.md)
 - Image: `ghcr.io/<repo>/memory` via `.github/workflows/docker-publish.yml`
 
 ### m3.C.1 (Track C — PII)
@@ -69,7 +69,7 @@ documented error envelopes rather than silently widening scope.
 - `app/write/labels.py` — `resolve_write_labels`, validation, backward-compat synthesis from scalar `category` + `confidence` when `labels` omitted
 - Transactional `insert_labels_session` + `reload_memory_session` in orchestrator (same txn as memory insert); app never `UPDATE memories.category` — trigger `sync_memory_primary_category` only
 - Empty explicit `labels: []` → `ValidationError`; duplicate label → `409`-class validation error
-- Milestone: [3.C.4](../../web/content/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification.mdx); tracking [#630](https://github.com/Rick1330/ibex-harness/issues/630)
+- Milestone: [3.C.4](../../engineering/roadmap-archive/legacy-roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification.mdx); tracking [#630](https://github.com/Rick1330/ibex-harness/issues/630)
 
 ### m3.D.1 (Track D — Semantic search read path)
 
@@ -83,11 +83,11 @@ documented error envelopes rather than silently widening scope.
   gates: HNSW `pg_stat idx_scan` runtime (`test_hnsw_index_scan_at_runtime`) and GIN EXPLAIN
   on a test-only probe (`test_gin_index_used_at_runtime` in
   `tests/integration/test_find_similar_plans.py`)
-- Milestone: [3.D.1](../../web/content/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path.mdx)
+- Milestone: [3.D.1](../../engineering/roadmap-archive/legacy-roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path.mdx)
 
 ### m3.C.5 (Track C — Write orchestration)
 
-- `POST /v1/memories` — documented contract ([API_DOCUMENTATION.md](../../web/engineering/API_DOCUMENTATION.md))
+- `POST /v1/memories` — documented contract ([API_DOCUMENTATION.md](../../engineering/API_DOCUMENTATION.md))
 - Pipeline steps 7–9: transactional insert + supersession + escalations (`app/write/`, ADR-0057)
 - Unique-violation on active content hash → bump + `409 DUPLICATE_CONTENT`
 - After-commit Redis cache (`{org_id}:memory:{memory_id}`, `{org_id}:hot_memories:{agent_id}`) + vector upsert
@@ -110,7 +110,7 @@ documented error envelopes rather than silently widening scope.
 
 Live under top-level [`benchmarks/memory/`](../../benchmarks/memory/) (publish-aligned),
 not under this service tree. Published JSON:
-`web/public/benchmarks/hnsw-benchmark-data.json` (separate from proxy `benchmark-data.json`).
+`site/public/benchmarks/hnsw-benchmark-data.json` (separate from proxy `benchmark-data.json`).
 
 ```bash
 # compose-test Postgres on :5433, migrated:
@@ -138,4 +138,4 @@ POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable 
 If you are already inside `services/memory/`, use `make -C ../.. test-memory` (and the
 same for `test-memory-integration`).
 
-See [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md) §11.
+See [ENVIRONMENT_VARIABLES.md](../../engineering/ENVIRONMENT_VARIABLES.md) §11.

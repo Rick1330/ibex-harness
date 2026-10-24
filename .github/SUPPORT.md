@@ -10,13 +10,13 @@ Do **not** open a public issue. Follow [.github/SECURITY.md](SECURITY.md).
 
 ## Development questions
 
-- [web/engineering/DEVELOPMENT_GUIDE.md](../web/engineering/DEVELOPMENT_GUIDE.md) — local setup, branches, PR workflow, CI
-- [web/engineering/TOOLCHAIN.md](../web/engineering/TOOLCHAIN.md) — required tools and sanity checks
-- [Roadmap current state](../web/content/roadmap/current-state.mdx) — what is implemented vs planned (public `/roadmap/current-state`)
+- [engineering/DEVELOPMENT_GUIDE.md](../engineering/DEVELOPMENT_GUIDE.md) — local setup, branches, PR workflow, CI
+- [engineering/TOOLCHAIN.md](../engineering/TOOLCHAIN.md) — required tools and sanity checks
+- [Status and evidence](https://ibexharness.com/docs/architecture/status-and-evidence) — what is implemented vs planned
 
 ## Documentation
 
-Start at [engineering architecture](../web/engineering/ARCHITECTURE.md) for architecture, security, APIs, and runbooks.
+Start at [engineering architecture](../engineering/ARCHITECTURE.md) for architecture, security, APIs, and runbooks.
 
 ## Code of conduct
 

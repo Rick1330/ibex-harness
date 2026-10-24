@@ -95,14 +95,8 @@ jobs:
       - name: Landing hero assets guard
         run: bash .github/scripts/check-landing-assets.sh
 
-      - name: Static export guards
-        run: bash .github/scripts/check-static-export.sh
-
       - name: Provider credential schema leak guard
         run: bash .github/scripts/check-provider-credential-leak.sh
-
-      - name: Search index size-limit sync guard
-        run: bash .github/scripts/check-search-index-limit-sync.sh
 
       - name: Validate action pins
         env:
@@ -358,7 +352,7 @@ jobs:
       - name: Generate stubs (ephemeral; not committed)
         working-directory: packages/proto
         run: buf generate
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
       - name: Type-check generated TypeScript stubs
         run: pnpm exec tsc -p packages/proto/tsconfig.json
       - name: Contract unit tests
@@ -2125,8 +2119,8 @@ jobs:
         --lockfile
         pnpm-lock.yaml
 
-  web-build:
-    name: web-build
+  site-build:
+    name: site-build
     needs: [changes, repo-guards]
     if: needs.changes.outputs.run_web == 'true'
     runs-on: ubuntu-latest
@@ -2164,7 +2158,7 @@ jobs:
             echo "No successful Benchmarks run for ${HEAD_SHA}; using committed benchmark JSON."
             exit 0
           fi
-          mkdir -p web/public/benchmarks
+          mkdir -p site/public/benchmarks
           if ! gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name benchmark-data \
@@ -2172,9 +2166,9 @@ jobs:
             echo "Benchmark artifact download failed for run ${run_id}; using committed benchmark JSON."
             exit 0
           fi
-          cp /tmp/benchmark-data/benchmark-data.json web/public/benchmarks/benchmark-data.json
+          cp /tmp/benchmark-data/benchmark-data.json site/public/benchmarks/benchmark-data.json
           if [ -f /tmp/benchmark-data/badge.svg ]; then
-            cp /tmp/benchmark-data/badge.svg web/public/benchmarks/badge.svg
+            cp /tmp/benchmark-data/badge.svg site/public/benchmarks/badge.svg
           fi
           echo "Overlaid benchmark artifact from run ${run_id}"
 
@@ -2199,7 +2193,7 @@ jobs:
             echo "No successful Memory Benchmarks run for ${HEAD_SHA}; using committed HNSW JSON."
             exit 0
           fi
-          mkdir -p web/public/benchmarks
+          mkdir -p site/public/benchmarks
           if ! gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name hnsw-benchmark-data \
@@ -2208,14 +2202,14 @@ jobs:
             exit 0
           fi
           cp /tmp/hnsw-benchmark-data/hnsw-benchmark-data.json \
-            web/public/benchmarks/hnsw-benchmark-data.json
+            site/public/benchmarks/hnsw-benchmark-data.json
           echo "Overlaid HNSW artifact from run ${run_id}"
           if gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name ranking-quality-benchmark-data \
             --dir /tmp/ranking-quality-benchmark-data 2>/dev/null; then
             cp /tmp/ranking-quality-benchmark-data/ranking-quality-benchmark-data.json \
-              web/public/benchmarks/ranking-quality-benchmark-data.json
+              site/public/benchmarks/ranking-quality-benchmark-data.json
             echo "Overlaid ranking-quality artifact from run ${run_id}"
           fi
           if gh run download "$run_id" \
@@ -2223,29 +2217,43 @@ jobs:
             --name write-pipeline-benchmark-data \
             --dir /tmp/write-pipeline-benchmark-data 2>/dev/null; then
             cp /tmp/write-pipeline-benchmark-data/write-pipeline-benchmark-data.json \
-              web/public/benchmarks/write-pipeline-benchmark-data.json
+              site/public/benchmarks/write-pipeline-benchmark-data.json
             echo "Overlaid write-pipeline artifact from run ${run_id}"
           fi
 
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
 
-      - name: Cache Next.js build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Typecheck site
+        run: pnpm --filter site typecheck
+
+      - name: Lint site
+        run: pnpm --filter site lint
+
+      - name: Build site
+        run: pnpm --filter site build
+
+      - name: Check claims, links, and redirects
+        run: |
+          pnpm --filter site check:claims
+          pnpm --filter site check:links
+          pnpm --filter site check:redirects
+
+      - name: Prepare Chromium for site browser gates
+        # Playwright browser download via package CLI — not an npm lifecycle install.
+        run: pnpm --filter site exec playwright install --with-deps chromium # NOSONAR
+
+      - name: Test site layout and article render
+        timeout-minutes: 8
+        run: pnpm --filter site test:e2e
+
+      - name: Upload site browser evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          path: web/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml', 'web/**') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
-
-      - name: Typecheck web app
-        run: pnpm --filter web typecheck
-
-      - name: Test web components
-        timeout-minutes: 3
-        run: pnpm --filter web test
-
-      - name: Build web app
-        run: pnpm web:build:clean
+          name: site-browser-evidence
+          path: site/test-results/
+          if-no-files-found: warn
+          retention-days: 14
 
   console-quality:
     name: console-quality
@@ -2264,7 +2272,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-pnpm-web
+      - uses: ./.github/actions/setup-pnpm-node
 
       - name: Lint Console
         run: pnpm --filter @ibex/console lint
@@ -2363,7 +2371,7 @@ jobs:
       - name: Hadolint all Dockerfiles
         run: |
           # Dockerfiles today: services/auth, services/proxy, services/embedder, services/mcp-memory, services/mcp-operator.
-          # Pending: services/memory, services/dashboard (see web/engineering/DEPENDENCIES.md §10).
+          # Pending: services/memory, services/dashboard (see engineering/DEPENDENCIES.md §10).
           mapfile -t files < <(find . -name 'Dockerfile*' -not -path './.git/*' | sort)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No Dockerfiles found"
@@ -2776,8 +2784,8 @@ jobs:
           sarif_file: bandit.sarif
           category: bandit
 
-  web-go-quality-gate:
-    name: web-go-quality-gate
+  site-go-quality-gate:
+    name: site-go-quality-gate
     needs:
       - changes
       - proto-contract
@@ -2799,26 +2807,26 @@ jobs:
     permissions:
       contents: read
     steps:
-      - run: echo "Go quality gates passed for web deploy"
+      - run: echo "Go quality gates passed for site deploy"
 
-  web-deploy:
-    name: web-deploy
+  site-deploy:
+    name: site-deploy
     needs:
       - changes
       - repo-guards
-      - web-build
-      - web-go-quality-gate
+      - site-build
+      - site-go-quality-gate
     if: |
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.changes.outputs.run_web == 'true' &&
       needs.repo-guards.result == 'success' &&
-      needs.web-build.result == 'success' &&
-      (needs.changes.outputs.run_go != 'true' || needs.web-go-quality-gate.result == 'success')
+      needs.site-build.result == 'success' &&
+      (needs.changes.outputs.run_go != 'true' || needs.site-go-quality-gate.result == 'success')
     permissions:
       contents: read
-    uses: ./.github/workflows/web-deploy.yml
+    uses: ./.github/workflows/site-deploy.yml
     secrets:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -3001,7 +3009,7 @@ jobs:
     name: ci-gate-web
     needs:
       - changes
-      - web-build
+      - site-build
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -3010,10 +3018,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Evaluate web gate
+      - name: Evaluate site gate
         run: |
           bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" "${{ needs.changes.result }}" \
-            "${{ needs.web-build.result }}"
+            "${{ needs.site-build.result }}"
 
   ci-gate-security:
     name: ci-gate-security

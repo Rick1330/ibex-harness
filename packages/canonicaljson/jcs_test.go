@@ -17,7 +17,7 @@ type contractVectors struct {
 }
 
 func TestContractVectors(t *testing.T) {
-	raw, err := os.ReadFile("../../web/engineering/architecture-v2/contracts/jcs-test-vectors.json")
+	raw, err := os.ReadFile("../../engineering/architecture-v2/contracts/jcs-test-vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}

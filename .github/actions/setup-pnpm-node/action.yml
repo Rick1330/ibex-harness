@@ -1,0 +1,18 @@
+name: Setup pnpm (Node workspace)
+description: Node 22 with pnpm store cache and native dependency builds
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      with:
+        version: 9.15.9
+
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "22"
+        cache: pnpm
+
+    - name: Install workspace dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

@@ -1,0 +1,16 @@
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+node_modules
+.DS_Store
+.env
+.env.*
+!.env.example
+.tmp
+
+# Generated from the repository CHANGELOG by scripts/build-releases.mjs.
+app/data/releases.json
+public/releases.xml

@@ -1,0 +1,117 @@
+# IBEX Harness — Governance
+
+This document satisfies OpenSSF Baseline governance criteria (OSPS-GV-01.01, OSPS-GV-01.02, OSPS-GV-04.01) and records access controls that cannot be expressed in git alone.
+
+**Last reviewed:** 2026-07-15
+
+---
+
+## 1) Project members with sensitive-resource access
+
+| Name | GitHub | Role | Sensitive resources |
+| --- | --- | --- | --- |
+| Elshaday Mengesha | [@Rick1330](https://github.com/Rick1330) | Project lead / maintainer | GitHub repo admin, Actions secrets, Cloudflare deploy, branch protection, OpenSSF badge project owner |
+
+**Sensitive resources** include: repository admin settings, GitHub Actions secrets, production deploy credentials (Cloudflare), branch protection configuration, and OpenSSF Best Practices project administration.
+
+When additional maintainers join, this table must be updated in the same PR that grants access.
+
+---
+
+## 2) Roles and responsibilities
+
+| Role | Responsibilities |
+| --- | --- |
+| **Project lead** | Roadmap, release approval, security incident response, branch protection, CI policy (including fork PR workflow approval), OpenSSF badge maintenance |
+| **Contributor** | Open PRs from forks or branches; no direct push to `main`; no access to production secrets |
+| **Automation (`github-actions[bot]`)** | Version release PRs, SBOM/signing workflows, benchmark bot PRs — scoped tokens only (`GITHUB_TOKEN` or named secrets) |
+
+All human changes merge through pull requests with required CI gates ([ADR-0003](../engineering/adr/0003-branch-protection-and-merge-policy.md)).
+
+---
+
+## 3) Permission escalation review (OSPS-GV-04.01)
+
+Before granting **admin**, **maintain**, or **Actions secrets** access to a new collaborator:
+
+1. Open a tracking issue describing why elevated access is needed.
+2. Project lead reviews the request (self-review documented in the issue for solo maintenance).
+3. Grant the **minimum** GitHub role required (prefer **Write** over **Admin**).
+4. Update the member table in this document in the same change window.
+5. Revoke access promptly when the collaborator leaves the project.
+
+**Org-level settings** (verified manually; re-check quarterly):
+
+| Setting | Expected value | Status (2026-07-15) |
+| --- | --- | --- |
+| MFA for accounts with write/admin (OSPS-AC-01.01) | Enabled | **Verify in GitHub → Settings → Password and authentication** before marking Met on badge form; API tokens often cannot read `two_factor_authentication` |
+| Default repository permission (OSPS-AC-02.01) | Lowest / explicit grants only | User-owned solo repo: only @Rick1330 has admin; no other collaborators with write |
+| Private vulnerability reporting | Enabled | Repository Security → Private vulnerability reporting |
+| DCO / sign-off | Enforced via CONTRIBUTING + CI | [CONTRIBUTING.md](../CONTRIBUTING.md#developer-certificate-of-origin-dco) |
+
+---
+
+## 3.1) Access continuity (solo maintenance)
+
+Today the project has a **single human maintainer**. To reduce lockout risk if the lead is unavailable:
+
+1. **GitHub:** Enable MFA; keep recovery codes offline; add a successor’s GitHub account as a collaborator with **Admin** only when succession is activated (tracked by issue first — see §3).
+2. **Secrets lockbox:** Production secrets (Cloudflare Pages token, any deploy tokens) are stored only in GitHub Actions secrets and a personal password manager vault labeled `ibex-harness-ops`. Document the vault location offline for the designated successor (not in this repo).
+3. **Cloudflare:** Account recovery email must be an address the project lead controls; token recreation steps live outside git in `ibex-r/cloudflare-pages-token-setup.md` (maintainer workspace).
+4. **OpenSSF badge:** Project ownership on bestpractices.dev stays with the project lead; transfer via BadgeApp permissions when a co-maintainer joins.
+5. **Bus factor:** Pre-1.0, the intentional bus factor is 1. Team mode (≥1 required PR approval) is defined in ADR-0003 and will be enabled when a second maintainer is onboarded.
+
+**Roadmap duration banners:** Phase pages may show "N weeks" estimates. Under solo maintenance those banners are **planning guidance only** — not load-bearing calendar commitments. Treat calendar time as an **aggregate of sequential milestone duration estimates** (day/week ranges only). Ignore non-duration `estimatedEffort` values such as `done` / status labels when aggregating. See [Phases overview](/roadmap/overview) and [Findings](/roadmap/findings) (2026-07-19 duration honesty).
+
+---
+
+## 4) Public discussion and contribution
+
+| Channel | Purpose |
+| --- | --- |
+| [GitHub Issues](https://github.com/Rick1330/ibex-harness/issues) | Bug reports, features, questions |
+| [GitHub Discussions](https://github.com/Rick1330/ibex-harness/issues) | *(Issues used today; Discussions optional)* |
+| Pull requests | Code review and design discussion |
+
+Contributor requirements: [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+---
+
+## 5) Security assessment (OSPS-SA-03.01)
+
+The project maintains a living security assessment:
+
+- Threat model and controls: [SECURITY.md](./SECURITY.md)
+- CI security gates: [ADR-0008](../engineering/adr/0008-security-ci-gates.md)
+- Cryptography policy: [ADR-0010](../engineering/adr/0010-cryptography-policy.md)
+- Phase 1 validated invariants: SECURITY.md Appendix A (`TestSecurity_SEC*` integration suite)
+
+Formal threat-modeling workshops (OSPS-SA-03.02) remain on the backlog for org-wide production hardening (**deferred beyond Phase 5** as future roadmap scope). The documented threat model in SECURITY.md §3 is the current baseline; per-phase exit gates still require security/isolation evidence for that phase’s surfaces.
+
+### Security review record (OpenSSF Gold `security_review`)
+
+| Date | Scope | Outcome |
+| --- | --- | --- |
+| 2026-07-15 | Reviewed SECURITY.md threat model (§3), security objectives (§2), CI gates (ADR-0008), and assurance case mapping | Accepted as current baseline; residual risks listed in [ASSURANCE_CASE.md](./ASSURANCE_CASE.md) §5 |
+
+Re-review at least every 12 months or after a major auth/tenant design change.
+
+---
+
+## 6) Vulnerability disclosure and publication (OSPS-VM-04.01)
+
+- **Private reporting:** [.github/SECURITY.md](../.github/SECURITY.md) — GitHub Private vulnerability reporting
+- **Public advisories:** Published via [GitHub Security Advisories](https://github.com/Rick1330/ibex-harness/security/advisories) when fixes are available
+- **Response SLA:** Acknowledge within 5 business days (`.github/SECURITY.md`)
+
+VEX feeds for non-affecting component vulnerabilities (OSPS-VM-04.02) are planned for Phase 5; not yet published.
+
+---
+
+## 7) Related documents
+
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — PR workflow, DCO, testing policy
+- [OPENSSF_BEST_PRACTICES.md](./OPENSSF_BEST_PRACTICES.md) — badge evidence map
+- [RELEASING.md](./RELEASING.md) — release integrity and support policy
+- [SECURITY.md](./SECURITY.md) — threat model and security controls
+- [ASSURANCE_CASE.md](./ASSURANCE_CASE.md) — security claims and evidence map

@@ -431,7 +431,7 @@ class OracleCassettePolicyTests(unittest.TestCase):
 
     def test_policy_allows_next_route_group_paths(self) -> None:
         with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
-            path = "web/src/app/(site)/benchmarks/extraction-quality/page.tsx"
+            path = "site/app/pages/benchmarks.vue"
             changed = self._write_changed_files(Path(tmp), {path})
             self.assertEqual(oracle_policy._load_changed_paths(changed), {path})
 

@@ -119,7 +119,7 @@ check_tools() {
   if (( failures )); then
     cat >&2 <<'EOF'
 check-tools: one or more tools do not match infra/tool-versions.conf.
-Remediation: follow the OS-specific installation recipes in web/engineering/TOOLCHAIN.md,
+Remediation: follow the OS-specific installation recipes in engineering/TOOLCHAIN.md,
 then rerun `make check-tools`. Do not silently upgrade lockfiles or go.mod.
 EOF
     return 1
@@ -171,7 +171,7 @@ case "${1:-help}" in
     "$markdownlint" "**/*.md" "#node_modules"
     ;;
   security-scan) cd "$ROOT_DIR"; require_tool gitleaks 'gitleaks is required for security-scan'; gitleaks detect --source . --config .gitleaks.toml --redact --verbose ;;
-  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/check-static-export.sh; bash .github/scripts/validate-action-pins.sh; python3 infra/scripts/check_roadmap_status.py ;;
+  repo-guards) cd "$ROOT_DIR"; bash .github/scripts/check-repo-layout.sh; bash .github/scripts/check-landing-assets.sh; bash .github/scripts/validate-action-pins.sh ;;
   proto-lint) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf lint ;;
   proto-breaking) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf breaking --against "$PROTO_BREAKING_AGAINST" ;;
   proto-gen) require_tool buf 'buf is required'; cd "$PROTO_DIR"; buf generate ;;

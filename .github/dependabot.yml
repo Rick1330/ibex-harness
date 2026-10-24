@@ -72,8 +72,8 @@ updates:
       - react-dom
       - "@types/react"
       - "@types/react-dom"
-    fumadocs:
+    nuxt:
       patterns:
-      - fumadocs-ui
-      - fumadocs-core
-      - fumadocs-mdx
+      - nuxt
+      - docus
+      - "@nuxt/*"
