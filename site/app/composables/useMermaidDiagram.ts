@@ -170,14 +170,17 @@ const SVG_VIEWBOX = /<svg\b[^>]*\bviewBox="([^"]+)"/i
 const SVG_WIDTH = /<svg\b[^>]*\bwidth="([\d.]+)"/i
 const SVG_HEIGHT = /<svg\b[^>]*\bheight="([\d.]+)"/i
 
-function measure(svg: string) {
+function viewBoxSize(svg: string): { width: number, height: number } | null {
   const viewBox = SVG_VIEWBOX.exec(svg)?.[1]
-  if (viewBox) {
-    const parts = viewBox.split(/[\s,]+/).map(Number)
-    if (parts.length === 4 && parts.every(Number.isFinite)) {
-      return { width: parts[2]!, height: parts[3]! }
-    }
-  }
+  if (!viewBox) return null
+  const parts = viewBox.split(/[\s,]+/).map(Number)
+  if (parts.length !== 4 || !parts.every(Number.isFinite)) return null
+  return { width: parts[2]!, height: parts[3]! }
+}
+
+function measure(svg: string) {
+  const fromViewBox = viewBoxSize(svg)
+  if (fromViewBox) return fromViewBox
   return {
     width: Number(SVG_WIDTH.exec(svg)?.[1]) || 800,
     height: Number(SVG_HEIGHT.exec(svg)?.[1]) || 600,

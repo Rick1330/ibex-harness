@@ -139,6 +139,7 @@ onBeforeUnmount(() => {
         <dialog
           ref="panel"
           open
+          aria-modal="true"
           :aria-labelledby="titleId"
           class="static m-0 flex max-h-[94dvh] w-full flex-col overflow-hidden border border-[var(--site-line)] bg-[var(--site-bg)] p-0 text-[var(--site-ink)] shadow-[0_40px_120px_-30px_#000] sm:max-w-6xl sm:rounded-2xl"
         >

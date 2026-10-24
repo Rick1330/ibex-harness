@@ -15,9 +15,18 @@ export type CodeTokenKind =
   | 'command'
   | 'flag'
 
-export interface CodeToken {
-  text: string
-  kind: CodeTokenKind
+export class CodeToken {
+  readonly text: string
+  readonly kind: CodeTokenKind
+
+  constructor(text: string, kind: CodeTokenKind) {
+    this.text = text
+    this.kind = kind
+  }
+
+  static plain(text: string): CodeToken {
+    return new CodeToken(text, 'plain')
+  }
 }
 
 // A quoted string of any of the three quote flavors, a shell-style variable,
@@ -74,12 +83,12 @@ function createTokenSink(source: string) {
       cursor += newTokens.reduce((length, token) => length + token.text.length, 0)
     },
     pushPlain(text: string, kind: CodeTokenKind = 'plain') {
-      tokens.push({ text, kind })
+      tokens.push(new CodeToken(text, kind))
       cursor += text.length
     },
     pushRemainingPlain() {
       if (cursor < source.length) {
-        tokens.push({ text: source.slice(cursor), kind: 'plain' })
+        tokens.push(CodeToken.plain(source.slice(cursor)))
       }
     },
   }
@@ -105,7 +114,7 @@ function tokenizeStructuredPlain(text: string, language: 'ts' | 'python'): CodeT
     if (gap) sink.pushPlain(gap)
     sink.advanceTo(index)
     const rest = text.slice(index + match[0].length)
-    sink.push({ text: match[0], kind: structuredKind(match[0], keywords, rest) })
+    sink.push(new CodeToken(match[0], structuredKind(match[0], keywords, rest)))
   }
 
   sink.pushRemainingPlain()
@@ -165,8 +174,8 @@ function tokenizeCommentLine(line: string): CodeToken[] {
   const trimmed = line.trimStart()
   const indent = line.slice(0, line.length - trimmed.length)
   return [
-    ...(indent ? [{ text: indent, kind: 'plain' as const }] : []),
-    { text: trimmed, kind: 'comment' },
+    ...(indent ? [CodeToken.plain(indent)] : []),
+    new CodeToken(trimmed, 'comment'),
   ]
 }
 
@@ -184,7 +193,7 @@ function tokenizeCodeSegments(line: string, language: CodeLanguage): CodeToken[]
     const gap = sink.textBefore(index)
     if (gap) sink.pushAll(tokenizePlain(gap, language, sink.consumed() === 0))
     sink.advanceTo(index)
-    sink.push({ text: match[0], kind: segmentKind(match[0]) })
+    sink.push(new CodeToken(match[0], segmentKind(match[0])))
   }
 
   const remainder = sink.textBefore(line.length)

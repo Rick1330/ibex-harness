@@ -350,39 +350,59 @@ function downloadSvg() {
 async function downloadPng() {
   if (!svg.value || !naturalWidth.value || !naturalHeight.value) return
   try {
-    const exported = await render(props.code, 'ibex-diagram-export', { htmlLabels: false })
-    const ratio = Math.min(2, 4096 / Math.max(exported.width, exported.height))
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(exported.width * ratio)
-    canvas.height = Math.round(exported.height * ratio)
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('Canvas unavailable')
-
-    const background = getComputedStyle(document.documentElement).getPropertyValue('--site-surface').trim() || '#ffffff'
-    context.fillStyle = background
-    context.fillRect(0, 0, canvas.width, canvas.height)
-
-    const url = URL.createObjectURL(new Blob([exported.svg], { type: 'image/svg+xml;charset=utf-8' }))
-    try {
-      const image = new Image()
-      image.decoding = 'async'
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve()
-        image.onerror = () => reject(new Error('SVG decode failed'))
-        image.src = url
-      })
-      context.drawImage(image, 0, 0, canvas.width, canvas.height)
-    } finally {
-      URL.revokeObjectURL(url)
-    }
-
-    const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
-    if (png) downloadBlob(png, `${slug.value}.png`)
+    const png = await exportSvgAsPng(props.code)
+    downloadBlob(png, `${slug.value}.png`)
   } catch {
-    notice.value = 'PNG export is unavailable in this browser.'
-    if (noticeTimer) clearTimeout(noticeTimer)
-    noticeTimer = setTimeout(() => { notice.value = '' }, 3000)
+    showNotice('PNG export is unavailable in this browser.')
   }
+}
+
+function showNotice(message: string) {
+  notice.value = message
+  if (noticeTimer) clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => { notice.value = '' }, 3000)
+}
+
+function exportCanvasSize(width: number, height: number): { canvas: HTMLCanvasElement, context: CanvasRenderingContext2D } {
+  const ratio = Math.min(2, 4096 / Math.max(width, height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(width * ratio)
+  canvas.height = Math.round(height * ratio)
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Canvas unavailable')
+  return { canvas, context }
+}
+
+function paintCanvasBackground(context: CanvasRenderingContext2D) {
+  const background = getComputedStyle(document.documentElement).getPropertyValue('--site-surface').trim() || '#ffffff'
+  context.fillStyle = background
+  context.fillRect(0, 0, context.canvas.width, context.canvas.height)
+}
+
+async function drawSvgInto(context: CanvasRenderingContext2D, svgMarkup: string) {
+  const url = URL.createObjectURL(new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' }))
+  try {
+    const image = new Image()
+    image.decoding = 'async'
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error('SVG decode failed'))
+      image.src = url
+    })
+    context.drawImage(image, 0, 0, context.canvas.width, context.canvas.height)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+async function exportSvgAsPng(code: string): Promise<Blob> {
+  const exported = await render(code, 'ibex-diagram-export', { htmlLabels: false })
+  const { canvas, context } = exportCanvasSize(exported.width, exported.height)
+  paintCanvasBackground(context)
+  await drawSvgInto(context, exported.svg)
+  const png = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'))
+  if (!png) throw new Error('PNG encoding failed')
+  return png
 }
 
 async function copySource() {
@@ -432,6 +452,7 @@ onBeforeUnmount(() => {
         <dialog
           ref="panel"
           open
+          aria-modal="true"
           :aria-labelledby="titleId"
           class="static m-0 flex h-full w-full flex-col overflow-hidden border border-[var(--site-line)] bg-[var(--site-bg)] p-0 text-[var(--site-ink)] shadow-[0_40px_120px_-30px_#000] sm:h-[94dvh] sm:max-w-[98vw] sm:rounded-2xl"
         >
