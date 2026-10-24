@@ -15,7 +15,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'HOST=127.0.0.1 PORT=3282 node .output/server/index.mjs',
+    // Serve the deployed artifact (.output/public) the way Cloudflare Pages
+    // does — the Nitro server can answer requests the static deployment
+    // cannot, which would let tests pass against behavior that never ships.
+    command: 'HOST=127.0.0.1 PORT=3282 node scripts/serve-static.mjs',
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

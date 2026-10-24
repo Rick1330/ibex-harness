@@ -17,14 +17,14 @@ let section = null
 
 function clean(text) {
   return text
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/\*\*/g, '')
+    .replace(/\[([^\]]+)\]\(.+?\)/g, '$1')
+    .replaceAll('**', '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
 for (const line of lines) {
-  const release = line.match(/^## \[([^\]]+)\]\(([^)]+)\) \((\d{4}-\d{2}-\d{2})\)/)
+  const release = line.match(/^## \[(.+?)\]\((.+?)\) \((\d{4}-\d{2}-\d{2})\)/)
   if (release) {
     current = { version: release[1], compareUrl: release[2], date: release[3], sections: [] }
     releases.push(current)
@@ -47,11 +47,11 @@ for (const line of lines) {
   const item = line.match(/^\* (.+)$/)
   if (item && section) {
     const raw = item[1].trim()
-    const issue = raw.match(/\(\[#(\d+)\]\(([^)]+)\)\)/)
-    const commit = raw.match(/\(\[([0-9a-f]{7,40})\]\(([^)]+)\)\)/)
+    const issue = raw.match(/\(\[#(\d+)\]\((.+?)\)\)/)
+    const commit = raw.match(/\(\[([0-9a-f]{7,40})\]\((.+?)\)\)/)
     let text = raw
-      .replace(/\s*\(\[#\d+\]\([^)]+\)\)/g, '')
-      .replace(/\s*\(\[[0-9a-f]{7,40}\]\([^)]+\)\)/g, '')
+      .replace(/\s*\(\[#\d+\]\(.+?\)\)/g, '')
+      .replace(/\s*\(\[[0-9a-f]{7,40}\]\(.+?\)\)/g, '')
     text = clean(text)
     section.items.push({
       text,
@@ -67,11 +67,11 @@ for (const release of releases) {
 
 function xml(value) {
   return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('\'', '&apos;')
 }
 
 const items = releases.slice(0, 20).map((release) => {

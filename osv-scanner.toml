@@ -7,3 +7,31 @@
 id = "GHSA-vfj7-8cjw-p6xm"
 ignoreUntil = 2026-12-01
 reason = "No upstream fixed release; reachable only through console devDependencies eslint-config-next/shadcn; excluded from production audit."
+
+# node-forge CSRF/intercept advisory (GHSA-86w9-cpqp-85rv): npm has no patched
+# release (OSV reports fixed version "--"; 1.4.0 is the latest publish). It is
+# reachable only through site development tooling (listhen, the Nuxt dev
+# proxy), not in the deployed .output/public static artifact. Revisit when
+# listhen ships a release that drops or patches node-forge.
+[[IgnoredVulns]]
+id = "GHSA-86w9-cpqp-85rv"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release; node-forge@1.4.0 is the latest publish and is reachable only through the listhen dev-server dependency of the site, which is never deployed."
+
+# nitro-server advisory (GHSA-vjh5-4x84-xrqp): OSV lists no fixed release and
+# 4.6.2 is the latest @nuxt/nitro-server publish. Reachable only through site
+# development tooling; the deployment artifact is prerendered static output.
+# Revisit when the nitro-server advisory gains a fixed release.
+[[IgnoredVulns]]
+id = "GHSA-vjh5-4x84-xrqp"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release; @nuxt/nitro-server@4.6.2 is the latest publish and is reachable only through site development tooling, not the deployed static output."
+
+# zod patch advisory (GHSA-mrhx-c7xc-m3w5): fixed only in zod 4.6.6, which the
+# shadcn CLI (console devDependency) cannot take because it targets zod v3.
+# The zod 4.x instance in the lockfile is already >=4.6.6, so the ignore only
+# silences the shadcn-carried 3.x copy in console development tooling.
+[[IgnoredVulns]]
+id = "GHSA-mrhx-c7xc-m3w5"
+ignoreUntil = 2026-12-01
+reason = "Fix exists only in zod 4.6.6+ (already installed for direct zod 4 consumers); the remaining 3.x instance is carried by the shadcn CLI devDependency and cannot take the major bump."

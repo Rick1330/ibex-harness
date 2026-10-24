@@ -31,3 +31,22 @@
 /docs/api-reference/websocket /docs/api-reference/chat-completions 301
 /docs/memory/architecture /docs/memory/overview 301
 /docs/context/architecture /docs/context/overview 301
+
+# Retired benchmark sub-pages. The old site split each suite into its own
+# route; the new site serves one /benchmarks page. Sub-tree splats are safe
+# because site/public/benchmarks only holds JSON files directly — never add a
+# blanket /benchmarks/* rule, it would shadow those files.
+/benchmarks/latency /benchmarks 301
+/benchmarks/waterfall /benchmarks 301
+/benchmarks/load /benchmarks 301
+/benchmarks/history /benchmarks 301
+/benchmarks/compare /benchmarks 301
+/benchmarks/memory /benchmarks 301
+/benchmarks/memory/* /benchmarks 301
+/benchmarks/extraction-quality /benchmarks 301
+/benchmarks/extraction-quality/* /benchmarks 301
+
+# Release-feed subscribers keep polling the pre-Docus feed path.
+/releases/rss.xml /releases.xml 301
+# The old blog feed has no replacement; land subscribers on the blog index.
+/blog/rss.xml /blog 301

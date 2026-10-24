@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Dependency review with manifest-scoped GHSA exceptions (not global allow-ghsas).
+# Each exception applies only to one package pinned at one version in one
+# manifest; entries must carry a documented reason in the conf file and be
+# re-audited when the pinned dependency chain changes.
 set -euo pipefail
 
 allowlist_file="$(cd "$(dirname "$0")/../dependency-review" && pwd)/licenses-tools-allowlist.conf"
@@ -18,24 +21,27 @@ fi
 basehead="${base_sha}...${head_sha}"
 compare_json="$(gh api "repos/${repo}/dependency-graph/compare/${basehead}")"
 
-is_allowed_ghsa() {
-  local ghsa="$1"
-  local entry
-  IFS=',' read -ra allowed <<< "$ALLOWED_GHSAS"
-  for entry in "${allowed[@]}"; do
-    if [[ "$entry" == "$ghsa" ]]; then
+normalize_version() {
+  local ver="${1#v}"
+  echo "$ver"
+}
+
+# is_allowed "$manifest" "$package" "$version" "$ghsa"
+is_allowed() {
+  local manifest="$1" package="$2" version="$3" ghsa="$4"
+  local entry entry_manifest entry_package entry_version entry_ghsas
+  for entry in "${SCOPED_EXCEPTIONS[@]}"; do
+    IFS='|' read -r entry_manifest entry_package entry_version entry_ghsas <<< "$entry"
+    if [[ "$manifest" == "$entry_manifest" ]] \
+      && [[ "$package" == "$entry_package" ]] \
+      && [[ "$version" == "$(normalize_version "$entry_version")" ]] \
+      && [[ ",${entry_ghsas}," == *",${ghsa},"* ]]; then
       return 0
     fi
   done
   return 1
 }
 
-normalize_version() {
-  local ver="${1#v}"
-  echo "$ver"
-}
-
-allowed_version="$(normalize_version "$ALLOWED_VERSION")"
 failures=0
 
 while IFS= read -r dep; do
@@ -52,11 +58,8 @@ while IFS= read -r dep; do
     ghsa="$(jq -r '.advisory_ghsa_id' <<< "$vuln")"
     severity="$(jq -r '.severity' <<< "$vuln")"
 
-    if [[ "$manifest" == "$LICENSES_MANIFEST" ]] \
-      && [[ "$package" == "$ALLOWED_PACKAGE" ]] \
-      && [[ "$version" == "$allowed_version" ]] \
-      && is_allowed_ghsa "$ghsa"; then
-      echo "allowed (licenses CI tools): ${package}@${version} ${ghsa} in ${manifest}"
+    if is_allowed "$manifest" "$package" "$version" "$ghsa"; then
+      echo "allowed (scoped exception): ${package}@${version} ${ghsa} in ${manifest}"
       continue
     fi
 
@@ -67,9 +70,9 @@ done < <(jq -c '.[]' <<< "$compare_json")
 
 if [[ "$failures" -gt 0 ]]; then
   echo "" >&2
-  echo "${failures} vulnerable dependency change(s) outside the scoped licenses-tools allowlist." >&2
+  echo "${failures} vulnerable dependency change(s) outside the scoped allowlist." >&2
   echo "Production manifests must have zero vulnerabilities." >&2
-  echo "Only ${ALLOWED_PACKAGE}@${ALLOWED_VERSION} in ${LICENSES_MANIFEST} may use the allowlisted GHSAs." >&2
+  echo "See .github/dependency-review/licenses-tools-allowlist.conf for the pinned exceptions." >&2
   exit 1
 fi
 

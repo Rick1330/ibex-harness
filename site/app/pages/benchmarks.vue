@@ -135,6 +135,16 @@ const rankingRows = computed(() => [
   { label: 'Top category', value: latestRanking.metrics.top_category_accuracy },
 ])
 
+const rankingAtCeiling = computed(() => rankingRows.value.filter(row => row.value === 1).length)
+
+const rankingGate = computed(() => {
+  const checks = latestRanking.gate_summary.checks
+  return {
+    passed: checks.filter(check => check.ok).length,
+    total: checks.length,
+  }
+})
+
 const writeHistory = computed(() => [...writeRuns].reverse())
 const writeLabels = computed(() => writeHistory.value.map(run => formatDate(run.timestamp).replace(/, \d{4}$/, '')))
 const writeRegression = computed(() => {
@@ -203,6 +213,16 @@ const extractionMacro = computed(() => [
   { label: 'Temporal accuracy', value: latestExtraction.metrics.temporal_field_accuracy },
 ])
 
+// Runs are published newest-first and failed runs are kept, so the latest run
+// can be a failing one; every gate summary on the page must derive from data.
+const extractionGate = computed(() => {
+  const checks = latestExtraction.gate_summary.checks
+  return {
+    passed: checks.filter(check => check.ok).length,
+    total: checks.length,
+  }
+})
+
 const extractionLegend = computed(() => [
   { label: 'Macro precision', value: formatPercent(latestExtraction.metrics.precision_macro), color: 'var(--chart-lime)' },
   { label: 'Macro recall', value: formatPercent(latestExtraction.metrics.recall_macro), color: 'var(--chart-blue)' },
@@ -239,7 +259,7 @@ const suites = computed(() => [
     shortTitle: 'Ranking',
     icon: 'i-lucide-list-checks',
     detail: 'Gold-set precision, recall, reciprocal rank, and ordering checks.',
-    metric: '5 / 5',
+    metric: `${rankingAtCeiling.value} / ${rankingRows.value.length}`,
     metricLabel: 'metrics at 1.0',
     runs: rankingRuns.length,
     tag: 'gold set v1',
@@ -263,7 +283,7 @@ const suites = computed(() => [
     shortTitle: 'Extraction',
     icon: 'i-lucide-scan-text',
     detail: 'Structured extraction against a 125-conversation gold set in cassette mode.',
-    metric: '14 / 14',
+    metric: `${extractionGate.value.passed} / ${extractionGate.value.total}`,
     metricLabel: 'gate checks pass',
     runs: extractionRuns.length,
     tag: 'cassette',
@@ -791,7 +811,7 @@ function extractionModal(kind: 'categories' | 'summary', row: number): GraphModa
     ...blankModal(),
     eyebrow: '05 / Extraction quality',
     title: kind === 'summary' ? 'Extraction run summary' : 'Precision and recall by category',
-    description: 'Cassette-mode extraction against the v1 gold set. Fourteen gate checks; the regression limit is three percentage points. Hover to preview a run; click to pin it.',
+    description: `Cassette-mode extraction against the v1 gold set. ${extractionGate.value.total} gate checks; the regression limit is three percentage points. Hover to preview a run; click to pin it.`,
     sourceHref: run.run_url,
     chartKind: 'bar',
     barLabels: kind === 'summary' ? ['Precision', 'Recall', 'Category', 'Temporal'] : categories.map(category => category.name),
@@ -1133,7 +1153,7 @@ function compactNs(value: number) {
             index="03"
             label="Ranking quality"
             title="The gold set is at its ceiling."
-            description="Twenty queries over fifty-one memories. Every published ranking metric is 1.0, which means this set is saturated, not that ranking generalizes everywhere."
+            :description="`Twenty queries over fifty-one memories. ${rankingAtCeiling === rankingRows.length ? 'Every published ranking metric is 1.0, which means this set is saturated, not that ranking generalizes everywhere.' : 'The latest run is not at the ceiling; see the gate checks before citing ranking quality.'}`"
             icon="i-lucide-list-checks"
             :tag="suites[2]?.tag"
             :run-url="latestRanking.run_url"
@@ -1154,7 +1174,7 @@ function compactNs(value: number) {
                 >
                   <div class="grid size-32 place-items-center rounded-full bg-[var(--site-bg)] text-center">
                     <div>
-                      <p class="m-0 text-4xl font-semibold tracking-[-0.06em]">5 / 5</p>
+                      <p class="m-0 text-4xl font-semibold tracking-[-0.06em]">{{ rankingAtCeiling }} / {{ rankingRows.length }}</p>
                       <p class="m-0 mt-1 font-mono text-[0.5rem] uppercase tracking-[0.1em] text-[var(--site-muted)]">at 1.0</p>
                     </div>
                   </div>
@@ -1164,8 +1184,8 @@ function compactNs(value: number) {
 
             <BenchmarkGraphCard
               title="Metric ladder"
-              meta="gate v1 · 4 / 4 checks"
-              caption="Every published ranking metric is at the ceiling for this set."
+              :meta="`gate v1 · ${rankingGate.passed} / ${rankingGate.total} checks`"
+              :caption="rankingAtCeiling === rankingRows.length ? 'Every published ranking metric is at the ceiling for this set.' : 'The latest run is below the ceiling for at least one metric.'"
               @expand="openRanking"
             >
               <BenchmarkMeter :items="rankingRows.map(row => ({ label: row.label, value: row.value * 100, display: formatPercent(row.value), color: 'var(--chart-lime)' }))" />
@@ -1264,7 +1284,7 @@ function compactNs(value: number) {
             index="05"
             label="Extraction quality"
             title="Precision and recall by category."
-            description="Cassette-mode extraction against the v1 gold set: 125 conversations, fourteen gate checks, and a 3 percentage-point regression limit."
+            :description="`Cassette-mode extraction against the v1 gold set: ${latestExtraction.conversation_count} conversations, ${extractionGate.total} gate checks, and a 3 percentage-point regression limit.`"
             icon="i-lucide-scan-text"
             :tag="suites[4]?.tag"
             :run-url="latestExtraction.run_url"
@@ -1313,13 +1333,15 @@ function compactNs(value: number) {
 
             <BenchmarkGraphCard
               title="Run summary"
-              meta="14 / 14 gate checks"
-              caption="Perfect scores reflect a saturated gold set."
+              :meta="`${extractionGate.passed} / ${extractionGate.total} gate checks`"
+              :caption="extractionGate.passed === extractionGate.total
+                ? 'Perfect scores reflect a saturated gold set.'
+                : 'The latest run failed gate checks; see the modal for per-check detail.'"
               class="md:col-span-2 xl:col-span-1"
               @expand="openExtraction('summary')"
             >
               <div class="w-full">
-                <p class="m-0 text-5xl font-semibold tracking-[-0.065em]">14 / 14</p>
+                <p class="m-0 text-5xl font-semibold tracking-[-0.065em]">{{ extractionGate.passed }} / {{ extractionGate.total }}</p>
                 <p class="m-0 mt-1 text-xs text-[var(--site-muted)]">gate checks pass</p>
                 <div class="mt-6 grid grid-cols-2 gap-x-5 gap-y-5">
                   <div v-for="metric in extractionMacro" :key="metric.label">

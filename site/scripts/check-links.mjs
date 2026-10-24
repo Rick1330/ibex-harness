@@ -45,7 +45,7 @@ function decode(value) {
 }
 
 function publicPath(file) {
-  return `/${file.slice(root.length + 1).split('\\').join('/')}`
+  return `/${file.slice(root.length + 1).replaceAll('\\', '/')}`
 }
 
 async function resolves(urlPath) {

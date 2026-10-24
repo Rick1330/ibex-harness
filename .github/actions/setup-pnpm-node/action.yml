@@ -15,4 +15,10 @@ runs:
 
     - name: Install workspace dependencies
       shell: bash
-      run: pnpm install --frozen-lockfile
+      # --ignore-scripts is intentionally NOT set: it would skip the native
+      # postinstall builds (better-sqlite3, esbuild, sharp, @parcel/watcher,
+      # unrs-resolver). Lifecycle-script execution is already restricted to
+      # exactly those packages via pnpm.onlyBuiltDependencies in the root
+      # package.json; every other dependency's install scripts are blocked
+      # by pnpm itself.
+      run: pnpm install --frozen-lockfile # NOSONAR

@@ -4,19 +4,17 @@
   "type": "module",
   "version": "0.0.0",
   "scripts": {
-    "dev": "nuxt dev",
-    "build": "nuxt build",
-    "generate": "nuxt generate",
+    "dev": "node scripts/build-releases.mjs && nuxt dev",
+    "build": "node scripts/build-releases.mjs && nuxt build",
+    "generate": "node scripts/build-releases.mjs && nuxt generate",
+    "typecheck": "node scripts/build-releases.mjs && nuxt typecheck",
+    "releases": "node scripts/build-releases.mjs",
     "preview": "nuxt preview",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck",
     "check:links": "node scripts/check-links.mjs",
     "check:redirects": "node scripts/check-redirects.mjs",
     "check:claims": "node scripts/check-claims.mjs",
-    "test:e2e": "playwright test -c playwright.config.ts",
-    "predev": "node scripts/build-releases.mjs",
-    "prebuild": "node scripts/build-releases.mjs",
-    "pretypecheck": "node scripts/build-releases.mjs"
+    "test:e2e": "playwright test -c playwright.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",
@@ -32,6 +30,6 @@
     "eslint": "10.13.0",
     "typescript": "5.9.3",
     "vue-tsc": "3.1.4",
-    "yaml": "2.8.1"
+    "yaml": "2.9.1"
   }
 }

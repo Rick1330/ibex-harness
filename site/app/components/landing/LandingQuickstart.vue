@@ -107,7 +107,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
               type="button"
               class="landing-code-copy"
               :class="{ 'is-copied': copied }"
-              aria-label="Copy quickstart commands"
+              :aria-label="copied ? 'Copied quickstart commands' : 'Copy all quickstart commands'"
               title="Copy quickstart commands"
               @click="copyCommands"
             >

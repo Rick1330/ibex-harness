@@ -64,6 +64,11 @@ fail_under = 90
 
 [tool.uv]
 exclude-newer = "7 days"
+# Security fixes must not wait out the cooldown: certifi ships emergency
+# releases for compromised-CA advisories (GHSA-6q48-6c7w-9gw2), so certifi
+# alone is exempt from the 7-day window (per-package cutoff in the far
+# future). Re-tighten if the certifi cadence slows.
+exclude-newer-package = { certifi = "2100-01-01T00:00:00Z" }
 
 [tool.uv.sources]
 ibex-async-db = { path = "../../packages/ibex_async_db" }

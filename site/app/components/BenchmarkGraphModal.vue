@@ -127,6 +127,7 @@ onBeforeUnmount(() => {
         v-if="props.open"
         class="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-5"
         @click.self="onClose"
+        @keydown.escape="onClose"
       >
         <div
           ref="panel"

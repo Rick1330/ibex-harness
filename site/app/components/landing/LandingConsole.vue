@@ -173,7 +173,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
                 </button>
               </div>
 
-              <div class="console-code" tabindex="0" aria-label="Example request headers and body">
+              <div class="console-code">
                 <div class="console-line">
                   <span class="console-ln">01</span>
                   <span><span class="console-key">Authorization</span><span class="console-punc">:</span> <span class="console-string">Bearer $IBEX_TOKEN</span></span>

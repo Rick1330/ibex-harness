@@ -40,7 +40,8 @@ const scaleLabel = computed(() => `${Math.round(scale.value * 100)}%`)
 const slug = computed(() => (props.title || 'ibex-diagram')
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, '-')
-  .replace(/^-+|-+$/g, '') || 'ibex-diagram')
+  .replace(/^-+/, '')
+  .replace(/-+$/, '') || 'ibex-diagram')
 
 const stageStyle = computed(() => ({
   width: `${naturalWidth.value}px`,
@@ -165,6 +166,35 @@ function focusableElements() {
     .filter(element => element.offsetParent !== null)
 }
 
+function trapFocus(event: KeyboardEvent) {
+  const focusable = focusableElements()
+  if (!focusable.length) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+function zoomFactorFor(key: string) {
+  if (key === '+' || key === '=') return 1.2
+  if (key === '-' || key === '_') return 1 / 1.2
+  return null
+}
+
+function panByArrowKey(event: KeyboardEvent) {
+  event.preventDefault()
+  const step = event.shiftKey ? 160 : 60
+  if (event.key === 'ArrowLeft') translateX.value += step
+  if (event.key === 'ArrowRight') translateX.value -= step
+  if (event.key === 'ArrowUp') translateY.value += step
+  if (event.key === 'ArrowDown') translateY.value -= step
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (!props.open) return
 
@@ -175,42 +205,32 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   if (event.key === 'Tab') {
-    const focusable = focusableElements()
-    if (!focusable.length) return
-    const first = focusable[0]!
-    const last = focusable[focusable.length - 1]!
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
+    trapFocus(event)
     return
   }
 
   if (event.metaKey || event.ctrlKey || event.altKey) return
 
-  if (event.key === '+' || event.key === '=') {
+  const zoom = zoomFactorFor(event.key)
+  if (zoom !== null) {
     event.preventDefault()
-    zoomFromCenter(1.2)
-  } else if (event.key === '-' || event.key === '_') {
-    event.preventDefault()
-    zoomFromCenter(1 / 1.2)
-  } else if (event.key === '0') {
+    zoomFromCenter(zoom)
+    return
+  }
+
+  if (event.key === '0') {
     event.preventDefault()
     fitAll()
-  } else if (event.key === '1') {
+    return
+  }
+
+  if (event.key === '1') {
     event.preventDefault()
     actualSize()
-  } else if (event.key.startsWith('Arrow')) {
-    event.preventDefault()
-    const step = event.shiftKey ? 160 : 60
-    if (event.key === 'ArrowLeft') translateX.value += step
-    if (event.key === 'ArrowRight') translateX.value -= step
-    if (event.key === 'ArrowUp') translateY.value += step
-    if (event.key === 'ArrowDown') translateY.value -= step
+    return
   }
+
+  if (event.key.startsWith('Arrow')) panByArrowKey(event)
 }
 
 function onWheel(event: WheelEvent) {
@@ -396,6 +416,7 @@ onBeforeUnmount(() => {
         v-if="props.open"
         class="fixed inset-0 z-[90] flex items-stretch justify-center bg-black/75 backdrop-blur-sm sm:items-center sm:p-4"
         @click.self="onClose"
+        @keydown.escape="onClose"
       >
         <div
           ref="panel"
@@ -437,7 +458,7 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 class="min-w-14 border-x border-[var(--site-line)] px-2 py-2 font-mono text-[0.58rem] tabular-nums text-[var(--site-ink)] transition-colors hover:bg-[color-mix(in_srgb,var(--site-ink)_7%,transparent)]"
-                aria-label="Reset to actual size"
+                :aria-label="`${scaleLabel} — reset to actual size`"
                 @click="actualSize"
               >
                 {{ scaleLabel }}

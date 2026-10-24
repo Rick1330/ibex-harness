@@ -215,20 +215,22 @@ const isActive = (to: string) => route.path === to || route.path.startsWith(`${t
   margin-top: 0.85rem;
 }
 
-.docs-mobile-status {
-  display: inline-flex !important;
+/* Scoped with .site-mobile-nav a so the overrides outweigh the panel's
+   .site-mobile-nav a rule (0,1,1) without resorting to !important. */
+.site-mobile-nav a.docs-mobile-status {
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-start !important;
+  justify-content: flex-start;
   gap: 0.45rem;
   color: var(--site-muted);
 }
 
-.docs-mobile-cta {
+.site-mobile-nav a.docs-mobile-cta {
   margin-top: 0.35rem;
-  border: 1px solid var(--site-ink) !important;
+  border: 1px solid var(--site-ink);
   background: var(--site-ink);
-  color: var(--site-bg) !important;
-  padding-inline: 0.8rem !important;
+  color: var(--site-bg);
+  padding-inline: 0.8rem;
 }
 
 @media (min-width: 640px) {
@@ -281,21 +283,21 @@ body.landing-page .docs-nav-link.is-active {
 }
 
 body.landing-page .docs-search {
-  border-color: rgb(10 11 12 / 0.26) !important;
-  background: transparent !important;
-  color: rgb(10 11 12 / 0.66) !important;
+  border-color: rgb(10 11 12 / 0.26);
+  background: transparent;
+  color: rgb(10 11 12 / 0.66);
 }
 
 body.landing-page .docs-search:hover {
-  border-color: var(--site-landing-field-ink) !important;
-  background: rgb(10 11 12 / 0.06) !important;
-  color: var(--site-landing-field-ink) !important;
+  border-color: var(--site-landing-field-ink);
+  background: rgb(10 11 12 / 0.06);
+  color: var(--site-landing-field-ink);
 }
 
 body.landing-page .docs-search kbd {
-  background: rgb(10 11 12 / 0.08) !important;
+  background: rgb(10 11 12 / 0.08);
   box-shadow: inset 0 0 0 1px rgb(10 11 12 / 0.16);
-  color: var(--site-landing-field-ink) !important;
+  color: var(--site-landing-field-ink);
 }
 
 body.landing-page .docs-status {
@@ -322,13 +324,13 @@ body.landing-page .docs-status-sep {
 }
 
 body.landing-page .docs-icon-button:hover {
-  background: rgb(10 11 12 / 0.08) !important;
-  color: var(--site-landing-field-ink) !important;
+  background: rgb(10 11 12 / 0.08);
+  color: var(--site-landing-field-ink);
 }
 
 body.landing-page .docs-header [data-slot="toggle"],
 body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) [data-slot="toggle"] {
-  color: var(--site-landing-field-ink) !important;
+  color: var(--site-landing-field-ink);
 }
 
 body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) {
@@ -353,22 +355,24 @@ body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) .si
 
 body.landing-page .docs-header [data-slot="toggle"]:hover,
 body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) [data-slot="toggle"]:hover {
-  background: rgb(10 11 12 / 0.08) !important;
+  background: rgb(10 11 12 / 0.08);
 }
 
 body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) .docs-mobile-tools button {
-  background: rgb(255 255 255 / 0.55) !important;
-  color: var(--site-landing-field-ink) !important;
-  box-shadow: inset 0 0 0 1px rgb(10 11 12 / 0.2) !important;
+  background: rgb(255 255 255 / 0.55);
+  color: var(--site-landing-field-ink);
+  box-shadow: inset 0 0 0 1px rgb(10 11 12 / 0.2);
 }
 
 body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) .docs-mobile-tools button:hover {
-  background: rgb(255 255 255 / 0.82) !important;
+  background: rgb(255 255 255 / 0.82);
 }
 
-body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) .docs-mobile-cta {
-  border-color: var(--site-landing-field-ink) !important;
-  background: var(--site-landing-field-ink) !important;
-  color: var(--site-landing-field) !important;
+/* Includes .site-mobile-nav a in the path so the color/border declarations
+   outweigh the sibling :has(...) .site-mobile-nav a rule below it. */
+body.landing-page [data-slot="content"][role="dialog"]:has(.site-mobile-nav) .site-mobile-nav a.docs-mobile-cta {
+  border-color: var(--site-landing-field-ink);
+  background: var(--site-landing-field-ink);
+  color: var(--site-landing-field);
 }
 </style>
