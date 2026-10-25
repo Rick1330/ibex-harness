@@ -32,6 +32,7 @@ from app.schemas.tokens import TokenCreateRequest, TokenCreateResponse, TokenRes
 from app.services import agents as agent_service
 
 TOKEN_NOT_FOUND_MSG = "Token not found"  # nosec B105 — user-facing error text, not a credential
+AUTH_UNAVAILABLE_MSG = "Auth service unavailable"  # nosec B105 — user-facing error text, not a credential
 _GET_BY_ID_DEADLINE_S = 5.0
 _GET_BY_ID_PAGE_SIZE = 100
 
@@ -66,8 +67,8 @@ def _map_token_rpc(exc: BaseException) -> ApiError:
     if isinstance(exc, AuthFailedError):
         return ApiError(code=INVALID_TOKEN, message="Invalid token")
     if isinstance(exc, AuthUnavailableError):
-        return ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable")
-    return ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable")
+        return ApiError(code=AUTH_UNAVAILABLE, message=AUTH_UNAVAILABLE_MSG)
+    return ApiError(code=AUTH_UNAVAILABLE, message=AUTH_UNAVAILABLE_MSG)
 
 
 async def _call_auth[T](op: Callable[[], Awaitable[T]]) -> T:
@@ -173,7 +174,7 @@ async def _scan_token_meta(access: TokenAccess, needle: str) -> TokenMetadataWir
         if not page.next_cursor:
             return None
         cursor = page.next_cursor
-    raise ApiError(code=AUTH_UNAVAILABLE, message="Auth service unavailable")
+    raise ApiError(code=AUTH_UNAVAILABLE, message=AUTH_UNAVAILABLE_MSG)
 
 
 async def revoke_token(access: TokenAccess, token_id: UUID) -> None:

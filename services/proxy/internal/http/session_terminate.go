@@ -55,6 +55,8 @@ type terminateEnqueueFlight struct {
 	m  map[string]*sync.WaitGroup
 }
 
+const sessionTerminateValidationMessage = "Request validation failed"
+
 func newTerminateEnqueueFlight() *terminateEnqueueFlight {
 	return &terminateEnqueueFlight{m: make(map[string]*sync.WaitGroup)}
 }
@@ -155,7 +157,7 @@ func (h sessionTerminateHandler) admitTermination(w http.ResponseWriter, r *http
 		if len(key) > 256 {
 			detail = "Idempotency-Key must be 256 characters or fewer"
 		}
-		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError, "Request validation failed", id.requestID,
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError, sessionTerminateValidationMessage, id.requestID,
 			apierror.WriteOpts{Detail: detail, DocsBase: h.docsBase})
 		return idempotency.ClaimOutcome{}, true
 	}
@@ -221,7 +223,7 @@ func (h sessionTerminateHandler) resolveTerminateIdentity(
 	externalID := strings.TrimSpace(r.PathValue("session_id"))
 	if externalID == "" {
 		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-			"Request validation failed", requestID,
+			sessionTerminateValidationMessage, requestID,
 			apierror.WriteOpts{Detail: "session_id path parameter is required", DocsBase: h.docsBase})
 		return terminateIdentity{}, false
 	}
@@ -253,7 +255,7 @@ func (h sessionTerminateHandler) validateTerminateBody(
 	}
 	if body.Status != session.StatusCompleted {
 		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-			"Request validation failed", requestID,
+			sessionTerminateValidationMessage, requestID,
 			apierror.WriteOpts{Detail: `status must be "completed"`, DocsBase: h.docsBase})
 		return terminateRequestBody{}, false
 	}

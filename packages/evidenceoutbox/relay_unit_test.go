@@ -394,50 +394,7 @@ func TestUnit_ProcessBatch_RejectsUnsafeContractsBeforeSink(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			db, mock, err := sqlmock.New()
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = db.Close() }()
-			var deliverer Deliverer
-			var sinkCalls func() int
-			if tc.legacyOnlySink {
-				legacy := &legacyOnlyDeliverer{}
-				deliverer = legacy
-				sinkCalls = func() int { return legacy.n }
-			} else {
-				stub := &stubDeliverer{}
-				deliverer = stub
-				sinkCalls = func() int { return stub.n }
-			}
-			relay, err := NewRelay(db, deliverer, RelayConfig{BatchSize: 1, MaxAttempts: 8})
-			if err != nil {
-				t.Fatal(err)
-			}
-			id, org, eventID, now := uuid.New(), uuid.New(), uuid.New(), time.Now()
-			mock.ExpectBegin()
-			rows := sqlmock.NewRows([]string{
-				"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
-				"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
-				"last_error", "created_at", "delivered_at",
-			}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
-				tc.payload, validPayloadDigest(tc.payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
-			mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
-			mock.ExpectCommit()
-			mock.ExpectBegin()
-			mock.ExpectQuery(`evidence_outbox_mark_failure`).WithArgs(
-				id, 1, StatusPoison, tc.wantErr, sqlmock.AnyArg(),
-			).WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
-			mock.ExpectCommit()
-
-			res, err := relay.ProcessBatch(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertPoisonedWithoutDelivery(t, res, sinkCalls())
-			if err := mock.ExpectationsWereMet(); err != nil {
-				t.Fatal(err)
-			}
+			runUnsafeContractCase(t, tc)
 		})
 	}
 }
@@ -543,5 +500,57 @@ func TestUnit_TruncErr_UTF8SafeCap(t *testing.T) {
 	}
 	if !utf8.ValidString(got) {
 		t.Fatalf("split rune: %q", got)
+	}
+}
+
+func runUnsafeContractCase(t *testing.T, tc struct {
+	name           string
+	payload        []byte
+	wantErr        string
+	legacyOnlySink bool
+}) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var deliverer Deliverer
+	var sinkCalls func() int
+	if tc.legacyOnlySink {
+		legacy := &legacyOnlyDeliverer{}
+		deliverer = legacy
+		sinkCalls = func() int { return legacy.n }
+	} else {
+		stub := &stubDeliverer{}
+		deliverer = stub
+		sinkCalls = func() int { return stub.n }
+	}
+	relay, err := NewRelay(db, deliverer, RelayConfig{BatchSize: 1, MaxAttempts: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, org, eventID, now := uuid.New(), uuid.New(), uuid.New(), time.Now()
+	mock.ExpectBegin()
+	rows := sqlmock.NewRows([]string{
+		"id", "org_id", "event_id", "aggregate_id", "aggregate_seq", "schema_version",
+		"event_type", "payload", "payload_digest", "payload_digest_scheme", "delivery_status", "attempts", "available_at",
+		"last_error", "created_at", "delivered_at",
+	}).AddRow(id, org, eventID, "agg", int64(1), SchemaVersion, EventTypeRunCommitted,
+		tc.payload, validPayloadDigest(tc.payload), PayloadDigestSchemeJCSV1, StatusInFlight, 1, now, "", now, nil)
+	mock.ExpectQuery(`evidence_outbox_claim_pending`).WithArgs(1).WillReturnRows(rows)
+	mock.ExpectCommit()
+	mock.ExpectBegin()
+	mock.ExpectQuery(`evidence_outbox_mark_failure`).WithArgs(
+		id, 1, StatusPoison, tc.wantErr, sqlmock.AnyArg(),
+	).WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(1))
+	mock.ExpectCommit()
+
+	res, err := relay.ProcessBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPoisonedWithoutDelivery(t, res, sinkCalls())
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

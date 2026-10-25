@@ -174,12 +174,12 @@ async def cmd_supersede_check(org_id: UUID, old_id: UUID, new_id: UUID) -> None:
                 },
             )
         ).one()
-    _require_supersede_row(row, old_id=old_id, new_id=new_id)
+    _require_supersede_row(row, new_id=new_id)
     _require_count(rel.c, want=1, label="supersedes edge")
     _require_count(esc.c, want=0, label="pending escalations")
 
 
-def _require_supersede_row(row: object, *, old_id: UUID, new_id: UUID) -> None:
+def _require_supersede_row(row: object, *, new_id: UUID) -> None:
     status = getattr(row, "status", None)
     tip = getattr(row, "tip", None)
     if status != "superseded":

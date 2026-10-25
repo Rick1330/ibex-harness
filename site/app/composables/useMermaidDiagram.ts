@@ -193,18 +193,34 @@ function enqueue<T>(work: () => Promise<T>) {
   return run
 }
 
+// A mermaid operation that never settles (a stalled library chunk, a hung
+// renderer) must surface the diagram's visible error state instead of an
+// indefinite spinner. The deadline cannot cancel the underlying work; it
+// only stops the caller waiting on it.
+const MERMAID_OPERATION_TIMEOUT_MS = 20_000
+
+function withDeadline<T>(work: Promise<T>, failure: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(failure)), MERMAID_OPERATION_TIMEOUT_MS)
+  })
+  return Promise.race([work, deadline]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer)
+  })
+}
+
 export function useMermaidDiagram() {
   const colorMode = useColorMode()
   const isDark = computed(() => colorMode.value === 'dark')
 
   async function render(code: string, prefix = 'ibex-mermaid', options: { htmlLabels?: boolean } = {}): Promise<RenderedDiagram> {
-    const mermaid = await loadMermaid()
+    const mermaid = await withDeadline(loadMermaid(), 'Mermaid library failed to load in time')
     const dark = isDark.value
     const htmlLabels = options.htmlLabels ?? true
     return enqueue(async () => {
       mermaid.initialize(buildConfig(dark, htmlLabels))
       const id = nextDiagramId(prefix)
-      const result = await mermaid.render(id, code)
+      const result = await withDeadline(mermaid.render(id, code), 'Diagram rendering timed out')
       return {
         ...measure(result.svg),
         svg: result.svg,

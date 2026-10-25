@@ -154,23 +154,36 @@ class InMemoryVectorStore(VectorStore):
         query = tuple(float(x) for x in request.query_embedding)
         hits: list[SearchHit] = []
         for memory_id, row in self._rows.items():
-            if row.org_id != request.org_id or row.agent_id != request.agent_id:
-                continue
-            if row.status != "active" or row.deleted_at is not None or row.tombstoned:
-                continue
-            if request.mode is SearchMode.USER_RETRIEVAL:
-                now = datetime.now(tz=UTC)
-                if row.valid_from is not None and row.valid_from > now:
-                    continue
-                if row.valid_until is not None and row.valid_until <= now:
-                    continue
-                if row.expires_at is not None and row.expires_at <= now:
-                    continue
-            sim = _cosine_similarity(query, row.embedding)
-            if sim >= threshold:
-                hits.append(SearchHit(memory_id=memory_id, similarity=sim))
+            similarity = self._similarity_if_visible(request, row, query, threshold)
+            if similarity is not None:
+                hits.append(SearchHit(memory_id=memory_id, similarity=similarity))
         hits.sort(key=lambda h: h.similarity, reverse=True)
         return hits[: request.limit]
+
+    def _similarity_if_visible(
+        self, request: SearchRequest, row: _StoredEmbedding, query: tuple[float, ...], threshold: float
+    ) -> float | None:
+        if row.org_id != request.org_id or row.agent_id != request.agent_id:
+            return None
+        if not self._row_active(row):
+            return None
+        if request.mode is SearchMode.USER_RETRIEVAL and not self._row_temporally_visible(row):
+            return None
+        similarity = _cosine_similarity(query, row.embedding)
+        return similarity if similarity >= threshold else None
+
+    @staticmethod
+    def _row_active(row: _StoredEmbedding) -> bool:
+        return row.status == "active" and row.deleted_at is None and not row.tombstoned
+
+    @staticmethod
+    def _row_temporally_visible(row: _StoredEmbedding) -> bool:
+        now = datetime.now(tz=UTC)
+        if row.valid_from is not None and row.valid_from > now:
+            return False
+        if row.valid_until is not None and row.valid_until <= now:
+            return False
+        return row.expires_at is None or row.expires_at > now
 
     async def delete(self, *, memory_id: UUID, org_id: UUID, expected_revision: int) -> None:
         if expected_revision < 1:

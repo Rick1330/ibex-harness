@@ -357,7 +357,7 @@ func execAsService(t *testing.T, ctx context.Context, e serviceExec) error {
 	})
 }
 
-func assertMigrationVersionAtLeast(t *testing.T, dsn string, min uint) {
+func assertMigrationVersionAtLeast(t *testing.T, dsn string, floor uint) {
 	t.Helper()
 	v, dirty, err := Version(dsn)
 	if err != nil {
@@ -366,8 +366,8 @@ func assertMigrationVersionAtLeast(t *testing.T, dsn string, min uint) {
 	if dirty {
 		t.Fatal("expected clean migration state")
 	}
-	if v < min {
-		t.Fatalf("expected version >= %d, got %d", min, v)
+	if v < floor {
+		t.Fatalf("expected version >= %d, got %d", floor, v)
 	}
 }
 

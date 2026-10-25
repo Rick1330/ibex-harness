@@ -118,7 +118,8 @@ func (l *PostgresLedger) Claim(ctx context.Context, p Principal, key, requestHas
 	if err != nil {
 		return ClaimOutcome{}, err
 	}
-	out, err := l.resolveClaim(ctx, tx, p, key, requestHash, leaseArg, row, fresh)
+	pending := claimContext{principal: p, key: key, requestHash: requestHash, leaseArg: leaseArg, row: row, fresh: fresh}
+	out, err := l.resolveClaim(ctx, tx, pending)
 	if err != nil {
 		return ClaimOutcome{}, err
 	}
@@ -145,13 +146,25 @@ SELECT id, request_hash, state, status_code, response_payload, lease_expires_at,
 	return row, false, err
 }
 
-func (l *PostgresLedger) resolveClaim(ctx context.Context, tx *sql.Tx, p Principal, key, requestHash, leaseArg string, row ledgerRow, fresh bool) (ClaimOutcome, error) {
-	out := ClaimOutcome{Claim: ClaimToken{ID: row.id, Principal: p, Key: key, RequestHash: row.requestHash, Version: row.version}}
-	if row.requestHash != requestHash {
+// claimContext bundles the identity and ledger-row inputs the claim decision
+// needs, keeping resolveClaim's parameter list small.
+type claimContext struct {
+	principal   Principal
+	key         string
+	requestHash string
+	leaseArg    string
+	row         ledgerRow
+	fresh       bool
+}
+
+func (l *PostgresLedger) resolveClaim(ctx context.Context, tx *sql.Tx, pending claimContext) (ClaimOutcome, error) {
+	row := pending.row
+	out := ClaimOutcome{Claim: ClaimToken{ID: row.id, Principal: pending.principal, Key: pending.key, RequestHash: row.requestHash, Version: row.version}}
+	if row.requestHash != pending.requestHash {
 		out.Kind = ClaimConflict
 		return out, nil
 	}
-	if fresh {
+	if pending.fresh {
 		out.Kind = ClaimOwned
 		return out, nil
 	}
@@ -171,7 +184,7 @@ UPDATE ibex_core.idempotency_ledger
    SET lease_expires_at=NOW()+$1::interval, version=version+1, updated_at=NOW()
  WHERE id=$2 AND organization_id=$3 AND agent_id=$4 AND dedupe_key=$5
    AND request_hash=$6 AND state='claimed' AND lease_expires_at <= NOW()
-RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`, leaseArg, row.id, p.OrgID, p.AgentID, key, requestHash))
+RETURNING id, request_hash, state, status_code, response_payload, lease_expires_at, version`, pending.leaseArg, row.id, pending.principal.OrgID, pending.principal.AgentID, pending.key, pending.requestHash))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			out.Kind, out.RetryAfter = ClaimInProgress, time.Second

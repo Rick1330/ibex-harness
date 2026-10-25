@@ -155,6 +155,6 @@ func cloneUUIDPointer(value *uuid.UUID) *uuid.UUID {
 	if value == nil {
 		return nil
 	}
-	copy := *value
-	return &copy
+	cloned := *value
+	return &cloned
 }

@@ -52,31 +52,7 @@ func TestWriteEvidenceAck_GoldenHTTPOutcomes(t *testing.T) {
 			if got := response.Header().Get("Content-Type"); got != "application/json" {
 				t.Fatalf("content-type=%q", got)
 			}
-			if tc.wantErrorCode != "" {
-				var body apierror.Response
-				if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-					t.Fatalf("decode error envelope: %v", err)
-				}
-				if body.Error.Code != tc.wantErrorCode || body.Error.RequestID != in.RequestID || body.Error.Message == "" || body.Error.Timestamp.IsZero() {
-					t.Fatalf("unexpected 503 error envelope: %+v", body.Error)
-				}
-				if body.Error.Detail != "" || body.Error.DocsURL != "" {
-					t.Fatalf("503 must not disclose persistence details: %+v", body.Error)
-				}
-				return
-			}
-			var body struct {
-				Data struct {
-					Outcome EvidenceAckStatus `json:"outcome"`
-					RunID   string            `json:"run_id"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode success envelope: %v", err)
-			}
-			if body.Data.Outcome != tc.wantOutcome || body.Data.RunID != tc.wantRunID {
-				t.Fatalf("success envelope=%+v want outcome=%q run_id=%q", body.Data, tc.wantOutcome, tc.wantRunID)
-			}
+			assertEvidenceAckEnvelope(t, response, in, tc)
 		})
 	}
 }
@@ -136,4 +112,40 @@ type plainEvidencePersister struct{}
 
 func (plainEvidencePersister) PersistRun(context.Context, evidenceoutbox.RunInput) (evidenceoutbox.PersistResult, error) {
 	return evidenceoutbox.PersistResult{}, errors.New("db down")
+}
+
+func assertEvidenceAckEnvelope(t *testing.T, response *httptest.ResponseRecorder, in evidenceoutbox.RunInput, tc struct {
+	name          string
+	out           EvidencePersistOutcome
+	wantStatus    int
+	wantOutcome   EvidenceAckStatus
+	wantErrorCode apierror.Code
+	wantRunID     string
+}) {
+	t.Helper()
+	if tc.wantErrorCode != "" {
+		var body apierror.Response
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode error envelope: %v", err)
+		}
+		if body.Error.Code != tc.wantErrorCode || body.Error.RequestID != in.RequestID || body.Error.Message == "" || body.Error.Timestamp.IsZero() {
+			t.Fatalf("unexpected 503 error envelope: %+v", body.Error)
+		}
+		if body.Error.Detail != "" || body.Error.DocsURL != "" {
+			t.Fatalf("503 must not disclose persistence details: %+v", body.Error)
+		}
+		return
+	}
+	var body struct {
+		Data struct {
+			Outcome EvidenceAckStatus `json:"outcome"`
+			RunID   string            `json:"run_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode success envelope: %v", err)
+	}
+	if body.Data.Outcome != tc.wantOutcome || body.Data.RunID != tc.wantRunID {
+		t.Fatalf("success envelope=%+v want outcome=%q run_id=%q", body.Data, tc.wantOutcome, tc.wantRunID)
+	}
 }

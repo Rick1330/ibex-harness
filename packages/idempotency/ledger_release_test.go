@@ -32,6 +32,11 @@ func expectReleaseDelete(m sqlmock.Sqlmock, claim ClaimToken, result driver.Resu
 }
 
 func TestPostgresLedgerReleaseValidationAndFailures(t *testing.T) {
+	assertReleaseInvalidClaim(t)
+	runReleaseFailureCases(t, releaseTestClaim())
+}
+
+func assertReleaseInvalidClaim(t *testing.T) {
 	ctx := context.Background()
 	invalidDB, invalidMock, err := sqlmock.New()
 	if err != nil {
@@ -48,8 +53,10 @@ func TestPostgresLedgerReleaseValidationAndFailures(t *testing.T) {
 	if err := invalidMock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
 
-	claim := releaseTestClaim()
+func runReleaseFailureCases(t *testing.T, claim ClaimToken) {
+	ctx := context.Background()
 	cases := []struct {
 		name  string
 		setup func(sqlmock.Sqlmock, ClaimToken)

@@ -32,13 +32,26 @@ func (f *terminateLedgerFake) Release(context.Context, idempotency.ClaimToken) e
 }
 
 func TestSessionTerminateLedgerBranches(t *testing.T) {
+	runTerminateKeyValidationBranches(t)
+	runTerminateLedgerOutcomeBranches(t)
+}
+
+func terminateLedgerBranchFixture(t *testing.T, ledger idempotency.Ledger, sid uuid.UUID) (sessionTerminateHandler, *terminateStoreFake) {
+	store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
+	return newTerminateHandler(t, terminateHandlerArgs{store: store, metric: "ledger-branches", ledger: ledger}), store
+}
+
+func terminateLedgerBranchRequest(t *testing.T, org, agent uuid.UUID, key string) *http.Request {
+	return terminateAuthedRequest(t, terminateReqParams{org: org, agent: agent, externalID: "ledger-ext", body: `{"status":"completed"}`, idempotencyKey: key})
+}
+
+func runTerminateKeyValidationBranches(t *testing.T) {
 	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
 	base := func(ledger idempotency.Ledger) (sessionTerminateHandler, *terminateStoreFake) {
-		store := &terminateStoreFake{result: session.CompleteOK, sessionID: sid}
-		return newTerminateHandler(t, terminateHandlerArgs{store: store, metric: "ledger-branches", ledger: ledger}), store
+		return terminateLedgerBranchFixture(t, ledger, sid)
 	}
 	request := func(key string) *http.Request {
-		return terminateAuthedRequest(t, terminateReqParams{org: org, agent: agent, externalID: "ledger-ext", body: `{"status":"completed"}`, idempotencyKey: key})
+		return terminateLedgerBranchRequest(t, org, agent, key)
 	}
 
 	t.Run("missing key", func(t *testing.T) {
@@ -65,6 +78,16 @@ func TestSessionTerminateLedgerBranches(t *testing.T) {
 			t.Fatalf("status=%d calls=%d", rec.Code, store.calls.Load())
 		}
 	})
+}
+
+func runTerminateLedgerOutcomeBranches(t *testing.T) {
+	org, agent, sid := uuid.New(), uuid.New(), uuid.New()
+	base := func(ledger idempotency.Ledger) (sessionTerminateHandler, *terminateStoreFake) {
+		return terminateLedgerBranchFixture(t, ledger, sid)
+	}
+	request := func(key string) *http.Request {
+		return terminateLedgerBranchRequest(t, org, agent, key)
+	}
 	t.Run("replay", func(t *testing.T) {
 		h, store := base(&terminateLedgerFake{outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimReplay, Status: http.StatusOK, Response: []byte(`{"data":{"replayed":true}}`)}})
 		rec := httptest.NewRecorder()

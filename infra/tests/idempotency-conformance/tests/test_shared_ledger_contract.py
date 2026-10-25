@@ -16,7 +16,7 @@ honor on ``ibex_core.idempotency_ledger``:
 from __future__ import annotations
 
 import asyncio
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from ibex_idempotency import (
@@ -25,6 +25,7 @@ from ibex_idempotency import (
     KIND_OWNED,
     KIND_REPLAY,
     LedgerConflictError,
+    LedgerValidationError,
     PostgresIdempotencyLedger,
 )
 from sqlalchemy import text
@@ -183,12 +184,10 @@ async def test_rls_hides_other_org_rows(
 @pytest.mark.asyncio
 async def test_unknown_agent_fails_closed(ledger, principal) -> None:
     org_id, _ = principal
-    from uuid import uuid4
-
-    from ibex_idempotency import LedgerValidationError
+    unknown_agent = uuid4()
 
     with pytest.raises(LedgerValidationError):
-        await ledger.claim(org_id=org_id, agent_id=uuid4(), key="fk", request_hash=_hash("a"))
+        await ledger.claim(org_id=org_id, agent_id=unknown_agent, key="fk", request_hash=_hash("a"))
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,9 @@ is_bot_identity() {
       "greptile-apps[bot]" | "coderabbitai[bot]" | "renovate[bot]")
       [[ "$email" == *@users.noreply.github.com ]] && return 0
       ;;
+    *)
+      # Not a known automation account; fall through to the [bot] email check.
+      ;;
   esac
   [[ "$email" == *+*\[bot\]@users.noreply.github.com ]] && return 0
   return 1
@@ -30,7 +33,8 @@ is_bot_identity() {
 # GitHub <noreply@github.com>. The author owns the content but cannot add a local
 # sign-off, so treat those as automation.
 is_github_applied() {
-  [[ "$1" == "GitHub" && "$2" == "noreply@github.com" ]] && return 0
+  local committer_name="$1" committer_email="$2"
+  [[ "$committer_name" == "GitHub" && "$committer_email" == "noreply@github.com" ]] && return 0
   return 1
 }
 
