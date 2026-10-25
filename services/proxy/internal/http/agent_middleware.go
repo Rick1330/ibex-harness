@@ -31,6 +31,8 @@ type principalContextBuildInput struct {
 
 const agentVerificationUnavailableMessage = "Authentication service unavailable. The request cannot be verified."
 
+const agentNotAuthorizedMessage = "The agent is not authorized for this organization or is not active."
+
 // AgentVerificationMiddleware validates X-IBEX-Agent-ID against the authenticated org.
 // Must run after AuthMiddleware and before RateLimitMiddleware.
 func AgentVerificationMiddleware(
@@ -97,7 +99,7 @@ func (h *agentVerifyHandler) buildPrincipalContext(w http.ResponseWriter, r *htt
 	}
 	if errors.Is(err, ErrPrincipalAgentMismatch) {
 		h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{ctx: r.Context(), requestID: in.requestID, docsBase: in.docsBase, requestingOrg: in.authRes.OrgID.String(), agentID: in.agentHeader})
-		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized, "The agent is not authorized for this organization or is not active.", in.requestID, apierror.WriteOpts{DocsBase: in.docsBase})
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized, agentNotAuthorizedMessage, in.requestID, apierror.WriteOpts{DocsBase: in.docsBase})
 		return nil, false
 	}
 	if h.logger != nil {
@@ -126,7 +128,7 @@ func (h *agentVerifyHandler) prepareAgentRequest(w http.ResponseWriter, r *http.
 			requestingOrg: authRes.OrgID.String(), agentID: agentHeader,
 		})
 		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
-			"The agent is not authorized for this organization or is not active.", requestID,
+			agentNotAuthorizedMessage, requestID,
 			apierror.WriteOpts{DocsBase: docsBase})
 		return nil, "", false
 	}
@@ -173,7 +175,7 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 	case errors.Is(err, auth.ErrAgentNotAuthorized):
 		h.auditAgentAuthorizationDenied(opts)
 		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
-			"The agent is not authorized for this organization or is not active.", opts.requestID,
+			agentNotAuthorizedMessage, opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentVerifyUnavailable):
 		if h.logger != nil {
