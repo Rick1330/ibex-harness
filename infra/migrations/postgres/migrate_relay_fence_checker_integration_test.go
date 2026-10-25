@@ -18,14 +18,13 @@ const (
 
 type relayFenceFixture struct {
 	db        *sql.DB
-	ctx       context.Context
 	dsn       string
 	orgID     string
 	otherOrg  string
 	sessionID string
 }
 
-func newRelayFenceFixture(t *testing.T) *relayFenceFixture {
+func newRelayFenceFixture(t *testing.T, ctx context.Context) *relayFenceFixture {
 	t.Helper()
 	dsn := testDSN()
 	db := openTestDB(t)
@@ -34,9 +33,9 @@ func newRelayFenceFixture(t *testing.T) *relayFenceFixture {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	f := &relayFenceFixture{db: db, ctx: context.Background(), dsn: dsn}
-	f.orgID, f.sessionID = seedRelayFenceOrgWithSession(t, f.ctx, db, "relay-fence-a")
-	f.otherOrg, _ = seedRelayFenceOrgWithSession(t, f.ctx, db, "relay-fence-b")
+	f := &relayFenceFixture{db: db, dsn: dsn}
+	f.orgID, f.sessionID = seedRelayFenceOrgWithSession(t, ctx, db, "relay-fence-a")
+	f.otherOrg, _ = seedRelayFenceOrgWithSession(t, ctx, db, "relay-fence-b")
 	return f
 }
 
@@ -74,10 +73,10 @@ func seedRelayFenceOrgWithSession(t *testing.T, ctx context.Context, db *sql.DB,
 	return orgID, sessionID
 }
 
-func (f *relayFenceFixture) checkFence(t *testing.T, orgID, resourceID string, version int64) string {
+func (f *relayFenceFixture) checkFence(t *testing.T, ctx context.Context, orgID, resourceID string, version int64) string {
 	t.Helper()
 	var out string
-	if err := f.db.QueryRowContext(f.ctx,
+	if err := f.db.QueryRowContext(ctx,
 		relayFenceCall, orgID, resourceID, version,
 	).Scan(&out); err != nil {
 		t.Fatalf("check fence: %v", err)
@@ -85,10 +84,10 @@ func (f *relayFenceFixture) checkFence(t *testing.T, orgID, resourceID string, v
 	return out
 }
 
-func (f *relayFenceFixture) softDeleteSession(t *testing.T) {
+func (f *relayFenceFixture) softDeleteSession(t *testing.T, ctx context.Context) {
 	t.Helper()
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx,
+	err := withServiceAccount(ctx, f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
 			`UPDATE ibex_core.sessions SET deleted_at = NOW() WHERE id = $1::uuid`, f.sessionID)
 		return err
 	})
@@ -97,10 +96,10 @@ func (f *relayFenceFixture) softDeleteSession(t *testing.T) {
 	}
 }
 
-func (f *relayFenceFixture) sessionFenceVersion(t *testing.T) int64 {
+func (f *relayFenceFixture) sessionFenceVersion(t *testing.T, ctx context.Context) int64 {
 	t.Helper()
 	var v int64
-	if err := f.db.QueryRowContext(f.ctx,
+	if err := f.db.QueryRowContext(ctx,
 		`SELECT evidence_fence_version FROM ibex_core.sessions WHERE id = $1::uuid`, f.sessionID,
 	).Scan(&v); err != nil {
 		t.Fatalf("read fence version: %v", err)
@@ -109,12 +108,13 @@ func (f *relayFenceFixture) sessionFenceVersion(t *testing.T) int64 {
 }
 
 func TestRelayFenceChecker_DefinitionAndGrants(t *testing.T) {
-	f := newRelayFenceFixture(t)
+	ctx := t.Context()
+	f := newRelayFenceFixture(t, ctx)
 
 	var owner string
 	var securityDefiner bool
 	var volatility string
-	err := f.db.QueryRowContext(f.ctx, `
+	err := f.db.QueryRowContext(ctx, `
 		SELECT r.rolname, p.prosecdef, p.provolatile
 		FROM pg_proc p
 		JOIN pg_roles r ON r.oid = p.proowner
@@ -133,14 +133,14 @@ func TestRelayFenceChecker_DefinitionAndGrants(t *testing.T) {
 		t.Fatalf("volatility: got %q want stable", volatility)
 	}
 
-	assertFenceExecutePrivilege(t, f, "ibex_evidence_relay", true)
-	assertFenceExecutePrivilege(t, f, "ibex_app", false)
+	assertFenceExecutePrivilege(t, ctx, f, "ibex_evidence_relay", true)
+	assertFenceExecutePrivilege(t, ctx, f, "ibex_app", false)
 }
 
-func assertFenceExecutePrivilege(t *testing.T, f *relayFenceFixture, role string, want bool) {
+func assertFenceExecutePrivilege(t *testing.T, ctx context.Context, f *relayFenceFixture, role string, want bool) {
 	t.Helper()
 	var got bool
-	if err := f.db.QueryRowContext(f.ctx,
+	if err := f.db.QueryRowContext(ctx,
 		`SELECT has_function_privilege($1, $2, 'EXECUTE')`,
 		role, relayFenceSignature,
 	).Scan(&got); err != nil {
@@ -152,67 +152,69 @@ func assertFenceExecutePrivilege(t *testing.T, f *relayFenceFixture, role string
 }
 
 func TestRelayFenceChecker_FenceOutcomes(t *testing.T) {
-	f := newRelayFenceFixture(t)
+	ctx := t.Context()
+	f := newRelayFenceFixture(t, ctx)
 
-	if got := f.checkFence(t, f.orgID, f.sessionID, 1); got != "alive" {
+	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 1); got != "alive" {
 		t.Fatalf("live session: got %q want alive", got)
 	}
-	if got := f.checkFence(t, f.orgID, f.sessionID, 2); got != "stale_version" {
+	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 2); got != "stale_version" {
 		t.Fatalf("version drift: got %q want stale_version", got)
 	}
-	if got := f.checkFence(t, f.orgID, uuid.NewString(), 1); got != "not_found" {
+	if got := f.checkFence(t, ctx, f.orgID, uuid.NewString(), 1); got != "not_found" {
 		t.Fatalf("unknown session: got %q want not_found", got)
 	}
-	if got := f.checkFence(t, f.otherOrg, f.sessionID, 1); got != "not_found" {
+	if got := f.checkFence(t, ctx, f.otherOrg, f.sessionID, 1); got != "not_found" {
 		t.Fatalf("cross-tenant session: got %q want not_found", got)
 	}
 
-	f.softDeleteSession(t)
-	if v := f.sessionFenceVersion(t); v != 2 {
+	f.softDeleteSession(t, ctx)
+	if v := f.sessionFenceVersion(t, ctx); v != 2 {
 		t.Fatalf("fence version after soft delete: got %d want 2", v)
 	}
-	if got := f.checkFence(t, f.orgID, f.sessionID, 1); got != "tombstoned" {
+	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 1); got != "tombstoned" {
 		t.Fatalf("tombstoned pre-delete version: got %q want tombstoned", got)
 	}
-	if got := f.checkFence(t, f.orgID, f.sessionID, 2); got != "tombstoned" {
+	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 2); got != "tombstoned" {
 		t.Fatalf("tombstoned current version: got %q want tombstoned", got)
 	}
 }
 
 // connAs opens a dedicated connection and switches it to a role via the given
 // literal statement (e.g. "SET ROLE ibex_evidence_relay").
-func (f *relayFenceFixture) connAs(t *testing.T, statement string) *sql.Conn {
+func (f *relayFenceFixture) connAs(t *testing.T, ctx context.Context, statement string) *sql.Conn {
 	t.Helper()
-	conn, err := f.db.Conn(f.ctx)
+	conn, err := f.db.Conn(ctx)
 	if err != nil {
 		t.Fatalf("conn: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	if _, err := conn.ExecContext(f.ctx, statement); err != nil {
+	if _, err := conn.ExecContext(ctx, statement); err != nil {
 		t.Fatalf("role switch %q: %v", statement, err)
 	}
 	return conn
 }
 
 func TestRelayFenceChecker_RoleIsolation(t *testing.T) {
-	f := newRelayFenceFixture(t)
-	assertRelayRoleCanFenceButNotReadSessions(t, f)
-	assertAppRoleCannotExecuteFence(t, f)
+	ctx := t.Context()
+	f := newRelayFenceFixture(t, ctx)
+	assertRelayRoleCanFenceButNotReadSessions(t, ctx, f)
+	assertAppRoleCannotExecuteFence(t, ctx, f)
 }
 
-func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, f *relayFenceFixture) {
+func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, ctx context.Context, f *relayFenceFixture) {
 	t.Helper()
-	conn := f.connAs(t, "SET ROLE ibex_evidence_relay")
+	conn := f.connAs(t, ctx, "SET ROLE ibex_evidence_relay")
 
 	var current string
-	if err := conn.QueryRowContext(f.ctx, `SELECT current_user`).Scan(&current); err != nil {
+	if err := conn.QueryRowContext(ctx, `SELECT current_user`).Scan(&current); err != nil {
 		t.Fatalf("current_user: %v", err)
 	}
 	if current != "ibex_evidence_relay" {
 		t.Fatalf("current_user: got %q want ibex_evidence_relay", current)
 	}
 	var outcome string
-	if err := conn.QueryRowContext(f.ctx,
+	if err := conn.QueryRowContext(ctx,
 		relayFenceCall, f.orgID, f.sessionID, 1,
 	).Scan(&outcome); err != nil {
 		t.Fatalf("relay role must execute fence check: %v", err)
@@ -221,17 +223,17 @@ func assertRelayRoleCanFenceButNotReadSessions(t *testing.T, f *relayFenceFixtur
 		t.Fatalf("relay role outcome: got %q want alive", outcome)
 	}
 	var count int
-	err := conn.QueryRowContext(f.ctx, `SELECT COUNT(*) FROM ibex_core.sessions`).Scan(&count)
+	err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.sessions`).Scan(&count)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("relay role must not read sessions directly, got count=%d err=%v", count, err)
 	}
 }
 
-func assertAppRoleCannotExecuteFence(t *testing.T, f *relayFenceFixture) {
+func assertAppRoleCannotExecuteFence(t *testing.T, ctx context.Context, f *relayFenceFixture) {
 	t.Helper()
-	conn := f.connAs(t, "SET ROLE ibex_app")
+	conn := f.connAs(t, ctx, "SET ROLE ibex_app")
 	var outcome string
-	err := conn.QueryRowContext(f.ctx,
+	err := conn.QueryRowContext(ctx,
 		relayFenceCall, f.orgID, f.sessionID, 1,
 	).Scan(&outcome)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
@@ -240,10 +242,11 @@ func assertAppRoleCannotExecuteFence(t *testing.T, f *relayFenceFixture) {
 }
 
 func TestRelayFenceChecker_DownRemovesFunction(t *testing.T) {
-	f := newRelayFenceFixture(t)
+	ctx := t.Context()
+	f := newRelayFenceFixture(t, ctx)
 
 	var exists bool
-	if err := f.db.QueryRowContext(f.ctx,
+	if err := f.db.QueryRowContext(ctx,
 		`SELECT to_regprocedure($1) IS NOT NULL`, relayFenceSignature,
 	).Scan(&exists); err != nil {
 		t.Fatalf("to_regprocedure: %v", err)
@@ -255,7 +258,7 @@ func TestRelayFenceChecker_DownRemovesFunction(t *testing.T) {
 	if err := Down(f.dsn); err != nil {
 		t.Fatalf("down: %v", err)
 	}
-	if err := f.db.QueryRowContext(f.ctx,
+	if err := f.db.QueryRowContext(ctx,
 		`SELECT to_regprocedure($1) IS NOT NULL`, relayFenceSignature,
 	).Scan(&exists); err != nil {
 		t.Fatalf("to_regprocedure after down: %v", err)

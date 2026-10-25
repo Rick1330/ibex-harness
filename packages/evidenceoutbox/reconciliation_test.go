@@ -23,7 +23,10 @@ func TestReconciliationHelpers_ValidateAndClassifyRows(t *testing.T) {
 	if !validReconciliationInput(in) {
 		t.Fatal("valid reconciliation input rejected")
 	}
+	classifyOutboxRows(t, in)
+}
 
+func classifyOutboxRows(t *testing.T, in RunInput) {
 	rowID := uuid.New()
 	rows := []struct {
 		name, status string

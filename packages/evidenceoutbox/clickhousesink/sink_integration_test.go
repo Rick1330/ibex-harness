@@ -27,7 +27,7 @@ func TestIntegration_DeliverDedupesPerTenant(t *testing.T) {
 	fence := evidenceoutbox.TombstoneFence{ResourceType: "evidence_run", ResourceID: "run-1", ResourceVersion: 1}
 	event := uuid.New()
 	row := integrationRow(event)
-	deliverIntegrationRows(t, integrationDelivery{ctx: ctx, sink: sink, row: row, fence: fence})
+	deliverIntegrationRows(t, ctx, integrationDelivery{sink: sink, row: row, fence: fence})
 	assertIntegrationTenantRows(t, ctx, conn, event)
 }
 
@@ -72,22 +72,21 @@ func integrationRow(event uuid.UUID) evidenceoutbox.OutboxRow {
 }
 
 type integrationDelivery struct {
-	ctx   context.Context
 	sink  *Sink
 	row   evidenceoutbox.OutboxRow
 	fence evidenceoutbox.TombstoneFence
 }
 
-func deliverIntegrationRows(t *testing.T, delivery integrationDelivery) {
+func deliverIntegrationRows(t *testing.T, ctx context.Context, delivery integrationDelivery) {
 	t.Helper()
-	if err := delivery.sink.DeliverWithTombstoneFence(delivery.ctx, delivery.row, delivery.fence); err != nil {
+	if err := delivery.sink.DeliverWithTombstoneFence(ctx, delivery.row, delivery.fence); err != nil {
 		t.Fatal(err)
 	}
-	if err := delivery.sink.DeliverWithTombstoneFence(delivery.ctx, delivery.row, delivery.fence); err != nil {
+	if err := delivery.sink.DeliverWithTombstoneFence(ctx, delivery.row, delivery.fence); err != nil {
 		t.Fatal(err)
 	}
 	delivery.row.OrgID = uuid.New()
-	if err := delivery.sink.DeliverWithTombstoneFence(delivery.ctx, delivery.row, delivery.fence); err != nil {
+	if err := delivery.sink.DeliverWithTombstoneFence(ctx, delivery.row, delivery.fence); err != nil {
 		t.Fatal(err)
 	}
 }

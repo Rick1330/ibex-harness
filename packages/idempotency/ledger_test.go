@@ -170,13 +170,18 @@ func TestPostgresLedgerCrossTenantIsolation(t *testing.T) {
 }
 
 func TestPostgresLedgerConstructorAndClaimFailures(t *testing.T) {
+	assertLedgerConstructorValidation(t)
+	assertClaimBeginAndScopeFailures(t)
+}
+
+func assertLedgerConstructorValidation(t *testing.T) {
 	if _, err := NewPostgresLedger(nil, time.Minute); err == nil {
 		t.Fatal("nil database must fail")
 	}
 	if ledger, err := NewOptionalPostgresLedger(nil, time.Minute); ledger != nil || err != nil {
 		t.Fatalf("optional nil database ledger=%v err=%v", ledger, err)
 	}
-	db, mock, err := sqlmock.New()
+	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +192,18 @@ func TestPostgresLedgerConstructorAndClaimFailures(t *testing.T) {
 	}
 	if optional, err := NewOptionalPostgresLedger(db, time.Minute); err != nil || optional == nil {
 		t.Fatalf("optional database ledger=%v err=%v", optional, err)
+	}
+}
+
+func assertClaimBeginAndScopeFailures(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	ledger, err := NewPostgresLedger(db, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
 	org, agent := uuid.New(), uuid.New()
 	mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
@@ -256,10 +273,21 @@ func TestPostgresLedgerClaimStates(t *testing.T) {
 	if err == nil || out.Kind != "" {
 		t.Fatalf("unsupported state outcome=%+v err=%v", out, err)
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+	assertExpiredLeaseReclaimProbes(t, ledger, mock, org, agent, key)
+}
+
+func assertExpiredLeaseReclaimProbes(t *testing.T, ledger *PostgresLedger, mock sqlmock.Sqlmock, org, agent uuid.UUID, key string) {
+	hash := HashRequest([]byte("same"))
+	row := func(state string, expires any) *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}).AddRow(uuid.New(), hash, state, nil, nil, expires, 1)
+	}
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WithArgs(org, agent, key, hash, "60.000000 seconds").WillReturnRows(sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}))
-	mock.ExpectQuery(`SELECT id, request_hash, state`).WithArgs(org, agent, key).WillReturnRows(row(hash, "claimed", nil, nil, time.Now().Add(-time.Minute), 1))
+	mock.ExpectQuery(`SELECT id, request_hash, state`).WithArgs(org, agent, key).WillReturnRows(row("claimed", time.Now().Add(-time.Minute)))
 	mock.ExpectQuery(`UPDATE ibex_core\.idempotency_ledger`).WillReturnError(errors.New("reclaim failed"))
 	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash); err == nil || !strings.Contains(err.Error(), "reclaim failed") {
 		t.Fatalf("reclaim error=%v", err)
@@ -267,15 +295,12 @@ func TestPostgresLedgerClaimStates(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WithArgs(org, agent, key, hash, "60.000000 seconds").WillReturnRows(sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}))
-	mock.ExpectQuery(`SELECT id, request_hash, state`).WithArgs(org, agent, key).WillReturnRows(row(hash, "claimed", nil, nil, time.Now().Add(-time.Minute), 1))
+	mock.ExpectQuery(`SELECT id, request_hash, state`).WithArgs(org, agent, key).WillReturnRows(row("claimed", time.Now().Add(-time.Minute)))
 	mock.ExpectQuery(`UPDATE ibex_core\.idempotency_ledger`).WillReturnError(sql.ErrNoRows)
 	mock.ExpectCommit()
-	out, err = ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash)
+	out, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash)
 	if err != nil || out.Kind != ClaimInProgress || out.RetryAfter <= 0 {
 		t.Fatalf("clock-race outcome=%+v err=%v", out, err)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
 	}
 }
 
