@@ -25,6 +25,7 @@ from ibex_idempotency import (
     KIND_OWNED,
     KIND_REPLAY,
     LedgerConflictError,
+    LedgerValidationError,
     PostgresIdempotencyLedger,
 )
 from sqlalchemy import text
@@ -184,8 +185,6 @@ async def test_rls_hides_other_org_rows(
 async def test_unknown_agent_fails_closed(ledger, principal) -> None:
     org_id, _ = principal
     unknown_agent = uuid4()
-
-    from ibex_idempotency import LedgerValidationError  # noqa: PLC0415 — narrow import mirrors neighboring tests
 
     with pytest.raises(LedgerValidationError):
         await ledger.claim(org_id=org_id, agent_id=unknown_agent, key="fk", request_hash=_hash("a"))
