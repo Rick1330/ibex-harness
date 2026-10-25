@@ -167,7 +167,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
                 </button>
               </div>
 
-              <section class="console-code" tabindex="0" aria-label="Example request headers and body">
+              <section class="console-code" tabindex="0" aria-label="Example request headers and body"><!-- NOSONAR --><!-- scrollable region: tabindex is the a11y-correct pattern (WCAG 2.1.1) per review on #1029 -->
                 <div class="console-line">
                   <span class="console-ln">01</span>
                   <span><span class="console-key">Authorization</span><span class="console-punc">:</span> <span class="console-string">Bearer $IBEX_TOKEN</span></span>

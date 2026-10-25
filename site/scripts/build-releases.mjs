@@ -16,17 +16,63 @@ let current = null
 let section = null
 
 function clean(text) {
-  return text
-    .replace(/\[([^\]]+)\]\(.+?\)/g, '$1')
+  return stripMarkdownLinks(text)
     .replaceAll('**', '')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
+// Markdown link "[label](url)" -> "label", located with indexOf so no
+// backtracking regex runs over changelog text.
+function stripMarkdownLinks(text) {
+  let out = ''
+  let cursor = 0
+  for (;;) {
+    const labelStart = text.indexOf('[', cursor)
+    if (labelStart === -1) break
+    const labelEnd = text.indexOf('](', labelStart + 1)
+    if (labelEnd === -1) break
+    const urlEnd = text.indexOf(')', labelEnd + 2)
+    if (urlEnd === -1) break
+    out += text.slice(cursor, labelStart) + text.slice(labelStart + 1, labelEnd)
+    cursor = urlEnd + 1
+  }
+  return out + text.slice(cursor)
+}
+
+// Release headings look like "## [1.2.3](compare-url) (2026-10-01)".
+function parseReleaseHeading(line) {
+  if (!line.startsWith('## [')) return null
+  const versionEnd = line.indexOf('](')
+  if (versionEnd === -1) return null
+  const urlEnd = line.indexOf(') (', versionEnd + 2)
+  if (urlEnd === -1) return null
+  const date = line.slice(urlEnd + 3, urlEnd + 13)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  return { version: line.slice(3, versionEnd), compareUrl: line.slice(versionEnd + 2, urlEnd), date }
+}
+
+// Issue references look like "(#[123](https://...))"; commit references look
+// like "([abc1234](https://...))". Returns the parts and the line without them.
+function parseTrailingReference(raw) {
+  const open = raw.lastIndexOf('([')
+  if (open === -1 || !raw.endsWith('))')) return { text: raw, match: null }
+  const close = raw.length - 2
+  const bracketEnd = raw.indexOf('](', open + 2)
+  if (bracketEnd === -1 || bracketEnd > close) return { text: raw, match: null }
+  const label = raw.slice(open + 2, bracketEnd)
+  const url = raw.slice(bracketEnd + 2, close)
+  return { text: raw.slice(0, open).trimEnd(), match: { label, url } }
+}
+
+function isCommitLabel(label) {
+  return /^[0-9a-f]{7,40}$/.test(label)
+}
+
 for (const line of lines) {
-  const release = line.match(/^## \[(.+?)\]\((.+?)\) \((\d{4}-\d{2}-\d{2})\)/)
+  const release = parseReleaseHeading(line)
   if (release) {
-    current = { version: release[1], compareUrl: release[2], date: release[3], sections: [] }
+    current = { version: release.version, compareUrl: release.compareUrl, date: release.date, sections: [] }
     releases.push(current)
     section = null
     continue
@@ -47,17 +93,20 @@ for (const line of lines) {
   const item = line.match(/^\* (.+)$/)
   if (item && section) {
     const raw = item[1].trim()
-    const issue = raw.match(/\(\[#(\d+)\]\((.+?)\)\)/)
-    const commit = raw.match(/\(\[([0-9a-f]{7,40})\]\((.+?)\)\)/)
-    let text = raw
-      .replace(/\s*\(\[#\d+\]\(.+?\)\)/g, '')
-      .replace(/\s*\(\[[0-9a-f]{7,40}\]\(.+?\)\)/g, '')
-    text = clean(text)
-    section.items.push({
-      text,
-      issue: issue ? { number: issue[1], url: issue[2] } : null,
-      commit: commit ? { short: commit[1].slice(0, 7), url: commit[2] } : null,
-    })
+    const reference = parseTrailingReference(raw)
+    /** @type {{ number: string, url: string } | null} */
+    let issue = null
+    /** @type {{ short: string, url: string } | null} */
+    let commit = null
+    if (reference.match) {
+      if (reference.match.label.startsWith('#')) {
+        issue = { number: reference.match.label.slice(1), url: reference.match.url }
+      } else if (isCommitLabel(reference.match.label)) {
+        commit = { short: reference.match.label.slice(0, 7), url: reference.match.url }
+      }
+    }
+    const text = clean(reference.text)
+    section.items.push({ text, issue, commit })
   }
 }
 

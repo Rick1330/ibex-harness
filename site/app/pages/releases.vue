@@ -1,5 +1,31 @@
 <script setup lang="ts">
-import releases from '~/data/releases.json'
+import releasesJson from '~/data/releases.json'
+
+// The JSON is generated from CHANGELOG.md; issue references are optional per
+// item, so the inferred JSON type collapses them to `null` when the current
+// changelog carries none.
+interface ReleaseReference {
+  number?: string
+  short?: string
+  url: string
+}
+interface ReleaseItem {
+  text: string
+  issue: ReleaseReference | null
+  commit: ReleaseReference | null
+}
+interface ReleaseSection {
+  title: string
+  items: ReleaseItem[]
+}
+interface ReleaseEntry {
+  version: string
+  compareUrl: string
+  date: string
+  sections: ReleaseSection[]
+}
+
+const releases = releasesJson as ReleaseEntry[]
 
 useSeoMeta({
   title: 'Releases',
