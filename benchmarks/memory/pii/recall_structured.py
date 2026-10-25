@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 import time
@@ -72,6 +73,14 @@ def resolve_output_path(raw: Path | str) -> Path:
     return resolved
 
 
+def write_text_secure(path: Path, text: str) -> None:
+    """Write without following a symlink swapped in after validation (S8707 TOCTOU)."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -116,7 +125,7 @@ def main() -> int:
         "misses": misses,
     }
     path = resolve_output_path(args.output)
-    path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+    write_text_secure(path, json.dumps(out, indent=2) + "\n")
     print(json.dumps(out, indent=2))
     return 0 if out["pass"] else 1
 
