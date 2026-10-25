@@ -53,20 +53,20 @@ func (c CapabilityCatalog) Lookup(model string) (ModelCapability, bool) {
 	if len(c) == 0 {
 		return ModelCapability{}, false
 	}
-	cap, ok := c[model]
-	return cap, ok
+	entry, ok := c[model]
+	return entry, ok
 }
 
 // MergeCapabilityCatalog returns a new catalog with base entries, then each
 // overlay applied in order (later overlays win on ID collision).
 func MergeCapabilityCatalog(base CapabilityCatalog, overlays ...CapabilityCatalog) CapabilityCatalog {
 	out := make(CapabilityCatalog, len(base))
-	for id, cap := range base {
-		out[id] = cap
+	for id, entry := range base {
+		out[id] = entry
 	}
 	for _, overlay := range overlays {
-		for id, cap := range overlay {
-			out[id] = cap
+		for id, entry := range overlay {
+			out[id] = entry
 		}
 	}
 	return out
@@ -77,15 +77,15 @@ func MergeCapabilityCatalog(base CapabilityCatalog, overlays ...CapabilityCatalo
 // TokenizerFamily are trimmed so stored rows match ValidateCapability checks.
 func CatalogFromCapabilities(caps ...ModelCapability) CapabilityCatalog {
 	out := make(CapabilityCatalog, len(caps))
-	for _, cap := range caps {
-		id := strings.TrimSpace(cap.ModelID)
+	for _, record := range caps {
+		id := strings.TrimSpace(record.ModelID)
 		if id == "" {
 			continue
 		}
-		cap.ModelID = id
-		cap.Provider = strings.TrimSpace(cap.Provider)
-		cap.TokenizerFamily = strings.TrimSpace(cap.TokenizerFamily)
-		out[id] = cap
+		record.ModelID = id
+		record.Provider = strings.TrimSpace(record.Provider)
+		record.TokenizerFamily = strings.TrimSpace(record.TokenizerFamily)
+		out[id] = record
 	}
 	return out
 }
@@ -93,39 +93,39 @@ func CatalogFromCapabilities(caps ...ModelCapability) CapabilityCatalog {
 // ValidateCapability checks required fields for a catalog row (overlay-safe).
 // TokenizerFamily must be one of the declared family constants (including
 // TokenizerFamilyUnknown for ExtraModels overlays).
-func ValidateCapability(cap ModelCapability) error {
-	return validateCapability(cap, true)
+func ValidateCapability(record ModelCapability) error {
+	return validateCapability(record, true)
 }
 
 // ValidateBuiltinCapability is ValidateCapability plus rejection of
 // TokenizerFamilyUnknown (built-in curated rows must name a real family).
-func ValidateBuiltinCapability(cap ModelCapability) error {
-	return validateCapability(cap, false)
+func ValidateBuiltinCapability(record ModelCapability) error {
+	return validateCapability(record, false)
 }
 
-func validateCapability(cap ModelCapability, allowUnknownTokenizer bool) error {
-	if err := validateCapabilityIdentity(cap); err != nil {
+func validateCapability(record ModelCapability, allowUnknownTokenizer bool) error {
+	if err := validateCapabilityIdentity(record); err != nil {
 		return err
 	}
-	if err := validateCapabilityLimits(cap); err != nil {
+	if err := validateCapabilityLimits(record); err != nil {
 		return err
 	}
-	return validateCapabilityTokenizer(cap, allowUnknownTokenizer)
+	return validateCapabilityTokenizer(record, allowUnknownTokenizer)
 }
 
-func validateCapabilityIdentity(cap ModelCapability) error {
-	id := strings.TrimSpace(cap.ModelID)
+func validateCapabilityIdentity(record ModelCapability) error {
+	id := strings.TrimSpace(record.ModelID)
 	if id == "" {
 		return fmt.Errorf("%w: empty ModelID", ErrInvalidCapability)
 	}
-	if cap.ModelID != id {
+	if record.ModelID != id {
 		return fmt.Errorf("%w: %q: ModelID must not have surrounding whitespace", ErrInvalidCapability, id)
 	}
-	provider := strings.TrimSpace(cap.Provider)
+	provider := strings.TrimSpace(record.Provider)
 	if provider == "" {
 		return fmt.Errorf("%w: %q: empty Provider", ErrInvalidCapability, id)
 	}
-	if cap.Provider != provider {
+	if record.Provider != provider {
 		return fmt.Errorf("%w: %q: Provider must not have surrounding whitespace", ErrInvalidCapability, id)
 	}
 	if !isAllowedCapabilityProvider(provider) {
@@ -134,28 +134,28 @@ func validateCapabilityIdentity(cap ModelCapability) error {
 	return nil
 }
 
-func validateCapabilityLimits(cap ModelCapability) error {
-	id := strings.TrimSpace(cap.ModelID)
-	if cap.ContextWindow <= 0 {
+func validateCapabilityLimits(record ModelCapability) error {
+	id := strings.TrimSpace(record.ModelID)
+	if record.ContextWindow <= 0 {
 		return fmt.Errorf("%w: %q: ContextWindow must be > 0", ErrInvalidCapability, id)
 	}
-	if cap.MaxOutputTokens <= 0 {
+	if record.MaxOutputTokens <= 0 {
 		return fmt.Errorf("%w: %q: MaxOutputTokens must be > 0", ErrInvalidCapability, id)
 	}
-	if cap.MaxOutputTokens > cap.ContextWindow {
+	if record.MaxOutputTokens > record.ContextWindow {
 		return fmt.Errorf("%w: %q: MaxOutputTokens (%d) exceeds ContextWindow (%d)",
-			ErrInvalidCapability, id, cap.MaxOutputTokens, cap.ContextWindow)
+			ErrInvalidCapability, id, record.MaxOutputTokens, record.ContextWindow)
 	}
 	return nil
 }
 
-func validateCapabilityTokenizer(cap ModelCapability, allowUnknownTokenizer bool) error {
-	id := strings.TrimSpace(cap.ModelID)
-	family := strings.TrimSpace(cap.TokenizerFamily)
+func validateCapabilityTokenizer(record ModelCapability, allowUnknownTokenizer bool) error {
+	id := strings.TrimSpace(record.ModelID)
+	family := strings.TrimSpace(record.TokenizerFamily)
 	if family == "" {
 		return fmt.Errorf("%w: %q: empty TokenizerFamily", ErrInvalidCapability, id)
 	}
-	if cap.TokenizerFamily != family {
+	if record.TokenizerFamily != family {
 		return fmt.Errorf("%w: %q: TokenizerFamily must not have surrounding whitespace", ErrInvalidCapability, id)
 	}
 	if !isAllowedTokenizerFamily(family, allowUnknownTokenizer) {

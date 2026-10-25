@@ -61,7 +61,7 @@ func runLoop(ctx context.Context, deps loopDeps) {
 			break
 		}
 	}
-	deps.log.InfoCtx(context.Background(), "relay loop stopped")
+	deps.log.InfoCtx(ctx, "relay loop stopped")
 }
 
 // runOnce performs one recover + claim + deliver cycle bounded by the
