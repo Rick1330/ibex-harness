@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -51,6 +52,24 @@ FIXTURES: list[dict[str, str]] = [
 
 WRITE_BUDGET_MS = 200.0
 TARGET_RECALL = 0.95
+
+# Results may land beside this script (the committed docs baseline) or in the
+# system temp directory (CI and scratch runs). Resolving and prefix-checking
+# keeps a crafted --output from writing anywhere else on disk (S8707).
+_ALLOWED_OUTPUT_ROOTS = (
+    Path(__file__).resolve().parent,
+    Path(tempfile.gettempdir()).resolve(),
+)
+
+
+def resolve_output_path(raw: Path | str) -> Path:
+    resolved = Path(raw).resolve()
+    if resolved.suffix != ".json":
+        raise SystemExit(f"--output must end with .json, got {raw}")
+    if not any(resolved == root or resolved.is_relative_to(root) for root in _ALLOWED_OUTPUT_ROOTS):
+        allowed = ", ".join(str(root) for root in _ALLOWED_OUTPUT_ROOTS)
+        raise SystemExit(f"--output must resolve inside one of: {allowed}")
+    return resolved
 
 
 def main() -> int:
@@ -96,7 +115,7 @@ def main() -> int:
         "spacy_model": settings.pii_spacy_model,
         "misses": misses,
     }
-    path = args.output
+    path = resolve_output_path(args.output)
     path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(out, indent=2))
     return 0 if out["pass"] else 1

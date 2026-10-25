@@ -24,3 +24,5 @@ and expected hit counts in `test_pii_recall_gate.py` whenever fixtures change.
 
 Use `--output PATH` to write results elsewhere. Without it, the harness rewrites
 `recall_structured.json` beside the script; the committed JSON is the docs baseline.
+For safety the resolved path must end in `.json` and sit inside the script's
+directory or the system temp directory; anything else exits with an error.
