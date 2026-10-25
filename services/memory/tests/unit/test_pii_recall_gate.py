@@ -10,7 +10,6 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-
 _RECALL_SCRIPT = Path(__file__).resolve().parents[4] / "benchmarks/memory/pii/recall_structured.py"
 
 
