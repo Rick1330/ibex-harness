@@ -12,26 +12,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "services" / "api"))
 
-from app.main import create_app
-
 # Snapshot exports land in the services/api tree (the committed contract) or
-# the system temp directory (check-openapi-snapshot.sh scratch file). Resolving
-# and prefix-checking keeps a crafted CLI path from writing elsewhere (S8707).
-_ALLOWED_OUTPUT_ROOTS = (
-    (REPO_ROOT / "services" / "api").resolve(),
-    Path(tempfile.gettempdir()).resolve(),
-)
+# the system temp directory (check-openapi-snapshot.sh scratch file). Within
+# the repo only the canonical snapshot file is writable; resolving and
+# checking against those roots keeps a crafted CLI path from writing
+# elsewhere (S8707).
+_REPO_SNAPSHOT = (REPO_ROOT / "services" / "api" / "openapi.snapshot.json").resolve()
+_TEMP_ROOT = Path(tempfile.gettempdir()).resolve()
 
 
 def resolve_output_path(raw: Path | str) -> Path:
     resolved = Path(raw).resolve()
-    if not any(resolved == root or resolved.is_relative_to(root) for root in _ALLOWED_OUTPUT_ROOTS):
-        allowed = ", ".join(str(root) for root in _ALLOWED_OUTPUT_ROOTS)
-        raise SystemExit(f"output path must resolve inside one of: {allowed}")
-    return resolved
+    if resolved == _REPO_SNAPSHOT or resolved.is_relative_to(_TEMP_ROOT):
+        return resolved
+    raise SystemExit(
+        f"output path must be {_REPO_SNAPSHOT} or inside the temp directory {_TEMP_ROOT}"
+    )
 
 
 def main() -> int:
+    from app.main import create_app  # noqa: PLC0415 — heavy import only for real exports
+
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     args = parser.parse_args()

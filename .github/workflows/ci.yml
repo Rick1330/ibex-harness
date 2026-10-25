@@ -2247,7 +2247,9 @@ jobs:
 
       - name: Test site layout and article render
         timeout-minutes: 8
-        run: pnpm --filter site test:e2e
+        run: |
+        pnpm --filter site test:unit
+        pnpm --filter site test:e2e
 
       - name: Upload site browser evidence
         if: always()

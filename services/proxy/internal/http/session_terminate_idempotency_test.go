@@ -41,7 +41,7 @@ func terminateLedgerBranchFixture(t *testing.T, ledger idempotency.Ledger, sid u
 	return newTerminateHandler(t, terminateHandlerArgs{store: store, metric: "ledger-branches", ledger: ledger}), store
 }
 
-func terminateLedgerBranchRequest(t *testing.T, org, agent, sid uuid.UUID, key string) *http.Request {
+func terminateLedgerBranchRequest(t *testing.T, org, agent uuid.UUID, key string) *http.Request {
 	return terminateAuthedRequest(t, terminateReqParams{org: org, agent: agent, externalID: "ledger-ext", body: `{"status":"completed"}`, idempotencyKey: key})
 }
 
@@ -51,7 +51,7 @@ func runTerminateKeyValidationBranches(t *testing.T) {
 		return terminateLedgerBranchFixture(t, ledger, sid)
 	}
 	request := func(key string) *http.Request {
-		return terminateLedgerBranchRequest(t, org, agent, sid, key)
+		return terminateLedgerBranchRequest(t, org, agent, key)
 	}
 
 	t.Run("missing key", func(t *testing.T) {
@@ -86,7 +86,7 @@ func runTerminateLedgerOutcomeBranches(t *testing.T) {
 		return terminateLedgerBranchFixture(t, ledger, sid)
 	}
 	request := func(key string) *http.Request {
-		return terminateLedgerBranchRequest(t, org, agent, sid, key)
+		return terminateLedgerBranchRequest(t, org, agent, key)
 	}
 	t.Run("replay", func(t *testing.T) {
 		h, store := base(&terminateLedgerFake{outcome: idempotency.ClaimOutcome{Kind: idempotency.ClaimReplay, Status: http.StatusOK, Response: []byte(`{"data":{"replayed":true}}`)}})

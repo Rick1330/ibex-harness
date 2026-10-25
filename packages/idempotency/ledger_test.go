@@ -196,6 +196,15 @@ func assertLedgerConstructorValidation(t *testing.T) {
 }
 
 func assertClaimBeginAndScopeFailures(t *testing.T) {
+	t.Run("begin failure", func(t *testing.T) { assertClaimBeginFailure(t) })
+	t.Run("scope failure", func(t *testing.T) { assertClaimScopeFailure(t) })
+	t.Run("insert failure", func(t *testing.T) { assertClaimInsertFailure(t) })
+	t.Run("commit failure", func(t *testing.T) { assertClaimCommitFailure(t) })
+}
+
+// newFailureProbeLedger returns a default-lease ledger backed by a fresh
+// sqlmock; each probe queues its own expectations.
+func newFailureProbeLedger(t *testing.T) (*PostgresLedger, sqlmock.Sqlmock, uuid.UUID, uuid.UUID) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -205,22 +214,47 @@ func assertClaimBeginAndScopeFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	org, agent := uuid.New(), uuid.New()
+	return ledger, mock, uuid.New(), uuid.New()
+}
+
+func assertClaimBeginFailure(t *testing.T) {
+	ledger, mock, org, agent := newFailureProbeLedger(t)
 	mock.ExpectBegin().WillReturnError(errors.New("begin failed"))
 	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil || !strings.Contains(err.Error(), "begin failed") {
 		t.Fatalf("claim begin error=%v", err)
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertClaimScopeFailure(t *testing.T) {
+	ledger, mock, org, agent := newFailureProbeLedger(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnError(errors.New("scope failed"))
 	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil || !strings.Contains(err.Error(), "scope failed") {
 		t.Fatalf("claim scope error=%v", err)
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertClaimInsertFailure(t *testing.T) {
+	ledger, mock, org, agent := newFailureProbeLedger(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WillReturnError(errors.New("insert failed"))
 	if _, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, "k", HashRequest([]byte("b"))); err == nil || !strings.Contains(err.Error(), "insert failed") {
 		t.Fatalf("claim insert error=%v", err)
 	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertClaimCommitFailure(t *testing.T) {
+	ledger, mock, org, agent := newFailureProbeLedger(t)
 	mock.ExpectBegin()
 	mock.ExpectExec(`SELECT set_config`).WithArgs(org.String()).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery(`INSERT INTO ibex_core\.idempotency_ledger`).WithArgs(org, agent, "k", HashRequest([]byte("b")), "120.000000 seconds").WillReturnRows(sqlmock.NewRows([]string{"id", "request_hash", "state", "status_code", "response_payload", "lease_expires_at", "version"}).AddRow(uuid.New(), HashRequest([]byte("b")), "claimed", nil, nil, time.Now().Add(time.Minute), 1))
@@ -301,6 +335,9 @@ func assertExpiredLeaseReclaimProbes(t *testing.T, ledger *PostgresLedger, mock 
 	out, err := ledger.Claim(context.Background(), Principal{OrgID: org, AgentID: agent}, key, hash)
 	if err != nil || out.Kind != ClaimInProgress || out.RetryAfter <= 0 {
 		t.Fatalf("clock-race outcome=%+v err=%v", out, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
 

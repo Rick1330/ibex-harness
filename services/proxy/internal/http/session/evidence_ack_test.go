@@ -52,7 +52,7 @@ func TestWriteEvidenceAck_GoldenHTTPOutcomes(t *testing.T) {
 			if got := response.Header().Get("Content-Type"); got != "application/json" {
 				t.Fatalf("content-type=%q", got)
 			}
-			assertEvidenceAckEnvelope(t, response, in, tc.wantErrorCode, tc.wantOutcome, tc.wantRunID)
+			assertEvidenceAckEnvelope(t, response, in, tc)
 		})
 	}
 }
@@ -114,14 +114,21 @@ func (plainEvidencePersister) PersistRun(context.Context, evidenceoutbox.RunInpu
 	return evidenceoutbox.PersistResult{}, errors.New("db down")
 }
 
-func assertEvidenceAckEnvelope(t *testing.T, response *httptest.ResponseRecorder, in evidenceoutbox.RunInput, wantErrorCode apierror.Code, wantOutcome EvidenceAckStatus, wantRunID string) {
+func assertEvidenceAckEnvelope(t *testing.T, response *httptest.ResponseRecorder, in evidenceoutbox.RunInput, tc struct {
+	name          string
+	out           EvidencePersistOutcome
+	wantStatus    int
+	wantOutcome   EvidenceAckStatus
+	wantErrorCode apierror.Code
+	wantRunID     string
+}) {
 	t.Helper()
-	if wantErrorCode != "" {
+	if tc.wantErrorCode != "" {
 		var body apierror.Response
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 			t.Fatalf("decode error envelope: %v", err)
 		}
-		if body.Error.Code != wantErrorCode || body.Error.RequestID != in.RequestID || body.Error.Message == "" || body.Error.Timestamp.IsZero() {
+		if body.Error.Code != tc.wantErrorCode || body.Error.RequestID != in.RequestID || body.Error.Message == "" || body.Error.Timestamp.IsZero() {
 			t.Fatalf("unexpected 503 error envelope: %+v", body.Error)
 		}
 		if body.Error.Detail != "" || body.Error.DocsURL != "" {
@@ -138,7 +145,7 @@ func assertEvidenceAckEnvelope(t *testing.T, response *httptest.ResponseRecorder
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode success envelope: %v", err)
 	}
-	if body.Data.Outcome != wantOutcome || body.Data.RunID != wantRunID {
-		t.Fatalf("success envelope=%+v want outcome=%q run_id=%q", body.Data, wantOutcome, wantRunID)
+	if body.Data.Outcome != tc.wantOutcome || body.Data.RunID != tc.wantRunID {
+		t.Fatalf("success envelope=%+v want outcome=%q run_id=%q", body.Data, tc.wantOutcome, tc.wantRunID)
 	}
 }

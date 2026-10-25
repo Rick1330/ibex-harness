@@ -14,7 +14,8 @@
     "check:links": "node scripts/check-links.mjs",
     "check:redirects": "node scripts/check-redirects.mjs",
     "check:claims": "node scripts/check-claims.mjs",
-    "test:e2e": "playwright test -c playwright.config.ts"
+    "test:e2e": "playwright test -c playwright.config.ts",
+    "test:unit": "node --test scripts/"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",

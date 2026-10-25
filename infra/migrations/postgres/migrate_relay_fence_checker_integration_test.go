@@ -73,11 +73,19 @@ func seedRelayFenceOrgWithSession(t *testing.T, ctx context.Context, db *sql.DB,
 	return orgID, sessionID
 }
 
-func (f *relayFenceFixture) checkFence(t *testing.T, ctx context.Context, orgID, resourceID string, version int64) string {
+// relayFenceRequest groups the fence-check arguments so checkFence stays a
+// single focused input alongside ctx.
+type relayFenceRequest struct {
+	orgID      string
+	resourceID string
+	version    int64
+}
+
+func (f *relayFenceFixture) checkFence(t *testing.T, ctx context.Context, req relayFenceRequest) string {
 	t.Helper()
 	var out string
 	if err := f.db.QueryRowContext(ctx,
-		relayFenceCall, orgID, resourceID, version,
+		relayFenceCall, req.orgID, req.resourceID, req.version,
 	).Scan(&out); err != nil {
 		t.Fatalf("check fence: %v", err)
 	}
@@ -155,16 +163,16 @@ func TestRelayFenceChecker_FenceOutcomes(t *testing.T) {
 	ctx := t.Context()
 	f := newRelayFenceFixture(t, ctx)
 
-	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 1); got != "alive" {
+	if got := f.checkFence(t, ctx, relayFenceRequest{orgID: f.orgID, resourceID: f.sessionID, version: 1}); got != "alive" {
 		t.Fatalf("live session: got %q want alive", got)
 	}
-	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 2); got != "stale_version" {
+	if got := f.checkFence(t, ctx, relayFenceRequest{orgID: f.orgID, resourceID: f.sessionID, version: 2}); got != "stale_version" {
 		t.Fatalf("version drift: got %q want stale_version", got)
 	}
-	if got := f.checkFence(t, ctx, f.orgID, uuid.NewString(), 1); got != "not_found" {
+	if got := f.checkFence(t, ctx, relayFenceRequest{orgID: f.orgID, resourceID: uuid.NewString(), version: 1}); got != "not_found" {
 		t.Fatalf("unknown session: got %q want not_found", got)
 	}
-	if got := f.checkFence(t, ctx, f.otherOrg, f.sessionID, 1); got != "not_found" {
+	if got := f.checkFence(t, ctx, relayFenceRequest{orgID: f.otherOrg, resourceID: f.sessionID, version: 1}); got != "not_found" {
 		t.Fatalf("cross-tenant session: got %q want not_found", got)
 	}
 
@@ -172,10 +180,10 @@ func TestRelayFenceChecker_FenceOutcomes(t *testing.T) {
 	if v := f.sessionFenceVersion(t, ctx); v != 2 {
 		t.Fatalf("fence version after soft delete: got %d want 2", v)
 	}
-	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 1); got != "tombstoned" {
+	if got := f.checkFence(t, ctx, relayFenceRequest{orgID: f.orgID, resourceID: f.sessionID, version: 1}); got != "tombstoned" {
 		t.Fatalf("tombstoned pre-delete version: got %q want tombstoned", got)
 	}
-	if got := f.checkFence(t, ctx, f.orgID, f.sessionID, 2); got != "tombstoned" {
+	if got := f.checkFence(t, ctx, relayFenceRequest{orgID: f.orgID, resourceID: f.sessionID, version: 2}); got != "tombstoned" {
 		t.Fatalf("tombstoned current version: got %q want tombstoned", got)
 	}
 }

@@ -11,6 +11,55 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 
+_RECALL_SCRIPT = Path(__file__).resolve().parents[4] / "benchmarks/memory/pii/recall_structured.py"
+
+
+@pytest.fixture
+def resolve_output_path():
+    """Load the harness module with real PiiService imports via the repo venv."""
+    spec = importlib.util.spec_from_file_location("recall_structured_guard", _RECALL_SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.resolve_output_path
+
+
+def test_output_guard_accepts_temp_and_baseline(resolve_output_path, tmp_path: Path) -> None:
+    temp_path = resolve_output_path(tmp_path / "out.json")
+    assert temp_path.suffix == ".json"
+    baseline = resolve_output_path(_RECALL_SCRIPT.with_name("recall_structured.json"))
+    assert baseline.name == "recall_structured.json"
+
+
+def test_output_guard_rejects_bad_suffix(resolve_output_path, tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="must end with .json"):
+        resolve_output_path(tmp_path / "out.txt")
+
+
+def test_output_guard_rejects_outside_roots(resolve_output_path) -> None:
+    with pytest.raises(SystemExit, match="must resolve inside one of"):
+        resolve_output_path(Path("/etc/evil.json"))
+
+
+def test_output_guard_rejects_dotdot_traversal(resolve_output_path) -> None:
+    # Escapes the baseline root into the repo tree: still outside both roots.
+    traversal = _RECALL_SCRIPT.parent.parent.parent / "services" / "memory" / "evil.json"
+    with pytest.raises(SystemExit, match="must resolve inside one of"):
+        resolve_output_path(traversal)
+
+
+def test_output_guard_rejects_symlink_escape(resolve_output_path, tmp_path: Path) -> None:
+    outside = Path("/etc/evil.json")
+    link = tmp_path / "link.json"
+    link.symlink_to(outside)
+    try:
+        with pytest.raises(SystemExit, match="must resolve inside one of"):
+            resolve_output_path(link)
+    finally:
+        link.unlink()
+
+
 @pytest.fixture
 def recall_structured(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     path = Path(__file__).resolve().parents[4] / "benchmarks/memory/pii/recall_structured.py"

@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '../..')
@@ -8,23 +8,9 @@ const source = resolve(root, 'CHANGELOG.md')
 const target = resolve(here, '../app/data/releases.json')
 const rssTarget = resolve(here, '../public/releases.xml')
 
-const markdown = await readFile(source, 'utf8')
-const lines = markdown.split(/\r?\n/)
-
-const releases = []
-let current = null
-let section = null
-
-function clean(text) {
-  return stripMarkdownLinks(text)
-    .replaceAll('**', '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
 // Markdown link "[label](url)" -> "label", located with indexOf so no
-// backtracking regex runs over changelog text.
-function stripMarkdownLinks(text) {
+// backtracking regex runs over changelog text (S5852).
+export function stripMarkdownLinks(text) {
   let out = ''
   let cursor = 0
   for (;;) {
@@ -40,8 +26,16 @@ function stripMarkdownLinks(text) {
   return out + text.slice(cursor)
 }
 
-// Release headings look like "## [1.2.3](compare-url) (2026-10-01)".
-function parseReleaseHeading(line) {
+export function clean(text) {
+  return stripMarkdownLinks(text)
+    .replaceAll('**', '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Release headings look like "## [1.2.3](compare-url) (2026-10-01)"; the
+// version starts after "## [" at index 4.
+export function parseReleaseHeading(line) {
   if (!line.startsWith('## [')) return null
   const versionEnd = line.indexOf('](')
   if (versionEnd === -1) return null
@@ -49,69 +43,79 @@ function parseReleaseHeading(line) {
   if (urlEnd === -1) return null
   const date = line.slice(urlEnd + 3, urlEnd + 13)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
-  return { version: line.slice(3, versionEnd), compareUrl: line.slice(versionEnd + 2, urlEnd), date }
+  return { version: line.slice(4, versionEnd), compareUrl: line.slice(versionEnd + 2, urlEnd), date }
 }
 
-// Issue references look like "(#[123](https://...))"; commit references look
-// like "([abc1234](https://...))". Returns the parts and the line without them.
-function parseTrailingReference(raw) {
-  const open = raw.lastIndexOf('([')
-  if (open === -1 || !raw.endsWith('))')) return { text: raw, match: null }
-  const close = raw.length - 2
-  const bracketEnd = raw.indexOf('](', open + 2)
-  if (bracketEnd === -1 || bracketEnd > close) return { text: raw, match: null }
-  const label = raw.slice(open + 2, bracketEnd)
-  const url = raw.slice(bracketEnd + 2, close)
-  return { text: raw.slice(0, open).trimEnd(), match: { label, url } }
-}
-
-function isCommitLabel(label) {
+export function isCommitLabel(label) {
   return /^[0-9a-f]{7,40}$/.test(label)
 }
 
-for (const line of lines) {
-  const release = parseReleaseHeading(line)
-  if (release) {
-    current = { version: release.version, compareUrl: release.compareUrl, date: release.date, sections: [] }
-    releases.push(current)
-    section = null
-    continue
-  }
-  if (!current) continue
-
-  const heading = line.match(/^### (.+)$/)
-  if (heading) {
-    const title = heading[1].trim()
-    section = current.sections.find(existing => existing.title === title)
-    if (!section) {
-      section = { title, items: [] }
-      current.sections.push(section)
+// Item entries may end with an issue reference "([#911](https://...))" and/or
+// a commit reference "([2411f73](https://...))". Extract them from the end
+// inward so both survive; the remaining text is cleaned separately.
+export function parseTrailingReference(raw) {
+  const refs = { issue: null, commit: null }
+  let text = raw
+  for (;;) {
+    const open = text.lastIndexOf('([')
+    if (open === -1 || !text.endsWith('))')) break
+    const close = text.length - 2
+    const bracketEnd = text.indexOf('](', open + 2)
+    if (bracketEnd === -1 || bracketEnd > close) break
+    const label = text.slice(open + 2, bracketEnd)
+    const url = text.slice(bracketEnd + 2, close)
+    if (label.startsWith('#')) {
+      refs.issue = { number: label.slice(1), url }
+    } else if (isCommitLabel(label)) {
+      refs.commit = { short: label.slice(0, 7), url }
+    } else {
+      break
     }
-    continue
+    text = text.slice(0, open).trimEnd()
   }
-
-  const item = line.match(/^\* (.+)$/)
-  if (item && section) {
-    const raw = item[1].trim()
-    const reference = parseTrailingReference(raw)
-    /** @type {{ number: string, url: string } | null} */
-    let issue = null
-    /** @type {{ short: string, url: string } | null} */
-    let commit = null
-    if (reference.match) {
-      if (reference.match.label.startsWith('#')) {
-        issue = { number: reference.match.label.slice(1), url: reference.match.url }
-      } else if (isCommitLabel(reference.match.label)) {
-        commit = { short: reference.match.label.slice(0, 7), url: reference.match.url }
-      }
-    }
-    const text = clean(reference.text)
-    section.items.push({ text, issue, commit })
-  }
+  return { text, refs }
 }
 
-for (const release of releases) {
-  release.sections = release.sections.filter(section => section.items.length > 0)
+export function parseChangelog(markdown) {
+  const lines = markdown.split(/\r?\n/)
+  const releases = []
+  let current = null
+  let section = null
+
+  for (const line of lines) {
+    const release = parseReleaseHeading(line)
+    if (release) {
+      current = { version: release.version, compareUrl: release.compareUrl, date: release.date, sections: [] }
+      releases.push(current)
+      section = null
+      continue
+    }
+    if (!current) continue
+
+    const heading = line.match(/^### (.+)$/)
+    if (heading) {
+      const title = heading[1].trim()
+      section = current.sections.find(existing => existing.title === title)
+      if (!section) {
+        section = { title, items: [] }
+        current.sections.push(section)
+      }
+      continue
+    }
+
+    const item = line.match(/^\* (.+)$/)
+    if (item && section) {
+      const raw = item[1].trim()
+      const { text: stripped, refs } = parseTrailingReference(raw)
+      const text = clean(stripped)
+      section.items.push({ text, issue: refs.issue, commit: refs.commit })
+    }
+  }
+
+  for (const release of releases) {
+    release.sections = release.sections.filter(section => section.items.length > 0)
+  }
+  return releases
 }
 
 function xml(value) {
@@ -123,20 +127,21 @@ function xml(value) {
     .replaceAll('\'', '&apos;')
 }
 
-const items = releases.slice(0, 20).map((release) => {
-  const description = release.sections
-    .map(section => `${section.title}: ${section.items.map(item => item.text).join('; ')}`)
-    .join('\n')
-  return `    <item>
+export function buildRss(releases) {
+  const items = releases.slice(0, 20).map((release) => {
+    const description = release.sections
+      .map(section => `${section.title}: ${section.items.map(item => item.text).join('; ')}`)
+      .join('\n')
+    return `    <item>
       <title>IBEX Harness v${xml(release.version)}</title>
       <link>https://github.com/Rick1330/ibex-harness/releases/tag/v${xml(release.version)}</link>
       <guid isPermaLink="false">ibex-harness-v${xml(release.version)}</guid>
       <pubDate>${new Date(`${release.date}T12:00:00Z`).toUTCString()}</pubDate>
       <description>${xml(description)}</description>
     </item>`
-}).join('\n')
+  }).join('\n')
 
-const rss = `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>IBEX Harness releases</title>
@@ -148,9 +153,19 @@ ${items}
   </channel>
 </rss>
 `
+}
 
-await mkdir(dirname(target), { recursive: true })
-await writeFile(target, `${JSON.stringify(releases, null, 2)}\n`)
-await writeFile(rssTarget, rss)
-console.log(`Wrote ${releases.length} releases to ${target} and ${rssTarget}`)
+async function main() {
+  const markdown = await readFile(source, 'utf8')
+  const releases = parseChangelog(markdown)
 
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, `${JSON.stringify(releases, null, 2)}\n`)
+  await writeFile(rssTarget, buildRss(releases))
+  console.log(`Wrote ${releases.length} releases to ${target} and ${rssTarget}`)
+}
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isMain) {
+  await main()
+}

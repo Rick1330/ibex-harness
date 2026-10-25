@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/canonicaljson"
 	"github.com/google/uuid"
@@ -42,7 +43,13 @@ func newOutboxDigestMigrationFixture(t *testing.T) *outboxDigestMigrationFixture
 		db: db, dsn: dsn,
 		payload: []byte(`{"value": 1}`), jcsID: uuid.New(), legacyID: uuid.New(),
 	}
-	t.Cleanup(func() { fixture.cleanup(t, t.Context()) })
+	// t.Context() is canceled before t.Cleanup callbacks run; cleanup needs its
+	// own bounded context so the organization delete does not fail canceled.
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		fixture.cleanup(t, cleanupCtx)
+	})
 	fixture.createOrganization(t, t.Context())
 	fixture.calculateDigests(t, t.Context())
 	return fixture
