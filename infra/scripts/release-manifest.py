@@ -25,9 +25,11 @@ from pathlib import Path
 from typing import cast
 
 MANIFEST_VERSION = 1
-TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+TAG_RE = re.compile(r"^v([0-9]+)\.([0-9]+)\.([0-9]+)$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-MIGRATION_RE = re.compile(r"^(\d+)_")
+COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
+MIGRATION_RE = re.compile(r"^([0-9]+)_")
 
 
 class ManifestError(RuntimeError):
@@ -134,6 +136,30 @@ def _executable(name: str) -> str:
     return path
 
 
+def _inspect_digest(command: list[str], reference: str) -> str:
+    try:
+        # Fixed argv, no shell. ``reference`` is built from a validated tag,
+        # a validated service name, and the repository constant.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        result = subprocess.run(  # nosec B603
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError as exc:
+        msg = "docker is required to resolve image digests"
+        raise ManifestError(msg) from exc
+    except subprocess.TimeoutExpired as exc:
+        msg = f"timed out resolving {reference}"
+        raise ManifestError(msg) from exc
+    except subprocess.CalledProcessError as exc:
+        msg = f"could not resolve {reference}: {exc.stderr.strip()}"
+        raise ManifestError(msg) from exc
+    return result.stdout
+
+
 def _digest_from_registry(reference: str) -> str:
     command = [
         _executable("docker"),
@@ -144,23 +170,7 @@ def _digest_from_registry(reference: str) -> str:
         "--format",
         "{{json .Manifest.Digest}}",
     ]
-    try:
-        # Fixed argv, no shell. ``reference`` is built from a validated tag,
-        # a validated service name, and the repository constant.
-        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
-        result = subprocess.run(  # nosec B603
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        msg = "docker is required to resolve image digests"
-        raise ManifestError(msg) from exc
-    except subprocess.CalledProcessError as exc:
-        msg = f"could not resolve {reference}: {exc.stderr.strip()}"
-        raise ManifestError(msg) from exc
-    digest = result.stdout.strip().strip('"')
+    digest = _inspect_digest(command, reference).strip().strip('"')
     if not DIGEST_RE.fullmatch(digest):
         msg = f"registry returned an invalid digest for {reference}: {digest}"
         raise ManifestError(msg)
@@ -186,11 +196,13 @@ def _git_head(root: Path) -> str:
         return ""
     try:
         # Fixed argv, absolute executable, no shell.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
         return subprocess.check_output(  # nosec B603
             [git, "-C", str(root), "rev-parse", "HEAD"],
             text=True,
+            timeout=10,
         ).strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return ""
 
 
@@ -220,11 +232,32 @@ def _manifest_document(
     }
 
 
+def _valid_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def _validate_metadata(spec: ManifestSpec) -> None:
+    if not REPOSITORY_RE.fullmatch(spec.repository):
+        msg = f"invalid repository: {spec.repository}"
+        raise ManifestError(msg)
+    if not COMMIT_RE.fullmatch(spec.commit):
+        msg = f"invalid commit: {spec.commit}"
+        raise ManifestError(msg)
+    if not _valid_timestamp(spec.generated_at):
+        msg = f"invalid generated_at: {spec.generated_at}"
+        raise ManifestError(msg)
+
+
 def build_manifest(spec: ManifestSpec) -> dict[str, object]:
     match = TAG_RE.fullmatch(spec.tag)
     if not match:
         msg = f"invalid release tag: {spec.tag}"
         raise ManifestError(msg)
+    _validate_metadata(spec)
     platform_version = ".".join(match.groups())
     services = _services(spec.root, spec.services)
     return _manifest_document(spec, platform_version, _image_digests(spec, services))

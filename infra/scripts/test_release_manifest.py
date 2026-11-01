@@ -6,11 +6,13 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("release-manifest.py")
 SPEC = importlib.util.spec_from_file_location("release_manifest", SCRIPT)
@@ -62,18 +64,23 @@ class ReleaseManifestTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def build(self) -> dict[str, object]:
-        return release_manifest.build_manifest(
-            release_manifest.ManifestSpec(
-                root=self.root,
-                tag="v1.2.3",
-                repository="Rick1330/ibex-harness",
-                commit=COMMIT,
-                generated_at="2026-11-01T00:00:00Z",
-                digest_map=self.digest_map,
-                services=["auth", "proxy"],
-            )
+    def spec(self) -> release_manifest.ManifestSpec:
+        return release_manifest.ManifestSpec(
+            root=self.root,
+            tag="v1.2.3",
+            repository="Rick1330/ibex-harness",
+            commit=COMMIT,
+            generated_at="2026-11-01T00:00:00Z",
+            digest_map=self.digest_map,
+            services=["auth", "proxy"],
         )
+
+    def build(self, **overrides: object) -> dict[str, object]:
+        return release_manifest.build_manifest(replace(self.spec(), **overrides))
+
+    def assert_build_rejected(self, **overrides: object) -> None:
+        with self.assertRaises(release_manifest.ManifestError):
+            self.build(**overrides)
 
     def run_cli(self, case: CliCase | None = None) -> tuple[int, Path]:
         case = case or CliCase()
@@ -151,6 +158,29 @@ class ReleaseManifestTest(unittest.TestCase):
     def test_rejects_a_missing_service_dockerfile(self) -> None:
         code, _ = self.run_cli(CliCase(services="auth,proxy,memory"))
         self.assertEqual(code, 1)
+
+    def test_rejects_non_ascii_version_digits(self) -> None:
+        self.assert_build_rejected(tag="v\u0661.\u0662.\u0663")
+
+    def test_rejects_an_invalid_commit(self) -> None:
+        self.assert_build_rejected(commit="abc123")
+
+    def test_rejects_an_invalid_repository(self) -> None:
+        self.assert_build_rejected(repository="not-a-repository")
+
+    def test_rejects_a_timestamp_without_a_timezone(self) -> None:
+        self.assert_build_rejected(generated_at="2026-11-01T00:00:00")
+
+    def test_registry_timeout_is_a_manifest_error(self) -> None:
+        with (
+            patch.object(release_manifest.shutil, "which", return_value="/usr/bin/docker"),
+            patch.object(
+                release_manifest.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired("docker", 30),
+            ),
+        ):
+            self.assert_build_rejected(digest_map=None, services=["auth"])
 
     def test_rejects_an_output_outside_the_root(self) -> None:
         code, _ = self.run_cli(

@@ -164,7 +164,7 @@ if grep -Fq 'needs: tagged-docker-publish' <<<"$manifest_block"; then
 else
   bad "release-manifest does not depend on tagged-docker-publish"
 fi
-if grep -Fq 'release-manifest.json' "$release_docker"; then
+if grep -Fq 'gh release upload "$TAG" release-manifest.json' <<<"$manifest_block"; then
   pass "tagged release uploads the manifest"
 else
   bad "tagged release does not upload the manifest"

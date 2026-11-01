@@ -24,7 +24,7 @@ These names look similar but do **different** jobs. You usually need only one at
 | `platform_version` / `tag` | The platform release, without and with the `v` prefix. |
 | `source` | Repository and commit SHA the tag points at. |
 | `images` | Service name → `sha256:` image digest. Deploy by digest, not by the movable tag. |
-| `contracts` | SHA-256 of the OpenAPI snapshot and the concatenated `.proto` sources. |
+| `contracts` | SHA-256 of the OpenAPI snapshot, and a SHA-256 over the `.proto` sources that hashes each sorted relative path and file content separated by NUL bytes. |
 | `migrations` | Highest Postgres and ClickHouse migration number included in the release. |
 | `bundles` | Supported bundles with smoke-test status. Empty until a bundle ships with a passing smoke test (ADR-0089 §5). |
 
