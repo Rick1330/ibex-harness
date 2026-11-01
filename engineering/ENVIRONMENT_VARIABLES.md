@@ -702,7 +702,7 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 |----------|----------|---------|-------------|
 | `IBEX_OPERATOR_API_ORIGIN` | Yes | (none) | Server-only API origin used by the Console BFF; never exposed to the browser |
 | `IBEX_OPERATOR_SESSION_COOKIE_NAME` | No | `ibex_session` | Access cookie the BFF forwards to the API |
-| `CONSOLE_READ_ONLY` | No | unset | Keeps the Console presentation read-only |
+| `CONSOLE_READ_ONLY` | No | unset | Reserved and ignored by the Console; read-only behavior is structural |
 
 ### Cookie / CSRF / provisional JWT (set on **`services/api`**, not in the browser bundle)
 

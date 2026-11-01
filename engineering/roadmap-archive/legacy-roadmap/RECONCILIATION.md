@@ -8,14 +8,14 @@ Current truth remains:
 - `engineering/architecture-v2/00-status-and-evidence.md` — capability ledger.
 - `engineering/architecture-v2/18-gap-register.md` — open GAPs and their dispositions.
 - `services/console/shared/operator/surfaces.ts` — Console surface tiers and availability.
-- [ADR-0089](../adr/0089-product-shape-and-console-scope.md) — memory/context product shape and Console scope.
-- [ADR-0090](../adr/0090-retire-dashboard-compatibility-shell.md) — dashboard compatibility shell retired.
+- [ADR-0089](../../adr/0089-product-shape-and-console-scope.md) — memory/context product shape and Console scope.
+- [ADR-0090](../../adr/0090-retire-dashboard-compatibility-shell.md) — dashboard compatibility shell retired.
 
 ## Status vocabulary
 
 | Label | Meaning |
 | --- | --- |
-| `done*` | Implemented and mounted locally; the current ledger still keeps the capability provisional. |
+| `done*` | Implemented and mounted locally; the ledger records the capability as `shipped-local`. Hosted, HA, and SLO evidence are separate. |
 | `partial` | Some code or evidence exists; the milestone's acceptance condition is not met. |
 | `not done` | No implementation or acceptance evidence found. |
 | `superseded` | The premise or deliverable was replaced by a later decision. |
@@ -24,9 +24,9 @@ Current truth remains:
 
 | Milestone | Legacy claim | Status | Evidence and boundary |
 | --- | --- | --- | --- |
-| 4.A.1–A.5 | Management CRUD complete | `done*` | API routers are mounted (`services/api/app/main.py`); the ledger keeps the management plane provisional. Some milestone pages say `completed` while the ledger says `planned`; treat the ledger as authoritative. |
-| 4.B.1–B.3 | Hierarchical rate limits, config API, load gate | `done*` | `packages/ratelimit`, API config routes, and the load-gate CI job exist. Hosted Redis HA and latency evidence remain open. |
-| 4.C.1–C.3 | Anthropic, routing, breakers | `done*` | Provider bootstrap and proxy routing exist; no hosted provider-failure soak claim. |
+| 4.A.1–A.5 | Management CRUD complete | `done*` | API routers are mounted (`services/api/app/main.py`); the ledger records the Management API as `shipped-local`. The `4.A.2` frontmatter still says `planned`; that label is stale, not a status contradiction. |
+| 4.B.1–B.3 | Hierarchical rate limits, config API, load gate | `done*` | `packages/ratelimit`, API config routes, and the load-gate CI job exist; the ledger records rate limiting as `shipped-local`. No hosted Redis HA or measured latency SLO is claimed. |
+| 4.C.1–C.3 | Anthropic, routing, breakers | `done*` | Provider bootstrap and proxy routing exist; the ledger records them as `shipped-local`. No hosted provider-conformance matrix or provider-failure soak is claimed. |
 | 4.C.4–C.5 | Fallback and streaming hardening | `partial` | Fallback and stream forwarding exist. Streaming hardening remains provisional in the ledger; no slow-client/leak soak evidence. |
 | 4.P.0–P.1 | Runtime topology and identity | `partial` | The operator session API exists behind a default-off feature flag. There is no login product, hosted ingress, or two-tenant evidence. The dashboard preview workflow is retired by ADR-0090. |
 | 4.P.2–P.4 | Evidence, privacy, cost platform | `partial` | Evidence and budget migrations and routers exist. Response-bound acknowledgement, ClickHouse production delivery, and cost reconciliation remain open (GAP-005, GAP-006, GAP-011). |
