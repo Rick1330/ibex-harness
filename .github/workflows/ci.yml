@@ -156,7 +156,7 @@ jobs:
         uses: ./.github/actions/detect-changes
         with:
           fetch-depth: ${{ github.event_name == 'push' && '2' || '0' }}
-          force-full: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.force_full == true) }}
+          force-full: ${{ github.event_name == 'schedule' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.force_full == true) }}
 
   markdown:
     name: markdownlint
