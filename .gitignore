@@ -105,3 +105,6 @@ loop-run-log.md
 safety.md
 gate.yaml
 opencode.json
+
+# Local bundle smoke evidence (generated)
+bundle-smoke-result.json
