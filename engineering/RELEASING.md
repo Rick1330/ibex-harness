@@ -30,6 +30,8 @@ These names look similar but do **different** jobs. You usually need only one at
 
 `mcp-operator` has a Dockerfile but is not published by `docker-publish.yml`, so it is not in the manifest. Add it only after the image publish job exists.
 
+`bundles` is populated from `infra/bundles/*.json`. A bundle is `unverified` unless the generator receives `--smoke-results` with a `passed` result for the same commit. The `memory-context` profile and its smoke are documented in [`infra/compose/bundles/README.md`](../infra/compose/bundles/README.md); until a same-commit smoke runs in CI, the manifest reports the bundle as unverified rather than claiming a pass.
+
 The workflow validates the tag as `vX.Y.Z` before publishing any image. If the tag has no GitHub Release yet, the manifest job creates a minimal release, then uploads the manifest.
 
 Verify a downloaded manifest:

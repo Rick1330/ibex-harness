@@ -1,0 +1,23 @@
+{
+  "name": "memory-context",
+  "description": "Memory and context substrate without the LLM proxy: AuthService, memory, embedder, PostgreSQL with pgvector, and migrations.",
+  "images": ["auth", "embedder", "memory"],
+  "dependencies": {
+    "required": ["postgres-pgvector"],
+    "optional": ["redis"]
+  },
+  "migrations": {
+    "postgres": { "min": 1 }
+  },
+  "limits": [
+    "No hard budgets without the budget ledger.",
+    "No durable evidence without the outbox and relay.",
+    "No tenant-wide memory without AuthService.",
+    "The cpu embedder profile is deterministic stub geometry; it is a contract profile, not a semantic-quality claim."
+  ],
+  "not_claimed": [
+    "High availability, hosted SLOs, or production deployment.",
+    "Retrieval quality beyond the deterministic cpu profile.",
+    "Exactly-once effects or replay."
+  ]
+}

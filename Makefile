@@ -84,6 +84,9 @@ test-memory-integration: ## Run memory PgVectorStore integration tests (needs Po
 test-release-manifest: ## Run release manifest generator tests
 	uv run --no-project --no-build --with-requirements infra/scripts/release-manifest-test-requirements.txt python3 infra/scripts/test_release_manifest.py
 
+bundle-smoke: ## Run the memory-context bundle smoke (Docker/Podman required)
+	bash infra/scripts/bundle-smoke.sh
+
 test-worker: ## Run Python worker service unit tests (services/worker)
 	@"$(BASH)" infra/scripts/worker-test-ci.sh
 

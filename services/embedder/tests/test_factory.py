@@ -8,7 +8,7 @@ from app.backends.hosted import HostedAPIBackend
 from app.backends.stub import StubBackend
 from app.backends.tei import TEIBackend
 from app.config import Settings, get_settings
-from app.errors import BackendUnavailableError, GeometryMismatchError
+from app.errors import BackendUnavailableError
 from app.factory import build_backend, build_registry, load_active_backend
 
 
@@ -25,6 +25,14 @@ class TestBuildBackend:
         assert isinstance(backend, StubBackend)
         assert backend.name == "stub"
         assert backend.profile == "cpu"
+
+    def test_cpu_profile_honors_dimension_and_model_overrides(self) -> None:
+        backend = build_backend(
+            Settings(profile="cpu", dim=1024, model="stub-1024")
+        )
+        assert isinstance(backend, StubBackend)
+        assert backend.dimensions == 1024
+        assert backend.model_id == "stub-1024"
 
     def test_hosted_profile_returns_hosted_backend(self) -> None:
         settings = Settings(
@@ -145,10 +153,9 @@ class TestLoadActiveBackend:
         with pytest.raises(BackendUnavailableError):
             load_active_backend(settings)
 
-    def test_geometry_mismatch_raises(self) -> None:
-        settings = Settings(profile="cpu", dim=9999, model="all-MiniLM-L6-v2")
-        with pytest.raises(GeometryMismatchError):
-            load_active_backend(settings)
+    def test_cpu_dimension_override_is_honored(self) -> None:
+        backend = load_active_backend(Settings(profile="cpu", dim=9999))
+        assert backend.dimensions == 9999
 
     def test_hosted_default_geometry(self) -> None:
         backend = load_active_backend(

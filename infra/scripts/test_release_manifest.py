@@ -34,6 +34,7 @@ class CliCase:
     digests: dict[str, str] | None = None
     map_path: Path | None = None
     output: Path | None = None
+    smoke_results: Path | None = None
 
 
 class ReleaseManifestTest(unittest.TestCase):
@@ -88,24 +89,25 @@ class ReleaseManifestTest(unittest.TestCase):
             json.dumps(self.digest_map if case.digests is None else case.digests)
         )
         output = case.output or self.root / "release-manifest.json"
-        code = release_manifest.main(
-            [
-                "--root",
-                str(self.root),
-                "--tag",
-                case.tag,
-                "--commit",
-                COMMIT,
-                "--generated-at",
-                "2026-11-01T00:00:00Z",
-                "--digest-map",
-                str(map_path),
-                "--services",
-                case.services,
-                "--output",
-                str(output),
-            ]
-        )
+        args = [
+            "--root",
+            str(self.root),
+            "--tag",
+            case.tag,
+            "--commit",
+            COMMIT,
+            "--generated-at",
+            "2026-11-01T00:00:00Z",
+            "--digest-map",
+            str(map_path),
+            "--services",
+            case.services,
+            "--output",
+            str(output),
+        ]
+        if case.smoke_results:
+            args.extend(["--smoke-results", str(case.smoke_results)])
+        code = release_manifest.main(args)
         return code, output
 
     def test_builds_the_expected_manifest(self) -> None:
@@ -153,6 +155,99 @@ class ReleaseManifestTest(unittest.TestCase):
             CliCase(digests={"auth": "sha256:not-a-digest", "proxy": DIGEST_B})
         )
         self.assertEqual(code, 1)
+
+    def write_bundle(self, **overrides: object) -> Path:
+        directory = self.root / "infra" / "bundles"
+        directory.mkdir(parents=True, exist_ok=True)
+        data: dict[str, object] = {
+            "name": "memory-context",
+            "description": "Memory and context substrate.",
+            "images": ["auth", "proxy"],
+            "dependencies": {"required": ["postgres-pgvector"], "optional": ["redis"]},
+            "migrations": {"postgres": {"min": 1}},
+            "limits": ["No budgets without the ledger."],
+            "not_claimed": ["No high availability."],
+        }
+        data.update(overrides)
+        path = directory / f"{data['name']}.json"
+        path.write_text(json.dumps(data))
+        return path
+
+    def write_smoke(self, commit: str = COMMIT) -> Path:
+        path = self.root / "bundle-smoke-result.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "bundle": "memory-context",
+                    "status": "passed",
+                    "commit": commit,
+                    "finished_at": "2026-11-01T00:10:00Z",
+                }
+            )
+        )
+        return path
+
+    def test_emits_bundle_metadata_without_smoke_evidence(self) -> None:
+        self.write_bundle()
+        bundles = self.build()["bundles"]
+        self.assertEqual(len(bundles), 1)
+        bundle = bundles[0]
+        self.assertEqual(bundle["name"], "memory-context")
+        self.assertEqual(bundle["status"], "unverified")
+        self.assertEqual(bundle["images"], ["auth", "proxy"])
+        self.assertEqual(bundle["migrations"], {"postgres": {"min": 1, "max": 2}})
+
+    def test_promotes_a_bundle_only_with_matching_smoke_evidence(self) -> None:
+        self.write_bundle()
+        code, output = self.run_cli(CliCase(smoke_results=self.write_smoke()))
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(output.read_text())["bundles"][0]["status"], "smoke-passed"
+        )
+
+        code, output = self.run_cli(
+            CliCase(smoke_results=self.write_smoke(commit="f" * 40))
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            json.loads(output.read_text())["bundles"][0]["status"], "unverified"
+        )
+
+    def test_rejects_a_bundle_with_no_images(self) -> None:
+        self.write_bundle(images=[])
+        self.assert_build_rejected()
+
+    def test_rejects_a_bundle_with_an_unpublished_image(self) -> None:
+        self.write_bundle(images=["auth", "mystery"])
+        self.assert_build_rejected()
+
+    def test_rejects_a_smoke_result_for_an_unknown_bundle(self) -> None:
+        self.assert_build_rejected(smoke_passed=frozenset({"mystery"}))
+
+    def test_rejects_a_bundle_filename_mismatch(self) -> None:
+        directory = self.root / "infra" / "bundles"
+        directory.mkdir(parents=True)
+        (directory / "other.json").write_text(
+            json.dumps(
+                {
+                    "name": "memory-context",
+                    "description": "Mismatched.",
+                    "images": ["auth"],
+                    "dependencies": {"required": [], "optional": []},
+                    "migrations": {"postgres": {"min": 1}},
+                    "limits": [],
+                    "not_claimed": [],
+                }
+            )
+        )
+        self.assert_build_rejected()
+
+    def test_schema_accepts_bundle_metadata(self) -> None:
+        import jsonschema
+
+        self.write_bundle()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        jsonschema.validate(self.build(), schema)
 
     def test_rejects_a_missing_service_dockerfile(self) -> None:
         code, _ = self.run_cli(CliCase(services="auth,proxy,memory"))
