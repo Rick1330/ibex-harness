@@ -15,6 +15,17 @@
 </p>
 
 <p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README.es.md">Español</a> ·
+  <a href="README.fr.md">Français</a> ·
+  <a href="README.de.md">Deutsch</a> ·
+  <a href="README.pt-BR.md">Português (Brasil)</a> ·
+  <a href="README.zh-CN.md">中文</a> ·
+  <a href="README.ar.md">العربية</a> ·
+  <a href="README.am.md">አማርኛ</a>
+</p>
+
+<p align="center">
   <a href="https://ibexharness.com">Website</a> ·
   <a href="https://ibexharness.com/docs">Docs</a> ·
   <a href="https://ibexharness.com/docs/architecture/status-and-evidence">Status</a> ·
@@ -74,12 +85,18 @@ make setup
 make check-tools
 ```
 
-Start the local dependencies, apply migrations, seed a development tenant, and run the auth + proxy smoke test:
+Start the local dependencies, apply migrations, and seed a development tenant:
 
 ```bash
 make compose-dev-up
 make db-migrate
 make db-seed
+```
+
+Start AuthService and the proxy in two terminals using the commands in
+[`DEVELOPMENT_GUIDE.md` §4.4](engineering/DEVELOPMENT_GUIDE.md#44-run-services), then run the smoke test:
+
+```bash
 make dev-smoke
 ```
 

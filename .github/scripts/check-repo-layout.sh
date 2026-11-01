@@ -4,7 +4,7 @@ set -euo pipefail
 # Repository layout policy. `new findings/` and `test-results/` are local,
 # gitignored scratch and are skipped below so the guard reflects the tracked tree.
 ALLOWED_TOP='^(site|engineering|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.claude|\.opencode|\.github|\.git|_report|node_modules)$'
-ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
+ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README(\.(es|fr|de|pt-BR|zh-CN|ar|am))?\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
 
 fail=0
 
