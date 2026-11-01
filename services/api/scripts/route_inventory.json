@@ -189,6 +189,34 @@
     "source": "services/api/app/routers/agents.py"
   },
   {
+    "endpoint": "app.routers.operator_agents.operator_agent_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_agent_list",
+    "path": "/v1/operator/agents",
+    "response_model": "<class 'app.pagination.CursorPage[OperatorAgent]'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_agents.py"
+  },
+  {
+    "endpoint": "app.routers.operator_agents.operator_agent_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_agent_detail",
+    "path": "/v1/operator/agents/{agent_id}",
+    "response_model": "<class 'app.schemas.operator_agents.OperatorAgent'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_agents.py"
+  },
+  {
     "endpoint": "app.routers.operator_overview.operator_context",
     "methods": [
       "GET"
@@ -197,8 +225,8 @@
     "path": "/v1/operator/context",
     "response_model": "<class 'app.schemas.operator_overview.OperatorContextResponse'>",
     "security": [
-      "app.deps.operator_org_session",
-      "app.routers.operator_overview.require_operator_metadata_session"
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
     ],
     "source": "services/api/app/routers/operator_overview.py"
   },
@@ -224,8 +252,8 @@
     "path": "/v1/operator/overview",
     "response_model": "<class 'app.schemas.operator_overview.OperatorOverviewResponse'>",
     "security": [
-      "app.deps.operator_org_session",
-      "app.routers.operator_overview.require_operator_metadata_session"
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
     ],
     "source": "services/api/app/routers/operator_overview.py"
   },

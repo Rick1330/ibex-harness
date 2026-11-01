@@ -16,6 +16,7 @@ Python FastAPI management-plane service. The API contains both established tenan
 | Legal holds | `/v1/organizations/{id}/legal-holds` | Explicit legal-hold permission; audit trail required |
 | Operator session | `/v1/operator/session/login`, `/refresh`, `/logout` | Server-owned session cookie, CSRF checks, AuthService/session integration; not a browser bearer shortcut |
 | Operator D1 | `/v1/operator/context`, `/overview`, `/platform`, `/events` | Mounted, tenant-scoped, read/event transport; provisional until hosted identity/origin/reconnect evidence |
+| Operator agents | `/v1/operator/agents`, `/agents/{id}` | Read-only tenant-scoped agent summary/detail; `org_id`, config, and metadata excluded |
 | Operator D2 | `/v1/operator/traces`, `/traces/{id}` | Metadata-only list/detail; strict schema, bounded projection, no raw content/prompts/tool args |
 | OpenAPI | `/openapi.json`, `/docs` | Generated contract; verify with the repository snapshot gate |
 
