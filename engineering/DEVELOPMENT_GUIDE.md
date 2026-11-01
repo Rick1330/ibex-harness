@@ -248,7 +248,7 @@ make db-seed          # fixed local org, user, agent, and PAT; never against a s
 | Management API | `cd services/api && uv sync --frozen --extra dev`, then `.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010` | 8010 |
 | Memory | `cd services/memory && uv sync --group dev`, then `uv run --directory services/memory uvicorn app.main:app --host 127.0.0.1 --port 8005` | 8005 |
 | Embedder | `cd services/embedder && uv sync --frozen --extra dev`, then `IBEX_EMBEDDING_PROFILE=cpu .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080` | 8080 |
-| Context | `PYTHONPATH=packages/proto/gen/python services/context/.venv/bin/python -m app` | configured gRPC |
+| Context | `bash infra/scripts/context-uv-sync.sh`, then `PYTHONPATH=packages/proto/gen/python services/context/.venv/bin/python -m app` | configured gRPC |
 | Worker | `cd services/worker && uv sync --extra dev`, then `celery -A app.celery_app:celery_app worker -Q extraction,embedding,maintenance,mcp_audit --loglevel=info` | — |
 | Console | `pnpm --filter @ibex/console dev` | 3000 |
 

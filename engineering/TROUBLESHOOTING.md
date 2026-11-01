@@ -577,21 +577,36 @@ Fix:
 
 ---
 
-## 9) Dashboard Issues (Next.js)
+## 9) Console Issues (Nuxt 4 + Nitro)
 
 ### 9.1 “Server/client boundary errors”
 
 Symptoms:
 
-- “Cannot access process.env in client component”
-- “Module not found: fs” (server-only module pulled into client)
-- hydration errors
+- `process.env` is undefined in the browser
+- a Node built-in (`fs`, `crypto`) is pulled into the client bundle
+- hydration mismatch warnings after the first render
 
 Fix:
 
-- ensure `"use client"` only in leaf components
-- move server-only API calls to server components
-- isolate client hooks in `hooks/` and client components only
+- keep server-only values in `server/` or in `runtimeConfig` without `public`; only `runtimeConfig.public` and `NUXT_PUBLIC_*` reach the browser
+- never import `server/` from `app/`; move the read behind a `/api/operator/*` route
+- hydrate only leaf interactive components; do not read `window`, `document`, or locale-dependent time during setup
+- if a live read fails, render the unavailable state instead of falling back to fixtures
+
+### 9.3 “Preview fixture appears on a live surface”
+
+Symptoms:
+
+- a live page renders illustrative rows
+- `pnpm --filter @ibex/console check:surfaces` or the preview-policy test fails
+
+Fix:
+
+- preview fixtures live in `app/lib/*-preview.ts` and are registered in `app/lib/preview-fixtures.ts`
+- only preview surface components may import them; the shared shell, layouts, and live pages must not
+- a live read fails closed; use `?demo=0` to force that path locally
+- run `pnpm --filter @ibex/console check:surfaces` before committing
 
 ---
 

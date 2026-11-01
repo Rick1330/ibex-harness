@@ -1,5 +1,7 @@
 # IBEX IBEX Console — Deep Readiness and Implementation Plan
 
+> **Historical record.** This plan predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md). Its Next.js App Router guidance is historical; the current Console is Nuxt 4 + Nitro with a 10-surface core tier. Current status: `services/console/README.md`.
+
 **Status:** Research and architecture plan, amended for the current mounted slices; it is not hosted acceptance evidence.
 **Repository baseline:** `ibex-harness` at `e4525e3` (D1 `fc8735c`, D2 metadata-only trace read `e4525e3`).
 **Design baseline:** `/home/ubuntu/dash-board-mock/dash-board-mock`.
