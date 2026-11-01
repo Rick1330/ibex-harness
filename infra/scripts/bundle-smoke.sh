@@ -12,7 +12,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/infra/compose/bundles/memory-context.yml"
 PROJECT="${BUNDLE_COMPOSE_PROJECT:-ibex-memory-context-smoke}"
-BASE_URL="${BUNDLE_MEMORY_URL:-http://127.0.0.1:18005}"
+COMPOSE_MEMORY_URL="http://127.0.0.1:18005"
+BASE_URL="${BUNDLE_MEMORY_URL:-$COMPOSE_MEMORY_URL}"
 PAT="${BUNDLE_DEV_PAT:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY}"
 AGENT_A="00000000-0000-0000-0000-000000000003"
 ORG_B="00000000-0000-0000-0000-000000000010"
@@ -43,6 +44,12 @@ cleanup() {
 
 compose() {
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
+}
+
+require_same_stack() {
+  if [[ "$BASE_URL" != "$COMPOSE_MEMORY_URL" ]]; then
+    fail "BUNDLE_MEMORY_URL must point at the started stack ($COMPOSE_MEMORY_URL), got: $BASE_URL"
+  fi
 }
 
 require_clean_checkout() {
@@ -246,11 +253,12 @@ PY
 }
 
 refuse_non_local
-require_clean_checkout
 if [[ "${1:-}" == "--check-url" ]]; then
   pass "bundle memory URL is loopback-only"
   exit 0
 fi
+require_same_stack
+require_clean_checkout
 trap cleanup EXIT
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose up -d --build
