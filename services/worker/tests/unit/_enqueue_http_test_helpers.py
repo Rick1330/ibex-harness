@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,7 +14,15 @@ from app.idempotency_ledger import ClaimOutcome, ClaimToken
 
 
 class _Ledger:
+    """In-memory ledger double for concurrent TestClient requests.
+
+    TestClient can execute requests on different threads, so the fake ledger
+    needs the same atomic claim guarantee as the Postgres ledger. Without the
+    lock, two threads can both observe an empty record and return 202.
+    """
+
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.records: dict[tuple[str, str, str], tuple[str, ClaimToken, int, bytes | None]] = {}
         self.claim_error: Exception | None = None
         self.finalize_error: Exception | None = None
@@ -24,44 +33,51 @@ class _Ledger:
         if self.ping_error is not None:
             raise self.ping_error
 
+    def reset(self) -> None:
+        with self._lock:
+            self.records.clear()
+            self.claim_error = None
+            self.finalize_error = None
+            self.release_error = None
+            self.ping_error = None
+
     async def claim(self, *, org_id, agent_id, key, request_hash) -> ClaimOutcome:
         if self.claim_error is not None:
             raise self.claim_error
-        record_key = (str(org_id), str(agent_id), key)
-        existing = self.records.get(record_key)
-        if existing is not None:
-            old_hash, claim, status, response = existing
-            if old_hash != request_hash:
-                return ClaimOutcome(kind="conflict", claim=claim)
-            if response is not None:
-                return ClaimOutcome(kind="replay", claim=claim, status=status, response=response)
-            return ClaimOutcome(kind="in_progress", claim=claim, retry_after=1)
-        claim = ClaimToken(uuid4(), org_id, agent_id, key, request_hash, 1)
-        self.records[record_key] = (request_hash, claim, 0, None)
-        return ClaimOutcome(kind="owned", claim=claim)
+        with self._lock:
+            record_key = (str(org_id), str(agent_id), key)
+            existing = self.records.get(record_key)
+            if existing is not None:
+                old_hash, claim, status, response = existing
+                if old_hash != request_hash:
+                    return ClaimOutcome(kind="conflict", claim=claim)
+                if response is not None:
+                    return ClaimOutcome(kind="replay", claim=claim, status=status, response=response)
+                return ClaimOutcome(kind="in_progress", claim=claim, retry_after=1)
+            claim = ClaimToken(uuid4(), org_id, agent_id, key, request_hash, 1)
+            self.records[record_key] = (request_hash, claim, 0, None)
+            return ClaimOutcome(kind="owned", claim=claim)
 
     async def finalize(self, claim, *, status, response) -> None:
         if self.finalize_error is not None:
             raise self.finalize_error
-        record_key = (str(claim.org_id), str(claim.agent_id), claim.key)
-        request_hash, _, _, _ = self.records[record_key]
-        self.records[record_key] = (request_hash, claim, status, response)
+        with self._lock:
+            record_key = (str(claim.org_id), str(claim.agent_id), claim.key)
+            request_hash, _, _, _ = self.records[record_key]
+            self.records[record_key] = (request_hash, claim, status, response)
 
     async def release(self, claim) -> None:
         if self.release_error is not None:
             raise self.release_error
-        self.records.pop((str(claim.org_id), str(claim.agent_id), claim.key), None)
+        with self._lock:
+            self.records.pop((str(claim.org_id), str(claim.agent_id), claim.key), None)
 
 
 _ledger = _Ledger()
 
 
 def reset_enqueue_state() -> None:
-    _ledger.records.clear()
-    _ledger.claim_error = None
-    _ledger.finalize_error = None
-    _ledger.release_error = None
-    _ledger.ping_error = None
+    _ledger.reset()
     reset_enqueue_http_for_tests()
 
 
