@@ -214,7 +214,7 @@ export const OperatorAgentSchema = z
   .object({
     id: z.string().uuid(),
     slug: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/),
-    name: z.string().min(1),
+    name: z.string().min(1).max(200),
     description: z.string().max(4096).nullable(),
     status: AgentStatusSchema,
     default_provider: z.string().min(1).max(64).nullable(),
