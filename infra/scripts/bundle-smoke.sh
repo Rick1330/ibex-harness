@@ -20,6 +20,8 @@ AGENT_B="00000000-0000-0000-0000-000000000011"
 RESULT_FILE="${BUNDLE_SMOKE_RESULT:-$ROOT_DIR/bundle-smoke-result.json}"
 KEEP="${BUNDLE_KEEP:-0}"
 TMP_DIR="$(mktemp -d)"
+HTTP_STATUS_FORMAT='%{http_code}'
+JSON_CONTENT_TYPE='Content-Type: application/json'
 
 fail() {
   echo "bundle-smoke: $*" >&2
@@ -76,7 +78,8 @@ wait_http() {
 }
 
 psql_scalar() {
-  compose exec -T postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 -tAc "$1"
+  local query="$1"
+  compose exec -T postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 -tAc "$query"
 }
 
 wait_for_seed() {
@@ -128,10 +131,10 @@ seed_second_tenant() {
 
 create_memory() {
   local status
-  status="$(curl -sS -o "$TMP_DIR/create.json" -w '%{http_code}' \
+  status="$(curl -sS -o "$TMP_DIR/create.json" -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories" \
     --oauth2-bearer "$PAT" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -H "X-Idempotency-Key: bundle-smoke-create-1" \
     -d "{\"agent_id\":\"$AGENT_A\",\"content\":\"The bundle smoke sentence is benign and retrievable.\",\"category\":\"factual\"}")"
   [[ "$status" == "201" ]] || fail "create returned $status"
@@ -149,10 +152,10 @@ PY
 
 search_memory() {
   local memory_id="$1" status
-  status="$(curl -sS -o "$TMP_DIR/search.json" -w '%{http_code}' \
+  status="$(curl -sS -o "$TMP_DIR/search.json" -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories/search" \
     --oauth2-bearer "$PAT" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -d "{\"agent_id\":\"$AGENT_A\",\"query\":\"bundle smoke retrievable sentence\",\"min_similarity\":0,\"limit\":5}")"
   [[ "$status" == "200" ]] || fail "search returned $status"
   python3 - "$TMP_DIR/search.json" "$memory_id" <<'PY'
@@ -168,10 +171,10 @@ PY
 
 assert_duplicate() {
   local status
-  status="$(curl -sS -o "$TMP_DIR/duplicate.json" -w '%{http_code}' \
+  status="$(curl -sS -o "$TMP_DIR/duplicate.json" -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories" \
     --oauth2-bearer "$PAT" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -H "X-Idempotency-Key: bundle-smoke-create-2" \
     -d "{\"agent_id\":\"$AGENT_A\",\"content\":\"The bundle smoke sentence is benign and retrievable.\",\"category\":\"factual\"}")"
   [[ "$status" == "409" ]] || fail "duplicate create returned $status"
@@ -189,9 +192,9 @@ PY
 
 assert_unauthenticated() {
   local status
-  status="$(curl -sS -o /dev/null -w '%{http_code}' \
+  status="$(curl -sS -o /dev/null -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories/search" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -d "{\"agent_id\":\"$AGENT_A\",\"query\":\"no token\",\"limit\":1}")"
   [[ "$status" == "401" ]] || fail "unauthenticated search returned $status"
   pass "missing token returns 401"
@@ -199,10 +202,10 @@ assert_unauthenticated() {
 
 assert_cross_tenant_denied() {
   local status
-  status="$(curl -sS -o "$TMP_DIR/cross-tenant.json" -w '%{http_code}' \
+  status="$(curl -sS -o "$TMP_DIR/cross-tenant.json" -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories/search" \
     --oauth2-bearer "$PAT" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -d "{\"agent_id\":\"$AGENT_B\",\"query\":\"cross tenant\",\"min_similarity\":0,\"limit\":1}")"
   [[ "$status" == "403" || "$status" == "404" ]] || fail "cross-tenant search returned $status, want 403 or 404"
   pass "another organization's agent is not readable ($status)"

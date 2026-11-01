@@ -30,7 +30,7 @@ expect_ok "http://[::1]:18005"
 
 # User information can hide a remote host from a naive prefix check.
 expect_reject "http://127.0.0.1:18005@example.com"
-expect_reject "http://0.0.0.0:18005"
+expect_reject "http://0.0.0.0:18005"  # NOSONAR: intentional cleartext test input
 expect_reject "https://127.0.0.1:18005"
 expect_reject "http://127.0.0.1"
 
