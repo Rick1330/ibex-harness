@@ -45,6 +45,17 @@ compose() {
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
 }
 
+require_clean_checkout() {
+  local head
+  head="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  if [[ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no)" ]]; then
+    fail "refusing to record smoke evidence from a checkout with tracked changes"
+  fi
+  if [[ -n "${GITHUB_SHA:-}" && "${GITHUB_SHA}" != "$head" ]]; then
+    fail "GITHUB_SHA does not match HEAD ($head)"
+  fi
+}
+
 refuse_non_local() {
   if [[ "${IBEX_ENV:-}" == "production" ]]; then
     fail "refusing to run with IBEX_ENV=production"
@@ -235,6 +246,7 @@ PY
 }
 
 refuse_non_local
+require_clean_checkout
 if [[ "${1:-}" == "--check-url" ]]; then
   pass "bundle memory URL is loopback-only"
   exit 0

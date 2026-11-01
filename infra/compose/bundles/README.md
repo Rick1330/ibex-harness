@@ -21,9 +21,16 @@ Optional: Redis for the hot cache. The base profile runs without it.
 
 ### Run it
 
+One-shot verification starts and removes its own stack (`ibex-memory-context-smoke`, port `18005`):
+
+```bash
+make bundle-smoke
+```
+
+For an interactive stack, use the default project and do not run the smoke against it at the same time:
+
 ```bash
 docker compose -f infra/compose/bundles/memory-context.yml up -d --build
-make bundle-smoke
 docker compose -f infra/compose/bundles/memory-context.yml down -v
 ```
 
