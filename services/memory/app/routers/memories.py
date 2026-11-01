@@ -117,10 +117,11 @@ async def create_memory(
         raise http_error_for_write(exc) from exc
     except Exception as exc:
         await release_idempotency(idem)
-        logger.exception(
-            "memory write failed org_id=%s agent_id=%s",
+        logger.error(
+            "memory write failed org_id=%s agent_id=%s error_class=%s",
             ctx.token.org_id,
             command.agent_id,
+            type(exc).__name__,
         )
         raise http_internal_error_for_write() from exc
 

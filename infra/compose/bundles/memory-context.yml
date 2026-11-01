@@ -108,4 +108,4 @@ services:
       seed:
         condition: service_completed_successfully
     ports:
-      - "18005:8005"
+      - "127.0.0.1:18005:8005"

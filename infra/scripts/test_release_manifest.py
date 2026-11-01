@@ -213,6 +213,10 @@ class ReleaseManifestTest(unittest.TestCase):
             json.loads(output.read_text())["bundles"][0]["status"], "unverified"
         )
 
+    def test_rejects_a_bundle_with_no_images(self) -> None:
+        self.write_bundle(images=[])
+        self.assert_build_rejected()
+
     def test_rejects_a_bundle_with_an_unpublished_image(self) -> None:
         self.write_bundle(images=["auth", "mystery"])
         self.assert_build_rejected()

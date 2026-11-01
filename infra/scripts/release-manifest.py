@@ -280,6 +280,9 @@ def _bundle_images(
     data: dict[str, object], images: dict[str, str], path: Path, name: str
 ) -> list[str]:
     bundle_images = _string_list(data.get("images"), "images", path)
+    if not bundle_images:
+        msg = f"bundle {name} must list at least one image: {path}"
+        raise ManifestError(msg)
     unknown = sorted(set(bundle_images) - set(images))
     if unknown:
         msg = f"bundle {name} names unpublished images: {', '.join(unknown)}"

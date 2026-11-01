@@ -47,10 +47,19 @@ refuse_non_local() {
   if [[ "${IBEX_ENV:-}" == "production" ]]; then
     fail "refusing to run with IBEX_ENV=production"
   fi
-  case "$BASE_URL" in
-    http://127.0.0.1:* | http://localhost:*) ;;
-    *) fail "BUNDLE_MEMORY_URL must be a loopback URL, got: $BASE_URL" ;;
-  esac
+  python3 - "$BASE_URL" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+url = urlparse(sys.argv[1])
+try:
+    port = url.port
+except ValueError:
+    port = None
+loopback = url.hostname in {"127.0.0.1", "localhost", "::1"}
+if url.scheme != "http" or not loopback or url.username or url.password or not port:
+    raise SystemExit(f"BUNDLE_MEMORY_URL must be http://<loopback>:<port>, got: {sys.argv[1]}")
+PY
 }
 
 wait_http() {
@@ -223,6 +232,10 @@ PY
 }
 
 refuse_non_local
+if [[ "${1:-}" == "--check-url" ]]; then
+  pass "bundle memory URL is loopback-only"
+  exit 0
+fi
 trap cleanup EXIT
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose up -d --build

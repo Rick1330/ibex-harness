@@ -82,6 +82,8 @@ jobs:
 
       - name: CI tiering policy tests
         run: bash infra/scripts/test-ci-tiering.sh
+      - name: Bundle smoke URL guard tests
+        run: bash infra/scripts/test-bundle-smoke-url.sh
 
       - name: Required CI gate inventory guard
         run: bash .github/scripts/check-required-ci-gates.sh
