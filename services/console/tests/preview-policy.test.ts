@@ -58,13 +58,30 @@ describe("preview fixture policy", () => {
       "app/pages/explore/r/[runId].vue",
     ]
 
+    const liveComponentTrees = [
+      "app/components/console/overview/",
+      "app/components/console/platform/",
+      "app/components/console/explore/",
+    ]
+
     const importers = walk(path.join(root, "app"))
       .filter((file) => file.endsWith(".vue") || file.endsWith(".ts"))
-      .filter((file) => /@\/lib\/[a-z0-9-]+-preview"/.test(readFileSync(file, "utf8")))
+      .filter((file) =>
+        /(?:@\/lib|~~\/app\/lib|(?:\.\.?\/)+lib)\/[a-z0-9-]+-preview["']/.test(readFileSync(file, "utf8")),
+      )
       .map((file) => path.relative(root, file))
+
+    expect(importers.length, "fixture import scan found no importers; the check would be vacuous").toBeGreaterThan(0)
 
     for (const file of productionShell) {
       expect(importers, `${file} imports a preview fixture module`).not.toContain(file)
+    }
+
+    for (const importer of importers) {
+      expect(
+        liveComponentTrees.some((prefix) => importer.startsWith(prefix)),
+        `${importer} imports a preview fixture module from a live component tree`,
+      ).toBe(false)
     }
   })
 

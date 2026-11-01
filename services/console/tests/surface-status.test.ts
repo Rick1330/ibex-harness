@@ -31,23 +31,23 @@ describe("surface status parity", () => {
 
   it("lists every surface once with a matching live/preview claim", () => {
     for (const [, surface] of entries) {
-      const row = readme
+      const rows = readme
         .split("\n")
-        .find((line) => line.startsWith("|") && line.includes(`\`${surface.path}\``))
+        .filter((line) => line.startsWith("|") && line.includes(`\`${surface.path}\``))
 
-      expect(row, `${surface.label} is missing from the README surface table`).toBeDefined()
+      expect(rows, `${surface.label} must have exactly one README row`).toHaveLength(1)
 
-      const claimsLive = /Live D[12]/.test(row ?? "")
+      const claimsLive = /Live D[12]/.test(rows[0] ?? "")
       expect(claimsLive, `${surface.label} status does not match SURFACES`).toBe(surface.availability === "live")
     }
   })
 
   it("places each surface in its declared tier", () => {
     for (const [, surface] of entries) {
-      const row = readme
+      const rows = readme
         .split("\n")
-        .find((line) => line.startsWith("|") && line.includes(`\`${surface.path}\``))
-      const rowIndex = row ? readme.indexOf(row) : -1
+        .filter((line) => line.startsWith("|") && line.includes(`\`${surface.path}\``))
+      const rowIndex = rows[0] ? readme.indexOf(rows[0]) : -1
 
       if (surface.tier === "core") {
         expect(rowIndex, `${surface.label} must appear under Core tier`).toBeGreaterThan(coreHeader)
