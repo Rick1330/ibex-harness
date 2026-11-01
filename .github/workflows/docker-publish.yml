@@ -8,13 +8,10 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'services/auth/**'
-      - 'services/proxy/**'
-      - 'services/embedder/**'
-      - 'services/mcp-memory/**'
-      - 'services/memory/**'
-      - 'services/api/**'
-      - 'services/worker/**'
+      - 'services/**/Dockerfile'
+      - 'services/**/pyproject.toml'
+      - 'services/**/uv.lock'
+      - 'services/**/requirements*.txt'
       - 'packages/**'
       - 'go.mod'
       - 'go.sum'

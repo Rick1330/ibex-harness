@@ -11,6 +11,8 @@ authors: "IBEX Harness team"
 ::
 
 > **Revision note (2026-11-01):** the public-site aggregate check and path-filter output were renamed from the historical `ci-gate-web`/`run_web` names to `ci-gate-site`/`run_site`; scope and enforcement are unchanged. The decision text below uses the current names.
+>
+> **Revision note (2026-11-01, CI tiers):** PRs keep the fast path-filtered unit, contract, coverage, build, and security scans. Full-stack E2E, fuzz, and cross-service integration run on every push to `main` and on the nightly schedule; `ci-gate-nightly` aggregates them. This changes cadence, not the required PR check names.
 
 # ADR-0008: Security scanning and CI quality gates
 

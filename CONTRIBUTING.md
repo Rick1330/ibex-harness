@@ -126,14 +126,16 @@ Every PR must pass these **branch protection** status checks (stable gate names;
 |-------|---------|
 | `ci-gate-repo` | Fast repo checks: layout, shellcheck, markdownlint, compose (when infra changes), go-mod-tidy/license (when Go changes) |
 | `ci-gate-go` | Go/proto lint, tests, smokes, coverage, govulncheck (auto-passes when no Go changes) |
-| `ci-gate-python` | Embedder + mcp-memory pytest/coverage (auto-passes when no Python service changes) |
-| `ci-gate-web` | Public site build, lint, typecheck, claims, links, redirects, and browser checks (stable legacy gate name; auto-passes when no site changes) |
+| `ci-gate-python` | Python unit, contract, coverage, and path-filtered integration checks for changed services (auto-passes when no Python service changes) |
+| `ci-gate-site` | Public site build, lint, typecheck, claims, links, redirects, and browser checks (auto-passes when no site changes) |
 | `ci-gate-security` | Trivy, OSV, bandit, hadolint (auto-passes when no Go/site/deps changes) |
 | `ci-gate-semgrep` | IBEX Semgrep rules (auto-passes when no Go/site changes) |
 | `gitleaks` | Secret scan (always runs) |
 | `semantic-pr-title` | Conventional PR title format |
 
 Path-filtered jobs (Go smokes, `site-build`, `trivy`, etc.) may be **skipped** on docs-only or single-area PRs; gate jobs still run and pass. Cross-cutting changes (`.github/workflows/**`, lockfiles) trigger the full matrix.
+
+**PR vs full matrix.** PRs run the fast, path-filtered checks for the areas they touch: unit, contract, coverage, changed-area integration, and security scans. The full-stack and rare checks run on every push to `main` and on the nightly schedule (03:00 UTC): `go-fuzz`, `e2e-smoke-p3-memory`, `e2e-smoke-p35`, `verify-phase25`, `memory-security-integration`, `security-integration-p35`, `worker-integration`, `relay-integration`, `mcp-operator-integration`, and `idempotency-conformance`. To run the full matrix on a branch, use **Actions → CI → Run workflow** with `force_full=true`.
 
 **Also run on many PRs (not merge-blocking):** `CodeQL`, `semgrep`, `dependency-review` (deps/lockfile PRs), individual job names under gates.
 
@@ -271,7 +273,7 @@ go test -tags=integration ./packages/... ./services/auth/... ./services/proxy/..
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable make coverage-report
 ```
 
-CI runs tests on every PR via [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`ci-gate-go` always runs; `go-race` and `go-fuzz` run when the workflow detects Go changes via `run_go`). The PR template **Testing** section must list what you ran.
+CI runs tests on every PR via [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`ci-gate-go` always runs; path-filtered Go jobs run when the detector sets `run_go`). Full-stack E2E, fuzz, and cross-service integration run on `main` and on the nightly schedule. The PR template **Testing** section must list what you ran.
 
 ## Linting and static analysis
 
@@ -284,7 +286,7 @@ We treat compiler and linter warnings as defects. Merge-blocking and advisory to
 | Semgrep (`.semgrep/rules/`) | Custom security rules | `ci-gate-semgrep` / PR |
 | CodeQL | Go, Python, JavaScript | [`codeql.yml`](.github/workflows/codeql.yml) |
 | `ruff` / `bandit` | Python (when present) | `ci-gate-security` |
-| ESLint / TypeScript | Dashboard and site | `ci-gate-web` |
+| ESLint / TypeScript | Dashboard and site | `ci-gate-site` |
 | `markdownlint-cli2` | Handwritten `*.md` / `*.mdc` (see exclusions below) | `ci-gate-repo` |
 | `govulncheck`, Trivy, OSV | Dependencies | `ci-gate-go` / `ci-gate-security` |
 

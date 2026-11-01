@@ -743,6 +743,8 @@ store paths — prefer `//go:build integration` with real Postgres (see §4 Go /
 - E2E tests (Playwright)
 - load tests (k6) (nightly or weekly)
 
+**Implemented split (2026-11-01):** Stage A/B run on PRs, path-filtered by area. Stage C runs on every push to `main` and nightly at 03:00 UTC through `.github/workflows/ci.yml`; `go-fuzz`, `e2e-smoke-p3-memory`, `e2e-smoke-p35`, `verify-phase25`, `memory-security-integration`, `security-integration-p35`, `worker-integration`, `relay-integration`, `mcp-operator-integration`, and `idempotency-conformance` are main/schedule-only. `ci-gate-nightly` aggregates them. A PR can run the full matrix with **Actions → CI → Run workflow** and `force_full=true`.
+
 ---
 
 ## 15) Test Checklist Per Feature (Definition of Done)
