@@ -208,33 +208,96 @@ def _git_head(root: Path) -> str:
         return ""
 
 
-def _string_list(value: object, label: str, path: Path) -> list[str]:
-    if not isinstance(value, list) or not all(
+def _is_string_list(value: object) -> bool:
+    return isinstance(value, list) and all(
         isinstance(item, str) and item for item in value
-    ):
+    )
+
+
+def _string_list(value: object, label: str, path: Path) -> list[str]:
+    if not _is_string_list(value):
         msg = f"{label} must be a list of non-empty strings: {path}"
         raise ManifestError(msg)
     return cast("list[str]", value)
 
 
+def _mapping(value: object, label: str, path: Path) -> dict[str, object]:
+    if not isinstance(value, dict):
+        msg = f"{label} must be an object: {path}"
+        raise ManifestError(msg)
+    return cast("dict[str, object]", value)
+
+
+def _integer(value: object, label: str, path: Path) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        msg = f"{label} must be an integer: {path}"
+        raise ManifestError(msg)
+    return value
+
+
 def _bundle_migrations(
     value: object, path: Path, postgres_max: int
 ) -> dict[str, dict[str, int]]:
-    if not isinstance(value, dict):
-        msg = f"migrations must be an object: {path}"
-        raise ManifestError(msg)
-    postgres = value.get("postgres")
-    if not isinstance(postgres, dict):
-        msg = f"migrations.postgres must be an object: {path}"
-        raise ManifestError(msg)
-    minimum = postgres.get("min")
-    if not isinstance(minimum, int) or isinstance(minimum, bool):
-        msg = f"migrations.postgres.min must be an integer: {path}"
-        raise ManifestError(msg)
+    migrations = _mapping(value, "migrations", path)
+    postgres = _mapping(migrations.get("postgres"), "migrations.postgres", path)
+    minimum = _integer(postgres.get("min"), "migrations.postgres.min", path)
     if minimum < 0 or minimum > postgres_max:
         msg = f"migrations.postgres.min must be between 0 and {postgres_max}: {path}"
         raise ManifestError(msg)
     return {"postgres": {"min": minimum, "max": postgres_max}}
+
+
+def _bundle_object(path: Path) -> dict[str, object]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return _mapping(data, "bundle", path)
+
+
+def _bundle_name(data: dict[str, object], path: Path) -> str:
+    name = data.get("name")
+    if not isinstance(name, str) or not BUNDLE_NAME_RE.fullmatch(name):
+        msg = f"invalid bundle name: {path}"
+        raise ManifestError(msg)
+    return name
+
+
+def _bundle_description(data: dict[str, object], path: Path) -> str:
+    description = data.get("description")
+    if not isinstance(description, str) or not description:
+        msg = f"bundle description must be a non-empty string: {path}"
+        raise ManifestError(msg)
+    return description
+
+
+def _bundle_identity(data: dict[str, object], path: Path) -> tuple[str, str]:
+    name = _bundle_name(data, path)
+    if name != path.stem:
+        msg = f"bundle name must match its filename: {path}"
+        raise ManifestError(msg)
+    return name, _bundle_description(data, path)
+
+
+def _bundle_images(
+    data: dict[str, object], images: dict[str, str], path: Path, name: str
+) -> list[str]:
+    bundle_images = _string_list(data.get("images"), "images", path)
+    unknown = sorted(set(bundle_images) - set(images))
+    if unknown:
+        msg = f"bundle {name} names unpublished images: {', '.join(unknown)}"
+        raise ManifestError(msg)
+    return bundle_images
+
+
+def _bundle_dependencies(
+    data: dict[str, object], path: Path
+) -> dict[str, list[str]]:
+    dependencies = _mapping(data.get("dependencies"), "dependencies", path)
+    required = _string_list(
+        dependencies.get("required", []), "dependencies.required", path
+    )
+    optional = _string_list(
+        dependencies.get("optional", []), "dependencies.optional", path
+    )
+    return {"required": required, "optional": optional}
 
 
 def _bundle_entry(
@@ -243,38 +306,14 @@ def _bundle_entry(
     postgres_max: int,
     smoke_passed: frozenset[str],
 ) -> dict[str, object]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        msg = f"bundle must be a JSON object: {path}"
-        raise ManifestError(msg)
-    name = data.get("name")
-    if not isinstance(name, str) or not BUNDLE_NAME_RE.fullmatch(name):
-        msg = f"invalid bundle name: {path}"
-        raise ManifestError(msg)
-    if name != path.stem:
-        msg = f"bundle name must match its filename: {path}"
-        raise ManifestError(msg)
-    description = data.get("description")
-    if not isinstance(description, str) or not description:
-        msg = f"bundle description must be a non-empty string: {path}"
-        raise ManifestError(msg)
-    bundle_images = _string_list(data.get("images"), "images", path)
-    unknown = sorted(set(bundle_images) - set(images))
-    if unknown:
-        msg = f"bundle {name} names unpublished images: {', '.join(unknown)}"
-        raise ManifestError(msg)
-    dependencies = data.get("dependencies")
-    if not isinstance(dependencies, dict):
-        msg = f"dependencies must be an object: {path}"
-        raise ManifestError(msg)
-    required = _string_list(dependencies.get("required", []), "dependencies.required", path)
-    optional = _string_list(dependencies.get("optional", []), "dependencies.optional", path)
+    data = _bundle_object(path)
+    name, description = _bundle_identity(data, path)
     return {
         "name": name,
         "description": description,
         "status": "smoke-passed" if name in smoke_passed else "unverified",
-        "images": bundle_images,
-        "dependencies": {"required": required, "optional": optional},
+        "images": _bundle_images(data, images, path, name),
+        "dependencies": _bundle_dependencies(data, path),
         "migrations": _bundle_migrations(data.get("migrations"), path, postgres_max),
         "limits": _string_list(data.get("limits", []), "limits", path),
         "not_claimed": _string_list(data.get("not_claimed", []), "not_claimed", path),
@@ -298,26 +337,46 @@ def _bundles(
     return entries
 
 
+def _valid_smoke_name(value: object) -> bool:
+    return isinstance(value, str) and BUNDLE_NAME_RE.fullmatch(value) is not None
+
+
+def _has_smoke_status(entry: dict[str, object]) -> bool:
+    return entry.get("status") == "passed"
+
+
+def _has_smoke_commit(entry: dict[str, object], commit: str) -> bool:
+    return entry.get("commit") == commit
+
+
+def _has_smoke_time(entry: dict[str, object]) -> bool:
+    finished = entry.get("finished_at")
+    return isinstance(finished, str) and _valid_timestamp(finished)
+
+
+def _is_smoke_pass(entry: object, commit: str) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    return (
+        _has_smoke_status(entry)
+        and _has_smoke_commit(entry, commit)
+        and _valid_smoke_name(entry.get("bundle"))
+        and _has_smoke_time(entry)
+    )
+
+
 def _smoke_passed(path: Path, commit: str) -> frozenset[str]:
     data = json.loads(path.read_text(encoding="utf-8"))
     entries = data if isinstance(data, list) else [data]
-    names: set[str] = set()
     for entry in entries:
         if not isinstance(entry, dict):
             msg = f"smoke result must be an object: {path}"
             raise ManifestError(msg)
-        name = entry.get("bundle")
-        finished = entry.get("finished_at")
-        if (
-            entry.get("status") == "passed"
-            and entry.get("commit") == commit
-            and isinstance(name, str)
-            and BUNDLE_NAME_RE.fullmatch(name)
-            and isinstance(finished, str)
-            and _valid_timestamp(finished)
-        ):
-            names.add(name)
-    return frozenset(names)
+    return frozenset(
+        cast("str", entry["bundle"])
+        for entry in entries
+        if _is_smoke_pass(entry, commit)
+    )
 
 
 def _manifest_document(
