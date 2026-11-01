@@ -1,0 +1,4 @@
+# Pre-fix bundle smoke: the documented dev-seed PAT variable in a literal header.
+# Later commits use --oauth2-bearer. These fingerprints ignore only these two findings.
+99a147fa47591c33e4169634c61aab4214b97bb4:infra/scripts/bundle-smoke.sh:curl-auth-header:122
+99a147fa47591c33e4169634c61aab4214b97bb4:infra/scripts/bundle-smoke.sh:curl-auth-header:162

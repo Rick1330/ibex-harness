@@ -42,6 +42,21 @@ setting that has no effect.
 - It does **not** weaken the read-only boundary; it removes a misleading configuration claim.
 - It does **not** change the Console route surface, contracts, or environment parsing.
 
+## Options considered
+
+1. **Keep the flag and consult it.** Rejected: the Console has no mutation routes, so a runtime flag would imply a
+   control that does not exist and could drift from the route surface.
+2. **Remove the variable everywhere.** Rejected: deployment templates and historical configs still set it; ignoring it
+   with a clear label is less disruptive.
+3. **Make read-only structural and document the variable as reserved.** Adopted: the route surface is the control, and
+   a future write path must add its own contract and safety checks.
+
+## Rollout / migration plan
+
+No runtime change. Operators may leave `CONSOLE_READ_ONLY` unset or keep it; it has no effect. Documentation marks it
+reserved and ignored. A future mutation surface must land with a new ADR, an owning API contract, CSRF, audit,
+idempotency, tenant-negative tests, and a rollback plan before it is enabled.
+
 ## Consequences
 
 - Operators cannot mistake `CONSOLE_READ_ONLY` for a security control.
@@ -51,3 +66,10 @@ setting that has no effect.
 ## Rollback
 
 Revert this record and restore the documentation claim. No code, data, or configuration changes are involved.
+
+## References
+
+- [ADR-0088](0088-console-nuxt-shadcn-vue-migration.md) — the read-only requirement this record amends.
+- [ADR-0089](0089-product-shape-and-console-scope.md) — the Console surface scope.
+- `services/console/README.md` — the structural read-only statement.
+- `engineering/ENVIRONMENT_VARIABLES.md` — the reserved-variable entry.

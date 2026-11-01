@@ -19,8 +19,3 @@ regexes = [
   '''agent_billing''',
   '''preview-idempotency-01''',
 ]
-commits = [
-  # The pre-fix bundle smoke at this immutable commit passed the documented
-  # dev-seed PAT variable in a literal header. Later commits use --oauth2-bearer.
-  "99a147fa47591c33e4169634c61aab4214b97bb4",
-]
