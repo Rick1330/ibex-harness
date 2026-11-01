@@ -1318,7 +1318,7 @@ jobs:
         run: services/api/.venv/bin/python services/api/scripts/route_inventory.py --check
 
       - name: Release manifest tests
-        run: uv run --no-project --no-build --with jsonschema==4.26.0 python3 infra/scripts/test_release_manifest.py
+        run: uv run --no-project --no-build --with-requirements infra/scripts/release-manifest-test-requirements.txt python3 infra/scripts/test_release_manifest.py
 
   api-integration:
     name: api-integration

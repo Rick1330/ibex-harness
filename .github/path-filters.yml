@@ -8,6 +8,8 @@ python:
   - 'infra/scripts/release-manifest.py'
   - 'infra/scripts/test_release_manifest.py'
   - 'infra/release-manifest.schema.json'
+  - 'infra/scripts/release-manifest-test.in'
+  - 'infra/scripts/release-manifest-test-requirements.txt'
   - 'infra/scripts/verify_phase3_memory_e2e.sh'
   - 'infra/scripts/verify_phase3_memory_e2e_seed.py'
   - 'infra/scripts/memory-e2e-test-ci.sh'
