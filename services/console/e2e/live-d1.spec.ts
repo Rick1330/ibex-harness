@@ -5,6 +5,7 @@ import { expect, type Page, test } from "@playwright/test"
 const require = createRequire(import.meta.url)
 const apiOrigin = "https://127.0.0.1:3283"
 const consoleOrigin = "https://127.0.0.1:3282"
+const runId = "11111111-1111-4111-8111-111111111111"
 
 type FixtureRequest = {
   method: string
@@ -45,15 +46,20 @@ async function seedOperatorCookies(page: Page): Promise<void> {
   ])
 }
 
-async function expectLiveDashboard(page: Page): Promise<void> {
-  await page.goto("/dashboard")
+async function waitForHydration(page: Page): Promise<void> {
+  await page.locator('[data-console-hydrated="true"]').waitFor({ state: "attached" })
+}
+
+async function expectLiveOverview(page: Page): Promise<void> {
+  await page.goto("/")
+  await waitForHydration(page)
   await expect(page.getByRole("heading", { name: "Live Workspace" })).toBeVisible()
-  await expect(page.getByText("admin · live-workspace")).toBeVisible()
+  await expect(page.getByText(/live-workspace · read-only snapshot/)).toBeVisible()
   await expect(page.getByText("7", { exact: true })).toBeVisible()
-  await expect(page.getByText("SSE connected")).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByText("degraded · platform health")).toBeVisible()
+  await expect(page.locator('[data-event-stream-state="connected"]')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText("Redis", { exact: true }).first()).toBeVisible()
+  await expect(page.getByText("Dependency reported degraded.")).toBeVisible()
   await expect(page.getByText("Acme Corp")).toHaveCount(0)
-  await expect(page.getByText("No mock data is substituted").first()).toBeVisible()
 }
 
 async function expectNoAxeViolations(page: Page): Promise<void> {
@@ -151,7 +157,7 @@ async function expectForwardedCookiesAreAccessOnly(page: Page): Promise<void> {
 test("live D1 renders tenant-scoped API data and forwards only the access cookie", async ({ page }) => {
   await resetFixtureApi(page)
   await seedOperatorCookies(page)
-  await expectLiveDashboard(page)
+  await expectLiveOverview(page)
   await expectNoAxeViolations(page)
 
   expect(await page.evaluate(() => document.cookie)).not.toContain("ibex_session=")
@@ -165,20 +171,47 @@ test("live D1 renders tenant-scoped API data and forwards only the access cookie
 test("live D2 Explore and run inspector stay fixture-free with axe coverage", async ({ page }) => {
   await resetFixtureApi(page)
   await seedOperatorCookies(page)
-  await page.goto("/dashboard/explore?limit=50&status=ok")
-  await expect(page.getByRole("heading", { name: "Trace metadata" })).toBeVisible()
-  await expect(page.getByText("Sessions (deferred)")).toBeVisible()
+  await page.goto("/explore?limit=50&status=ok")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Explore", exact: true })).toBeVisible()
   await expect(page.getByText("trace-live-1")).toBeVisible()
   await expect(page.getByText("Acme Corp")).toHaveCount(0)
-  await expect(page.getByText("No mock values are substituted")).toHaveCount(0)
   await expectNoAxeViolations(page)
 
-  await page.goto("/dashboard/explore/r/11111111-1111-4111-8111-111111111111?return=%2Fdashboard%2Fexplore")
-  await expect(page.getByText("Trace Inspector · frozen metadata snapshot")).toBeVisible()
-  await expect(page.getByText("publication published")).toBeVisible()
-  await expect(page.getByText("Raw content, replay")).toBeVisible()
+  await page.goto(`/explore/r/${runId}?return=%2Fexplore`)
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /^Run / })).toBeVisible()
+  await expect(page.getByText("trace-live-1").first()).toBeVisible()
+  await page.getByRole("tab", { name: "Evidence" }).click()
+  await expect(page.getByText("published", { exact: true })).toBeVisible()
+  await expect(page.getByText("Explicitly unavailable sections")).toBeVisible()
   await expectNoAxeViolations(page)
 
-  await page.goto("/dashboard/explore/r/22222222-2222-4222-8222-222222222222")
-  await expect(page.getByRole("heading", { name: "Trace not found" })).toBeVisible()
+  await page.goto("/explore/r/22222222-2222-4222-8222-222222222222")
+  await expect(page.getByText("Run unavailable")).toBeVisible()
+})
+
+test("live Platform renders readiness, dependency state, and connected events", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+  await page.goto("/platform")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Platform", exact: true })).toBeVisible()
+  await expect(page.getByText("1 reported issue across 2 dependencies")).toBeVisible()
+  await expect(page.getByText(/A dependency is not reporting ok/)).toBeVisible()
+  await expect(page.getByText("Database", { exact: true })).toBeVisible()
+  const redisRow = page.getByRole("row").filter({ hasText: "Redis" })
+  await expect(redisRow).toBeVisible()
+  await expect(redisRow.getByText("Degraded", { exact: true })).toBeVisible()
+  await expect(redisRow.getByText("Unavailable")).toBeVisible()
+  await expect(page.getByText("Unavailable history")).toBeVisible()
+  await expect(page.locator('[data-event-stream-state="connected"]')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+
+  const range = page.getByRole("group", { name: "Time range (unavailable)" })
+  await expect(range.getByRole("button", { name: "7d" })).toBeDisabled()
+
+  await page.getByText("Show JSON", { exact: true }).click()
+  await expect(page.locator("pre").filter({ hasText: '"dependency_health"' })).toBeVisible()
+  await expectNoAxeViolations(page)
 })

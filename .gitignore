@@ -86,3 +86,8 @@ services/console/CLAUDE.md
 
 # Wrangler local state (pages dev)
 .wrangler/
+
+# Nuxt build output (console and site)
+.nuxt/
+.nuxt-stale-*/
+.output/
