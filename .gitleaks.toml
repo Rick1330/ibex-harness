@@ -10,9 +10,6 @@ paths = [
   '''site/content/docs/.*\.md$''',
   '''prompts/''',
   '''services/proxy/internal/auth/validator_test\.go''',
-  # The local bundle smoke passes the documented dev-seed PAT variable to curl
-  # and refuses production. It contains no committed secret value.
-  '''infra/scripts/bundle-smoke\.sh''',
 ]
 regexes = [
   '''key: "agent_billing"''',
@@ -21,4 +18,7 @@ regexes = [
   '''pol-publish-2026-10-27-03''',
   '''agent_billing''',
   '''preview-idempotency-01''',
+  # The pre-fix bundle smoke passed the documented dev-seed PAT variable in a
+  # literal header. Match only that variable, not the rest of the file.
+  '''Authorization: Bearer \$PAT''',
 ]
