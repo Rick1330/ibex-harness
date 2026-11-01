@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/release-manifest.schema.json",
+  "title": "IBEX release manifest",
+  "description": "Platform release to image digest, contract hash, and migration version lock.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "tag",
+    "platform_version",
+    "generated_at",
+    "source",
+    "images",
+    "contracts",
+    "migrations",
+    "bundles"
+  ],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "tag": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "platform_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" }
+      }
+    },
+    "images": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["openapi_sha256", "proto_sha256"],
+      "properties": {
+        "openapi_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "proto_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "migrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgres", "clickhouse"],
+      "properties": {
+        "postgres": { "type": "integer", "minimum": 0 },
+        "clickhouse": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "bundles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      }
+    }
+  }
+}

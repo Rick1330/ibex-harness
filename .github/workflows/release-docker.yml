@@ -28,3 +28,40 @@ jobs:
     uses: ./.github/workflows/docker-publish.yml
     with:
       image_tag: ${{ github.ref_name }}
+
+  release-manifest:
+    name: release-manifest
+    # Runs only after the versioned images are pushed, so digests are immutable.
+    needs: tagged-docker-publish
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate release manifest
+        run: |
+          # mcp-operator has a Dockerfile but is not published by docker-publish yet.
+          python3 infra/scripts/release-manifest.py \
+            --tag "${{ github.ref_name }}" \
+            --commit "${{ github.sha }}" \
+            --services auth,proxy,api,memory,embedder,worker,mcp-memory \
+            --output release-manifest.json
+      - name: Upload release manifest
+        env:
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" release-manifest.json --clobber

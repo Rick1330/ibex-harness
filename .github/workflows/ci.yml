@@ -1317,6 +1317,9 @@ jobs:
       - name: Check API mounted-route inventory freshness
         run: services/api/.venv/bin/python services/api/scripts/route_inventory.py --check
 
+      - name: Release manifest tests
+        run: python3 infra/scripts/test_release_manifest.py
+
   api-integration:
     name: api-integration
     needs: changes

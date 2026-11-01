@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Tests for the release manifest generator."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).with_name("release-manifest.py")
+SPEC = importlib.util.spec_from_file_location("release_manifest", SCRIPT)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError("could not load release-manifest.py")
+release_manifest = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(release_manifest)
+
+DIGEST_A = "sha256:" + "a" * 64
+DIGEST_B = "sha256:" + "b" * 64
+
+
+class ReleaseManifestTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        (self.root / "services" / "auth").mkdir(parents=True)
+        (self.root / "services" / "auth" / "Dockerfile").write_text("FROM scratch\n")
+        (self.root / "services" / "proxy").mkdir(parents=True)
+        (self.root / "services" / "proxy" / "Dockerfile").write_text("FROM scratch\n")
+        (self.root / "services" / "api").mkdir(parents=True)
+        self.openapi = self.root / "services" / "api" / "openapi.snapshot.json"
+        self.openapi.write_text('{"openapi":"3.1.0"}\n')
+        proto = self.root / "packages" / "proto" / "ibex" / "auth" / "v1"
+        proto.mkdir(parents=True)
+        (proto / "auth.proto").write_text('syntax = "proto3";\n')
+        postgres = self.root / "infra" / "migrations" / "postgres"
+        postgres.mkdir(parents=True)
+        (postgres / "000001_init.up.sql").write_text("SELECT 1;\n")
+        (postgres / "000002_next.up.sql").write_text("SELECT 2;\n")
+        (postgres / "000002_next.down.sql").write_text("SELECT 0;\n")
+        clickhouse = self.root / "infra" / "migrations" / "clickhouse"
+        clickhouse.mkdir(parents=True)
+        (clickhouse / "000001_usage.up.sql").write_text("SELECT 1;\n")
+        self.digest_map = {"auth": DIGEST_A, "proxy": DIGEST_B}
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def build(self) -> dict[str, object]:
+        return release_manifest.build_manifest(
+            root=self.root,
+            tag="v1.2.3",
+            repository="Rick1330/ibex-harness",
+            commit="abc123",
+            generated_at="2026-11-01T00:00:00Z",
+            digest_map=self.digest_map,
+            services=["auth", "proxy"],
+        )
+
+    def test_builds_the_expected_manifest(self) -> None:
+        manifest = self.build()
+        self.assertEqual(manifest["manifest_version"], 1)
+        self.assertEqual(manifest["tag"], "v1.2.3")
+        self.assertEqual(manifest["platform_version"], "1.2.3")
+        self.assertEqual(manifest["images"], {"auth": DIGEST_A, "proxy": DIGEST_B})
+        self.assertEqual(manifest["migrations"], {"postgres": 2, "clickhouse": 1})
+        self.assertEqual(manifest["bundles"], [])
+        expected_openapi = hashlib.sha256(self.openapi.read_bytes()).hexdigest()
+        contracts = manifest["contracts"]
+        self.assertIsInstance(contracts, dict)
+        self.assertEqual(contracts["openapi_sha256"], expected_openapi)
+        self.assertRegex(contracts["proto_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_cli_writes_the_manifest(self) -> None:
+        map_path = self.root / "digests.json"
+        map_path.write_text(json.dumps(self.digest_map))
+        output = self.root / "release-manifest.json"
+        code = release_manifest.main(
+            [
+                "--root",
+                str(self.root),
+                "--tag",
+                "v1.2.3",
+                "--commit",
+                "abc123",
+                "--generated-at",
+                "2026-11-01T00:00:00Z",
+                "--digest-map",
+                str(map_path),
+                "--services",
+                "auth,proxy",
+                "--output",
+                str(output),
+            ]
+        )
+        self.assertEqual(code, 0)
+        data = json.loads(output.read_text())
+        self.assertEqual(data["platform_version"], "1.2.3")
+        self.assertEqual(data["source"], {"repository": "Rick1330/ibex-harness", "commit": "abc123"})
+
+    def test_rejects_an_invalid_tag(self) -> None:
+        code = release_manifest.main(
+            [
+                "--root",
+                str(self.root),
+                "--tag",
+                "1.2.3",
+                "--commit",
+                "abc123",
+                "--digest-map",
+                self._write_digest_map(),
+                "--services",
+                "auth,proxy",
+                "--output",
+                str(self.root / "out.json"),
+            ]
+        )
+        self.assertEqual(code, 1)
+
+    def test_rejects_a_missing_digest(self) -> None:
+        map_path = self.root / "digests.json"
+        map_path.write_text(json.dumps({"auth": DIGEST_A}))
+        code = release_manifest.main(
+            [
+                "--root",
+                str(self.root),
+                "--tag",
+                "v1.2.3",
+                "--commit",
+                "abc123",
+                "--digest-map",
+                str(map_path),
+                "--services",
+                "auth,proxy",
+                "--output",
+                str(self.root / "out.json"),
+            ]
+        )
+        self.assertEqual(code, 1)
+
+    def test_rejects_a_malformed_digest(self) -> None:
+        map_path = self.root / "digests.json"
+        map_path.write_text(json.dumps({"auth": "sha256:not-a-digest", "proxy": DIGEST_B}))
+        code = release_manifest.main(
+            [
+                "--root",
+                str(self.root),
+                "--tag",
+                "v1.2.3",
+                "--commit",
+                "abc123",
+                "--digest-map",
+                str(map_path),
+                "--services",
+                "auth,proxy",
+                "--output",
+                str(self.root / "out.json"),
+            ]
+        )
+        self.assertEqual(code, 1)
+
+    def test_rejects_a_missing_service_dockerfile(self) -> None:
+        map_path = self.root / "digests.json"
+        map_path.write_text(json.dumps({"auth": DIGEST_A, "proxy": DIGEST_B, "memory": DIGEST_A}))
+        code = release_manifest.main(
+            [
+                "--root",
+                str(self.root),
+                "--tag",
+                "v1.2.3",
+                "--commit",
+                "abc123",
+                "--digest-map",
+                str(map_path),
+                "--services",
+                "auth,proxy,memory",
+                "--output",
+                str(self.root / "out.json"),
+            ]
+        )
+        self.assertEqual(code, 1)
+
+    def _write_digest_map(self) -> str:
+        path = self.root / "digests.json"
+        path.write_text(json.dumps(self.digest_map))
+        return str(path)
+
+
+if __name__ == "__main__":
+    unittest.main()

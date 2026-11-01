@@ -81,6 +81,9 @@ test-memory: ## Run Python memory service unit tests (services/memory)
 test-memory-integration: ## Run memory PgVectorStore integration tests (needs Postgres + migrate)
 	@"$(BASH)" infra/scripts/memory-integration-test-ci.sh
 
+test-release-manifest: ## Run release manifest generator tests
+	python3 infra/scripts/test_release_manifest.py
+
 test-worker: ## Run Python worker service unit tests (services/worker)
 	@"$(BASH)" infra/scripts/worker-test-ci.sh
 
