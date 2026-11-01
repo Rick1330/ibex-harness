@@ -73,7 +73,7 @@ IBEX Harness is a distributed system designed for high performance, reliability,
                           │
    ┌──────────────────────▼─────────────────────┐
    │         Operator + MCP surfaces            │
-   │  Console (Next.js) │ API (FastAPI)         │
+   │  Console (Nuxt)    │ API (FastAPI)         │
    │  MCP memory server (tools over Auth gRPC)  │
    └────────────────────────────────────────────┘
 ```

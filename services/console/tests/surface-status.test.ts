@@ -63,10 +63,23 @@ describe("surface status parity", () => {
     expect(liveDomains.sort()).toEqual(["D1", "D2"])
   })
 
-  it("keeps the ledgers aligned with ADR-0089", () => {
-    expect(ledger).toContain("Operator Console")
-    expect(ledger).toContain("ADR-0089")
-    expect(siteLedger).toContain("ADR-0089")
-    expect(siteStatus).toContain("ADR-0089")
+  it("keeps the ledgers aligned with the tier counts in SURFACES", () => {
+    const core = SURFACE_LIST.filter((surface) => surface.tier === "core")
+    const coreLive = core.filter((surface) => surface.availability === "live").length
+    const corePreview = core.length - coreLive
+    const platform = SURFACE_LIST.filter((surface) => surface.tier === "platform").length
+
+    const sources: Array<[string, string]> = [
+      ["engineering ledger", ledger],
+      ["site ledger", siteLedger],
+      ["site status page", siteStatus],
+    ]
+
+    for (const [name, text] of sources) {
+      expect(text, `${name} must cite ADR-0089`).toContain("ADR-0089")
+      expect(text, `${name} live count disagrees with SURFACES`).toContain(`${coreLive} of ${core.length} core surfaces`)
+      expect(text, `${name} preview count disagrees with SURFACES`).toContain(`${corePreview} core surfaces`)
+      expect(text, `${name} platform count disagrees with SURFACES`).toContain(`${platform} platform-tier surfaces`)
+    }
   })
 })

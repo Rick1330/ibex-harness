@@ -26,6 +26,7 @@ Level: L1 report-only. No auto-fix. No `loop-pause-all` flag present.
 
 - **Console freeze is active.** Core live ratio is 3/10. No new surface may be added until at least five core surfaces are live and every core surface has an owning contract (ADR-0089 §3).
 - **Release manifest needs owner approval.** ADR-0089 §6 sets the direction, but `.github/workflows/**` and release-config changes require approval under `AGENTS.md` §10. Nothing was edited there.
+- **Legacy console auth UI was deleted with the Next.js tree.** `services/console/src/lib/auth/*` and `services/console/src/components/auth/*` are gone as part of the rebuild. `services/auth/` is untouched and no auth behaviour changed. The PR body must record this against the `auth/` deny-list in `loop-constraints.md`.
 - **Phase 4 gaps still open** (GAP-001, 002, 004, 006, 007, 009, 011). All are recorded with evidence and owners in the ledger; none is new this run. Monitor only.
 - **Ledger console rows were rewritten** to the core/platform tier model and now cite ADR-0089 in all three places. Re-verify them on the next docs run.
 - **Site rebuild (2026-10-24/25)** stays watch-only. Confirm the next `main` run of `site-deploy` plus `check:links`, `check:redirects`, and `check:claims` is green.

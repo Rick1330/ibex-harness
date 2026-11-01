@@ -123,7 +123,7 @@ export const capabilities: Capability[] = [
   {
     name: 'Operator Console · preview tiers',
     status: 'DEFERRED',
-    detail: 'Seven core surfaces and eight platform-tier surfaces remain preview designs. Labelled illustrative fixtures are permitted under ADR-0089 §4; no live claim is made.',
+    detail: '7 core surfaces and 8 platform-tier surfaces remain preview designs. Labelled illustrative fixtures are permitted under ADR-0089 §4; no live claim is made.',
     href: '/docs/operations/console',
   },
   {

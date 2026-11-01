@@ -88,12 +88,16 @@ These remain in the repository as designed previews. They are not deleted, not p
 
 ### 3. Surface lifecycle and freeze
 
-A surface moves through four states, in order:
+A surface has two independent attributes: **availability** (what it may render) and **acceptance** (what the status ledger certifies).
+
+**Availability** moves through four states, in order:
 
 1. `preview` — design only; no owning contract; no live claim.
-2. `read-model` — owning contract exists; operator projection is implemented and tested; still labelled preview until acceptance.
-3. `live` — contract accepted, tenant-negative test present, empty/error/loading states verified, accessibility checked, and the status ledger updated.
+2. `read-model` — owning contract exists; the operator projection is implemented and tested; the surface stays preview until the BFF reads it.
+3. `live` — the surface reads its owning contract through the BFF, renders real data, fails closed, and has no fixture fallback.
 4. `write-gated` — live plus a mutation path with CSRF, audit, idempotency, and a privileged-write affordance.
+
+`live` is an availability label, not an acceptance claim. Acceptance is the separate status-ledger axis (`provisional`, `accepted`, and so on). A live surface remains `provisional` until tenant-negative tests, accessibility checks, and hosted evidence exist, and the UI must not present `live` as certification.
 
 **Freeze:** no new surface may be added to either tier until at least five core surfaces are live and every core surface has an owning API contract rather than a contract name. The live ratio is computed from `SURFACES`, not from prose.
 
@@ -105,13 +109,13 @@ Preview surfaces **may** render illustrative fixture rows. ADR-0088 §3's blanke
 2. The page renders a persistent, non-dismissible `Illustrative preview` banner above the first fixture, and the page verdict states the coverage, for example `0% live · illustrative only`.
 3. Fixture rows are visibly marked as illustrative at the row or table level. A reader must not need the banner to know a row is not evidence.
 4. Fixture tenant identifiers use the reserved prefix `org_demo_` where the contract is a string id, or the reserved demo UUID `00000000-0000-4000-8000-000000000000` where the contract requires a UUID. They are never a seeded development org or a realistic customer identifier.
-5. Fixture modules live in `services/console/app/lib/*-preview.ts`, are registered in one enumerable fixture registry, and are importable only by preview page components. No live data path may import a fixture module.
+5. Fixture modules live in `services/console/app/lib/*-preview.ts`, are registered in one enumerable fixture registry, and are importable only by preview surface components. The shared shell, layouts, and live pages must never import a fixture module.
 6. Fixtures never contain credentials, tokens, keys, real personal data, or anything that could be mistaken for a secret.
 7. A preview page never claims that its contract is implemented, and never presents fixture output as evidence.
 
 **Development demo mode.** `CONSOLE_DEMO_ENABLED` may substitute illustrative reads for live-shaped contracts only when `import.meta.dev` is true. Demo mode must render the `Illustrative` provenance chip, must not activate in a production build, and is not a data mode. `CONSOLE_DATA_MODE` remains a presentation flag and never enables fixtures.
 
-**Enforcement.** A unit test enumerates the fixture registry and asserts conditions 1, 4, and 5. The existing production end-to-end suite asserts fail-closed behavior with no fixtures.
+**Enforcement.** A unit test enumerates the fixture registry, asserts conditions 4 and 5, and fails if the shared shell or a live page imports a fixture module. The production end-to-end suite asserts fail-closed behavior with no fixtures.
 
 ### 5. Packaging: one supported bundle now, library-first later
 
@@ -138,11 +142,11 @@ Changing `.github/workflows/**` and the release configuration requires owner app
 
 A `surface-status` check cross-validates it against:
 
-- `services/console/README.md` surface table,
-- `engineering/architecture-v2/00-status-and-evidence.md` Console rows,
-- `site/app/data/ledger.ts` and the published status page.
+- `services/console/README.md` — exactly one row per surface, with a matching live/preview claim and tier placement;
+- `engineering/architecture-v2/00-status-and-evidence.md` — the Console rows agree on the core live count, core preview count, and platform-tier count, and cite this record;
+- `site/app/data/ledger.ts` and the published status page — the same three counts and the same citation.
 
-The check fails on a missing surface, a status disagreement, or a tier disagreement. Prose may add detail; it may not contradict `SURFACES`.
+The check does not parse free-form ledger prose beyond those counts. Prose may add detail; it may not contradict `SURFACES`.
 
 ## Consequences
 
