@@ -6,7 +6,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -177,7 +176,7 @@ class ReleaseManifestTest(unittest.TestCase):
             patch.object(
                 release_manifest.subprocess,
                 "run",
-                side_effect=subprocess.TimeoutExpired("docker", 30),
+                side_effect=release_manifest.subprocess.TimeoutExpired("docker", 30),
             ),
         ):
             self.assert_build_rejected(digest_map=None, services=["auth"])
