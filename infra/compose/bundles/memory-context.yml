@@ -68,7 +68,16 @@ services:
       dockerfile: services/embedder/Dockerfile
     environment:
       IBEX_EMBEDDING_PROFILE: cpu
+      IBEX_EMBEDDING_DIM: "1024"
       IBEX_EMBEDDING_API_TOKEN: dev-embed-token
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/health')"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
 
   memory:
     build:
@@ -83,6 +92,14 @@ services:
       IBEX_MEMORY_AUTH_TIMEOUT_MS: "2000"
       IBEX_MEMORY_EMBEDDING_BASE_URL: http://embedder:8004
       IBEX_EMBEDDING_API_TOKEN: dev-embed-token
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health')"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
     depends_on:
       auth:
         condition: service_healthy

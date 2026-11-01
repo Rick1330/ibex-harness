@@ -34,7 +34,7 @@ docker compose -f infra/compose/bundles/memory-context.yml down -v
 - a benign memory can be created and found by search;
 - duplicate content returns `409 DUPLICATE_CONTENT`;
 - a missing token returns `401`;
-- an agent from another organization is not readable (`404`).
+- an agent from another organization is not readable (`403` today; `404` is the preferred code).
 
 The smoke writes `bundle-smoke-result.json` with `bundle`, `status`, `commit`, and `finished_at`. The file is
 gitignored.

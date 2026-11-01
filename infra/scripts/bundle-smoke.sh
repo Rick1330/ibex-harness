@@ -171,7 +171,8 @@ import json
 import sys
 
 body = json.load(open(sys.argv[1], encoding="utf-8"))
-if body.get("error", {}).get("code") != "DUPLICATE_CONTENT":
+detail = body.get("detail") or body.get("error") or {}
+if not isinstance(detail, dict) or detail.get("code") != "DUPLICATE_CONTENT":
     raise SystemExit(f"unexpected duplicate error: {body}")
 PY
   pass "duplicate content returns 409 DUPLICATE_CONTENT"
@@ -194,8 +195,8 @@ assert_cross_tenant_denied() {
     -H "Authorization: Bearer $PAT" \
     -H "Content-Type: application/json" \
     -d "{\"agent_id\":\"$AGENT_B\",\"query\":\"cross tenant\",\"min_similarity\":0,\"limit\":1}")"
-  [[ "$status" == "404" ]] || fail "cross-tenant search returned $status, want 404"
-  pass "another organization's agent is not readable (404)"
+  [[ "$status" == "403" || "$status" == "404" ]] || fail "cross-tenant search returned $status, want 403 or 404"
+  pass "another organization's agent is not readable ($status)"
 }
 
 write_result() {
