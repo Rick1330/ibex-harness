@@ -80,13 +80,12 @@ func assertTimingParity(t *testing.T, missDur, wrongDur time.Duration) {
 	if wrongDur == 0 {
 		t.Skip("wrong-secret duration too small to compare")
 	}
-	if missDur < time.Millisecond {
-		t.Fatalf("miss path did not pay measurable hashing time: %v", missDur)
-	}
 	ratio := float64(missDur) / float64(wrongDur)
-	// The security property is that the miss path does not return faster than a
-	// wrong-secret verification. A loaded runner can make it much slower, which is
-	// not a failure; only a suspiciously fast miss path is.
+	// The wrong-secret path is the control: it must verify the hash. The security
+	// property is that the miss path does not return much faster than that control.
+	// A loaded runner can make the miss path slower, which is not a failure, and a
+	// fast runner can make both paths cheap, so this is a relative check rather
+	// than a wall-clock floor.
 	if ratio < 0.25 {
 		t.Fatalf("miss path is faster than the wrong-secret path: ratio=%.2f miss=%v wrong=%v", ratio, missDur, wrongDur)
 	}
