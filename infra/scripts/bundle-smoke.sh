@@ -121,7 +121,7 @@ create_memory() {
   local status
   status="$(curl -sS -o "$TMP_DIR/create.json" -w '%{http_code}' \
     -X POST "$BASE_URL/v1/memories" \
-    -H "Authorization: Bearer $PAT" \
+    --oauth2-bearer "$PAT" \
     -H "Content-Type: application/json" \
     -H "X-Idempotency-Key: bundle-smoke-create-1" \
     -d "{\"agent_id\":\"$AGENT_A\",\"content\":\"The bundle smoke sentence is benign and retrievable.\",\"category\":\"factual\"}")"
@@ -142,7 +142,7 @@ search_memory() {
   local memory_id="$1" status
   status="$(curl -sS -o "$TMP_DIR/search.json" -w '%{http_code}' \
     -X POST "$BASE_URL/v1/memories/search" \
-    -H "Authorization: Bearer $PAT" \
+    --oauth2-bearer "$PAT" \
     -H "Content-Type: application/json" \
     -d "{\"agent_id\":\"$AGENT_A\",\"query\":\"bundle smoke retrievable sentence\",\"min_similarity\":0,\"limit\":5}")"
   [[ "$status" == "200" ]] || fail "search returned $status"
@@ -161,7 +161,7 @@ assert_duplicate() {
   local status
   status="$(curl -sS -o "$TMP_DIR/duplicate.json" -w '%{http_code}' \
     -X POST "$BASE_URL/v1/memories" \
-    -H "Authorization: Bearer $PAT" \
+    --oauth2-bearer "$PAT" \
     -H "Content-Type: application/json" \
     -H "X-Idempotency-Key: bundle-smoke-create-2" \
     -d "{\"agent_id\":\"$AGENT_A\",\"content\":\"The bundle smoke sentence is benign and retrievable.\",\"category\":\"factual\"}")"
@@ -192,7 +192,7 @@ assert_cross_tenant_denied() {
   local status
   status="$(curl -sS -o "$TMP_DIR/cross-tenant.json" -w '%{http_code}' \
     -X POST "$BASE_URL/v1/memories/search" \
-    -H "Authorization: Bearer $PAT" \
+    --oauth2-bearer "$PAT" \
     -H "Content-Type: application/json" \
     -d "{\"agent_id\":\"$AGENT_B\",\"query\":\"cross tenant\",\"min_similarity\":0,\"limit\":1}")"
   [[ "$status" == "403" || "$status" == "404" ]] || fail "cross-tenant search returned $status, want 403 or 404"
