@@ -1,0 +1,11 @@
+# Test-only JSON Schema validation for infra/scripts/release-manifest.py.
+#
+# Why: the manifest schema is JSON Schema 2020-12, and a hand-written validator
+# would duplicate the contract and miss drift. The repository's existing pinned
+# jsonschema lives in services/mcp-memory/uv.lock, but that venv is not
+# installed by the api-test job that runs this standalone infra script.
+# Security: resolved from a hash-locked requirements file with --no-build; no
+# setup scripts execute and every wheel hash is verified.
+# Maintenance/size impact: jsonschema plus five transitive wheels, installed
+# only for this test step; no runtime image or service dependency changes.
+jsonschema==4.26.0
