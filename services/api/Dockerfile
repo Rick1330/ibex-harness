@@ -42,6 +42,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/services/api/.venv/bin:$PATH"
 
 RUN python -m pip uninstall --yes setuptools wheel || true \
+    && rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+       /usr/local/lib/python3.*/ensurepip \
+       /usr/local/bin/pip* \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libpcre2-8-0=10.42-1+deb12u2 \
