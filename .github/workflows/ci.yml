@@ -2315,8 +2315,8 @@ jobs:
             fi
             sleep 1
           done
-          grep -Fq "Organization overview unavailable" /tmp/console-overview.html
-          grep -Fq "No mock values are substituted." /tmp/console-overview.html
+          grep -Fq "Organization snapshot unavailable" /tmp/console-overview.html
+          grep -Fq "No counts are invented for the gap." /tmp/console-overview.html
           if grep -Fq "1,284,092" /tmp/console-overview.html; then
             echo "forbidden fixture metric leaked into production preview HTML" >&2
             exit 1
@@ -2336,8 +2336,8 @@ jobs:
             fi
             sleep 1
           done
-          grep -Fq "Organization overview unavailable" /tmp/console-d1.html
-          grep -Fq "No mock values are substituted" /tmp/console-d1.html
+          grep -Fq "Organization snapshot unavailable" /tmp/console-d1.html
+          grep -Fq "No counts are invented for the gap" /tmp/console-d1.html
           if grep -Fq "1,284,092" /tmp/console-d1.html; then
             echo "forbidden fixture metric leaked into live D1 HTML" >&2
             exit 1
