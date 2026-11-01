@@ -179,4 +179,3 @@ The tier model, navigation, and documentation are reversible by reverting the im
 - [`services/console/shared/operator/surfaces.ts`](../../services/console/shared/operator/surfaces.ts) — surface source of truth.
 - [`engineering/architecture-v2/00-status-and-evidence.md`](../architecture-v2/00-status-and-evidence.md) — runtime claim ledger.
 - [`engineering/OPERATOR_PLATFORM_ARCHITECTURE.md`](../OPERATOR_PLATFORM_ARCHITECTURE.md) — Console boundary.
-- [Product-shape review, 2026-11-01](../../../ibex-harness-workspace/product-shape-review-2026-11-01.md) — evidence and external research behind this decision (session workspace, not repository content).

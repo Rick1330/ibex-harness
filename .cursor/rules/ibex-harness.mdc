@@ -1,0 +1,52 @@
+---
+description: IBEX Harness repository rules for Cursor
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# IBEX Harness
+
+Read `AGENTS.md` and `engineering/agent-playbook.md` before changing code. `AGENTS.md` is the project constitution; this
+file is a short entry point, not a replacement.
+
+## Product shape
+
+IBEX is a self-hosted memory and context layer for multi-tenant AI agents. The proxy is the adoption surface, the
+memory/context services are the differentiator, and the Console is the operations plane for the
+agent → session → memory → evidence lifecycle. Incidents, drift, analytics, and budgets are a later platform tier
+(ADR-0089).
+
+## Hard rules
+
+- Never remove `org_id` filtering, even where PostgreSQL RLS exists. Cross-tenant reads return 404, not 403.
+- Never log tokens, keys, memory content, prompts, or personal data.
+- Never add placeholder logic, stub handlers, or a dependency without stating why the stdlib/existing dependency is
+  insufficient.
+- Never weaken a lint rule, test, coverage threshold, or CI gate to make a change pass.
+- Every commit needs a DCO sign-off: `git commit -s`.
+- The Console is Nuxt 4 + Vue 3 + Nitro. Do not add React or Next.js.
+- Console surface status comes from `services/console/shared/operator/surfaces.ts`; do not restate it in prose.
+
+## Before you finish
+
+Run the checks for the area you changed. The short list:
+
+```bash
+make check
+pnpm --filter @ibex/console test
+pnpm --filter @ibex/console typecheck
+pnpm --filter @ibex/console lint
+pnpm --filter @ibex/console build
+pnpm site:build && pnpm site:check
+```
+
+Read `engineering/DEVELOPMENT_GUIDE.md` §4.4 for the service startup matrix and `engineering/agent-playbook.md` §6 for
+the full pre-push command list.
+
+## Where to look
+
+- Architecture and product shape: `engineering/ARCHITECTURE.md`, `engineering/adr/`
+- Runtime claims: `engineering/architecture-v2/00-status-and-evidence.md`
+- Service inventory: `services/README.md`
+- Contracts: `engineering/API_DOCUMENTATION.md`, `packages/proto/`
+- Security and tenancy: `engineering/SECURITY.md`, `AGENTS.md` §4–§5

@@ -7,10 +7,17 @@
 
 <h1 align="center">IBEX Harness</h1>
 
-<p align="center">AI-agent memory, context assembly, and secure LLM proxying for multi-tenant systems.</p>
+<p align="center"><strong>Self-hosted memory and context for multi-tenant AI agents.</strong></p>
 
 <p align="center">
-  <a href="https://ibexharness.com">Docs</a> ·
+  Point your agent at an OpenAI-compatible endpoint or add the MCP server. IBEX resolves tenant and agent identity,
+  injects bounded context, stores governed memories, and attaches evidence to every request.
+</p>
+
+<p align="center">
+  <a href="https://ibexharness.com">Website</a> ·
+  <a href="https://ibexharness.com/docs">Docs</a> ·
+  <a href="https://ibexharness.com/docs/architecture/status-and-evidence">Status</a> ·
   <a href="https://ibexharness.com/benchmarks">Benchmarks</a> ·
   <a href="engineering/DEVELOPMENT_GUIDE.md">Developer guide</a> ·
   <a href="engineering/SECURITY.md">Security</a>
@@ -24,22 +31,56 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
 </p>
 
-## Current status
+## Why IBEX
 
-Phases **0–3.5 are shipped**. **Phase 4 is in progress**: Track P operator readiness is the prerequisite for redesigned Track D capability slices. The current repository contains mounted, tenant-scoped, read-only **4.D.1 context/overview** and **4.D.2 metadata-only trace list/detail** surfaces. These are **mounted-but-provisional**, not proof of production identity, deployment, hosted acceptance, full management APIs, raw provenance, replay, or operator actions.
+Most agent stacks treat memory as a vector database and identity as an afterthought. IBEX treats both as governed,
+tenant-scoped infrastructure:
 
-See the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence), [published benchmarks](https://ibexharness.com/benchmarks), [service inventory](services/README.md), [package inventory](packages/README.md), and [operator architecture boundary](engineering/OPERATOR_PLATFORM_ARCHITECTURE.md).
+- **Tenant and agent identity on every call.** No `org_id` is ever accepted from a URL or browser; AuthService is the
+  authority and every data path filters explicitly.
+- **Bounded context, not a prompt dump.** Context assembly retrieves, ranks, and packs memories and directives within a
+  token budget and a deadline, and degrades to directive-only context rather than blocking the proxy.
+- **Evidence attached to the request.** Traces, redaction state, capture mode, and publication state travel with the
+  run, so an operator can answer "what happened?" without reconstructing it from logs.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+  Agent["Agent / SDK"] -->|OpenAI-compatible| Proxy["LLM proxy (Go)"]
+  Agent -->|MCP| MCP["MCP memory server"]
+  Proxy --> Auth["AuthService (Go)"]
+  Proxy --> Context["Context assembly (gRPC)"]
+  Proxy --> Memory["Memory service (FastAPI)"]
+  Proxy --> Providers["LLM providers"]
+  Memory --> PG[(PostgreSQL + pgvector)]
+  Memory --> Embedder["Embedder"]
+  API["Management API (FastAPI)"] --> PG
+  Console["Console (Nuxt 4 + Nitro)"] --> API
+  Proxy -.-> Evidence["Evidence outbox / relay"]
+```
+
+The proxy is the adoption surface. Memory, context assembly, and the evidence model are the reason to keep it.
 
 ## Quick start
 
-Prerequisites are Docker Compose v2 or Podman Compose, GNU Make, and the versions defined in [`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](engineering/TOOLCHAIN.md).
+Prerequisites: Docker Compose v2 or Podman Compose, GNU Make, and the versions in
+[`infra/tool-versions.conf`](infra/tool-versions.conf). See [TOOLCHAIN.md](engineering/TOOLCHAIN.md).
 
 ```bash
 git clone https://github.com/Rick1330/ibex-harness.git
 cd ibex-harness
-
 make setup
 make check-tools
+```
+
+Start the local dependencies, apply migrations, seed a development tenant, and run the auth + proxy smoke test:
+
+```bash
+make compose-dev-up
+make db-migrate
+make db-seed
+make dev-smoke
 ```
 
 For a restricted sandbox or Podman machine:
@@ -48,33 +89,110 @@ For a restricted sandbox or Podman machine:
 IBEX_RUNTIME=podman IBEX_NETWORK=host make setup
 ```
 
-Use `make env-doctor` for runtime, port, DNS, and injected telemetry diagnostics. `make db-seed` remains an optional local-development step; never run it against production.
+`make env-doctor` diagnoses runtime, port, DNS, and telemetry issues. `make db-seed` is local-development only; never
+run it against a shared environment.
 
-For the complete setup, service startup matrix, test commands, and teardown procedure, read [DEVELOPMENT_GUIDE.md](engineering/DEVELOPMENT_GUIDE.md).
+Run the Console:
 
-## Service and package navigation
+```bash
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm --filter @ibex/console dev
+```
 
-| Area | Start here |
+Open `http://127.0.0.1:3000`. The Console is read-only and fails closed without an operator session and
+`IBEX_OPERATOR_API_ORIGIN`.
+
+## Core concepts
+
+| Concept | Meaning |
 | --- | --- |
-| Go AuthService | [services/auth/README.md](services/auth/README.md) |
-| Go LLM proxy | [services/proxy/README.md](services/proxy/README.md) |
-| Python management API | [services/api/README.md](services/api/README.md) |
-| Python memory service | [services/memory/README.md](services/memory/README.md) |
-| Context assembly | [services/context/README.md](services/context/README.md) |
-| Embedder | [services/embedder/README.md](services/embedder/README.md) |
-| MCP memory server | [services/mcp-memory/README.md](services/mcp-memory/README.md) |
-| Celery workers | [services/worker/README.md](services/worker/README.md) |
-| Canonical operator Console | [services/console/README.md](services/console/README.md) |
-| Shared packages and protobuf | [packages/README.md](packages/README.md), [packages/proto/README.md](packages/proto/README.md) |
-| Local infrastructure | [infra/README.md](infra/README.md) |
+| **Organization** | The tenant boundary. Every row, cache key, and event carries its `org_id`. |
+| **Agent** | A named principal with credentials, permissions, and a memory scope. |
+| **Session** | A conversation or run context that groups turns and traces. |
+| **Memory** | A governed record with provenance, confidence, lifecycle state, and optional PII redaction. |
+| **Directive** | Standing context injected on every request, versioned separately from memories. |
+| **Evidence** | Trace, capture, redaction, and publication facts attached to a request. |
 
-## Engineering and contribution docs
+## Services
+
+| Service | Runtime | Status |
+| --- | --- | --- |
+| [`proxy/`](services/proxy/README.md) | Go | Shipped locally; hosted SLO evidence open |
+| [`auth/`](services/auth/README.md) | Go | Shipped locally; production key management gated |
+| [`memory/`](services/memory/README.md) | Python / FastAPI | Shipped locally |
+| [`context/`](services/context/README.md) | Python / gRPC | Provisional; trusted-boundary caller limitation is explicit |
+| [`embedder/`](services/embedder/README.md) | Python | Shipped or experimental by profile |
+| [`api/`](services/api/README.md) | Python / FastAPI | Mounted and tested; operator surfaces provisional |
+| [`worker/`](services/worker/README.md) | Python / Celery | Mixed; some task families are explicit no-ops |
+| [`mcp-memory/`](services/mcp-memory/README.md) | Python | Shipped/partial; logging-only audit by default |
+| [`mcp-operator/`](services/mcp-operator/README.md) | Python | Shipped locally, default-off |
+| [`relay/`](services/relay/README.md) | Go | Implemented locally, default-off; no production sink |
+| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 3 of 10 core surfaces have a live read path |
+| [`dashboard/`](services/dashboard/README.md) | Static SPA | Compatibility shell only; not the canonical product |
+
+The full inventory, shared packages, and local infrastructure are in [`services/README.md`](services/README.md),
+[`packages/README.md`](packages/README.md), and [`infra/README.md`](infra/README.md).
+
+## Console
+
+The Console is the operations plane for the memory/context lifecycle: Overview, Agents, Sessions, Memories, Evidence,
+Directives, Policies, Explore, Platform, and Settings. Incidents, drift, analytics, budgets, providers, MCP tools, and
+access are an explicit platform tier behind a collapsed disclosure (ADR-0089).
+
+A `Live` surface means its read path is connected and fails closed; it is not an acceptance claim. Every Console row
+remains provisional in the status ledger. See [`services/console/README.md`](services/console/README.md).
+
+## Documentation
 
 - [Architecture](engineering/ARCHITECTURE.md)
+- [Development guide](engineering/DEVELOPMENT_GUIDE.md)
 - [API documentation](engineering/API_DOCUMENTATION.md)
 - [Environment variables](engineering/ENVIRONMENT_VARIABLES.md)
-- [Security](engineering/SECURITY.md)
 - [Testing strategy](engineering/TESTING_STRATEGY.md)
+- [Architecture decision records](engineering/adr/index.md)
+- [Security](engineering/SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
-All status claims must distinguish **implemented**, **mounted-but-provisional**, **specified-not-implemented**, and **deferred**. Do not infer hosted readiness from local routes, fixtures, schemas, or design documents.
+## Development
+
+```bash
+make check                  # fast repository gate
+make test-memory            # Python memory unit tests
+make test-worker            # Python worker unit tests
+make lint-go                # Go lint for auth, proxy, and packages
+pnpm --filter @ibex/console test
+pnpm --filter @ibex/console typecheck
+pnpm --filter @ibex/console lint
+pnpm site:build && pnpm site:check
+```
+
+The full local matrix, including integration tests with PostgreSQL, Redis, and ClickHouse, is in
+[`engineering/agent-playbook.md`](engineering/agent-playbook.md) §6 and
+[`engineering/DEVELOPMENT_GUIDE.md`](engineering/DEVELOPMENT_GUIDE.md) §4.4.
+
+## Security and tenancy
+
+- Tenant isolation is defense in depth: PostgreSQL RLS plus explicit `org_id` filtering on every query. Redis keys are
+  namespaced by `org_id`; ClickHouse queries require an explicit `org_id` and refuse to run without one.
+- Cross-tenant reads return `404`, not `403`, to avoid existence leaks.
+- Secrets never reach logs, traces, browser configuration, or fixture data.
+- Memory content is untrusted input: it is quarantined, delimited as data, and never treated as instructions.
+- Report vulnerabilities through the private process in [`engineering/SECURITY.md`](engineering/SECURITY.md), not a
+  public issue.
+
+## Status and evidence
+
+IBEX distinguishes **shipped**, **mounted-but-provisional**, **specified-not-implemented**, and **deferred**. Local
+routes, schemas, fixtures, and design documents are not deployment evidence.
+
+The authoritative runtime claim is the [status ledger](https://ibexharness.com/docs/architecture/status-and-evidence).
+Do not infer hosted readiness, measured SLOs, HA, or restore evidence from this README.
+
+## Contributing
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md). Every commit needs a DCO sign-off
+(`git commit -s`), and every pull request must link a tracking issue. Conventional Commits are enforced by CI.
+
+## License
+
+[MIT](LICENSE)
