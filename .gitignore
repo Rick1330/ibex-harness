@@ -94,3 +94,14 @@ services/console/CLAUDE.md
 
 # Local tool scratch
 .zcode/
+.codacy/
+
+# Local agent and loop state (not repository content)
+LOOP.md
+STATE.md
+loop-budget.md
+loop-constraints.md
+loop-run-log.md
+safety.md
+gate.yaml
+opencode.json

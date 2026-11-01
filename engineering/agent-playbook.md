@@ -5,42 +5,23 @@
 Binding operating rules for AI agents (ECC agents, loop agents, and ad-hoc sessions) working in this repository.
 `AGENTS.md` is the project constitution; this file adds the day-to-day execution rules. If they conflict, `AGENTS.md` wins.
 
-Loaded by OpenCode through `instructions` in `opencode.json`.
+Loaded by agent clients that support repository instructions: `AGENTS.md`, `CLAUDE.md`, Cursor rules, and Copilot
+instructions all point here for the day-to-day rules.
 
 ---
 
 ## 1. Model policy
 
-Use **only** DeepSeek V4.1 Flash. Do not select another model, and do not "downgrade to save tokens".
-
-| Tier | Model selector | Used for |
-|---|---|---|
-| Default | `opencode/deepseek-v4.1-flash-free` | The orchestrator (`dr-rick`), triage, doc updates, and documentation lookup |
-| High | `opencode/deepseek-v4.1-flash-free#high` | Substantial implementation and structured review: TDD, build fixes, E2E, refactors, language reviewers, `implementer` |
-| Max | `opencode/deepseek-v4.1-flash-free#max` | Genuine reasoning: `planner`, `architect`, `security-reviewer`, `verifier` |
-
-**Do not put `max` on the orchestrator.** `dr-rick` runs at the default tier and delegates reasoning-heavy work to the
-four max-tier specialists. `max` and `high` consume the quota quickly; use them only for the agents above, and only
-when that agent is actually invoked.
-
-**Free first, paid on exhaustion.** Every session starts on the free model. When the free quota is spent, the
-`model-rollover` plugin switches the session to the paid model (`opencode-go/deepseek-v4.1-flash`) with the same
-thinking variant and retries. The rollover is logged to `~/.local/share/opencode/model-rollover.log`.
-
-The rollover happens at the retry boundary and is best-effort. If a run still fails with a quota error after rollover,
-switch manually with `/models` rather than retrying the free model.
-
-Agents must not set their own model outside this table. A subagent inherits its configured model; do not override it
-per task.
+Model and reasoning level are configured by the operator in the agent client. Agents must not override the configured
+model, request a different reasoning tier, or switch models to save tokens. A subagent inherits its configured model;
+do not override it per task. If the configured provider is unavailable, stop and report it instead of switching
+silently.
 
 ---
 
 ## 2. Which agent for which job
 
-ECC and loop engineering are complementary, not competing:
-
-- **ECC** is craft: specialized reviewers, TDD guidance, build-fix loops, documentation, and skills.
-- **Loop engineering** is cadence: scheduled triage, durable state, budgets, gates, and escalation.
+Agents are split by job:
 
 | Job | Use |
 |---|---|
@@ -53,24 +34,21 @@ ECC and loop engineering are complementary, not competing:
 | Write or fix E2E tests | `e2e-runner` |
 | Remove dead code | `refactor-cleaner` |
 | Update docs/codemaps | `doc-updater` |
-| Gate a loop-produced change (L2+) | `verifier` agent + `loop-verifier` skill |
-| Daily triage, state, budget | `loop-triage` agent + `loop-*` skills |
+| Gate an automated or delegated change | `verifier` agent |
 
 **Division of labour that must not blur:**
 
 - `code-reviewer` reviews a change for craft quality *before* a PR.
-- `verifier` decides APPROVE/REJECT for a *loop-produced* change; it never edits and never approves on a promise.
-- `loop-triage` is L1 report-only: it may write only `STATE.md` and `loop-run-log.md`. It never pushes, never edits code.
-- No loop at any level may push, merge, or open a PR. Those are human actions.
+- `verifier` decides APPROVE/REJECT for an automated or delegated change; it never edits and never approves on a promise.
+- No unattended automation may push, merge, or open a PR. Those are human actions.
 
-### 2.1 Orchestration — Dr. Rick
+### 2.1 Orchestration
 
-`dr-rick` is the default primary agent and the orchestrator. It classifies each task into RESEARCH, PLAN, IMPLEMENT,
-REVIEW, VERIFY, or TRIAGE, then routes to the agents above. It also owns the resource policy: heavy local scanners are
-off unless the review stage needs them.
+The primary agent classifies each task into RESEARCH, PLAN, IMPLEMENT, REVIEW, VERIFY, or TRIAGE, then routes to the
+specialists above. It also owns the resource policy: heavy local scanners are off unless the review stage needs them.
 
-Do not duplicate its routing manually. If you are unsure which specialist to use, start with `dr-rick` and let it
-delegate.
+Do not duplicate its routing manually. If you are unsure which specialist to use, start with the primary agent and let
+it delegate.
 
 ---
 
@@ -81,7 +59,7 @@ Before implementing anything that is not a trivial fix:
 1. Read the relevant `AGENTS.md` sections, the ADRs under `engineering/adr/`, and the status ledger.
 2. Use the `planner` (or `architect`) subagent, or `/plan`, to produce a written plan.
 3. For unfamiliar external APIs or tools, verify against current documentation instead of memory; record the source.
-4. Put the plan in the PR body (or `STATE.md` for loop work) so review can check intent against outcome.
+4. Put the plan in the PR body so review can check intent against outcome.
 
 If requirements are ambiguous, ask a precise question. Do not guess silently and do not implement two speculative
 variants.
@@ -329,13 +307,14 @@ Hard rules:
 
 ---
 
-## 9. Loop engineering boundaries
+## 9. Automation boundaries
 
-- **L1 (current)** is report-only. `loop-triage` writes `STATE.md` and `loop-run-log.md` and nothing else.
-- **L2** requires one scoped fix per item in an isolated `git worktree`, then a `verifier` verdict, then a human PR.
-- **L3** requires proven L1/L2 runs, a proven `gate.yaml` drill, and a human-approved budget.
-- The kill switch is `loop-pause-all` in `STATE.md`.
-- Loop budget and gates live in `loop-budget.md` and `gate.yaml`; agents never raise their own caps.
+- Agents may read, plan, edit, and run local checks in the working tree.
+- An unattended or scheduled agent never pushes, merges, or opens a pull request. A human owns those actions.
+- A human-directed session may push or open a pull request only when the human explicitly asks for it, and only after
+  the local gates pass.
+- Agents never raise their own budget, disable a gate, or change branch protection.
+- The operator maintains any automation kill switch outside this repository; it is not repository content.
 
 ---
 
