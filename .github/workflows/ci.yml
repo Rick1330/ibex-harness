@@ -2117,7 +2117,7 @@ jobs:
   osv-scan:
     name: osv-scan
     needs: changes
-    if: github.event_name != 'schedule' && needs.changes.outputs.run_security == 'true'
+    if: needs.changes.outputs.run_security == 'true'
     permissions:
       security-events: write
       contents: read
