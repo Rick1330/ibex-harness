@@ -10,6 +10,9 @@ paths = [
   '''site/content/docs/.*\.md$''',
   '''prompts/''',
   '''services/proxy/internal/auth/validator_test\.go''',
+  # The local bundle smoke passes the documented dev-seed PAT variable to curl
+  # and refuses production. It contains no committed secret value.
+  '''infra/scripts/bundle-smoke\.sh''',
 ]
 regexes = [
   '''key: "agent_billing"''',
