@@ -33,6 +33,14 @@ job_block() {
   ' "$CI"
 }
 
+file_block() {
+  awk -v key="  $2:" '
+    $0 == key { found = 1 }
+    found && /^  [a-z0-9_-]+:$/ && $0 != key { exit }
+    found { print }
+  ' "$1"
+}
+
 # --- schedule ownership ----------------------------------------------------
 if grep -Fq 'cron: "0 3 * * *"' "$CI"; then
   pass "ci.yml owns the daily 03:00 UTC schedule"
@@ -124,6 +132,40 @@ for path in \
     bad "Docker Publish PR filter is missing $path"
   fi
 done
+
+if (( fail != 0 )); then
+  echo "CI tiering policy tests failed" >&2
+  exit 1
+fi
+
+# --- tag release path ------------------------------------------------------
+# release-docker.yml calls docker-publish.yml on a tag push. A reusable
+# workflow inherits the caller's event, so resolve-tag must accept `push`;
+# otherwise every publish job is skipped and the manifest has no digests.
+resolve_if="$(file_block "$DOCKER" resolve-tag)"
+if grep -Fq "github.event_name == 'push' && github.ref_type == 'tag'" <<<"$resolve_if"; then
+  pass "docker-publish resolve-tag accepts a tag push"
+else
+  bad "docker-publish resolve-tag does not accept a tag push"
+fi
+if grep -Fq 'push)' <<<"$resolve_if" && grep -Fq 'GITHUB_REF_NAME' <<<"$resolve_if"; then
+  pass "docker-publish resolves the tag for push events"
+else
+  bad "docker-publish has no push branch in the tag resolver"
+fi
+
+release_docker="$ROOT/.github/workflows/release-docker.yml"
+manifest_block="$(file_block "$release_docker" release-manifest)"
+if grep -Fq 'needs: tagged-docker-publish' <<<"$manifest_block"; then
+  pass "release-manifest runs after tagged-docker-publish"
+else
+  bad "release-manifest does not depend on tagged-docker-publish"
+fi
+if grep -Fq 'release-manifest.json' "$release_docker"; then
+  pass "tagged release uploads the manifest"
+else
+  bad "tagged release does not upload the manifest"
+fi
 
 if (( fail != 0 )); then
   echo "CI tiering policy tests failed" >&2

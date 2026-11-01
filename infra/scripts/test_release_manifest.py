@@ -21,6 +21,8 @@ SPEC.loader.exec_module(release_manifest)
 
 DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
+SCHEMA_PATH = Path(__file__).resolve().parents[2] / "infra" / "release-manifest.schema.json"
 
 
 class ReleaseManifestTest(unittest.TestCase):
@@ -56,7 +58,7 @@ class ReleaseManifestTest(unittest.TestCase):
                 root=self.root,
                 tag="v1.2.3",
                 repository="Rick1330/ibex-harness",
-                commit="abc123",
+                commit=COMMIT,
                 generated_at="2026-11-01T00:00:00Z",
                 digest_map=self.digest_map,
                 services=["auth", "proxy"],
@@ -80,7 +82,7 @@ class ReleaseManifestTest(unittest.TestCase):
                 "--tag",
                 tag,
                 "--commit",
-                "abc123",
+                COMMIT,
                 "--generated-at",
                 "2026-11-01T00:00:00Z",
                 "--digest-map",
@@ -114,8 +116,16 @@ class ReleaseManifestTest(unittest.TestCase):
         self.assertEqual(data["platform_version"], "1.2.3")
         self.assertEqual(
             data["source"],
-            {"repository": "Rick1330/ibex-harness", "commit": "abc123"},
+            {"repository": "Rick1330/ibex-harness", "commit": COMMIT},
         )
+
+    def test_manifest_matches_the_published_schema(self) -> None:
+        import jsonschema
+
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        manifests = [self.build(), json.loads(self.run_cli()[1].read_text())]
+        for manifest in manifests:
+            jsonschema.validate(manifest, schema)
 
     def test_rejects_an_invalid_tag(self) -> None:
         code, _ = self.run_cli(tag="1.2.3")

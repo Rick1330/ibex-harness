@@ -35,7 +35,7 @@ gh release download "$TAG" -p release-manifest.json
 jq . release-manifest.json
 ```
 
-The JSON schema is [`infra/release-manifest.schema.json`](infra/release-manifest.schema.json). The generator is `infra/scripts/release-manifest.py`; `make test-release-manifest` runs its offline tests. A platform tag without a manifest is an incomplete release.
+The JSON schema is [`infra/release-manifest.schema.json`](../infra/release-manifest.schema.json). The generator is `infra/scripts/release-manifest.py`; `make test-release-manifest` runs its offline tests. A platform tag without a manifest is an incomplete release.
 
 ## Release cadence
 
