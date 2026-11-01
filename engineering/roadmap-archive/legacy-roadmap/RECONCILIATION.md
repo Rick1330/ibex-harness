@@ -41,7 +41,7 @@ Current truth remains:
 | --- | --- | --- | --- |
 | 4.5.A.1–C.3 | Fingerprints, drift, regression runner | `not done` | No behavioral-fingerprint migration or runtime. Drift exists only as Console preview fixtures. |
 | 4.5.C.4, D.1–D.4 | Dashboard integration and exit gate | `superseded` | The dashboard shell is retired (ADR-0090), and ADR-0089 keeps drift in the platform tier until a named design partner and owning contract exist. |
-| Exit premise | Proxy p99 <20 ms | `partial` | GAP-004 records the 20 ms target as warm-path local evidence, not a measured hosted p99. |
+| Exit premise | Proxy p99 <20 ms | `partial` | GAP-004 ratifies 20 ms as a **warm-path target**, not measured evidence. The local Go gate compares warm-path means, not p99; no recent passing full-chat p99 run is published. This is not hosted or production p99 evidence. |
 
 ## Phase 5 — Advanced Retrieval & Graph Memory
 

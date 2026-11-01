@@ -691,18 +691,20 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 
 | Environment | Operator UI | API / SSE | Cookie SameSite |
 |-------------|-------------|-----------|-----------------|
-| local | `http://localhost:3000` | `http://localhost:8010` | `Lax` |
+| local | `http://localhost:3000` | `https://127.0.0.1:8443` via a TLS proxy | `Lax` |
 | preview | not claimed | not provisioned | `None`+`Secure` if cross-site |
 | staging | `https://operator.staging.ibexharness.com` (planned) | `https://api.staging.ibexharness.com` (planned; **no Ingress yet**) | `Strict` when same eTLD+1 |
 | production | `https://operator.ibexharness.com` (planned) | `https://api.ibexharness.com` (planned; **no Ingress yet**) | `Strict` + `Secure` + `Domain=.ibexharness.com` |
 
-### Public (safe in browser / Pages build inject)
+The Console has no public browser configuration variables. The BFF rejects a plain-HTTP API origin when a session cookie is present, so local development needs a TLS proxy (or the TLS fixture harness used by the live E2E suite).
+
+### Server-only Console BFF configuration
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `IBEX_OPERATOR_API_ORIGIN` | Yes | (none) | Server-only API origin used by the Console BFF; never exposed to the browser |
 | `IBEX_OPERATOR_SESSION_COOKIE_NAME` | No | `ibex_session` | Access cookie the BFF forwards to the API |
-| `CONSOLE_READ_ONLY` | No | unset | Reserved and ignored by the Console; read-only behavior is structural |
+| `CONSOLE_READ_ONLY` | No | unset | Reserved and ignored by the Console; read-only behavior is structural (ADR-0091) |
 
 ### Cookie / CSRF / provisional JWT (set on **`services/api`**, not in the browser bundle)
 

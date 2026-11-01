@@ -765,18 +765,19 @@ This testing strategy is the enforcement mechanism that makes IBEX Harness safe 
 
 ## 16) IBEX Console assurance gates
 
-`services/console` is the only canonical operator product. The commands below are the required command interface for that package:
+`services/console` is the only canonical operator product. The commands below exist in `services/console/package.json`:
 
 ```bash
 pnpm --filter console lint
 pnpm --filter console typecheck
 pnpm --filter console test
-pnpm --filter console test:contract
-pnpm --filter console test:a11y
-pnpm --filter console test:visual
-pnpm --filter console test:e2e:smoke
+pnpm --filter console test:e2e
+pnpm --filter console test:e2e:live
+pnpm --filter console check:surfaces
 pnpm --filter console build
 ```
+
+`test:contract`, `test:a11y`, `test:visual`, and `test:e2e:smoke` are planned gates; they have no package script yet and must not be presented as runnable.
 
 The gates must cover four roles across at least two tenants: login, refresh, revocation and re-authentication; organization switching and server-derived scope; context/overview/platform-health reads; query persistence; permission/step-up states; CSRF/CORS/cookie behavior; and cross-tenant negative cases. Contract checks snapshot OpenAPI, verify generated-client freshness, validate runtime DTOs and SSE envelopes, and exercise cursor/filter semantics without claiming routes that are not mounted.
 
@@ -786,9 +787,9 @@ Browser and quality gates must include keyboard and screen-reader-visible status
 
 Track P, D, and E use an evidence-producing definition of done. Every operator milestone must identify its API/schema contract, tenant and permission matrix, golden fixture, loading/empty/error/partial states, accessibility checks, performance budget, failure behavior, rollback, and report artifact.
 
-### Required dashboard environment
+### Required Console environment
 
-The dashboard suite must run against the chosen server-capable operator topology or a separately deployed SPA/API/SSE origin. A static documentation-site smoke test is not dashboard E2E evidence. CI installs pinned Playwright browsers and provisions deterministic API, Postgres, Redis, ClickHouse, object-storage, and identity fixtures. Do not use contract doubles for PostgreSQL RLS, Redis Lua rate limiting, pgvector queries, or token-revocation propagation; limit doubles to dependencies whose production semantics are not under test (deterministic unit behavior and bounded external-failure scenarios only).
+The Console suite must run against the chosen server-capable operator topology or a separately deployed BFF/API/SSE origin. A static documentation-site smoke test is not Console E2E evidence. CI installs pinned Playwright browsers and provisions deterministic API, Postgres, Redis, ClickHouse, object-storage, and identity fixtures. Do not use contract doubles for PostgreSQL RLS, Redis Lua rate limiting, pgvector queries, or token-revocation propagation; limit doubles to dependencies whose production semantics are not under test (deterministic unit behavior and bounded external-failure scenarios only).
 
 ### Required journey matrix
 

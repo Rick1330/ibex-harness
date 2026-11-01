@@ -102,7 +102,7 @@ The memory service does:
 | Framework | Why Not Chosen |
 |-----------|----------------|
 | **Flask** | Synchronous by default. Most API operations are IO-bound (waiting for database, waiting for vector search, waiting for embedding API). Flask's sync model would require manual async workarounds or thread pools. |
-| **Django** | Carries enormous ORM and admin machinery irrelevant to this project. Startup time: ~2 seconds (vs <500ms for FastAPI). Django ORM doesn't support async well. Admin interface not needed (we have custom dashboard). |
+| **Django** | Carries enormous ORM and admin machinery irrelevant to this project. Startup time: ~2 seconds (vs <500ms for FastAPI). Django ORM doesn't support async well. Admin interface not needed (we have a custom operator console). |
 | **Sanic/Quart** | Smaller ecosystems, fewer production examples. FastAPI's automatic OpenAPI generation eliminates documentation maintenance work. Pydantic v2 integration is tighter in FastAPI. |
 
 **FastAPI Advantages Leveraged:**
@@ -111,7 +111,7 @@ The memory service does:
 - Automatic OpenAPI/Swagger documentation from type annotations
 - Pydantic v2 validation (5-10x faster than v1, compiled with Rust internals)
 - Dependency injection system (clean testing, request lifecycle management)
-- WebSocket support (for future real-time dashboard features)
+- WebSocket support (for future real-time Console features)
 
 **Runtime Choice: Uvicorn + Gunicorn**
 

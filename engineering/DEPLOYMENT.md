@@ -32,7 +32,7 @@ A deployment strategy must guarantee:
 
 The runtime owner must approve either (a) a versioned console static artifact/workload with an explicitly owned BFF/API/SSE topology, or (b) a time-boxed transition runtime. The owner must also define secure cookies, CSRF, exact credentialed CORS when cross-origin, security headers, authenticated SSE drain, and default `Cache-Control: no-store` for personalized/RSC/API/export responses. The API owns context, overview, platform-health, and events truth; console owns presentation and server-only DAL/BFF composition, not authorization or evidence.
 
-Staging promotion is an authenticated browser promotion gate for the IBEX Console artifact. It must include OpenAPI snapshot/generated-client/runtime validation, four-role/two-tenant contract and browser checks, accessibility, visual, hostile-content, cache, SSE, and performance gates, plus immutable artifact and rollback evidence. No public-docs smoke test is equivalent. Retire the compatibility shell only after parity, promotion, rollback, and removal-reference gates are recorded.
+Staging promotion is an authenticated browser promotion gate for the IBEX Console artifact. It must include OpenAPI snapshot/generated-client/runtime validation, four-role/two-tenant contract and browser checks, accessibility, visual, hostile-content, cache, SSE, and performance gates, plus immutable artifact and rollback evidence. No public-docs smoke test is equivalent.
 
 ---
 

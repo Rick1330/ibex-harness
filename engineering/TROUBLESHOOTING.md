@@ -23,7 +23,7 @@ It prioritizes:
 - context ↔ memory/redis/postgres/embedder
 - services ↔ postgres/redis/clickhouse/minio
 - workers ↔ queues/dependencies
-- dashboard ↔ API/auth/session cookies
+- Console BFF ↔ API/auth/session cookies
 
 ---
 
@@ -96,7 +96,7 @@ Fix:
    - `.env.example` (root)
    - `services/<service>/.env.example`
    - `engineering/ENVIRONMENT_VARIABLES.md`
-3. Ensure you didn’t put secrets into `NEXT_PUBLIC_*` (dashboard).
+3. Ensure you did not put secrets into any public browser variable; the Console keeps credentials in the server-only BFF.
 
 Best practice:
 
@@ -223,7 +223,7 @@ If Lua scripts are missing:
 
 Symptoms:
 
-- traces not visible in dashboard
+- traces not visible in Console
 - billing events missing
 - ClickHouse connection failures
 
@@ -262,7 +262,7 @@ Root causes:
 Symptoms:
 
 - proxy or API returns 401
-- dashboard shows login loop
+- Console shows login loop
 
 Checklist:
 
@@ -614,7 +614,7 @@ Fix:
 
 Symptoms:
 
-- dashboard keeps redirecting to login
+- Console keeps redirecting to login
 - refresh token rotation broken
 
 Checklist:
@@ -720,7 +720,7 @@ Escalate if:
 
 ### P3 Non-blocking issues
 
-- minor dashboard UI issues
+- minor Console UI issues
 - low-severity drift alert noise
 - analytics delays during ClickHouse issues
 
