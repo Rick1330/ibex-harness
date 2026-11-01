@@ -18,7 +18,9 @@ regexes = [
   '''pol-publish-2026-10-27-03''',
   '''agent_billing''',
   '''preview-idempotency-01''',
-  # The pre-fix bundle smoke passed the documented dev-seed PAT variable in a
-  # literal header. Match only that variable, not the rest of the file.
-  '''Authorization: Bearer \$PAT''',
+]
+commits = [
+  # The pre-fix bundle smoke at this immutable commit passed the documented
+  # dev-seed PAT variable in a literal header. Later commits use --oauth2-bearer.
+  "99a147fa47591c33e4169634c61aab4214b97bb4",
 ]
