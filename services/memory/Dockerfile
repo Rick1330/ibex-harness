@@ -15,7 +15,8 @@ FROM python@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_SYSTEM_PYTHON=0 \
-    UV_NO_BUILD=1
+    UV_NO_BUILD=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -55,7 +56,7 @@ RUN python -m pip uninstall --yes setuptools wheel || true \
 
 WORKDIR /app
 
-COPY --from=deps /app/services/memory/.venv ./.venv
+COPY --from=deps /app/.venv ./.venv
 
 COPY services/memory/app ./app
 
