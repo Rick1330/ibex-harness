@@ -18,7 +18,7 @@ LOG_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
 LOG="$LOG_DIR/memory-guard.log"
 
 mkdir -p "$LOG_DIR"
-if [ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 500000 ]; then
+if [[ -f "$LOG" ]] && [[ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 500000 ]]; then
   mv "$LOG" "$LOG.1"
 fi
 
@@ -28,7 +28,7 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 log() { printf '%s %s\n' "$ts" "$*" >>"$LOG"; }
 
-if [ "$used_pct" -lt "$THRESHOLD" ]; then
+if [[ "$used_pct" -lt "$THRESHOLD" ]]; then
   exit 0
 fi
 
@@ -36,7 +36,7 @@ log "RAM ${used_pct}% >= ${THRESHOLD}% — starting cooldown"
 acted=0
 
 run() {
-  if [ "$DRY_RUN" = "1" ]; then
+  if [[ "$DRY_RUN" = "1" ]]; then
     log "dry-run: $*"
   else
     log "exec: $*"
@@ -49,7 +49,7 @@ run() {
 for runtime in podman docker; do
   if command -v "$runtime" >/dev/null 2>&1 && "$runtime" info >/dev/null 2>&1; then
     mapfile -t containers < <("$runtime" ps -q --filter "ancestor=sonarsource/sonarqube-mcp" 2>/dev/null || true)
-    if [ "${#containers[@]}" -gt 0 ]; then
+    if [[ "${#containers[@]}" -gt 0 ]]; then
       run "$runtime" stop "${containers[@]}"
       acted=1
     fi
@@ -63,6 +63,7 @@ if systemctl --user is-active --quiet docker-desktop 2>/dev/null; then
 fi
 
 # 3. Media apps on a small, explicit allowlist. Never a terminal, editor, or the agent.
+# shellcheck disable=SC2043  # the allowlist is intentionally single-entry and may grow
 for app in vlc; do
   if pgrep -x "$app" >/dev/null 2>&1; then
     run pkill -x "$app"
@@ -70,7 +71,7 @@ for app in vlc; do
   fi
 done
 
-if [ "$acted" = "1" ]; then
+if [[ "$acted" = "1" ]]; then
   log "cooldown complete (RAM was ${used_pct}%)"
   exit 2
 fi
