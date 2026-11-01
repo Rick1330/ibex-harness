@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALLOWED_TOP='^(site|engineering|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.github|\.git|_report|node_modules)$'
+# Repository layout policy. `new findings/` and `test-results/` are local,
+# gitignored scratch and are skipped below so the guard reflects the tracked tree.
+ALLOWED_TOP='^(site|engineering|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.claude|\.opencode|\.github|\.git|_report|node_modules)$'
 ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
+# Loop engineering keeps its state and binding rules at the repo root by design
+# (see LOOP.md); these are the only root docs outside ROOT_DOCS.
+ROOT_LOOP_DOCS='^(LOOP\.md|STATE\.md|loop-budget\.md|loop-constraints\.md|loop-run-log\.md|safety\.md)$'
 
 fail=0
 
 shopt -s nullglob
 for entry in *; do
+  if git check-ignore -q -- "$entry"; then
+    continue
+  fi
   if [[ -d "$entry" ]]; then
     if ! [[ "$entry" =~ $ALLOWED_TOP ]]; then
       echo "Disallowed top-level directory: $entry"
@@ -15,11 +23,13 @@ for entry in *; do
     fi
   elif [[ -f "$entry" ]]; then
     case "$entry" in
-      .editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|sonar-project.properties|.sonarcloud.properties|Makefile|go.mod|go.sum|osv-scanner.toml|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CLAUDE.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|CHANGELOG.md|README.md|node_modules|version-release.config.json|.version-release-manifest.json) ;;
+      .editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|sonar-project.properties|.sonarcloud.properties|Makefile|go.mod|go.sum|osv-scanner.toml|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CLAUDE.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|CHANGELOG.md|README.md|node_modules|opencode.json|gate.yaml|version-release.config.json|.version-release-manifest.json) ;;
       *)
-        if [[ "$entry" =~ \.md$ ]] && ! [[ "$entry" =~ $ROOT_DOCS ]]; then
-          echo "Markdown at repo root not allowed: $entry (use engineering/)"
-          fail=1
+        if [[ "$entry" =~ \.md$ ]]; then
+          if ! [[ "$entry" =~ $ROOT_DOCS ]] && ! [[ "$entry" =~ $ROOT_LOOP_DOCS ]]; then
+            echo "Markdown at repo root not allowed: $entry (use engineering/)"
+            fail=1
+          fi
         else
           echo "Unexpected root file: $entry"
           fail=1
@@ -31,10 +41,13 @@ done
 
 while IFS= read -r f; do
   [[ "$f" == *.md ]] || continue
-  if [[ "$f" =~ ^(services|packages|infra|benchmarks)/README\.md$ ]] || [[ "$f" =~ ^(services|packages|infra|benchmarks)/.+/README\.md$ ]]; then
+  if [[ "$f" =~ ^(services|packages|infra|benchmarks)/README\.md$ ]] || [[ "$f" =~ ^(services|packages|infra|benchmarks)/.+/README\.md$ ]] || [[ "$f" =~ ^(services|packages|infra|benchmarks)/.+/NOTICE\.md$ ]]; then
     continue
   fi
-  if [[ "$f" == .github/* ]]; then
+  if [[ "$f" == .github/* || "$f" == .claude/* || "$f" == .opencode/* ]]; then
+    continue
+  fi
+  if [[ "$f" =~ $ROOT_LOOP_DOCS ]]; then
     continue
   fi
   if [[ "$f" != site/* && "$f" != engineering/* && "$f" != benchmarks/* && "$f" != AGENTS.md && "$f" != CLAUDE.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md && "$f" != CHANGELOG.md ]]; then
