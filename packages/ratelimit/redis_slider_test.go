@@ -84,6 +84,13 @@ func TestRedisSlider_ConcurrentBurst(t *testing.T) {
 
 func newTestSlider(t testing.TB, cfg RedisSliderConfig) Limiter {
 	t.Helper()
+	if cfg.Now == nil {
+		// A fixed clock keeps every slider test inside one calendar minute.
+		// The previous wall clock made the at/over-limit cases depend on where
+		// the test started relative to a minute boundary.
+		fixed := time.Date(2026, 11, 1, 12, 0, 10, 0, time.UTC)
+		cfg.Now = func() time.Time { return fixed }
+	}
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })

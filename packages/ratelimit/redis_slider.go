@@ -13,6 +13,8 @@ import (
 type RedisSliderConfig struct {
 	DefaultRPM   int64
 	OrgOverrides map[uuid.UUID]int64
+	// Now is optional. Tests inject a fixed clock; production leaves it nil.
+	Now func() time.Time
 }
 
 // RedisSlider implements a calendar-minute sliding window using Redis.
@@ -41,7 +43,11 @@ func (r *RedisSlider) Check(ctx context.Context, orgID, _ uuid.UUID) (Result, er
 		limit = 60
 	}
 
-	window := currentMinuteWindow(time.Now().UTC())
+	now := time.Now().UTC()
+	if r.cfg.Now != nil {
+		now = r.cfg.Now().UTC()
+	}
+	window := currentMinuteWindow(now)
 	key := fmt.Sprintf("ratelimit:%s:rpm:%d", orgID.String(), window.unixMinute)
 
 	count, err := incrWithExpire(ctx, r.client, key)

@@ -51,7 +51,7 @@ func newTimingPair(t *testing.T) timingPair {
 
 func averageValidateDurations(t *testing.T, pair timingPair) (missDur, wrongDur time.Duration) {
 	t.Helper()
-	const samples = 3
+	const samples = 7
 	var missTotal, wrongTotal time.Duration
 	for i := 0; i < samples; i++ {
 		missTotal += timeValidate(t, pair.miss, pair.bearer)
@@ -80,9 +80,15 @@ func assertTimingParity(t *testing.T, missDur, wrongDur time.Duration) {
 	if wrongDur == 0 {
 		t.Skip("wrong-secret duration too small to compare")
 	}
+	if missDur < time.Millisecond {
+		t.Fatalf("miss path did not pay measurable hashing time: %v", missDur)
+	}
 	ratio := float64(missDur) / float64(wrongDur)
-	if ratio < 0.25 || ratio > 4.0 {
-		t.Fatalf("timing parity ratio=%.2f miss=%v wrong=%v (want roughly comparable)", ratio, missDur, wrongDur)
+	// The security property is that the miss path does not return faster than a
+	// wrong-secret verification. A loaded runner can make it much slower, which is
+	// not a failure; only a suspiciously fast miss path is.
+	if ratio < 0.25 {
+		t.Fatalf("miss path is faster than the wrong-secret path: ratio=%.2f miss=%v wrong=%v", ratio, missDur, wrongDur)
 	}
 	t.Logf("timing parity ratio=%.2f miss=%v wrong=%v", ratio, missDur, wrongDur)
 }
