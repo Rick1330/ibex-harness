@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
-import { Check, Copy } from "@lucide/vue"
+import { Check, Copy, X } from "@lucide/vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
 import AgentStatusPill from "../AgentStatusPill.vue"
@@ -9,15 +9,19 @@ import type { PublicOperatorAgent } from "~~/shared/operator/public"
 
 const props = defineProps<{ agent: PublicOperatorAgent; returnTo: string }>()
 
-const copied = ref(false)
+const copyState = ref<"idle" | "copied" | "failed">("idle")
 
 async function copyId(): Promise<void> {
   if (!import.meta.client) return
-  await navigator.clipboard.writeText(props.agent.id)
-  copied.value = true
+  try {
+    await navigator.clipboard.writeText(props.agent.id)
+    copyState.value = "copied"
+  } catch {
+    copyState.value = "failed"
+  }
   setTimeout(() => {
-    copied.value = false
-  }, 1500)
+    copyState.value = "idle"
+  }, 2000)
 }
 
 function providerLabel(): string {
@@ -89,12 +93,19 @@ function providerLabel(): string {
               <button
                 type="button"
                 class="inline-flex shrink-0 items-center gap-1 text-[0.6875rem] text-fg-3 hover:text-fg-1"
-                :aria-label="copied ? 'Agent ID copied' : 'Copy agent ID'"
+                :aria-label="
+                  copyState === 'copied'
+                    ? 'Agent ID copied'
+                    : copyState === 'failed'
+                      ? 'Copy failed; select the agent ID and copy it manually'
+                      : 'Copy agent ID'
+                "
                 @click="copyId"
               >
-                <Check v-if="copied" :size="12" :stroke-width="2" aria-hidden="true" />
+                <Check v-if="copyState === 'copied'" :size="12" :stroke-width="2" aria-hidden="true" />
+                <X v-else-if="copyState === 'failed'" :size="12" :stroke-width="2" aria-hidden="true" />
                 <Copy v-else :size="12" :stroke-width="2" aria-hidden="true" />
-                {{ copied ? "Copied" : "Copy" }}
+                {{ copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy" }}
               </button>
             </dd>
           </div>

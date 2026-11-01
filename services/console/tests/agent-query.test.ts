@@ -47,6 +47,18 @@ describe("live agent query codec", () => {
     })
   })
 
+  it("reads repeated tag parameters as well as the comma form", () => {
+    const repeated = new URLSearchParams()
+    repeated.append("tags", "prod")
+    repeated.append("tags", "billing")
+    expect(parseLiveAgentQuery(repeated).tags).toEqual(["prod", "billing"])
+    expect(parseLiveAgentQuery({ tags: ["prod,billing", "support"] }).tags).toEqual([
+      "prod",
+      "billing",
+      "support",
+    ])
+  })
+
   it("serializes repeated tags for the API and a readable URL for the browser", () => {
     expect(serializeLiveAgentQuery(full).toString()).toBe(
       "limit=25&search=support&status=paused&cursor=cursor-1&tags=prod&tags=billing",

@@ -32,12 +32,16 @@ const failureDetail = computed(() =>
 const hasFilters = computed(() =>
   Boolean(props.state.search || props.state.status || props.state.tags.length),
 )
+const emptyBecauseCursor = computed(
+  () => agents.value.length === 0 && Boolean(props.state.cursor) && !hasFilters.value,
+)
 const activeCount = computed(() => agents.value.filter((agent) => agent.status === "active").length)
 const verdict = computed(() => {
   if (loading.value) return "Reading the agent inventory…"
   if (authIssue.value) return "The operator session cannot read this organization"
   if (error.value) return "Agent inventory unavailable"
   if (agents.value.length === 0) {
+    if (emptyBecauseCursor.value) return "No agents on this page"
     return hasFilters.value ? "No agents match these filters" : "No agents in this organization yet"
   }
   return `${agents.value.length} agents on this page · ${activeCount.value} active`
@@ -169,7 +173,7 @@ function refresh(): void {
             :value="searchDraft"
             type="search"
             class="ix-input w-full pl-8"
-            placeholder="Name, slug, or description"
+            placeholder="Name or slug"
             autocomplete="off"
             @input="onSearchInput"
           >
@@ -244,14 +248,30 @@ function refresh(): void {
       v-else-if="!loading && agents.length === 0"
       tone="unknown"
       eyebrow="Live operator read"
-      :title="hasFilters ? 'No agents match these filters' : 'No agents in this organization yet'"
+      :title="
+        emptyBecauseCursor
+          ? 'No agents on this page'
+          : hasFilters
+            ? 'No agents match these filters'
+            : 'No agents in this organization yet'
+      "
       :body="
-        hasFilters
-          ? 'Clear or change the filters to widen the search. The API returned no rows for this query.'
-          : 'Agents created through the API appear here once the tenant has at least one.'
+        emptyBecauseCursor
+          ? 'This cursor page is empty, but earlier pages may still contain agents.'
+          : hasFilters
+            ? 'Clear or change the filters to widen the search. The API returned no rows for this query.'
+            : 'Agents created through the API appear here once the tenant has at least one.'
       "
     >
       <template #actions>
+        <button
+          v-if="state.cursor"
+          type="button"
+          class="ix-button-secondary"
+          @click="emit('update', { ...state, cursor: null })"
+        >
+          First page
+        </button>
         <button v-if="hasFilters" type="button" class="ix-button-secondary" @click="clearFilters">
           Clear filters
         </button>
@@ -349,7 +369,7 @@ function refresh(): void {
     </div>
 
     <nav
-      v-if="!error && agents.length > 0"
+      v-if="!error && (agents.length > 0 || state.cursor)"
       class="flex flex-wrap items-center justify-between gap-2"
       aria-label="Agent pages"
     >

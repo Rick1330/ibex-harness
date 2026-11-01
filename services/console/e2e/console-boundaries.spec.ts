@@ -744,5 +744,10 @@ test("agents fail closed without an operator API and never render fixtures", asy
   await expect(page.getByRole("heading", { name: "Agent inventory unavailable" })).toBeVisible()
   await expect(page.getByText("Support Agent")).toHaveCount(0)
   await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+
+  // An unsupported query is replaced with the supported state when a filter changes.
+  await page.getByRole("searchbox", { name: "Search" }).fill("support")
+  await expect(page).toHaveURL(/search=support/)
+  await expect(page).not.toHaveURL(/demo=0/)
   await expectNoAxeViolations(page)
 })

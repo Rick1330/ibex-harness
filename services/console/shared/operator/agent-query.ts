@@ -37,6 +37,13 @@ function paramGet(params: QueryParams, key: string): string | null {
   return typeof raw === "string" ? raw : null
 }
 
+function paramGetAll(params: QueryParams, key: string): string[] {
+  if (params instanceof URLSearchParams) return params.getAll(key)
+  const raw = params[key]
+  if (Array.isArray(raw)) return raw.filter((value): value is string => typeof value === "string")
+  return typeof raw === "string" ? [raw] : []
+}
+
 function assertAllowedKeys(params: QueryParams): void {
   const keys = params instanceof URLSearchParams ? params.keys() : Object.keys(params)
   for (const key of keys) {
@@ -61,10 +68,9 @@ function parseStatus(raw: string | null): LiveAgentStatus | null {
   throw new LiveAgentQueryError("status must be active, paused, suspended, or archived")
 }
 
-function parseTags(raw: string | null): string[] {
-  if (raw == null || raw === "") return []
-  const tags = raw
-    .split(",")
+function parseTags(values: string[]): string[] {
+  const tags = values
+    .flatMap((value) => value.split(","))
     .map((tag) => tag.trim())
     .filter(Boolean)
   if (tags.length > MAX_TAGS) throw new LiveAgentQueryError("too many tags")
@@ -98,7 +104,7 @@ export function parseLiveAgentQuery(params: QueryParams): LiveAgentQuery {
   return {
     search: parseSearch(paramGet(params, "search")),
     status: parseStatus(paramGet(params, "status")),
-    tags: parseTags(paramGet(params, "tags")),
+    tags: parseTags(paramGetAll(params, "tags")),
     cursor: parseCursor(paramGet(params, "cursor")),
     limit: parseLimit(paramGet(params, "limit")),
   }

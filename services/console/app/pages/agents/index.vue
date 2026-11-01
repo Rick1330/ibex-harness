@@ -39,7 +39,7 @@ watch(
   state,
   (next) => {
     if (!import.meta.client) return
-    if (serialized(next) === serialized(parseLiveAgentQuery(route.query))) {
+    if (serialized(next) === serialized(stateFromQuery(route.query))) {
       returnTo.value = route.fullPath
       return
     }
