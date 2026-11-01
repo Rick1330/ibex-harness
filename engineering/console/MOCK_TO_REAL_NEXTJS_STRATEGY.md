@@ -1,6 +1,6 @@
 # Mock Dashboard → Real IBEX Operator Dashboard
 
-> **Historical record.** This strategy predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) (Console moved to Nuxt 4 + Nitro) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md) (Console scope). Its Next.js architecture is superseded. Current status: `services/console/README.md`.
+> **Historical record.** This strategy predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) (Console moved to Nuxt 4 + Nitro) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md) (Console scope). Its Next.js architecture is superseded. The `services/dashboard` compatibility shell was retired by [ADR-0090](../adr/0090-retire-dashboard-compatibility-shell.md). Current status: `services/console/README.md`.
 
 ## In-depth migration, design-preservation, and quality strategy
 

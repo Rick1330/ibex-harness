@@ -1,7 +1,7 @@
 # IBEX Harness - API Documentation
 
 > **Architecture v2 notice (2026-10-03):** The canonical target architecture, status vocabulary, authority matrix, contract registry, failure semantics, memory lifecycle, evidence model, and implementation gates live in [`engineering/architecture-v2/README.md`](architecture-v2/README.md). This document remains useful for its detailed subject matter, but any conflicting topology, status, SLO, fallback, or production-readiness claim is superseded by architecture-v2 until reconciled through an ADR.
-> **Status boundary:** This page contains a mixture of verified Phase 1 service APIs and historical/specification reference material. Do not treat an endpoint section as proof that a route is mounted. The canonical authenticated UI is `services/console`; `site/` is public documentation; `services/dashboard/` is a temporary compatibility shell.
+> **Status boundary:** This page contains a mixture of verified Phase 1 service APIs and historical/specification reference material. Do not treat an endpoint section as proof that a route is mounted. The canonical authenticated UI is `services/console`; `site/` is public documentation.
 
 ## Implementation status and ownership
 

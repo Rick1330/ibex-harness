@@ -1,6 +1,6 @@
 # IBEX Console (`@ibex/console`)
 
-`services/console` is the canonical operator application. It is a Nuxt 4 server-rendered app with a server-only operator BFF. `services/dashboard` is a temporary compatibility shell and must not become a second Track D product.
+`services/console` is the canonical operator application. It is a Nuxt 4 server-rendered app with a server-only operator BFF. The dashboard compatibility shell was retired by ADR-0090.
 
 The Console is the operations plane for the memory/context lifecycle (ADR-0089): agents, sessions, memories, evidence, directives, policies, trace exploration, platform health, and settings. Incidents, drift, analytics, budgets, providers, MCP tools, and access are a separate **platform tier** and are not part of the default navigation.
 
@@ -102,7 +102,7 @@ The BFF strips `org_id` before returning D1 context and overview payloads. Respo
 | `IBEX_OPERATOR_SESSION_COOKIE_NAME` | Access-session cookie name; defaults to `ibex_session`. |
 | `NUXT_PUBLIC_IBEX_ENV` | Environment label shown in the console chrome. |
 
-The Console exposes no mutation routes. Read-only behavior is structural, not flag-gated: `CONSOLE_READ_ONLY` is reserved and is not consulted by the Nuxt implementation. There is no production preview-data mode; the only fixture substitution is compile-time `import.meta.dev`. No bearer token is available to browser configuration, and the client holds no organization ID authority.
+The Console exposes no mutation routes. Read-only behavior is structural, not flag-gated (ADR-0091): `CONSOLE_READ_ONLY` is reserved and is not consulted by the Nuxt implementation. There is no production preview-data mode; the only fixture substitution is compile-time `import.meta.dev`. No bearer token is available to browser configuration, and the client holds no organization ID authority.
 
 ## Verification
 
