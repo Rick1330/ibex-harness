@@ -9,6 +9,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("release-manifest.py")
@@ -23,6 +24,15 @@ DIGEST_A = "sha256:" + "a" * 64
 DIGEST_B = "sha256:" + "b" * 64
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "infra" / "release-manifest.schema.json"
+
+
+@dataclass(frozen=True)
+class CliCase:
+    tag: str = "v1.2.3"
+    services: str = "auth,proxy"
+    digests: dict[str, str] | None = None
+    map_path: Path | None = None
+    output: Path | None = None
 
 
 class ReleaseManifestTest(unittest.TestCase):
@@ -65,22 +75,19 @@ class ReleaseManifestTest(unittest.TestCase):
             )
         )
 
-    def run_cli(
-        self,
-        *,
-        tag: str = "v1.2.3",
-        services: str = "auth,proxy",
-        digests: dict[str, str] | None = None,
-    ) -> tuple[int, Path]:
-        map_path = self.root / "digests.json"
-        map_path.write_text(json.dumps(self.digest_map if digests is None else digests))
-        output = self.root / "release-manifest.json"
+    def run_cli(self, case: CliCase | None = None) -> tuple[int, Path]:
+        case = case or CliCase()
+        map_path = case.map_path or self.root / "digests.json"
+        map_path.write_text(
+            json.dumps(self.digest_map if case.digests is None else case.digests)
+        )
+        output = case.output or self.root / "release-manifest.json"
         code = release_manifest.main(
             [
                 "--root",
                 str(self.root),
                 "--tag",
-                tag,
+                case.tag,
                 "--commit",
                 COMMIT,
                 "--generated-at",
@@ -88,7 +95,7 @@ class ReleaseManifestTest(unittest.TestCase):
                 "--digest-map",
                 str(map_path),
                 "--services",
-                services,
+                case.services,
                 "--output",
                 str(output),
             ]
@@ -128,21 +135,32 @@ class ReleaseManifestTest(unittest.TestCase):
             jsonschema.validate(manifest, schema)
 
     def test_rejects_an_invalid_tag(self) -> None:
-        code, _ = self.run_cli(tag="1.2.3")
+        code, _ = self.run_cli(CliCase(tag="1.2.3"))
         self.assertEqual(code, 1)
 
     def test_rejects_a_missing_digest(self) -> None:
-        code, _ = self.run_cli(digests={"auth": DIGEST_A})
+        code, _ = self.run_cli(CliCase(digests={"auth": DIGEST_A}))
         self.assertEqual(code, 1)
 
     def test_rejects_a_malformed_digest(self) -> None:
         code, _ = self.run_cli(
-            digests={"auth": "sha256:not-a-digest", "proxy": DIGEST_B}
+            CliCase(digests={"auth": "sha256:not-a-digest", "proxy": DIGEST_B})
         )
         self.assertEqual(code, 1)
 
     def test_rejects_a_missing_service_dockerfile(self) -> None:
-        code, _ = self.run_cli(services="auth,proxy,memory")
+        code, _ = self.run_cli(CliCase(services="auth,proxy,memory"))
+        self.assertEqual(code, 1)
+
+    def test_rejects_an_output_outside_the_root(self) -> None:
+        code, _ = self.run_cli(
+            CliCase(output=Path(tempfile.gettempdir()) / "escape.json")
+        )
+        self.assertEqual(code, 1)
+
+    def test_rejects_a_digest_map_outside_the_root(self) -> None:
+        outside = Path(tempfile.gettempdir()) / "digests-outside.json"
+        code, _ = self.run_cli(CliCase(map_path=outside))
         self.assertEqual(code, 1)
 
 

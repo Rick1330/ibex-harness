@@ -4,6 +4,9 @@
 The manifest ties a platform release to the exact container image digests,
 contract hashes, and migration versions published with it. It is generated
 after the versioned images are pushed and uploaded to the GitHub Release.
+
+Shelling out is limited to fixed argv lists (docker buildx and git). No shell
+is used, and every argument is validated before it reaches the process.
 """
 
 from __future__ import annotations
@@ -13,7 +16,8 @@ import hashlib
 import json
 import os
 import re
-import subprocess
+import shutil
+import subprocess  # nosec B404
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -122,9 +126,17 @@ def _digest_from_map(service: str, digest_map: dict[str, str]) -> str:
     return digest
 
 
+def _executable(name: str) -> str:
+    path = shutil.which(name)
+    if not path:
+        msg = f"{name} is required to resolve release inputs"
+        raise ManifestError(msg)
+    return path
+
+
 def _digest_from_registry(reference: str) -> str:
     command = [
-        "docker",
+        _executable("docker"),
         "buildx",
         "imagetools",
         "inspect",
@@ -133,7 +145,15 @@ def _digest_from_registry(reference: str) -> str:
         "{{json .Manifest.Digest}}",
     ]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        # Fixed argv, no shell. ``reference`` is built from a validated tag,
+        # a validated service name, and the repository constant.
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit
+        result = subprocess.run(  # nosec B603
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     except FileNotFoundError as exc:
         msg = "docker is required to resolve image digests"
         raise ManifestError(msg) from exc
@@ -161,9 +181,12 @@ def _image_digests(spec: ManifestSpec, services: list[str]) -> dict[str, str]:
 
 
 def _git_head(root: Path) -> str:
+    git = shutil.which("git")
+    if not git:
+        return ""
     try:
         return subprocess.check_output(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            [git, "-C", str(root), "rev-parse", "HEAD"],
             text=True,
         ).strip()
     except (FileNotFoundError, subprocess.CalledProcessError):
@@ -214,8 +237,18 @@ def _is_digest_map(value: object) -> bool:
     )
 
 
-def _digest_map(path: str) -> dict[str, str]:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+def _contained_path(raw: str, root: Path, label: str) -> Path:
+    """Resolve a CLI path and refuse anything outside the release checkout."""
+    candidate = Path(raw)
+    resolved = (candidate if candidate.is_absolute() else root / candidate).resolve()
+    if resolved != root and root not in resolved.parents:
+        msg = f"{label} must resolve inside {root}"
+        raise ManifestError(msg)
+    return resolved
+
+
+def _digest_map(path: Path) -> dict[str, str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not _is_digest_map(data):
         msg = "--digest-map must contain a JSON object of service to digest"
         raise ManifestError(msg)
@@ -261,24 +294,29 @@ def main(argv: list[str] | None = None) -> int:
         timespec="seconds"
     ).replace("+00:00", "Z")
     try:
+        digest_map_path = (
+            _contained_path(args.digest_map, root, "--digest-map")
+            if args.digest_map
+            else None
+        )
+        output = _contained_path(args.output, root, "--output")
         spec = ManifestSpec(
             root=root,
             tag=args.tag,
             repository=args.repository,
             commit=commit,
             generated_at=generated_at,
-            digest_map=_digest_map(args.digest_map) if args.digest_map else None,
+            digest_map=_digest_map(digest_map_path) if digest_map_path else None,
             services=_split_services(args.services),
         )
         manifest = build_manifest(spec)
+        output.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     except (ManifestError, OSError, json.JSONDecodeError) as exc:
         print(f"release-manifest: {exc}", file=sys.stderr)
         return 1
 
-    output = Path(args.output)
-    output.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
     print(f"wrote {output}")
     return 0
 

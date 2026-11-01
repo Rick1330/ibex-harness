@@ -18,7 +18,8 @@ bad() {
 }
 
 job_if() {
-  awk -v key="  $1:" '
+  local job="$1"
+  awk -v key="  ${job}:" '
     $0 == key { found = 1 }
     found && /^    if:/ { print; exit }
     found && /^  [a-z0-9_-]+:$/ && $0 != key { exit }
@@ -26,7 +27,8 @@ job_if() {
 }
 
 job_block() {
-  awk -v key="  $1:" '
+  local job="$1"
+  awk -v key="  ${job}:" '
     $0 == key { found = 1 }
     found && /^  [a-z0-9_-]+:$/ && $0 != key { exit }
     found { print }
@@ -34,11 +36,12 @@ job_block() {
 }
 
 file_block() {
-  awk -v key="  $2:" '
+  local file="$1" job="$2"
+  awk -v key="  ${job}:" '
     $0 == key { found = 1 }
     found && /^  [a-z0-9_-]+:$/ && $0 != key { exit }
     found { print }
-  ' "$1"
+  ' "$file"
 }
 
 # --- schedule ownership ----------------------------------------------------
