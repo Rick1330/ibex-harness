@@ -284,5 +284,23 @@ async def test_operator_agent_projection_is_tenant_scoped(
             with pytest.raises(ApiError) as error:
                 await agent_service.get_agent(session, fixture.org_a, fixture.agent_b)
             assert error.value.code == NOT_FOUND
+
+            # RLS check with a mismatched query org: the session GUC stays on
+            # org A while the service asks for org B. The SQL org filter alone
+            # cannot explain an empty result here; only RLS can.
+            cross_page = await agent_service.list_agents(
+                session,
+                ListAgentsArgs(
+                    org_id=fixture.org_b,
+                    cursor=None,
+                    limit=50,
+                    filters=AgentListFilters(),
+                ),
+            )
+            assert cross_page.data == []
+
+            with pytest.raises(ApiError) as cross_error:
+                await agent_service.get_agent(session, fixture.org_b, fixture.agent_b)
+            assert cross_error.value.code == NOT_FOUND
     finally:
         await _cleanup_d1_tenants(session_factory, fixture.org_a, fixture.org_b)
