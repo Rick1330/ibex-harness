@@ -62,17 +62,6 @@ changed_files() {
   } | sort -u
 }
 
-FILES="$(changed_files)"
-
-if [[ -z "$FILES" ]]; then
-  echo "docs-check: no changed files, nothing to do."
-  exit 0
-fi
-
-MD_FILES="$(printf '%s\n' "$FILES" | grep -E '\.md$' || true)"
-SITE_CHANGED="$(printf '%s\n' "$FILES" | grep -E '^site/' || true)"
-LEDGER_CHANGED="$(printf '%s\n' "$FILES" | grep -E 'ledger\.ts|00-status-and-evidence\.md|05\.status-and-evidence\.md' || true)"
-
 run_markdownlint() {
   if [[ -z "$MD_FILES" ]]; then
     return 0
@@ -120,6 +109,8 @@ run_site_full() {
 
 FAILED=0
 
+# Repo mode is independent of the working-tree diff. Run it before the
+# no-changes exit so a clean checkout still audits every tracked document.
 if [[ "$MODE" == "repo" ]]; then
   echo "docs-check: mode=repo (whole repository)"
   run_markdownlint_repo
@@ -131,6 +122,17 @@ if [[ "$MODE" == "repo" ]]; then
   echo "docs-check: OK"
   exit 0
 fi
+
+FILES="$(changed_files)"
+
+if [[ -z "$FILES" ]]; then
+  echo "docs-check: no changed files, nothing to do."
+  exit 0
+fi
+
+MD_FILES="$(printf '%s\n' "$FILES" | grep -E '\.md$' || true)"
+SITE_CHANGED="$(printf '%s\n' "$FILES" | grep -E '^site/' || true)"
+LEDGER_CHANGED="$(printf '%s\n' "$FILES" | grep -E 'ledger\.ts|00-status-and-evidence\.md|05\.status-and-evidence\.md' || true)"
 
 echo "docs-check: mode=$MODE base=${BASE:-none} changed=$(printf '%s\n' "$FILES" | wc -l | tr -d ' ')"
 
