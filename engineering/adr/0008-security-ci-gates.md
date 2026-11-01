@@ -113,7 +113,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | `benchmarks` | `benchmarks/**`, `site/public/benchmarks/**`, `benchmark.yml`, `services/auth/**`, `services/proxy/**`, `go.mod`, `go.sum` | `benchmark.yml` workflow trigger |
 | `docs` | `**/*.md`, `**/*.mdx` | fast `markdownlint` only |
 
-**Cross-cutting rule:** `workflows` or `deps` changes set `full=true` and run Go, site, and security scans. `workflow_dispatch` with `force_full: true` (nightly, manual) runs the full matrix.
+**Cross-cutting rule:** `workflows` or `deps` changes set `full=true` and run every PR-gated job (Go, site, console, security). The main/nightly-only jobs still skip on PRs. `workflow_dispatch` with `force_full: true` (manual) runs the full matrix; an ordinary manual run keeps path filtering. `main` pushes and the 03:00 UTC schedule run the full matrix.
 
 **Sibling workflows:**
 
@@ -125,7 +125,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | `sbom.yml` | **No PR trigger** — `push: main` + weekly schedule only |
 | `docker-publish.yml` | `workflow_run` after CI on main skips publish when neither `run_docker` nor `run_go` |
 
-**Safety net (no missed coverage):** `ci.yml` runs the full matrix on every push to `main` and daily at 03:00 UTC; `workflow_dispatch` with `force_full: true` runs it on demand. CodeQL and Scorecard run on their weekly schedules; any `.github/workflows/**` change forces full PR CI.
+**Safety net (no missed coverage):** `ci.yml` runs the full matrix on every push to `main` and daily at 03:00 UTC; `workflow_dispatch` with `force_full: true` runs it on demand. CodeQL and Scorecard run on their weekly schedules; any `.github/workflows/**` change forces every PR-gated job, while the main/nightly-only jobs still skip on PRs.
 
 **Validation matrix** (run after merge or on a dry-run PR branch):
 

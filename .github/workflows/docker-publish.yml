@@ -9,6 +9,11 @@ on:
     branches: [main]
     paths:
       - 'services/**/Dockerfile'
+      - 'services/**/app/**'
+      - 'services/**/scripts/**'
+      - 'services/auth/**'
+      - 'services/proxy/**'
+      - 'infra/provider-capabilities/**'
       - 'services/**/pyproject.toml'
       - 'services/**/uv.lock'
       - 'services/**/requirements*.txt'

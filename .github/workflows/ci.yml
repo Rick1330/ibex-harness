@@ -80,6 +80,9 @@ jobs:
       - name: CI aggregate gate regression tests
         run: bash .github/scripts/test-ci-gate.sh
 
+      - name: CI tiering policy tests
+        run: bash infra/scripts/test-ci-tiering.sh
+
       - name: Required CI gate inventory guard
         run: bash .github/scripts/check-required-ci-gates.sh
 
@@ -1065,7 +1068,7 @@ jobs:
   relay-integration:
     name: relay-integration
     needs: [changes, proto-contract, db-migrate-smoke]
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1427,7 +1430,7 @@ jobs:
   worker-integration:
     name: worker-integration
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1589,7 +1592,7 @@ jobs:
   idempotency-conformance:
     name: idempotency-conformance
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
@@ -1638,7 +1641,7 @@ jobs:
   mcp-operator-integration:
     name: mcp-operator-integration
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
@@ -1700,7 +1703,7 @@ jobs:
   memory-security-integration:
     name: memory-security-integration
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1758,7 +1761,7 @@ jobs:
   security-integration-p35:
     name: security-integration-p35
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1822,7 +1825,7 @@ jobs:
   e2e-smoke-p3-memory:
     name: e2e-smoke-p3-memory
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1883,7 +1886,7 @@ jobs:
   e2e-smoke-p35:
     name: e2e-smoke-p3.5
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -1945,7 +1948,7 @@ jobs:
   verify-phase25:
     name: verify-phase25
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true' || needs.changes.outputs.run_compose == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2041,7 +2044,7 @@ jobs:
   go-fuzz:
     name: go-fuzz
     needs: changes
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.force_full == true || needs.changes.outputs.run_go == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -3128,6 +3131,8 @@ jobs:
     name: ci-gate-nightly
     needs:
       - changes
+      - proto-contract
+      - db-migrate-smoke
       - go-fuzz
       - e2e-smoke-p3-memory
       - e2e-smoke-p35
@@ -3149,6 +3154,8 @@ jobs:
       - name: Evaluate nightly gate
         run: |
           bash .github/scripts/evaluate-ci-gate.sh "true" "${{ needs.changes.result }}" \
+            "${{ needs.proto-contract.result }}" \
+            "${{ needs.db-migrate-smoke.result }}" \
             "${{ needs.go-fuzz.result }}" \
             "${{ needs.e2e-smoke-p3-memory.result }}" \
             "${{ needs.e2e-smoke-p35.result }}" \

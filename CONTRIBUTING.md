@@ -133,7 +133,7 @@ Every PR must pass these **branch protection** status checks (stable gate names;
 | `gitleaks` | Secret scan (always runs) |
 | `semantic-pr-title` | Conventional PR title format |
 
-Path-filtered jobs (Go smokes, `site-build`, `trivy`, etc.) may be **skipped** on docs-only or single-area PRs; gate jobs still run and pass. Cross-cutting changes (`.github/workflows/**`, lockfiles) trigger the full matrix.
+Path-filtered jobs (Go smokes, `site-build`, `trivy`, etc.) may be **skipped** on docs-only or single-area PRs; gate jobs still run and pass. Cross-cutting changes (`.github/workflows/**`, lockfiles) trigger every PR-gated job; the main/nightly-only jobs still skip on PRs.
 
 **PR vs full matrix.** PRs run the fast, path-filtered checks for the areas they touch: unit, contract, coverage, changed-area integration, and security scans. The full-stack and rare checks run on every push to `main` and on the nightly schedule (03:00 UTC): `go-fuzz`, `e2e-smoke-p3-memory`, `e2e-smoke-p35`, `verify-phase25`, `memory-security-integration`, `security-integration-p35`, `worker-integration`, `relay-integration`, `mcp-operator-integration`, and `idempotency-conformance`. To run the full matrix on a branch, use **Actions → CI → Run workflow** with `force_full=true`.
 
