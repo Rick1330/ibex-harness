@@ -1,24 +1,66 @@
 <script setup lang="ts">
 import { computed } from "vue"
 import AgentDetailView from "@/components/console/agent/detail/AgentDetailView.vue"
-import { getAgentPreview } from "@/lib/agent-preview"
+import IxVerdict from "@/components/console/IxVerdict.vue"
+import { useOperatorAgent } from "@/composables/useOperatorData"
+import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
 import { safeAgentReturn } from "@/lib/return-to"
 
 const route = useRoute()
 const agentId = computed(() => String(route.params.agentId ?? ""))
-const agent = computed(() => getAgentPreview(agentId.value))
+const agentState = useOperatorAgent(() => agentId.value)
+const agent = computed(() => agentState.data.value ?? null)
+const error = computed(() => agentState.error.value)
+const loading = computed(
+  () => !agent.value && !error.value && agentState.status.value === "pending",
+)
+const notFound = computed(
+  () => (error.value as { statusCode?: number } | null)?.statusCode === 404,
+)
+const authIssue = computed(() => isOperatorAuthError(error.value))
+const failureDetail = computed(() =>
+  error.value && !notFound.value && !authIssue.value ? operatorFailureDetail(error.value) : null,
+)
 const returnTo = computed(() => safeAgentReturn(route.query.return))
 
 useHead(() => ({
-  title: `${agent.value?.name ?? "Agent not found"} · Agents · IBEX Console`,
+  title: `${agent.value?.name ?? "Agent"} · Agents · IBEX Console`,
 }))
 </script>
 
 <template>
   <AgentDetailView v-if="agent" :agent="agent" :return-to="returnTo" />
-  <section v-else class="mx-auto w-full max-w-[90rem] rounded-lg border border-line-subtle bg-surface-1 p-6" aria-labelledby="agent-not-found">
-    <NuxtLink :to="returnTo" class="text-xs text-fg-3 hover:text-fg-1">← Back to agents</NuxtLink>
-    <h1 id="agent-not-found" class="mt-4 text-lg font-semibold text-fg-1">Agent not found</h1>
-    <p class="mt-1 text-sm text-fg-3">This sample agent ID is not in the preview set. Live agent lookups are not connected.</p>
-  </section>
+  <div v-else class="flex min-w-0 flex-col gap-4">
+    <NuxtLink :to="returnTo" class="inline-flex text-xs text-fg-3 hover:text-fg-1">
+      ← Back to agents
+    </NuxtLink>
+    <IxVerdict
+      v-if="loading"
+      tone="unknown"
+      eyebrow="Live operator read"
+      title="Reading the agent record…"
+      body="The console is waiting for the operator API."
+    />
+    <IxVerdict
+      v-else-if="notFound"
+      tone="unknown"
+      eyebrow="Live operator read"
+      title="Agent not found"
+      body="This agent does not exist in the current organization, or the operator session cannot see it."
+    />
+    <IxVerdict
+      v-else-if="authIssue"
+      tone="unavailable"
+      eyebrow="Live operator read"
+      title="An operator session is required to read this agent"
+      body="Sign in with a session that can read this organization. No fixture record is substituted."
+    />
+    <IxVerdict
+      v-else
+      tone="unavailable"
+      eyebrow="Live operator read"
+      title="Agent record unavailable"
+      :body="failureDetail ?? 'The operator API did not return a verified record.'"
+    />
+  </div>
 </template>

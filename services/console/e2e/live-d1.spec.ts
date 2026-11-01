@@ -209,3 +209,35 @@ test("live Platform renders readiness, dependency state, and snapshot evidence",
   await expect(page.locator("pre").filter({ hasText: '"dependency_health"' })).toBeVisible()
   await expectNoAxeViolations(page)
 })
+
+test("live Agents renders the operator inventory and detail with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/agents")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible()
+  await expect(page.getByText("Showing 1 agent from the operator API.")).toBeVisible()
+  await expect(page.getByRole("link", { name: "Support Agent" })).toBeVisible()
+  await expect(page.getByText("support-agent", { exact: true })).toBeVisible()
+  await expect(page.getByText("openai · gpt-4.1")).toBeVisible()
+  await expect(page.getByText("42", { exact: true })).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  const listRequests = await fetchFixtureRequests(page)
+  expect(listRequests.some((request) => request.path === "/v1/operator/agents")).toBe(true)
+  for (const request of listRequests.filter((entry) => entry.path === "/v1/operator/agents")) {
+    expect(request.cookieNames).toEqual(["ibex_session"])
+  }
+
+  await page.getByRole("link", { name: "Support Agent" }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Support Agent", exact: true })).toBeVisible()
+  await expect(
+    page.locator("dd").filter({ hasText: "33333333-3333-4333-8333-333333333333" }),
+  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "Copy agent ID" })).toBeVisible()
+  await expect(page.getByText("901,234")).toBeVisible()
+  await expectNoAxeViolations(page)
+})

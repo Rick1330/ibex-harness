@@ -1,4 +1,7 @@
+import { computed } from "vue"
 import type {
+  PublicOperatorAgent,
+  PublicOperatorAgentPage,
   PublicOperatorContext,
   PublicOperatorOverview,
   PublicOperatorTraceDetail,
@@ -42,4 +45,17 @@ export function useTraceDetail(runId: string) {
   return useAsyncData<PublicOperatorTraceDetail>(`operator-trace-detail:${runId}`, () => {
     return useRequestFetch()(`/api/operator/traces/runs/${encodeURIComponent(runId)}`)
   })
+}
+
+export function useOperatorAgents(params: () => URLSearchParams) {
+  const url = computed(() => {
+    const query = params().toString()
+    return `/api/operator/agents${query ? `?${query}` : ""}`
+  })
+  return useFetch<PublicOperatorAgentPage>(url, { key: url, watch: [url] })
+}
+
+export function useOperatorAgent(agentId: () => string) {
+  const url = computed(() => `/api/operator/agents/${encodeURIComponent(agentId())}`)
+  return useFetch<PublicOperatorAgent>(url, { key: url, watch: [url] })
 }

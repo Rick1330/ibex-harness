@@ -204,6 +204,45 @@ export const OperatorTraceDetailSchema = OperatorTraceSchema.extend({
   score_schema_note: z.string().max(256).nullable().default(null),
 }).strict()
 
+export const AgentStatusSchema = z.enum(["active", "paused", "suspended", "archived"])
+
+/**
+ * Public operator projection of an agent. org_id and free-form config are
+ * deliberately absent: the browser has no tenant authority and no write path.
+ */
+export const OperatorAgentSchema = z
+  .object({
+    id: z.string().uuid(),
+    slug: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/),
+    name: z.string().min(1).max(200),
+    description: z.string().max(4096).nullable(),
+    status: AgentStatusSchema,
+    default_provider: z.string().min(1).max(64).nullable(),
+    default_model: z.string().min(1).max(128).nullable(),
+    tags: z.array(z.string().min(1).max(64)).max(32),
+    total_sessions: z.number().int().nonnegative(),
+    total_memories: z.number().int().nonnegative(),
+    total_tokens_used: z.number().int().nonnegative(),
+    last_active_at: z.string().datetime({ offset: true }).nullable(),
+    created_at: z.string().datetime({ offset: true }),
+    updated_at: z.string().datetime({ offset: true }),
+  })
+  .strict()
+
+export const OperatorAgentPageSchema = z
+  .object({
+    data: z.array(OperatorAgentSchema).max(100),
+    pagination: z
+      .object({
+        has_more: z.boolean(),
+        next_cursor: z.string().max(2048).nullable(),
+        prev_cursor: z.string().max(2048).nullable(),
+        total_count: z.number().int().nonnegative().nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+
 export type OperatorSession = z.infer<typeof OperatorSessionSchema>
 export type PlatformHealth = z.infer<typeof PlatformHealthSchema>
 export type OperatorContext = z.infer<typeof OperatorContextSchema>
@@ -211,6 +250,9 @@ export type OperatorOverview = z.infer<typeof OperatorOverviewSchema>
 export type OperatorTrace = z.infer<typeof OperatorTraceSchema>
 export type OperatorTraceList = z.infer<typeof OperatorTraceListSchema>
 export type OperatorTraceDetail = z.infer<typeof OperatorTraceDetailSchema>
+export type AgentStatus = z.infer<typeof AgentStatusSchema>
+export type OperatorAgent = z.infer<typeof OperatorAgentSchema>
+export type OperatorAgentPage = z.infer<typeof OperatorAgentPageSchema>
 export type UnavailableSection = z.infer<typeof UnavailableSectionSchema>
 
 export function parseOperatorSession(value: unknown): OperatorSession {

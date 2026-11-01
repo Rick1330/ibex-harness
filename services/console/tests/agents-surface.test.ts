@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest"
 
 import { SURFACES } from "../shared/operator/surfaces"
 
-describe("agents preview contract", () => {
-  it("remains preview-only until the agent summary API is connected", () => {
-    expect(SURFACES.agents.availability).toBe("preview")
-    expect(SURFACES.agents.contract).toContain("operator.agents.summary.v1")
+describe("agents live contract", () => {
+  it("is live once the operator read model is connected", () => {
+    expect(SURFACES.agents.availability).toBe("live")
+    expect(SURFACES.agents.contract).toBe("operator.agents.v1")
   })
 
-  it("does not expose an unverified live agents contract", () => {
-    expect(SURFACES.agents.description).toContain("planned")
-    expect(SURFACES.agents.contract).toContain("[NEEDS-BACKEND]")
+  it("does not claim unimplemented health, budget, or drift fields", () => {
+    expect(SURFACES.agents.description).not.toContain("planned")
+    expect(SURFACES.agents.contract).not.toContain("NEEDS-BACKEND")
   })
 })

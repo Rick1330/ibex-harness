@@ -3,10 +3,11 @@ import { onMounted, ref, watch } from "vue"
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router"
 import AgentListView from "@/components/console/agent/list/AgentListView.vue"
 import {
-  parseAgentListQuery,
-  serializeAgentListQuery,
-  type AgentListState,
-} from "@/lib/agent-list-query"
+  defaultLiveAgentQuery,
+  parseLiveAgentQuery,
+  serializeLiveAgentUrlQuery,
+  type LiveAgentQuery,
+} from "~~/shared/operator/agent-query"
 
 const SNAPSHOT_KEY = "ibex:agent-list:return"
 
@@ -17,39 +18,33 @@ type Snapshot = {
 
 const route = useRoute()
 const router = useRouter()
-const state = ref<AgentListState>(parseAgentListQuery(route.query))
+const state = ref<LiveAgentQuery>(stateFromQuery(route.query))
 const returnTo = ref(route.fullPath)
 
 useHead({ title: "Agents · IBEX Console" })
 
-function serialized(value: AgentListState): string {
-  return serializeAgentListQuery(value).toString()
+function stateFromQuery(query: Record<string, unknown>): LiveAgentQuery {
+  try {
+    return parseLiveAgentQuery(query)
+  } catch {
+    return defaultLiveAgentQuery()
+  }
 }
 
-function queryFrom(value: AgentListState): Record<string, string> {
-  return Object.fromEntries(serializeAgentListQuery(value))
-}
-
-function isSearchOnly(next: AgentListState): boolean {
-  const current = parseAgentListQuery(route.query)
-  const withoutSearch = (value: AgentListState) => serialized({ ...value, search: "" })
-  return withoutSearch(next) === withoutSearch(current) && next.search !== current.search
-}
-
-function update(next: AgentListState): void {
-  state.value = next
+function serialized(value: LiveAgentQuery): string {
+  return serializeLiveAgentUrlQuery(value).toString()
 }
 
 watch(
   state,
   (next) => {
     if (!import.meta.client) return
-    if (serialized(next) === serialized(parseAgentListQuery(route.query))) {
+    if (serialized(next) === serialized(stateFromQuery(route.query))) {
       returnTo.value = route.fullPath
       return
     }
     void router
-      .replace({ query: queryFrom(next) })
+      .replace({ query: Object.fromEntries(serializeLiveAgentUrlQuery(next)) })
       .then(() => {
         returnTo.value = route.fullPath
       })
@@ -62,13 +57,12 @@ watch(
   () => route.query,
   () => {
     if (route.path !== "/agents") return
-    const parsed = parseAgentListQuery(route.query)
+    const parsed = stateFromQuery(route.query)
     if (serialized(parsed) === serialized(state.value)) {
       returnTo.value = route.fullPath
       return
     }
-    // Search is owned by the debounced input; ignore echo writes from it.
-    if (!isSearchOnly(parsed)) state.value = parsed
+    state.value = parsed
     returnTo.value = route.fullPath
   },
 )
@@ -108,5 +102,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <AgentListView :state="state" :return-to="returnTo" @update="update" />
+  <AgentListView :state="state" :return-to="returnTo" @update="state = $event" />
 </template>

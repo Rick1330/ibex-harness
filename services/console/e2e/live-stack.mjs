@@ -15,6 +15,7 @@ const sessionCookie = "ibex_session=fixture-access-secret"
 const orgId = "bfc3f97b-7a61-498d-9faa-96f34fbd4f2f"
 const observedAt = "2026-09-26T17:00:00Z"
 const runId = "11111111-1111-4111-8111-111111111111"
+const agentId = "33333333-3333-4333-8333-333333333333"
 const requests = []
 let eventStreams = 0
 let closing = false
@@ -171,7 +172,28 @@ function fixtureBodies() {
     tools: [],
     score_schema_note: null,
   }
+  const agent = {
+    id: agentId,
+    slug: "support-agent",
+    name: "Support Agent",
+    description: "Answers customer questions from the memory store.",
+    status: "active",
+    default_provider: "openai",
+    default_model: "gpt-4.1",
+    tags: ["prod", "support"],
+    total_sessions: 42,
+    total_memories: 128,
+    total_tokens_used: 901234,
+    last_active_at: observedAt,
+    created_at: observedAt,
+    updated_at: observedAt,
+  }
   return {
+    agents: {
+      data: [agent],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    },
+    agent,
     context: {
       schema_version: "operator.context.v1",
       org_id: orgId,
@@ -210,6 +232,13 @@ function fixtureBodies() {
 
 function resolveFixtureBody(pathname) {
   const bodies = fixtureBodies()
+  if (pathname === "/v1/operator/agents") return { status: 200, payload: bodies.agents }
+  if (pathname === `/v1/operator/agents/${agentId}`) {
+    return { status: 200, payload: bodies.agent }
+  }
+  if (pathname.startsWith("/v1/operator/agents/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Agent not found" } } }
+  }
   if (pathname === "/v1/operator/context") return { status: 200, payload: bodies.context }
   if (pathname === "/v1/operator/overview") return { status: 200, payload: bodies.overview }
   if (pathname === "/v1/operator/platform/health") return { status: 200, payload: bodies.health }
