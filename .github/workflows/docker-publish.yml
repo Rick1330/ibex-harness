@@ -8,13 +8,15 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'services/**/Dockerfile'
+      - 'services/**/app/**'
+      - 'services/**/scripts/**'
       - 'services/auth/**'
       - 'services/proxy/**'
-      - 'services/embedder/**'
-      - 'services/mcp-memory/**'
-      - 'services/memory/**'
-      - 'services/api/**'
-      - 'services/worker/**'
+      - 'infra/provider-capabilities/**'
+      - 'services/**/pyproject.toml'
+      - 'services/**/uv.lock'
+      - 'services/**/requirements*.txt'
       - 'packages/**'
       - 'go.mod'
       - 'go.sum'
