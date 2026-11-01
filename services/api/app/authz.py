@@ -232,6 +232,21 @@ def assert_operator_permission(
     _assert_operator_bitmap(bitmap, required)
 
 
+def require_operator_metadata_session(
+    request: Request,
+    operator: Annotated[
+        OperatorSessionAuthorization, Depends(require_operator_session)
+    ],
+) -> OperatorSessionAuthorization:
+    """Require the operator metadata-read bit on a verified operator session."""
+    assert_operator_permission(
+        request.app.state.settings,
+        operator.permissions,
+        OPERATOR_METADATA_READ,
+    )
+    return operator
+
+
 def require_operator_permission(required: int) -> Callable[..., ValidateResult]:
     async def _dep(
         request: Request,

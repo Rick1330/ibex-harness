@@ -19,6 +19,8 @@ def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -
     if path in {
         "/v1/operator/context",
         "/v1/operator/overview",
+        "/v1/operator/agents",
+        "/v1/operator/agents/{agent_id}",
         "/v1/operator/traces",
         "/v1/operator/traces/runs/{run_id}",
         "/v1/operator/traces/{trace_id}",

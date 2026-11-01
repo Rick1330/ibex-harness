@@ -15,6 +15,8 @@ from app.config import Settings
 from app.db import create_engine, create_session_factory, session_with_org
 from app.errors import ApiError
 from app.operator_session_auth import OperatorSessionAuthorization
+from app.services import agents as agent_service
+from app.services.agents import AgentListFilters, ListAgentsArgs
 from app.services.operator_overview import get_operator_d1_read_model
 
 pytestmark = pytest.mark.integration
@@ -233,5 +235,72 @@ async def test_d1_read_model_is_tenant_scoped_and_counts_only_live_rows(
                 await get_operator_d1_read_model(session, authorization_b)
             assert error.value.code == NOT_FOUND
             assert "D1 RLS B" not in str(error.value)
+    finally:
+        await _cleanup_d1_tenants(session_factory, fixture.org_a, fixture.org_b)
+
+
+@pytest.mark.asyncio
+async def test_operator_agent_projection_is_tenant_scoped(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    fixture = _TenantFixture(
+        org_a=uuid4(),
+        org_b=uuid4(),
+        user_a=uuid4(),
+        user_b=uuid4(),
+        agent_a_active=uuid4(),
+        agent_a_paused=uuid4(),
+        agent_a_deleted=uuid4(),
+        agent_b=uuid4(),
+        suffix=uuid4().hex,
+    )
+
+    try:
+        async with session_factory() as session, session.begin():
+            await _seed_d1_tenants(session, fixture)
+
+        async with session_with_org(session_factory, str(fixture.org_a)) as session:
+            page = await agent_service.list_agents(
+                session,
+                ListAgentsArgs(
+                    org_id=fixture.org_a,
+                    cursor=None,
+                    limit=50,
+                    filters=AgentListFilters(),
+                ),
+            )
+            assert {agent.id for agent in page.data} == {
+                fixture.agent_a_active,
+                fixture.agent_a_paused,
+            }
+            assert fixture.agent_a_deleted not in {agent.id for agent in page.data}
+            assert fixture.agent_b not in {agent.id for agent in page.data}
+
+            detail = await agent_service.get_agent(
+                session, fixture.org_a, fixture.agent_a_active
+            )
+            assert detail.id == fixture.agent_a_active
+
+            with pytest.raises(ApiError) as error:
+                await agent_service.get_agent(session, fixture.org_a, fixture.agent_b)
+            assert error.value.code == NOT_FOUND
+
+            # RLS check with a mismatched query org: the session GUC stays on
+            # org A while the service asks for org B. The SQL org filter alone
+            # cannot explain an empty result here; only RLS can.
+            cross_page = await agent_service.list_agents(
+                session,
+                ListAgentsArgs(
+                    org_id=fixture.org_b,
+                    cursor=None,
+                    limit=50,
+                    filters=AgentListFilters(),
+                ),
+            )
+            assert cross_page.data == []
+
+            with pytest.raises(ApiError) as cross_error:
+                await agent_service.get_agent(session, fixture.org_b, fixture.agent_b)
+            assert cross_error.value.code == NOT_FOUND
     finally:
         await _cleanup_d1_tenants(session_factory, fixture.org_a, fixture.org_b)

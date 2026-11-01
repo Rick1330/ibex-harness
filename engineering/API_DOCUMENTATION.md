@@ -13,8 +13,9 @@
 | D1 context and Overview reads | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/context` and `GET /v1/operator/overview` are documented below and included in the OpenAPI snapshot. This does not certify the full staged operator topology or milestone. |
 | Platform-health and operator-events D1 composition | **Mounted-but-provisional** | Health/SSE path and rendering checks exist locally; hosted health freshness, SSE buffering/reconnect/drain, and operator-origin evidence remain release gates. |
 | D2 metadata trace list/detail | **Mounted-but-provisional** | `GET /v1/operator/traces` and `GET /v1/operator/traces/{trace_id}` are read-only, tenant-scoped, no-store metadata routes. Full provenance panels, content, score explanations, replay, and actions remain planned and unaccepted. |
+| Operator agent summary/detail | **Mounted; local contract and RLS integration-tested** | `GET /v1/operator/agents` and `GET /v1/operator/agents/{agent_id}` are read-only, tenant-scoped projections of the management agent record. They exclude `org_id`, `config`, and `metadata`; mutations remain management-plane. |
 | Memory service create/search/forget routes | **Mounted but provisional for GAP-007 lifecycle** | Runtime route and local tests exist; migration, PostgreSQL/RLS integration evidence, review, and contract acceptance remain open. See provisional forget endpoint below. |
-| Sessions, agents, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
+| Sessions, directives, analytics, incidents, actions, billing UI reads | **Specified-not-implemented unless an implementation record says otherwise** | The reference sections below are schemas/design guidance, not route evidence. |
 | Provider, webhook, export, deletion, replay, and advanced governance surfaces | **Deferred or separately gated** | Require explicit owner, permission, audit, redaction, and rollback evidence. |
 
 ### Contract ownership and validation
@@ -34,7 +35,7 @@ Both routes require an AuthService-backed operator session outside development, 
 
 ### Operator contract boundary
 
-The first operator slice is limited to server-owned context, overview, platform health, and operator events. Exact deployed paths, hostnames, origins, and workflows are intentionally not asserted here until verified. Personalized RSC, BFF, export, and SSE responses default to request-time `no-store`; any cache exception requires an explicit tenant-safe key design and two-role/two-tenant cache tests. Cookie-authenticated mutations require CSRF protection; cross-origin deployments require exact credentialed CORS allowlists and Origin/Referer validation.
+The first operator slice is limited to server-owned context, overview, platform health, operator events, and a read-only agent projection. Exact deployed paths, hostnames, origins, and workflows are intentionally not asserted here until verified. Personalized RSC, BFF, export, and SSE responses default to request-time `no-store`; any cache exception requires an explicit tenant-safe key design and two-role/two-tenant cache tests. Cookie-authenticated mutations require CSRF protection; cross-origin deployments require exact credentialed CORS allowlists and Origin/Referer validation.
 
 ### Security and hostile content
 
@@ -373,6 +374,18 @@ Returns the minimal server-derived organization and operator context: `schema_ve
 Returns `schema_version` (`operator.overview.v1`), organization identity/status, `observed_at`, `completeness: "complete"`, and `counts`: `active_users` (non-deleted users whose status is `active`), `agents` (non-deleted agents), and `active_agents` (non-deleted agents whose status is `active`). These are all-time organization counts, not filtered by the Console time-range control. The aggregate is bounded by a transaction-local 3-second statement timeout. The response intentionally excludes organization settings, credentials, and user/agent records.
 
 The canonical response models and path inventory are maintained in [`services/api/openapi.snapshot.json`](../services/api/openapi.snapshot.json) and generated route inventory. Local two-tenant RLS and Console browser evidence is recorded in [`D1_READINESS.md`](console/D1_READINESS.md); hosted AuthService, canonical-origin, four-role/two-tenant, performance, SSE drain, and rollback evidence is still required before 4.D.1 acceptance.
+
+### GET /v1/operator/agents
+
+Returns a cursor-paginated, tenant-scoped list of non-deleted agents. Query parameters are `limit` (1–100, default 50), `status`, `tags`, `search`, and the opaque `cursor` returned by the previous page. Each row contains `id`, `slug`, `name`, `description`, `status`, `default_provider`, `default_model`, `tags`, `total_sessions`, `total_memories`, `total_tokens_used`, `last_active_at`, `created_at`, and `updated_at`.
+
+The projection deliberately excludes `org_id`, `config`, and `metadata`. `total_sessions`, `total_memories`, and `total_tokens_used` are the counts maintained by the management plane; they are not recomputed by the operator read.
+
+### GET /v1/operator/agents/{agent_id}
+
+Returns the same projection for one non-deleted agent in the authenticated organization. A missing agent and an agent owned by another tenant both return `NOT_FOUND` (HTTP 404) to avoid an existence leak.
+
+Both routes require an AuthService-backed operator session outside development, `OPERATOR_METADATA_READ`, an organization-bound database transaction, and `Cache-Control: no-store`. They reuse the management agent query, so the tenant filter is explicit in SQL and enforced again by RLS. Local two-tenant coverage is in `services/api/tests/integration/test_operator_overview_rls.py`.
 
 ---
 
