@@ -15,8 +15,10 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 MANIFEST_VERSION = 1
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -26,6 +28,19 @@ MIGRATION_RE = re.compile(r"^(\d+)_")
 
 class ManifestError(RuntimeError):
     """Raised when verified manifest inputs are missing or malformed."""
+
+
+@dataclass(frozen=True)
+class ManifestSpec:
+    """Everything the manifest generator needs, resolved once."""
+
+    root: Path
+    tag: str
+    repository: str
+    commit: str
+    generated_at: str
+    digest_map: dict[str, str] | None = None
+    services: list[str] | None = None
 
 
 def _sha256(data: bytes) -> str:
@@ -54,33 +69,45 @@ def _proto_sha256(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _migration_versions(directory: Path) -> list[int]:
+    versions: list[int] = []
+    for path in directory.glob("*.up.sql"):
+        match = MIGRATION_RE.match(path.name)
+        if match:
+            versions.append(int(match.group(1)))
+    return versions
+
+
 def _migration_max(root: Path, engine: str) -> int:
     directory = root / "infra" / "migrations" / engine
-    versions = [
-        int(match.group(1))
-        for path in directory.glob("*.up.sql")
-        if (match := MIGRATION_RE.match(path.name)) is not None
-    ]
+    versions = _migration_versions(directory)
     if not versions:
         msg = f"no {engine} migration versions under {directory}"
         raise ManifestError(msg)
     return max(versions)
 
 
-def _services(root: Path, requested: list[str] | None) -> list[str]:
-    if requested:
-        services = sorted(requested)
-    else:
-        services = sorted(
-            path.parent.name for path in (root / "services").glob("*/Dockerfile")
-        )
-    if not services:
-        msg = "no service Dockerfiles found"
-        raise ManifestError(msg)
+def _discovered_services(root: Path) -> list[str]:
+    return sorted(path.parent.name for path in (root / "services").glob("*/Dockerfile"))
+
+
+def _validate_services(root: Path, services: list[str]) -> list[str]:
     for service in services:
         if not (root / "services" / service / "Dockerfile").is_file():
             msg = f"missing Dockerfile for service: {service}"
             raise ManifestError(msg)
+    return services
+
+
+def _services(root: Path, requested: list[str] | None) -> list[str]:
+    services = (
+        _validate_services(root, requested)
+        if requested
+        else _validate_services(root, _discovered_services(root))
+    )
+    if not services:
+        msg = "no service Dockerfiles found"
+        raise ManifestError(msg)
     return services
 
 
@@ -120,6 +147,19 @@ def _digest_from_registry(reference: str) -> str:
     return digest
 
 
+def _image_digests(spec: ManifestSpec, services: list[str]) -> dict[str, str]:
+    if spec.digest_map is not None:
+        return {
+            service: _digest_from_map(service, spec.digest_map)
+            for service in services
+        }
+    prefix = f"ghcr.io/{spec.repository.lower()}"
+    return {
+        service: _digest_from_registry(f"{prefix}/{service}:{spec.tag}")
+        for service in services
+    }
+
+
 def _git_head(root: Path) -> str:
     try:
         return subprocess.check_output(
@@ -130,60 +170,65 @@ def _git_head(root: Path) -> str:
         return ""
 
 
-def build_manifest(
-    *,
-    root: Path,
-    tag: str,
-    repository: str,
-    commit: str,
-    generated_at: str,
-    digest_map: dict[str, str] | None = None,
-    services: list[str] | None = None,
+def _manifest_document(
+    spec: ManifestSpec,
+    platform_version: str,
+    images: dict[str, str],
 ) -> dict[str, object]:
-    match = TAG_RE.fullmatch(tag)
-    if not match:
-        msg = f"invalid release tag: {tag}"
-        raise ManifestError(msg)
-    platform_version = ".".join(match.groups())
-    image_prefix = f"ghcr.io/{repository.lower()}"
-    images: dict[str, str] = {}
-    for service in _services(root, services):
-        if digest_map is not None:
-            images[service] = _digest_from_map(service, digest_map)
-        else:
-            images[service] = _digest_from_registry(f"{image_prefix}/{service}:{tag}")
     return {
         "manifest_version": MANIFEST_VERSION,
-        "tag": tag,
+        "tag": spec.tag,
         "platform_version": platform_version,
-        "generated_at": generated_at,
-        "source": {"repository": repository, "commit": commit},
+        "generated_at": spec.generated_at,
+        "source": {"repository": spec.repository, "commit": spec.commit},
         "images": images,
         "contracts": {
             "openapi_sha256": _file_sha256(
-                root / "services" / "api" / "openapi.snapshot.json"
+                spec.root / "services" / "api" / "openapi.snapshot.json"
             ),
-            "proto_sha256": _proto_sha256(root),
+            "proto_sha256": _proto_sha256(spec.root),
         },
         "migrations": {
-            "postgres": _migration_max(root, "postgres"),
-            "clickhouse": _migration_max(root, "clickhouse"),
+            "postgres": _migration_max(spec.root, "postgres"),
+            "clickhouse": _migration_max(spec.root, "clickhouse"),
         },
         "bundles": [],
     }
 
 
+def build_manifest(spec: ManifestSpec) -> dict[str, object]:
+    match = TAG_RE.fullmatch(spec.tag)
+    if not match:
+        msg = f"invalid release tag: {spec.tag}"
+        raise ManifestError(msg)
+    platform_version = ".".join(match.groups())
+    services = _services(spec.root, spec.services)
+    return _manifest_document(spec, platform_version, _image_digests(spec, services))
+
+
+def _is_digest_map(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    )
+
+
 def _digest_map(path: str) -> dict[str, str]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or not all(
-        isinstance(key, str) and isinstance(value, str) for key, value in data.items()
-    ):
+    if not _is_digest_map(data):
         msg = "--digest-map must contain a JSON object of service to digest"
         raise ManifestError(msg)
-    return data
+    return cast("dict[str, str]", data)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _split_services(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    return [service.strip() for service in value.split(",") if service.strip()]
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--output", default="release-manifest.json")
@@ -201,6 +246,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="comma-separated service names; defaults to discovered Dockerfiles",
     )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -210,22 +260,17 @@ def main(argv: list[str] | None = None) -> int:
     generated_at = args.generated_at or datetime.now(UTC).isoformat(
         timespec="seconds"
     ).replace("+00:00", "Z")
-    services = (
-        [service.strip() for service in args.services.split(",") if service.strip()]
-        if args.services
-        else None
-    )
     try:
-        digest_map = _digest_map(args.digest_map) if args.digest_map else None
-        manifest = build_manifest(
+        spec = ManifestSpec(
             root=root,
             tag=args.tag,
             repository=args.repository,
             commit=commit,
             generated_at=generated_at,
-            digest_map=digest_map,
-            services=services,
+            digest_map=_digest_map(args.digest_map) if args.digest_map else None,
+            services=_split_services(args.services),
         )
+        manifest = build_manifest(spec)
     except (ManifestError, OSError, json.JSONDecodeError) as exc:
         print(f"release-manifest: {exc}", file=sys.stderr)
         return 1

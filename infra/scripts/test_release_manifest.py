@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ SPEC = importlib.util.spec_from_file_location("release_manifest", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError("could not load release-manifest.py")
 release_manifest = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = release_manifest
 SPEC.loader.exec_module(release_manifest)
 
 DIGEST_A = "sha256:" + "a" * 64
@@ -50,14 +52,46 @@ class ReleaseManifestTest(unittest.TestCase):
 
     def build(self) -> dict[str, object]:
         return release_manifest.build_manifest(
-            root=self.root,
-            tag="v1.2.3",
-            repository="Rick1330/ibex-harness",
-            commit="abc123",
-            generated_at="2026-11-01T00:00:00Z",
-            digest_map=self.digest_map,
-            services=["auth", "proxy"],
+            release_manifest.ManifestSpec(
+                root=self.root,
+                tag="v1.2.3",
+                repository="Rick1330/ibex-harness",
+                commit="abc123",
+                generated_at="2026-11-01T00:00:00Z",
+                digest_map=self.digest_map,
+                services=["auth", "proxy"],
+            )
         )
+
+    def run_cli(
+        self,
+        *,
+        tag: str = "v1.2.3",
+        services: str = "auth,proxy",
+        digests: dict[str, str] | None = None,
+    ) -> tuple[int, Path]:
+        map_path = self.root / "digests.json"
+        map_path.write_text(json.dumps(self.digest_map if digests is None else digests))
+        output = self.root / "release-manifest.json"
+        code = release_manifest.main(
+            [
+                "--root",
+                str(self.root),
+                "--tag",
+                tag,
+                "--commit",
+                "abc123",
+                "--generated-at",
+                "2026-11-01T00:00:00Z",
+                "--digest-map",
+                str(map_path),
+                "--services",
+                services,
+                "--output",
+                str(output),
+            ]
+        )
+        return code, output
 
     def test_builds_the_expected_manifest(self) -> None:
         manifest = self.build()
@@ -74,118 +108,32 @@ class ReleaseManifestTest(unittest.TestCase):
         self.assertRegex(contracts["proto_sha256"], r"^[0-9a-f]{64}$")
 
     def test_cli_writes_the_manifest(self) -> None:
-        map_path = self.root / "digests.json"
-        map_path.write_text(json.dumps(self.digest_map))
-        output = self.root / "release-manifest.json"
-        code = release_manifest.main(
-            [
-                "--root",
-                str(self.root),
-                "--tag",
-                "v1.2.3",
-                "--commit",
-                "abc123",
-                "--generated-at",
-                "2026-11-01T00:00:00Z",
-                "--digest-map",
-                str(map_path),
-                "--services",
-                "auth,proxy",
-                "--output",
-                str(output),
-            ]
-        )
+        code, output = self.run_cli()
         self.assertEqual(code, 0)
         data = json.loads(output.read_text())
         self.assertEqual(data["platform_version"], "1.2.3")
-        self.assertEqual(data["source"], {"repository": "Rick1330/ibex-harness", "commit": "abc123"})
+        self.assertEqual(
+            data["source"],
+            {"repository": "Rick1330/ibex-harness", "commit": "abc123"},
+        )
 
     def test_rejects_an_invalid_tag(self) -> None:
-        code = release_manifest.main(
-            [
-                "--root",
-                str(self.root),
-                "--tag",
-                "1.2.3",
-                "--commit",
-                "abc123",
-                "--digest-map",
-                self._write_digest_map(),
-                "--services",
-                "auth,proxy",
-                "--output",
-                str(self.root / "out.json"),
-            ]
-        )
+        code, _ = self.run_cli(tag="1.2.3")
         self.assertEqual(code, 1)
 
     def test_rejects_a_missing_digest(self) -> None:
-        map_path = self.root / "digests.json"
-        map_path.write_text(json.dumps({"auth": DIGEST_A}))
-        code = release_manifest.main(
-            [
-                "--root",
-                str(self.root),
-                "--tag",
-                "v1.2.3",
-                "--commit",
-                "abc123",
-                "--digest-map",
-                str(map_path),
-                "--services",
-                "auth,proxy",
-                "--output",
-                str(self.root / "out.json"),
-            ]
-        )
+        code, _ = self.run_cli(digests={"auth": DIGEST_A})
         self.assertEqual(code, 1)
 
     def test_rejects_a_malformed_digest(self) -> None:
-        map_path = self.root / "digests.json"
-        map_path.write_text(json.dumps({"auth": "sha256:not-a-digest", "proxy": DIGEST_B}))
-        code = release_manifest.main(
-            [
-                "--root",
-                str(self.root),
-                "--tag",
-                "v1.2.3",
-                "--commit",
-                "abc123",
-                "--digest-map",
-                str(map_path),
-                "--services",
-                "auth,proxy",
-                "--output",
-                str(self.root / "out.json"),
-            ]
+        code, _ = self.run_cli(
+            digests={"auth": "sha256:not-a-digest", "proxy": DIGEST_B}
         )
         self.assertEqual(code, 1)
 
     def test_rejects_a_missing_service_dockerfile(self) -> None:
-        map_path = self.root / "digests.json"
-        map_path.write_text(json.dumps({"auth": DIGEST_A, "proxy": DIGEST_B, "memory": DIGEST_A}))
-        code = release_manifest.main(
-            [
-                "--root",
-                str(self.root),
-                "--tag",
-                "v1.2.3",
-                "--commit",
-                "abc123",
-                "--digest-map",
-                str(map_path),
-                "--services",
-                "auth,proxy,memory",
-                "--output",
-                str(self.root / "out.json"),
-            ]
-        )
+        code, _ = self.run_cli(services="auth,proxy,memory")
         self.assertEqual(code, 1)
-
-    def _write_digest_map(self) -> str:
-        path = self.root / "digests.json"
-        path.write_text(json.dumps(self.digest_map))
-        return str(path)
 
 
 if __name__ == "__main__":
