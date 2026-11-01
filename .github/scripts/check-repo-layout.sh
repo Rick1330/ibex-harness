@@ -4,7 +4,7 @@ set -euo pipefail
 # Repository layout policy. `new findings/` and `test-results/` are local,
 # gitignored scratch and are skipped below so the guard reflects the tracked tree.
 ALLOWED_TOP='^(site|engineering|services|packages|infra|reports|benchmarks|patches|\.codescene|\.cursor|\.claude|\.opencode|\.github|\.git|_report|node_modules)$'
-ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README(\.(es|fr|de|pt-BR|zh-CN|ar|am))?\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
+ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README(\.(es|fr|de|pt-BR|zh-CN|ar))?\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
 
 fail=0
 
@@ -44,7 +44,7 @@ while IFS= read -r f; do
   if [[ "$f" == .github/* || "$f" == .claude/* || "$f" == .opencode/* ]]; then
     continue
   fi
-  if [[ "$f" != site/* && "$f" != engineering/* && "$f" != benchmarks/* && "$f" != AGENTS.md && "$f" != CLAUDE.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md && "$f" != CHANGELOG.md ]]; then
+  if [[ "$f" != site/* && "$f" != engineering/* && "$f" != benchmarks/* ]] && ! [[ "$f" =~ $ROOT_DOCS ]]; then
     echo "Doc outside allowed paths: $f"
     fail=1
   fi

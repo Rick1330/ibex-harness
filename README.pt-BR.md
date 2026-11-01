@@ -5,8 +5,7 @@
   <a href="README.de.md">Deutsch</a> ·
   <a href="README.pt-BR.md">Português (Brasil)</a> ·
   <a href="README.zh-CN.md">中文</a> ·
-  <a href="README.ar.md">العربية</a> ·
-  <a href="README.am.md">አማርኛ</a>
+  <a href="README.ar.md">العربية</a>
 </p>
 
 # IBEX Harness
