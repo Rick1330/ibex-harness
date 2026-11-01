@@ -169,6 +169,25 @@ if grep -Fq 'release-manifest.json' "$release_docker"; then
 else
   bad "tagged release does not upload the manifest"
 fi
+if grep -Fq 'needs: validate-tag' "$release_docker"; then
+  pass "image publication waits for tag validation"
+else
+  bad "image publication does not wait for tag validation"
+fi
+
+publish_services="$(grep -E '^  push-[a-z0-9-]+:$' "$DOCKER" | sed -E 's/^  push-(.+):$/\1/' | sort)"
+manifest_services="$(
+  grep -oE -- '--services [a-z0-9,-]+' "$release_docker" |
+    head -1 |
+    awk '{print $2}' |
+    tr ',' '\n' |
+    sort
+)"
+if [[ "$publish_services" == "$manifest_services" ]]; then
+  pass "manifest services match the docker-publish push jobs"
+else
+  bad "manifest services do not match the docker-publish push jobs"
+fi
 
 if (( fail != 0 )); then
   echo "CI tiering policy tests failed" >&2

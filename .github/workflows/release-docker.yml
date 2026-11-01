@@ -13,8 +13,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-tag:
+    name: validate-tag
+    # Fail before publishing images when the tag is not vX.Y.Z. The workflow
+    # glob also matches v1.2.3-rc1 and v1.2.3+meta, which the manifest rejects.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Validate release tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::unsupported release tag: $TAG"
+            exit 1
+          fi
+
   tagged-docker-publish:
     name: tagged-docker-publish
+    needs: validate-tag
     # Callee jobs need packages/id-token/attestations; caller must grant them (cannot elevate).
     # contents:write is required by docker-publish `notify` (commit comment); contents:read
     # alone causes reusable-workflow startup_failure on tag push.
@@ -54,14 +76,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Generate release manifest
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           # mcp-operator has a Dockerfile but is not published by docker-publish yet.
           python3 infra/scripts/release-manifest.py \
-            --tag "${{ github.ref_name }}" \
-            --commit "${{ github.sha }}" \
+            --tag "$TAG" \
+            --commit "$COMMIT" \
+            --repository "$REPOSITORY" \
             --services auth,proxy,api,memory,embedder,worker,mcp-memory \
             --output release-manifest.json
+      - name: Ensure the GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes "Release $TAG"
+          fi
       - name: Upload release manifest
         env:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" release-manifest.json --clobber
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" release-manifest.json --clobber

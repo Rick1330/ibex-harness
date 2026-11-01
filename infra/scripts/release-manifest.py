@@ -185,7 +185,8 @@ def _git_head(root: Path) -> str:
     if not git:
         return ""
     try:
-        return subprocess.check_output(
+        # Fixed argv, absolute executable, no shell.
+        return subprocess.check_output(  # nosec B603
             [git, "-C", str(root), "rev-parse", "HEAD"],
             text=True,
         ).strip()
@@ -266,7 +267,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--output", default="release-manifest.json")
     parser.add_argument("--root", default=str(Path(__file__).resolve().parents[2]))
-    parser.add_argument("--repository", default="Rick1330/ibex-harness")
+    parser.add_argument(
+        "--repository",
+        default=os.environ.get("GITHUB_REPOSITORY", "Rick1330/ibex-harness"),
+    )
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", ""))
     parser.add_argument("--generated-at", default=None)
     parser.add_argument(
@@ -313,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         output.write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-    except (ManifestError, OSError, json.JSONDecodeError) as exc:
+    except (ManifestError, OSError, ValueError) as exc:
         print(f"release-manifest: {exc}", file=sys.stderr)
         return 1
 
