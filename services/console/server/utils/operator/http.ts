@@ -10,7 +10,13 @@ const OPERATOR_PATHS = {
   traces: "/v1/operator/traces",
   traceDetail: "/v1/operator/traces/",
   runDetail: "/v1/operator/traces/runs/",
+  agents: "/v1/operator/agents",
+  agentDetail: "/v1/operator/agents/",
 } as const
+
+const TRACE_ID_RE = /^[A-Za-z0-9._~-]{1,256}$/
+const AGENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SUFFIX_PATHS = new Set<OperatorPath>(["traceDetail", "runDetail", "agentDetail"])
 
 export type OperatorPath = keyof typeof OPERATOR_PATHS
 
@@ -72,11 +78,14 @@ export function operatorTarget(
   query?: URLSearchParams,
 ): URL {
   const origin = configuredOrigin(event)
-  if (suffix && path !== "traceDetail" && path !== "runDetail") {
+  if (suffix && !SUFFIX_PATHS.has(path)) {
     throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
   }
-  if (suffix && !/^[A-Za-z0-9._~-]{1,256}$/.test(suffix)) {
-    throw new OperatorUpstreamError(404, "NOT_FOUND", "Trace not found")
+  if (suffix) {
+    const pattern = path === "agentDetail" ? AGENT_ID_RE : TRACE_ID_RE
+    if (!pattern.test(suffix)) {
+      throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
+    }
   }
 
   const target = new URL(`${OPERATOR_PATHS[path]}${encodeURIComponent(suffix)}`, origin)

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  OperatorAgentPageSchema,
+  OperatorAgentSchema,
   OperatorContextSchema,
   OperatorOverviewSchema,
   OperatorTraceDetailSchema,
@@ -112,6 +114,28 @@ const traceDetail = {
   score_schema_note: null,
 }
 
+const agent = {
+  id: "33333333-3333-4333-8333-333333333333",
+  slug: "support-agent",
+  name: "Support Agent",
+  description: null,
+  status: "active" as const,
+  default_provider: "openai",
+  default_model: "gpt-4.1",
+  tags: ["prod"],
+  total_sessions: 1,
+  total_memories: 2,
+  total_tokens_used: 3,
+  last_active_at: null,
+  created_at: "2026-09-26T12:00:00.000Z",
+  updated_at: "2026-09-26T12:00:00.000Z",
+}
+
+const agentPage = {
+  data: [agent],
+  pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+}
+
 describe("operator response contracts", () => {
   it("accepts the stable session and health shapes", () => {
     expect(parseOperatorSession(session).org_id).toBe(session.org_id)
@@ -151,6 +175,27 @@ describe("operator response contracts", () => {
             evidence: { ...traceList.items[0].evidence, source_watermark: "guess" },
           },
         ],
+      }),
+    ).toThrow()
+  })
+
+  it("accepts the operator agent projection and page", () => {
+    expect(OperatorAgentSchema.parse(agent).slug).toBe("support-agent")
+    expect(OperatorAgentPageSchema.parse(agentPage).pagination.has_more).toBe(false)
+  })
+
+  it("rejects tenant authority, unsupported status, and malformed identity", () => {
+    expect(() => OperatorAgentSchema.parse({ ...agent, org_id: session.org_id })).toThrow()
+    expect(() => OperatorAgentSchema.parse({ ...agent, status: "draining" })).toThrow()
+    expect(() => OperatorAgentSchema.parse({ ...agent, id: "agent-1" })).toThrow()
+    expect(() => OperatorAgentSchema.parse({ ...agent, slug: "Support Agent" })).toThrow()
+  })
+
+  it("rejects unknown pagination fields", () => {
+    expect(() =>
+      OperatorAgentPageSchema.parse({
+        ...agentPage,
+        pagination: { ...agentPage.pagination, cursor: "x" },
       }),
     ).toThrow()
   })

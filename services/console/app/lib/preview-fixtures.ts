@@ -18,7 +18,6 @@ export type FixtureModule = {
  */
 export const FIXTURE_MODULES: FixtureModule[] = [
   { file: "access-preview.ts", surface: "access", kind: "preview" },
-  { file: "agent-preview.ts", surface: "agents", kind: "preview" },
   { file: "analytics-preview.ts", surface: "analytics", kind: "preview" },
   { file: "audit-preview.ts", surface: "audit", kind: "preview" },
   { file: "budget-preview.ts", surface: "budgets", kind: "preview" },

@@ -3,22 +3,21 @@ import { describe, expect, it } from "vitest"
 import { SURFACES } from "../shared/operator/surfaces"
 
 describe("static surface status", () => {
-  it("marks only the three validated reads as live", () => {
+  it("marks only the four validated reads as live", () => {
     const live = Object.values(SURFACES)
       .filter((surface) => surface.availability === "live")
       .map((surface) => surface.path)
       .sort()
-    expect(live).toEqual(["/", "/explore", "/platform"])
+    expect(live).toEqual(["/", "/agents", "/explore", "/platform"])
   })
 
-  it("keeps the remaining fifteen surfaces in preview", () => {
+  it("keeps the remaining fourteen surfaces in preview", () => {
     const preview = Object.values(SURFACES)
       .filter((surface) => surface.availability === "preview")
       .map((surface) => surface.path)
       .sort()
     expect(preview).toEqual([
       "/access",
-      "/agents",
       "/analytics",
       "/audit",
       "/budgets",

@@ -423,223 +423,13 @@ test("settings keeps its category and section in the URL and the keyboard", asyn
   await expectNoAxeViolations(page)
 })
 
-test("agent inventory starts high at the reference viewport and never invents a chart", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.goto("/agents")
-  await waitForHydration(page)
-
-  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible()
-  await expect(page.getByText("24 agents", { exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Filter to 21 active agents" })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Filter to 2 paused agents" })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Filter to 1 suspended agents" })).toBeVisible()
-  await expect(page.getByText("Showing 10 of 24")).toBeVisible()
-  await expect(page.getByText("14 have no data in this period")).toBeVisible()
-
-  const table = page.locator('[aria-label="Agent table"]')
-  await expect(table).toBeVisible()
-
-  const metrics = await page.evaluate(async () => {
-    // Font swap can shift the header height; measure only after final layout.
-    await document.fonts?.ready
-    const table = document.querySelector('table[aria-label="Agent table"]')
-    const content = document.querySelector("#console-main")?.firstElementChild
-    const rows = [...document.querySelectorAll("tbody tr[data-agent-row]")]
-    if (!table || !content) return null
-    return {
-      offset: table.getBoundingClientRect().top - content.getBoundingClientRect().top,
-      visibleRows: rows.filter((row) => {
-        const box = row.getBoundingClientRect()
-        return box.top >= 0 && box.bottom <= window.innerHeight
-      }).length,
-      hits: table.querySelectorAll("canvas, svg[data-chart]").length,
-    }
-  })
-  expect(metrics).not.toBeNull()
-  expect(metrics!.offset).toBeLessThanOrEqual(340)
-  expect(metrics!.visibleRows).toBeGreaterThanOrEqual(8)
-  expect(metrics!.hits).toBe(0)
-
-  // The retired side box and run-volume chart must not come back.
-  await expect(page.getByText("Run volume", { exact: false })).toHaveCount(0)
-  await expect(page.getByRole("complementary", { name: /Agent detail/ })).toHaveCount(0)
-
-  const pageDimensions = await page.evaluate(() => ({
-    client: document.documentElement.clientWidth,
-    scroll: document.documentElement.scrollWidth,
-  }))
-  expect(pageDimensions.scroll, JSON.stringify(pageDimensions)).toBeLessThanOrEqual(pageDimensions.client)
-
-  // Light is the Playwright default; verify the dark palette too.
-  await expectNoAxeViolations(page)
-  await page.getByRole("button", { name: /Switch to dark theme/ }).click()
-  await expect(page.locator("html")).toHaveClass(/dark/)
-  await expectNoAxeViolations(page)
-})
-
-test("agent list filters, search, and row navigation survive reload and back", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/agents")
-  await waitForHydration(page)
-
-  const rows = page.locator("tbody tr[data-agent-row]")
-  await expect(rows).toHaveCount(10)
-
-  await page.getByRole("group", { name: "Quick filters" }).getByRole("button", { name: /^Needs attention/ }).click()
-  await expect(page).toHaveURL(/view=attention/)
-  await expect(rows).toHaveCount(6)
-
-  const searchbox = page.getByRole("searchbox", { name: "Search agents" })
-  await searchbox.fill("research")
-  await expect(page).toHaveURL(/q=research/)
-  await expect(rows).toHaveCount(1)
-
-  await page.reload()
-  await waitForHydration(page)
-  await expect(page.getByRole("searchbox", { name: "Search agents" })).toHaveValue("research")
-  await expect(rows).toHaveCount(1)
-  await expect(page).toHaveURL(/view=attention/)
-  await expect(page).toHaveURL(/q=research/)
-
-  await page.getByRole("link", { name: "Research assistant", exact: true }).click()
-  await waitForHydration(page)
-  await expect(page.getByRole("heading", { name: "Research assistant", exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/return=%2Fagents%3Fq%3Dresearch%26view%3Dattention/)
-
-  await page.goBack()
-  await waitForHydration(page)
-  await expect(page.getByRole("searchbox", { name: "Search agents" })).toHaveValue("research")
-  await expect(rows).toHaveCount(1)
-})
-
-test("agent quick look opens on hover or Space and stays read-only", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/agents")
-  await waitForHydration(page)
-  // Font swap can shift rows out from under the pointer mid-hover.
-  await page.evaluate(() => document.fonts?.ready)
-
-  const row = page.locator("tbody tr[data-agent-row]").nth(1)
-  await row.hover()
-  const quickLook = page.getByRole("dialog", { name: "Agent quick look" })
-  await expect(quickLook).toBeVisible()
-  await expect(quickLook.getByText("Spend budget")).toBeVisible()
-  await expect(quickLook.getByRole("link", { name: /Open Support triage/ })).toBeVisible()
-  await page.keyboard.press("Escape")
-  // Wait for the sheet to unmount so its focus trap cannot steal the row focus.
-  await expect(quickLook).toHaveCount(0)
-
-  await row.focus()
-  await expect(row).toBeFocused()
-  await page.keyboard.press("Space")
-  await expect(quickLook).toBeVisible()
-  await page.keyboard.press("Escape")
-  await expect(quickLook).toHaveCount(0)
-
-  await page.evaluate(() => window.scrollTo(0, 0))
-  const dimensions = await page.evaluate(() => ({
-    client: document.documentElement.clientWidth,
-    scroll: document.documentElement.scrollWidth,
-  }))
-  expect(dimensions.scroll, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.client)
-})
-
-test("agent detail labels every version, keeps nine tabs, and restores tab filters", async ({ page }) => {
-  test.setTimeout(60_000)
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/agents/ag_support_triage")
-  await waitForHydration(page)
-
-  await expect(page.getByRole("heading", { name: "Support triage", exact: true })).toBeVisible()
-  await expect(page.getByText("Agent v14", { exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Directive v8" })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Policy v3" })).toBeVisible()
-  await expect(page.getByRole("button", { name: /^Budget \$1\.24k left/ })).toBeVisible()
-
-  // The old banner is gone; honesty lives in the chip and the about popover.
-  await expect(page.getByText(/Illustrative agent detail/)).toHaveCount(0)
-
-  const tabs = page.getByRole("tablist", { name: "Agent views" }).getByRole("tab")
-  await expect(tabs).toHaveCount(9)
-  for (const label of ["Overview", "Runs", "Sessions", "Directives", "Policies", "Memories", "MCP tools", "Cost & budgets", "Audit history"]) {
-    await expect(page.getByRole("tab", { name: new RegExp(`^${label}`) })).toBeVisible()
-  }
-
-  const sticky = await page.evaluate(() => {
-    const tablist = document.querySelector('[aria-label="Agent views"]')
-    const bar = tablist?.parentElement?.parentElement
-    return bar ? { position: getComputedStyle(bar).position, top: parseFloat(getComputedStyle(bar).top) } : null
-  })
-  expect(sticky?.position).toBe("sticky")
-  expect(sticky?.top).toBe(48)
-
-  // The bar stays pinned below the top bar while the default panel scrolls.
-  const scrollable = await page.evaluate(() => {
-    window.scrollTo(0, document.documentElement.scrollHeight)
-    return document.documentElement.scrollHeight - window.innerHeight
-  })
-  expect(scrollable).toBeGreaterThan(400)
-  await page.waitForTimeout(200)
-  const pinnedTop = await page.evaluate(() => {
-    const tablist = document.querySelector('[aria-label="Agent views"]')
-    return tablist?.parentElement?.parentElement?.getBoundingClientRect().top ?? -1
-  })
-  expect(pinnedTop).toBeLessThanOrEqual(48)
-  expect(pinnedTop).toBeGreaterThanOrEqual(47)
-  await page.evaluate(() => window.scrollTo(0, 0))
-  await page.getByRole("tab", { name: /^Runs/ }).click()
-  await expect(page).toHaveURL(/tab=runs/)
-  await page.getByRole("searchbox", { name: "Search runs" }).fill("run_support_triage_003")
-  await expect(page).toHaveURL(/rq=run_support_triage_003/)
-  await expect(page.locator("tbody tr")).toHaveCount(1)
-
-  await page.reload()
-  await waitForHydration(page)
-  await expect(page.getByRole("tab", { name: /^Runs/ })).toHaveAttribute("aria-selected", "true")
-  await expect(page.getByRole("searchbox", { name: "Search runs" })).toHaveValue("run_support_triage_003")
-  await expect(page.locator("tbody tr")).toHaveCount(1)
-
-  await expectNoAxeViolations(page)
-})
-
-test("agent detail archive and delete preview their cascade without writing", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/agents/ag_support_triage")
-  await waitForHydration(page)
-
-  await page.getByRole("button", { name: "More agent actions" }).click()
-  await page.getByRole("menuitem", { name: /Archive/ }).click()
-
-  const dialog = page.getByRole("dialog", { name: /Archive Support triage/ })
-  await expect(dialog).toBeVisible()
-  await expect(dialog.getByText("Sessions", { exact: true })).toBeVisible()
-  await expect(dialog.getByText("312 · 3 live")).toBeVisible()
-  await expect(dialog.getByText("3 live sessions must finish or be terminated before a write can complete.")).toBeVisible()
-  const confirm = dialog.getByRole("button", { name: "Archive agent" })
-  await expect(confirm).toBeDisabled()
-  await expect(dialog.getByText("Read-only console. Requires a privileged write contract.")).toBeVisible()
-
-  await dialog.getByRole("button", { name: "Close cascade preview" }).click()
-  await expect(dialog).toBeHidden()
-
-  await page.getByRole("button", { name: "More agent actions" }).click()
-  await page.getByRole("menuitem", { name: /Delete/ }).click()
-  const remove = page.getByRole("dialog", { name: /Delete Support triage/ })
-  await expect(remove).toBeVisible()
-  await expect(remove.getByRole("button", { name: "Delete agent" })).toBeDisabled()
-  await page.keyboard.press("Escape")
-  await expect(remove).toBeHidden()
-})
-
-test("agent surfaces fall back to cards without horizontal overflow on narrow viewports", async ({ page }) => {
+test("agent surfaces fail closed without horizontal overflow on narrow viewports", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto("/agents")
   await waitForHydration(page)
 
-  const cards = page.getByRole("list", { name: "Agent cards" })
-  await expect(cards).toBeVisible()
-  await expect(cards.getByRole("listitem")).toHaveCount(10)
-  await expect(page.locator('table[aria-label="Agent table"]')).toBeHidden()
+  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Agent inventory unavailable" })).toBeVisible()
 
   const listDimensions = await page.evaluate(() => ({
     client: document.documentElement.clientWidth,
@@ -648,9 +438,9 @@ test("agent surfaces fall back to cards without horizontal overflow on narrow vi
   expect(listDimensions.scroll, JSON.stringify(listDimensions)).toBeLessThanOrEqual(listDimensions.client)
   await expectNoAxeViolations(page)
 
-  await page.goto("/agents/ag_support_triage")
+  await page.goto("/agents/33333333-3333-4333-8333-333333333333")
   await waitForHydration(page)
-  await expect(page.getByRole("heading", { name: "Support triage", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Agent record unavailable" })).toBeVisible()
   const detailDimensions = await page.evaluate(() => ({
     client: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
@@ -912,7 +702,7 @@ test("sidebar shows the core lifecycle and hides the platform tier by default", 
 
 test("preview surfaces carry a persistent illustrative banner and live surfaces do not", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/agents")
+  await page.goto("/sessions")
   await waitForHydration(page)
 
   const banner = page.getByRole("note", { name: "Illustrative preview" })
@@ -945,4 +735,14 @@ test("command menu searches the core lifecycle only", async ({ page }) => {
 
   await dialog.getByRole("searchbox").fill("memories")
   await expect(dialog.getByRole("button", { name: /Memories/ })).toBeVisible()
+})
+
+test("agents fail closed without an operator API and never render fixtures", async ({ page }) => {
+  await page.goto("/agents?demo=0")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Agent inventory unavailable" })).toBeVisible()
+  await expect(page.getByText("Support Agent")).toHaveCount(0)
+  await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+  await expectNoAxeViolations(page)
 })

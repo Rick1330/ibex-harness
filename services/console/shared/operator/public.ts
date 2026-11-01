@@ -1,4 +1,6 @@
 import type {
+  OperatorAgent,
+  OperatorAgentPage,
   OperatorContext,
   OperatorOverview,
   OperatorTrace,
@@ -14,6 +16,8 @@ export type PublicOperatorTrace = OperatorTrace
 export type PublicOperatorTraceList = OperatorTraceList
 export type PublicOperatorTraceDetail = OperatorTraceDetail
 export type PublicPlatformHealth = PlatformHealth
+export type PublicOperatorAgent = OperatorAgent
+export type PublicOperatorAgentPage = OperatorAgentPage
 
 export type OperatorErrorEnvelope = {
   error: {
