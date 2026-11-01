@@ -1,6 +1,6 @@
 # Pre-Track-D Readiness: Three-PR Remediation Plan
 
-> **Historical record.** This plan predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md). Next.js references are historical. Current status: `services/console/README.md`.
+> **Historical record.** This plan predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md). Next.js references are historical. The `services/dashboard` compatibility shell was retired by [ADR-0090](../adr/0090-retire-dashboard-compatibility-shell.md). Current status: `services/console/README.md`.
 
 **Baseline reviewed:** `a041ed302bfc7966d94b6ce175fec655ced5263c` (`main`, 2026-09-24)
 **Plan purpose:** Close the minimum source, identity, topology, and assurance prerequisites before beginning a real Track D product slice.

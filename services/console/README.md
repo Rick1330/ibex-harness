@@ -1,6 +1,6 @@
 # IBEX Console (`@ibex/console`)
 
-`services/console` is the canonical operator application. It is a Nuxt 4 server-rendered app with a server-only operator BFF. `services/dashboard` is a temporary compatibility shell and must not become a second Track D product.
+`services/console` is the canonical operator application. It is a Nuxt 4 server-rendered app with a server-only operator BFF. The dashboard compatibility shell was retired by ADR-0090.
 
 The Console is the operations plane for the memory/context lifecycle (ADR-0089): agents, sessions, memories, evidence, directives, policies, trace exploration, platform health, and settings. Incidents, drift, analytics, budgets, providers, MCP tools, and access are a separate **platform tier** and are not part of the default navigation.
 

@@ -681,9 +681,9 @@ Used by: **all services**
 
 ---
 
-## 15) Operator UI / Dashboard Variables (4.P.0+)
+## 15) Operator session variables (4.P.0+)
 
-Used by: **`services/dashboard`** (static SPA on Cloudflare Pages) talking to **`services/api`**.
+Used by **`services/api`** for operator session cookies and JWTs. The Console reads them through the same-origin BFF. The `DASHBOARD_*` names are legacy API config keys and are kept for compatibility.
 
 Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 
@@ -691,8 +691,8 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 
 | Environment | Operator UI | API / SSE | Cookie SameSite |
 |-------------|-------------|-----------|-----------------|
-| local | `http://localhost:3100` | `http://localhost:8010` | `Lax` |
-| preview | `https://*.ibex-harness-operator.pages.dev` | not provisioned (use local/staging API) | `None`+`Secure` if cross-site |
+| local | `http://localhost:3000` | `http://localhost:8010` | `Lax` |
+| preview | not claimed | not provisioned | `None`+`Secure` if cross-site |
 | staging | `https://operator.staging.ibexharness.com` (planned) | `https://api.staging.ibexharness.com` (planned; **no Ingress yet**) | `Strict` when same eTLD+1 |
 | production | `https://operator.ibexharness.com` (planned) | `https://api.ibexharness.com` (planned; **no Ingress yet**) | `Strict` + `Secure` + `Domain=.ibexharness.com` |
 
@@ -700,8 +700,9 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NEXT_PUBLIC_API_BASE_URL` / `window.IBEX_API_BASE_URL` | Yes | `http://localhost:8010` | API/SSE origin for the operator shell (use `localhost`, not `127.0.0.1`, with UI on `localhost:3100`) |
-| `NEXT_PUBLIC_SENTRY_DSN` | No | (none) | Public Sentry DSN (safe) |
+| `IBEX_OPERATOR_API_ORIGIN` | Yes | (none) | Server-only API origin used by the Console BFF; never exposed to the browser |
+| `IBEX_OPERATOR_SESSION_COOKIE_NAME` | No | `ibex_session` | Access cookie the BFF forwards to the API |
+| `CONSOLE_READ_ONLY` | No | unset | Keeps the Console presentation read-only |
 
 ### Cookie / CSRF / provisional JWT (set on **`services/api`**, not in the browser bundle)
 
@@ -719,7 +720,7 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 | `JWT_ACCESS_TOKEN_TTL_SECONDS` | No | `3600` | Access TTL | Short-lived |
 | `JWT_REFRESH_TOKEN_TTL_SECONDS` | No | `2592000` | Refresh TTL | |
 | `JWT_HMAC_SECRET` | Yes when feature on (HS256 path) | (none) | Provisional HS256 secret (≥32 bytes) | **No** `JWT_PRIVATE_KEY_PEM` alias; dual-verify logs `provisional_hs256_verify=1` |
-| `JWT_PRIVATE_KEY_PEM` | Yes (auth RS256) | (none) | Auth-only RS256 signing key | Never load on API/dashboard |
+| `JWT_PRIVATE_KEY_PEM` | Yes (auth RS256) | (none) | Auth-only RS256 signing key | Never load on the API or Console |
 | `DASHBOARD_JWT_PUBLIC_KEYS_PEM` | Yes when verifying RS256 | (none) | API verifies Auth-issued RS256 session/step-up JWTs | Keep server-only |
 | `IBEX_ENV` / `IBEX_API_ENV` | Yes when operator sessions are enabled | `development` only when feature is off | Explicit API profile: `development`, `staging`, or `production` | Missing explicit profile is rejected at startup when operator sessions are enabled; HMAC sessions are development-only |
 | `IBEX_OPERATOR_FEATURE_ENABLED` | No | `false` | Enables provisional `/v1/operator/session` + SSE | Default off until 4.P.1 |
@@ -729,7 +730,7 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 | `IBEX_OPERATOR_ALLOW_REPLAY` | No | `false` | API per-action kill switch | |
 | `IBEX_OPERATOR_ALLOW_SECRET_USE` | No | `false` | API per-action kill switch | |
 
-**Rule:** never put secrets in `NEXT_PUBLIC_*` or operator deep links. Never persist a PAT in `localStorage`/URL.
+**Rule:** never put secrets in public browser configuration or operator deep links. Never persist a PAT in `localStorage`/URL.
 
 ---
 
@@ -755,8 +756,7 @@ Create `/.env.example` for convenience (dev only). Do not put secrets in it.
 IBEX_ENV=development
 
 # Core endpoints
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
-NEXT_PUBLIC_PROXY_BASE_URL=http://localhost:8080
+IBEX_PROXY_BASE_URL=http://localhost:8080
 
 # Redis
 REDIS_URL=redis://localhost:6379/0

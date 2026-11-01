@@ -2,7 +2,7 @@
 
 ## Purpose and status
 
-This document defines the target architecture and evidence boundary for the operator product. The canonical authenticated application name is **`services/console`**. `site/` remains the public documentation site. `services/dashboard/` is only the temporary 4.P.0 compatibility shell and is not a second production product.
+This document defines the target architecture and evidence boundary for the operator product. The canonical authenticated application name is **`services/console`**. `site/` remains the public documentation site. The dashboard compatibility shell was retired by ADR-0090; the Console is the only operator application.
 
 The current repository baseline is `e4525e3` (D2 metadata-only trace slice, following D1 `fc8735c`). Statements below distinguish four states: **implemented** means verified in the current source; **mounted-but-provisional** means code is present but not production-ready; **specified-not-implemented** means a contract or design exists without a verified implementation; **deferred** means intentionally outside the current slice. A design contract is not deployment evidence.
 
@@ -15,7 +15,6 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 | Surface | Status in baseline | Ownership and constraint |
 |---|---|---|
 | `site/` | Implemented public site | Public docs, roadmap, benchmark, and marketing content only. Do not place authenticated operator routes here. |
-| `services/dashboard/` | Mounted-but-provisional | Static 4.P.0 connection/session/SSE compatibility shell. Retain while migration proceeds; do not expand it into Track D. |
 | `services/console/` | Mounted-but-provisional | Canonical Nuxt 4 + Nitro operator application (ADR-0088). Four of ten core surfaces are live: Overview, Platform health, metadata-only Explore, and the agent inventory (ADR-0089). Hosted AuthService, two-tenant, deployment, and promotion evidence remain open. |
 | Overview/context/health/events contract | Mounted backend foundations, operator composition not fully verified | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
 | Explore / Trace Inspector metadata slice | Mounted-but-provisional | D2 list/detail metadata is mounted with explicit unavailable sections; full query, provenance joins, content, score, replay, and actions remain unaccepted. |
@@ -68,9 +67,9 @@ Mandatory identifiers are not inferred from timestamps or content hashes: `trace
 
 ## Deployment and runtime ownership
 
-The deployment owner must explicitly choose one approved runtime for `services/console`: a versioned static artifact/workload with an approved BFF/API/SSE topology, or an approved transition runtime for the migration period. No hostname, ingress, Cloudflare project, Kubernetes workload, image, workflow, or production promotion is assumed from this document. The static compatibility shell may remain independently runnable until the canonical artifact has parity and rollback evidence.
+The deployment owner must explicitly choose one approved runtime for `services/console`: a versioned static artifact/workload with an approved BFF/API/SSE topology, or an approved transition runtime for the migration period. No hostname, ingress, Cloudflare project, Kubernetes workload, image, workflow, or production promotion is assumed from this document. The dashboard compatibility shell was retired by ADR-0090; its manual preview workflow and workspace entry are removed.
 
-Staging promotion must use the console artifact and authenticated browser evidence, not a public-docs smoke test. Promotion requires contract/OpenAPI and generated-client checks, four-role/two-tenant browser journeys, accessibility/visual/hostile-content/cache/SSE/performance gates, immutable artifact evidence, and a named rollback owner. Rollback must restore the prior known-good console artifact/digest and verify session, cache, SSE drain, and tenant boundaries. Retire `services/dashboard` only after an approved parity matrix, migration notice, rollback window, and removal of its workflow/runtime references; no retirement date is claimed here.
+Staging promotion must use the console artifact and authenticated browser evidence, not a public-docs smoke test. Promotion requires contract/OpenAPI and generated-client checks, four-role/two-tenant browser journeys, accessibility/visual/hostile-content/cache/SSE/performance gates, immutable artifact evidence, and a named rollback owner. Rollback must restore the prior known-good console artifact/digest and verify session, cache, SSE drain, and tenant boundaries.
 
 ## Required trace prerequisites
 

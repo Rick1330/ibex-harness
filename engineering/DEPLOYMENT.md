@@ -28,7 +28,7 @@ A deployment strategy must guarantee:
 
 ## 1.1 IBEX Console runtime and evidence boundary
 
-`services/console` is the canonical authenticated operator application. `site/` is the public documentation site. `services/dashboard` is a temporary compatibility shell only. The baseline does not verify an IBEX Console package, workload, ingress, hostname, deployment workflow, or production artifact; those must not be inferred from this target deployment document.
+`services/console` is the canonical authenticated operator application. `site/` is the public documentation site. The baseline does not verify an IBEX Console package, workload, ingress, hostname, deployment workflow, or production artifact; those must not be inferred from this target deployment document.
 
 The runtime owner must approve either (a) a versioned console static artifact/workload with an explicitly owned BFF/API/SSE topology, or (b) a time-boxed transition runtime. The owner must also define secure cookies, CSRF, exact credentialed CORS when cross-origin, security headers, authenticated SSE drain, and default `Cache-Control: no-store` for personalized/RSC/API/export responses. The API owns context, overview, platform-health, and events truth; console owns presentation and server-only DAL/BFF composition, not authorization or evidence.
 
@@ -408,7 +408,7 @@ In environments where everything deploys together:
 6. API server (management plane)
 7. `services/console` (canonical authenticated operator application; deploy only after its artifact, runtime owner, and promotion evidence are verified)
 
-`services/dashboard` is not a deployment-order product. It is a temporary compatibility shell only and may be used as a transition fallback, not as the canonical operator deployment.
+The dashboard compatibility shell was retired by ADR-0090. `services/console` is the only operator deployment.
 
 **Important:** Many services can start without their deps (but not be ready).
 Readiness probes control routing. Do not “hard fail” startup unless configuration is missing.

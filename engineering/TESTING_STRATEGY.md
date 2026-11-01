@@ -765,7 +765,7 @@ This testing strategy is the enforcement mechanism that makes IBEX Harness safe 
 
 ## 16) IBEX Console assurance gates
 
-`services/console` is the only canonical operator product. `services/console (canonical; services/dashboard is compatibility-only)` tests remain compatibility-shell tests and do not satisfy console product evidence. The console package is not present in the baseline, so the commands below are the required command interface for that package, not a claim that they currently run:
+`services/console` is the only canonical operator product. The commands below are the required command interface for that package:
 
 ```bash
 pnpm --filter console lint

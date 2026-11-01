@@ -1570,8 +1570,7 @@ async def db_session(postgres_container):
 
 ## 📘 TypeScript Standards
 
-The canonical TypeScript application is `services/console` (Nuxt 4 + Vue 3 + Nitro, ADR-0088). The legacy
-`services/dashboard` shell is not a pattern source.
+The canonical TypeScript application is `services/console` (Nuxt 4 + Vue 3 + Nitro, ADR-0088). The dashboard compatibility shell was retired by ADR-0090.
 
 ### Project structure
 
