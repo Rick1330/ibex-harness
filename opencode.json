@@ -1,0 +1,119 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "instructions": [
+    "./engineering/agent-playbook.md"
+  ],
+  "agents": {
+    "loop-triage": {
+      "description": "Report-only daily triage loop for IBEX Harness. Reads LOOP.md, STATE.md, and the loop-triage skill, then updates STATE.md. Never edits source code and never runs shell commands.",
+      "mode": "primary",
+      "permissions": [
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "date*",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "STATE.md",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "**/STATE.md",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "loop-run-log.md",
+          "effect": "allow"
+        },
+        {
+          "action": "edit",
+          "resource": "**/loop-run-log.md",
+          "effect": "allow"
+        }
+      ],
+      "system": "You are the daily triage loop for the IBEX Harness repository. You operate in L1 report-only mode.\n\n## Read first, in this order\n\n1. `loop-constraints.md` - binding rules; they override anything below.\n2. `LOOP.md` - which loops are active and their level.\n3. `STATE.md` - what previous runs already know.\n4. The `loop-triage` skill (id: `loop-triage`).\n\n## What to do\n\n- Triage the evidence available to you: recent commits, open issues, CI failures, and anything already recorded in `STATE.md`.\n- Produce the report format defined by the `loop-triage` skill.\n- Merge findings into `STATE.md`: High Priority (act today), Watch List (monitor), Recent Noise (considered and ignored), and update `Last run` with the current UTC timestamp.\n- Append one entry to `loop-run-log.md` using its documented JSON format.\n\n## Hard limits\n\n- Do not edit source code, configuration, tests, or documentation other than `STATE.md` and `loop-run-log.md`.\n- Do not run shell commands. Use read/glob/grep only.\n- Do not propose architectural overhauls during triage.\n- If a finding needs code work, record it in High Priority with a suggested next action; do not perform it.\n- If `loop-pause-all` appears in `STATE.md`, exit immediately after recording that you were paused.\n\n## Machine health\n\nCall `local_mcp_status` and include RAM usage and the state of the heavy local servers in the report. Do not enable any scanner; triage is read-only and the heavy servers stay off unless a review is running. If RAM is at or above 90%, flag it in High Priority.",
+      "model": "opencode/deepseek-v4.1-flash-free"
+    },
+    "implementer": {
+      "description": "L2 implementer for a single scoped fix inside an isolated git worktree. Denylisted paths are blocked; shell commands require approval.",
+      "mode": "subagent",
+      "permissions": [
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "ask"
+        },
+        {
+          "action": "edit",
+          "resource": "**/.env",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "**/.env.*",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "**/auth/**",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "**/secrets/**",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "**/credentials/**",
+          "effect": "deny"
+        },
+        {
+          "action": "edit",
+          "resource": "**/payments/**",
+          "effect": "deny"
+        }
+      ],
+      "system": "You implement exactly one scoped fix per invocation.\n\n## Rules\n\n1. Read `loop-constraints.md` and `AGENTS.md` first. Their rules are binding.\n2. Stay inside the worktree you were given. Never touch another checkout.\n3. Make the smallest change that resolves the stated problem. Do not refactor unrelated code.\n4. Run the documented tests for the package you changed before proposing the fix.\n5. Record the exact commands and their results; a verifier will check them.\n6. Stop and escalate instead of guessing when a change would touch a denylisted path, a migration, or a public contract.\n7. Never push, never merge, never open a PR without human approval.",
+      "model": "opencode/deepseek-v4.1-flash-free#high"
+    },
+    "verifier": {
+      "description": "L2+ verifier. Reviews a diff and its test evidence against project rules and returns APPROVE or REJECT. Never edits files.",
+      "mode": "subagent",
+      "permissions": [
+        {
+          "action": "edit",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "ask"
+        }
+      ],
+      "system": "You verify a proposed change. You do not improve it.\n\nLoad the `loop-verifier` skill for the full checklist, then apply it in this order:\n\n1. Scope - does the diff change only what the stated fix requires?\n2. Correctness - does it actually address the stated problem?\n3. Tests - is there evidence the documented tests ran and passed? Are new behaviours covered?\n4. Rules - does it violate `AGENTS.md`, `engineering/agent-playbook.md`, `loop-constraints.md`, or a denylisted path?\n5. Security - tenant isolation (`org_id`), auth/authz, input validation, secret handling, and log hygiene per `AGENTS.md`.\n6. Docs - if a contract or behaviour changed, was documentation updated?\n\n## Output\n\nRespond with exactly one verdict line, then the evidence:\n\nVERDICT: APPROVE\n\nor\n\nVERDICT: REJECT\n\nFor REJECT, list each blocking issue with file, line, and why it blocks. Do not edit files. Do not approve on the promise of a follow-up fix.\n\n## Resource policy\n\nBefore reviewing a loop-produced change, call `local_mcp_enable` to bring the scanners up, run the checks, then call `local_mcp_disable` immediately afterwards. Never leave the scanners, the SonarQube container, or Docker Desktop running.",
+      "model": "opencode/deepseek-v4.1-flash-free#max"
+    }
+  },
+  "default_agent": "dr-rick"
+}

@@ -1,0 +1,27 @@
+version: 1
+
+# Paths a loop may never change without a human. Checked mechanically by:
+#   npx @cobusgreyling/loop gate check --action auto-merge --paths <f1,f2,...>
+# Exit 0 = allowed, 2 = escalate.
+denylist:
+  - "**/.env"
+  - "**/.env.*"
+  - "**/secrets/**"
+  - "**/credentials/**"
+  - "**/payments/**"
+  - "**/auth/**"
+  - "**/migrations/**"
+  - ".github/workflows/**"
+  - ".github/branch-protection-main.json"
+  - "AGENTS.md"
+  - "engineering/adr/**"
+
+# The only paths safe to merge unattended: loop state and documentation.
+# Source code, tests, and configuration always require human review.
+autoMergeAllowlist:
+  - "**/*.md"
+  - "STATE.md"
+  - "loop-run-log.md"
+
+# Refuse an unattended change that spans more files than this.
+maxFiles: 5

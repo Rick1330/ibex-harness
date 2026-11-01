@@ -91,3 +91,6 @@ services/console/CLAUDE.md
 .nuxt/
 .nuxt-stale-*/
 .output/
+
+# Local tool scratch
+.zcode/
