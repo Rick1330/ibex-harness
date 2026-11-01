@@ -126,7 +126,7 @@ jobs:
     outputs:
       go: ${{ steps.detect.outputs.go }}
       python: ${{ steps.detect.outputs.python }}
-      web: ${{ steps.detect.outputs.web }}
+      site: ${{ steps.detect.outputs.site }}
       console: ${{ steps.detect.outputs.console }}
       proto: ${{ steps.detect.outputs.proto }}
       docker: ${{ steps.detect.outputs.docker }}
@@ -139,7 +139,7 @@ jobs:
       full: ${{ steps.detect.outputs.full }}
       run_go: ${{ steps.detect.outputs.run_go }}
       run_python: ${{ steps.detect.outputs.run_python }}
-      run_web: ${{ steps.detect.outputs.run_web }}
+      run_site: ${{ steps.detect.outputs.run_site }}
       run_console: ${{ steps.detect.outputs.run_console }}
       run_security: ${{ steps.detect.outputs.run_security }}
       run_docker: ${{ steps.detect.outputs.run_docker }}
@@ -2135,7 +2135,7 @@ jobs:
   site-build:
     name: site-build
     needs: [changes, repo-guards]
-    if: needs.changes.outputs.run_web == 'true'
+    if: needs.changes.outputs.run_site == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2817,7 +2817,7 @@ jobs:
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.run_web == 'true' &&
+      needs.changes.outputs.run_site == 'true' &&
       needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -2836,7 +2836,7 @@ jobs:
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.run_web == 'true' &&
+      needs.changes.outputs.run_site == 'true' &&
       needs.repo-guards.result == 'success' &&
       needs.site-build.result == 'success' &&
       (needs.changes.outputs.run_go != 'true' || needs.site-go-quality-gate.result == 'success')
@@ -3021,8 +3021,8 @@ jobs:
             "${{ needs.coverage.result }}" \
             "${{ needs.govulncheck.result }}"
 
-  ci-gate-web:
-    name: ci-gate-web
+  ci-gate-site:
+    name: ci-gate-site
     needs:
       - changes
       - site-build
@@ -3036,7 +3036,7 @@ jobs:
           persist-credentials: false
       - name: Evaluate site gate
         run: |
-          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" "${{ needs.changes.result }}" \
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_site }}" "${{ needs.changes.result }}" \
             "${{ needs.site-build.result }}"
 
   ci-gate-security:

@@ -10,6 +10,8 @@ authors: "IBEX Harness team"
 ::decision-banner{status="Accepted" date="2026-06-02" id="0008"}
 ::
 
+> **Revision note (2026-11-01):** the public-site aggregate check and path-filter output were renamed from `ci-gate-web`/`run_web` to `ci-gate-site`/`run_site`; scope and enforcement are unchanged. The decision text below uses the current names.
+
 # ADR-0008: Security scanning and CI quality gates
 
 - **Status:** Accepted

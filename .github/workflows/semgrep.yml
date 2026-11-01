@@ -27,7 +27,7 @@ jobs:
       contents: read
     outputs:
       run_go: ${{ steps.detect.outputs.run_go }}
-      run_web: ${{ steps.detect.outputs.run_web }}
+      run_site: ${{ steps.detect.outputs.run_site }}
       run_security: ${{ steps.detect.outputs.run_security }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,7 +52,7 @@ jobs:
       image: semgrep/semgrep:1.103.0
     if: |
       (needs.changes.outputs.run_go == 'true' ||
-       needs.changes.outputs.run_web == 'true' ||
+       needs.changes.outputs.run_site == 'true' ||
        needs.changes.outputs.run_security == 'true')
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -107,7 +107,7 @@ jobs:
       - name: Evaluate custom Semgrep gate
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          AREA_ACTIVE: ${{ needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_web == 'true' || needs.changes.outputs.run_security == 'true' }}
+          AREA_ACTIVE: ${{ needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_site == 'true' || needs.changes.outputs.run_security == 'true' }}
           SEMGREP_RESULT: ${{ needs.semgrep.result }}
         run: |
           bash .github/scripts/evaluate-ci-gate.sh "$AREA_ACTIVE" "$CHANGES_RESULT" "$SEMGREP_RESULT"

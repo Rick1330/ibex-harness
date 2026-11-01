@@ -10,6 +10,8 @@ authors: "IBEX Harness team"
 ::decision-banner{status="Accepted" date="2026-10-23" id="0087"}
 ::
 
+> **Revision note (2026-11-01):** the public-site aggregate check is now `ci-gate-site` and the path-filter output `run_site`; the public-site scope and deployment boundary are unchanged.
+
 # ADR-0087: Public site migration to Nuxt 4 + Docus
 
 - **Status:** Accepted

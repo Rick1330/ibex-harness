@@ -58,9 +58,9 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Public site:** `site/` is Nuxt 4 + Docus. CI builds it and deploys `site/.output/public` to Cloudflare Pages project `ibex-harness-docs` through `.github/workflows/site-deploy.yml`. There is no public-site server runtime.
 - **Engineering docs:** `engineering/` is canonical. ADRs live in `engineering/adr/`; they are engineering records, not public docs pages. The public `/docs/adr` route redirects to the GitHub directory.
 - **Status vocabulary:** `site/app/data/ledger.ts` and `site/content/docs/02.architecture/05.status-and-evidence.md` must agree with `engineering/architecture-v2/00-status-and-evidence.md`. Never promote a claim beyond its recorded evidence.
-- **Stable CI gate name:** the public-site aggregate check is `ci-gate-web`. Path-filter outputs remain `run_web`, and the site build job displays as `site-build`. Do not rename protected check contexts without updating `.github/branch-protection-main.json` and the live GitHub rule.
+- **Stable CI gate name:** the public-site aggregate check is `ci-gate-site`. Path-filter outputs remain `run_site`, and the site build job displays as `site-build`. Do not rename protected check contexts without updating `.github/branch-protection-main.json` and the live GitHub rule.
 - **Consoles:** `services/console` is canonical; `services/dashboard` is a compatibility shell only.
-- **Content status:** phases 0–3.5 are shipped locally. Phase 4 remains in progress; hosted HA, measured p99 SLOs, restore drills, and end-to-end tenant-isolation acceptance are open. See the status ledger before making any availability claim.
+- **Content status:** local implementations exist for auth, proxy, API, memory, and the core Console read paths. Hosted HA, measured p99 SLOs, restore drills, and end-to-end tenant-isolation acceptance remain open. See the status ledger before making any availability claim.
 
 ---
 

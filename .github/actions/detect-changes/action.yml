@@ -22,9 +22,9 @@ outputs:
   python:
     description: Raw python path filter match
     value: ${{ steps.filter.outputs.python }}
-  web:
+  site:
     description: Raw web path filter match
-    value: ${{ steps.filter.outputs.web }}
+    value: ${{ steps.filter.outputs.site }}
   console:
     description: Raw Console service path filter match
     value: ${{ steps.filter.outputs.console }}
@@ -61,9 +61,9 @@ outputs:
   run_python:
     description: Run Python embedder tests and coverage
     value: ${{ steps.effective.outputs.run_python }}
-  run_web:
+  run_site:
     description: Run web build and checks
-    value: ${{ steps.effective.outputs.run_web }}
+    value: ${{ steps.effective.outputs.run_site }}
   run_console:
     description: Run Console package quality gate
     value: ${{ steps.effective.outputs.run_console }}
@@ -106,7 +106,7 @@ runs:
       env:
         FILTER_GO: ${{ steps.filter.outputs.go }}
         FILTER_PYTHON: ${{ steps.filter.outputs.python }}
-        FILTER_WEB: ${{ steps.filter.outputs.web }}
+        FILTER_SITE: ${{ steps.filter.outputs.site }}
         FILTER_CONSOLE: ${{ steps.filter.outputs.console }}
         FILTER_DOCKER: ${{ steps.filter.outputs.docker }}
         FILTER_WORKFLOWS: ${{ steps.filter.outputs.workflows }}
@@ -120,7 +120,7 @@ runs:
         full=false
         run_go=false
         run_python=false
-        run_web=false
+        run_site=false
         run_console=false
         run_security=false
         run_docker=false
@@ -131,7 +131,7 @@ runs:
           full=true
           run_go=true
           run_python=true
-          run_web=true
+          run_site=true
           run_console=true
           run_security=true
           run_docker=true
@@ -143,7 +143,7 @@ runs:
           full=true
           run_go=true
           run_python=true
-          run_web=true
+          run_site=true
           run_console=true
           run_security=true
           run_memory=true
@@ -160,8 +160,8 @@ runs:
           run_security=true
         fi
 
-        if [ "$FILTER_WEB" = "true" ]; then
-          run_web=true
+        if [ "$FILTER_SITE" = "true" ]; then
+          run_site=true
           run_security=true
         fi
 
@@ -191,7 +191,7 @@ runs:
           echo "full=$full"
           echo "run_go=$run_go"
           echo "run_python=$run_python"
-          echo "run_web=$run_web"
+          echo "run_site=$run_site"
           echo "run_console=$run_console"
           echo "run_security=$run_security"
           echo "run_docker=$run_docker"
