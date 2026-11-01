@@ -87,11 +87,21 @@ test("legacy dashboard paths redirect to the approved top-level routes", async (
   await expect(page).toHaveURL(/\/analytics$/)
   await page.goto("/dashboard/billing")
   await expect(page).toHaveURL(/\/budgets$/)
+  await page.goto("/dashboard/memories/mem_legacy_1")
+  await expect(page).toHaveURL(/\/memories\/mem_legacy_1$/)
+  await page.goto("/dashboard/agents/agt_legacy_1")
+  await expect(page).toHaveURL(/\/agents\/agt_legacy_1$/)
+  await page.goto("/dashboard/policies/rules/rule_legacy_1")
+  await expect(page).toHaveURL(/\/policies\/rules\/rule_legacy_1$/)
 })
 
 test("unknown legacy dashboard paths fail closed with 404", async ({ page }) => {
   const response = await page.goto("/dashboard/not-a-surface")
   expect(response?.status()).toBe(404)
+  const nested = await page.goto("/dashboard/settings/not-a-section")
+  expect(nested?.status()).toBe(404)
+  const overview = await page.goto("/dashboard/overview/not-a-view")
+  expect(overview?.status()).toBe(404)
 })
 
 test("sessions list uses one provenance chip and one About contract", async ({ page }) => {

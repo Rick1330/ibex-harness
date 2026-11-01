@@ -21,19 +21,28 @@ const DIRECT_REDIRECTS: Record<string, string> = {
   access: "/access",
 }
 
+/** Legacy roots that have a real detail route at the same suffix. */
+const DETAIL_ROOTS = new Set(["agents", "sessions", "memories", "directives", "policies", "drift", "audit"])
+
 export default defineEventHandler((event) => {
   const url = getRequestURL(event)
   const segments = url.pathname.split("/").filter(Boolean)
   const rest = segments.slice(1)
   const first = rest[0]
+  const suffix = rest.slice(1).join("/")
 
   let target: string | null = null
   if (!first || first === "overview") {
-    target = "/"
+    target = suffix ? null : "/"
   } else if (first === "explore") {
-    target = `/explore${rest.length > 1 ? `/${rest.slice(1).join("/")}` : ""}`
+    target = `/explore${suffix ? `/${suffix}` : ""}`
   } else if (first && DIRECT_REDIRECTS[first]) {
-    target = DIRECT_REDIRECTS[first]!
+    const base = DIRECT_REDIRECTS[first]!
+    if (!suffix) {
+      target = base
+    } else if (DETAIL_ROOTS.has(first)) {
+      target = `${base}/${suffix}`
+    }
   }
 
   if (!target) {

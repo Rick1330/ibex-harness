@@ -2310,7 +2310,7 @@ jobs:
           cleanup() { kill "${server_pid}" 2>/dev/null || true; }
           trap cleanup EXIT
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:3100/ >/tmp/console-overview.html; then
+            if curl --fail --silent --show-error "http://127.0.0.1:3100/?demo=1" >/tmp/console-overview.html; then
               break
             fi
             sleep 1
@@ -2331,7 +2331,7 @@ jobs:
           cleanup() { kill "${server_pid}" 2>/dev/null || true; }
           trap cleanup EXIT
           for _ in $(seq 1 30); do
-            if curl --fail --silent --show-error -H 'Cookie: ibex_session=fixture-test-cookie' http://127.0.0.1:3101/ >/tmp/console-d1.html; then
+            if curl --fail --silent --show-error -H 'Cookie: ibex_session=fixture-test-cookie' "http://127.0.0.1:3101/?demo=1" >/tmp/console-d1.html; then
               break
             fi
             sleep 1

@@ -17,6 +17,18 @@ import type {
  */
 export const CONSOLE_DEMO_ENABLED = import.meta.dev
 
+/**
+ * Resolve demo mode for a request.
+ *
+ * Demo fixtures are compile-time development-only. `?demo=1` cannot enable
+ * them in a production build; `?demo=0` forces the fail-closed live path in
+ * development.
+ */
+export function resolveDemoMode(enabled: boolean, demoParam: unknown): boolean {
+  if (!enabled) return false
+  return demoParam !== "0"
+}
+
 const ORG_ID = "00000000-0000-4000-8000-000000000000"
 const SESSION_ID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
 const RUN_IDS = [
