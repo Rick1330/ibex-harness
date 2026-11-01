@@ -6,6 +6,8 @@ The Console is the operations plane for the memory/context lifecycle (ADR-0089):
 
 Live surfaces render only evidence returned by the operator API. Preview surfaces are labelled blueprints and may render illustrative fixtures under the conditions in [ADR-0089 §4](../../engineering/adr/0089-product-shape-and-console-scope.md). A live surface never falls back to fixtures.
 
+`Live` describes the read path, not acceptance. Every Console row remains provisional in the status ledger until tenant-negative tests, accessibility checks, and hosted evidence exist.
+
 ## Local commands
 
 From the repository root:

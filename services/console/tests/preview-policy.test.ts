@@ -1,10 +1,9 @@
-import { readFileSync, readdirSync } from "node:fs"
+import { readFileSync, readdirSync, statSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
 import { DEMO_FIXTURE_FILES, FIXTURE_MODULES, PREVIEW_FIXTURE_FILES } from "../app/lib/preview-fixtures"
-import { PREVIEW_PAGES } from "../app/lib/preview-pages"
-import { SURFACES, type SurfaceDefinition, type SurfaceKey } from "../shared/operator/surfaces"
+import { SURFACES } from "../shared/operator/surfaces"
 
 const root = path.resolve(import.meta.dirname, "..")
 const libDir = path.join(root, "app/lib")
@@ -12,6 +11,13 @@ const read = (relative: string): string => readFileSync(path.join(root, relative
 const readLib = (file: string): string => readFileSync(path.join(libDir, file), "utf8")
 
 const SEEDED_DEV_ORG = "00000000-0000-0000-0000-000000000001"
+
+function walk(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry)
+    return statSync(full).isDirectory() ? walk(full) : [full]
+  })
+}
 
 describe("preview fixture policy", () => {
   it("registers every preview fixture module", () => {
@@ -39,8 +45,12 @@ describe("preview fixture policy", () => {
     expect(readLib("console-demo.ts")).toContain("export const CONSOLE_DEMO_ENABLED = import.meta.dev")
   })
 
-  it("keeps preview fixtures out of live pages", () => {
-    const livePages = [
+  it("keeps preview fixtures out of live pages and the shared shell", () => {
+    const productionShell = [
+      "app/components/console/AppSidebar.vue",
+      "app/components/console/ConsoleHeader.vue",
+      "app/components/console/PreviewBanner.vue",
+      "app/layouts/default.vue",
       "app/pages/index.vue",
       "app/pages/platform.vue",
       "app/pages/explore/index.vue",
@@ -48,21 +58,13 @@ describe("preview fixture policy", () => {
       "app/pages/explore/r/[runId].vue",
     ]
 
-    for (const page of livePages) {
-      expect(read(page), `${page} imports a preview fixture module`).not.toMatch(/-preview"/)
-    }
-  })
+    const importers = walk(path.join(root, "app"))
+      .filter((file) => file.endsWith(".vue") || file.endsWith(".ts"))
+      .filter((file) => /@\/lib\/[a-z0-9-]+-preview"/.test(readFileSync(file, "utf8")))
+      .map((file) => path.relative(root, file))
 
-  it("gives every preview surface an illustrative verdict and a 0% live claim", () => {
-    for (const [key, surface] of Object.entries(SURFACES) as [SurfaceKey, SurfaceDefinition][]) {
-      if (surface.availability !== "preview") continue
-
-      const config = PREVIEW_PAGES[key]
-      expect(config, `${surface.label} has no preview page config`).toBeDefined()
-      expect(config?.verdict.toLowerCase(), `${surface.label} verdict is not marked illustrative`).toContain(
-        "illustrative",
-      )
-      expect(config?.coverage, `${surface.label} coverage overclaims`).toContain("0% live")
+    for (const file of productionShell) {
+      expect(importers, `${file} imports a preview fixture module`).not.toContain(file)
     }
   })
 

@@ -19,7 +19,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { SidebarTrigger } from "@/components/ui/sidebar"
 import { findNavigationItem, navigationGroupFor } from "@/lib/navigation"
-import { getAgentPreview } from "@/lib/agent-preview"
 import { formatUtc } from "@/lib/format"
 import CommandMenu from "@/components/console/CommandMenu.vue"
 import ThemeToggle from "@/components/console/ThemeToggle.vue"
@@ -50,9 +49,7 @@ const sessionCrumb = computed(() => {
 
 const agentCrumb = computed(() => {
   const match = route.path.match(/^\/agents\/([^/]+)$/)
-  if (!match) return null
-  const id = decodeURIComponent(match[1]!)
-  return getAgentPreview(id)?.name ?? id
+  return match ? decodeURIComponent(match[1]!) : null
 })
 
 function openCommand(): void {
