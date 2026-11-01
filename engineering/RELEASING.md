@@ -28,6 +28,8 @@ These names look similar but do **different** jobs. You usually need only one at
 | `migrations` | Highest Postgres and ClickHouse migration number included in the release. |
 | `bundles` | Supported bundles with smoke-test status. Empty until a bundle ships with a passing smoke test (ADR-0089 §5). |
 
+`mcp-operator` has a Dockerfile but is not published by `docker-publish.yml`, so it is not in the manifest. Add it only after the image publish job exists.
+
 Verify a downloaded manifest:
 
 ```bash
