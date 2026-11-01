@@ -86,3 +86,22 @@ services/console/CLAUDE.md
 
 # Wrangler local state (pages dev)
 .wrangler/
+
+# Nuxt build output (console and site)
+.nuxt/
+.nuxt-stale-*/
+.output/
+
+# Local tool scratch
+.zcode/
+.codacy/
+
+# Local agent and loop state (not repository content)
+LOOP.md
+STATE.md
+loop-budget.md
+loop-constraints.md
+loop-run-log.md
+safety.md
+gate.yaml
+opencode.json

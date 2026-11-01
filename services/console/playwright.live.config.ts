@@ -12,6 +12,7 @@ export default defineConfig({
   reporter: "list",
   use: {
     ...devices["Desktop Chrome"],
+    channel: "chromium",
     baseURL,
     ignoreHTTPSErrors: true,
     trace: "on",

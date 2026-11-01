@@ -23,7 +23,7 @@
     "better-sqlite3": "12.11.1",
     "docus": "5.15.0",
     "mermaid": "12.2.0",
-    "nuxt": "4.6.2"
+    "nuxt": "4.6.3"
   },
   "devDependencies": {
     "@nuxt/eslint": "1.17.0",

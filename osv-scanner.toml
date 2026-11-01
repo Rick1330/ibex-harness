@@ -1,37 +1,44 @@
-# braces stack-exhaustion advisory (GHSA-vfj7-8cjw-p6xm): npm has no patched
-# release (OSV reports fixed version "--"). It is reachable only through
-# console development tooling (eslint-config-next and shadcn), not production
-# dependencies. Advisory-scoped ignore keeps other braces findings visible.
-# Revisit when the upstream dependency chain publishes a fix.
-[[IgnoredVulns]]
-id = "GHSA-vfj7-8cjw-p6xm"
-ignoreUntil = 2026-12-01
-reason = "No upstream fixed release; reachable only through console devDependencies eslint-config-next/shadcn; excluded from production audit."
+# OSV ignore policy: advisory-scoped, expiring, and limited to dependency
+# chains that are build-time or development-only and have no compatible fixed
+# release. A package that reaches the deployed artifact must not be ignored.
 
-# node-forge CSRF/intercept advisory (GHSA-86w9-cpqp-85rv): npm has no patched
-# release (OSV reports fixed version "--"; 1.4.0 is the latest publish). It is
-# reachable only through site development tooling (listhen, the Nuxt dev
-# proxy), not in the deployed .output/public static artifact. Revisit when
-# listhen ships a release that drops or patches node-forge.
-[[IgnoredVulns]]
-id = "GHSA-86w9-cpqp-85rv"
-ignoreUntil = 2026-12-01
-reason = "No upstream fixed release; node-forge@1.4.0 is the latest publish and is reachable only through the listhen dev-server dependency of the site, which is never deployed."
-
-# nitro-server advisory (GHSA-vjh5-4x84-xrqp): OSV lists no fixed release and
-# 4.6.2 is the latest @nuxt/nitro-server publish. Reachable only through site
-# development tooling; the deployment artifact is prerendered static output.
-# Revisit when the nitro-server advisory gains a fixed release.
-[[IgnoredVulns]]
-id = "GHSA-vjh5-4x84-xrqp"
-ignoreUntil = 2026-12-01
-reason = "No upstream fixed release; @nuxt/nitro-server@4.6.2 is the latest publish and is reachable only through site development tooling, not the deployed static output."
-
-# zod patch advisory (GHSA-mrhx-c7xc-m3w5): fixed only in zod 4.6.6, which the
-# shadcn CLI (console devDependency) cannot take because it targets zod v3.
-# The zod 4.x instance in the lockfile is already >=4.6.6, so the ignore only
-# silences the shadcn-carried 3.x copy in console development tooling.
+# zod patch advisory (GHSA-mrhx-c7xc-m3w5): fixed only in zod 4.6.6, which
+# @nuxt/content 3.16.2 (the Docus content layer for the static site) does not
+# accept yet. Build-time only; the deployed site is static HTML/JS.
 [[IgnoredVulns]]
 id = "GHSA-mrhx-c7xc-m3w5"
 ignoreUntil = 2026-12-01
-reason = "Fix exists only in zod 4.6.6+ (already installed for direct zod 4 consumers); the remaining 3.x instance is carried by the shadcn CLI devDependency and cannot take the major bump."
+reason = "Fix exists only in zod 4.6.6+; @nuxt/content 3.16.2 for the static Docus site still resolves zod 3.25.76. Build-time only, no runtime exposure. Re-audit when @nuxt/content supports zod 4."
+
+# glob ReDoS advisory (GHSA-3g3m-2fjr-6pw4): fixed only in glob 14, a major
+# that the nitropack build chain (@vercel/nft, archiver) does not accept.
+# Build-time only; absent from the deployed Nitro output.
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2026-12-01
+reason = "Fixed only in glob 14 (major); carried by nitropack build tools (@vercel/nft and archiver) and absent from the deployed Nitro output. Re-audit when nitropack upgrades glob."
+
+# minimatch ReDoS advisory (GHSA-g3hv-75wg-m249): fixed only in minimatch 11,
+# a major that the build-time glob/archiver chains do not accept. Build-time
+# only; absent from the deployed Nitro output.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-01
+reason = "Fixed only in minimatch 11 (major); carried by build-time glob/archiver chains and absent from the deployed Nitro output. Re-audit when the parent packages upgrade."
+
+# deepmerge prototype-pollution advisory (GHSA-gcqx-w48m-w2h4): OSV reports no
+# fixed release. Carried by @rollup/plugin-node-resolve at build time only and
+# absent from the deployed Nitro output.
+[[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release; carried by @rollup/plugin-node-resolve at build time and absent from the deployed Nitro output. Revisit when a fixed release exists."
+
+# nitro-server advisory (GHSA-vjh5-4x84-xrqp): OSV reports no fixed release as
+# of 4.6.3. The Console uses the Nitro node-server preset, but no Console
+# hostname, workload, or production promotion is claimed (ADR-0088). Re-audit
+# before any hosted rollout and when an upstream fix exists.
+[[IgnoredVulns]]
+id = "GHSA-vjh5-4x84-xrqp"
+ignoreUntil = 2026-12-01
+reason = "No upstream fixed release as of @nuxt/nitro-server 4.6.3; the Console is not hosted and claims no production deployment. Re-audit before any hosted rollout."

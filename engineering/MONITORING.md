@@ -332,13 +332,13 @@ Every service must publish these metrics:
 - `ibex_api_cache_hit_total{cache}`
 - `ibex_api_cache_miss_total{cache}`
 
-### 7.8 Console (Next.js)
+### 7.8 Console (Nuxt 4 + Nitro)
 
 Client metrics are optional, but recommended via RUM:
 
-- `ibex_dashboard_page_load_seconds` (p50/p95)
-- `ibex_dashboard_api_error_total{code}`
-- `ibex_dashboard_js_error_total` (Sentry already covers)
+- `ibex_console_page_load_seconds` (p50/p95)
+- `ibex_console_api_error_total{code}`
+- `ibex_console_js_error_total`
 
 ---
 

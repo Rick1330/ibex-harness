@@ -10,6 +10,8 @@ authors: "IBEX Harness team"
 ::decision-banner{status="Accepted" date="2026-10-23" id="0087"}
 ::
 
+> **Revision note (2026-11-01):** the public-site aggregate check is now `ci-gate-site` and the path-filter output `run_site`; the public-site scope and deployment boundary are unchanged.
+
 # ADR-0087: Public site migration to Nuxt 4 + Docus
 
 - **Status:** Accepted
@@ -55,7 +57,7 @@ Internal links in content and components are absolute (`/docs/...`, `/blog/...`)
 ### 4. CI and deployment keep the public-site boundary
 
 - The site build job is `site-build` and runs typecheck, lint, build, claims/links/redirect checks, and Playwright browser tests.
-- The protected aggregate check remains `ci-gate-web`; the path-filter output remains `run_web`.
+- The protected aggregate check remains `ci-gate-site`; the path-filter output remains `run_site`.
 - `.github/workflows/site-deploy.yml` deploys `site/.output/public` to the existing `ibex-harness-docs` Cloudflare Pages project.
 - `.github/scripts/site-smoke.sh` verifies the deployed site, including the production-claim boundary, security headers, and compatibility redirects.
 - No public-site secret, privileged data access, or long-lived server runtime is introduced.

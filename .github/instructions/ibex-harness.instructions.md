@@ -4,6 +4,7 @@ Read before reviewing or suggesting code changes:
 
 - [AGENTS.md](../../AGENTS.md)
 - [CLAUDE.md](../../CLAUDE.md)
+- [engineering/agent-playbook.md](../../engineering/agent-playbook.md) — agent routing, git/DCO, PR and CI rules
 - [engineering/SECURITY.md](../../engineering/SECURITY.md)
 - [engineering/FILE_STRUCTURE.md](../../engineering/FILE_STRUCTURE.md)
 

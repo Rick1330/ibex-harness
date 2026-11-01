@@ -1,14 +1,11 @@
 import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:https"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
-import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const consoleDir = dirname(dirname(fileURLToPath(import.meta.url)))
-const require = createRequire(import.meta.url)
-const nextBin = require.resolve("next/dist/bin/next")
 const tempDir = mkdtempSync(join(tmpdir(), "ibex-console-live-"))
 const keyPath = join(tempDir, "server.key")
 const certPath = join(tempDir, "server.crt")
@@ -46,6 +43,22 @@ function writeUnauthorized(response) {
 }
 
 function handleTestRoute(url, request, response) {
+  if (url.pathname === "/__test/login") {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "set-cookie": `${sessionCookie}; Path=/; Secure; SameSite=Lax`,
+    })
+    response.end(`<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>IBEX Console fixture session</title></head>
+  <body>
+    <p>Fixture session set. <a href="https://127.0.0.1:${consolePort}/">Open the console</a>.</p>
+    <script>location.replace("https://127.0.0.1:${consolePort}/")</script>
+  </body>
+</html>`)
+    return true
+  }
   if (url.pathname === "/__test/requests") {
     writeJson(response, 200, requests)
     return true
@@ -254,12 +267,12 @@ const api = createServer({ key: tlsKey, cert: tlsCert }, handleApiRequest)
 api.listen(apiPort, "127.0.0.1")
 
 consoleProcess = spawn(
-  process.execPath,
+  "corepack",
   [
-    nextBin,
-    "dev", "--hostname", "127.0.0.1", "--port", String(consolePort),
-    "--experimental-https", "--experimental-https-key", keyPath,
-    "--experimental-https-cert", certPath,
+    "pnpm", "exec", "nuxt", "dev",
+    "--no-tui", "--no-fork",
+    "--host", "127.0.0.1", "--port", String(consolePort),
+    "--https", "--https.key", keyPath, "--https.cert", certPath,
   ],
   {
     cwd: consoleDir,
@@ -268,7 +281,6 @@ consoleProcess = spawn(
       NODE_EXTRA_CA_CERTS: certPath,
       NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --use-openssl-ca`.trim(),
       SSL_CERT_FILE: certPath,
-      CONSOLE_DATA_MODE: "live",
       CONSOLE_READ_ONLY: "1",
       IBEX_OPERATOR_API_ORIGIN: `https://127.0.0.1:${apiPort}`,
       IBEX_OPERATOR_SESSION_COOKIE_NAME: "ibex_session",

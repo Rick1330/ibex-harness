@@ -201,216 +201,83 @@ task_reject_on_worker_lost = True  # Requeue tasks if worker crashes
 
 ---
 
-### Dashboard: **Next.js 14 (App Router) + TypeScript + Tailwind CSS**
+### Console: **Nuxt 4 + Vue 3 + Nitro + TypeScript + Tailwind CSS v4**
 
-**Why Next.js 14 App Router:**
+**Why Nuxt 4 + Nitro:**
 
-**Server Components Advantage:**
+The Console is the operations plane for the memory/context lifecycle (ADR-0089). Its pages are data-heavy but
+read-only: session timelines and turn inspectors, the memory index with provenance and conflicts, evidence and
+redaction ledgers, and trace list/detail.
 
-The dashboard has data-heavy pages:
+**Server-side rendering:** Nuxt renders the first view on the server with the operator session resolved server-side,
+then hydrates only the interactive leaves. The browser receives HTML and a small island bundle rather than an empty
+shell plus megabytes of JavaScript.
 
-- Session history (potentially thousands of turns)
-- Memory graphs (visualizing relationships between memories)
-- Behavioral fingerprint timelines
-- Analytics dashboards with large datasets
+**Same-origin BFF:** Nitro server routes under `server/api/operator/` own the upstream origin, the fixed path
+allowlist, cookie forwarding, runtime response validation, and error normalization. The browser never receives a
+bearer token, upstream origin, or tenant authority. This is the Console's security boundary; a static SPA cannot
+provide it.
 
-**Traditional React SPA Approach:**
-
-1. Ship empty HTML shell
-2. Ship megabytes of JavaScript
-3. JavaScript fetches data
-4. JavaScript renders page
-5. Total time to interactive: 3-5 seconds on slow connections
-
-**Next.js App Router Approach:**
-
-1. Server components fetch data server-side
-2. Render HTML with data on server
-3. Ship minimal JavaScript (only for interactive components)
-4. Total time to interactive: 1-2 seconds on same connection
-
-**Real Metrics from Production Next.js Apps:**
-
-- 40-60% reduction in JavaScript bundle size
-- 30-50% faster time to interactive
-- Better SEO (server-rendered content)
-
-**Why App Router over Pages Router:**
-
-- Streaming SSR: Send HTML as it's ready, don't wait for entire page
-- Nested layouts: Shared layouts don't re-render on navigation
-- Server actions: Form handling without API routes
-- Better data fetching patterns: fetch in components, automatic deduplication
+**Vue 3 Composition API:** `<script setup lang="ts">`, typed props and emits, and composables for server reads.
+React and Next.js are not used; ADR-0088 superseded the prior Next.js implementation.
 
 **Why TypeScript:**
 
-**Type Safety = Fewer Bugs:**
+Type safety catches response-shape mistakes at the BFF boundary:
 
-```typescript
-// Without TypeScript
-function getMemory(id) {
-  return fetch(`/api/memories/${id}`)
-    .then(res => res.json())
-    .then(data => data.memory) // What if 'memory' doesn't exist? Runtime error.
-}
+```ts
+// Without a contract
+const data = await $fetch(`/api/operator/overview`)
+return data.overview // undefined at runtime if the upstream changes
 
-// With TypeScript
-interface Memory {
-  id: string;
-  content: string;
-  embedding: number[];
-  created_at: string;
-}
-
-async function getMemory(id: string): Promise<Memory> {
-  const res = await fetch(`/api/memories/${id}`);
-  const data = await res.json();
-  return data.memory; // TypeScript ensures this matches Memory interface
-}
+// With a zod contract
+const parsed = operatorOverviewSchema.safeParse(await $fetch(`/api/operator/overview`))
+if (!parsed.success) throw createOperatorError(parsed.error)
+return parsed.data
 ```
 
-**Production Evidence:**
+Specific benefits:
 
-- Airbnb: 38% of bugs preventable with TypeScript (from their postmortem analysis)
-- Slack: "TypeScript has been a massive improvement in code quality"
-- Microsoft: Created TypeScript because JavaScript lacked necessary guardrails for large codebases
+- inferred types for operator contracts in `shared/operator/`
+- refactoring safety across pages, composables, and BFF routes
+- self-documenting props, emits, and responses
 
-**Specific Benefits for IBEX Dashboard:**
+**Why Tailwind CSS v4:**
 
-- Autocomplete for API responses (developer velocity)
-- Refactoring safety (rename a field, compiler finds all usages)
-- Self-documenting code (types are documentation)
-- Integration with backend: Generate TypeScript types from proto files
+Utility-first CSS with design tokens in `app/assets/css/main.css`:
 
-**Why Tailwind CSS:**
+- no context switching between CSS and markup
+- no dead CSS; only used utilities ship
+- design-system constraints (spacing, color, type scale) are built in
+- one token source for light and dark themes
 
-**Utility-First Advantages:**
-
-Traditional CSS:
-
-```css
-/* Somewhere in a CSS file */
-.memory-card {
-  padding: 1rem;
-  margin-bottom: 1rem;
-  border-radius: 0.5rem;
-  background-color: white;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
-/* Now need to find this class in HTML */
-```
-
-Tailwind:
-
-```tsx
-<div className="p-4 mb-4 rounded-lg bg-white shadow-md">
-  {/* Styling colocated with markup */}
+```vue
+<div class="rounded-lg border border-line bg-surface p-4">
+  <p class="text-sm text-fg-2">Memory stored</p>
 </div>
 ```
 
-**Why This Matters:**
+**State:**
 
-- No context switching between files
-- No naming things (naming is hard)
-- No dead CSS (only used utilities are included)
-- Design system constraints built-in (spacing scale, color palette)
-- Production bundle: ~10KB after PurgeCSS (removes unused utilities)
+- **URL state** for filters, tabs, selection, and pagination that must survive reload (`/explore`, `/settings`,
+  `/sessions`).
+- **Composables** (`app/composables/`) for server reads and derived view models.
+- **`ref`/`useState`** for ephemeral UI only.
+- No global store for server data. Do not persist credentials, tokens, or tenant authority in browser storage.
 
-**Production Evidence:**
+**Data visualization:**
 
-- GitHub: Redesigned with Tailwind, development velocity increased
-- Shopify: Faster UI development, more consistent design
-- Vercel: Uses Tailwind for their own dashboard products
+- `@unovis/vue` for designed charts, and only when the underlying series exists.
+- No fabricated trend lines; a missing series renders an explicit unavailable state.
+- Charts follow the site's graphite, paper, and lime tokens.
 
-**State Management:**
+**Testing:**
 
-**Client State: Zustand**
-
-```typescript
-import create from 'zustand';
-
-const useStore = create((set) => ({
-  selectedAgent: null,
-  setSelectedAgent: (agent) => set({ selectedAgent: agent }),
-}));
-
-// Usage in component
-const selectedAgent = useStore(state => state.selectedAgent);
-```
-
-**Why Zustand over Redux:**
-
-- Less boilerplate (5 lines vs 20 lines for same functionality)
-- Hooks-based (natural React integration)
-- No Provider wrapper needed (works anywhere)
-- TypeScript support excellent
-- Bundle size: 1KB vs 3KB (Redux) vs 5KB (MobX)
-
-**Server State: TanStack Query (React Query)**
-
-```typescript
-const { data, isLoading, error } = useQuery({
-  queryKey: ['memory', memoryId],
-  queryFn: () => fetchMemory(memoryId),
-  staleTime: 5000, // Consider fresh for 5 seconds
-  cacheTime: 300000, // Keep in cache for 5 minutes
-});
-```
-
-**Why TanStack Query:**
-
-- Automatic caching, deduplication, background refetch
-- Pagination, infinite scroll built-in
-- Optimistic updates for better UX
-- Synchronization across components (fetch once, use everywhere)
-- DevTools for debugging
-
-**Together:** Zustand for UI state (selected items, modal open/closed), TanStack Query for server state (memories, sessions, analytics). Clean separation of concerns.
-
-**Data Visualization:**
-
-**For Complex Charts: Observable Plot**
-
-```typescript
-import * as Plot from "@observableplot/plot";
-
-Plot.plot({
-  marks: [
-    Plot.line(data, {x: "timestamp", y: "latency"}),
-    Plot.dot(data, {x: "timestamp", y: "latency"}),
-  ]
-})
-```
-
-**Why Observable Plot:**
-
-- Built on D3 (proven foundation)
-- Higher-level API (less code than raw D3)
-- Excellent for time-series, distributions, correlations
-- Designed for data analysis (our use case)
-
-**For Simple Charts: Recharts**
-
-```tsx
-<LineChart data={data}>
-  <Line dataKey="latency" />
-  <XAxis dataKey="timestamp" />
-  <YAxis />
-</LineChart>
-```
-
-**Why Recharts:**
-
-- React-native API (declarative)
-- Good for simple bar, line, area charts
-- Responsive by default
-- Accessible
-
-**Not Chart.js:** Imperative API fights against React's declarative model.
+- `vitest` for contracts, query parsing, surface status, and preview policy.
+- Playwright plus axe for fail-closed behavior, preview labelling, keyboard navigation, and WCAG 2.2 AA.
+- `pnpm --filter @ibex/console check:surfaces` for README and ledger parity.
 
 ---
-
 ### CLI Tool: **Go 1.25.13+**
 
 **Why Go for CLI:**
@@ -1391,7 +1258,7 @@ resource "aws_eks_cluster" "ibex" {
 |-------|-----------|-----------------|
 | **Proxy** | Go 1.25.13+ | Low latency, high concurrency, single binary |
 | **API/Workers** | Python 3.11+, FastAPI, Celery | ML ecosystem, async support, rapid development |
-| **Dashboard** | Next.js 14, TypeScript, Tailwind | Server components, type safety, fast development |
+| **Console** | Nuxt 4, Vue 3, Nitro, TypeScript, Tailwind v4 | SSR, same-origin BFF, type safety, fast development |
 | **CLI** | Go 1.25.13+, Cobra | Single binary, fast startup, cross-platform |
 | **SDKs** | Python, TypeScript, Go | Cover 90%+ of agent use cases |
 | **Primary DB** | PostgreSQL 16, pgvector | ACID, RLS, vector search, mature |

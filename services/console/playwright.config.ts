@@ -11,15 +11,15 @@ export default defineConfig({
   reporter: "list",
   use: {
     ...devices["Desktop Chrome"],
+    channel: "chromium",
     baseURL,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   webServer: {
-    command:
-      "CONSOLE_DATA_MODE=preview CONSOLE_PREVIEW=1 NEXT_PUBLIC_CONSOLE_PREVIEW=1 pnpm exec next dev --hostname 127.0.0.1 --port 3280",
+    command: "corepack pnpm exec nuxt dev --no-tui --host 127.0.0.1 --port 3280",
     url: baseURL,
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 180_000,
   },
 })

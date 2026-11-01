@@ -23,7 +23,7 @@ The public documentation site lives in [`site/`](../site/). The current capabili
 | [`embedder/`](embedder/README.md) | Python embedding service with deterministic CPU stub, TEI GPU backend, hosted backend, probes, and cache | **Shipped/experimental by profile**; backend readiness depends on external service configuration |
 | [`mcp-memory/`](mcp-memory/README.md) | Python MCP memory resource server with AuthService boundary, memory tools, metrics, and optional audit sink | **Shipped/partial**; default audit is logging-only unless ClickHouse is configured |
 | [`worker/`](worker/README.md) | Python Celery extraction, organization deletion, billing reconciliation/rollups, dead-letter handling, maintenance, and scheduled tasks | **Mixed:** several task families are shipped; explicit no-op tasks remain |
-| [`console/`](console/README.md) | Canonical Next.js operator application and server-only DAL/BFF boundary | **Mounted-but-provisional:** D1/D2 metadata reads only; production identity and broader product surfaces are gated |
+| [`console/`](console/README.md) | Canonical Nuxt 4 + Nitro operator application and server-only BFF boundary | **Mounted-but-provisional:** core-tier D1/D2 reads only; production identity and broader core surfaces are gated |
 | [`dashboard/`](dashboard/README.md) | Legacy static connection/session/SSE shell | **Compatibility-only (4.P.0)**; do not expand as a second Track D product |
 
 ## Planned or intentionally absent services

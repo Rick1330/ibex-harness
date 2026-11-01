@@ -6,12 +6,14 @@ audience: contributor
 
 # Architecture Decision Records
 
-Each ADR captures a decision, its context, consequences, and its own status. Browse the records in this directory through ADR-0087.
+Each ADR captures a decision, its context, consequences, and its own status. Browse the records in this directory through ADR-0089.
 
 Decision records are not implementation evidence. A record can be **Proposed**, **Accepted**, **Rejected**, or **Superseded** while the runtime remains provisional or absent. The authoritative runtime claim is the [status ledger](../architecture-v2/00-status-and-evidence.md).
 
 Notable records:
 
+- [ADR-0089](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0089-product-shape-and-console-scope.md) — memory/context product shape, Console core/platform tiers, preview policy, and packaging.
+- [ADR-0088](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0088-console-nuxt-shadcn-vue-migration.md) — Console migration to Nuxt 4 + shadcn-vue with a same-origin BFF.
 - [ADR-0087](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0087-public-site-nuxt-docus-migration.md) — public site migration to Nuxt 4 + Docus.
 - [ADR-0086](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0086-mcp-operator-gateway.md) — read-only MCP operator gateway, local and default-off.
 - [ADR-0085](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0085-evidence-relay-daemon-and-session-fence.md) — evidence relay daemon and session fence.

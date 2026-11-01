@@ -232,11 +232,11 @@ pnpm site:check
 pnpm --filter site exec playwright install chromium
 pnpm --filter site test:e2e
 
-# Phase 1.5 public site smoke (production default; override with IBEX_SITE_URL)
+# Public site smoke (production default; override with IBEX_SITE_URL)
 make verify-phase15
 # IBEX_SITE_URL=http://localhost:3000 make verify-phase15   # local production preview
 
-# Phase 2.5 exit gate (packages + Python; add IBEX_VERIFY_PHASE25_E2E=1 for live multi-service)
+# Cross-service verification gate (packages + Python; add IBEX_VERIFY_PHASE25_E2E=1 for live multi-service)
 make verify-phase25
 make coverage-gate
 ```

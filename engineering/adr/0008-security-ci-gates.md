@@ -10,6 +10,8 @@ authors: "IBEX Harness team"
 ::decision-banner{status="Accepted" date="2026-06-02" id="0008"}
 ::
 
+> **Revision note (2026-11-01):** the public-site aggregate check and path-filter output were renamed from the historical `ci-gate-web`/`run_web` names to `ci-gate-site`/`run_site`; scope and enforcement are unchanged. The decision text below uses the current names.
+
 # ADR-0008: Security scanning and CI quality gates
 
 - **Status:** Accepted
@@ -74,7 +76,7 @@ GitHub **Default** CodeQL setup conflicts with the advanced `.github/workflows/c
 | `ci-gate-repo` | `repo-guards`, `shellcheck`, `markdownlint`, `compose-validate`, `go-mod-tidy`, `license-check` |
 | `ci-gate-go` | Buf/proto, Go smokes, `go-services`, `golangci-lint`, `coverage`, `govulncheck` |
 | `ci-gate-python` | `embedder-test`, `embedder-coverage` |
-| `ci-gate-web` | `site-build` |
+| `ci-gate-site` | `site-build` |
 | `ci-gate-security` | `trivy`, `osv-scan`, `bandit`, `hadolint` |
 | `ci-gate-semgrep` | IBEX custom Semgrep rules |
 | `gitleaks` | Secret scan (always runs — secrets can appear in any path) |
@@ -100,7 +102,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | --- | --- | --- |
 | `go` | `services/**`, `packages/**`, `go.mod`, migrations, `.golangci.yml` | `run_go`, `run_security`, `run_docker` |
 | `python` | `services/**/app/**`, `services/**/tests/**`, Python lockfiles | `run_python`, `run_security` |
-| `web` | `site/**`, `engineering/**`, pnpm/turbo root files | `run_web`, `run_security` |
+| `site` | `site/**`, `engineering/**`, pnpm/turbo root files | `run_site`, `run_security` |
 | `proto` | `packages/proto/**` | (included in `go` via shared paths) |
 | `docker` | Dockerfiles, `.hadolint.yaml` | `run_docker`, `run_security` |
 | `workflows` | `.github/workflows/**`, actions, scripts | **`full`** → all areas |
@@ -116,7 +118,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | Workflow | PR behavior |
 | --- | --- |
 | `codeql.yml` | Runs when `run_go` or `run_security`; weekly schedule is full Go analysis |
-| `semgrep.yml` | Runs when `run_go` or `run_web` |
+| `semgrep.yml` | Runs when `run_go` or `run_site` |
 | `dependency-review.yml` | Runs when `deps` or `run_security` |
 | `sbom.yml` | **No PR trigger** — `push: main` + weekly schedule only |
 | `docker-publish.yml` | `workflow_run` after CI on main skips publish when neither `run_docker` nor `run_go` |

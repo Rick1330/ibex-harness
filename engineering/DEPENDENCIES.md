@@ -215,7 +215,7 @@ Targets:
 
 Targets:
 
-- avoid heavy UI frameworks beyond Next.js + Tailwind
+- use the Nuxt 4 + Vue 3 + Nitro stack (ADR-0088); do not add React or Next.js
 - avoid large chart libs unless justified (bundle size budgets)
 - do not introduce “utility” libs for trivial helpers (prefer small local helpers)
 
@@ -342,17 +342,19 @@ Avoid:
 
 Required:
 
-- Next.js
-- React
+- Nuxt 4 + Vue 3
+- Nitro (`node-server` preset)
 - TypeScript
-- Tailwind
-- TanStack Query
-- Zustand
-- Sentry (optional)
-- Observable Plot / Recharts (as needed)
+- Tailwind CSS v4
+- shadcn-vue and reka-ui
+- zod (runtime response validation at the BFF)
+- @tanstack/vue-table (table state)
+- @lucide/vue (icons)
+- @unovis/vue only where a designed chart exists; never a fabricated series
 
 Avoid:
 
+- React and Next.js (superseded by ADR-0088)
 - lodash (prefer native JS)
 - moment (prefer date-fns or Temporal polyfill if truly needed)
 - axios (prefer fetch)
@@ -412,7 +414,7 @@ Also extend golangci-lint paths for new Go services (see [AGENTS.md](../AGENTS.m
 | golangci-lint | Lint errors on touched Go packages | No blanket disables |
 | gitleaks | Any secret match | Never suppress without rotation |
 
-All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../CONTRIBUTING.md#required-ci-checks).
+All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` / `ci-gate-site`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../CONTRIBUTING.md#required-ci-checks).
 
 - OSV Scanner (replaces separate `govulncheck` in CI)
 - `golangci-lint` on `./services/auth/...` and `./services/proxy/...` (hard gate)
@@ -458,8 +460,8 @@ Recommended baseline images:
 - Go build: `golang:1.21` (builder stage)
 - Go runtime: `gcr.io/distroless/static-debian11` (runtime stage)
 - Python runtime: `python:3.11-slim` (or distroless python if feasible)
-- Node build: `node:18-alpine` (build stage)
-- Node runtime (dashboard): `node:18-alpine` or Next.js recommended runtime
+- Node build: `node:22-alpine` (build stage; matches `.nvmrc`)
+- Node runtime (Console): `node:22-alpine` with the Nuxt/Nitro node-server output
 
 Rules:
 

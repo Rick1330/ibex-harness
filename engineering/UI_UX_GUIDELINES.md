@@ -337,7 +337,7 @@ If 429:
 - max 8 props (prefer composition/context)
 - avoid prop drilling beyond 2 levels
 - no `any`, no unsafe casts
-- server/client boundary respected (App Router)
+- server/client boundary respected (Nitro server routes, `server/` never imported by `app/`)
 
 ---
 

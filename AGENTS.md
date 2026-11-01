@@ -16,7 +16,7 @@ Your output must be:
 - **Maintainable** (consistent patterns, low complexity, clear naming)
 - **Tested** (unit + integration where relevant)
 - **Observable** (metrics/logs/traces for meaningful events)
-- **Framework-compliant** (FastAPI, Next.js App Router, Nuxt 4 + Docus, Go layout)
+- **Framework-compliant** (FastAPI, Nuxt 4 + Nitro for the Console, Nuxt 4 + Docus for the public site, Go layout)
 
 ### Absolute prohibitions
 
@@ -47,7 +47,7 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Context Assembly Engine (Python, gRPC)**: budget calculation + memory retrieval + ranking + packing + context formatting with strict latency budgets.
 - **Auth Service (Go)**: token validation, permission bitmap enforcement, JWT issuance/verification flows, revocation propagation.
 - **Workers (Python/Celery)**: memory extraction, embeddings, conflict resolution, fingerprinting, drift detection, notifications, garbage collection.
-- **Console (Next.js/TypeScript)**: the canonical operator application for sessions, traces, memories, directives, drift alerts, and billing/usage views. `services/dashboard/` is a temporary 4.P.0 compatibility shell, not a second Track D product.
+- **Console (Nuxt 4 + Vue 3 + Nitro)**: the canonical operator application for the memory/context lifecycle — agents, sessions, memories, evidence, directives, policies, trace exploration, platform health, and settings. It is the operations plane, not a general observability product; incidents, drift, analytics, budgets, providers, MCP tools, and access are a separate platform tier (ADR-0089). `services/dashboard/` is a temporary 4.P.0 compatibility shell, not a second Track D product.
 - **Public Site (Nuxt 4 + Docus)**: `site/` renders the landing page, docs, blog, releases, and benchmarks as a static Cloudflare Pages deployment. It is not the operator application.
 - **Data layer**: PostgreSQL + pgvector (OLTP), Redis (cache/streams/rate limits), ClickHouse (analytics/billing events), MinIO/S3 (archives).
 
@@ -58,9 +58,9 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Public site:** `site/` is Nuxt 4 + Docus. CI builds it and deploys `site/.output/public` to Cloudflare Pages project `ibex-harness-docs` through `.github/workflows/site-deploy.yml`. There is no public-site server runtime.
 - **Engineering docs:** `engineering/` is canonical. ADRs live in `engineering/adr/`; they are engineering records, not public docs pages. The public `/docs/adr` route redirects to the GitHub directory.
 - **Status vocabulary:** `site/app/data/ledger.ts` and `site/content/docs/02.architecture/05.status-and-evidence.md` must agree with `engineering/architecture-v2/00-status-and-evidence.md`. Never promote a claim beyond its recorded evidence.
-- **Stable CI gate name:** the public-site aggregate check is `ci-gate-web`. Path-filter outputs remain `run_web`, and the site build job displays as `site-build`. Do not rename protected check contexts without updating `.github/branch-protection-main.json` and the live GitHub rule.
+- **Stable CI gate name:** the public-site aggregate check is `ci-gate-site`. Path-filter outputs remain `run_site`, and the site build job displays as `site-build`. Do not rename protected check contexts without updating `.github/branch-protection-main.json` and the live GitHub rule.
 - **Consoles:** `services/console` is canonical; `services/dashboard` is a compatibility shell only.
-- **Content status:** phases 0–3.5 are shipped locally. Phase 4 remains in progress; hosted HA, measured p99 SLOs, restore drills, and end-to-end tenant-isolation acceptance are open. See the status ledger before making any availability claim.
+- **Content status:** local implementations exist for auth, proxy, API, memory, and the core Console read paths. Hosted HA, measured p99 SLOs, restore drills, and end-to-end tenant-isolation acceptance remain open. See the status ledger before making any availability claim.
 
 ---
 
@@ -276,13 +276,17 @@ If you change hot path code, include a benchmark or performance justification.
 - set `SET LOCAL app.current_org_id = ...` per transaction
 - avoid N+1 queries; use proper eager loading if needed
 
-### 7.3 Next.js App Router (`services/console`, `services/dashboard`)
+### 7.3 Nuxt 4 + Nitro (`services/console`)
 
-- server components by default
-- `"use client"` only where needed (leaf interactive components)
-- do not import server-only modules into client components
-- every data view has loading/empty/error states
+`services/console` is a Nuxt 4 SSR application with a same-origin Nitro BFF (ADR-0088). `services/dashboard` is a compatibility shell only.
+
+- server-render by default; hydrate only leaf interactive components
+- keep upstream origins, cookies, and tenant authority in `server/`; never expose them to the browser
+- every data view has loading, empty, and error states; a live view fails closed rather than falling back to fixtures
 - keep components small and focused
+- surface status comes from `services/console/shared/operator/surfaces.ts`; do not restate it in prose
+- every surface declares its tier (`core` or `platform`) and availability (`live` or `preview`) per ADR-0089
+- preview surfaces may render labelled illustrative fixtures only under ADR-0089 §4; live surfaces never do
 
 ### 7.4 Nuxt 4 + Docus (`site/`)
 
@@ -341,6 +345,36 @@ For any change:
 - Redis Lua rate limiting
 - pgvector query behavior
 - token revocation propagation
+
+### 9.1 Local quality and security gates (run before every push)
+
+The scanners that run on pull requests are also available locally as MCP servers. A PR must not be the first place they
+run.
+
+- **CodeScene** — `codescene_code_health_review`, `codescene_pre_commit_code_health_safeguard`, and
+  `codescene_analyze_change_set` for code health and complexity regressions. Do not lower a threshold to pass.
+- **SonarQube** — `sonarqube_analyze_code_snippet` for bugs, security, and code smells (project
+  `Rick1330_ibex-harness`, organization `rick1330`).
+- **Codacy** — `codacy_cli_analyze` with `rootPath` for local analysis, and `codacy_list_repository_issues` for
+  `gh` / `Rick1330` / `ibex-harness` for existing findings.
+
+Run `/quality-gate` for all three plus the repository gates, and `/security-gate` for secrets, SAST, dependency CVEs,
+and the scanner security findings. Fix every finding, or record a written justification, before committing. Full
+command list: `engineering/agent-playbook.md` §6.1.
+
+These scanners are heavy, so they are **off by default**. Enable them with `/review-on` only for the review stage, then
+run `/review-off` to disable them and stop the SonarQube container and Docker. `resource-guard` throttles them at 90%
+RAM, and `infra/scripts/memory-guard.sh` (user timer) covers the case where OpenCode is not running.
+
+#### CodeScene guidance
+
+- **Code Health is authoritative.** Treat it as the single source of truth for maintainability.
+- **Target Code Health 10.0.** 9+ is not "good enough" for AI-touched code.
+- **Safeguard all AI-touched code** before suggesting a commit: `pre_commit_code_health_safeguard` before each commit,
+  `analyze_change_set` before opening a PR.
+- If Code Health regresses, refactor — do not declare done. Call `code_health_review` for details, and use the findings
+  to plan incremental, high-impact refactorings.
+- When in doubt, call the appropriate CodeScene MCP tool — do not guess.
 
 ---
 

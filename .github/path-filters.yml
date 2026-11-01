@@ -42,7 +42,7 @@ go:
   - '.golangci.depguard.yml'
   - '.golangci.complexity.yml'
   - '.github/tools/**'
-web:
+site:
   - 'site/**'
   - 'engineering/**'
   - 'CHANGELOG.md'
@@ -55,7 +55,6 @@ web:
   - '.github/workflows/site-deploy.yml'
   - '.github/workflows/operator-deploy.yml'
   - '.github/actions/setup-pnpm-node/**'
-  - 'services/dashboard/**'
 console:
   - 'services/console/**'
 proto:
