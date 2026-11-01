@@ -520,14 +520,15 @@ CI: required `security-integration` job (M1.5.1 SEC matrix in `proxy_security_se
 
 ---
 
-### 6.7 Console (Next.js) — UX + Error Discipline
+### 6.7 Console (Nuxt 4 + Nitro) — UX + Error Discipline
 
 **Primary risks:**
 
-- server/client boundary violations (App Router)
+- server/client boundary violations (SSR and hydration)
 - missing loading/empty/error states
 - token handling mistakes (XSS/CSRF)
 - incorrect caching and stale data
+- a live surface silently falling back to fixture data
 
 **Unit/component tests must cover:**
 
@@ -537,14 +538,14 @@ CI: required `security-integration` job (M1.5.1 SEC matrix in `proxy_security_se
   - error state
   - success state
 - critical components: memory list, session replay, directive diff view
+- surface status parity and the preview fixture policy (`pnpm --filter @ibex/console check:surfaces`)
 
 **E2E tests must cover (Playwright):**
 
-- login flow (including refresh)
-- view an agent
-- view sessions
-- inspect “why did agent do that?” trace view
-- memory search in UI
+- fail-closed live reads and legacy redirects
+- every preview surface renders a persistent `Illustrative preview` banner
+- mobile navigation, keyboard navigation, and WCAG 2.2 AA checks
+- required once the owning contract lands: login and refresh, agent detail, session replay, memory search in the UI
 
 ---
 

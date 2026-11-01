@@ -16,10 +16,10 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 |---|---|---|
 | `site/` | Implemented public site | Public docs, roadmap, benchmark, and marketing content only. Do not place authenticated operator routes here. |
 | `services/dashboard/` | Mounted-but-provisional | Static 4.P.0 connection/session/SSE compatibility shell. Retain while migration proceeds; do not expand it into Track D. |
-| `services/console/` | Mounted-but-provisional | Canonical Next.js operator application. D2 metadata Explore list/detail is live-mode opt-in and server-only; hosted AuthService, two-tenant, deployment, and promotion evidence remain open. |
+| `services/console/` | Mounted-but-provisional | Canonical Nuxt 4 + Nitro operator application (ADR-0088). Three of ten core surfaces are live: Overview, Platform health, and metadata-only Explore (ADR-0089). Hosted AuthService, two-tenant, deployment, and promotion evidence remain open. |
 | Overview/context/health/events contract | Mounted backend foundations, operator composition not fully verified | Ownership must remain server/API-side; the operator client must not infer missing evidence. |
 | Explore / Trace Inspector metadata slice | Mounted-but-provisional | D2 list/detail metadata is mounted with explicit unavailable sections; full query, provenance joins, content, score, replay, and actions remain unaccepted. |
-| Sessions, Memories, Incidents, Directives, Drift, Billing, Analytics, Agents, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Enable one vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
+| Sessions, Memories, Incidents, Directives, Drift, Billing, Analytics, Agents, Settings | Specified-not-implemented unless a separate implementation record proves otherwise | Core tier (agents, sessions, memories, evidence, directives, policies, settings) and platform tier (incidents, drift, audit, budgets, analytics, providers, MCP tools, access) are separated by ADR-0089. Enable one core vertical slice at a time after data, security, contract, browser, and rollback gates pass. |
 | Full production operator deployment and shell retirement | Deferred | Requires approved runtime ownership, staging browser promotion, rollback evidence, and parity decision. |
 
 ## Contract layers
@@ -40,9 +40,9 @@ IBEX is an **auditable context-and-policy provenance debugger**. The operator UI
 
 ## Server-only DAL and BFF boundary
 
-`services/console` must use a server-only DAL/BFF for privileged data. DAL modules must be marked `import 'server-only'`; resolve the authenticated session and organization on the server, authorize the request, call the owning API, validate the response, redact sensitive fields, and return minimal DTOs. Client components must never import server-only clients, bearer credentials, provider secrets, or raw tenant context.
+`services/console` must use a server-only BFF for privileged data. Server-only modules live under `server/` and must never be imported by client components. The BFF resolves the authenticated session and organization on the server, authorizes the request, calls the owning API, validates the response, redacts sensitive fields, and returns minimal DTOs. Client components must never import server-only clients, bearer credentials, provider secrets, or raw tenant context.
 
-Use Next.js proxy preprocessing only for lightweight routing/correlation concerns. Route Handlers are narrow same-origin BFF functions for session/bootstrap, CSRF-protected mutations, small composed reads, short-lived exports, or SSE forwarding when topology requires it. There must be no generic open proxy. Final authorization remains in the DAL and API.
+Use Nitro server middleware only for lightweight routing and correlation concerns. Nitro server routes are narrow same-origin BFF functions for session/bootstrap, CSRF-protected mutations, small composed reads, short-lived exports, or SSE forwarding when topology requires it. There must be no generic open proxy. Final authorization remains in the DAL and API.
 
 ## API contract ownership and validation
 

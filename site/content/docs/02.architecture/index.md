@@ -39,7 +39,7 @@ flowchart TB
   subgraph Edge
     Proxy["Go proxy"]
     API["Python management API"]
-    Console["Next.js Console"]
+    Console["Nuxt Console"]
   end
   subgraph Identity
     Auth["Go auth"]

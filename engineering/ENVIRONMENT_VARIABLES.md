@@ -844,9 +844,9 @@ Every service must validate configuration at startup:
 
 ## 19) Common Misconfigurations (and how we prevent them)
 
-1. **Accidentally leaking secrets via Next.js**
-   - Prevention: only use `NEXT_PUBLIC_*` for non-secret values
-   - Add lint rule: any variable name containing `KEY|SECRET|TOKEN|PASSWORD` forbidden in client bundles
+1. **Accidentally leaking secrets through public runtime config (Nuxt)**
+   - Prevention: only use `NUXT_PUBLIC_*` and `runtimeConfig.public.*` for non-secret values
+   - Add a lint rule: any variable name containing `KEY|SECRET|TOKEN|PASSWORD` forbidden in client bundles
 
 2. **Missing org filter in ClickHouse**
    - Prevention: query guard layer rejects queries missing org filter

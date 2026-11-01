@@ -1570,559 +1570,94 @@ async def db_session(postgres_container):
 
 ## 📘 TypeScript Standards
 
-### Project Structure
+The canonical TypeScript application is `services/console` (Nuxt 4 + Vue 3 + Nitro, ADR-0088). The legacy
+`services/dashboard` shell is not a pattern source.
+
+### Project structure
 
 ```text
-services/dashboard/
-├── src/
-│   └── app/                     -- Next.js App Router
-│       ├── (auth)/              -- Route group: auth pages
-│       │   ├── login/
-│       │   │   └── page.tsx
-│       │   └── layout.tsx
-│       ├── (dashboard)/         -- Route group: main app
-│       │   ├── agents/
-│       │   │   ├── page.tsx     -- Server component
-│       │   │   └── [id]/
-│       │   │       ├── page.tsx
-│       │   │       └── sessions/
-│       │   │           └── page.tsx
-│       │   ├── memories/
-│       │   │   └── page.tsx
-│       │   └── layout.tsx       -- Dashboard layout
-│       ├── api/                 -- Route handlers (API)
-│       │   └── auth/
-│       │       └── route.ts
-│       ├── layout.tsx           -- Root layout
-│       └── globals.css
-├── src/
-│   ├── components/
-│   │   ├── ui/                  -- Base components (Button, etc.)
-│   │   ├── memory/              -- Memory-specific components
-│   │   ├── session/             -- Session components
-│   │   └── charts/              -- Data visualization
-│   ├── lib/
-│   │   ├── api.ts               -- API client
-│   │   ├── auth.ts              -- Auth utilities
-│   │   └── utils.ts             -- Shared utilities
-│   ├── hooks/                   -- Custom React hooks
-│   ├── stores/                  -- Zustand stores
-│   └── types/                   -- TypeScript types
-├── tsconfig.json
-├── next.config.js
-└── tailwind.config.ts
+services/console/
+  app/                      # client + SSR application
+    components/             # console and shadcn-vue components
+    composables/            # reactive data and view-model helpers
+    layouts/                # shell, sidebar, preview banner
+    lib/                    # query parsing, formatting, preview fixtures
+    pages/                  # file-based routes
+    assets/css/             # Tailwind v4 tokens
+  server/                   # Nitro BFF only; never imported by app/
+    api/operator/           # same-origin read endpoints
+    utils/operator/         # upstream client, validation, redaction
+  shared/operator/          # contracts, zod schemas, surface registry
+  tests/                    # vitest unit and policy checks
+  e2e/                      # Playwright and axe
 ```
 
-### TypeScript Configuration
+Rules:
 
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "ES2022"],
-    "allowJs": false,
-    "skipLibCheck": true,
-    "strict": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noImplicitAny": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noImplicitOverride": true,
-    "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "preserve",
-    "incremental": true,
-    "plugins": [{ "name": "next" }],
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
-}
-```
+- `app/` may import `shared/`; `shared/` must not import `app/` or `server/`.
+- `server/` may import `shared/`; `app/` must never import `server/`.
+- One surface status source: `shared/operator/surfaces.ts`.
 
-### Server vs Client Components
+### TypeScript configuration
 
-```typescript
-// SERVER COMPONENT (default in App Router)
-// File: app/(dashboard)/agents/page.tsx
+- `strict: true`; no `any` in shared contracts or public function signatures.
+- Prefer `unknown` plus zod parsing at every external boundary.
+- Do not silence errors with `@ts-ignore`; use `@ts-expect-error` with a reason only when the error is expected.
+- Do not duplicate DTO types by hand when a zod schema exists: infer with `z.infer<typeof schema>`.
 
-// Server components:
-// - Run on server, no JavaScript sent to client
-// - Can directly access database, secrets
-// - Cannot use useState, useEffect, event handlers
-// - Cannot use browser APIs
+### Server and client boundary
 
-import { getAgents } from "@/lib/api/agents"
-import { AgentList } from "@/components/agent/AgentList"
+- Server-only values (`IBEX_OPERATOR_API_ORIGIN`, cookies, tenant authority) live in `server/` or in `runtimeConfig`
+  without `public`.
+- `runtimeConfig.public.*` is for non-secret display values only.
+- Browser code calls same-origin `/api/operator/*` routes. It never receives an upstream origin, bearer token, or
+  tenant authority.
+- A live view fails closed: no fixture fallback, no optimistic success, no inferred evidence.
+- Preview views may render labelled fixtures only under ADR-0089 §4 and must show the persistent preview banner.
 
-// This function runs on the server
-// The result is sent as HTML to the browser
-export default async function AgentsPage() {
-  // Direct data fetch on server (no useEffect needed)
-  const agents = await getAgents()
+### Types
 
-  return (
-    <main>
-      <h1>Agents</h1>
-      {/* AgentList receives data as props */}
-      <AgentList agents={agents} />
-    </main>
-  )
-}
+- Shared contracts are zod schemas in `shared/operator/contracts.ts`; types are inferred.
+- Response validation happens once, at the BFF boundary.
+- Error shapes are normalized before they reach components.
+- Nullable evidence is explicit; missing evidence is `unknown`, never fabricated.
 
-// CLIENT COMPONENT
-// File: components/agent/AgentActions.tsx
-// Must have "use client" directive
+### API client pattern
 
-"use client"
+- Use `$fetch`/`ofetch` through the BFF, with a fixed path allowlist and a bounded timeout.
+- Never build an upstream URL from request input.
+- Forward only the configured access cookie; strip `org_id` before returning D1 payloads.
+- Return `Cache-Control: private, no-store` and `Vary: Cookie`.
+- Parse the response with the owning zod schema; on failure return a normalized operator error.
 
-// Client components:
-// - Shipped as JavaScript to browser
-// - Can use useState, useEffect, event handlers
-// - Can use browser APIs
-// - Cannot directly access server resources
+### State
 
-import { useState } from "react"
-import { pauseAgent } from "@/lib/api/agents"
+- URL state for filters, tabs, selected rows, and pagination that must survive reload (see `/explore` and `/settings`).
+- Composables for server reads; do not copy server data into a global store.
+- `useState`/`ref` for ephemeral UI only.
+- Do not persist credentials, tokens, or tenant authority in local storage.
 
-interface AgentActionsProps {
-  agentId: string
-  initialStatus: "active" | "paused"
-}
+### Component patterns
 
-export function AgentActions({
-  agentId,
-  initialStatus,
-}: AgentActionsProps) {
-  const [status, setStatus] = useState(initialStatus)
-  const [isPausing, setIsPausing] = useState(false)
+- `<script setup lang="ts">`; typed props with `defineProps`, typed events with `defineEmits`.
+- Default to SSR; hydrate only leaf interactive components.
+- Every data view has loading, empty, error, and success states.
+- Keep components small; extract primitives before a component exceeds roughly 300 lines.
+- Use the locked-action primitive and privileged-write tooltip for any future write control; never a working-looking
+  disabled button without a reason.
+- Never render untrusted memory, prompt, or tool content with `v-html`. Sanitize it or render it as text.
+- Charts are allowed only when the underlying series exists; no invented trend lines.
+- Every icon-only control needs an `aria-label`; every interactive control is keyboard reachable.
+- Respect the design tokens in `app/assets/css/main.css`; do not hardcode new colors.
 
-  async function handlePause() {
-    setIsPausing(true)
-    try {
-      await pauseAgent(agentId)
-      setStatus("paused")
-    } finally {
-      setIsPausing(false)
-    }
-  }
+### Testing
 
-  return (
-    <button
-      onClick={handlePause}
-      disabled={isPausing || status === "paused"}
-    >
-      {isPausing ? "Pausing..." : "Pause Agent"}
-    </button>
-  )
-}
-
-// RULE: Only add "use client" when needed
-// Keep server components as server components
-// Push client interactivity to leaf components
-```
-
-### Type Definitions
-
-```typescript
-// types/memory.ts
-
-// Domain types match the API response exactly
-export interface Memory {
-  readonly id: string
-  readonly agentId: string
-  readonly orgId: string
-  readonly content: string
-  readonly contentTokens: number
-  readonly category: MemoryCategory
-  readonly confidence: number
-  readonly source: MemorySource
-  readonly status: MemoryStatus
-  readonly visibility: MemoryVisibility
-  readonly pinned: boolean
-  readonly tags: readonly string[]
-  readonly retrievalCount: number
-  readonly usefulnessScore: number
-  readonly piiDetected: boolean
-  readonly injectionRiskScore: number
-  readonly createdAt: string
-  readonly updatedAt: string
-  readonly lastRetrievedAt: string | null
-}
-
-// Use string unions for enums (not TypeScript enums)
-// String unions are more predictable and debuggable
-export type MemoryCategory =
-  | "factual"
-  | "preference"
-  | "behavioral"
-  | "episodic"
-  | "procedural"
-
-export type MemoryStatus =
-  | "active"
-  | "superseded"
-  | "merged_into"
-  | "archived"
-  | "quarantined"
-  | "deleted"
-
-export type MemorySource =
-  | "extracted"
-  | "user_provided"
-  | "imported"
-  | "inferred"
-
-export type MemoryVisibility = "agent" | "org" | "session"
-
-// Request types
-export interface CreateMemoryRequest {
-  agentId: string
-  content: string
-  category?: MemoryCategory
-  confidence?: number
-  sessionId?: string
-  visibility?: MemoryVisibility
-  tags?: string[]
-  pinned?: boolean
-}
-
-// API response envelope
-export interface ApiResponse<T> {
-  data: T
-  meta?: Record<string, unknown>
-}
-
-export interface PaginatedResponse<T> extends ApiResponse<T[]> {
-  pagination: {
-    hasMore: boolean
-    nextCursor: string | null
-    prevCursor: string | null
-    totalCount: number
-  }
-}
-
-export interface ApiError {
-  error: {
-    code: string
-    message: string
-    detail?: string
-    docsUrl?: string
-    requestId: string
-    timestamp: string
-    fieldErrors?: Array<{
-      field: string
-      code: string
-      message: string
-    }>
-  }
-}
-```
-
-### API Client Pattern
-
-```typescript
-// lib/api/client.ts
-
-class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly status: number,
-    public readonly requestId: string,
-  ) {
-    super(message)
-    this.name = "ApiError"
-  }
-}
-
-async function apiRequest<T>(
-  path: string,
-  options: RequestInit & {
-    params?: Record<string, string | number | boolean | undefined>
-  } = {},
-): Promise<T> {
-  const { params, ...fetchOptions } = options
-
-  // Build URL with query params
-  const url = new URL(path, process.env.NEXT_PUBLIC_API_URL)
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value))
-      }
-    })
-  }
-
-  const response = await fetch(url.toString(), {
-    ...fetchOptions,
-    headers: {
-      "Content-Type": "application/json",
-      ...fetchOptions.headers,
-    },
-  })
-
-  // Parse response
-  const body = await response.json()
-
-  if (!response.ok) {
-    const errorBody = body as ApiError
-    throw new ApiError(
-      errorBody.error.message,
-      errorBody.error.code,
-      response.status,
-      errorBody.error.requestId,
-    )
-  }
-
-  return body as T
-}
-
-// lib/api/memories.ts
-export async function createMemory(
-  request: CreateMemoryRequest,
-): Promise<Memory> {
-  const response = await apiRequest<ApiResponse<Memory>>(
-    "/v1/memories",
-    {
-      method: "POST",
-      body: JSON.stringify(request),
-    },
-  )
-  return response.data
-}
-
-export async function searchMemories(
-  agentId: string,
-  query: string,
-  options: {
-    limit?: number
-    minSimilarity?: number
-    categories?: MemoryCategory[]
-  } = {},
-): Promise<Memory[]> {
-  const response = await apiRequest<ApiResponse<{
-    results: Array<{ memory: Memory; scores: Record<string, number> }>
-  }>>("/v1/memories/search", {
-    method: "POST",
-    body: JSON.stringify({
-      agent_id: agentId,
-      query,
-      limit: options.limit,
-      min_similarity: options.minSimilarity,
-      filters: {
-        category: options.categories,
-      },
-    }),
-  })
-
-  return response.data.results.map((r) => r.memory)
-}
-```
-
-### State Management
-
-```typescript
-// stores/agent-store.ts
-import { create } from "zustand"
-import { devtools } from "zustand/middleware"
-
-interface AgentStore {
-  // State
-  selectedAgentId: string | null
-  sidebarCollapsed: boolean
-
-  // Actions
-  selectAgent: (agentId: string | null) => void
-  toggleSidebar: () => void
-}
-
-export const useAgentStore = create<AgentStore>()(
-  devtools(
-    (set) => ({
-      // Initial state
-      selectedAgentId: null,
-      sidebarCollapsed: false,
-
-      // Actions: plain functions, no async
-      selectAgent: (agentId) => set({ selectedAgentId: agentId }),
-      toggleSidebar: () =>
-        set((state) => ({
-          sidebarCollapsed: !state.sidebarCollapsed,
-        })),
-    }),
-    { name: "agent-store" }, // Redux DevTools name
-  ),
-)
-
-// Usage: select only what you need (prevents unnecessary rerenders)
-const selectedAgentId = useAgentStore(
-  (state) => state.selectedAgentId
-)
-```
-
-```typescript
-// TanStack Query for server state
-// hooks/use-memories.ts
-import {
-  useQuery,
-  useMutation,
-  useQueryClient
-} from "@tanstack/react-query"
-
-export function useMemories(agentId: string) {
-  return useQuery({
-    queryKey: ["memories", agentId],
-    queryFn: () => getMemories(agentId),
-    staleTime: 30_000,     // Fresh for 30 seconds
-    gcTime: 5 * 60_000,    // Keep in cache for 5 minutes
-  })
-}
-
-export function useCreateMemory() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: createMemory,
-    onSuccess: (newMemory) => {
-      // Invalidate and refetch memories for this agent
-      queryClient.invalidateQueries({
-        queryKey: ["memories", newMemory.agentId],
-      })
-    },
-    onError: (error) => {
-      if (error instanceof ApiError) {
-        // Handle specific error codes
-        if (error.code === "DUPLICATE_CONTENT") {
-          // Show specific UI for duplicates
-        }
-      }
-    },
-  })
-}
-```
-
-### Component Patterns
-
-```typescript
-// REQUIRED: Loading and error states for every data component
-// components/memory/MemoryList.tsx
-
-"use client"
-
-import { useMemories } from "@/hooks/use-memories"
-
-interface MemoryListProps {
-  agentId: string
-}
-
-export function MemoryList({ agentId }: MemoryListProps) {
-  const { data: memories, isLoading, error, refetch } = useMemories(agentId)
-
-  // Loading state: always show something meaningful
-  if (isLoading) {
-    return <MemoryListSkeleton count={5} />
-  }
-
-  // Error state: never show blank screen
-  if (error) {
-    return (
-      <ErrorState
-        title="Failed to load memories"
-        description="We couldn't load the memories for this agent."
-        retry={() => void refetch()}
-      />
-    )
-  }
-
-  // Empty state: inform user, offer action
-  if (!memories || memories.length === 0) {
-    return (
-      <EmptyState
-        title="No memories yet"
-        description="This agent hasn't created any memories yet."
-        action={<CreateMemoryButton agentId={agentId} />}
-      />
-    )
-  }
-
-  return (
-    <ul className="space-y-3">
-      {memories.map((memory) => (
-        <MemoryCard key={memory.id} memory={memory} />
-      ))}
-    </ul>
-  )
-}
-
-// REQUIRED: Accessibility for interactive components
-// components/ui/Button.tsx
-interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "danger"
-  size?: "sm" | "md" | "lg"
-  isLoading?: boolean
-  loadingText?: string
-}
-
-export function Button({
-  variant = "primary",
-  size = "md",
-  isLoading = false,
-  loadingText,
-  disabled,
-  children,
-  ...props
-}: ButtonProps) {
-  const isDisabled = disabled || isLoading
-
-  return (
-    <button
-      {...props}
-      disabled={isDisabled}
-      aria-busy={isLoading}
-      aria-label={isLoading && loadingText
-        ? loadingText
-        : props["aria-label"]}
-      className={cn(
-        // Base styles
-        "font-medium rounded-md transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2",
-        "focus-visible:ring-offset-2 focus-visible:ring-blue-500",
-        "disabled:opacity-50 disabled:cursor-not-allowed",
-        // Variant styles
-        variant === "primary" && "bg-blue-600 text-white hover:bg-blue-700",
-        variant === "secondary" && "bg-gray-100 text-gray-900 hover:bg-gray-200",
-        variant === "danger" && "bg-red-600 text-white hover:bg-red-700",
-        // Size styles
-        size === "sm" && "px-3 py-1.5 text-sm",
-        size === "md" && "px-4 py-2 text-sm",
-        size === "lg" && "px-6 py-3 text-base",
-      )}
-    >
-      {isLoading ? (
-        <>
-          <Spinner className="mr-2 h-4 w-4" aria-hidden="true" />
-          {loadingText ?? children}
-        </>
-      ) : (
-        children
-      )}
-    </button>
-  )
-}
-```
+- `pnpm --filter @ibex/console test` for unit, contract, query, and surface-policy checks.
+- `pnpm --filter @ibex/console check:surfaces` for status parity.
+- `pnpm --filter @ibex/console test:e2e` for fail-closed behavior, preview labelling, keyboard navigation, and axe.
+- Cross-tenant tests are required wherever data access changes.
 
 ---
-
 ## 🔬 Code Review Standards
 
 ### What Every Reviewer Checks

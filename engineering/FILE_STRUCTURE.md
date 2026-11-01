@@ -7,7 +7,7 @@ This document defines the **canonical repository structure** for IBEX Harness:
 - where each service lives,
 - how each service is structured internally,
 - where shared packages and generated code live,
-- how to keep frameworks (Go/FastAPI/Next.js/Nuxt) consistent,
+- how to keep frameworks (Go/FastAPI/Nuxt) consistent,
 - and what changes require an ADR.
 
 This exists because AI-assisted development fails badly when:
@@ -53,8 +53,8 @@ ibex-harness/
     worker/                    # Python Celery — extraction / jobs (shipped 3.5+)
     context/                   # Python gRPC — context assembly (shipped 3.5.C+)
     api/                       # Python FastAPI — management plane (mounted)
-    console/                   # Next.js — canonical operator UI (mounted-but-provisional)
-    dashboard/                 # Next.js — 4.P.0 compatibility shell
+    console/                   # Nuxt 4 + Nitro — canonical operator UI (mounted-but-provisional)
+    dashboard/                 # Static SPA — 4.P.0 compatibility shell
 
   packages/                    # shared libraries — see packages/README.md
     proto/                     # protobuf source of truth + codegen
@@ -278,80 +278,44 @@ services/worker/
 - Tasks must never log sensitive content.
 - Queue topology is situational — confirm against live Redis/Celery constraints during implementation.
 
-### 3.4 Next.js dashboard (App Router) — TypeScript
+### 3.4 Console (Nuxt 4 + Nitro) — TypeScript
 
-Canonical layout (Next.js 14+ App Router):
+Canonical layout (`services/console`, ADR-0088):
 
 ```text
-services/dashboard/
-  src/
-    app/
-      (auth)/
-        login/
-          page.tsx
-        layout.tsx
-      (dashboard)/
-        agents/
-          page.tsx
-          [agentId]/
-            page.tsx
-            sessions/
-              page.tsx
-        memories/
-          page.tsx
-        directives/
-          page.tsx
-        layout.tsx
-      api/
-        auth/
-          route.ts             # server route handlers if needed
-      layout.tsx
-      error.tsx                # root error boundary
-      not-found.tsx
-      loading.tsx
-      globals.css
-
+services/console/
+  app/
     components/
-      ui/                      # base components: Button, Input, Modal
-      agent/
-      session/
-      memory/
-      directive/
-      charts/
-
-    hooks/                     # React Query hooks, small + focused
-    lib/
-      api/                     # typed API client
-      auth/                    # server-only auth helpers
-      telemetry/
-      utils/
-    stores/                    # Zustand stores (UI state only)
-    types/                     # stable TS types (generated + handwritten)
-  public/
-  tests/
-    unit/
-    e2e/                       # Playwright tests
-  next.config.js
-  tsconfig.json
-  tailwind.config.ts
+      console/                # console views and primitives
+      ui/                     # shadcn-vue primitives
+    composables/              # reactive data and view-model helpers
+    layouts/default.vue       # shell, sidebar, preview banner
+    lib/                      # query parsing, formatting, preview fixtures
+    pages/                    # file-based routes
+    assets/css/main.css       # Tailwind v4 tokens
+  server/
+    api/operator/             # same-origin BFF read routes
+    utils/operator/           # upstream client, validation, redaction
+  shared/operator/            # zod contracts and surface registry
+  tests/                      # vitest
+  e2e/                        # Playwright + axe
+  nuxt.config.ts
+  vitest.config.ts
+  playwright.config.ts
   package.json
-  .env.example
-  README.md
 ```
 
-**Server vs Client component rules:**
+**Rules:**
 
-- Default to server components (`page.tsx` is usually server)
-- Use `"use client"` only in leaf interactive components
-- Never import server-only modules into client components
-- Every data-heavy view must have:
-  - loading state
-  - error state
-  - empty state
+- `app/` may import `shared/`; `shared/` must not import `app/` or `server/`.
+- `server/` may import `shared/`; `app/` must never import `server/`.
+- `app/pages/` stays thin: a page names the route and delegates to a view component.
+- Surface status comes from `shared/operator/surfaces.ts`; do not restate it in components.
+- Every data-heavy view must have loading, error, empty, and success states.
+- A live view fails closed; only a preview view may render labelled fixtures (ADR-0089 §4).
+- `services/dashboard/` is a static SPA compatibility shell. It is not a pattern source and must not be expanded.
 
----
-
-## 4) Packages Scaffold Conventions
+---## 4) Packages Scaffold Conventions
 
 ### 4.1 `packages/proto` (source of truth)
 
@@ -589,7 +553,7 @@ Generated code is a frequent source of drift:
 - adding `lib/` folders inside Go services as dumping grounds
 - mixing business logic into API routers/handlers
 - putting DB queries into service layer (Python)
-- putting server-only code into Next.js client components
+- importing `server/` code into `app/` components (Nuxt)
 - recreating a top-level `docs/` tree parallel to `engineering/`
 
 ---

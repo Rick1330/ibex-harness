@@ -232,20 +232,29 @@ make mcp-conformance                # Streamable HTTP stub handshake evidence
 
 ### 4.4 Run services
 
-Recommended pattern: run infra in Docker, run services on host for fast iteration.
-
-Example (per-service):
+Recommended pattern: run infra in Docker, run services on host for fast iteration. There is no single `make dev-stack`
+target; start each service in its own terminal.
 
 ```bash
-make dev-auth
-make dev-proxy
-make dev-memory
-make dev-context
-make dev-embedder
-make dev-worker
-make dev-api
-make dev-dashboard
+make compose-dev-up
+make db-migrate
+make db-seed          # fixed local org, user, agent, and PAT; never against a shared environment
 ```
+
+| Service | Command (from the repository root) | Port |
+|---|---|---|
+| AuthService | `IBEX_PORT=8081 IBEX_GRPC_PORT=9091 go run ./services/auth/cmd/auth` | 8081 HTTP, 9091 gRPC |
+| Proxy | `IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 go run ./services/proxy/cmd/proxy` | 8080 |
+| Management API | `cd services/api && uv sync --frozen --extra dev`, then `.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010` | 8010 |
+| Memory | `cd services/memory && uv sync --group dev`, then `uv run --directory services/memory uvicorn app.main:app --host 127.0.0.1 --port 8005` | 8005 |
+| Embedder | `cd services/embedder && uv sync --frozen --extra dev`, then `IBEX_EMBEDDING_PROFILE=cpu .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080` | 8080 |
+| Context | `PYTHONPATH=packages/proto/gen/python services/context/.venv/bin/python -m app` | configured gRPC |
+| Worker | `cd services/worker && uv sync --extra dev`, then `celery -A app.celery_app:celery_app worker -Q extraction,embedding,maintenance,mcp_audit --loglevel=info` | — |
+| Console | `pnpm --filter @ibex/console dev` | 3000 |
+
+Memory requires AuthService gRPC and the Embedder, plus PostgreSQL with pgvector and applied migrations. Console live
+reads require `IBEX_OPERATOR_API_ORIGIN` and an operator session cookie; without them the live surfaces fail closed.
+The Console is read-only and exposes no mutation routes.
 
 ### 4.5 Health checks
 
