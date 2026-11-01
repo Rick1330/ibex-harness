@@ -696,7 +696,13 @@ Topology and hostnames: [ADR-0078](adr/0078-operator-runtime-topology.md).
 | staging | `https://operator.staging.ibexharness.com` (planned) | `https://api.staging.ibexharness.com` (planned; **no Ingress yet**) | `Strict` when same eTLD+1 |
 | production | `https://operator.ibexharness.com` (planned) | `https://api.ibexharness.com` (planned; **no Ingress yet**) | `Strict` + `Secure` + `Domain=.ibexharness.com` |
 
-The Console has no public browser configuration variables. The BFF rejects a plain-HTTP API origin when a session cookie is present, so local development needs a TLS proxy (or the TLS fixture harness used by the live E2E suite).
+The Console has one public, non-secret browser setting: `NUXT_PUBLIC_IBEX_ENV`, which only labels the environment in the chrome. Credentials, upstream origins, cookies, and tenant authority stay in the server-only BFF. The BFF rejects a plain-HTTP API origin when a session cookie is present, so local development needs a TLS proxy (or the TLS fixture harness used by the live E2E suite).
+
+### Public (non-secret) Console configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NUXT_PUBLIC_IBEX_ENV` | No | `local` | Environment label rendered in the Console chrome; never a secret. |
 
 ### Server-only Console BFF configuration
 
