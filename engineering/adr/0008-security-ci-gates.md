@@ -67,7 +67,7 @@ GitHub **Default** CodeQL setup conflicts with the advanced `.github/workflows/c
 ### Dependabot
 
 - Active: `github-actions`, `gomod` at `/`
-- Deferred (documented in `.github/dependabot.yml`): `pip` (`/services/memory`), `npm` (`/services/dashboard`)
+- Deferred (documented in `.github/dependabot.yml`): `pip` (`/services/memory`)
 
 ### Branch protection
 

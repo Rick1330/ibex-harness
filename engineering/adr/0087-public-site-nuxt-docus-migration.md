@@ -14,6 +14,8 @@ authors: "IBEX Harness team"
 
 # ADR-0087: Public site migration to Nuxt 4 + Docus
 
+> **Dashboard retention superseded:** The `services/dashboard` compatibility shell was retired by [ADR-0090](0090-retire-dashboard-compatibility-shell.md). The public-site decision is unchanged.
+
 - **Status:** Accepted
 - **Date:** 2026-10-23
 - **Authors:** IBEX Harness team

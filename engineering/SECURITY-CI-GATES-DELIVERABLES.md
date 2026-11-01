@@ -57,7 +57,7 @@ govulncheck ./packages/... ./services/auth/... ./services/proxy/...
 
 ## IBEX Console gates
 
-The canonical product is `services/console`; `site/` remains public docs and `services/dashboard/` remains a temporary compatibility shell. Before IBEX Console staging promotion, CI must publish evidence for:
+The canonical product is `services/console`; `site/` remains public docs; the dashboard compatibility shell was retired by ADR-0090. Before IBEX Console staging promotion, CI must publish evidence for:
 
 - OpenAPI snapshot diff, generated TypeScript client freshness, runtime DTO validation, and versioned SSE envelope validation;
 - four-role/two-tenant contract and authenticated browser journeys, including tenant-negative authorization;

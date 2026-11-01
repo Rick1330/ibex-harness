@@ -54,7 +54,6 @@ ibex-harness/
     context/                   # Python gRPC — context assembly (shipped 3.5.C+)
     api/                       # Python FastAPI — management plane (mounted)
     console/                   # Nuxt 4 + Nitro — canonical operator UI (mounted-but-provisional)
-    dashboard/                 # Static SPA — 4.P.0 compatibility shell
 
   packages/                    # shared libraries — see packages/README.md
     proto/                     # protobuf source of truth + codegen
@@ -313,7 +312,6 @@ services/console/
 - Surface status comes from `shared/operator/surfaces.ts`; do not restate it in components.
 - Every data-heavy view must have loading, error, empty, and success states.
 - A live view fails closed; only a preview view may render labelled fixtures (ADR-0089 §4).
-- `services/dashboard/` is a static SPA compatibility shell. It is not a pattern source and must not be expanded.
 
 ---## 4) Packages Scaffold Conventions
 
@@ -477,7 +475,6 @@ infra/helm/
       context/
       embedder/
       worker/
-      dashboard/
       postgresql/            # optional if self-hosted DB
       redis/                 # optional if self-hosted Redis
       clickhouse/            # optional if self-hosted

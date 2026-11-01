@@ -58,7 +58,6 @@ site:
   - 'turbo.json'
   - '.github/workflows/ci.yml'
   - '.github/workflows/site-deploy.yml'
-  - '.github/workflows/operator-deploy.yml'
   - '.github/actions/setup-pnpm-node/**'
 console:
   - 'services/console/**'

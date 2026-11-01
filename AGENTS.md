@@ -47,7 +47,7 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Context Assembly Engine (Python, gRPC)**: budget calculation + memory retrieval + ranking + packing + context formatting with strict latency budgets.
 - **Auth Service (Go)**: token validation, permission bitmap enforcement, JWT issuance/verification flows, revocation propagation.
 - **Workers (Python/Celery)**: memory extraction, embeddings, conflict resolution, fingerprinting, drift detection, notifications, garbage collection.
-- **Console (Nuxt 4 + Vue 3 + Nitro)**: the canonical operator application for the memory/context lifecycle — agents, sessions, memories, evidence, directives, policies, trace exploration, platform health, and settings. It is the operations plane, not a general observability product; incidents, drift, analytics, budgets, providers, MCP tools, and access are a separate platform tier (ADR-0089). `services/dashboard/` is a temporary 4.P.0 compatibility shell, not a second Track D product.
+- **Console (Nuxt 4 + Vue 3 + Nitro)**: the canonical operator application for the memory/context lifecycle — agents, sessions, memories, evidence, directives, policies, trace exploration, platform health, and settings. It is the operations plane, not a general observability product; incidents, drift, analytics, budgets, providers, MCP tools, and access are a separate platform tier (ADR-0089). The dashboard compatibility shell was retired by ADR-0090; the Console is the only operator application.
 - **Public Site (Nuxt 4 + Docus)**: `site/` renders the landing page, docs, blog, releases, and benchmarks as a static Cloudflare Pages deployment. It is not the operator application.
 - **Data layer**: PostgreSQL + pgvector (OLTP), Redis (cache/streams/rate limits), ClickHouse (analytics/billing events), MinIO/S3 (archives).
 
@@ -59,7 +59,7 @@ IBEX Harness is an AI agent memory + context platform that provides:
 - **Engineering docs:** `engineering/` is canonical. ADRs live in `engineering/adr/`; they are engineering records, not public docs pages. The public `/docs/adr` route redirects to the GitHub directory.
 - **Status vocabulary:** `site/app/data/ledger.ts` and `site/content/docs/02.architecture/05.status-and-evidence.md` must agree with `engineering/architecture-v2/00-status-and-evidence.md`. Never promote a claim beyond its recorded evidence.
 - **Stable CI gate name:** the public-site aggregate check is `ci-gate-site`. Path-filter outputs remain `run_site`, and the site build job displays as `site-build`. Do not rename protected check contexts without updating `.github/branch-protection-main.json` and the live GitHub rule.
-- **Consoles:** `services/console` is canonical; `services/dashboard` is a compatibility shell only.
+- **Consoles:** `services/console` is the only operator application (ADR-0090).
 - **Content status:** local implementations exist for auth, proxy, API, memory, and the core Console read paths. Hosted HA, measured p99 SLOs, restore drills, and end-to-end tenant-isolation acceptance remain open. See the status ledger before making any availability claim.
 
 ---
@@ -278,7 +278,7 @@ If you change hot path code, include a benchmark or performance justification.
 
 ### 7.3 Nuxt 4 + Nitro (`services/console`)
 
-`services/console` is a Nuxt 4 SSR application with a same-origin Nitro BFF (ADR-0088). `services/dashboard` is a compatibility shell only.
+`services/console` is a Nuxt 4 SSR application with a same-origin Nitro BFF (ADR-0088). The dashboard compatibility shell was retired by ADR-0090.
 
 - server-render by default; hydrate only leaf interactive components
 - keep upstream origins, cookies, and tenant authority in `server/`; never expose them to the browser

@@ -12,6 +12,8 @@ authors: "IBEX Harness team"
 
 # ADR-0078: Operator runtime topology & environment contract (4.P.0)
 
+> **Dashboard topology retired:** The `services/dashboard` Cloudflare Pages shell in this record was retired by [ADR-0090](0090-retire-dashboard-compatibility-shell.md). The operator runtime topology for `services/console` is unchanged.
+
 - **Status:** Accepted
 - **Date:** 2026-09-14
 - **Authors:** IBEX Harness team

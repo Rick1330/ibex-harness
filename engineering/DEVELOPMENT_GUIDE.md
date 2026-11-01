@@ -64,7 +64,6 @@ ibex-harness/
     context/                # Python — active Phase 3.5 context clients
     api/                    # Python FastAPI — shipped 4.A.1 foundations; D1/D2 reads mounted
     console/                # Nuxt 4 + Nitro — canonical operator UI; core-tier live reads
-    dashboard/              # compatibility-only 4.P.0 shell
 
   packages/                 # shared libraries + contracts
     proto/                  # protobuf source of truth

@@ -14,6 +14,8 @@ authors: "IBEX Harness team"
 
 # ADR-0088: Console migration to Nuxt 4 + shadcn-vue
 
+> **Dashboard retention superseded:** The `services/dashboard` compatibility shell was retired by [ADR-0090](0090-retire-dashboard-compatibility-shell.md). The Nuxt/Nitro migration decision is unchanged.
+
 - **Status:** Accepted
 - **Date:** 2026-10-25
 - **Authors:** IBEX Harness team

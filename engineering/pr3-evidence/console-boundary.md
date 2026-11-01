@@ -1,6 +1,6 @@
 # Console boundary and compatibility gate
 
-`services/console` is the canonical operator presentation boundary. `site/` remains public documentation. `services/dashboard` remains a compatibility-only connection shell until the following gate is met:
+`services/console` is the canonical operator presentation boundary. `site/` remains public documentation. The `services/dashboard` compatibility shell was retired by [ADR-0090](../adr/0090-retire-dashboard-compatibility-shell.md); this evidence record is kept for its original gate.
 
 1. `services/console` has an authenticated server-owned session and tenant context.
 2. The console consumes the versioned API/SSE contracts through the server-only transport seam.

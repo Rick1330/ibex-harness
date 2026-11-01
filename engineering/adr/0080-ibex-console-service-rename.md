@@ -9,6 +9,8 @@ date: 2026-09-24
 
 # ADR-0080: IBEX Console service rename and boundary
 
+> **Dashboard retention superseded:** The `services/dashboard` compatibility shell named in this record was retired by [ADR-0090](0090-retire-dashboard-compatibility-shell.md). The rename decision is unchanged.
+
 ## Context
 
 The merged Track D foundation is a deployable Next.js application under `services/console` with package name `@ibex/console`. The implementation is a presentation and preview foundation: it does not yet provide production authentication, tenant authority, live operator API contracts, or deployment evidence. The public documentation site remains under `site/`, while `services/dashboard` is a separate compatibility shell.

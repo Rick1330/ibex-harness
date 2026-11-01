@@ -1,5 +1,7 @@
 # IBEX Harness — Phase 4 Track D Readiness Review
 
+> **Historical record.** This plan predates [ADR-0089](../adr/0089-product-shape-and-console-scope.md) and [ADR-0090](../adr/0090-retire-dashboard-compatibility-shell.md). The `services/dashboard` compatibility shell was retired; current status: `services/console/README.md`.
+
 **Repository:** `Rick1330/ibex-harness`
 **Reviewed commit:** `cc0ad1d` (`refactor(console): rename operator web service boundary (#889)`)
 **Review date:** 2026-09-24

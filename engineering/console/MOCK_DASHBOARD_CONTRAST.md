@@ -1,6 +1,6 @@
 # Mock Dashboard Review and Main-Repository Contrast
 
-> **Historical record.** This review predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) (Console moved to Nuxt 4 + Nitro) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md) (Console scope and preview policy). Next.js references describe the reviewed mock, not the current Console. Current status: `services/console/README.md`.
+> **Historical record.** This review predates [ADR-0088](../adr/0088-console-nuxt-shadcn-vue-migration.md) (Console moved to Nuxt 4 + Nitro) and [ADR-0089](../adr/0089-product-shape-and-console-scope.md) (Console scope and preview policy). Next.js references describe the reviewed mock, not the current Console. The `services/dashboard` compatibility shell was retired by [ADR-0090](../adr/0090-retire-dashboard-compatibility-shell.md). Current status: `services/console/README.md`.
 
 **Mock source:** `dash-board-mock.zip`
 **Main repository:** `Rick1330/ibex-harness` at `8f8e130`
