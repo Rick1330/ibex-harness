@@ -719,6 +719,26 @@
         "title": "CursorPage[OperatorMemory]",
         "type": "object"
       },
+      "CursorPage_OperatorSession_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorSession"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMeta"
+          }
+        },
+        "required": [
+          "data",
+          "pagination"
+        ],
+        "title": "CursorPage[OperatorSession]",
+        "type": "object"
+      },
       "CursorPage_RateCardResponse_": {
         "properties": {
           "data": {
@@ -1492,6 +1512,374 @@
           "observed_at"
         ],
         "title": "OperatorOverviewResponse",
+        "type": "object"
+      },
+      "OperatorSession": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "directive_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directive Version Id"
+          },
+          "evidence_fence_version": {
+            "minimum": 1.0,
+            "title": "Evidence Fence Version",
+            "type": "integer"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_extracted_turn": {
+            "minimum": 0.0,
+            "title": "Last Extracted Turn",
+            "type": "integer"
+          },
+          "lifecycle_revision": {
+            "minimum": 1.0,
+            "title": "Lifecycle Revision",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "completed",
+              "abandoned",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_input_tokens": {
+            "minimum": 0.0,
+            "title": "Total Input Tokens",
+            "type": "integer"
+          },
+          "total_latency_ms": {
+            "minimum": 0.0,
+            "title": "Total Latency Ms",
+            "type": "integer"
+          },
+          "total_output_tokens": {
+            "minimum": 0.0,
+            "title": "Total Output Tokens",
+            "type": "integer"
+          },
+          "turn_count": {
+            "minimum": 0.0,
+            "title": "Turn Count",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "status",
+          "model",
+          "provider",
+          "turn_count",
+          "total_input_tokens",
+          "total_output_tokens",
+          "total_latency_ms",
+          "last_extracted_turn",
+          "lifecycle_revision",
+          "evidence_fence_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OperatorSession",
+        "type": "object"
+      },
+      "OperatorSessionDetail": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "directive_version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Directive Version Id"
+          },
+          "evidence_fence_version": {
+            "minimum": 1.0,
+            "title": "Evidence Fence Version",
+            "type": "integer"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_extracted_turn": {
+            "minimum": 0.0,
+            "title": "Last Extracted Turn",
+            "type": "integer"
+          },
+          "lifecycle_revision": {
+            "minimum": 1.0,
+            "title": "Lifecycle Revision",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "completed",
+              "abandoned",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total_input_tokens": {
+            "minimum": 0.0,
+            "title": "Total Input Tokens",
+            "type": "integer"
+          },
+          "total_latency_ms": {
+            "minimum": 0.0,
+            "title": "Total Latency Ms",
+            "type": "integer"
+          },
+          "total_output_tokens": {
+            "minimum": 0.0,
+            "title": "Total Output Tokens",
+            "type": "integer"
+          },
+          "turn_count": {
+            "minimum": 0.0,
+            "title": "Turn Count",
+            "type": "integer"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorSessionTurn"
+            },
+            "maxItems": 500,
+            "title": "Turns",
+            "type": "array"
+          },
+          "turns_truncated": {
+            "default": false,
+            "title": "Turns Truncated",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "status",
+          "model",
+          "provider",
+          "turn_count",
+          "total_input_tokens",
+          "total_output_tokens",
+          "total_latency_ms",
+          "last_extracted_turn",
+          "lifecycle_revision",
+          "evidence_fence_version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OperatorSessionDetail",
+        "type": "object"
+      },
+      "OperatorSessionTurn": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_tokens": {
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "type": "integer"
+          },
+          "is_complete": {
+            "title": "Is Complete",
+            "type": "boolean"
+          },
+          "is_streaming": {
+            "title": "Is Streaming",
+            "type": "boolean"
+          },
+          "latency_ms": {
+            "minimum": 0.0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "output_tokens": {
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "type": "integer"
+          },
+          "provider": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionTurnEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "turn_index": {
+            "minimum": 0.0,
+            "title": "Turn Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "turn_index",
+          "request_id",
+          "input_tokens",
+          "output_tokens",
+          "model",
+          "provider",
+          "latency_ms",
+          "is_streaming",
+          "is_complete",
+          "created_at"
+        ],
+        "title": "OperatorSessionTurn",
         "type": "object"
       },
       "OperatorTraceAssemblyMetrics": {
@@ -2911,6 +3299,81 @@
           "current_minute_requests"
         ],
         "title": "RateLimitsResponse",
+        "type": "object"
+      },
+      "SessionTurnEvidence": {
+        "properties": {
+          "completeness": {
+            "enum": [
+              "complete",
+              "partial",
+              "sampled",
+              "late",
+              "redacted",
+              "expired",
+              "deleted",
+              "simulated"
+            ],
+            "title": "Completeness",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "run_id",
+          "completeness",
+          "status",
+          "started_at"
+        ],
+        "title": "SessionTurnEvidence",
         "type": "object"
       },
       "TokenCreateRequest": {
@@ -4679,6 +5142,149 @@
         "summary": "Refresh Session",
         "tags": [
           "operator-session-provisional"
+        ]
+      }
+    },
+    "/v1/operator/sessions": {
+      "get": {
+        "operationId": "operator_session_list_v1_operator_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "completed",
+                    "abandoned",
+                    "error"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_OperatorSession_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Session List",
+        "tags": [
+          "operator-sessions"
+        ]
+      }
+    },
+    "/v1/operator/sessions/{session_id}": {
+      "get": {
+        "operationId": "operator_session_detail_v1_operator_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorSessionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Session Detail",
+        "tags": [
+          "operator-sessions"
         ]
       }
     },

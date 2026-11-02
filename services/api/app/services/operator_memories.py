@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from apierror_py import NOT_FOUND, VALIDATION_ERROR
+from apierror_py import NOT_FOUND
 from sqlalchemy import and_, bindparam, column, literal_column, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
-from app.pagination import CursorPage, decode_cursor, encode_cursor, page_from_rows
+from app.pagination import CursorPage, encode_cursor, page_from_rows
 from app.schemas.operator_memories import OperatorMemory
+from app.services.operator_keyset import (
+    KeysetCursor,
+    keyset_cursor_payload,
+    parse_keyset_cursor,
+)
+from app.services.operator_rows import row_value
 
 _MEMORY_NOT_FOUND_MSG = "Memory not found"
 
@@ -116,21 +121,8 @@ class ListMemoriesArgs:
     filters: MemoryListFilters
 
 
-@dataclass(frozen=True)
-class _MemoryListCursor:
-    created_at: datetime | None
-    memory_id: UUID | None
-
-
-def _row_get(row: Any, key: str) -> Any:
-    try:
-        return row[key]
-    except (KeyError, TypeError):
-        return getattr(row, key)
-
-
 def _tags_from_row(row: Any) -> list[str]:
-    raw = _row_get(row, "tags") or []
+    raw = row_value(row, "tags") or []
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
@@ -143,54 +135,37 @@ def _tags_from_row(row: Any) -> list[str]:
 
 
 def _visibility_from_row(row: Any) -> str:
-    value = str(_row_get(row, "visibility"))
+    value = str(row_value(row, "visibility"))
     return value if value in _VISIBILITIES else "agent"
 
 
 def _memory_from_row(row: Any) -> OperatorMemory:
     return OperatorMemory(
-        id=_row_get(row, "id"),
-        agent_id=_row_get(row, "agent_id"),
-        session_id=_row_get(row, "session_id"),
-        category=_row_get(row, "category"),
-        status=_row_get(row, "status"),
-        source=_row_get(row, "source"),
-        confidence=float(_row_get(row, "confidence")),
-        usefulness_score=float(_row_get(row, "usefulness_score")),
-        content_tokens=int(_row_get(row, "content_tokens")),
-        retrieval_count=int(_row_get(row, "retrieval_count")),
-        last_retrieved_at=_row_get(row, "last_retrieved_at"),
-        pii_detected=bool(_row_get(row, "pii_detected")),
-        pii_redacted=bool(_row_get(row, "pii_redacted")),
+        id=row_value(row, "id"),
+        agent_id=row_value(row, "agent_id"),
+        session_id=row_value(row, "session_id"),
+        category=row_value(row, "category"),
+        status=row_value(row, "status"),
+        source=row_value(row, "source"),
+        confidence=float(row_value(row, "confidence")),
+        usefulness_score=float(row_value(row, "usefulness_score")),
+        content_tokens=int(row_value(row, "content_tokens")),
+        retrieval_count=int(row_value(row, "retrieval_count")),
+        last_retrieved_at=row_value(row, "last_retrieved_at"),
+        pii_detected=bool(row_value(row, "pii_detected")),
+        pii_redacted=bool(row_value(row, "pii_redacted")),
         visibility=_visibility_from_row(row),
-        pinned=bool(_row_get(row, "pinned")),
+        pinned=bool(row_value(row, "pinned")),
         tags=_tags_from_row(row),
-        lifecycle_revision=int(_row_get(row, "lifecycle_revision")),
-        tombstoned=bool(_row_get(row, "tombstoned")),
-        expires_at=_row_get(row, "expires_at"),
-        valid_from=_row_get(row, "valid_from"),
-        valid_until=_row_get(row, "valid_until"),
-        observed_at=_row_get(row, "observed_at"),
-        created_at=_row_get(row, "created_at"),
-        updated_at=_row_get(row, "updated_at"),
+        lifecycle_revision=int(row_value(row, "lifecycle_revision")),
+        tombstoned=bool(row_value(row, "tombstoned")),
+        expires_at=row_value(row, "expires_at"),
+        valid_from=row_value(row, "valid_from"),
+        valid_until=row_value(row, "valid_until"),
+        observed_at=row_value(row, "observed_at"),
+        created_at=row_value(row, "created_at"),
+        updated_at=row_value(row, "updated_at"),
     )
-
-
-def _parse_list_cursor(cursor: str | None) -> _MemoryListCursor:
-    try:
-        payload = decode_cursor(cursor)
-    except (TypeError, ValueError) as exc:
-        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
-    if payload is None:
-        return _MemoryListCursor(None, None)
-    try:
-        created_at = datetime.fromisoformat(str(payload["created_at"]))
-        memory_id = UUID(str(payload["id"]))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
-    if created_at.tzinfo is None:
-        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor")
-    return _MemoryListCursor(created_at, memory_id)
 
 
 def _active_filters(filters: MemoryListFilters) -> dict[str, Any]:
@@ -208,12 +183,12 @@ def _cursor_clause() -> Any:
     )
 
 
-def _list_statement(filters: MemoryListFilters, cursor: _MemoryListCursor) -> Any:
+def _list_statement(filters: MemoryListFilters, cursor: KeysetCursor) -> Any:
     clauses: list[Any] = [_MEMORIES.c.org_id == bindparam("org_id")]
     clauses.extend(
         _MEMORIES.c[field] == bindparam(field) for field in _active_filters(filters)
     )
-    if cursor.created_at is not None and cursor.memory_id is not None:
+    if cursor.created_at is not None and cursor.row_id is not None:
         clauses.append(_cursor_clause())
     return (
         select(*_MEMORY_PROJECTION)
@@ -227,21 +202,21 @@ def _list_statement(filters: MemoryListFilters, cursor: _MemoryListCursor) -> An
 def _list_params(
     org_id: UUID,
     filters: MemoryListFilters,
-    cursor: _MemoryListCursor,
+    cursor: KeysetCursor,
     limit: int,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {"org_id": org_id, "limit": limit + 1}
     params.update(_active_filters(filters))
-    if cursor.created_at is not None and cursor.memory_id is not None:
+    if cursor.created_at is not None and cursor.row_id is not None:
         params["cursor_created_at"] = cursor.created_at
-        params["cursor_id"] = cursor.memory_id
+        params["cursor_id"] = cursor.row_id
     return params
 
 
 async def list_operator_memories(
     session: AsyncSession, args: ListMemoriesArgs
 ) -> CursorPage[OperatorMemory]:
-    list_cursor = _parse_list_cursor(args.cursor)
+    list_cursor = parse_keyset_cursor(args.cursor)
     result = await session.execute(
         _list_statement(args.filters, list_cursor),
         _list_params(args.org_id, args.filters, list_cursor, args.limit),
@@ -256,7 +231,7 @@ def _next_list_payload(memories: list[OperatorMemory], limit: int) -> dict[str, 
     if len(memories) <= limit:
         return None
     last = memories[limit - 1]
-    return {"created_at": last.created_at.isoformat(), "id": str(last.id)}
+    return keyset_cursor_payload(last.created_at, last.id)
 
 
 async def get_operator_memory(
