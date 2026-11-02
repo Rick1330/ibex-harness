@@ -64,5 +64,5 @@ class OperatorMemoryListQuery(BaseModel):
     session_id: UUID | None = None
     status: MemoryStatus | None = None
     category: MemoryCategory | None = None
-    cursor: str | None = None
+    cursor: str | None = Field(default=None, max_length=2048)
     limit: int = Field(default=50, ge=1, le=100)

@@ -37,7 +37,9 @@ class OperatorSessionTurn(BaseModel):
     request_id: str = Field(min_length=1, max_length=256)
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
-    model: str = Field(min_length=1, max_length=128)
+    # The proxy bounds a model name at MaxModelNameLength (256) and stores it
+    # unchanged, so a narrower projection would turn a saved session into a 500.
+    model: str = Field(min_length=1, max_length=256)
     provider: str = Field(min_length=1, max_length=64)
     latency_ms: int = Field(ge=0)
     is_streaming: bool
@@ -51,7 +53,7 @@ class OperatorSession(BaseModel):
     agent_id: UUID
     external_id: str | None = Field(default=None, max_length=128)
     status: SessionStatus
-    model: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=256)
     provider: str = Field(min_length=1, max_length=64)
     directive_version_id: UUID | None = None
     turn_count: int = Field(ge=0)
@@ -76,5 +78,5 @@ class OperatorSessionDetail(OperatorSession):
 class OperatorSessionListQuery(BaseModel):
     agent_id: UUID | None = None
     status: SessionStatus | None = None
-    cursor: str | None = None
+    cursor: str | None = Field(default=None, max_length=2048)
     limit: int = Field(default=50, ge=1, le=100)
