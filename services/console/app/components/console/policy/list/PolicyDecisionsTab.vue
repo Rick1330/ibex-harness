@@ -227,7 +227,7 @@ function clearFilters(): void {
               :aria-label="`Open run ${row.decision.runId}`"
             >
               <td>
-                <span class="text-xs whitespace-nowrap text-fg-2" :title="formatGovernStamp(row.decision.at)">{{ formatGovernRelative(row.decision.at) }}</span>
+                <span class="text-xs whitespace-nowrap text-fg-2" :title="formatGovernStamp(row.decision.at)">{{ formatGovernRelative(row.decision.at, GOVERN_NOW) }}</span>
               </td>
               <td>
                 <span class="block truncate font-mono text-[0.6875rem] text-fg-2">{{ row.decision.runId }}</span>
@@ -290,7 +290,7 @@ function clearFilters(): void {
       <div class="space-y-3">
         <div class="flex flex-wrap items-center gap-1.5">
           <GovernDecisionPill :decision="peekDecision.decision" />
-          <span class="font-mono text-[0.6875rem] text-fg-3" :title="formatGovernStamp(peekDecision.at)">{{ formatGovernRelative(peekDecision.at) }}</span>
+          <span class="font-mono text-[0.6875rem] text-fg-3" :title="formatGovernStamp(peekDecision.at)">{{ formatGovernRelative(peekDecision.at, GOVERN_NOW) }}</span>
         </div>
         <p class="text-sm leading-5 text-fg-2">{{ peekDecision.summary }}</p>
         <dl class="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line-subtle bg-line-subtle">

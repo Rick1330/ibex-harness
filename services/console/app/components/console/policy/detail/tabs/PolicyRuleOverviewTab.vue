@@ -7,7 +7,7 @@ import GovernEffectTag from "@/components/console/govern/primitives/GovernEffect
 import GovernEmptyValue from "@/components/console/govern/primitives/GovernEmptyValue.vue"
 import GovernModeTag from "@/components/console/govern/primitives/GovernModeTag.vue"
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
-import { formatGovernNumber, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernNumber, formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   POLICY_EFFECT_DESCRIPTIONS,
   POLICY_MODE_DESCRIPTIONS,
@@ -83,7 +83,7 @@ const deltaIcon = computed(() => (delta.value.direction === "up" ? ArrowUp : del
           </span>
         </GovernStatTile>
         <GovernStatTile label="Linked runs" :value="formatGovernNumber(provenance.linked)" :helper="`${provenance.complete} complete · ${provenance.partial} partial`" :tone="provenance.partial > 0 ? 'warning' : 'default'" compact />
-        <GovernStatTile label="Last fired" :value="lastFired ? formatGovernRelative(lastFired.at) : '—'" :helper="lastFired ? formatGovernStamp(lastFired.at) : 'No linked decision'" compact />
+        <GovernStatTile label="Last fired" :value="lastFired ? formatGovernRelative(lastFired.at, GOVERN_NOW) : '—'" :helper="lastFired ? formatGovernStamp(lastFired.at) : 'No linked decision'" compact />
         <GovernStatTile label="Revision" :value="`@${revision.revision}`" :helper="`of ${rule.revisions.length} revisions`" compact />
       </div>
 
@@ -142,7 +142,7 @@ const deltaIcon = computed(() => (delta.value.direction === "up" ? ArrowUp : del
           <div class="flex items-baseline justify-between gap-3 px-4 py-2">
             <dt class="text-xs text-fg-3">Changed</dt>
             <dd class="text-right">
-              <span class="block text-xs text-fg-1" :title="formatGovernStamp(revision.effectiveFrom)">{{ formatGovernRelative(revision.effectiveFrom) }}</span>
+              <span class="block text-xs text-fg-1" :title="formatGovernStamp(revision.effectiveFrom)">{{ formatGovernRelative(revision.effectiveFrom, GOVERN_NOW) }}</span>
               <span class="block text-[0.625rem] text-fg-3">by {{ revision.changedBy }}</span>
             </dd>
           </div>
@@ -192,7 +192,7 @@ const deltaIcon = computed(() => (delta.value.direction === "up" ? ArrowUp : del
                 <span class="font-mono text-xs text-fg-1">@{{ entry.revision }}</span>
                 <span class="text-[0.625rem] text-fg-3">{{ POLICY_EFFECT_DESCRIPTIONS[entry.effect].split(".")[0] }}</span>
               </span>
-              <span class="mt-0.5 block truncate text-[0.625rem] text-fg-3">{{ formatGovernRelative(entry.effectiveFrom) }} · {{ entry.changedBy }}</span>
+              <span class="mt-0.5 block truncate text-[0.625rem] text-fg-3">{{ formatGovernRelative(entry.effectiveFrom, GOVERN_NOW) }} · {{ entry.changedBy }}</span>
             </button>
             <span v-if="entry.revision === props.revision.revision" class="size-1.5 rounded-full bg-accent-memory" role="img" aria-label="Shown" />
             <ArrowRight v-else :size="11" :stroke-width="1.8" class="text-fg-off" aria-hidden="true" />

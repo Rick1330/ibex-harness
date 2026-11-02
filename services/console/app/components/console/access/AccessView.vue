@@ -31,7 +31,7 @@ import {
   type AccessSession,
 } from "@/lib/access-preview"
 import type { AccessKeyStateFilter, AccessMemberStateFilter, AccessState, AccessTab } from "@/lib/access-query"
-import { formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 
 const props = defineProps<{ state: AccessState }>()
 const emit = defineEmits<{ update: [state: AccessState] }>()
@@ -358,7 +358,7 @@ function sessionTone(session: AccessSession): string {
           <span class="shrink-0" :class="keyTone(key.state)">{{ accessKeyRotationLabel(key) }}</span>
         </div>
         <p class="mt-2 truncate font-mono text-[0.6875rem] text-fg-2">{{ key.scopes.join(" · ") }}</p>
-        <p class="mt-1 text-[0.6875rem] text-fg-3">{{ key.createdBy }} · last used <RelativeTime :value="key.lastUsedAt" /></p>
+        <p class="mt-1 text-[0.6875rem] text-fg-3">{{ key.createdBy }} · last used <RelativeTime :value="key.lastUsedAt" :now="GOVERN_NOW" /></p>
       </article>
       <p v-if="!filteredKeys.length" class="rounded-lg border border-dashed border-line-subtle px-4 py-8 text-center text-xs text-fg-3">
         No keys match this view.
@@ -400,7 +400,7 @@ function sessionTone(session: AccessSession): string {
               </td>
               <td class="truncate font-mono text-[0.75rem]">{{ key.scopes.join(" · ") }}</td>
               <td class="truncate text-xs">{{ key.createdBy }}</td>
-              <td><RelativeTime :value="key.lastUsedAt" /></td>
+              <td><RelativeTime :value="key.lastUsedAt" :now="GOVERN_NOW" /></td>
               <td>
                 <span :class="keyTone(key.state)">{{ accessKeyRotationLabel(key) }}</span>
               </td>
@@ -439,9 +439,9 @@ function sessionTone(session: AccessSession): string {
         </div>
         <p class="mt-2 text-[0.6875rem] text-fg-2">{{ member.role }} · <span class="font-mono">{{ member.scope }}</span></p>
         <p class="mt-1 text-[0.6875rem] text-fg-3">
-          <span v-if="member.mfaVerifiedAt">MFA <RelativeTime :value="member.mfaVerifiedAt" /> · </span>
+          <span v-if="member.mfaVerifiedAt">MFA <RelativeTime :value="member.mfaVerifiedAt" :now="GOVERN_NOW" /> · </span>
           <span v-else class="text-warn">MFA pending · </span>
-          last active <RelativeTime :value="member.lastActiveAt" />
+          last active <RelativeTime :value="member.lastActiveAt" :now="GOVERN_NOW" />
         </p>
       </article>
       <p v-if="!filteredMembers.length" class="rounded-lg border border-dashed border-line-subtle px-4 py-8 text-center text-xs text-fg-3">
@@ -485,11 +485,11 @@ function sessionTone(session: AccessSession): string {
               <td><span :class="memberTone(member.status)">{{ member.status }}</span></td>
               <td>
                 <span v-if="member.mfaVerifiedAt" class="font-mono text-[0.75rem] text-fg-2">
-                  <RelativeTime :value="member.mfaVerifiedAt" /> · verified
+                  <RelativeTime :value="member.mfaVerifiedAt" :now="GOVERN_NOW" /> · verified
                 </span>
                 <span v-else class="font-mono text-[0.75rem] text-warn">pending</span>
               </td>
-              <td><RelativeTime :value="member.lastActiveAt" /></td>
+              <td><RelativeTime :value="member.lastActiveAt" :now="GOVERN_NOW" /></td>
               <td class="text-right">
                 <ChevronRight :size="14" :stroke-width="1.8" class="text-fg-3" aria-hidden="true" />
               </td>
@@ -520,7 +520,7 @@ function sessionTone(session: AccessSession): string {
           <span class="shrink-0" :class="sessionTone(session)">{{ session.mfa }}</span>
         </div>
         <p class="mt-2 font-mono text-[0.6875rem] text-fg-2">{{ session.origin ?? "—" }}</p>
-        <p class="mt-1 text-[0.6875rem] text-fg-3">last seen <RelativeTime :value="session.lastSeenAt" /> · {{ session.state }}</p>
+        <p class="mt-1 text-[0.6875rem] text-fg-3">last seen <RelativeTime :value="session.lastSeenAt" :now="GOVERN_NOW" /> · {{ session.state }}</p>
       </article>
       <p v-if="!filteredSessions.length" class="rounded-lg border border-dashed border-line-subtle px-4 py-8 text-center text-xs text-fg-3">
         No sessions match this view.
@@ -556,7 +556,7 @@ function sessionTone(session: AccessSession): string {
               <td class="text-xs">{{ session.device }}</td>
               <td class="font-mono text-[0.75rem]">{{ session.origin ?? "—" }}</td>
               <td><span :class="sessionTone(session)">{{ session.mfa }}</span></td>
-              <td><RelativeTime :value="session.lastSeenAt" /></td>
+              <td><RelativeTime :value="session.lastSeenAt" :now="GOVERN_NOW" /></td>
               <td><span class="ix-status-pill">{{ session.state }}</span></td>
               <td class="text-right">
                 <ChevronRight :size="14" :stroke-width="1.8" class="text-fg-3" aria-hidden="true" />
@@ -643,7 +643,7 @@ function sessionTone(session: AccessSession): string {
             </div>
             <div class="flex items-start justify-between gap-3 border-b border-line-subtle pb-2">
               <dt class="text-fg-3">Last used</dt>
-              <dd><span>{{ formatGovernStamp(selectedKey.lastUsedAt) }}</span><span class="block text-right text-fg-3"><RelativeTime :value="selectedKey.lastUsedAt" /></span></dd>
+              <dd><span>{{ formatGovernStamp(selectedKey.lastUsedAt) }}</span><span class="block text-right text-fg-3"><RelativeTime :value="selectedKey.lastUsedAt" :now="GOVERN_NOW" /></span></dd>
             </div>
             <div class="flex items-start justify-between gap-3">
               <dt class="text-fg-3">Rotation</dt>
@@ -683,7 +683,7 @@ function sessionTone(session: AccessSession): string {
             </div>
             <div class="flex items-start justify-between gap-3">
               <dt class="text-fg-3">Last active</dt>
-              <dd><RelativeTime :value="selectedMember.lastActiveAt" /></dd>
+              <dd><RelativeTime :value="selectedMember.lastActiveAt" :now="GOVERN_NOW" /></dd>
             </div>
           </dl>
           <div class="flex flex-wrap gap-2 border-t border-line-subtle pt-3">
@@ -708,7 +708,7 @@ function sessionTone(session: AccessSession): string {
             </div>
             <div class="flex items-start justify-between gap-3 border-b border-line-subtle pb-2">
               <dt class="text-fg-3">Last seen</dt>
-              <dd><RelativeTime :value="selectedSession.lastSeenAt" /></dd>
+              <dd><RelativeTime :value="selectedSession.lastSeenAt" :now="GOVERN_NOW" /></dd>
             </div>
             <div class="flex items-start justify-between gap-3">
               <dt class="text-fg-3">State</dt>

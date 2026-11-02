@@ -24,7 +24,7 @@ import GovernModeTag from "@/components/console/govern/primitives/GovernModeTag.
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
 import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
 import PolicyLifecycleStepper from "./PolicyLifecycleStepper.vue"
-import { formatGovernDuration, formatGovernNumber, formatGovernPercent, formatGovernRelative, formatGovernShortDate, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernDuration, formatGovernNumber, formatGovernPercent, formatGovernRelative, formatGovernShortDate, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   policyImpact,
   policyProvenance,
@@ -347,7 +347,7 @@ function ruleHref(ruleId: string): string {
               </thead>
               <tbody>
                 <tr v-for="run in runs" :key="run.runId + run.ruleId">
-                  <td><span class="text-xs text-fg-2" :title="formatGovernStamp(run.at)">{{ formatGovernRelative(run.at) }}</span></td>
+                  <td><span class="text-xs text-fg-2" :title="formatGovernStamp(run.at)">{{ formatGovernRelative(run.at, GOVERN_NOW) }}</span></td>
                   <td><span class="font-mono text-[0.6875rem] text-fg-1">{{ run.runId }}</span></td>
                   <td class="hidden min-[900px]:table-cell">
                     <span class="block text-xs text-fg-2">{{ run.agent }}</span>

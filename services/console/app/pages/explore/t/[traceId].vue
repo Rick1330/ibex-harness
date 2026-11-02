@@ -374,7 +374,7 @@ const shortcutGroups = [
               </td>
               <td>
                 <span class="whitespace-nowrap text-xs text-fg-2" :title="formatGovernStamp(row.trace.started_at)">
-                  {{ formatGovernRelative(row.trace.started_at) }}
+                  {{ formatGovernRelative(row.trace.started_at, runs?.observed_at ?? null) }}
                 </span>
               </td>
               <td style="padding-left: 0.25rem; padding-right: 0" class="text-right">

@@ -11,7 +11,7 @@ import GovernSeverityChip from "@/components/console/govern/primitives/GovernSev
 import GovernShortcutsDialog from "@/components/console/govern/primitives/GovernShortcutsDialog.vue"
 import GovernMonitorStatusChip from "@/components/console/drift/GovernMonitorStatusChip.vue"
 import { useGovernShortcuts } from "@/composables/useGovernShortcuts"
-import { formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   driftMonitorValue,
   driftMonitors,
@@ -243,7 +243,7 @@ const shortcutGroups = [
               </td>
               <td>
                 <span v-if="monitor.lastEvaluated" class="text-xs text-fg-2" :title="formatGovernStamp(monitor.lastEvaluated)">
-                  {{ formatGovernRelative(monitor.lastEvaluated) }}
+                  {{ formatGovernRelative(monitor.lastEvaluated, GOVERN_NOW) }}
                 </span>
                 <span v-else class="text-xs text-warn">Not evaluated</span>
               </td>
@@ -318,7 +318,7 @@ const shortcutGroups = [
             <tbody>
               <tr v-for="entry in peekMonitor.evaluations" :key="entry.at">
                 <td>
-                  <span class="text-xs text-fg-2" :title="formatGovernStamp(entry.at)">{{ formatGovernRelative(entry.at) }}</span>
+                  <span class="text-xs text-fg-2" :title="formatGovernStamp(entry.at)">{{ formatGovernRelative(entry.at, GOVERN_NOW) }}</span>
                   <p class="mt-0.5 text-[0.625rem] leading-4 text-fg-3">{{ entry.note }}</p>
                 </td>
                 <td class="text-right font-mono text-xs text-fg-2">{{ driftMonitorValue(peekMonitor, entry.value) }}</td>

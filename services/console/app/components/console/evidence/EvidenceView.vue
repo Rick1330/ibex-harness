@@ -129,7 +129,7 @@ function update(patch: Partial<LiveEvidenceQuery>): void {
 
     <section class="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[0.6875rem] text-fg-3" aria-label="Evidence summary">
       <span v-if="summary && summary.last_run_at">
-        Newest run {{ formatGovernRelative(summary.last_run_at) }}
+        Newest run {{ formatGovernRelative(summary.last_run_at, summary.observed_at) }}
       </span>
       <GovernCopyId id="operator.evidence.summary.v1" label="Summary contract" truncate />
     </section>

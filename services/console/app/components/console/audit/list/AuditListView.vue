@@ -12,7 +12,7 @@ import GovernShortcutsDialog from "@/components/console/govern/primitives/Govern
 import AuditListHeader from "./AuditListHeader.vue"
 import { useGovernShortcuts } from "@/composables/useGovernShortcuts"
 import { useTriageTable } from "@/composables/useTriageTable"
-import { formatGovernRelative, formatGovernStamp, formatGovernStampMillis } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, formatGovernStampMillis, GOVERN_NOW } from "@/lib/govern-format"
 import { AUDIT_LIST_DEFAULT, auditEventHref, auditListHref, type AuditListQueryState } from "@/lib/govern-query"
 import {
   AUDIT_ORIGIN_LABELS,
@@ -345,7 +345,7 @@ const shortcutGroups = [
               <tr v-for="event in group.events" :key="event.id" v-bind="triage.rowAttrs(event)">
                 <td class="relative">
                   <span class="font-mono text-[0.6875rem] whitespace-nowrap text-fg-2 tabular-nums" :title="formatGovernStampMillis(event.at)">
-                    {{ formatGovernRelative(event.at) }}
+                    {{ formatGovernRelative(event.at, GOVERN_NOW) }}
                   </span>
                 </td>
                 <td>

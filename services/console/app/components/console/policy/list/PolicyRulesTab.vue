@@ -11,7 +11,7 @@ import GovernFilterSelect from "@/components/console/govern/primitives/GovernFil
 import GovernModeTag from "@/components/console/govern/primitives/GovernModeTag.vue"
 import GovernPeekSheet from "@/components/console/govern/primitives/GovernPeekSheet.vue"
 import GovernSparkline from "@/components/console/govern/primitives/GovernSparkline.vue"
-import { formatGovernNumber, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernNumber, formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   POLICY_AREA_ORDER,
   POLICY_EFFECT_FILTER_LABELS,
@@ -323,13 +323,13 @@ function deltaTone(direction: "up" | "down" | "flat" | "new"): string {
                 </td>
                 <td class="hidden min-[1100px]:table-cell">
                   <span v-if="policyRuleLastFired(rule.id)" class="text-xs text-fg-2" :title="formatGovernStamp(policyRuleLastFired(rule.id)!.at)">
-                    {{ formatGovernRelative(policyRuleLastFired(rule.id)!.at) }}
+                    {{ formatGovernRelative(policyRuleLastFired(rule.id)!.at, GOVERN_NOW) }}
                   </span>
                   <GovernEmptyValue v-else reason="This rule has not fired in the sampled decisions" />
                 </td>
                 <td class="hidden min-[1340px]:table-cell">
                   <span class="block text-xs text-fg-2" :title="formatGovernStamp(rule.revision.effectiveFrom)">
-                    {{ formatGovernRelative(rule.revision.effectiveFrom) }}
+                    {{ formatGovernRelative(rule.revision.effectiveFrom, GOVERN_NOW) }}
                   </span>
                   <span class="mt-0.5 block truncate text-[0.625rem] text-fg-3">{{ rule.revision.changedBy }}</span>
                 </td>

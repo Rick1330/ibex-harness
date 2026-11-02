@@ -28,7 +28,7 @@ import GovernStatTile from "@/components/console/govern/primitives/GovernStatTil
 import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
 import KeyHint from "@/components/console/primitives/KeyHint.vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
-import { formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   CREDENTIAL_STATE_LABELS,
   PROVIDER_CAPABILITY_KEYS,
@@ -583,7 +583,7 @@ const aboutNotes = [
                 <td class="font-mono text-[0.6875rem] text-fg-2">{{ provider.credential.prefix }}</td>
                 <td class="hidden font-mono text-[0.6875rem] text-fg-3 sm:table-cell">{{ provider.credential.scope }}</td>
                 <td class="hidden md:table-cell">
-                  <span class="font-mono text-xs text-fg-2" :title="formatGovernStamp(provider.credential.rotatedAt)">{{ formatGovernRelative(provider.credential.rotatedAt) }}</span>
+                  <span class="font-mono text-xs text-fg-2" :title="formatGovernStamp(provider.credential.rotatedAt)">{{ formatGovernRelative(provider.credential.rotatedAt, GOVERN_NOW) }}</span>
                 </td>
                 <td>
                   <span class="text-xs" :class="provider.credential.state === 'overdue' ? 'text-crit' : provider.credential.state === 'due' ? 'text-warn' : 'text-fg-2'">

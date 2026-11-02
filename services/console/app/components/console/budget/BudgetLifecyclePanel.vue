@@ -4,7 +4,7 @@ import { CircleDashed } from "@lucide/vue"
 import GovernCaveat from "@/components/console/govern/primitives/GovernCaveat.vue"
 import GovernEmptyState from "@/components/console/govern/primitives/GovernEmptyState.vue"
 import GovernPendingData from "@/components/console/govern/primitives/GovernPendingData.vue"
-import { formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   BUDGET_RESERVATIONS_CONTRACT,
   RESERVATION_EVENT_LABELS,
@@ -107,7 +107,7 @@ const days = computed(() => {
                 {{ budgetUsd(event.amountUsd) }}
               </span>
               <span class="ml-auto font-mono text-[0.6875rem] whitespace-nowrap text-fg-3" :title="formatGovernStamp(event.at)">
-                {{ formatGovernRelative(event.at) }}
+                {{ formatGovernRelative(event.at, GOVERN_NOW) }}
               </span>
             </div>
 
