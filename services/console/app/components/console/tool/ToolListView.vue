@@ -26,7 +26,7 @@ import GovernHashTag from "@/components/console/govern/primitives/GovernHashTag.
 import GovernLockedAction from "@/components/console/govern/primitives/GovernLockedAction.vue"
 import GovernShortcutsDialog from "@/components/console/govern/primitives/GovernShortcutsDialog.vue"
 import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
-import MemoryKbd from "@/components/console/memory/list/primitives/MemoryKbd.vue"
+import KeyHint from "@/components/console/primitives/KeyHint.vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
 import { formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
 import {
@@ -320,7 +320,7 @@ const groupedTools = computed(() =>
             @input="onSearchInput(($event.target as HTMLInputElement).value)"
             @keydown.enter.prevent="update({ search: searchDraft })"
           >
-          <span class="pointer-events-none absolute inset-y-0 right-0.5 flex items-center"><MemoryKbd>/</MemoryKbd></span>
+          <span class="pointer-events-none absolute inset-y-0 right-0.5 flex items-center"><KeyHint>/</KeyHint></span>
         </div>
 
         <template v-if="state.tab === 'tools'">

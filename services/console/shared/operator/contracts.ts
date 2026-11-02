@@ -307,7 +307,93 @@ export const OperatorMemoryPageSchema = z
   })
   .strict()
 
-export type OperatorSession = z.infer<typeof OperatorSessionSchema>
+export const SessionStatusSchema = z.enum(["active", "completed", "abandoned", "error"])
+
+export const SessionEvidenceCompletenessSchema = z.enum([
+  "complete",
+  "partial",
+  "sampled",
+  "late",
+  "redacted",
+  "expired",
+  "deleted",
+  "simulated",
+])
+
+export const SessionEvidenceStatusSchema = z.enum(["ok", "error"])
+
+export const SessionTurnEvidenceSchema = z
+  .object({
+    trace_id: z.string().min(1).max(256),
+    run_id: z.string().uuid(),
+    completeness: SessionEvidenceCompletenessSchema,
+    status: SessionEvidenceStatusSchema,
+    error_code: z.string().max(128).nullable(),
+    started_at: z.string().datetime({ offset: true }),
+    ended_at: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
+export const OperatorSessionTurnSchema = z
+  .object({
+    id: z.string().uuid(),
+    turn_index: z.number().int().nonnegative(),
+    request_id: z.string().min(1).max(256),
+    input_tokens: z.number().int().nonnegative(),
+    output_tokens: z.number().int().nonnegative(),
+    model: z.string().min(1).max(128),
+    provider: z.string().min(1).max(64),
+    latency_ms: z.number().int().nonnegative(),
+    is_streaming: z.boolean(),
+    is_complete: z.boolean(),
+    created_at: z.string().datetime({ offset: true }),
+    trace: SessionTurnEvidenceSchema.nullable(),
+  })
+  .strict()
+
+/** Metadata-only session projection; message content and hashes are absent. */
+export const OperatorSessionRecordSchema = z
+  .object({
+    id: z.string().uuid(),
+    agent_id: z.string().uuid(),
+    external_id: z.string().max(128).nullable(),
+    status: SessionStatusSchema,
+    model: z.string().min(1).max(128),
+    provider: z.string().min(1).max(64),
+    directive_version_id: z.string().uuid().nullable(),
+    turn_count: z.number().int().nonnegative(),
+    total_input_tokens: z.number().int().nonnegative(),
+    total_output_tokens: z.number().int().nonnegative(),
+    total_latency_ms: z.number().int().nonnegative(),
+    last_extracted_turn: z.number().int().nonnegative(),
+    lifecycle_revision: z.number().int().positive(),
+    evidence_fence_version: z.number().int().positive(),
+    created_at: z.string().datetime({ offset: true }),
+    updated_at: z.string().datetime({ offset: true }),
+    completed_at: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
+export const OperatorSessionRecordDetailSchema = OperatorSessionRecordSchema.extend({
+  turns: z.array(OperatorSessionTurnSchema).max(500),
+  turns_truncated: z.boolean(),
+}).strict()
+
+export const OperatorSessionRecordPageSchema = z
+  .object({
+    data: z.array(OperatorSessionRecordSchema).max(100),
+    pagination: z
+      .object({
+        has_more: z.boolean(),
+        next_cursor: z.string().max(2048).nullable(),
+        prev_cursor: z.string().max(2048).nullable(),
+        total_count: z.number().int().nonnegative().nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+
+export type OperatorSessionRecord = z.infer<typeof OperatorSessionRecordSchema>
 export type PlatformHealth = z.infer<typeof PlatformHealthSchema>
 export type OperatorContext = z.infer<typeof OperatorContextSchema>
 export type OperatorOverview = z.infer<typeof OperatorOverviewSchema>
@@ -321,6 +407,12 @@ export type MemoryStatus = z.infer<typeof MemoryStatusSchema>
 export type MemoryCategory = z.infer<typeof MemoryCategorySchema>
 export type OperatorMemory = z.infer<typeof OperatorMemorySchema>
 export type OperatorMemoryPage = z.infer<typeof OperatorMemoryPageSchema>
+export type SessionStatus = z.infer<typeof SessionStatusSchema>
+export type OperatorSessionTurn = z.infer<typeof OperatorSessionTurnSchema>
+export type SessionTurnEvidence = z.infer<typeof SessionTurnEvidenceSchema>
+export type OperatorSession = z.infer<typeof OperatorSessionSchema>
+export type OperatorSessionRecordDetail = z.infer<typeof OperatorSessionRecordDetailSchema>
+export type OperatorSessionRecordPage = z.infer<typeof OperatorSessionRecordPageSchema>
 export type UnavailableSection = z.infer<typeof UnavailableSectionSchema>
 
 export function parseOperatorSession(value: unknown): OperatorSession {

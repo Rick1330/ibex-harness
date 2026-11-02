@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { Search, X } from "@lucide/vue"
-import MemoryKbd from "@/components/console/memory/list/primitives/MemoryKbd.vue"
+import KeyHint from "@/components/console/primitives/KeyHint.vue"
 
 const props = withDefaults(
   defineProps<{
@@ -44,7 +44,7 @@ defineExpose({ focus })
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
         @keydown.enter.prevent="emit('submit')"
       >
-      <span class="pointer-events-none absolute inset-y-0 right-2 flex items-center"><MemoryKbd>/</MemoryKbd></span>
+      <span class="pointer-events-none absolute inset-y-0 right-2 flex items-center"><KeyHint>/</KeyHint></span>
     </div>
 
     <slot name="filters" />

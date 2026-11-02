@@ -18,7 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import MemoryKbd from "@/components/console/memory/list/primitives/MemoryKbd.vue"
+import KeyHint from "@/components/console/primitives/KeyHint.vue"
 import DirectiveListHeader from "./DirectiveListHeader.vue"
 import DirectiveQuickLook from "./DirectiveQuickLook.vue"
 import DirectiveResultCard from "./DirectiveResultCard.vue"
@@ -321,7 +321,7 @@ function sortIcon(key: DirectiveSortKey) {
             @input="onSearchInput(($event.target as HTMLInputElement).value)"
             @change="submitSearch"
           >
-          <span class="pointer-events-none absolute inset-y-0 right-2 flex items-center"><MemoryKbd>/</MemoryKbd></span>
+          <span class="pointer-events-none absolute inset-y-0 right-2 flex items-center"><KeyHint>/</KeyHint></span>
         </div>
 
         <DropdownMenu>
@@ -493,7 +493,7 @@ function sortIcon(key: DirectiveSortKey) {
 
     <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] leading-4 text-fg-3">
       <button type="button" class="hover:text-fg-1 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-memory" @click="shortcutsDialog?.showModal()">
-        Keyboard shortcuts <MemoryKbd>?</MemoryKbd>
+        Keyboard shortcuts <KeyHint>?</KeyHint>
       </button>
     </p>
 
@@ -533,12 +533,12 @@ function sortIcon(key: DirectiveSortKey) {
         </button>
       </div>
       <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 px-4 py-3 text-xs">
-        <dt class="font-mono text-fg-2"><MemoryKbd>/</MemoryKbd></dt><dd class="text-fg-3">Focus search</dd>
-        <dt class="font-mono text-fg-2"><MemoryKbd>j</MemoryKbd> <MemoryKbd>k</MemoryKbd></dt><dd class="text-fg-3">Move selection</dd>
-        <dt class="font-mono text-fg-2"><MemoryKbd>Enter</MemoryKbd></dt><dd class="text-fg-3">Open the selected directive</dd>
-        <dt class="font-mono text-fg-2"><MemoryKbd>Space</MemoryKbd></dt><dd class="text-fg-3">Quick look at the selected directive</dd>
-        <dt class="font-mono text-fg-2"><MemoryKbd>Esc</MemoryKbd></dt><dd class="text-fg-3">Close or clear search</dd>
-        <dt class="font-mono text-fg-2"><MemoryKbd>?</MemoryKbd></dt><dd class="text-fg-3">Show this dialog</dd>
+        <dt class="font-mono text-fg-2"><KeyHint>/</KeyHint></dt><dd class="text-fg-3">Focus search</dd>
+        <dt class="font-mono text-fg-2"><KeyHint>j</KeyHint> <KeyHint>k</KeyHint></dt><dd class="text-fg-3">Move selection</dd>
+        <dt class="font-mono text-fg-2"><KeyHint>Enter</KeyHint></dt><dd class="text-fg-3">Open the selected directive</dd>
+        <dt class="font-mono text-fg-2"><KeyHint>Space</KeyHint></dt><dd class="text-fg-3">Quick look at the selected directive</dd>
+        <dt class="font-mono text-fg-2"><KeyHint>Esc</KeyHint></dt><dd class="text-fg-3">Close or clear search</dd>
+        <dt class="font-mono text-fg-2"><KeyHint>?</KeyHint></dt><dd class="text-fg-3">Show this dialog</dd>
       </dl>
     </dialog>
   </div>

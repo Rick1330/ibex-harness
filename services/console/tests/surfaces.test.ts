@@ -3,15 +3,15 @@ import { describe, expect, it } from "vitest"
 import { SURFACES } from "../shared/operator/surfaces"
 
 describe("static surface status", () => {
-  it("marks only the five validated reads as live", () => {
+  it("marks only the six validated reads as live", () => {
     const live = Object.values(SURFACES)
       .filter((surface) => surface.availability === "live")
       .map((surface) => surface.path)
       .sort()
-    expect(live).toEqual(["/", "/agents", "/explore", "/memories", "/platform"])
+    expect(live).toEqual(["/", "/agents", "/explore", "/memories", "/platform", "/sessions"])
   })
 
-  it("keeps the remaining fourteen surfaces in preview", () => {
+  it("keeps the remaining twelve surfaces in preview", () => {
     const preview = Object.values(SURFACES)
       .filter((surface) => surface.availability === "preview")
       .map((surface) => surface.path)
@@ -28,7 +28,6 @@ describe("static surface status", () => {
       "/mcp-tools",
       "/policies",
       "/providers",
-      "/sessions",
       "/settings",
     ])
   })

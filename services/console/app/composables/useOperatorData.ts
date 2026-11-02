@@ -6,6 +6,8 @@ import type {
   PublicOperatorMemory,
   PublicOperatorMemoryPage,
   PublicOperatorOverview,
+  PublicOperatorSessionRecordDetail,
+  PublicOperatorSessionRecordPage,
   PublicOperatorTraceDetail,
   PublicOperatorTraceList,
   PublicPlatformHealth,
@@ -73,4 +75,17 @@ export function useOperatorMemories(params: () => URLSearchParams) {
 export function useOperatorMemory(memoryId: () => string) {
   const url = computed(() => `/api/operator/memories/${encodeURIComponent(memoryId())}`)
   return useFetch<PublicOperatorMemory>(url, { key: url, watch: [url] })
+}
+
+export function useOperatorSessions(params: () => URLSearchParams) {
+  const url = computed(() => {
+    const query = params().toString()
+    return `/api/operator/sessions${query ? `?${query}` : ""}`
+  })
+  return useFetch<PublicOperatorSessionRecordPage>(url, { key: url, watch: [url] })
+}
+
+export function useOperatorSession(sessionId: () => string) {
+  const url = computed(() => `/api/operator/sessions/${encodeURIComponent(sessionId())}`)
+  return useFetch<PublicOperatorSessionRecordDetail>(url, { key: url, watch: [url] })
 }

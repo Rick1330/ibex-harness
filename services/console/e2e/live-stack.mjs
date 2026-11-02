@@ -17,6 +17,7 @@ const observedAt = "2026-09-26T17:00:00Z"
 const runId = "11111111-1111-4111-8111-111111111111"
 const agentId = "33333333-3333-4333-8333-333333333333"
 const memoryId = "44444444-4444-4444-8444-444444444444"
+const sessionId = "88888888-8888-4888-8888-888888888888"
 const requests = []
 let eventStreams = 0
 let closing = false
@@ -215,7 +216,54 @@ function fixtureBodies() {
     created_at: observedAt,
     updated_at: observedAt,
   }
+  const sessionTurn = {
+    id: "99999999-9999-4999-8999-999999999999",
+    turn_index: 0,
+    request_id: "req-live-1",
+    input_tokens: 10,
+    output_tokens: 20,
+    model: "gpt-4.1",
+    provider: "openai",
+    latency_ms: 100,
+    is_streaming: false,
+    is_complete: true,
+    created_at: observedAt,
+    trace: {
+      trace_id: "trace-live-1",
+      run_id: runId,
+      completeness: "complete",
+      status: "ok",
+      error_code: null,
+      started_at: observedAt,
+      ended_at: observedAt,
+    },
+  }
+  const session = {
+    id: sessionId,
+    agent_id: agentId,
+    external_id: "ext-live-1",
+    status: "completed",
+    model: "gpt-4.1",
+    provider: "openai",
+    directive_version_id: null,
+    turn_count: 1,
+    total_input_tokens: 10,
+    total_output_tokens: 20,
+    total_latency_ms: 100,
+    last_extracted_turn: 0,
+    lifecycle_revision: 1,
+    evidence_fence_version: 1,
+    created_at: observedAt,
+    updated_at: observedAt,
+    completed_at: observedAt,
+  }
   return {
+    sessions: {
+      data: [session],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    },
+    session,
+    sessionDetail: { ...session, turns: [sessionTurn], turns_truncated: false },
     memories: {
       data: [memory],
       pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
@@ -264,6 +312,13 @@ function fixtureBodies() {
 
 function resolveFixtureBody(pathname) {
   const bodies = fixtureBodies()
+  if (pathname === "/v1/operator/sessions") return { status: 200, payload: bodies.sessions }
+  if (pathname === `/v1/operator/sessions/${sessionId}`) {
+    return { status: 200, payload: bodies.sessionDetail }
+  }
+  if (pathname.startsWith("/v1/operator/sessions/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Session not found" } } }
+  }
   if (pathname === "/v1/operator/memories") return { status: 200, payload: bodies.memories }
   if (pathname === `/v1/operator/memories/${memoryId}`) {
     return { status: 200, payload: bodies.memory }
