@@ -342,10 +342,15 @@ const evidenceSummary = {
   })
 
   it("accepts the memory lineage block and rejects notes", () => {
+    const target = {
+      id: "55555555-5555-4555-8555-555555555555",
+      status: "active" as const,
+      tombstoned: false,
+    }
     const lineage = {
-      superseded_by: "55555555-5555-4555-8555-555555555555",
+      superseded_by: target,
       merged_into: null,
-      tip: "55555555-5555-4555-8555-555555555555",
+      tip: target,
       replaces: [],
       replaced_by: [
         {
@@ -362,7 +367,8 @@ const evidenceSummary = {
 
     const parsed = OperatorMemoryDetailSchema.parse({ ...memory, lineage })
     expect(parsed.lineage.replaced_by[0]?.relationship_type).toBe("supersedes")
-    expect(parsed.lineage.tip).toBe(lineage.tip)
+    expect(parsed.lineage.tip?.id).toBe(target.id)
+    expect(parsed.lineage.tip?.tombstoned).toBe(false)
     // Free-text notes and content must not be accepted.
     expect(() =>
       OperatorMemoryDetailSchema.parse({

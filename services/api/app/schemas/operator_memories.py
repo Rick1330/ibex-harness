@@ -69,6 +69,18 @@ MemoryRelationshipType = Literal[
 ]
 
 
+class OperatorMemoryLineageTarget(BaseModel):
+    """A related memory, with the state a reader needs before linking to it.
+
+    The detail route serves retained records, so a link would resolve — but a
+    tombstoned or deleted target must read as such, not as a live successor.
+    """
+
+    id: UUID
+    status: MemoryStatus
+    tombstoned: bool
+
+
 class OperatorMemoryLineageEdge(BaseModel):
     """One typed edge, with the other end's current state.
 
@@ -93,9 +105,9 @@ class OperatorMemoryLineage(BaseModel):
     head rather than an empty link.
     """
 
-    superseded_by: UUID | None = None
-    merged_into: UUID | None = None
-    tip: UUID | None = None
+    superseded_by: OperatorMemoryLineageTarget | None = None
+    merged_into: OperatorMemoryLineageTarget | None = None
+    tip: OperatorMemoryLineageTarget | None = None
     # Out-edges: what this memory replaced (it is the `source` of `supersedes`).
     replaces: list[OperatorMemoryLineageEdge] = Field(default_factory=list)
     # In-edges: what replaced this memory (it is the `target` of `supersedes`).

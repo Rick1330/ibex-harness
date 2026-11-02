@@ -336,12 +336,20 @@ export const OperatorMemoryLineageEdgeSchema = z
   })
   .strict()
 
+export const OperatorMemoryLineageTargetSchema = z
+  .object({
+    id: z.string().uuid(),
+    status: MemoryStatusSchema,
+    tombstoned: z.boolean(),
+  })
+  .strict()
+
 export const OperatorMemoryLineageSchema = z
   .object({
-    superseded_by: z.string().uuid().nullable(),
-    merged_into: z.string().uuid().nullable(),
+    superseded_by: OperatorMemoryLineageTargetSchema.nullable(),
+    merged_into: OperatorMemoryLineageTargetSchema.nullable(),
     // The chain head; equals the memory itself when nothing superseded it.
-    tip: z.string().uuid().nullable(),
+    tip: OperatorMemoryLineageTargetSchema.nullable(),
     // Out-edges: what this memory replaced.
     replaces: z.array(OperatorMemoryLineageEdgeSchema).max(20),
     // In-edges: what replaced this memory.
@@ -476,6 +484,7 @@ export type MemoryStatus = z.infer<typeof MemoryStatusSchema>
 export type MemoryCategory = z.infer<typeof MemoryCategorySchema>
 export type OperatorMemory = z.infer<typeof OperatorMemorySchema>
 export type OperatorMemoryLineage = z.infer<typeof OperatorMemoryLineageSchema>
+export type OperatorMemoryLineageTarget = z.infer<typeof OperatorMemoryLineageTargetSchema>
 export type OperatorMemoryLineageEdge = z.infer<typeof OperatorMemoryLineageEdgeSchema>
 export type OperatorMemoryDetail = z.infer<typeof OperatorMemoryDetailSchema>
 export type OperatorMemoryPage = z.infer<typeof OperatorMemoryPageSchema>

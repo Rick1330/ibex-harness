@@ -5,7 +5,7 @@ import GovernStatTile from "@/components/console/govern/primitives/GovernStatTil
 import MemoryStatusPill from "./LiveMemoryStatusPill.vue"
 import { formatGovernNumber, formatGovernStamp } from "@/lib/govern-format"
 import type { PublicOperatorMemoryDetail } from "~~/shared/operator/public"
-import type { OperatorMemoryLineageEdge } from "~~/shared/operator/contracts"
+import type { OperatorMemoryLineageEdge, OperatorMemoryLineageTarget } from "~~/shared/operator/contracts"
 
 const props = defineProps<{ memory: PublicOperatorMemoryDetail; returnTo: string }>()
 
@@ -29,6 +29,20 @@ const hasLineage = computed(
 
 function memoryHref(memoryId: string): string {
   return `/memories/${encodeURIComponent(memoryId)}?return=${encodeURIComponent(props.returnTo)}`
+}
+
+/**
+ * A target is linkable only while it is a live-visible record.
+ *
+ * The detail route serves retained rows, so a tombstoned or deleted target would
+ * resolve — but linking to it would read as a live successor, which it is not.
+ */
+function isLinkable(target: { status: string, tombstoned: boolean } | null | undefined): boolean {
+  return Boolean(target) && !target!.tombstoned && target!.status !== "deleted"
+}
+
+function targetState(target: OperatorMemoryLineageTarget): string {
+  return target.tombstoned ? `${target.status} · tombstoned` : target.status
 }
 
 function edgeState(edge: OperatorMemoryLineageEdge): string {
@@ -192,12 +206,15 @@ function piiLabel(): string {
               <dt class="ix-label">Superseded by</dt>
               <dd class="mt-0.5 text-xs">
                 <NuxtLink
-                  v-if="lineage.superseded_by"
-                  :to="memoryHref(lineage.superseded_by)"
+                  v-if="lineage.superseded_by && isLinkable(lineage.superseded_by)"
+                  :to="memoryHref(lineage.superseded_by.id)"
                   class="font-mono text-fg-1 underline-offset-2 hover:underline"
                 >
-                  {{ lineage.superseded_by.slice(0, 8) }}…
+                  {{ lineage.superseded_by.id.slice(0, 8) }}…
                 </NuxtLink>
+                <span v-else-if="lineage.superseded_by" class="font-mono text-fg-3">
+                  {{ lineage.superseded_by.id.slice(0, 8) }}… · {{ targetState(lineage.superseded_by) }}
+                </span>
                 <span v-else class="text-fg-3">Not superseded</span>
               </dd>
             </div>
@@ -205,12 +222,15 @@ function piiLabel(): string {
               <dt class="ix-label">Merged into</dt>
               <dd class="mt-0.5 text-xs">
                 <NuxtLink
-                  v-if="lineage.merged_into"
-                  :to="memoryHref(lineage.merged_into)"
+                  v-if="lineage.merged_into && isLinkable(lineage.merged_into)"
+                  :to="memoryHref(lineage.merged_into.id)"
                   class="font-mono text-fg-1 underline-offset-2 hover:underline"
                 >
-                  {{ lineage.merged_into.slice(0, 8) }}…
+                  {{ lineage.merged_into.id.slice(0, 8) }}…
                 </NuxtLink>
+                <span v-else-if="lineage.merged_into" class="font-mono text-fg-3">
+                  {{ lineage.merged_into.id.slice(0, 8) }}… · {{ targetState(lineage.merged_into) }}
+                </span>
                 <span v-else class="text-fg-3">Not merged</span>
               </dd>
             </div>
@@ -218,24 +238,35 @@ function piiLabel(): string {
               <dt class="ix-label">Current head of the chain</dt>
               <dd class="mt-0.5 text-xs">
                 <NuxtLink
-                  v-if="lineage.tip && lineage.tip !== memory.id"
-                  :to="memoryHref(lineage.tip)"
+                  v-if="lineage.tip && lineage.tip.id !== memory.id && isLinkable(lineage.tip)"
+                  :to="memoryHref(lineage.tip.id)"
                   class="font-mono text-fg-1 underline-offset-2 hover:underline"
                 >
-                  {{ lineage.tip.slice(0, 8) }}…
+                  {{ lineage.tip.id.slice(0, 8) }}…
                 </NuxtLink>
+                <span
+                  v-else-if="lineage.tip && lineage.tip.id !== memory.id"
+                  class="font-mono text-fg-3"
+                >
+                  {{ lineage.tip.id.slice(0, 8) }}… · {{ targetState(lineage.tip) }}
+                </span>
                 <span v-else class="text-fg-2">This memory</span>
               </dd>
             </div>
           </dl>
 
           <div v-if="lineage.replaced_by.length" class="mt-4">
-            <p class="ix-label">Replaced by</p>
+            <p class="ix-label">Incoming relationships</p>
             <ul class="mt-1 flex flex-col gap-1 text-xs">
               <li v-for="edge in lineage.replaced_by" :key="edge.memory_id + edge.relationship_type">
-                <NuxtLink :to="memoryHref(edge.memory_id)" class="font-mono text-fg-1 hover:underline">
+                <NuxtLink
+                  v-if="isLinkable(edge)"
+                  :to="memoryHref(edge.memory_id)"
+                  class="font-mono text-fg-1 hover:underline"
+                >
                   {{ edge.memory_id.slice(0, 8) }}…
                 </NuxtLink>
+                <span v-else class="font-mono text-fg-3">{{ edge.memory_id.slice(0, 8) }}…</span>
                 <span class="text-fg-3">
                   · {{ RELATIONSHIP_LABELS[edge.relationship_type] }} · confidence
                   {{ edge.confidence.toFixed(2) }} · {{ edgeState(edge) }}
@@ -245,12 +276,17 @@ function piiLabel(): string {
           </div>
 
           <div v-if="lineage.replaces.length" class="mt-4">
-            <p class="ix-label">Replaces</p>
+            <p class="ix-label">Outgoing relationships</p>
             <ul class="mt-1 flex flex-col gap-1 text-xs">
               <li v-for="edge in lineage.replaces" :key="edge.memory_id + edge.relationship_type">
-                <NuxtLink :to="memoryHref(edge.memory_id)" class="font-mono text-fg-1 hover:underline">
+                <NuxtLink
+                  v-if="isLinkable(edge)"
+                  :to="memoryHref(edge.memory_id)"
+                  class="font-mono text-fg-1 hover:underline"
+                >
                   {{ edge.memory_id.slice(0, 8) }}…
                 </NuxtLink>
+                <span v-else class="font-mono text-fg-3">{{ edge.memory_id.slice(0, 8) }}…</span>
                 <span class="text-fg-3">
                   · {{ RELATIONSHIP_LABELS[edge.relationship_type] }} · confidence
                   {{ edge.confidence.toFixed(2) }} · {{ edgeState(edge) }}

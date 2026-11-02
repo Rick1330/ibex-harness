@@ -2453,14 +2453,12 @@
           "merged_into": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "$ref": "#/components/schemas/OperatorMemoryLineageTarget"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Merged Into"
+            ]
           },
           "replaced_by": {
             "items": {
@@ -2479,26 +2477,22 @@
           "superseded_by": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "$ref": "#/components/schemas/OperatorMemoryLineageTarget"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Superseded By"
+            ]
           },
           "tip": {
             "anyOf": [
               {
-                "format": "uuid",
-                "type": "string"
+                "$ref": "#/components/schemas/OperatorMemoryLineageTarget"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Tip"
+            ]
           }
         },
         "title": "OperatorMemoryLineage",
@@ -2561,6 +2555,39 @@
           "tombstoned"
         ],
         "title": "OperatorMemoryLineageEdge",
+        "type": "object"
+      },
+      "OperatorMemoryLineageTarget": {
+        "description": "A related memory, with the state a reader needs before linking to it.\n\nThe detail route serves retained records, so a link would resolve \u2014 but a\ntombstoned or deleted target must read as such, not as a live successor.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "superseded",
+              "merged_into",
+              "archived",
+              "quarantined",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tombstoned": {
+            "title": "Tombstoned",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "tombstoned"
+        ],
+        "title": "OperatorMemoryLineageTarget",
         "type": "object"
       },
       "OperatorOverviewCounts": {

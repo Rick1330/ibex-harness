@@ -265,9 +265,10 @@ async def _supersede(
     await session.execute(
         text(
             "UPDATE ibex_core.memories SET superseded_by = CAST(:newer AS uuid), "
-            "status = 'superseded' WHERE id = CAST(:older AS uuid)"
+            "status = 'superseded' WHERE id = CAST(:older AS uuid) "
+            "AND org_id = CAST(:org_id AS uuid)"
         ),
-        {"older": str(older), "newer": str(newer)},
+        {"older": str(older), "newer": str(newer), "org_id": str(org_id)},
     )
 
 
@@ -296,8 +297,11 @@ async def test_memory_lineage_is_tenant_scoped_and_resolves_the_tip(
         async with session_with_org(session_factory, str(ids.org_a)) as session:
             detail = await get_operator_memory(session, ids.org_a, ids.memory_a1)
 
-        assert detail.lineage.superseded_by == ids.memory_a2
-        assert detail.lineage.tip == ids.memory_a2
+        assert detail.lineage.superseded_by is not None
+        assert detail.lineage.superseded_by.id == ids.memory_a2
+        assert detail.lineage.superseded_by.tombstoned is False
+        assert detail.lineage.tip is not None
+        assert detail.lineage.tip.id == ids.memory_a2
         assert [edge.memory_id for edge in detail.lineage.replaced_by] == [ids.memory_a2]
         assert detail.lineage.replaced_by[0].relationship_type == "supersedes"
         # The replacement is the fixture's archived memory; the edge reports its state.
@@ -311,7 +315,8 @@ async def test_memory_lineage_is_tenant_scoped_and_resolves_the_tip(
 
         assert other.lineage.replaced_by == []
         # No successor: the memory is its own chain head.
-        assert other.lineage.tip == ids.memory_b
+        assert other.lineage.tip is not None
+        assert other.lineage.tip.id == ids.memory_b
         assert err.value.code == NOT_FOUND
     finally:
         await _cleanup(session_factory, ids.org_a, ids.org_b)

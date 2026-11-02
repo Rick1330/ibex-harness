@@ -18,6 +18,7 @@ from app.schemas.operator_memories import (
     OperatorMemoryDetail,
     OperatorMemoryLineage,
     OperatorMemoryLineageEdge,
+    OperatorMemoryLineageTarget,
 )
 from app.services.operator_keyset import (
     KeysetCursor,
@@ -345,21 +346,66 @@ def _edge_rows(rows: list[Any]) -> tuple[list[OperatorMemoryLineageEdge], bool]:
     return edges, truncated
 
 
+def _target_statement(targets: list[UUID]) -> Any:
+    return (
+        select(_MEMORIES.c.id, _MEMORIES.c.status, _MEMORIES.c.tombstoned)
+        .select_from(_MEMORIES)
+        .where(
+            _MEMORIES.c.org_id == bindparam("org_id"),
+            _MEMORIES.c.id.in_(targets),
+        )
+    )
+
+
+def _target_or_none(
+    targets: dict[UUID, OperatorMemoryLineageTarget], value: Any
+) -> OperatorMemoryLineageTarget | None:
+    if value is None:
+        return None
+    return targets.get(UUID(str(value)))
+
+
 async def _memory_lineage(
     session: AsyncSession, org_id: UUID, memory_id: UUID, row: Any
 ) -> OperatorMemoryLineage:
     params = {"org_id": org_id, "memory_id": memory_id}
-    tip_row = (
+    tip_value = (
         await session.execute(_SUPERSESSION_TIP_SQL, params)
     ).scalar_one_or_none()
     out_rows = (await session.execute(_edge_statement("out"), params)).mappings().all()
     in_rows = (await session.execute(_edge_statement("in"), params)).mappings().all()
     replaces, out_truncated = _edge_rows(list(out_rows))
     replaced_by, in_truncated = _edge_rows(list(in_rows))
+
+    # The three pointer targets are ids only, so fetch their state in one
+    # bounded read; a tombstoned successor must not render as a live link.
+    pointer_ids = [
+        UUID(str(value))
+        for value in (
+            row_value(row, "superseded_by"),
+            row_value(row, "merged_into"),
+            tip_value,
+        )
+        if value is not None
+    ]
+    targets: dict[UUID, OperatorMemoryLineageTarget] = {}
+    if pointer_ids:
+        target_rows = (
+            await session.execute(_target_statement(pointer_ids), {"org_id": org_id})
+        ).mappings().all()
+        targets = {
+            row_value(target, "id"): OperatorMemoryLineageTarget(
+                id=row_value(target, "id"),
+                status=row_value(target, "status"),
+                tombstoned=bool(row_value(target, "tombstoned")),
+            )
+            for target in target_rows
+        }
+
     return OperatorMemoryLineage(
-        superseded_by=row_value(row, "superseded_by"),
-        merged_into=row_value(row, "merged_into"),
-        tip=UUID(str(tip_row)) if tip_row is not None else None,
+        superseded_by=_target_or_none(targets, row_value(row, "superseded_by")),
+        merged_into=_target_or_none(targets, row_value(row, "merged_into")),
+        tip=_target_or_none(targets, tip_value),
         replaces=replaces,
         replaced_by=replaced_by,
         edges_truncated=out_truncated or in_truncated,

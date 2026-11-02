@@ -222,7 +222,7 @@ function fixtureBodies() {
     lineage: {
       superseded_by: null,
       merged_into: null,
-      tip: memoryId,
+      tip: { id: memoryId, status: "active", tombstoned: false },
       replaces: [],
       replaced_by: [],
       edges_truncated: false,

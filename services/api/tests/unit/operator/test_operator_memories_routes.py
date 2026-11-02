@@ -18,6 +18,7 @@ from app.schemas.operator_memories import (
     OperatorMemoryDetail,
     OperatorMemoryLineage,
     OperatorMemoryLineageEdge,
+    OperatorMemoryLineageTarget,
 )
 from tests.unit.operator.conftest import create_operator_app
 from tests.unit.operator.memory_fixtures import memory_record
@@ -105,8 +106,12 @@ def test_operator_memory_detail_projects_metadata(
     detail = OperatorMemoryDetail(
         **memory.model_dump(),
         lineage=OperatorMemoryLineage(
-            superseded_by=replacement,
-            tip=replacement,
+            superseded_by=OperatorMemoryLineageTarget(
+                id=replacement, status="active", tombstoned=False
+            ),
+            tip=OperatorMemoryLineageTarget(
+                id=replacement, status="active", tombstoned=False
+            ),
             replaced_by=[
                 OperatorMemoryLineageEdge(
                     memory_id=replacement,
@@ -143,8 +148,9 @@ def test_operator_memory_detail_projects_metadata(
     assert "org_id" not in body
     assert "content" not in body
     assert "metadata" not in body
-    assert body["lineage"]["superseded_by"] == str(replacement)
-    assert body["lineage"]["tip"] == str(replacement)
+    assert body["lineage"]["superseded_by"]["id"] == str(replacement)
+    assert body["lineage"]["superseded_by"]["tombstoned"] is False
+    assert body["lineage"]["tip"]["id"] == str(replacement)
     assert body["lineage"]["replaced_by"][0]["relationship_type"] == "supersedes"
     # Resolution notes are free text next to content and are not in the contract.
     assert "resolution_notes" not in body["lineage"]["replaced_by"][0]

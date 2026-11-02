@@ -91,12 +91,17 @@ async def test_get_memory_projects_metadata_and_parses_tags() -> None:
         _MapResult(scalar=str(replacement)),
         _MapResult(),
         _MapResult(),
+        _MapResult(
+            [{"id": replacement, "status": "active", "tombstoned": False}]
+        ),
     )
 
     memory = await memory_service.get_operator_memory(session, uuid4(), row.id)
 
     assert memory.id == row.id
-    assert memory.lineage.tip == replacement
+    assert memory.lineage.tip is not None
+    assert memory.lineage.tip.id == replacement
+    assert memory.lineage.tip.tombstoned is False
     assert memory.lineage.replaces == []
     assert memory.lineage.edges_truncated is False
     assert memory.tags == ["support", "billing"]
@@ -254,14 +259,18 @@ async def test_lineage_maps_edges_and_truncates_over_the_cap() -> None:
     ]
     session = _session(
         [row],
-        _MapResult(scalar=None),
+        _MapResult(scalar=str(row.superseded_by)),
         _MapResult(successors),
         _MapResult(predecessors),
+        _MapResult(
+            [{"id": row.superseded_by, "status": "active", "tombstoned": False}]
+        ),
     )
 
     memory = await memory_service.get_operator_memory(session, uuid4(), row.id)
 
-    assert memory.lineage.superseded_by == row.superseded_by
+    assert memory.lineage.superseded_by is not None
+    assert memory.lineage.superseded_by.id == row.superseded_by
     assert memory.lineage.merged_into is None
     assert len(memory.lineage.replaces) == 20
     assert memory.lineage.edges_truncated is True
