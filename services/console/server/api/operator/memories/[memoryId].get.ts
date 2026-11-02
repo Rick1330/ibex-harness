@@ -1,4 +1,4 @@
-import { OperatorMemorySchema } from "~~/shared/operator/contracts"
+import { OperatorMemoryDetailSchema } from "~~/shared/operator/contracts"
 import { noStore, fetchOperatorJson, toHttpError } from "~~/server/utils/operator/http"
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
     return await fetchOperatorJson(
       event,
       "memoryDetail",
-      (value) => OperatorMemorySchema.parse(value),
+      (value) => OperatorMemoryDetailSchema.parse(value),
       { suffix: memoryId },
     )
   } catch (error) {

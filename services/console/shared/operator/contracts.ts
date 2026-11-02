@@ -310,6 +310,50 @@ export const OperatorMemorySchema = z
   })
   .strict()
 
+export const MemoryRelationshipTypeSchema = z.enum([
+  "supersedes",
+  "contradicts",
+  "specializes",
+  "generalizes",
+  "merged_from",
+  "derived_from",
+])
+
+/**
+ * One typed lineage edge, with the other end's current state.
+ *
+ * `resolution_notes` is not projected: it is free text adjacent to memory
+ * content, and the API never selects it.
+ */
+export const OperatorMemoryLineageEdgeSchema = z
+  .object({
+    memory_id: z.string().uuid(),
+    relationship_type: MemoryRelationshipTypeSchema,
+    confidence: z.number().min(0).max(1),
+    created_at: z.string().datetime({ offset: true }),
+    status: MemoryStatusSchema,
+    tombstoned: z.boolean(),
+  })
+  .strict()
+
+export const OperatorMemoryLineageSchema = z
+  .object({
+    superseded_by: z.string().uuid().nullable(),
+    merged_into: z.string().uuid().nullable(),
+    // The chain head; equals the memory itself when nothing superseded it.
+    tip: z.string().uuid().nullable(),
+    // Out-edges: what this memory replaced.
+    replaces: z.array(OperatorMemoryLineageEdgeSchema).max(20),
+    // In-edges: what replaced this memory.
+    replaced_by: z.array(OperatorMemoryLineageEdgeSchema).max(20),
+    edges_truncated: z.boolean(),
+  })
+  .strict()
+
+export const OperatorMemoryDetailSchema = OperatorMemorySchema.extend({
+  lineage: OperatorMemoryLineageSchema,
+}).strict()
+
 export const OperatorMemoryPageSchema = z
   .object({
     data: z.array(OperatorMemorySchema).max(100),
@@ -431,6 +475,9 @@ export type OperatorAgentPage = z.infer<typeof OperatorAgentPageSchema>
 export type MemoryStatus = z.infer<typeof MemoryStatusSchema>
 export type MemoryCategory = z.infer<typeof MemoryCategorySchema>
 export type OperatorMemory = z.infer<typeof OperatorMemorySchema>
+export type OperatorMemoryLineage = z.infer<typeof OperatorMemoryLineageSchema>
+export type OperatorMemoryLineageEdge = z.infer<typeof OperatorMemoryLineageEdgeSchema>
+export type OperatorMemoryDetail = z.infer<typeof OperatorMemoryDetailSchema>
 export type OperatorMemoryPage = z.infer<typeof OperatorMemoryPageSchema>
 export type SessionStatus = z.infer<typeof SessionStatusSchema>
 export type OperatorSessionTurn = z.infer<typeof OperatorSessionTurnSchema>

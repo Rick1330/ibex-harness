@@ -46,6 +46,24 @@ because there is no correct one: inheriting the fixture clock on a live page rep
 once the constant is behind real time. `tests/clock-boundary.test.ts` enforces the boundary by rejecting `GOVERN_NOW` in
 any file that is not under a preview surface or the fixture library.
 
+### Memory lineage (`operator.memories.v1` detail)
+
+The memory plane records why a memory is no longer current, and the operator detail reads it without reading content:
+
+- **Direct replacement.** `memories.superseded_by` and `merged_into` are the row-level answer.
+- **Chain head.** `tip` comes from `resolve_supersession_tip(org, memory, 5)`, which walks incoming `supersedes` edges
+  in SQL with a depth cap and a cycle break. The walk is not re-implemented in Python, so the cap and the cycle rule
+  have one owner. A memory with no successor is its own head.
+- **Edges.** `memory_relationships` is typed (`supersedes`, `contradicts`, `specializes`, `generalizes`, `merged_from`,
+  `derived_from`) and carries confidence. `replaces` is the out-edge set (what this memory replaced); `replaced_by` is
+  the in-edge set (what replaced it). Both are capped at 20 with `edges_truncated`.
+- **The other end's state.** Each edge joins `memories` for `status` and `tombstoned`, so a replacement that was later
+  deleted reads as "deleted · tombstoned" instead of looking like a live link.
+
+`resolution_notes` is never projected: it is free text adjacent to memory content. Retention follows the same principle
+as Graphiti (invalidated facts are kept and marked, not deleted) and Mem0 (a per-memory change history exists); this
+contract is the reader for the history we already store.
+
 ## MCP surface
 
 MCP is an external resource/tool boundary. It derives scope from authenticated principal, uses versioned tool descriptors and hashes, caps input/output, validates arguments, supports deadlines/cancellation, requires idempotency for writes, and records policy/evidence IDs. Tool descriptions and results are untrusted data.

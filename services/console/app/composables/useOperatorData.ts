@@ -7,7 +7,7 @@ import type {
   PublicOperatorDirectivePage,
   PublicOperatorEvidenceDeletions,
   PublicOperatorEvidenceSummary,
-  PublicOperatorMemory,
+  PublicOperatorMemoryDetail,
   PublicOperatorMemoryPage,
   PublicOperatorOverview,
   PublicOperatorSessionRecordDetail,
@@ -78,7 +78,7 @@ export function useOperatorMemories(params: () => URLSearchParams) {
 
 export function useOperatorMemory(memoryId: () => string) {
   const url = computed(() => `/api/operator/memories/${encodeURIComponent(memoryId())}`)
-  return useFetch<PublicOperatorMemory>(url, { key: url, watch: [url] })
+  return useFetch<PublicOperatorMemoryDetail>(url, { key: url, watch: [url] })
 }
 
 export function useOperatorDirectives(params: () => URLSearchParams) {

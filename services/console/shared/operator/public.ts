@@ -8,6 +8,7 @@ import type {
   OperatorEvidenceDeletions,
   OperatorEvidenceSummary,
   OperatorMemory,
+  OperatorMemoryDetail,
   OperatorMemoryPage,
   OperatorOverview,
   OperatorSessionRecord,
@@ -29,6 +30,7 @@ export type PublicPlatformHealth = PlatformHealth
 export type PublicOperatorAgent = OperatorAgent
 export type PublicOperatorAgentPage = OperatorAgentPage
 export type PublicOperatorMemory = OperatorMemory
+export type PublicOperatorMemoryDetail = OperatorMemoryDetail
 export type PublicOperatorMemoryPage = OperatorMemoryPage
 export type PublicOperatorSessionRecord = OperatorSessionRecord
 export type PublicOperatorSessionRecordDetail = OperatorSessionRecordDetail

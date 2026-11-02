@@ -8,6 +8,7 @@ import {
   OperatorDirectivePageSchema,
   OperatorEvidenceDeletionsSchema,
   OperatorEvidenceSummarySchema,
+  OperatorMemoryDetailSchema,
   OperatorMemoryPageSchema,
   OperatorMemorySchema,
   OperatorOverviewSchema,
@@ -338,6 +339,45 @@ const evidenceSummary = {
   it("accepts the metadata-only operator memory projection", () => {
     expect(OperatorMemorySchema.parse(memory).content_tokens).toBe(12)
     expect(OperatorMemoryPageSchema.parse(memoryPage).data[0]?.tags).toEqual(["support"])
+  })
+
+  it("accepts the memory lineage block and rejects notes", () => {
+    const lineage = {
+      superseded_by: "55555555-5555-4555-8555-555555555555",
+      merged_into: null,
+      tip: "55555555-5555-4555-8555-555555555555",
+      replaces: [],
+      replaced_by: [
+        {
+          memory_id: "55555555-5555-4555-8555-555555555555",
+          relationship_type: "supersedes" as const,
+          confidence: 0.9,
+          created_at: "2026-11-02T12:00:00.000Z",
+          status: "active" as const,
+          tombstoned: false,
+        },
+      ],
+      edges_truncated: false,
+    }
+
+    const parsed = OperatorMemoryDetailSchema.parse({ ...memory, lineage })
+    expect(parsed.lineage.replaced_by[0]?.relationship_type).toBe("supersedes")
+    expect(parsed.lineage.tip).toBe(lineage.tip)
+    // Free-text notes and content must not be accepted.
+    expect(() =>
+      OperatorMemoryDetailSchema.parse({
+        ...memory,
+        lineage: {
+          ...lineage,
+          replaced_by: [{ ...lineage.replaced_by[0], resolution_notes: "quoted content" }],
+        },
+      }),
+    ).toThrow()
+    expect(() =>
+      OperatorMemoryDetailSchema.parse({ ...memory, lineage: { ...lineage, content: "leak" } }),
+    ).toThrow()
+    // The list projection stays lineage-free.
+    expect(() => OperatorMemorySchema.parse({ ...memory, lineage })).toThrow()
   })
 
   it("rejects content, tenant authority, and malformed memory fields", () => {
