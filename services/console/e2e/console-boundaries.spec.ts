@@ -534,6 +534,31 @@ test("memories fail closed without an operator API and never render fixtures", a
   await expectNoAxeViolations(page)
 })
 
+test("an in-app query change normalizes the address bar too", async ({ page }) => {
+  // `normalizeUrl` runs on mount. A client-side navigation that only adds an
+  // ignored field leaves the parsed state equal, so the state watcher stays
+  // silent and the route watcher has to clean the URL itself.
+  await page.goto("/sessions?status=error")
+  await waitForHydration(page)
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/sessions?status=error&limit=101")
+    window.dispatchEvent(new PopStateEvent("popstate"))
+  })
+  await expect(page).toHaveURL(/status=error/)
+  await expect(page).toHaveURL(/limit=50/)
+  await expect(page).not.toHaveURL(/limit=101/)
+
+  await page.goto("/memories?status=quarantined")
+  await waitForHydration(page)
+  await page.evaluate(() => {
+    window.history.pushState({}, "", "/memories?status=quarantined&demo=0&limit=101")
+    window.dispatchEvent(new PopStateEvent("popstate"))
+  })
+  await expect(page).toHaveURL(/status=quarantined/)
+  await expect(page).toHaveURL(/limit=50/)
+  await expect(page).not.toHaveURL(/demo=0/)
+})
+
 test("a stale memory filter link keeps its valid filters and drops the rest", async ({ page }) => {
   // The read must not widen: `quarantined` still filters, and the unsupported
   // field and the out-of-range limit leave the address bar instead of silently

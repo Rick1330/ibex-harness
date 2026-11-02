@@ -39,6 +39,9 @@ function normalizeUrl(): void {
   if (strictStateFromQuery(route.query)) return
   void router
     .replace({ query: Object.fromEntries(serializeLiveMemoryQuery(state.value)) })
+    .then(() => {
+      returnTo.value = route.fullPath
+    })
     .catch(() => undefined)
 }
 
@@ -67,8 +70,12 @@ watch(
   () => route.query,
   () => {
     if (route.path !== "/memories") return
-    const parsed = stateFromQuery(route.query)
-    if (serialized(parsed) === serialized(state.value)) {
+    const strict = strictStateFromQuery(route.query)
+    const parsed = strict ?? parseLiveMemoryQueryLenient(route.query)
+    // Assigning a fresh object also fires the state watcher, which rewrites the
+    // address bar. Returning early on an equal parse would leave a URL that
+    // still claims a field the read ignores.
+    if (strict && serialized(parsed) === serialized(state.value)) {
       returnTo.value = route.fullPath
       return
     }
