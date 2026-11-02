@@ -49,9 +49,9 @@ def _summary() -> OperatorEvidenceSummary:
         statuses=EvidenceStatusCounts(ok=9, error=1),
         last_run_at=NOW,
         delivery=EvidenceDeliveryCounts(delivered=9, pending=1),
-        oldest_pending_at=NOW,
+        oldest_unsettled_at=NOW,
         last_delivered_at=NOW,
-        capture_policy=EvidenceCapturePolicy(mode="metadata_only", scope="org"),
+        capture_policy=EvidenceCapturePolicy(mode="metadata_only"),
         legal_hold=EvidenceLegalHold(active=False, since=None),
     )
 

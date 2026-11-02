@@ -800,7 +800,7 @@
         "type": "object"
       },
       "EvidenceCapturePolicy": {
-        "description": "The capture policy that applies to the organization.\n\n`mode` is the effective mode; `None` means no policy row exists and the\ndeployment default applies. `scope` names where the winning row applies.",
+        "description": "The organization-level capture policy, plus its agent overrides.\n\n`mode` is the organization-wide row (`agent_id IS NULL`); `None` means no\nsuch row exists and the deployment default applies. Agent rows are counted\nrather than folded in: they resolve per agent, so no single agent mode\ndescribes the organization.",
         "properties": {
           "agent_overrides": {
             "default": 0,
@@ -824,21 +824,6 @@
               }
             ],
             "title": "Mode"
-          },
-          "scope": {
-            "anyOf": [
-              {
-                "enum": [
-                  "org",
-                  "agent"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scope"
           }
         },
         "title": "EvidenceCapturePolicy",
@@ -1473,7 +1458,7 @@
             "title": "Observed At",
             "type": "string"
           },
-          "oldest_pending_at": {
+          "oldest_unsettled_at": {
             "anyOf": [
               {
                 "format": "date-time",
@@ -1483,7 +1468,7 @@
                 "type": "null"
               }
             ],
-            "title": "Oldest Pending At"
+            "title": "Oldest Unsettled At"
           },
           "range": {
             "enum": [

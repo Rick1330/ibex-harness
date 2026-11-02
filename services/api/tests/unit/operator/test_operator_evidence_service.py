@@ -48,13 +48,13 @@ def _run_row(completeness: str, status: str, count: int, last: datetime | None) 
 def _delivery_row(
     status: str,
     count: int,
-    oldest_pending_at: datetime | None = None,
+    oldest_unsettled_at: datetime | None = None,
     last_delivered_at: datetime | None = None,
 ) -> dict[str, object]:
     return {
         "delivery_status": status,
         "row_count": count,
-        "oldest_pending_at": oldest_pending_at,
+        "oldest_unsettled_at": oldest_unsettled_at,
         "last_delivered_at": last_delivered_at,
     }
 
@@ -62,7 +62,7 @@ def _delivery_row(
 @pytest.mark.asyncio
 async def test_summary_projects_every_grouped_fact() -> None:
     last_run = NOW - timedelta(minutes=5)
-    oldest_pending = NOW - timedelta(minutes=30)
+    oldest_unsettled = NOW - timedelta(minutes=30)
     last_delivered = NOW - timedelta(minutes=2)
     session = _session(
         [
@@ -73,8 +73,8 @@ async def test_summary_projects_every_grouped_fact() -> None:
         ],
         [
             _delivery_row("delivered", 15, None, last_delivered),
-            _delivery_row("pending", 2, oldest_pending),
-            _delivery_row("poison", 1, oldest_pending),
+            _delivery_row("pending", 2, oldest_unsettled),
+            _delivery_row("poison", 1, oldest_unsettled),
         ],
         [{"mode": "metadata_only", "agent_id": None}],
         [{"created_at": NOW - timedelta(days=1)}],
@@ -98,10 +98,9 @@ async def test_summary_projects_every_grouped_fact() -> None:
     assert summary.delivery.delivered == 15
     assert summary.delivery.pending == 2
     assert summary.delivery.poison == 1
-    assert summary.oldest_pending_at == oldest_pending
+    assert summary.oldest_unsettled_at == oldest_unsettled
     assert summary.last_delivered_at == last_delivered
     assert summary.capture_policy.mode == "metadata_only"
-    assert summary.capture_policy.scope == "org"
     assert summary.capture_policy.agent_overrides == 0
     assert summary.legal_hold.active is True
     assert summary.legal_hold.since == NOW - timedelta(days=1)
@@ -118,10 +117,10 @@ async def test_summary_is_empty_not_estimated_when_nothing_was_recorded() -> Non
     assert summary.completeness.complete == 0
     assert summary.last_run_at is None
     assert summary.delivery.delivered == 0
-    assert summary.oldest_pending_at is None
+    assert summary.oldest_unsettled_at is None
     assert summary.last_delivered_at is None
     assert summary.capture_policy.mode is None
-    assert summary.capture_policy.scope is None
+    assert summary.capture_policy.agent_overrides == 0
     assert summary.legal_hold.active is False
     assert summary.legal_hold.since is None
 
@@ -148,37 +147,53 @@ async def test_unknown_enum_values_are_ignored_rather_than_guessed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_capture_policy_reports_an_agent_scoped_winning_row() -> None:
-    agent_id = uuid4()
+async def test_capture_policy_reports_the_org_row_and_counts_agent_overrides() -> None:
     session = _session(
         [],
         [],
         [
-            {"mode": "redacted", "agent_id": agent_id},
-            {"mode": "full", "agent_id": None},
+            {"mode": "full", "agent_id": uuid4()},
+            {"mode": "redacted", "agent_id": None},
         ],
         [],
     )
 
     summary = await evidence_service.get_evidence_summary(session, _args(), now=NOW)
 
+    # The agent row resolves for one agent only; it must not speak for the org.
     assert summary.capture_policy.mode == "redacted"
-    assert summary.capture_policy.scope == "agent"
     assert summary.capture_policy.agent_overrides == 1
 
 
 @pytest.mark.asyncio
-async def test_every_query_is_scoped_to_the_operator_org() -> None:
-    session = _session([], [], [], [])
-    args = _args("30d")
+async def test_capture_policy_stays_empty_when_only_agent_rows_exist() -> None:
+    session = _session(
+        [],
+        [],
+        [{"mode": "full", "agent_id": uuid4()}],
+        [],
+    )
 
-    await evidence_service.get_evidence_summary(session, args, now=NOW)
+    summary = await evidence_service.get_evidence_summary(session, _args(), now=NOW)
 
-    assert session.execute.await_count == 4
-    for call in session.execute.await_args_list:
-        assert call.args[1]["org_id"] == args.org_id
-    for call in session.execute.await_args_list[:2]:
-        assert call.args[1]["window_start"] == NOW - timedelta(hours=720)
+    assert summary.capture_policy.mode is None
+    assert summary.capture_policy.agent_overrides == 1
+
+
+@pytest.mark.asyncio
+async def test_oldest_unsettled_covers_every_non_delivered_status() -> None:
+    poison_only = NOW - timedelta(hours=2)
+    session = _session(
+        [],
+        [_delivery_row("delivered", 5), _delivery_row("poison", 1, poison_only)],
+        [],
+        [],
+    )
+
+    summary = await evidence_service.get_evidence_summary(session, _args(), now=NOW)
+
+    assert summary.delivery.poison == 1
+    assert summary.oldest_unsettled_at == poison_only
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS ibex_core.idx_evidence_outbox_org_created_at;

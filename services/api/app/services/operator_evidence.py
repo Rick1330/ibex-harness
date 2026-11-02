@@ -43,7 +43,7 @@ _COMPLETENESS_VALUES: frozenset[str] = frozenset(get_args(EvidenceCompleteness))
 _RUN_STATUS_VALUES: frozenset[str] = frozenset(get_args(EvidenceRunStatus))
 _DELIVERY_VALUES: frozenset[str] = frozenset(get_args(EvidenceDeliveryStatus))
 _CAPTURE_MODE_VALUES: frozenset[str] = frozenset(get_args(EvidenceCaptureMode))
-_UNDELIVERED = ("pending", "failed")
+_UNDELIVERED = ("pending", "in_flight", "failed", "poison")
 
 _RUNS = table(
     "evidence_runs",
@@ -119,7 +119,7 @@ def _delivery_statement() -> Any:
             func.count().label("row_count"),
             func.min(_OUTBOX.c.created_at)
             .filter(_OUTBOX.c.delivery_status.in_(_UNDELIVERED))
-            .label("oldest_pending_at"),
+            .label("oldest_unsettled_at"),
             func.max(_OUTBOX.c.delivered_at).label("last_delivered_at"),
         )
         .select_from(_OUTBOX)
@@ -200,8 +200,8 @@ def _delivery_counts(rows: list[Any]) -> EvidenceDeliveryCounts:
     return EvidenceDeliveryCounts(**buckets)
 
 
-def _oldest_pending_at(rows: list[Any]) -> datetime | None:
-    stamps = [row_value(row, "oldest_pending_at") for row in rows]
+def _oldest_unsettled_at(rows: list[Any]) -> datetime | None:
+    stamps = [row_value(row, "oldest_unsettled_at") for row in rows]
     present = [stamp for stamp in stamps if stamp is not None]
     return min(present) if present else None
 
@@ -213,15 +213,22 @@ def _last_delivered_at(rows: list[Any]) -> datetime | None:
 
 
 def _capture_policy(rows: list[Any]) -> EvidenceCapturePolicy:
-    if not rows:
-        return EvidenceCapturePolicy(mode=None, scope=None, agent_overrides=0)
-    winning = rows[0]
-    mode = str(row_value(winning, "mode"))
-    agent_scoped = row_value(winning, "agent_id") is not None
+    """Report the organization row and count the agent rows.
+
+    Agent policies resolve per agent (`capture_policies.resolve` prefers the
+    agent row, then priority), so picking the lowest-priority row overall would
+    let one agent override speak for the whole organization.
+    """
+    agent_overrides = sum(1 for row in rows if row_value(row, "agent_id") is not None)
+    organization_row = next(
+        (row for row in rows if row_value(row, "agent_id") is None), None
+    )
+    if organization_row is None:
+        return EvidenceCapturePolicy(mode=None, agent_overrides=agent_overrides)
+    mode = str(row_value(organization_row, "mode"))
     return EvidenceCapturePolicy(
         mode=mode if mode in _CAPTURE_MODE_VALUES else None,
-        scope="agent" if agent_scoped else "org",
-        agent_overrides=sum(1 for row in rows if row_value(row, "agent_id") is not None),
+        agent_overrides=agent_overrides,
     )
 
 
@@ -260,7 +267,7 @@ async def get_evidence_summary(
         statuses=_status_counts(counted_runs),
         last_run_at=_last_run_at(counted_runs),
         delivery=_delivery_counts(delivery_rows),
-        oldest_pending_at=_oldest_pending_at(delivery_rows),
+        oldest_unsettled_at=_oldest_unsettled_at(delivery_rows),
         last_delivered_at=_last_delivered_at(delivery_rows),
         capture_policy=_capture_policy(policy_rows),
         legal_hold=_legal_hold(hold_rows),

@@ -58,14 +58,15 @@ class EvidenceDeliveryCounts(BaseModel):
 
 
 class EvidenceCapturePolicy(BaseModel):
-    """The capture policy that applies to the organization.
+    """The organization-level capture policy, plus its agent overrides.
 
-    `mode` is the effective mode; `None` means no policy row exists and the
-    deployment default applies. `scope` names where the winning row applies.
+    `mode` is the organization-wide row (`agent_id IS NULL`); `None` means no
+    such row exists and the deployment default applies. Agent rows are counted
+    rather than folded in: they resolve per agent, so no single agent mode
+    describes the organization.
     """
 
     mode: EvidenceCaptureMode | None = None
-    scope: Literal["org", "agent"] | None = None
     agent_overrides: int = Field(default=0, ge=0)
 
 
@@ -96,7 +97,9 @@ class OperatorEvidenceSummary(BaseModel):
     statuses: EvidenceStatusCounts
     last_run_at: datetime | None = None
     delivery: EvidenceDeliveryCounts
-    oldest_pending_at: datetime | None = None
+    # The oldest row in the window that has not reached `delivered`, across
+    # pending, in_flight, failed, and poison. `None` only when every row settled.
+    oldest_unsettled_at: datetime | None = None
     last_delivered_at: datetime | None = None
     capture_policy: EvidenceCapturePolicy
     legal_hold: EvidenceLegalHold
