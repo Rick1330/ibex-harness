@@ -74,6 +74,8 @@ const tabBadges = computed<Record<string, string>>(() => {
   return badges
 })
 
+const clock = computed(() => detail.value?.observed_at ?? null)
+
 const liveVersion = computed(() =>
   detail.value ? versionByNumber(detail.value, detail.value.active_version_num) : null,
 )
@@ -126,7 +128,7 @@ function copyLink(): void {
       scope="Organization"
       :range="`Usage: ${rangeOptions.find((option) => option.value === state.range)?.label ?? state.range}`"
       :coverage="coverage"
-      :observed="detail?.updated_at ?? null"
+      :observed="detail?.observed_at ?? null"
       caveat="Version identity only: the instruction text is not in this contract, so no diff or promotion history is shown."
     >
       <template #actions>
@@ -231,10 +233,15 @@ function copyLink(): void {
           />
           <GovernStatTile
             label="Last version"
-            :value="detail.last_version_at ? formatGovernRelative(detail.last_version_at, detail.updated_at) : 'None'"
+            :value="detail.last_version_at ? formatGovernRelative(detail.last_version_at, clock) : 'None'"
             :helper="detail.last_version_at ? formatGovernStamp(detail.last_version_at) : 'No version published'"
           />
         </div>
+
+        <GovernCaveat v-if="detail.versions_truncated" tone="info" title="The timeline is partial">
+          This directive has {{ formatGovernNumber(detail.version_count) }} versions. The newest 200 are listed, plus the
+          version the pointer names when it is older than that window, so a rollback stays visible.
+        </GovernCaveat>
 
         <GovernCaveat v-if="detail.active_version_missing" tone="warning" title="The pointer names an unseen version">
           The directive points at a version this read did not return. Treat the live version as unknown rather than
@@ -263,7 +270,7 @@ function copyLink(): void {
                 </td>
                 <td>
                   <span class="text-xs text-fg-2" :title="formatGovernStamp(version.created_at)">
-                    {{ formatGovernRelative(version.created_at, detail.updated_at) }}
+                    {{ formatGovernRelative(version.created_at, clock) }}
                   </span>
                 </td>
                 <td>
@@ -300,7 +307,7 @@ function copyLink(): void {
           />
           <GovernStatTile
             label="Window starts"
-            :value="formatGovernRelative(detail.usage_window_start, detail.updated_at)"
+            :value="formatGovernRelative(detail.usage_window_start, clock)"
             :helper="formatGovernStamp(detail.usage_window_start)"
           />
         </div>
@@ -327,7 +334,7 @@ function copyLink(): void {
                     class="text-xs text-fg-2"
                     :title="formatGovernStamp(row.last_session_at)"
                   >
-                    {{ formatGovernRelative(row.last_session_at, detail.updated_at) }}
+                    {{ formatGovernRelative(row.last_session_at, clock) }}
                   </span>
                   <span v-else class="text-xs text-fg-3">Not recorded</span>
                 </td>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import { useRoute } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import DirectiveDetailView from "@/components/console/directive/live/DirectiveDetailView.vue"
 import { safeDirectiveReturn } from "@/lib/return-to"
 import {
@@ -14,34 +14,58 @@ const TABS = ["versions", "usage", "diff", "promotion", "audit"] as const
 type DetailTab = (typeof TABS)[number]
 
 const route = useRoute()
+const router = useRouter()
 const directiveId = computed(() => String(route.params.directiveId ?? ""))
 const returnTo = computed(() => safeDirectiveReturn(route.query.return))
 
 const state = ref<LiveDirectiveDetailQuery>(detailStateFromQuery(route.query))
 const tab = ref<DetailTab>(tabFromQuery(route.query))
 
+/**
+ * One builder for every URL rewrite on this page.
+ *
+ * `return` is part of the location, not of the view state: dropping it on a tab
+ * or range change would send "Back to directives" to an unfiltered first page.
+ */
+function buildQuery(
+  nextState: LiveDirectiveDetailQuery,
+  nextTab: DetailTab,
+  back: unknown,
+): Record<string, string> {
+  const query: Record<string, string> = Object.fromEntries(
+    serializeLiveDirectiveDetailQuery(nextState),
+  )
+  if (nextTab !== "versions") query.tab = nextTab
+  if (typeof back === "string" && back) query.return = back
+  return query
+}
+
 watch(
   () => route.query,
   () => {
     if (!route.path.startsWith("/directives/")) return
-    state.value = detailStateFromQuery(route.query)
-    tab.value = tabFromQuery(route.query)
+    const parsed = detailStateFromQuery(route.query)
+    const nextTab = tabFromQuery(route.query)
+    if (serialized(parsed) !== serialized(state.value)) state.value = parsed
+    if (nextTab !== tab.value) tab.value = nextTab
   },
 )
 
-watch(state, (next) => {
+watch([state, tab], ([nextState, nextTab]) => {
   if (!import.meta.client) return
-  const query = Object.fromEntries(serializeLiveDirectiveDetailQuery(next))
-  if (tab.value !== "versions") query.tab = tab.value
-  void useRouter().replace({ query }).catch(() => undefined)
+  const target = buildQuery(nextState, nextTab, route.query.return)
+  const current = buildQuery(
+    detailStateFromQuery(route.query),
+    tabFromQuery(route.query),
+    route.query.return,
+  )
+  if (JSON.stringify(target) === JSON.stringify(current)) return
+  void router.replace({ query: target }).catch(() => undefined)
 })
 
-watch(tab, (next) => {
-  if (!import.meta.client) return
-  const query = Object.fromEntries(serializeLiveDirectiveDetailQuery(state.value))
-  if (next !== "versions") query.tab = next
-  void useRouter().replace({ query }).catch(() => undefined)
-})
+function serialized(value: LiveDirectiveDetailQuery): string {
+  return serializeLiveDirectiveDetailQuery(value).toString()
+}
 
 function strictDetailState(query: Record<string, unknown>): LiveDirectiveDetailQuery | null {
   try {

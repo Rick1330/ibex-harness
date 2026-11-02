@@ -50,6 +50,8 @@ export function mostUsedVersion(
  */
 export function sessionsOffPointer(detail: OperatorDirectiveDetail): number {
   const live = detail.active_version_num
+  // An inactive directive has no pointer, so nothing can be "off" it.
+  if (live === null) return 0
   return detail.usage
     .filter((row) => row.version_num !== live)
     .reduce((sum, row) => sum + row.sessions, 0)

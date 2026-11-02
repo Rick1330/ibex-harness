@@ -14,6 +14,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.pagination import PaginationMeta
+
 DirectiveInjectionMode = Literal["system_first", "system_append", "user_prepend"]
 DirectiveStateFilter = Literal["all", "active", "inactive"]
 DirectiveUsageRange = Literal["24h", "7d", "30d"]
@@ -58,13 +60,30 @@ class OperatorDirectiveUsage(BaseModel):
 
 
 class OperatorDirectiveDetail(OperatorDirectiveSummary):
+    """`version_count` is the true total, not the size of `versions`.
+
+    The list carries the newest `VERSIONS_LIMIT` versions plus the pointed
+    version when it is older than that window, so a rollback stays visible on a
+    long history. `versions_truncated` says the timeline is partial.
+    """
+
     versions: list[OperatorDirectiveVersion] = Field(default_factory=list)
+    versions_truncated: bool = False
     usage: list[OperatorDirectiveUsage] = Field(default_factory=list)
     usage_range: DirectiveUsageRange
     usage_window_start: datetime
+    observed_at: datetime
     # True when the pointer names a version that is not in `versions`, which can
     # only happen if the two reads disagree; the UI must not guess a live version.
     active_version_missing: bool = False
+
+
+class OperatorDirectivePage(BaseModel):
+    """One keyset page plus the read time relative ages are measured against."""
+
+    data: list[OperatorDirectiveSummary]
+    pagination: PaginationMeta
+    observed_at: datetime
 
 
 class OperatorDirectiveListQuery(BaseModel):

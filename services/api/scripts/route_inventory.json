@@ -237,7 +237,7 @@
     ],
     "name": "operator_directive_list",
     "path": "/v1/operator/directives",
-    "response_model": "<class 'app.pagination.CursorPage[OperatorDirectiveSummary]'>",
+    "response_model": "<class 'app.schemas.operator_directives.OperatorDirectivePage'>",
     "security": [
       "app.authz.require_operator_metadata_session",
       "app.deps.operator_org_session"

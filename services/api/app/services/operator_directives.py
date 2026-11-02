@@ -14,6 +14,9 @@ pointer may name an older version than the newest one.
 
 Instruction text is never selected. `func.octet_length(content)` gives the stored
 size without returning the content itself.
+
+Every query filters `org_id` explicitly, including the joins and the
+pointer-to-version lookup, because RLS is defense in depth, not the only guard.
 """
 
 from __future__ import annotations
@@ -28,9 +31,10 @@ from sqlalchemy import and_, bindparam, column, func, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
-from app.pagination import CursorPage, encode_cursor, page_from_rows
+from app.pagination import PaginationMeta, encode_cursor
 from app.schemas.operator_directives import (
     OperatorDirectiveDetail,
+    OperatorDirectivePage,
     OperatorDirectiveSummary,
     OperatorDirectiveUsage,
     OperatorDirectiveVersion,
@@ -45,6 +49,9 @@ from app.services.operator_rows import row_value
 _USAGE_HOURS: dict[str, int] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
 _DIGEST_PREFIX = 12
 _DIRECTIVE_NOT_FOUND = "Directive not found"
+# The newest N versions are returned, and the pointer target is always included
+# even when it is older, so a rollback stays visible on a long history.
+VERSIONS_LIMIT = 200
 
 _DIRECTIVES = table(
     "directives",
@@ -106,6 +113,18 @@ class DirectiveDetailArgs:
     usage_range: str
 
 
+@dataclass(frozen=True)
+class DirectiveHeader:
+    id: UUID
+    agent_id: UUID
+    agent_name: str
+    agent_slug: str
+    is_active: bool
+    injection_mode: str
+    active_version_id: UUID | None
+    updated_at: datetime
+
+
 def usage_window(range_value: str, *, now: datetime | None = None) -> tuple[datetime, datetime]:
     end = now or datetime.now(UTC)
     return end - timedelta(hours=_USAGE_HOURS[range_value]), end
@@ -115,7 +134,10 @@ def _live_version_number() -> Any:
     """The version the pointer names, which may not be the newest after a rollback."""
     return (
         select(_VERSIONS.c.version_num)
-        .where(_VERSIONS.c.id == _DIRECTIVES.c.active_version_id)
+        .where(
+            _VERSIONS.c.id == _DIRECTIVES.c.active_version_id,
+            _VERSIONS.c.org_id == _DIRECTIVES.c.org_id,
+        )
         .scalar_subquery()
     )
 
@@ -130,22 +152,8 @@ def _cursor_clause(cursor: KeysetCursor) -> Any:
     )
 
 
-def _list_statement(args: DirectiveListArgs, cursor: KeysetCursor) -> Any:
-    version_stats = (
-        select(
-            _VERSIONS.c.directive_id.label("directive_id"),
-            func.count().label("version_count"),
-            func.max(_VERSIONS.c.created_at).label("last_version_at"),
-        )
-        .select_from(_VERSIONS)
-        .where(_VERSIONS.c.org_id == bindparam("org_id"))
-        .group_by(_VERSIONS.c.directive_id)
-        .subquery()
-    )
-    clauses: list[Any] = [
-        _DIRECTIVES.c.org_id == bindparam("org_id"),
-        _AGENTS.c.org_id == bindparam("org_id"),
-    ]
+def _list_filter_clauses(args: DirectiveListArgs, cursor: KeysetCursor) -> list[Any]:
+    clauses: list[Any] = [_DIRECTIVES.c.org_id == bindparam("org_id")]
     if args.state == "active":
         clauses.append(_DIRECTIVES.c.is_active.is_(True))
     elif args.state == "inactive":
@@ -154,6 +162,34 @@ def _list_statement(args: DirectiveListArgs, cursor: KeysetCursor) -> Any:
         clauses.append(_DIRECTIVES.c.agent_id == bindparam("agent_id"))
     if cursor.created_at is not None and cursor.row_id is not None:
         clauses.append(_cursor_clause(cursor))
+    return clauses
+
+
+def _list_statement(args: DirectiveListArgs, cursor: KeysetCursor) -> Any:
+    # Page the directives first, then aggregate versions for those ids only, so a
+    # small page never groups the organization's whole version history.
+    page = (
+        select(_DIRECTIVES.c.id, _DIRECTIVES.c.updated_at)
+        .select_from(_DIRECTIVES)
+        .where(*_list_filter_clauses(args, cursor))
+        .order_by(_DIRECTIVES.c.updated_at.desc(), _DIRECTIVES.c.id.desc())
+        .limit(bindparam("limit"))
+        .subquery("directive_page")
+    )
+    version_stats = (
+        select(
+            _VERSIONS.c.directive_id.label("directive_id"),
+            func.count().label("version_count"),
+            func.max(_VERSIONS.c.created_at).label("last_version_at"),
+        )
+        .select_from(_VERSIONS)
+        .where(
+            _VERSIONS.c.org_id == bindparam("org_id"),
+            _VERSIONS.c.directive_id.in_(select(page.c.id)),
+        )
+        .group_by(_VERSIONS.c.directive_id)
+        .subquery()
+    )
     return (
         select(
             _DIRECTIVES.c.id,
@@ -168,13 +204,15 @@ def _list_statement(args: DirectiveListArgs, cursor: KeysetCursor) -> Any:
             _live_version_number().label("active_version_num"),
         )
         .select_from(
-            _DIRECTIVES.join(_AGENTS, _AGENTS.c.id == _DIRECTIVES.c.agent_id).outerjoin(
-                version_stats, version_stats.c.directive_id == _DIRECTIVES.c.id
+            page.join(_DIRECTIVES, _DIRECTIVES.c.id == page.c.id)
+            .join(
+                _AGENTS,
+                and_(_AGENTS.c.id == _DIRECTIVES.c.agent_id, _AGENTS.c.org_id == _DIRECTIVES.c.org_id),
             )
+            .outerjoin(version_stats, version_stats.c.directive_id == _DIRECTIVES.c.id)
         )
-        .where(*clauses)
+        .where(_DIRECTIVES.c.org_id == bindparam("org_id"))
         .order_by(_DIRECTIVES.c.updated_at.desc(), _DIRECTIVES.c.id.desc())
-        .limit(bindparam("limit"))
     )
 
 
@@ -197,8 +235,8 @@ def _summary_from_row(row: Any) -> OperatorDirectiveSummary:
 
 
 async def list_operator_directives(
-    session: AsyncSession, args: DirectiveListArgs
-) -> CursorPage[OperatorDirectiveSummary]:
+    session: AsyncSession, args: DirectiveListArgs, *, now: datetime | None = None
+) -> OperatorDirectivePage:
     cursor = parse_keyset_cursor(args.cursor)
     params: dict[str, Any] = {"org_id": args.org_id, "limit": args.limit + 1}
     if args.agent_id is not None:
@@ -208,21 +246,23 @@ async def list_operator_directives(
         params["cursor_id"] = cursor.row_id
     result = await session.execute(_list_statement(args, cursor), params)
     rows = [_summary_from_row(row) for row in result.mappings().all()]
-    next_cursor = None
-    if len(rows) > args.limit:
-        last = rows[args.limit - 1]
-        next_cursor = encode_cursor(keyset_cursor_payload(last.updated_at, last.id))
-    return page_from_rows(rows, limit=args.limit, next_cursor=next_cursor)
+    has_more = len(rows) > args.limit
+    data = rows[: args.limit]
+    next_cursor = (
+        encode_cursor(keyset_cursor_payload(data[-1].updated_at, data[-1].id))
+        if has_more and data
+        else None
+    )
+    observed = now or datetime.now(UTC)
+    return OperatorDirectivePage(
+        data=data,
+        pagination=PaginationMeta(has_more=has_more, next_cursor=next_cursor),
+        observed_at=observed,
+    )
 
 
-async def get_operator_directive(
-    session: AsyncSession,
-    args: DirectiveDetailArgs,
-    *,
-    now: datetime | None = None,
-) -> OperatorDirectiveDetail:
-    params = {"org_id": args.org_id, "directive_id": args.directive_id}
-    header = (
+async def _fetch_header(session: AsyncSession, args: DirectiveDetailArgs) -> DirectiveHeader:
+    statement = (
         select(
             _DIRECTIVES.c.id,
             _DIRECTIVES.c.agent_id,
@@ -233,45 +273,108 @@ async def get_operator_directive(
             _DIRECTIVES.c.active_version_id,
             _DIRECTIVES.c.updated_at,
         )
-        .select_from(_DIRECTIVES.join(_AGENTS, _AGENTS.c.id == _DIRECTIVES.c.agent_id))
+        .select_from(
+            _DIRECTIVES.join(
+                _AGENTS,
+                and_(_AGENTS.c.id == _DIRECTIVES.c.agent_id, _AGENTS.c.org_id == _DIRECTIVES.c.org_id),
+            )
+        )
         .where(
             _DIRECTIVES.c.org_id == bindparam("org_id"),
             _DIRECTIVES.c.id == bindparam("directive_id"),
         )
         .limit(1)
     )
-    header_row = (await session.execute(header, params)).mappings().first()
-    if header_row is None:
+    row = (
+        await session.execute(statement, {"org_id": args.org_id, "directive_id": args.directive_id})
+    ).mappings().first()
+    if row is None:
         raise ApiError(code=NOT_FOUND, message=_DIRECTIVE_NOT_FOUND)
+    return DirectiveHeader(
+        id=row_value(row, "id"),
+        agent_id=row_value(row, "agent_id"),
+        agent_name=row_value(row, "agent_name"),
+        agent_slug=row_value(row, "agent_slug"),
+        is_active=bool(row_value(row, "is_active")),
+        injection_mode=row_value(row, "injection_mode"),
+        active_version_id=row_value(row, "active_version_id"),
+        updated_at=row_value(row, "updated_at"),
+    )
 
-    versions_statement = (
-        select(
-            _VERSIONS.c.id,
-            _VERSIONS.c.version_num,
-            _VERSIONS.c.content_hash,
-            func.octet_length(_VERSIONS.c.content).label("content_bytes"),
-            _VERSIONS.c.created_by,
-            _VERSIONS.c.created_at,
-        )
+
+def _version_statement(pointed_only: bool) -> Any:
+    statement = select(
+        _VERSIONS.c.id,
+        _VERSIONS.c.version_num,
+        _VERSIONS.c.content_hash,
+        func.octet_length(_VERSIONS.c.content).label("content_bytes"),
+        _VERSIONS.c.created_by,
+        _VERSIONS.c.created_at,
+    ).select_from(_VERSIONS).where(
+        _VERSIONS.c.org_id == bindparam("org_id"),
+        _VERSIONS.c.directive_id == bindparam("directive_id"),
+    )
+    if pointed_only:
+        return statement.where(_VERSIONS.c.id == bindparam("version_id"))
+    return statement.order_by(_VERSIONS.c.version_num.desc()).limit(VERSIONS_LIMIT + 1)
+
+
+async def _count_versions(session: AsyncSession, args: DirectiveDetailArgs) -> int:
+    statement = (
+        select(func.count())
         .select_from(_VERSIONS)
         .where(
             _VERSIONS.c.org_id == bindparam("org_id"),
             _VERSIONS.c.directive_id == bindparam("directive_id"),
         )
-        .order_by(_VERSIONS.c.version_num.desc())
     )
-    version_rows = (await session.execute(versions_statement, params)).mappings().all()
+    result = await session.execute(
+        statement, {"org_id": args.org_id, "directive_id": args.directive_id}
+    )
+    return int(result.scalar_one())
 
-    is_active = bool(row_value(header_row, "is_active"))
-    active_version_id = row_value(header_row, "active_version_id")
-    live_version_id = active_version_id if is_active else None
 
-    version_number_by_id: dict[Any, int] = {}
+async def _fetch_versions(
+    session: AsyncSession, args: DirectiveDetailArgs, live_version_id: UUID | None
+) -> tuple[list[Any], int]:
+    rows = list(
+        (
+            await session.execute(
+                _version_statement(pointed_only=False),
+                {"org_id": args.org_id, "directive_id": args.directive_id},
+            )
+        ).mappings().all()
+    )
+    total = await _count_versions(session, args)
+    rows = rows[:VERSIONS_LIMIT]
+    if live_version_id is not None and not any(
+        row_value(row, "id") == live_version_id for row in rows
+    ):
+        # A rollback can point at a version older than the newest page.
+        extra = (
+            await session.execute(
+                _version_statement(pointed_only=True),
+                {
+                    "org_id": args.org_id,
+                    "directive_id": args.directive_id,
+                    "version_id": live_version_id,
+                },
+            )
+        ).mappings().all()
+        rows.extend(extra)
+    rows.sort(key=lambda row: int(row_value(row, "version_num")), reverse=True)
+    return rows, total
+
+
+def _version_projection(
+    rows: list[Any], live_version_id: UUID | None
+) -> tuple[list[OperatorDirectiveVersion], dict[Any, int]]:
+    number_by_id: dict[Any, int] = {}
     versions: list[OperatorDirectiveVersion] = []
-    for row in version_rows:
+    for row in rows:
         version_id = row_value(row, "id")
         version_num = int(row_value(row, "version_num"))
-        version_number_by_id[version_id] = version_num
+        number_by_id[version_id] = version_num
         versions.append(
             OperatorDirectiveVersion(
                 version_num=version_num,
@@ -282,9 +385,16 @@ async def get_operator_directive(
                 is_live=live_version_id is not None and version_id == live_version_id,
             )
         )
+    return versions, number_by_id
 
-    window_start, _ = usage_window(args.usage_range, now=now)
-    usage_statement = (
+
+async def _fetch_usage(
+    session: AsyncSession,
+    args: DirectiveDetailArgs,
+    version_numbers: dict[Any, int],
+    window_start: datetime,
+) -> list[OperatorDirectiveUsage]:
+    statement = (
         select(
             _SESSIONS.c.directive_version_id,
             func.count().label("sessions"),
@@ -303,40 +413,57 @@ async def get_operator_directive(
         )
         .group_by(_SESSIONS.c.directive_version_id)
     )
-    usage_rows = (
-        await session.execute(usage_statement, {**params, "window_start": window_start})
+    rows = (
+        await session.execute(
+            statement,
+            {
+                "org_id": args.org_id,
+                "directive_id": args.directive_id,
+                "window_start": window_start,
+            },
+        )
     ).mappings().all()
-    usage = sorted(
-        (
-            OperatorDirectiveUsage(
-                version_num=version_number_by_id[row_value(row, "directive_version_id")],
-                sessions=int(row_value(row, "sessions")),
-                last_session_at=row_value(row, "last_session_at"),
-            )
-            for row in usage_rows
-            if row_value(row, "directive_version_id") in version_number_by_id
-        ),
-        key=lambda item: item.sessions,
-        reverse=True,
-    )
+    usage = [
+        OperatorDirectiveUsage(
+            version_num=version_numbers[row_value(row, "directive_version_id")],
+            sessions=int(row_value(row, "sessions")),
+            last_session_at=row_value(row, "last_session_at"),
+        )
+        for row in rows
+        if row_value(row, "directive_version_id") in version_numbers
+    ]
+    return sorted(usage, key=lambda item: item.sessions, reverse=True)
 
-    live_version_num = (
-        version_number_by_id.get(live_version_id) if live_version_id is not None else None
-    )
+
+async def get_operator_directive(
+    session: AsyncSession,
+    args: DirectiveDetailArgs,
+    *,
+    now: datetime | None = None,
+) -> OperatorDirectiveDetail:
+    header = await _fetch_header(session, args)
+    live_version_id = header.active_version_id if header.is_active else None
+    version_rows, total_versions = await _fetch_versions(session, args, live_version_id)
+    versions, number_by_id = _version_projection(version_rows, live_version_id)
+    window_start, window_end = usage_window(args.usage_range, now=now)
+    usage = await _fetch_usage(session, args, number_by_id, window_start)
+    live_version_num = number_by_id.get(live_version_id) if live_version_id else None
     return OperatorDirectiveDetail(
-        id=row_value(header_row, "id"),
-        agent_id=row_value(header_row, "agent_id"),
-        agent_name=row_value(header_row, "agent_name"),
-        agent_slug=row_value(header_row, "agent_slug"),
-        is_active=is_active,
-        injection_mode=row_value(header_row, "injection_mode"),
+        id=header.id,
+        agent_id=header.agent_id,
+        agent_name=header.agent_name,
+        agent_slug=header.agent_slug,
+        is_active=header.is_active,
+        injection_mode=header.injection_mode,
         active_version_num=live_version_num,
-        version_count=len(versions),
+        version_count=total_versions,
         last_version_at=versions[0].created_at if versions else None,
-        updated_at=row_value(header_row, "updated_at"),
+        updated_at=header.updated_at,
         versions=versions,
+        versions_truncated=total_versions > len(versions),
         usage=usage,
         usage_range=args.usage_range,
         usage_window_start=window_start,
+        observed_at=window_end,
         active_version_missing=live_version_id is not None and live_version_num is None,
     )

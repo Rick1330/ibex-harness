@@ -16,11 +16,16 @@ from app.services.operator_directives import DirectiveDetailArgs, DirectiveListA
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 
 
-class _MapResult:
-    def __init__(self, rows: list[dict[str, object]] | None = None) -> None:
-        self._rows = rows or []
+class _Result:
+    """One fake result: mapping rows, or a scalar for the COUNT query."""
 
-    def mappings(self) -> _MapResult:
+    def __init__(
+        self, rows: list[dict[str, object]] | None = None, scalar: int = 0
+    ) -> None:
+        self._rows = rows or []
+        self._scalar = scalar
+
+    def mappings(self) -> _Result:
         return self
 
     def all(self) -> list[dict[str, object]]:
@@ -29,10 +34,18 @@ class _MapResult:
     def first(self) -> dict[str, object] | None:
         return self._rows[0] if self._rows else None
 
+    def scalar_one(self) -> int:
+        return self._scalar
 
-def _session(*results: list[dict[str, object]]) -> AsyncMock:
+
+def _session(*results: list[dict[str, object]] | int) -> AsyncMock:
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[_MapResult(rows) for rows in results])
+    session.execute = AsyncMock(
+        side_effect=[
+            _Result(scalar=result) if isinstance(result, int) else _Result(result)
+            for result in results
+        ]
+    )
     return session
 
 
@@ -110,6 +123,7 @@ async def test_list_projects_the_live_pointer_not_the_newest_version() -> None:
     page = await directive_service.list_operator_directives(session, _list_args())
 
     row = page.data[0]
+    assert page.observed_at is not None
     assert row.active_version_num == 2
     assert row.version_count == 5
     assert row.agent_name == "Support triage"
@@ -176,6 +190,7 @@ async def test_detail_marks_the_pointer_version_live_and_never_selects_content()
             _version_row(5, newer_id),
             _version_row(2, live_id),
         ],
+        2,
         [{"directive_version_id": live_id, "sessions": 7, "last_session_at": NOW}],
     )
 
@@ -199,9 +214,12 @@ async def test_detail_marks_the_pointer_version_live_and_never_selects_content()
 
 @pytest.mark.asyncio
 async def test_detail_flags_a_pointer_that_names_a_missing_version() -> None:
+    missing_id = uuid4()
     session = _session(
-        [_header_row(active_version_id=uuid4())],
+        [_header_row(active_version_id=missing_id)],
         [_version_row(1, uuid4())],
+        1,
+        [],
         [],
     )
 
@@ -234,6 +252,7 @@ async def test_detail_usage_only_counts_versions_of_this_directive() -> None:
     session = _session(
         [_header_row(active_version_id=live_id)],
         [_version_row(1, live_id)],
+        1,
         [
             {"directive_version_id": live_id, "sessions": 2, "last_session_at": NOW},
             {"directive_version_id": foreign_version, "sessions": 99, "last_session_at": NOW},
@@ -245,3 +264,43 @@ async def test_detail_usage_only_counts_versions_of_this_directive() -> None:
     )
 
     assert [(row.version_num, row.sessions) for row in detail.usage] == [(1, 2)]
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_back_pointer_is_fetched_even_when_it_falls_outside_the_page() -> None:
+    # 200 newest versions are returned; the pointer names an older one that the
+    # page does not include, so the service fetches it explicitly.
+    live_id = uuid4()
+    newest = [_version_row(number, uuid4()) for number in range(500, 300, -1)]
+    session = _session(
+        [_header_row(active_version_id=live_id)],
+        newest,
+        250,
+        [_version_row(3, live_id)],
+        [{"directive_version_id": live_id, "sessions": 4, "last_session_at": NOW}],
+    )
+
+    detail = await directive_service.get_operator_directive(
+        session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="7d"), now=NOW
+    )
+
+    assert detail.version_count == 250
+    assert detail.versions_truncated is True
+    assert detail.active_version_num == 3
+    assert detail.active_version_missing is False
+    assert detail.versions[-1].version_num == 3
+    assert detail.versions[-1].is_live is True
+
+
+@pytest.mark.asyncio
+async def test_a_short_history_is_not_marked_truncated() -> None:
+    live_id = uuid4()
+    session = _session([_header_row(active_version_id=live_id)], [_version_row(1, live_id)], 1, [])
+
+    detail = await directive_service.get_operator_directive(
+        session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="24h"), now=NOW
+    )
+
+    assert detail.version_count == 1
+    assert detail.versions_truncated is False
+    assert detail.observed_at == NOW

@@ -59,6 +59,8 @@ const coverage = computed(() => {
   return `${directives.value.length} live rows`
 })
 
+const observedAt = computed(() => directivesState.data.value?.observed_at ?? null)
+
 const newest = computed(() => {
   const stamps = directives.value
     .map((directive) => directive.last_version_at)
@@ -189,7 +191,7 @@ function detailHref(directiveId: string): string {
                   class="text-xs text-fg-2"
                   :title="formatGovernStamp(directive.last_version_at)"
                 >
-                  {{ formatGovernRelative(directive.last_version_at, directive.updated_at) }}
+                  {{ formatGovernRelative(directive.last_version_at, observedAt) }}
                 </span>
                 <span v-else class="text-xs text-fg-3">No version</span>
               </td>

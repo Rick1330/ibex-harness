@@ -585,10 +585,14 @@ export const OperatorDirectiveUsageSchema = z
   .strict()
 
 export const OperatorDirectiveDetailSchema = OperatorDirectiveSummarySchema.extend({
-  versions: z.array(OperatorDirectiveVersionSchema).max(500),
-  usage: z.array(OperatorDirectiveUsageSchema).max(500),
+  // The API returns the newest 200 versions plus the pointed version when it is
+  // older, so 201 is the real ceiling; `versions_truncated` marks a partial view.
+  versions: z.array(OperatorDirectiveVersionSchema).max(201),
+  versions_truncated: z.boolean(),
+  usage: z.array(OperatorDirectiveUsageSchema).max(201),
   usage_range: DirectiveUsageRangeSchema,
   usage_window_start: z.string().datetime({ offset: true }),
+  observed_at: z.string().datetime({ offset: true }),
   active_version_missing: z.boolean(),
 }).strict()
 
@@ -603,6 +607,7 @@ export const OperatorDirectivePageSchema = z
         total_count: z.number().int().nonnegative().nullable(),
       })
       .strict(),
+    observed_at: z.string().datetime({ offset: true }),
   })
   .strict()
 

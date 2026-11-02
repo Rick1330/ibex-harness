@@ -10,9 +10,6 @@ import type { DirectiveUsageRange } from "./contracts"
 export const DIRECTIVE_STATES = ["all", "active", "inactive"] as const
 export type DirectiveStateFilter = (typeof DIRECTIVE_STATES)[number]
 
-export const DIRECTIVE_SORTS = ["change", "agent"] as const
-export type DirectiveSort = (typeof DIRECTIVE_SORTS)[number]
-
 export type LiveDirectiveListQuery = {
   state: DirectiveStateFilter
   agentId: string | null

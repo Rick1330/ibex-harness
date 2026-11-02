@@ -699,26 +699,6 @@
         "title": "CursorPage[OperatorAgent]",
         "type": "object"
       },
-      "CursorPage_OperatorDirectiveSummary_": {
-        "properties": {
-          "data": {
-            "items": {
-              "$ref": "#/components/schemas/OperatorDirectiveSummary"
-            },
-            "title": "Data",
-            "type": "array"
-          },
-          "pagination": {
-            "$ref": "#/components/schemas/PaginationMeta"
-          }
-        },
-        "required": [
-          "data",
-          "pagination"
-        ],
-        "title": "CursorPage[OperatorDirectiveSummary]",
-        "type": "object"
-      },
       "CursorPage_OperatorMemory_": {
         "properties": {
           "data": {
@@ -1430,6 +1410,7 @@
         "type": "object"
       },
       "OperatorDirectiveDetail": {
+        "description": "`version_count` is the true total, not the size of `versions`.\n\nThe list carries the newest `VERSIONS_LIMIT` versions plus the pointed\nversion when it is older than that window, so a rollback stays visible on a\nlong history. `versions_truncated` says the timeline is partial.",
         "properties": {
           "active_version_missing": {
             "default": false,
@@ -1490,6 +1471,11 @@
             ],
             "title": "Last Version At"
           },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -1527,6 +1513,11 @@
             },
             "title": "Versions",
             "type": "array"
+          },
+          "versions_truncated": {
+            "default": false,
+            "title": "Versions Truncated",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1539,9 +1530,37 @@
           "version_count",
           "updated_at",
           "usage_range",
-          "usage_window_start"
+          "usage_window_start",
+          "observed_at"
         ],
         "title": "OperatorDirectiveDetail",
+        "type": "object"
+      },
+      "OperatorDirectivePage": {
+        "description": "One keyset page plus the read time relative ages are measured against.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorDirectiveSummary"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMeta"
+          }
+        },
+        "required": [
+          "data",
+          "pagination",
+          "observed_at"
+        ],
+        "title": "OperatorDirectivePage",
         "type": "object"
       },
       "OperatorDirectiveSummary": {
@@ -5439,7 +5458,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CursorPage_OperatorDirectiveSummary_"
+                  "$ref": "#/components/schemas/OperatorDirectivePage"
                 }
               }
             },

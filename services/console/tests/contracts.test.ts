@@ -422,6 +422,7 @@ const evidenceSummary = {
     const page = {
       data: [directive],
       pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+      observed_at: "2026-11-02T12:00:00.000Z",
     }
     const detail = {
       ...directive,
@@ -436,8 +437,10 @@ const evidenceSummary = {
         },
       ],
       usage: [{ version_num: 2, sessions: 12, last_session_at: null }],
+      versions_truncated: false,
       usage_range: "7d",
       usage_window_start: "2026-10-26T12:00:00.000Z",
+      observed_at: "2026-11-02T12:00:00.000Z",
       active_version_missing: false,
     }
 

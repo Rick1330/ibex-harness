@@ -65,14 +65,16 @@ async def _seed_directive(
     )
 
 
-async def _seed_version(
-    session: AsyncSession,
-    org_id: UUID,
-    directive_id: UUID,
-    version_id: UUID,
-    version_num: int,
-    created_at: datetime = START,
-) -> None:
+@dataclass(frozen=True)
+class SeedVersion:
+    org_id: UUID
+    directive_id: UUID
+    version_id: UUID
+    version_num: int
+    created_at: datetime = START
+
+
+async def _seed_version(session: AsyncSession, seed: SeedVersion) -> None:
     await session.execute(
         text(
             """
@@ -85,13 +87,13 @@ async def _seed_version(
             """
         ),
         {
-            "id": str(version_id),
-            "directive_id": str(directive_id),
-            "org_id": str(org_id),
-            "version_num": version_num,
-            "content": f"instruction text for version {version_num}",
-            "content_hash": "a" * 64 if version_num == 1 else "b" * 64,
-            "created_at": created_at,
+            "id": str(seed.version_id),
+            "directive_id": str(seed.directive_id),
+            "org_id": str(seed.org_id),
+            "version_num": seed.version_num,
+            "content": f"instruction text for version {seed.version_num}",
+            "content_hash": "a" * 64 if seed.version_num == 1 else "b" * 64,
+            "created_at": seed.created_at,
         },
     )
 
@@ -106,9 +108,14 @@ async def _point_at(session: AsyncSession, directive_id: UUID, version_id: UUID)
     )
 
 
-async def _seed_session(
-    session: AsyncSession, org_id: UUID, agent_id: UUID, version_id: UUID, request_id: str
-) -> None:
+@dataclass(frozen=True)
+class SeedSession:
+    org_id: UUID
+    agent_id: UUID
+    version_id: UUID
+
+
+async def _seed_session(session: AsyncSession, seed: SeedSession) -> None:
     await session.execute(
         text(
             """
@@ -123,9 +130,9 @@ async def _seed_session(
             """
         ),
         {
-            "org_id": str(org_id),
-            "agent_id": str(agent_id),
-            "version_id": str(version_id),
+            "org_id": str(seed.org_id),
+            "agent_id": str(seed.agent_id),
+            "version_id": str(seed.version_id),
             "created_at": START,
         },
     )
@@ -177,15 +184,30 @@ async def _seed_fixture(session_factory: async_sessionmaker[AsyncSession], ids: 
         await _seed_agent(admin, ids.org_b, ids.agent_b, "Agent B")
         await _seed_directive(admin, ids.org_a, ids.agent_a, ids.directive_a)
         await _seed_directive(admin, ids.org_b, ids.agent_b, ids.directive_b)
-        await _seed_version(admin, ids.org_a, ids.directive_a, ids.version_a1, 1)
         await _seed_version(
-            admin, ids.org_a, ids.directive_a, ids.version_a2, 2, created_at=START + timedelta(minutes=5)
+            admin, SeedVersion(ids.org_a, ids.directive_a, ids.version_a1, 1)
         )
-        await _seed_version(admin, ids.org_b, ids.directive_b, ids.version_b1, 1)
+        await _seed_version(
+            admin,
+            SeedVersion(
+                ids.org_a,
+                ids.directive_a,
+                ids.version_a2,
+                2,
+                created_at=START + timedelta(minutes=5),
+            ),
+        )
+        await _seed_version(
+            admin, SeedVersion(ids.org_b, ids.directive_b, ids.version_b1, 1)
+        )
         # Rollback: the pointer names v1 while v2 is the newest version.
         await _point_at(admin, ids.directive_a, ids.version_a1)
-        await _seed_session(admin, ids.org_a, ids.agent_a, ids.version_a1, "req-a-1")
-        await _seed_session(admin, ids.org_a, ids.agent_a, ids.version_a1, "req-a-2")
+        await _seed_session(
+            admin, SeedSession(ids.org_a, ids.agent_a, ids.version_a1)
+        )
+        await _seed_session(
+            admin, SeedSession(ids.org_a, ids.agent_a, ids.version_a1)
+        )
 
 
 @pytest.mark.asyncio
@@ -222,6 +244,7 @@ async def test_directive_reads_are_tenant_scoped_and_follow_the_pointer(
             )
 
         assert [row.id for row in page.data] == [ids.directive_a]
+        assert page.observed_at is not None
         assert page.data[0].version_count == 2
         # v1 is live after the rollback even though v2 is the newest version.
         assert page.data[0].active_version_num == 1
@@ -229,6 +252,9 @@ async def test_directive_reads_are_tenant_scoped_and_follow_the_pointer(
         assert [version.is_live for version in detail.versions] == [False, True]
         assert [(row.version_num, row.sessions) for row in detail.usage] == [(1, 2)]
         assert detail.active_version_missing is False
+        assert detail.version_count == 2
+        assert detail.versions_truncated is False
+        assert detail.observed_at is not None
 
         async with session_with_org(session_factory, str(ids.org_b)) as session:
             other_page = await list_operator_directives(

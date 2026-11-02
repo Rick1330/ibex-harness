@@ -13,9 +13,10 @@ from authclient.permissions import OPERATOR_METADATA_READ
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.deps import operator_org_session
 from app.errors import ApiError
-from app.pagination import CursorPage, PaginationMeta
+from app.pagination import PaginationMeta
 from app.schemas.operator_directives import (
     OperatorDirectiveDetail,
+    OperatorDirectivePage,
     OperatorDirectiveSummary,
     OperatorDirectiveUsage,
     OperatorDirectiveVersion,
@@ -66,6 +67,7 @@ def _detail() -> OperatorDirectiveDetail:
                 is_live=True,
             )
         ],
+        versions_truncated=False,
         usage=[
             OperatorDirectiveUsage(
                 version_num=4, sessions=12, last_session_at=NOW - timedelta(hours=1)
@@ -73,6 +75,7 @@ def _detail() -> OperatorDirectiveDetail:
         ],
         usage_range="7d",
         usage_window_start=NOW - timedelta(days=7),
+        observed_at=NOW,
     )
 
 
@@ -94,12 +97,12 @@ def test_directive_list_projects_and_forwards_filters(monkeypatch: pytest.Monkey
     agent_id = uuid4()
     seen: dict[str, object] = {}
 
-    async def fake_list(_session: object, args: object) -> CursorPage[OperatorDirectiveSummary]:
+    async def fake_list(_session: object, args: object) -> OperatorDirectivePage:
         seen["org_id"] = args.org_id  # type: ignore[attr-defined]
         seen["state"] = args.state  # type: ignore[attr-defined]
         seen["agent_id"] = args.agent_id  # type: ignore[attr-defined]
-        return CursorPage[OperatorDirectiveSummary](
-            data=[_summary()], pagination=PaginationMeta(has_more=False)
+        return OperatorDirectivePage(
+            data=[_summary()], pagination=PaginationMeta(has_more=False), observed_at=NOW
         )
 
     monkeypatch.setattr(

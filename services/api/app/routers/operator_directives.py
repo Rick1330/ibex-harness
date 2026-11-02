@@ -11,12 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.authz import require_operator_metadata_session
 from app.deps import operator_org_session
 from app.operator_session_auth import OperatorSessionAuthorization
-from app.pagination import CursorPage
 from app.schemas.operator_directives import (
     OperatorDirectiveDetail,
     OperatorDirectiveDetailQuery,
     OperatorDirectiveListQuery,
-    OperatorDirectiveSummary,
+    OperatorDirectivePage,
 )
 from app.services import operator_directives as directive_service
 from app.services.operator_directives import DirectiveDetailArgs, DirectiveListArgs
@@ -35,7 +34,7 @@ async def operator_directive_list(
     operator: OperatorSessionAuth,
     session: OperatorSessionDatabase,
     query: Annotated[OperatorDirectiveListQuery, Query()],
-) -> CursorPage[OperatorDirectiveSummary]:
+) -> OperatorDirectivePage:
     return await directive_service.list_operator_directives(
         session,
         DirectiveListArgs(
