@@ -2,6 +2,7 @@ import type {
   OperatorAgent,
   OperatorAgentPage,
   OperatorContext,
+  OperatorEvidenceSummary,
   OperatorMemory,
   OperatorMemoryPage,
   OperatorOverview,
@@ -28,6 +29,7 @@ export type PublicOperatorMemoryPage = OperatorMemoryPage
 export type PublicOperatorSessionRecord = OperatorSessionRecord
 export type PublicOperatorSessionRecordDetail = OperatorSessionRecordDetail
 export type PublicOperatorSessionRecordPage = OperatorSessionRecordPage
+export type PublicOperatorEvidenceSummary = OperatorEvidenceSummary
 
 export type OperatorErrorEnvelope = {
   error: {

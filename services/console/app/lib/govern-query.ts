@@ -39,14 +39,6 @@ import {
   type AuditSavedViewId,
 } from "./audit-preview"
 import {
-  CHAIN_STATES,
-  DELETION_BASES,
-  EVIDENCE_RANGES,
-  type ChainState,
-  type DeletionBasis,
-  type EvidenceRange,
-} from "./evidence-preview"
-import {
   ANALYTICS_RANGES,
   DIMENSIONS,
   METRIC_KEYS,
@@ -778,67 +770,6 @@ export function serializeAuditIntegrityQuery(state: AuditIntegrityState): URLSea
 export function auditIntegrityHref(state: AuditIntegrityState): string {
   const query = serializeAuditIntegrityQuery(state).toString()
   return query ? `/audit/integrity?${query}` : "/audit/integrity"
-}
-
-/* ------------------------------------------------------------------ evidence */
-
-export const EVIDENCE_TABS = ["ledger", "tombstones", "chain", "redaction"] as const
-export type EvidenceTab = (typeof EVIDENCE_TABS)[number]
-
-export const EVIDENCE_TAB_LABELS: Record<EvidenceTab, string> = {
-  ledger: "Coverage ledger",
-  tombstones: "Tombstones",
-  chain: "Evidence chain",
-  redaction: "Redaction",
-}
-
-export type EvidenceListState = {
-  tab: EvidenceTab
-  range: EvidenceRange
-  component: string
-  basis: DeletionBasis | "all"
-  chainState: ChainState | "all"
-  q: string
-}
-
-export const EVIDENCE_LIST_DEFAULT: EvidenceListState = {
-  tab: "ledger",
-  range: "24h",
-  component: "all",
-  basis: "all",
-  chainState: "all",
-  q: "",
-}
-
-export function parseEvidenceQuery(query: Record<string, unknown>): EvidenceListState {
-  const state = { ...EVIDENCE_LIST_DEFAULT }
-  const tab = firstValue(query.tab)
-  if (allowed(tab, EVIDENCE_TABS)) state.tab = tab
-  const range = firstValue(query.range)
-  if (allowed(range, EVIDENCE_RANGES)) state.range = range
-  state.component = firstValue(query.component).trim().slice(0, 60) || "all"
-  const basis = firstValue(query.basis)
-  if (basis === "all" || allowed(basis, DELETION_BASES)) state.basis = basis as DeletionBasis | "all"
-  const chainState = firstValue(query.state)
-  if (chainState === "all" || allowed(chainState, CHAIN_STATES)) state.chainState = chainState as ChainState | "all"
-  state.q = firstValue(query.q).trim().slice(0, 160)
-  return state
-}
-
-export function serializeEvidenceQuery(state: EvidenceListState): URLSearchParams {
-  const query = new URLSearchParams()
-  if (state.tab !== EVIDENCE_LIST_DEFAULT.tab) query.set("tab", state.tab)
-  if (state.range !== EVIDENCE_LIST_DEFAULT.range) query.set("range", state.range)
-  if (state.component !== "all") query.set("component", state.component)
-  if (state.basis !== "all") query.set("basis", state.basis)
-  if (state.chainState !== "all") query.set("state", state.chainState)
-  if (state.q.trim()) query.set("q", state.q.trim())
-  return query
-}
-
-export function evidenceHref(state: EvidenceListState): string {
-  const query = serializeEvidenceQuery(state).toString()
-  return query ? `/evidence?${query}` : "/evidence"
 }
 
 /* ------------------------------------------------------------------ budgets */

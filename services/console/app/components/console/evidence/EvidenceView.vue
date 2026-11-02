@@ -1,179 +1,136 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
-import EvidenceChainPanel from "./EvidenceChainPanel.vue"
-import EvidenceHeader from "./EvidenceHeader.vue"
-import EvidenceLedgerPanel from "./EvidenceLedgerPanel.vue"
-import EvidenceRedactionPanel from "./EvidenceRedactionPanel.vue"
-import EvidenceTombstonePanel from "./EvidenceTombstonePanel.vue"
-import GovernFilterBar from "@/components/console/govern/primitives/GovernFilterBar.vue"
-import GovernFilterSelect from "@/components/console/govern/primitives/GovernFilterSelect.vue"
-import GovernShortcutsDialog from "@/components/console/govern/primitives/GovernShortcutsDialog.vue"
-import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
+import { computed } from "vue"
+import { Download } from "@lucide/vue"
+import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
 import GovernCopyId from "@/components/console/govern/primitives/GovernCopyId.vue"
-import { useGovernShortcuts } from "@/composables/useGovernShortcuts"
-import { formatGovernRelative } from "@/lib/govern-format"
+import GovernFilterSelect from "@/components/console/govern/primitives/GovernFilterSelect.vue"
+import GovernLockedAction from "@/components/console/govern/primitives/GovernLockedAction.vue"
+import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
+import IxVerdict from "@/components/console/IxVerdict.vue"
+import EvidenceCoveragePanel from "./EvidenceCoveragePanel.vue"
+import EvidenceDeliveryPanel from "./EvidenceDeliveryPanel.vue"
+import EvidenceUnavailablePanel from "./EvidenceUnavailablePanel.vue"
+import { useOperatorEvidenceSummary } from "@/composables/useOperatorData"
+import { formatGovernNumber, formatGovernRelative } from "@/lib/govern-format"
+import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
 import {
-  EVIDENCE_LIST_DEFAULT,
+  EVIDENCE_RANGES,
+  EVIDENCE_RANGE_LABELS,
   EVIDENCE_TAB_LABELS,
-  evidenceHref,
-  type EvidenceListState,
+  serializeLiveEvidenceQuery,
   type EvidenceTab,
-} from "@/lib/govern-query"
-import {
-  CHAIN_STATE_LABELS,
-  CHAIN_STATES,
-  DELETION_BASES,
-  DELETION_BASIS_LABELS,
-  EVIDENCE_PRODUCERS,
-  EVIDENCE_REDACTION_ROWS,
-  EVIDENCE_SUMMARY_CONTRACT,
-  chainStateCounts,
-  evidenceChainInRange,
-  evidenceProducersFor,
-  evidenceTombstonesInRange,
-  filterChainLinks,
-  filterEvidenceProducers,
-  filterEvidenceRedaction,
-  filterTombstones,
-  tombstoneChainComplete,
-  type ChainState,
-  type DeletionBasis,
-  type EvidenceRange,
-} from "@/lib/evidence-preview"
+  type LiveEvidenceQuery,
+} from "~~/shared/operator/evidence-query"
+import { deliveryTotal, unsettledDelivery } from "@/lib/evidence-summary"
 
-const props = defineProps<{ state: EvidenceListState }>()
-const emit = defineEmits<{ update: [state: EvidenceListState] }>()
+const props = defineProps<{ state: LiveEvidenceQuery }>()
+const emit = defineEmits<{ update: [state: LiveEvidenceQuery] }>()
 
-function update(patch: Partial<EvidenceListState>): void {
+const summaryState = useOperatorEvidenceSummary(() => serializeLiveEvidenceQuery(props.state))
+const summary = computed(() => summaryState.data.value ?? null)
+const error = computed(() => summaryState.error.value)
+const authIssue = computed(() => isOperatorAuthError(error.value))
+const failureDetail = computed(() =>
+  error.value && !authIssue.value ? operatorFailureDetail(error.value) : null,
+)
+const loading = computed(() => !summary.value && !error.value && summaryState.status.value === "pending")
+
+const rangeOptions = EVIDENCE_RANGES.map((range) => ({ value: range, label: EVIDENCE_RANGE_LABELS[range] }))
+
+const tabs = computed(() => [
+  { id: "coverage", label: EVIDENCE_TAB_LABELS.coverage },
+  { id: "delivery", label: EVIDENCE_TAB_LABELS.delivery },
+  { id: "tombstones", label: EVIDENCE_TAB_LABELS.tombstones },
+  { id: "redaction", label: EVIDENCE_TAB_LABELS.redaction },
+])
+
+const tabBadges = computed<Record<string, string>>(() => {
+  const badges: Record<string, string> = {}
+  const data = summary.value
+  if (!data) return badges
+  const unsettled = unsettledDelivery(data.delivery)
+  badges.coverage = formatGovernNumber(data.runs_total)
+  badges.delivery = unsettled > 0
+    ? `${formatGovernNumber(unsettled)} open`
+    : formatGovernNumber(deliveryTotal(data.delivery))
+  return badges
+})
+
+const verdict = computed(() => {
+  if (loading.value) return "Reading the evidence summary for this organization…"
+  if (authIssue.value) return "The operator session cannot read this organization"
+  if (error.value) return "Evidence summary unavailable"
+  const data = summary.value
+  if (!data) return "Evidence summary unavailable"
+  if (data.runs_total === 0) return "No evidence run was recorded in this window"
+  const incomplete = data.runs_total - data.capture_complete_runs
+  const open = unsettledDelivery(data.delivery)
+  if (incomplete === 0 && open === 0) {
+    return `${formatGovernNumber(data.runs_total)} runs, every one a complete capture and every event settled`
+  }
+  return `${formatGovernNumber(data.capture_complete_runs)} of ${formatGovernNumber(data.runs_total)} runs have a complete capture; ${formatGovernNumber(open)} outbox event(s) are unsettled`
+})
+
+const coverage = computed(() => {
+  const data = summary.value
+  if (!data) return "No data shown"
+  return `${formatGovernNumber(data.runs_total)} runs · ${formatGovernNumber(deliveryTotal(data.delivery))} outbox events`
+})
+
+const observed = computed(() => summary.value?.observed_at ?? null)
+
+const notes = [
+  {
+    lead: "A completeness value describes the record.",
+    body: "Complete means the run's record holds the full capture. Partial, sampled, late, redacted, expired, deleted, and simulated each name why it does not, and the page never folds them into one verdict.",
+  },
+  {
+    lead: "Delivery is a separate axis.",
+    body: "The outbox carries no run reference, so relay health is reported for the organization, not per run. A complete capture that has not reached its sink is shown as exactly that.",
+  },
+  {
+    lead: "Tombstones and redaction need their own read models.",
+    body: "Those tabs render an explicit unavailable state instead of fixtures. There is no contract behind them yet.",
+  },
+]
+
+function update(patch: Partial<LiveEvidenceQuery>): void {
   emit("update", { ...props.state, ...patch })
 }
-
-const header = ref<InstanceType<typeof EvidenceHeader> | null>(null)
-const search = ref<InstanceType<typeof GovernFilterBar> | null>(null)
-
-const producers = computed(() => evidenceProducersFor(props.state.range))
-const tombstones = computed(() => evidenceTombstonesInRange(props.state.range))
-const chain = computed(() => evidenceChainInRange(props.state.range))
-const redaction = computed(() => filterEvidenceRedaction(EVIDENCE_REDACTION_ROWS, props.state.q))
-
-const ledgerRows = computed(() => filterEvidenceProducers(producers.value, props.state))
-const tombstoneRows = computed(() => filterTombstones(tombstones.value, props.state))
-const chainRows = computed(() => filterChainLinks(chain.value, props.state))
-const chainCounts = computed(() => chainStateCounts(chain.value))
-
-const tabs = [
-  { id: "ledger", label: EVIDENCE_TAB_LABELS.ledger },
-  { id: "tombstones", label: EVIDENCE_TAB_LABELS.tombstones },
-  { id: "chain", label: EVIDENCE_TAB_LABELS.chain },
-  { id: "redaction", label: EVIDENCE_TAB_LABELS.redaction },
-]
-
-const tabBadges = computed(() => ({
-  ledger: String(ledgerRows.value.length),
-  tombstones: String(tombstoneRows.value.length),
-  chain: String(chainRows.value.length),
-  redaction: String(redaction.value.length),
-}))
-
-const componentOptions = [
-  { value: "all", label: "All producers" },
-  ...EVIDENCE_PRODUCERS.map((row) => ({ value: row.id, label: row.label })),
-]
-
-const basisOptions = [
-  { value: "all", label: "All bases" },
-  ...DELETION_BASES.map((basis) => ({ value: basis, label: DELETION_BASIS_LABELS[basis] })),
-]
-
-const chainStateOptions = [
-  { value: "all", label: "All states" },
-  ...CHAIN_STATES.map((state) => ({ value: state, label: CHAIN_STATE_LABELS[state] })),
-]
-
-const placeholders: Record<EvidenceTab, string> = {
-  ledger: "Filter producers: memory, relay, projection",
-  tombstones: "Filter deletions: record id, basis, requester",
-  chain: "Filter the chain: outbox id, producer, subject",
-  redaction: "Filter pipelines: sanitizer, proof, removed field",
-}
-
-const openChain = computed(() => chainCounts.value.poison + chainCounts.value.gap + chainCounts.value.retrying)
-const incompleteTombstones = computed(() => tombstones.value.filter((row) => !tombstoneChainComplete(row)).length)
-const newestEvidence = computed(() => {
-  const stamps = producers.value
-    .map((row) => row.lastEvidenceAt)
-    .filter((value): value is string => value !== null)
-    .sort((left, right) => Date.parse(right) - Date.parse(left))
-  return stamps[0] ?? null
-})
-
-const activeFilters = computed(
-  () =>
-    [
-      props.state.q.trim() !== "",
-      props.state.component !== "all",
-      props.state.basis !== "all",
-      props.state.chainState !== "all",
-    ].filter(Boolean).length,
-)
-
-function clearFilters(): void {
-  emit("update", { ...EVIDENCE_LIST_DEFAULT, tab: props.state.tab, range: props.state.range })
-}
-
-function copyCurrentLink(): void {
-  if (!import.meta.client) return
-  void navigator.clipboard.writeText(`${window.location.origin}${evidenceHref(props.state)}`)
-}
-
-const { helpOpen } = useGovernShortcuts({
-  onSearch: () => search.value?.focus(),
-  keys: {
-    y: copyCurrentLink,
-    "1": () => update({ tab: "ledger" }),
-    "2": () => update({ tab: "tombstones" }),
-    "3": () => update({ tab: "chain" }),
-    "4": () => update({ tab: "redaction" }),
-  },
-})
-
-const shortcutGroups = [
-  {
-    title: "This page",
-    rows: [
-      { keys: "/", label: "Focus the filter box" },
-      { keys: "1 / 2 / 3 / 4", label: "Coverage ledger · Tombstones · Evidence chain · Redaction" },
-      { keys: "y", label: "Copy link to this view" },
-      { keys: "g p", label: "Go to policies" },
-      { keys: "g d", label: "Go to drift" },
-      { keys: "g a", label: "Go to audit log" },
-      { keys: "?", label: "Show this sheet" },
-    ],
-  },
-]
 </script>
 
 <template>
   <div class="mx-auto flex w-full max-w-[100rem] min-w-0 flex-1 flex-col gap-3 pb-2">
-    <EvidenceHeader
-      ref="header"
-      :range="state.range"
-      @update:range="update({ range: $event as EvidenceRange })"
-    />
+    <ConsolePageHeader
+      title="Evidence"
+      definition="Which runs hold a complete capture, which do not, and whether the delivery chain behind them settled."
+      state="live"
+      :verdict="verdict"
+      contract="operator.evidence.summary.v1"
+      scope="Organization"
+      :range="EVIDENCE_RANGE_LABELS[state.range]"
+      :coverage="coverage"
+      :observed="observed"
+      caveat="Complete capture is a statement about the record. It is not a delivery guarantee, and it is not a population estimate."
+      :notes="notes"
+    >
+      <template #actions>
+        <GovernFilterSelect
+          label="Range"
+          :model-value="state.range"
+          :options="rangeOptions"
+          default-value="24h"
+          @update:model-value="update({ range: $event as LiveEvidenceQuery['range'] })"
+        />
+        <GovernLockedAction label="Export" :icon="Download" />
+      </template>
+    </ConsolePageHeader>
 
     <section class="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[0.6875rem] text-fg-3" aria-label="Evidence summary">
-      <span>
-        {{ tombstones.length }} tombstones in range ·
-        <span v-if="incompleteTombstones > 0" class="text-warn">{{ incompleteTombstones }} with an open step</span>
-        <span v-else class="text-ok">all fully applied</span>
+      <span v-if="summary && summary.last_run_at">
+        Newest run {{ formatGovernRelative(summary.last_run_at) }}
       </span>
-      <span>
-        Chain:
-        <span v-if="openChain > 0" class="text-crit">{{ openChain }} row(s) not settled</span>
-        <span v-else class="text-ok">every recorded row settled</span>
-      </span>
-      <span v-if="newestEvidence">Newest evidence row {{ formatGovernRelative(newestEvidence) }}</span>
-      <GovernCopyId :id="EVIDENCE_SUMMARY_CONTRACT" label="Summary contract" truncate />
+      <GovernCopyId id="operator.evidence.summary.v1" label="Summary contract" truncate />
     </section>
 
     <GovernTabBar
@@ -184,62 +141,46 @@ const shortcutGroups = [
       @update:model-value="update({ tab: $event as EvidenceTab })"
     />
 
-    <GovernFilterBar
-      ref="search"
-      :model-value="state.q"
-      :label="placeholders[state.tab]"
-      :placeholder="placeholders[state.tab]"
-      :result-text="
-        state.tab === 'ledger'
-          ? `${ledgerRows.length} of ${producers.length} producers`
-          : state.tab === 'tombstones'
-            ? `${tombstoneRows.length} of ${tombstones.length} tombstones`
-            : state.tab === 'chain'
-              ? `${chainRows.length} of ${chain.length} chain rows`
-              : `${redaction.length} of ${EVIDENCE_REDACTION_ROWS.length} pipelines`
-      "
-      :active="activeFilters > 0"
-      @update:model-value="update({ q: $event })"
-      @clear="clearFilters"
-    >
-      <template #filters>
-        <GovernFilterSelect
-          v-if="state.tab === 'ledger'"
-          label="Producer"
-          :model-value="state.component"
-          :options="componentOptions"
-          default-value="all"
-          @update:model-value="update({ component: $event })"
-        />
-        <GovernFilterSelect
-          v-if="state.tab === 'tombstones'"
-          label="Basis"
-          :model-value="state.basis"
-          :options="basisOptions"
-          default-value="all"
-          @update:model-value="update({ basis: $event as DeletionBasis | 'all' })"
-        />
-        <GovernFilterSelect
-          v-if="state.tab === 'chain'"
-          label="State"
-          :model-value="state.chainState"
-          :options="chainStateOptions"
-          default-value="all"
-          @update:model-value="update({ chainState: $event as ChainState | 'all' })"
-        />
-      </template>
-    </GovernFilterBar>
-
-    <EvidenceLedgerPanel
-      v-if="state.tab === 'ledger'"
-      :rows="ledgerRows"
-      :selected="state.component"
-      @select="update({ component: $event })"
+    <!-- Tabs without a contract explain themselves regardless of the read state;
+         they never depend on the summary and never substitute fixtures. -->
+    <EvidenceUnavailablePanel
+      v-if="state.tab === 'tombstones'"
+      title="Tombstone history is not part of this contract"
+      reason="operator.evidence.summary.v1 reports capture completeness and relay delivery. Deletion chains, downstream receipts, and hold scope need their own read model, so this tab renders nothing rather than fixtures."
+      next-step="Use the memory and session records for a specific subject, or open the privacy governance contract once it exists."
+      action-label="Open memories"
+      action-to="/memories"
     />
-    <EvidenceTombstonePanel v-else-if="state.tab === 'tombstones'" :rows="tombstoneRows" />
-    <EvidenceChainPanel v-else-if="state.tab === 'chain'" :rows="chainRows" :counts="chainCounts" />
-    <EvidenceRedactionPanel v-else :rows="redaction" />
-
-    <GovernShortcutsDialog v-model:open="helpOpen" :groups="shortcutGroups" />
+    <EvidenceUnavailablePanel
+      v-else-if="state.tab === 'redaction'"
+      title="Redaction detail is not part of this contract"
+      reason="The summary reports how many runs are redacted, not which fields were removed from each. Field-level redaction evidence needs its own read model."
+      next-step="Open a memory record to see its redaction flags, or read the capture policy on this page."
+      action-label="Back to coverage"
+      action-to="/evidence"
+    />
+    <IxVerdict
+      v-else-if="loading"
+      tone="unknown"
+      eyebrow="Live operator read"
+      title="Reading the evidence summary"
+      body="Asking the operator API for the selected window."
+    />
+    <IxVerdict
+      v-else-if="authIssue"
+      tone="unavailable"
+      eyebrow="Operator session"
+      title="The operator session cannot read this organization"
+      body="Sign in again with an account that holds metadata-read permission."
+    />
+    <IxVerdict
+      v-else-if="error"
+      tone="unknown"
+      eyebrow="Live operator read"
+      title="Evidence summary unavailable"
+      :body="failureDetail ?? 'The upstream read failed. No values are inferred.'"
+    />
+    <EvidenceDeliveryPanel v-else-if="summary && state.tab === 'delivery'" :summary="summary" />
+    <EvidenceCoveragePanel v-else-if="summary" :summary="summary" />
   </div>
 </template>
