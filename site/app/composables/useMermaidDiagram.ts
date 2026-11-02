@@ -170,6 +170,20 @@ const SVG_VIEWBOX = /<svg\b[^>]*\bviewBox="([^"]+)"/i
 const SVG_WIDTH = /<svg\b[^>]*\bwidth="([\d.]+)"/i
 const SVG_HEIGHT = /<svg\b[^>]*\bheight="([\d.]+)"/i
 
+// Mermaid sanitises its output with its own DOMPurify and runs at
+// `securityLevel: 'strict'`, so this should never match. It is the fail-closed
+// guard in front of `v-html`: if a mermaid upgrade or a config change ever emits
+// active content, the diagram shows its error state instead of mounting it.
+// `foreignObject` is deliberately absent: mermaid uses it for its own HTML
+// labels, which strict mode keeps but with encoded content.
+const ACTIVE_SVG_CONTENT = /<\s*(script|iframe|object|embed)\b|\son[a-z]+\s*=|javascript:/i
+
+function assertInertSvg(svg: string): void {
+  if (ACTIVE_SVG_CONTENT.test(svg)) {
+    throw new Error('Mermaid rendered active content; refusing to mount the diagram')
+  }
+}
+
 function viewBoxSize(svg: string): { width: number, height: number } | null {
   const viewBox = SVG_VIEWBOX.exec(svg)?.[1]
   if (!viewBox) return null
@@ -221,6 +235,7 @@ export function useMermaidDiagram() {
       mermaid.initialize(buildConfig(dark, htmlLabels))
       const id = nextDiagramId(prefix)
       const result = await withDeadline(mermaid.render(id, code), 'Diagram rendering timed out')
+      assertInertSvg(result.svg)
       return {
         ...measure(result.svg),
         svg: result.svg,
