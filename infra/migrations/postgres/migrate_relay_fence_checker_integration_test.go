@@ -263,6 +263,9 @@ func TestRelayFenceChecker_DownRemovesFunction(t *testing.T) {
 		t.Fatal("function must exist after up")
 	}
 
+	// 000047 is no longer the latest migration; step down to it first.
+	const relayFenceVersion uint = 47
+	downToVersion(t, f.dsn, relayFenceVersion)
 	if err := Down(f.dsn); err != nil {
 		t.Fatalf("down: %v", err)
 	}
