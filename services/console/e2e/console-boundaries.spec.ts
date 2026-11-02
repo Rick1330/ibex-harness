@@ -246,50 +246,39 @@ test("agent surfaces fail closed without horizontal overflow on narrow viewports
 test("directives stay a list, filter in the URL, and open a route", async ({ page }) => {
   test.setTimeout(60_000)
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/directives")
+  await page.goto("/directives?demo=0")
   await waitForHydration(page)
 
   await expect(page.getByRole("heading", { name: "Directives", exact: true })).toBeVisible()
-  const table = page.locator('[aria-label="Directive table"]')
-  await expect(table).toBeVisible()
-  await expect(page.locator("tr[data-directive-row]")).toHaveCount(4)
-  // Visiting the list must never auto-open a record.
-  await expect(page.getByRole("dialog", { name: "Directive quick look" })).toHaveCount(0)
+  // No operator API: the surface fails closed and renders no fixture rows.
+  await expect(page.getByRole("heading", { name: "Directive index unavailable" })).toBeVisible()
+  await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+  await expect(page.getByText("Support triage")).toHaveCount(0)
 
-  const search = page.getByRole("searchbox", { name: "Search directives" })
-  await search.fill("billing")
-  await expect(page).toHaveURL(/[?&]q=billing/)
-  // "billing" appears in both Billing assistant and Support triage (billing impact check).
-  await expect(page.getByText("Showing 2 of 4")).toBeVisible()
-  await expect(page.locator("tr[data-directive-row]")).toHaveCount(2)
-
-  await table.getByRole("button", { name: "Open Billing assistant" }).click()
-  await expect(page).toHaveURL(/\/directives\/dir_billing_assistant/)
-  await expect(page.getByRole("heading", { name: "Billing assistant", exact: true })).toBeVisible()
+  // The state filter is real URL state, and the unsupported field is dropped.
+  await page.getByRole("combobox", { name: "Filter by state" }).selectOption("active")
+  await expect(page).toHaveURL(/state=active/)
+  await expect(page).not.toHaveURL(/demo=0/)
   await expectNoAxeViolations(page)
 })
 
-test("directive detail keeps six tab states in the URL and reports candidate facts", async ({ page }) => {
+test("directive detail keeps its tab states in the URL and names what it cannot show", async ({ page }) => {
   test.setTimeout(60_000)
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/directives/dir_support_triage")
+  await page.goto("/directives/11111111-1111-4111-8111-111111111111")
   await waitForHydration(page)
 
-  await expect(page.getByRole("heading", { name: "Support triage", exact: true })).toBeVisible()
-  await expect(page.getByText(/Live:\s*v13/)).toBeVisible()
-  await expect(page.getByText(/Candidate:\s*v14/)).toBeVisible()
-
+  await expect(page.getByRole("heading", { name: "Directive", exact: true, level: 1 })).toBeVisible()
   const tabs = page.getByRole("tablist", { name: "Directive views" }).getByRole("tab")
-  await expect(tabs).toHaveCount(6)
-  for (const label of ["Overview", "Versions", "Diff", "Promotion", "Usage", "Audit"]) {
+  await expect(tabs).toHaveCount(5)
+  for (const label of ["Versions", "Usage", "Diff", "Promotion", "Audit"]) {
     await expect(page.getByRole("tab", { name: new RegExp(`^${label}`) })).toBeVisible()
   }
 
   await page.getByRole("tab", { name: /^Diff/ }).click()
   await expect(page).toHaveURL(/tab=diff/)
   await expect(page.getByRole("tab", { name: /^Diff/ })).toHaveAttribute("aria-selected", "true")
-  // The diff defaults to live → candidate.
-  await expect(page.getByText("v13 → v14")).toBeVisible()
+  await expect(page.getByText("Version diff is not part of this contract", { exact: true })).toBeVisible()
 
   await page.reload()
   await waitForHydration(page)
@@ -297,23 +286,11 @@ test("directive detail keeps six tab states in the URL and reports candidate fac
 
   await page.getByRole("tab", { name: /^Promotion/ }).click()
   await expect(page).toHaveURL(/tab=promotion/)
-  // The promotion path marks each step and highlights approval while it waits.
-  const path = page.getByRole("region", { name: "Promotion path" })
-  await expect(path).toBeVisible()
-  const steps = path.getByRole("listitem")
-  await expect(steps).toHaveCount(5)
-  for (const label of ["Draft", "Submitted", "Checks", "Approval", "Live"]) {
-    await expect(path.getByText(new RegExp(`^${label}`))).toBeVisible()
-  }
-  await expect(path.locator('[aria-current="step"]')).toContainText("Approval")
-  await expect(path.getByText("0 of 1 approvals recorded")).toBeVisible()
-  await expect(page.getByRole("heading", { name: "Promotion readiness" })).toBeVisible()
-  await expect(page.getByText("No failed checks")).toBeVisible()
-  await expect(page.getByRole("heading", { name: "Rollback plan" })).toBeVisible()
-  await expect(page.getByText(/Target\s*v12/)).toBeVisible()
-  // Three of four candidate checks pass; approval is still pending.
-  await expect(page.getByText("3/4 passed").first()).toBeVisible()
-  await expect(page.getByText("Requires a privileged write contract").first()).toBeVisible()
+  await expect(page.getByText("Promotion history is not part of this contract", { exact: true })).toBeVisible()
+
+  await page.getByRole("tab", { name: /^Audit/ }).click()
+  await expect(page).toHaveURL(/tab=audit/)
+  await expect(page.getByText("Directive audit is not part of this contract", { exact: true })).toBeVisible()
   await expectNoAxeViolations(page)
 })
 
@@ -390,8 +367,8 @@ test("govern surfaces stay readable without horizontal overflow on mobile", asyn
   await page.goto("/directives")
   await waitForHydration(page)
   await expect(page.getByRole("heading", { name: "Directives", exact: true })).toBeVisible()
-  await expect(page.locator('table[aria-label="Directive table"]')).toBeHidden()
-  await expect(page.getByRole("button", { name: "Open Support triage" }).first()).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Directive index unavailable" })).toBeVisible()
+  await expect(page.locator('table[aria-label="Directives"]')).toBeHidden()
   const directiveDimensions = await page.evaluate(() => ({
     client: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
@@ -411,9 +388,10 @@ test("govern surfaces stay readable without horizontal overflow on mobile", asyn
   expect(policyDimensions.scroll, JSON.stringify(policyDimensions)).toBeLessThanOrEqual(policyDimensions.client)
   await expectNoAxeViolations(page)
 
-  await page.goto("/directives/dir_support_triage?tab=promotion")
+  await page.goto("/directives/11111111-1111-4111-8111-111111111111?tab=promotion")
   await waitForHydration(page)
-  await expect(page.getByRole("heading", { name: "Support triage", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Directive", exact: true, level: 1 })).toBeVisible()
+  await expect(page.getByText("Promotion history is not part of this contract", { exact: true })).toBeVisible()
   const detailDimensions = await page.evaluate(() => ({
     client: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
@@ -581,6 +559,24 @@ test("a stale session filter link keeps its valid filters and drops the rest", a
   await expect(page).toHaveURL(/status=error/)
   await expect(page).toHaveURL(/limit=50/)
   await expect(page).not.toHaveURL(/demo=0/)
+  await expectNoAxeViolations(page)
+})
+
+test("directives fail closed without an operator API and never render fixtures", async ({ page }) => {
+  await page.goto("/directives")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Directives", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Directive index unavailable" })).toBeVisible()
+  await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+  // The preview taxonomy must be gone from a live surface.
+  await expect(page.getByText("Rolled back")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  await page.goto("/directives/11111111-1111-4111-8111-111111111111")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Directive unavailable" })).toBeVisible()
+  await page.getByRole("tab", { name: "Diff" }).click()
+  await expect(page.getByText("Version diff is not part of this contract", { exact: true })).toBeVisible()
   await expectNoAxeViolations(page)
 })
 

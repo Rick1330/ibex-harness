@@ -1,65 +1,74 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { useRoute } from "vue-router"
-import DirectiveDetailView from "@/components/console/directive/detail/DirectiveDetailView.vue"
-import { directiveCandidate, directiveLive, getDirectivePreview } from "@/lib/directive-preview"
-import {
-  parseDirectiveDetailQuery,
-  serializeDirectiveDetailQuery,
-  type DirectiveDetailState,
-} from "@/lib/govern-query"
+import DirectiveDetailView from "@/components/console/directive/live/DirectiveDetailView.vue"
 import { safeDirectiveReturn } from "@/lib/return-to"
+import {
+  parseLiveDirectiveDetailQuery,
+  parseLiveDirectiveDetailQueryLenient,
+  serializeLiveDirectiveDetailQuery,
+  type LiveDirectiveDetailQuery,
+} from "~~/shared/operator/directive-query"
+
+const TABS = ["versions", "usage", "diff", "promotion", "audit"] as const
+type DetailTab = (typeof TABS)[number]
 
 const route = useRoute()
 const directiveId = computed(() => String(route.params.directiveId ?? ""))
-const directive = computed(() => getDirectivePreview(directiveId.value))
 const returnTo = computed(() => safeDirectiveReturn(route.query.return))
 
-const defaults = computed(() => {
-  const value = directive.value
-  if (!value) return { from: "v1", to: "v1" }
-  const to = directiveCandidate(value) ?? directiveLive(value) ?? value.versions[0] ?? null
-  if (!to) return { from: "v1", to: "v1" }
-  const index = value.versions.findIndex((version) => version.version === to.version)
-  const from = (index >= 0 ? value.versions[index + 1] : undefined) ?? to
-  return { from: from.version, to: to.version }
-})
-
-const state = ref<DirectiveDetailState>(parseDirectiveDetailQuery(route.query, defaults.value))
+const state = ref<LiveDirectiveDetailQuery>(detailStateFromQuery(route.query))
+const tab = ref<DetailTab>(tabFromQuery(route.query))
 
 watch(
   () => route.query,
   () => {
     if (!route.path.startsWith("/directives/")) return
-    state.value = parseDirectiveDetailQuery(route.query, defaults.value)
+    state.value = detailStateFromQuery(route.query)
+    tab.value = tabFromQuery(route.query)
   },
 )
 
-watch(
-  defaults,
-  (next) => {
-    state.value = parseDirectiveDetailQuery(route.query, next)
-  },
-)
-
-function update(next: DirectiveDetailState): void {
-  state.value = next
+watch(state, (next) => {
   if (!import.meta.client) return
-  const query = Object.fromEntries(serializeDirectiveDetailQuery(next, defaults.value))
-  const preserved = typeof route.query.return === "string" ? { return: route.query.return } : {}
-  void navigateTo({ query: { ...query, ...preserved } }, { replace: true })
+  const query = Object.fromEntries(serializeLiveDirectiveDetailQuery(next))
+  if (tab.value !== "versions") query.tab = tab.value
+  void useRouter().replace({ query }).catch(() => undefined)
+})
+
+watch(tab, (next) => {
+  if (!import.meta.client) return
+  const query = Object.fromEntries(serializeLiveDirectiveDetailQuery(state.value))
+  if (next !== "versions") query.tab = next
+  void useRouter().replace({ query }).catch(() => undefined)
+})
+
+function strictDetailState(query: Record<string, unknown>): LiveDirectiveDetailQuery | null {
+  try {
+    return parseLiveDirectiveDetailQuery(query)
+  } catch {
+    return null
+  }
 }
 
-useHead(() => ({
-  title: `${directive.value?.name ?? "Directive not found"} · Directives · IBEX Console`,
-}))
+function detailStateFromQuery(query: Record<string, unknown>): LiveDirectiveDetailQuery {
+  return strictDetailState(query) ?? parseLiveDirectiveDetailQueryLenient(query)
+}
+
+function tabFromQuery(query: Record<string, unknown>): DetailTab {
+  const raw = typeof query.tab === "string" ? query.tab : ""
+  return (TABS as readonly string[]).includes(raw) ? (raw as DetailTab) : "versions"
+}
+
+useHead(() => ({ title: "Directive · IBEX Console" }))
 </script>
 
 <template>
-  <DirectiveDetailView v-if="directive" :directive="directive" :return-to="returnTo" :state="state" :defaults="defaults" @update="update" />
-  <section v-else class="mx-auto w-full max-w-[90rem] rounded-lg border border-line-subtle bg-surface-1 p-6" aria-labelledby="directive-not-found">
-    <NuxtLink :to="returnTo" class="text-xs text-fg-3 hover:text-fg-1">← Back to directives</NuxtLink>
-    <h1 id="directive-not-found" class="mt-4 text-lg font-semibold text-fg-1">Directive not found</h1>
-    <p class="mt-1 text-sm text-fg-3">This sample directive ID is not in the preview set. Live directive lookups are not connected.</p>
-  </section>
+  <DirectiveDetailView
+    v-model:tab="tab"
+    :directive-id="directiveId"
+    :state="state"
+    :return-to="returnTo"
+    @update="state = $event"
+  />
 </template>

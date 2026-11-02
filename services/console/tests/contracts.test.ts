@@ -4,6 +4,8 @@ import {
   OperatorAgentPageSchema,
   OperatorAgentSchema,
   OperatorContextSchema,
+  OperatorDirectiveDetailSchema,
+  OperatorDirectivePageSchema,
   OperatorEvidenceSummarySchema,
   OperatorMemoryPageSchema,
   OperatorMemorySchema,
@@ -229,6 +231,19 @@ const sessionPage = {
   pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
 }
 
+const directive = {
+  id: "11111111-1111-4111-8111-111111111111",
+  agent_id: "22222222-2222-4222-8222-222222222222",
+  agent_name: "Support triage",
+  agent_slug: "support-triage",
+  is_active: true,
+  injection_mode: "system_first" as const,
+  active_version_num: 2,
+  version_count: 3,
+  last_version_at: "2026-11-01T12:00:00.000Z",
+  updated_at: "2026-11-02T12:00:00.000Z",
+}
+
 const evidenceSummary = {
   schema_version: "operator.evidence.summary.v1" as const,
   range: "7d" as const,
@@ -401,6 +416,44 @@ const evidenceSummary = {
         turns: [{ ...sessionTurn, model }],
       }),
     ).not.toThrow()
+  })
+
+  it("accepts the directive contract and rejects instruction text", () => {
+    const page = {
+      data: [directive],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    }
+    const detail = {
+      ...directive,
+      versions: [
+        {
+          version_num: 2,
+          content_digest: "abcdef012345",
+          content_bytes: 1024,
+          created_by: null,
+          created_at: "2026-10-30T12:00:00.000Z",
+          is_live: true,
+        },
+      ],
+      usage: [{ version_num: 2, sessions: 12, last_session_at: null }],
+      usage_range: "7d",
+      usage_window_start: "2026-10-26T12:00:00.000Z",
+      active_version_missing: false,
+    }
+
+    expect(OperatorDirectivePageSchema.parse(page).data[0]?.active_version_num).toBe(2)
+    const parsed = OperatorDirectiveDetailSchema.parse(detail)
+    expect(parsed.versions[0]?.is_live).toBe(true)
+    expect(parsed.usage[0]?.sessions).toBe(12)
+    // Instruction text and an unknown range must not pass.
+    expect(() =>
+      OperatorDirectiveDetailSchema.parse({
+        ...detail,
+        versions: [{ ...detail.versions[0], content: "secret instruction" }],
+      }),
+    ).toThrow()
+    expect(() => OperatorDirectiveDetailSchema.parse({ ...detail, usage_range: "90d" })).toThrow()
+    expect(() => OperatorDirectivePageSchema.parse({ ...page, data: [{ ...directive, content: "x" }] })).toThrow()
   })
 
   it("accepts the evidence summary contract and rejects verdict language", () => {

@@ -13,6 +13,8 @@ const OPERATOR_PATHS = {
   agents: "/v1/operator/agents",
   agentDetail: "/v1/operator/agents/",
   evidenceSummary: "/v1/operator/evidence/summary",
+  directives: "/v1/operator/directives",
+  directiveDetail: "/v1/operator/directives/",
   memories: "/v1/operator/memories",
   memoryDetail: "/v1/operator/memories/",
   sessions: "/v1/operator/sessions",
@@ -27,6 +29,7 @@ const SUFFIX_PATHS = new Set<OperatorPath>([
   "agentDetail",
   "memoryDetail",
   "sessionDetail",
+  "directiveDetail",
 ])
 
 export type OperatorPath = keyof typeof OPERATOR_PATHS

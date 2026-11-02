@@ -46,7 +46,7 @@ The API origin must be HTTPS whenever an operator session cookie is present. The
 | Sessions | `/sessions` | Live D3 | Metadata-only session index and turn-to-trace ledger from `operator.sessions.v1`. |
 | Memories | `/memories` | Live D2 | Metadata-only index from `operator.memories.v1`; content is not exposed. |
 | Evidence | `/evidence` | Live D2 | Capture completeness and relay delivery from `operator.evidence.summary.v1`; tombstones and redaction are explicitly unavailable. |
-| Directives | `/directives` | Preview (deferred) | Version timeline and diff; no owning API router exists. |
+| Directives | `/directives` | Live D5 | Version timeline, the live pointer, and per-version session usage from `operator.directives.versions.v1`; instruction text, diffs, and promotion history are explicitly unavailable. |
 | Policies | `/policies` | Preview | Snapshots, readable rules, and diffs; run-to-policy provenance is not connected. |
 | Explore | `/explore`, `/explore/t/:traceId`, `/explore/r/:runId` | Live D2 | Metadata-only trace list, multi-run trace view, and validated run detail using `operator.trace-query.v1`. |
 | Platform | `/platform` | Live D1 | Dependency health, ingestion lag, retention, backup, restore, and deployment evidence. |

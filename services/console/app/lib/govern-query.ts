@@ -1,11 +1,4 @@
 import {
-  DIRECTIVE_STATE_FILTER_LABELS,
-  DIRECTIVE_TABS,
-  type DirectiveSortKey,
-  type DirectiveStateFilter,
-  type DirectiveTab,
-} from "./directive-preview"
-import {
   POLICY_AREA_ORDER,
   POLICY_DECISION_ORDER,
   POLICY_EFFECT_FILTER_LABELS,
@@ -57,37 +50,6 @@ import {
 
 export type { DriftListState } from "./drift-preview"
 
-export const DIRECTIVE_SORT_KEYS = ["change", "name", "live"] as const
-export const DIRECTIVE_SORT_LABELS: Record<DirectiveSortKey, string> = {
-  change: "Recently changed",
-  name: "Name",
-  live: "Live since",
-}
-
-export const DIRECTIVE_STATE_FILTERS = Object.keys(DIRECTIVE_STATE_FILTER_LABELS) as DirectiveStateFilter[]
-
-export const DIRECTIVE_DIFF_MODES = ["sections", "unified", "split"] as const
-export type DirectiveDiffMode = (typeof DIRECTIVE_DIFF_MODES)[number]
-export const DIRECTIVE_DIFF_MODE_LABELS: Record<DirectiveDiffMode, string> = {
-  sections: "Sections",
-  unified: "Unified",
-  split: "Split",
-}
-
-export type DirectiveListState = {
-  q: string
-  agent: string
-  state: DirectiveStateFilter
-  sort: DirectiveSortKey
-}
-
-export const DIRECTIVE_LIST_DEFAULT: DirectiveListState = {
-  q: "",
-  agent: "all",
-  state: "all",
-  sort: "change",
-}
-
 function firstValue(value: unknown): string {
   if (typeof value === "string") return value
   if (Array.isArray(value)) return value.find((entry): entry is string => typeof entry === "string") ?? ""
@@ -96,88 +58,6 @@ function firstValue(value: unknown): string {
 
 function allowed<T extends string>(value: string, options: readonly T[]): value is T {
   return (options as readonly string[]).includes(value)
-}
-
-export function parseDirectiveListQuery(query: Record<string, unknown>): DirectiveListState {
-  const state = { ...DIRECTIVE_LIST_DEFAULT }
-  state.q = firstValue(query.q).trim().slice(0, 120)
-  const agent = firstValue(query.agent).trim().slice(0, 80)
-  if (agent) state.agent = agent
-  const stateFilter = firstValue(query.state)
-  if (allowed(stateFilter, DIRECTIVE_STATE_FILTERS)) state.state = stateFilter
-  const sort = firstValue(query.sort)
-  if (allowed(sort, DIRECTIVE_SORT_KEYS)) state.sort = sort
-  return state
-}
-
-export function serializeDirectiveListQuery(state: DirectiveListState): URLSearchParams {
-  const query = new URLSearchParams()
-  if (state.q.trim()) query.set("q", state.q.trim().slice(0, 120))
-  if (state.agent !== "all") query.set("agent", state.agent)
-  if (state.state !== "all") query.set("state", state.state)
-  if (state.sort !== DIRECTIVE_LIST_DEFAULT.sort) query.set("sort", state.sort)
-  return query
-}
-
-export function directiveListHref(state: DirectiveListState): string {
-  const query = serializeDirectiveListQuery(state).toString()
-  return query ? `/directives?${query}` : "/directives"
-}
-
-export function directiveListStateEqual(left: DirectiveListState, right: DirectiveListState): boolean {
-  return serializeDirectiveListQuery(left).toString() === serializeDirectiveListQuery(right).toString()
-}
-
-export type DirectiveDetailState = {
-  tab: DirectiveTab
-  from: string
-  to: string
-  mode: DirectiveDiffMode
-}
-
-export type DirectiveDetailDefaults = {
-  from: string
-  to: string
-}
-
-function versionValue(value: unknown, fallback: string): string {
-  const raw = firstValue(value).trim()
-  return /^v\d{1,3}$/.test(raw) ? raw : fallback
-}
-
-export function parseDirectiveDetailQuery(
-  query: Record<string, unknown>,
-  defaults: DirectiveDetailDefaults,
-): DirectiveDetailState {
-  const tab = firstValue(query.tab)
-  const mode = firstValue(query.mode)
-  return {
-    tab: allowed(tab, DIRECTIVE_TABS.map((entry) => entry.id)) ? tab : "overview",
-    from: versionValue(query.from, defaults.from),
-    to: versionValue(query.to, defaults.to),
-    mode: allowed(mode, DIRECTIVE_DIFF_MODES) ? mode : "sections",
-  }
-}
-
-export function serializeDirectiveDetailQuery(
-  state: DirectiveDetailState,
-  defaults: DirectiveDetailDefaults,
-): URLSearchParams {
-  const query = new URLSearchParams()
-  if (state.tab !== "overview") query.set("tab", state.tab)
-  if (state.from !== defaults.from) query.set("from", state.from)
-  if (state.to !== defaults.to) query.set("to", state.to)
-  if (state.mode !== "sections") query.set("mode", state.mode)
-  return query
-}
-
-export function directiveDetailHref(
-  directiveId: string,
-  state: DirectiveDetailState,
-  defaults: DirectiveDetailDefaults,
-): string {
-  const query = serializeDirectiveDetailQuery(state, defaults).toString()
-  return `/directives/${encodeURIComponent(directiveId)}${query ? `?${query}` : ""}`
 }
 
 export const POLICY_EFFECT_FILTERS = Object.keys(POLICY_EFFECT_FILTER_LABELS) as PolicyEffectFilter[]

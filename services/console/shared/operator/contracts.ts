@@ -534,3 +534,81 @@ export type EvidenceDeliveryCounts = z.infer<typeof EvidenceDeliveryCountsSchema
 export type EvidenceCapturePolicy = z.infer<typeof EvidenceCapturePolicySchema>
 export type EvidenceLegalHold = z.infer<typeof EvidenceLegalHoldSchema>
 export type OperatorEvidenceSummary = z.infer<typeof OperatorEvidenceSummarySchema>
+
+export const DirectiveInjectionModeSchema = z.enum([
+  "system_first",
+  "system_append",
+  "user_prepend",
+])
+
+export const DirectiveUsageRangeSchema = z.enum(["24h", "7d", "30d"])
+
+/**
+ * `operator.directives.versions.v1`.
+ *
+ * Metadata only. Instruction text is never part of this contract:
+ * `content_digest` is a 12-character identity prefix so two versions can be told
+ * apart, not a verifier for the content.
+ */
+export const OperatorDirectiveSummarySchema = z
+  .object({
+    id: z.string().uuid(),
+    agent_id: z.string().uuid(),
+    agent_name: z.string().min(1),
+    agent_slug: z.string().min(1),
+    is_active: z.boolean(),
+    injection_mode: DirectiveInjectionModeSchema,
+    active_version_num: z.number().int().positive().nullable(),
+    version_count: z.number().int().nonnegative(),
+    last_version_at: z.string().datetime({ offset: true }).nullable(),
+    updated_at: z.string().datetime({ offset: true }),
+  })
+  .strict()
+
+export const OperatorDirectiveVersionSchema = z
+  .object({
+    version_num: z.number().int().positive(),
+    content_digest: z.string().min(1).max(64),
+    content_bytes: z.number().int().positive(),
+    created_by: z.string().uuid().nullable(),
+    created_at: z.string().datetime({ offset: true }),
+    is_live: z.boolean(),
+  })
+  .strict()
+
+export const OperatorDirectiveUsageSchema = z
+  .object({
+    version_num: z.number().int().positive(),
+    sessions: z.number().int().nonnegative(),
+    last_session_at: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
+export const OperatorDirectiveDetailSchema = OperatorDirectiveSummarySchema.extend({
+  versions: z.array(OperatorDirectiveVersionSchema).max(500),
+  usage: z.array(OperatorDirectiveUsageSchema).max(500),
+  usage_range: DirectiveUsageRangeSchema,
+  usage_window_start: z.string().datetime({ offset: true }),
+  active_version_missing: z.boolean(),
+}).strict()
+
+export const OperatorDirectivePageSchema = z
+  .object({
+    data: z.array(OperatorDirectiveSummarySchema).max(100),
+    pagination: z
+      .object({
+        has_more: z.boolean(),
+        next_cursor: z.string().nullable(),
+        prev_cursor: z.string().nullable(),
+        total_count: z.number().int().nonnegative().nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+
+export type OperatorDirectiveSummary = z.infer<typeof OperatorDirectiveSummarySchema>
+export type OperatorDirectiveVersion = z.infer<typeof OperatorDirectiveVersionSchema>
+export type OperatorDirectiveUsage = z.infer<typeof OperatorDirectiveUsageSchema>
+export type OperatorDirectiveDetail = z.infer<typeof OperatorDirectiveDetailSchema>
+export type OperatorDirectivePage = z.infer<typeof OperatorDirectivePageSchema>
+export type DirectiveUsageRange = z.infer<typeof DirectiveUsageRangeSchema>

@@ -2,19 +2,13 @@ import { describe, expect, it } from "vitest"
 import {
   OVERVIEW_DEFAULT,
   PLATFORM_DEFAULT,
-  directiveDetailHref,
-  directiveListHref,
   overviewHref,
-  parseDirectiveDetailQuery,
-  parseDirectiveListQuery,
   parseOverviewQuery,
   parsePlatformQuery,
   parsePolicyListQuery,
   parsePolicyRuleDetailQuery,
   platformHref,
   policyListHref,
-  serializeDirectiveDetailQuery,
-  serializeDirectiveListQuery,
   serializeOverviewQuery,
   serializePlatformQuery,
   serializePolicyListQuery,
@@ -23,56 +17,6 @@ import { policySnapshots } from "../app/lib/policy-preview"
 
 const CURRENT_SNAPSHOT = policySnapshots[0]!.id
 const PREVIOUS_SNAPSHOT = policySnapshots[1]!.id
-
-describe("directive list query", () => {
-  it("falls back to the documented defaults", () => {
-    expect(parseDirectiveListQuery({})).toEqual({ q: "", agent: "all", state: "all", sort: "change" })
-    expect(parseDirectiveListQuery({ state: "bogus", sort: "bogus", agent: ["ag_support_triage"] })).toMatchObject({
-      agent: "ag_support_triage",
-      state: "all",
-      sort: "change",
-    })
-  })
-
-  it("round-trips only non-default values", () => {
-    const state = parseDirectiveListQuery({ q: "refund", state: "candidate", sort: "name", agent: "ag_support_triage" })
-    const query = serializeDirectiveListQuery(state)
-    expect(query.toString()).toBe("q=refund&agent=ag_support_triage&state=candidate&sort=name")
-    expect(directiveListHref(state)).toBe("/directives?q=refund&agent=ag_support_triage&state=candidate&sort=name")
-    expect(directiveListHref(parseDirectiveListQuery({}))).toBe("/directives")
-  })
-})
-
-describe("directive detail query", () => {
-  const defaults = { from: "v13", to: "v14" }
-
-  it("keeps valid tab, versions, and diff mode", () => {
-    expect(parseDirectiveDetailQuery({ tab: "diff", from: "v12", to: "v13", mode: "split" }, defaults)).toEqual({
-      tab: "diff",
-      from: "v12",
-      to: "v13",
-      mode: "split",
-    })
-  })
-
-  it("rejects unknown tabs, malformed versions, and unknown modes", () => {
-    expect(parseDirectiveDetailQuery({ tab: "secrets", from: "../etc", to: "v9999", mode: "raw" }, defaults)).toEqual({
-      tab: "overview",
-      from: "v13",
-      to: "v14",
-      mode: "sections",
-    })
-  })
-
-  it("omits defaults and keeps the href stable", () => {
-    const state = parseDirectiveDetailQuery({}, defaults)
-    expect(serializeDirectiveDetailQuery(state, defaults).toString()).toBe("")
-    expect(directiveDetailHref("dir_support_triage", state, defaults)).toBe("/directives/dir_support_triage")
-    expect(directiveDetailHref("dir_support_triage", { ...state, tab: "usage", mode: "unified" }, defaults)).toBe(
-      "/directives/dir_support_triage?tab=usage&mode=unified",
-    )
-  })
-})
 
 describe("policy list query", () => {
   it("defaults to the newest snapshot", () => {

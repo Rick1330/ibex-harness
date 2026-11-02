@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { SURFACES } from "../shared/operator/surfaces"
 
 describe("static surface status", () => {
-  it("marks only the seven validated reads as live", () => {
+  it("marks only the eight validated reads as live", () => {
     const live = Object.values(SURFACES)
       .filter((surface) => surface.availability === "live")
       .map((surface) => surface.path)
@@ -11,6 +11,7 @@ describe("static surface status", () => {
     expect(live).toEqual([
       "/",
       "/agents",
+      "/directives",
       "/evidence",
       "/explore",
       "/memories",
@@ -19,7 +20,7 @@ describe("static surface status", () => {
     ])
   })
 
-  it("keeps the remaining eleven surfaces in preview", () => {
+  it("keeps the remaining ten surfaces in preview", () => {
     const preview = Object.values(SURFACES)
       .filter((surface) => surface.availability === "preview")
       .map((surface) => surface.path)
@@ -29,7 +30,6 @@ describe("static surface status", () => {
       "/analytics",
       "/audit",
       "/budgets",
-      "/directives",
       "/drift",
       "/incidents",
       "/mcp-tools",
