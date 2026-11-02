@@ -17,3 +17,29 @@ Admission/deny, reservation/release/reconcile, provider attempt/usage, context m
 ## Privacy
 
 Raw prompts, memory bodies, secrets, tokens, embeddings, and unredacted PII do not enter ordinary logs, metrics, or evidence payloads. Large sensitive bodies use access-controlled redacted artifacts and stable references. Query/export paths enforce tenant scope and retention.
+
+## Capture completeness (operator read model)
+
+`operator.evidence.summary.v1` reports what the plane can prove. It deliberately does **not** call a run "certified":
+an `evidence_runs` row holds no digest of its own, so the only digest in the plane is
+`evidence_outbox.payload_digest`, per event.
+
+The contract states four separate facts:
+
+- **Capture completeness** — `evidence_runs.completeness`. `complete` means the record holds the full capture for the
+  run. `partial`, `sampled`, `late`, `redacted`, `expired`, `deleted`, and `simulated` each name why it does not.
+  A sampled or partial window is never extrapolated to a population figure.
+- **Operation outcome** — `evidence_runs.status` (`ok` / `error`). Evidence of a failed operation is still complete
+  evidence, so the outcome is a separate axis and does not lower the capture count.
+- **Relay delivery** — `evidence_outbox.delivery_status`. Reported at organization level, because the outbox carries no
+  run reference. A complete capture whose event has not reached its sink is shown as exactly that, not as a success.
+- **Retention context** — the effective `org_capture_policies.mode` and whether a `legal_holds` row is active. A hold
+  preserves data; it does not make a record more complete.
+
+Sources for the rule: OpenTelemetry's trace-completeness semantics (a trace is complete only when all spans are
+collected; incompleteness is either intentional sampling or a collection error, and non-probability sampling must not be
+extrapolated) and in-toto's attestation validation (completeness is checked against declared requirements, never
+assumed). Both are recorded here as design precedent, not as a compliance claim.
+
+Out of scope until separate read models exist: tombstone chains, downstream deletion receipts, and field-level
+redaction detail. The Console renders those tabs as explicitly unavailable rather than with fixtures.

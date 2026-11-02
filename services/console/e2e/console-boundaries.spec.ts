@@ -422,16 +422,20 @@ test("govern surfaces stay readable without horizontal overflow on mobile", asyn
   await expectNoAxeViolations(page)
 })
 
-test("evidence redaction tab lists sanitizers, proof versions, and removed fields", async ({ page }) => {
+test("evidence tabs without a contract say so instead of showing fixtures", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto("/evidence?tab=redaction")
   await waitForHydration(page)
 
   await expect(page.getByRole("tab", { name: /Redaction/ })).toHaveAttribute("aria-selected", "true")
-  await expect(page.getByRole("heading", { name: "Session evidence sanitizer", exact: true })).toBeVisible()
-  await expect(page.getByText("Memory PII pipeline", { exact: true })).toBeVisible()
-  await expect(page.getByText("span.attributes", { exact: true })).toBeVisible()
-  await expect(page.getByRole("cell", { name: "session-metadata-allowlist/v1" }).first()).toBeVisible()
+  await expect(page.getByText("Redaction detail is not part of this contract", { exact: true })).toBeVisible()
+  // No fixture sanitizer table survives on a live surface.
+  await expect(page.getByRole("heading", { name: "Session evidence sanitizer", exact: true })).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  await page.goto("/evidence?tab=tombstones")
+  await waitForHydration(page)
+  await expect(page.getByText("Tombstone history is not part of this contract", { exact: true })).toBeVisible()
   await expectNoAxeViolations(page)
 })
 
@@ -469,7 +473,7 @@ test("sidebar shows the core lifecycle and hides the platform tier by default", 
 
 test("preview surfaces carry a persistent illustrative banner and live surfaces do not", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/evidence")
+  await page.goto("/policies")
   await waitForHydration(page)
 
   const banner = page.getByRole("note", { name: "Illustrative preview" })
@@ -577,6 +581,18 @@ test("a stale session filter link keeps its valid filters and drops the rest", a
   await expect(page).toHaveURL(/status=error/)
   await expect(page).toHaveURL(/limit=50/)
   await expect(page).not.toHaveURL(/demo=0/)
+  await expectNoAxeViolations(page)
+})
+
+test("evidence fails closed without an operator API and never renders fixtures", async ({ page }) => {
+  await page.goto("/evidence")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Evidence", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Evidence summary unavailable" })).toBeVisible()
+  await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+  // The contract is live: a reader must not be shown fixture coverage numbers.
+  await expect(page.getByText("Re-provable by digest")).toHaveCount(0)
+  await expect(page.getByText(/Coverage ledger/)).toHaveCount(0)
   await expectNoAxeViolations(page)
 })
 

@@ -1,25 +1,57 @@
 <script setup lang="ts">
-import { ref, watch } from "vue"
+import { onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import EvidenceView from "@/components/console/evidence/EvidenceView.vue"
-import { parseEvidenceQuery, serializeEvidenceQuery, type EvidenceListState } from "@/lib/govern-query"
+import {
+  parseLiveEvidenceQuery,
+  parseLiveEvidenceQueryLenient,
+  serializeLiveEvidenceQuery,
+  type LiveEvidenceQuery,
+} from "~~/shared/operator/evidence-query"
 
 const route = useRoute()
 const router = useRouter()
-const state = ref<EvidenceListState>(parseEvidenceQuery(route.query))
+const state = ref<LiveEvidenceQuery>(stateFromQuery(route.query))
 
 useHead({ title: "Evidence · IBEX Console" })
 
-function serialized(value: EvidenceListState): string {
-  return serializeEvidenceQuery(value).toString()
+function strictStateFromQuery(query: Record<string, unknown>): LiveEvidenceQuery | null {
+  try {
+    return parseLiveEvidenceQuery(query)
+  } catch {
+    return null
+  }
 }
+
+// A stale or hand-edited link must not silently reinterpret the read: keep the
+// fields that parse and let `normalizeUrl` drop the rest from the address bar so
+// it always describes the window on screen.
+function stateFromQuery(query: Record<string, unknown>): LiveEvidenceQuery {
+  return strictStateFromQuery(query) ?? parseLiveEvidenceQueryLenient(query)
+}
+
+function serialized(value: LiveEvidenceQuery): string {
+  return serializeLiveEvidenceQuery(value).toString()
+}
+
+function normalizeUrl(): void {
+  if (strictStateFromQuery(route.query)) return
+  void router
+    .replace({ query: Object.fromEntries(serializeLiveEvidenceQuery(state.value)) })
+    .catch(() => undefined)
+}
+
+onMounted(normalizeUrl)
 
 watch(
   state,
   (next) => {
     if (!import.meta.client) return
-    if (serialized(next) === serialized(parseEvidenceQuery(route.query))) return
-    void router.replace({ query: Object.fromEntries(serializeEvidenceQuery(next)) }).catch(() => undefined)
+    const current = strictStateFromQuery(route.query)
+    if (current && serialized(next) === serialized(current)) return
+    void router
+      .replace({ query: Object.fromEntries(serializeLiveEvidenceQuery(next)) })
+      .catch(() => undefined)
   },
   { deep: true },
 )
@@ -28,8 +60,11 @@ watch(
   () => route.query,
   () => {
     if (route.path !== "/evidence") return
-    const parsed = parseEvidenceQuery(route.query)
-    if (serialized(parsed) === serialized(state.value)) return
+    const strict = strictStateFromQuery(route.query)
+    const parsed = strict ?? parseLiveEvidenceQueryLenient(route.query)
+    // Assigning a fresh object also fires the state watcher, which rewrites the
+    // address bar, so an ignored field cannot linger in the URL.
+    if (strict && serialized(parsed) === serialized(state.value)) return
     state.value = parsed
   },
 )

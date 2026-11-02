@@ -447,3 +447,90 @@ export function parseOperatorSession(value: unknown): OperatorSession {
 export function parsePlatformHealth(value: unknown): PlatformHealth {
   return PlatformHealthSchema.parse(value)
 }
+
+export const EvidenceRangeSchema = z.enum(["24h", "7d", "30d"])
+
+/**
+ * `operator.evidence.summary.v1`.
+ *
+ * Every field states a fact this API can read. Nothing here is a verdict: the
+ * contract deliberately does not call a run "certified", because a run row holds
+ * no digest of its own — the only digest in the plane is the per-event
+ * `evidence_outbox.payload_digest`. Capture completeness and relay delivery are
+ * separate axes and must be read separately.
+ */
+export const EvidenceCompletenessCountsSchema = z
+  .object({
+    complete: z.number().int().nonnegative(),
+    partial: z.number().int().nonnegative(),
+    sampled: z.number().int().nonnegative(),
+    late: z.number().int().nonnegative(),
+    redacted: z.number().int().nonnegative(),
+    expired: z.number().int().nonnegative(),
+    deleted: z.number().int().nonnegative(),
+    simulated: z.number().int().nonnegative(),
+  })
+  .strict()
+
+export const EvidenceStatusCountsSchema = z
+  .object({
+    ok: z.number().int().nonnegative(),
+    error: z.number().int().nonnegative(),
+  })
+  .strict()
+
+export const EvidenceDeliveryCountsSchema = z
+  .object({
+    pending: z.number().int().nonnegative(),
+    in_flight: z.number().int().nonnegative(),
+    delivered: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    poison: z.number().int().nonnegative(),
+  })
+  .strict()
+
+/**
+ * The organization-wide capture policy plus a count of agent overrides. Agent
+ * rows resolve per agent, so no single agent mode describes the organization.
+ */
+export const EvidenceCapturePolicySchema = z
+  .object({
+    mode: z.enum(["none", "metadata_only", "redacted", "full"]).nullable(),
+    agent_overrides: z.number().int().nonnegative(),
+  })
+  .strict()
+
+export const EvidenceLegalHoldSchema = z
+  .object({
+    active: z.boolean(),
+    since: z.string().datetime({ offset: true }).nullable(),
+  })
+  .strict()
+
+export const OperatorEvidenceSummarySchema = z
+  .object({
+    schema_version: z.literal("operator.evidence.summary.v1"),
+    range: EvidenceRangeSchema,
+    window_start: z.string().datetime({ offset: true }),
+    window_end: z.string().datetime({ offset: true }),
+    observed_at: z.string().datetime({ offset: true }),
+    runs_total: z.number().int().nonnegative(),
+    capture_complete_runs: z.number().int().nonnegative(),
+    completeness: EvidenceCompletenessCountsSchema,
+    statuses: EvidenceStatusCountsSchema,
+    last_run_at: z.string().datetime({ offset: true }).nullable(),
+    delivery: EvidenceDeliveryCountsSchema,
+    oldest_unsettled_at: z.string().datetime({ offset: true }).nullable(),
+    last_delivered_at: z.string().datetime({ offset: true }).nullable(),
+    capture_policy: EvidenceCapturePolicySchema,
+    legal_hold: EvidenceLegalHoldSchema,
+  })
+  .strict()
+
+export type EvidenceRange = z.infer<typeof EvidenceRangeSchema>
+export type EvidenceCompletenessCounts = z.infer<typeof EvidenceCompletenessCountsSchema>
+export type EvidenceStatusCounts = z.infer<typeof EvidenceStatusCountsSchema>
+export type EvidenceDeliveryCounts = z.infer<typeof EvidenceDeliveryCountsSchema>
+export type EvidenceCapturePolicy = z.infer<typeof EvidenceCapturePolicySchema>
+export type EvidenceLegalHold = z.infer<typeof EvidenceLegalHoldSchema>
+export type OperatorEvidenceSummary = z.infer<typeof OperatorEvidenceSummarySchema>

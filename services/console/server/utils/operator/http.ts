@@ -12,6 +12,7 @@ const OPERATOR_PATHS = {
   runDetail: "/v1/operator/traces/runs/",
   agents: "/v1/operator/agents",
   agentDetail: "/v1/operator/agents/",
+  evidenceSummary: "/v1/operator/evidence/summary",
   memories: "/v1/operator/memories",
   memoryDetail: "/v1/operator/memories/",
   sessions: "/v1/operator/sessions",

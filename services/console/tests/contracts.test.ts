@@ -4,6 +4,7 @@ import {
   OperatorAgentPageSchema,
   OperatorAgentSchema,
   OperatorContextSchema,
+  OperatorEvidenceSummarySchema,
   OperatorMemoryPageSchema,
   OperatorMemorySchema,
   OperatorOverviewSchema,
@@ -228,6 +229,33 @@ const sessionPage = {
   pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
 }
 
+const evidenceSummary = {
+  schema_version: "operator.evidence.summary.v1" as const,
+  range: "7d" as const,
+  window_start: "2026-10-26T12:00:00.000Z",
+  window_end: "2026-11-02T12:00:00.000Z",
+  observed_at: "2026-11-02T12:00:00.000Z",
+  runs_total: 18,
+  capture_complete_runs: 14,
+  completeness: {
+    complete: 14,
+    partial: 3,
+    sampled: 1,
+    late: 0,
+    redacted: 0,
+    expired: 0,
+    deleted: 0,
+    simulated: 0,
+  },
+  statuses: { ok: 16, error: 2 },
+  last_run_at: "2026-11-02T11:55:00.000Z",
+  delivery: { pending: 2, in_flight: 0, delivered: 15, failed: 0, poison: 1 },
+  oldest_unsettled_at: "2026-11-02T11:30:00.000Z",
+  last_delivered_at: "2026-11-02T11:58:00.000Z",
+  capture_policy: { mode: "metadata_only" as const, agent_overrides: 0 },
+  legal_hold: { active: false, since: null },
+}
+
   it("accepts the stable session and health shapes", () => {
     expect(parseOperatorSession(session).org_id).toBe(session.org_id)
     expect(PlatformHealthSchema.parse(health).dependency_health.redis).toBe("ok")
@@ -373,6 +401,32 @@ const sessionPage = {
         turns: [{ ...sessionTurn, model }],
       }),
     ).not.toThrow()
+  })
+
+  it("accepts the evidence summary contract and rejects verdict language", () => {
+    const parsed = OperatorEvidenceSummarySchema.parse(evidenceSummary)
+    expect(parsed.capture_complete_runs).toBe(14)
+    expect(parsed.completeness.complete).toBe(14)
+    // Delivery is a separate axis: a complete capture with a poison row is legal.
+    expect(parsed.delivery.poison).toBe(1)
+    expect(() =>
+      OperatorEvidenceSummarySchema.parse({ ...evidenceSummary, certified: true }),
+    ).toThrow()
+    expect(() =>
+      OperatorEvidenceSummarySchema.parse({ ...evidenceSummary, range: "90d" }),
+    ).toThrow()
+    expect(() =>
+      OperatorEvidenceSummarySchema.parse({
+        ...evidenceSummary,
+        completeness: { ...evidenceSummary.completeness, complete: -1 },
+      }),
+    ).toThrow()
+    expect(() =>
+      OperatorEvidenceSummarySchema.parse({
+        ...evidenceSummary,
+        capture_policy: { mode: "everything", agent_overrides: 0 },
+      }),
+    ).toThrow()
   })
 
   it("counts model-name length in code points, like the API", () => {

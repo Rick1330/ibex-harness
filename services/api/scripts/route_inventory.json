@@ -244,6 +244,20 @@
     "source": "services/api/app/routers/operator_events.py"
   },
   {
+    "endpoint": "app.routers.operator_evidence.operator_evidence_summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_evidence_summary",
+    "path": "/v1/operator/evidence/summary",
+    "response_model": "<class 'app.schemas.operator_evidence.OperatorEvidenceSummary'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_evidence.py"
+  },
+  {
     "endpoint": "app.routers.operator_memories.operator_memory_list",
     "methods": [
       "GET"

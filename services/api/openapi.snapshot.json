@@ -799,6 +799,173 @@
         "title": "CursorPage[UserResponse]",
         "type": "object"
       },
+      "EvidenceCapturePolicy": {
+        "description": "The organization-level capture policy, plus its agent overrides.\n\n`mode` is the organization-wide row (`agent_id IS NULL`); `None` means no\nsuch row exists and the deployment default applies. Agent rows are counted\nrather than folded in: they resolve per agent, so no single agent mode\ndescribes the organization.",
+        "properties": {
+          "agent_overrides": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Agent Overrides",
+            "type": "integer"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "metadata_only",
+                  "redacted",
+                  "full"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          }
+        },
+        "title": "EvidenceCapturePolicy",
+        "type": "object"
+      },
+      "EvidenceCompletenessCounts": {
+        "description": "What the capture layer recorded, one bucket per `evidence_runs.completeness`.",
+        "properties": {
+          "complete": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Complete",
+            "type": "integer"
+          },
+          "deleted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "expired": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Expired",
+            "type": "integer"
+          },
+          "late": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Late",
+            "type": "integer"
+          },
+          "partial": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Partial",
+            "type": "integer"
+          },
+          "redacted": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Redacted",
+            "type": "integer"
+          },
+          "sampled": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Sampled",
+            "type": "integer"
+          },
+          "simulated": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Simulated",
+            "type": "integer"
+          }
+        },
+        "title": "EvidenceCompletenessCounts",
+        "type": "object"
+      },
+      "EvidenceDeliveryCounts": {
+        "description": "Relay health for the same window, grouped by `evidence_outbox.delivery_status`.",
+        "properties": {
+          "delivered": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "failed": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "in_flight": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "In Flight",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "poison": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Poison",
+            "type": "integer"
+          }
+        },
+        "title": "EvidenceDeliveryCounts",
+        "type": "object"
+      },
+      "EvidenceLegalHold": {
+        "description": "An active hold preserves data; it is not a completeness claim.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "title": "EvidenceLegalHold",
+        "type": "object"
+      },
+      "EvidenceStatusCounts": {
+        "description": "Operation outcome, kept separate from capture completeness.\n\nEvidence of a failed operation is still complete evidence, so an `error` row\ndoes not lower the capture count.",
+        "properties": {
+          "error": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Error",
+            "type": "integer"
+          },
+          "ok": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Ok",
+            "type": "integer"
+          }
+        },
+        "title": "EvidenceStatusCounts",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1240,6 +1407,117 @@
           "observed_at"
         ],
         "title": "OperatorContextResponse",
+        "type": "object"
+      },
+      "OperatorEvidenceSummary": {
+        "description": "`operator.evidence.summary.v1`.\n\nEvery field states a fact this service can read. Nothing here is a verdict:\nthe contract deliberately does not call a run \"certified\", because a run row\nholds no digest of its own \u2014 the only digest in the plane is\n`evidence_outbox.payload_digest`, per event.",
+        "properties": {
+          "capture_complete_runs": {
+            "minimum": 0.0,
+            "title": "Capture Complete Runs",
+            "type": "integer"
+          },
+          "capture_policy": {
+            "$ref": "#/components/schemas/EvidenceCapturePolicy"
+          },
+          "completeness": {
+            "$ref": "#/components/schemas/EvidenceCompletenessCounts"
+          },
+          "delivery": {
+            "$ref": "#/components/schemas/EvidenceDeliveryCounts"
+          },
+          "last_delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delivered At"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "legal_hold": {
+            "$ref": "#/components/schemas/EvidenceLegalHold"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "oldest_unsettled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Unsettled At"
+          },
+          "range": {
+            "enum": [
+              "24h",
+              "7d",
+              "30d"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "runs_total": {
+            "minimum": 0.0,
+            "title": "Runs Total",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": "operator.evidence.summary.v1",
+            "default": "operator.evidence.summary.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "statuses": {
+            "$ref": "#/components/schemas/EvidenceStatusCounts"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "range",
+          "window_start",
+          "window_end",
+          "observed_at",
+          "runs_total",
+          "capture_complete_runs",
+          "completeness",
+          "statuses",
+          "delivery",
+          "capture_policy",
+          "legal_hold"
+        ],
+        "title": "OperatorEvidenceSummary",
         "type": "object"
       },
       "OperatorMemory": {
@@ -4806,6 +5084,54 @@
         "summary": "Stream Events",
         "tags": [
           "operator-events"
+        ]
+      }
+    },
+    "/v1/operator/evidence/summary": {
+      "get": {
+        "operationId": "operator_evidence_summary_v1_operator_evidence_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "24h",
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorEvidenceSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Evidence Summary",
+        "tags": [
+          "operator-evidence"
         ]
       }
     },

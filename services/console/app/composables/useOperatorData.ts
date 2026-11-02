@@ -3,6 +3,7 @@ import type {
   PublicOperatorAgent,
   PublicOperatorAgentPage,
   PublicOperatorContext,
+  PublicOperatorEvidenceSummary,
   PublicOperatorMemory,
   PublicOperatorMemoryPage,
   PublicOperatorOverview,
@@ -75,6 +76,14 @@ export function useOperatorMemories(params: () => URLSearchParams) {
 export function useOperatorMemory(memoryId: () => string) {
   const url = computed(() => `/api/operator/memories/${encodeURIComponent(memoryId())}`)
   return useFetch<PublicOperatorMemory>(url, { key: url, watch: [url] })
+}
+
+export function useOperatorEvidenceSummary(params: () => URLSearchParams) {
+  const url = computed(() => {
+    const query = params().toString()
+    return `/api/operator/evidence/summary${query ? `?${query}` : ""}`
+  })
+  return useFetch<PublicOperatorEvidenceSummary>(url, { key: url, watch: [url] })
 }
 
 export function useOperatorSessions(params: () => URLSearchParams) {

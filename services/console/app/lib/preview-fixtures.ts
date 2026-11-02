@@ -24,7 +24,6 @@ export const FIXTURE_MODULES: FixtureModule[] = [
   { file: "console-demo.ts", surface: "overview", kind: "demo" },
   { file: "directive-preview.ts", surface: "directives", kind: "preview" },
   { file: "drift-preview.ts", surface: "drift", kind: "preview" },
-  { file: "evidence-preview.ts", surface: "evidence", kind: "preview" },
   { file: "incident-preview.ts", surface: "incidents", kind: "preview" },
   { file: "policy-preview.ts", surface: "policies", kind: "preview" },
   { file: "provider-preview.ts", surface: "providers", kind: "preview" },

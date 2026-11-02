@@ -45,7 +45,7 @@ The API origin must be HTTPS whenever an operator session cookie is present. The
 | Agents | `/agents` | Live D2 | Tenant-scoped inventory and detail from `operator.agents.v1`; no fixture fallback. |
 | Sessions | `/sessions` | Live D3 | Metadata-only session index and turn-to-trace ledger from `operator.sessions.v1`. |
 | Memories | `/memories` | Live D2 | Metadata-only index from `operator.memories.v1`; content is not exposed. |
-| Evidence | `/evidence` | Preview | Certification coverage, tombstones, and relay chain; no summary contract is connected. |
+| Evidence | `/evidence` | Live D2 | Capture completeness and relay delivery from `operator.evidence.summary.v1`; tombstones and redaction are explicitly unavailable. |
 | Directives | `/directives` | Preview (deferred) | Version timeline and diff; no owning API router exists. |
 | Policies | `/policies` | Preview | Snapshots, readable rules, and diffs; run-to-policy provenance is not connected. |
 | Explore | `/explore`, `/explore/t/:traceId`, `/explore/r/:runId` | Live D2 | Metadata-only trace list, multi-run trace view, and validated run detail using `operator.trace-query.v1`. |
