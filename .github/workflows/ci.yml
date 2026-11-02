@@ -77,6 +77,9 @@ jobs:
       - name: Repo layout guard
         run: bash .github/scripts/check-repo-layout.sh
 
+      - name: Repo layout guard regression tests
+        run: bash .github/scripts/test-check-repo-layout.sh
+
       - name: CI aggregate gate regression tests
         run: bash .github/scripts/test-ci-gate.sh
 
