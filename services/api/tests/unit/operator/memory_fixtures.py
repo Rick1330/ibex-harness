@@ -38,6 +38,8 @@ def memory_values(**overrides: Any) -> dict[str, Any]:
         "observed_at": NOW,
         "created_at": NOW,
         "updated_at": NOW,
+        "superseded_by": None,
+        "merged_into": None,
     }
     values.update(overrides)
     return values

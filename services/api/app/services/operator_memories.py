@@ -8,12 +8,18 @@ from typing import Any
 from uuid import UUID
 
 from apierror_py import NOT_FOUND
-from sqlalchemy import and_, bindparam, column, literal_column, or_, select, table
+from sqlalchemy import and_, bindparam, column, literal_column, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError
 from app.pagination import CursorPage, encode_cursor, page_from_rows
-from app.schemas.operator_memories import OperatorMemory
+from app.schemas.operator_memories import (
+    OperatorMemory,
+    OperatorMemoryDetail,
+    OperatorMemoryLineage,
+    OperatorMemoryLineageEdge,
+    OperatorMemoryLineageTarget,
+)
 from app.services.operator_keyset import (
     KeysetCursor,
     keyset_cursor_payload,
@@ -22,6 +28,12 @@ from app.services.operator_keyset import (
 from app.services.operator_rows import row_value
 
 _MEMORY_NOT_FOUND_MSG = "Memory not found"
+# Supersession tip walk: the schema owns the depth cap and the cycle break.
+_SUPERSESSION_TIP_SQL = text(
+    "SELECT ibex_core.resolve_supersession_tip("
+    "CAST(:org_id AS uuid), CAST(:memory_id AS uuid), 5)"
+)
+_LINEAGE_EDGE_LIMIT = 20
 
 _MEMORIES = table(
     "memories",
@@ -48,11 +60,11 @@ _MEMORIES = table(
     column("updated_at"),
     column("metadata"),
     column("org_id"),
+    column("superseded_by"),
+    column("merged_into"),
     schema="ibex_core",
 )
 
-# One projection shared by the list and detail reads. The raw ``metadata``
-# column is never selected; only the three presentation fields are projected.
 _MEMORY_PROJECTION = (
     _MEMORIES.c.id,
     _MEMORIES.c.agent_id,
@@ -97,6 +109,26 @@ _MEMORY_PROJECTION = (
         END
     """).label("tags"),
 )
+
+_DETAIL_PROJECTION = (
+    *_MEMORY_PROJECTION,
+    _MEMORIES.c.superseded_by,
+    _MEMORIES.c.merged_into,
+)
+
+_RELATIONSHIPS = table(
+    "memory_relationships",
+    column("org_id"),
+    column("source_memory_id"),
+    column("target_memory_id"),
+    column("relationship_type"),
+    column("confidence"),
+    column("created_at"),
+    schema="ibex_core",
+)
+
+# One projection shared by the list and detail reads. The raw ``metadata``
+# column is never selected; only the three presentation fields are projected.
 
 _MEMORY_ORDER = (_MEMORIES.c.created_at.desc(), _MEMORIES.c.id.desc())
 _FILTER_FIELDS = ("agent_id", "session_id", "status", "category")
@@ -236,9 +268,9 @@ def _next_list_payload(memories: list[OperatorMemory], limit: int) -> dict[str, 
 
 async def get_operator_memory(
     session: AsyncSession, org_id: UUID, memory_id: UUID
-) -> OperatorMemory:
+) -> OperatorMemoryDetail:
     statement = (
-        select(*_MEMORY_PROJECTION)
+        select(*_DETAIL_PROJECTION)
         .select_from(_MEMORIES)
         .where(
             _MEMORIES.c.org_id == bindparam("org_id"),
@@ -250,4 +282,131 @@ async def get_operator_memory(
     row = result.mappings().first()
     if row is None:
         raise ApiError(code=NOT_FOUND, message=_MEMORY_NOT_FOUND_MSG)
-    return _memory_from_row(row)
+    base = _memory_from_row(row)
+    lineage = await _memory_lineage(session, org_id, memory_id, row)
+    return OperatorMemoryDetail(**base.model_dump(), lineage=lineage)
+
+
+def _edge_statement(direction: str) -> Any:
+    """Edges out of, or into, this memory, with the other end's state.
+
+    The other end is joined from `memories` so a replacement that has since been
+    deleted or tombstoned is visible as such instead of looking like a live link.
+    """
+    other = (
+        _RELATIONSHIPS.c.target_memory_id
+        if direction == "out"
+        else _RELATIONSHIPS.c.source_memory_id
+    )
+    anchor = (
+        _RELATIONSHIPS.c.source_memory_id
+        if direction == "out"
+        else _RELATIONSHIPS.c.target_memory_id
+    )
+    return (
+        select(
+            other.label("memory_id"),
+            _RELATIONSHIPS.c.relationship_type,
+            _RELATIONSHIPS.c.confidence,
+            _RELATIONSHIPS.c.created_at,
+            _MEMORIES.c.status,
+            _MEMORIES.c.tombstoned,
+        )
+        .select_from(
+            _RELATIONSHIPS.join(
+                _MEMORIES,
+                and_(
+                    _MEMORIES.c.id == other,
+                    _MEMORIES.c.org_id == _RELATIONSHIPS.c.org_id,
+                ),
+            )
+        )
+        .where(
+            _RELATIONSHIPS.c.org_id == bindparam("org_id"),
+            anchor == bindparam("memory_id"),
+        )
+        .order_by(_RELATIONSHIPS.c.created_at.desc())
+        .limit(_LINEAGE_EDGE_LIMIT + 1)
+    )
+
+
+def _edge_rows(rows: list[Any]) -> tuple[list[OperatorMemoryLineageEdge], bool]:
+    truncated = len(rows) > _LINEAGE_EDGE_LIMIT
+    edges = [
+        OperatorMemoryLineageEdge(
+            memory_id=row_value(row, "memory_id"),
+            relationship_type=str(row_value(row, "relationship_type")),
+            confidence=float(row_value(row, "confidence")),
+            created_at=row_value(row, "created_at"),
+            status=row_value(row, "status"),
+            tombstoned=bool(row_value(row, "tombstoned")),
+        )
+        for row in rows[:_LINEAGE_EDGE_LIMIT]
+    ]
+    return edges, truncated
+
+
+def _target_statement(targets: list[UUID]) -> Any:
+    return (
+        select(_MEMORIES.c.id, _MEMORIES.c.status, _MEMORIES.c.tombstoned)
+        .select_from(_MEMORIES)
+        .where(
+            _MEMORIES.c.org_id == bindparam("org_id"),
+            _MEMORIES.c.id.in_(targets),
+        )
+    )
+
+
+def _target_or_none(
+    targets: dict[UUID, OperatorMemoryLineageTarget], value: Any
+) -> OperatorMemoryLineageTarget | None:
+    if value is None:
+        return None
+    return targets.get(UUID(str(value)))
+
+
+async def _memory_lineage(
+    session: AsyncSession, org_id: UUID, memory_id: UUID, row: Any
+) -> OperatorMemoryLineage:
+    params = {"org_id": org_id, "memory_id": memory_id}
+    tip_value = (
+        await session.execute(_SUPERSESSION_TIP_SQL, params)
+    ).scalar_one_or_none()
+    out_rows = (await session.execute(_edge_statement("out"), params)).mappings().all()
+    in_rows = (await session.execute(_edge_statement("in"), params)).mappings().all()
+    replaces, out_truncated = _edge_rows(list(out_rows))
+    replaced_by, in_truncated = _edge_rows(list(in_rows))
+
+    # The three pointer targets are ids only, so fetch their state in one
+    # bounded read; a tombstoned successor must not render as a live link.
+    pointer_ids = [
+        UUID(str(value))
+        for value in (
+            row_value(row, "superseded_by"),
+            row_value(row, "merged_into"),
+            tip_value,
+        )
+        if value is not None
+    ]
+    targets: dict[UUID, OperatorMemoryLineageTarget] = {}
+    if pointer_ids:
+        target_rows = (
+            await session.execute(_target_statement(pointer_ids), {"org_id": org_id})
+        ).mappings().all()
+        targets = {
+            row_value(target, "id"): OperatorMemoryLineageTarget(
+                id=row_value(target, "id"),
+                status=row_value(target, "status"),
+                tombstoned=bool(row_value(target, "tombstoned")),
+            )
+            for target in target_rows
+        }
+
+    return OperatorMemoryLineage(
+        superseded_by=_target_or_none(targets, row_value(row, "superseded_by")),
+        merged_into=_target_or_none(targets, row_value(row, "merged_into")),
+        tip=_target_or_none(targets, tip_value),
+        replaces=replaces,
+        replaced_by=replaced_by,
+        edges_truncated=out_truncated or in_truncated,
+    )

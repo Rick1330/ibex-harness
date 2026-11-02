@@ -320,7 +320,7 @@
     ],
     "name": "operator_memory_detail",
     "path": "/v1/operator/memories/{memory_id}",
-    "response_model": "<class 'app.schemas.operator_memories.OperatorMemory'>",
+    "response_model": "<class 'app.schemas.operator_memories.OperatorMemoryDetail'>",
     "security": [
       "app.authz.require_operator_metadata_session",
       "app.deps.operator_org_session"

@@ -216,6 +216,18 @@ function fixtureBodies() {
     created_at: observedAt,
     updated_at: observedAt,
   }
+  // The list projection is lineage-free by contract; only the detail carries it.
+  const memoryDetail = {
+    ...memory,
+    lineage: {
+      superseded_by: null,
+      merged_into: null,
+      tip: { id: memoryId, status: "active", tombstoned: false },
+      replaces: [],
+      replaced_by: [],
+      edges_truncated: false,
+    },
+  }
   const sessionTurn = {
     id: "99999999-9999-4999-8999-999999999999",
     turn_index: 0,
@@ -264,6 +276,7 @@ function fixtureBodies() {
     },
     session,
     sessionDetail: { ...session, turns: [sessionTurn], turns_truncated: false },
+    memoryDetail,
     memories: {
       data: [memory],
       pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
@@ -321,7 +334,7 @@ function resolveFixtureBody(pathname) {
   }
   if (pathname === "/v1/operator/memories") return { status: 200, payload: bodies.memories }
   if (pathname === `/v1/operator/memories/${memoryId}`) {
-    return { status: 200, payload: bodies.memory }
+    return { status: 200, payload: bodies.memoryDetail }
   }
   if (pathname.startsWith("/v1/operator/memories/")) {
     return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Memory not found" } } }

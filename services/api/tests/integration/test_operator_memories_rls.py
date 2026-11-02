@@ -246,6 +246,82 @@ async def _assert_cursor(session: AsyncSession, ids: SeedIds) -> None:
     assert [item.id for item in second.data] == [ids.memory_a1]
 
 
+async def _supersede(
+    session: AsyncSession,
+    org_id: UUID,
+    older: UUID,
+    newer: UUID,
+) -> None:
+    """Record "`newer` supersedes `older`": the newer memory is the edge source."""
+    await session.execute(
+        text(
+            "INSERT INTO ibex_core.memory_relationships ("
+            "org_id, source_memory_id, target_memory_id, relationship_type, confidence"
+            ") VALUES (CAST(:org_id AS uuid), CAST(:newer AS uuid), CAST(:older AS uuid), "
+            "'supersedes', 0.9)"
+        ),
+        {"org_id": str(org_id), "older": str(older), "newer": str(newer)},
+    )
+    await session.execute(
+        text(
+            "UPDATE ibex_core.memories SET superseded_by = CAST(:newer AS uuid), "
+            "status = 'superseded' WHERE id = CAST(:older AS uuid) "
+            "AND org_id = CAST(:org_id AS uuid)"
+        ),
+        {"older": str(older), "newer": str(newer), "org_id": str(org_id)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_lineage_is_tenant_scoped_and_resolves_the_tip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    ids = SeedIds(
+        org_a=uuid4(),
+        org_b=uuid4(),
+        agent_a=uuid4(),
+        agent_b=uuid4(),
+        memory_a1=uuid4(),
+        memory_a2=uuid4(),
+        memory_b=uuid4(),
+        memory_malformed=uuid4(),
+    )
+    try:
+        await _seed_fixture(session_factory, ids)
+        async with session_factory() as admin, admin.begin():
+            await admin.execute(text("SELECT set_config('app.is_service_account', 'true', true)"))
+            # A supersedes A1 -> A2, and B supersedes nothing in org A.
+            # The newer memory is the `source` of `supersedes`; the older one is the target.
+            await _supersede(admin, ids.org_a, ids.memory_a1, ids.memory_a2)
+
+        async with session_with_org(session_factory, str(ids.org_a)) as session:
+            detail = await get_operator_memory(session, ids.org_a, ids.memory_a1)
+
+        assert detail.lineage.superseded_by is not None
+        assert detail.lineage.superseded_by.id == ids.memory_a2
+        assert detail.lineage.superseded_by.tombstoned is False
+        assert detail.lineage.tip is not None
+        assert detail.lineage.tip.id == ids.memory_a2
+        assert [edge.memory_id for edge in detail.lineage.replaced_by] == [ids.memory_a2]
+        assert detail.lineage.replaced_by[0].relationship_type == "supersedes"
+        # The replacement is the fixture's archived memory; the edge reports its state.
+        assert detail.lineage.replaced_by[0].status == "archived"
+        assert detail.lineage.replaces == []
+
+        async with session_with_org(session_factory, str(ids.org_b)) as session:
+            other = await get_operator_memory(session, ids.org_b, ids.memory_b)
+            with pytest.raises(ApiError) as err:
+                await get_operator_memory(session, ids.org_b, ids.memory_a1)
+
+        assert other.lineage.replaced_by == []
+        # No successor: the memory is its own chain head.
+        assert other.lineage.tip is not None
+        assert other.lineage.tip.id == ids.memory_b
+        assert err.value.code == NOT_FOUND
+    finally:
+        await _cleanup(session_factory, ids.org_a, ids.org_b)
+
+
 @pytest.mark.asyncio
 async def test_operator_memories_are_tenant_scoped_and_exclude_content(
     session_factory: async_sessionmaker[AsyncSession],
