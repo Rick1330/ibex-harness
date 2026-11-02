@@ -11,14 +11,13 @@ import EvidenceCoveragePanel from "./EvidenceCoveragePanel.vue"
 import EvidenceDeliveryPanel from "./EvidenceDeliveryPanel.vue"
 import EvidenceTombstonesPanel from "./EvidenceTombstonesPanel.vue"
 import EvidenceUnavailablePanel from "./EvidenceUnavailablePanel.vue"
-import { useOperatorEvidenceDeletions, useOperatorEvidenceSummary } from "@/composables/useOperatorData"
+import { useOperatorEvidenceSummary } from "@/composables/useOperatorData"
 import { formatGovernNumber, formatGovernRelative } from "@/lib/govern-format"
 import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
 import {
   EVIDENCE_RANGES,
   EVIDENCE_RANGE_LABELS,
   EVIDENCE_TAB_LABELS,
-  evidenceDeletionsParams,
   evidenceSummaryParams,
   type EvidenceTab,
   type LiveEvidenceQuery,
@@ -29,11 +28,6 @@ const props = defineProps<{ state: LiveEvidenceQuery }>()
 const emit = defineEmits<{ update: [state: LiveEvidenceQuery] }>()
 
 const summaryState = useOperatorEvidenceSummary(() => evidenceSummaryParams(props.state.range))
-// The deletion record is its own contract: tombstones are facts about records,
-// not about capture completeness, and it is only fetched for that tab.
-const deletionsState = useOperatorEvidenceDeletions(() =>
-  props.state.tab === "tombstones" ? evidenceDeletionsParams(props.state.range) : new URLSearchParams(),
-)
 const summary = computed(() => summaryState.data.value ?? null)
 const error = computed(() => summaryState.error.value)
 const authIssue = computed(() => isOperatorAuthError(error.value))
@@ -150,15 +144,7 @@ function update(patch: Partial<LiveEvidenceQuery>): void {
 
     <!-- Tabs without a contract explain themselves regardless of the read state;
          they never depend on the summary and never substitute fixtures. -->
-    <EvidenceTombstonesPanel
-      v-if="state.tab === 'tombstones'"
-      :deletions="deletionsState.data.value ?? null"
-      :error="
-        deletionsState.error.value
-          ? (operatorFailureDetail(deletionsState.error.value) ?? 'The deletion record could not be read.')
-          : null
-      "
-    />
+    <EvidenceTombstonesPanel v-if="state.tab === 'tombstones'" :range="state.range" />
     <EvidenceUnavailablePanel
       v-else-if="state.tab === 'redaction'"
       title="Redaction detail is not part of this contract"

@@ -2,18 +2,32 @@
 import { computed } from "vue"
 import GovernCaveat from "@/components/console/govern/primitives/GovernCaveat.vue"
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
+import IxVerdict from "@/components/console/IxVerdict.vue"
+import { useOperatorEvidenceDeletions } from "@/composables/useOperatorData"
 import { formatGovernNumber, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
-import type {
-  ErasureStatus,
-  OperatorEvidenceDeletions,
-  ReceiptStatus,
-} from "~~/shared/operator/contracts"
+import { isOperatorAuthError, operatorFailureDetail } from "@/lib/operator-error"
+import { evidenceDeletionsParams } from "~~/shared/operator/evidence-query"
+import type { ErasureStatus, EvidenceRange, ReceiptStatus } from "~~/shared/operator/contracts"
 
-const props = defineProps<{ deletions: OperatorEvidenceDeletions | null, error: string | null }>()
+// Fetched here, not in the page: the whole-ledger check must not run on the
+// Coverage, Delivery, or Redaction tabs, and this component only mounts on the
+// Tombstones tab.
+const props = defineProps<{ range: EvidenceRange }>()
 
-const tombstones = computed(() => props.deletions?.tombstones ?? null)
-const audit = computed(() => props.deletions?.audit ?? null)
-const clock = computed(() => props.deletions?.observed_at ?? null)
+const deletionsState = useOperatorEvidenceDeletions(() => evidenceDeletionsParams(props.range))
+const deletions = computed(() => deletionsState.data.value ?? null)
+const error = computed(() => deletionsState.error.value)
+const loading = computed(
+  () => !deletions.value && !error.value && deletionsState.status.value === "pending",
+)
+const authIssue = computed(() => isOperatorAuthError(error.value))
+const failureDetail = computed(() =>
+  error.value && !authIssue.value ? operatorFailureDetail(error.value) : null,
+)
+
+const tombstones = computed(() => deletions.value?.tombstones ?? null)
+const audit = computed(() => deletions.value?.audit ?? null)
+const clock = computed(() => deletions.value?.observed_at ?? null)
 
 const events = computed(() => {
   const counts = tombstones.value?.events
@@ -23,7 +37,7 @@ const events = computed(() => {
 
 const failedReceipts = computed(
   () =>
-    props.deletions?.jobs.reduce(
+    deletions.value?.jobs.reduce(
       (sum, job) => sum + job.receipts.filter((receipt) => receipt.status === "failed").length,
       0,
     ) ?? 0,
@@ -62,9 +76,27 @@ const RECEIPT_TONE: Record<ReceiptStatus, string> = {
 
 <template>
   <div class="flex flex-col gap-3">
-    <div v-if="!deletions" class="rounded-lg border border-dashed border-line-subtle bg-surface-1/40 px-4 py-6 text-center text-xs text-fg-3">
-      {{ error ?? "The deletion record could not be read for this window." }}
-    </div>
+    <IxVerdict
+      v-if="loading"
+      tone="unknown"
+      eyebrow="Live operator read"
+      title="Reading the deletion record"
+      body="Asking the operator API for tombstones, erasure receipts, and the audit chain."
+    />
+    <IxVerdict
+      v-else-if="authIssue"
+      tone="unavailable"
+      eyebrow="Operator session"
+      title="The operator session cannot read this organization"
+      body="Sign in again with an account that holds metadata-read permission."
+    />
+    <IxVerdict
+      v-else-if="error"
+      tone="unknown"
+      eyebrow="Live operator read"
+      title="Deletion record unavailable"
+      :body="failureDetail ?? 'The upstream read failed. No values are inferred.'"
+    />
 
     <template v-else-if="deletions">
       <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
@@ -76,7 +108,7 @@ const RECEIPT_TONE: Record<ReceiptStatus, string> = {
         <GovernStatTile
           label="Propagation pending"
           :value="formatGovernNumber(tombstones?.pending ?? 0)"
-          :helper="tombstones?.oldest_pending_at ? `Oldest ${formatGovernRelative(tombstones.oldest_pending_at, clock)}` : 'Every lifecycle event delivered'"
+          :helper="tombstones?.oldest_pending_at ? `Oldest ${formatGovernRelative(tombstones.oldest_pending_at, clock)}` : 'No undelivered deletion event, at any age'"
           :tone="(tombstones?.pending ?? 0) > 0 ? 'warning' : 'default'"
         />
         <GovernStatTile

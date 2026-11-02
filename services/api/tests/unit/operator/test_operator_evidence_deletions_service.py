@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -12,6 +13,7 @@ from app.services import operator_evidence_deletions as deletion_service
 from app.services.operator_evidence_deletions import DeletionArgs, window_for
 
 NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+GENESIS = "0" * 64
 
 
 class _Result:
@@ -51,33 +53,48 @@ def _args(range_value: str = "24h") -> DeletionArgs:
     return DeletionArgs(org_id=uuid4(), range=range_value)  # type: ignore[arg-type]
 
 
-def _tombstone_row(
-    event: str,
-    events: int,
-    pending: int = 0,
-    oldest: datetime | None = None,
-    last: datetime | None = None,
-) -> dict[str, object]:
-    return {
-        "event_type": event,
-        "events": events,
-        "pending": pending,
-        "oldest_pending_at": oldest,
-        "last_event_at": last,
-    }
+@dataclass(frozen=True)
+class TombstoneRow:
+    event: str
+    events: int
+    last: datetime | None = None
+
+
+def _tombstone_row(row: TombstoneRow) -> dict[str, object]:
+    return {"event_type": row.event, "events": row.events, "last_event_at": row.last}
+
+
+def _backlog(pending: int = 0, oldest: datetime | None = None) -> _Result:
+    return _Result([{"pending": pending, "oldest_pending_at": oldest}])
+
+
+@dataclass(frozen=True)
+class AuditRow:
+    entries: int
+    first: int | None
+    last: int | None
+    first_prev: str | None = GENESIS
+    first_break: int | None = None
+    head: str | None = None
+
+
+def _audit_row(row: AuditRow) -> _Result:
+    return _Result(
+        [
+            {
+                "entries": row.entries,
+                "first_seq": row.first,
+                "last_seq": row.last,
+                "first_prev_hash": row.first_prev,
+                "last_row_hash": row.head,
+                "first_break": row.first_break,
+            }
+        ]
+    )
 
 
 def _job_row(status: str, created_at: datetime = NOW) -> dict[str, object]:
-    return {
-        "id": uuid4(),
-        "status": status,
-        "created_at": created_at,
-        "finished_at": None,
-    }
-
-
-def _audit_totals(entries: int, first: int | None, last: int | None) -> _Result:
-    return _Result([{"entries": entries, "first_seq": first, "last_seq": last}])
+    return {"id": uuid4(), "status": status, "created_at": created_at, "finished_at": None}
 
 
 @pytest.mark.parametrize(
@@ -97,11 +114,12 @@ async def test_summary_projects_tombstones_fence_erasures_and_audit() -> None:
     job = _job_row("hold_blocked")
     session = _session(
         [
-            _tombstone_row("forgotten", 3, pending=0, last=NOW),
-            _tombstone_row("expired", 2, pending=1, oldest=oldest, last=NOW),
-            _tombstone_row("purged", 1, pending=1, oldest=oldest, last=NOW),
-            _tombstone_row("created", 99),
+            _tombstone_row(TombstoneRow("forgotten", 3, NOW)),
+            _tombstone_row(TombstoneRow("expired", 2, NOW)),
+            _tombstone_row(TombstoneRow("purged", 1, NOW)),
+            _tombstone_row(TombstoneRow("created", 99)),
         ],
+        _backlog(pending=2, oldest=oldest),
         _Result(scalar=4),
         [{"status": "succeeded", "jobs": 1}, {"status": "hold_blocked", "jobs": 1}],
         [_job_row("succeeded"), job],
@@ -109,9 +127,8 @@ async def test_summary_projects_tombstones_fence_erasures_and_audit() -> None:
             {"job_id": job["id"], "store": "postgres", "status": "verified", "verified_absent_at": NOW},
             {"job_id": job["id"], "store": "redis", "status": "pending", "verified_absent_at": None},
         ],
-        _audit_totals(2, 1, 2),
-        _Result(scalar=None),
-        _Result(scalar="deadbeef"),
+        _Result(),
+        _audit_row(AuditRow(4, 1, 4, head="deadbeef")),
     )
 
     summary = await deletion_service.get_evidence_deletions(session, _args(), now=NOW)
@@ -133,21 +150,21 @@ async def test_summary_projects_tombstones_fence_erasures_and_audit() -> None:
         ("redis", "pending"),
     ]
     assert summary.audit.continuity_ok is True
-    assert summary.audit.entries == 2
+    assert summary.audit.entries == 4
     assert summary.audit.last_row_hash == "deadbeef"
     assert summary.observed_at == NOW
 
 
 @pytest.mark.asyncio
-async def test_a_broken_chain_is_reported_with_the_first_broken_seq() -> None:
+async def test_a_broken_link_is_reported_with_the_first_broken_seq() -> None:
     session = _session(
         [],
+        _backlog(),
         _Result(scalar=0),
         [],
         [],
-        _audit_totals(5, 1, 5),
-        _Result(scalar=4),
-        _Result(scalar="cafebabe"),
+        _Result(),
+        _audit_row(AuditRow(5, 1, 5, first_break=4, head="cafebabe")),
     )
 
     summary = await deletion_service.get_evidence_deletions(session, _args(), now=NOW)
@@ -158,15 +175,53 @@ async def test_a_broken_chain_is_reported_with_the_first_broken_seq() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_empty_tenant_reports_zeros_and_an_intact_empty_chain() -> None:
+async def test_a_chain_that_does_not_start_at_one_is_broken_at_its_start() -> None:
+    # A ledger whose first row is gone would otherwise look continuous, because
+    # there is no earlier row to compare against.
     session = _session(
         [],
+        _backlog(),
         _Result(scalar=0),
         [],
         [],
-        _audit_totals(0, None, None),
-        _Result(scalar=None),
-        _Result(scalar=None),
+        _Result(),
+        _audit_row(AuditRow(3, 2, 4, head="cafebabe")),
+    )
+
+    summary = await deletion_service.get_evidence_deletions(session, _args(), now=NOW)
+
+    assert summary.audit.continuity_ok is False
+    assert summary.audit.broken_at_seq == 2
+
+
+@pytest.mark.asyncio
+async def test_a_first_row_that_does_not_link_to_genesis_is_broken() -> None:
+    session = _session(
+        [],
+        _backlog(),
+        _Result(scalar=0),
+        [],
+        [],
+        _Result(),
+        _audit_row(AuditRow(2, 1, 2, first_prev="ab" * 32, head="cafebabe")),
+    )
+
+    summary = await deletion_service.get_evidence_deletions(session, _args(), now=NOW)
+
+    assert summary.audit.continuity_ok is False
+    assert summary.audit.broken_at_seq == 1
+
+
+@pytest.mark.asyncio
+async def test_an_empty_tenant_reports_zeros_and_an_intact_empty_chain() -> None:
+    session = _session(
+        [],
+        _backlog(),
+        _Result(scalar=0),
+        [],
+        [],
+        _Result(),
+        _audit_row(AuditRow(0, None, None, first_prev=None)),
     )
 
     summary = await deletion_service.get_evidence_deletions(session, _args(), now=NOW)
@@ -190,18 +245,21 @@ async def test_an_empty_tenant_reports_zeros_and_an_intact_empty_chain() -> None
 async def test_every_query_is_scoped_to_the_operator_org() -> None:
     session = _session(
         [],
+        _backlog(),
         _Result(scalar=0),
         [],
         [],
-        _audit_totals(0, None, None),
-        _Result(scalar=None),
-        _Result(scalar=None),
+        _Result(),
+        _audit_row(AuditRow(0, None, None, first_prev=None)),
     )
     args = _args("7d")
 
     await deletion_service.get_evidence_deletions(session, args, now=NOW)
 
-    for call in session.execute.await_args_list:
+    # The SET LOCAL has no bind params; every data query must carry the org.
+    scoped = [call for call in session.execute.await_args_list if len(call.args) > 1]
+    assert len(scoped) == 6
+    for call in scoped:
         assert call.args[1]["org_id"] == args.org_id
 
 
@@ -210,13 +268,13 @@ async def test_more_than_twenty_jobs_is_marked_truncated() -> None:
     jobs = [_job_row("succeeded", created_at=NOW - timedelta(minutes=index)) for index in range(21)]
     session = _session(
         [],
+        _backlog(),
         _Result(scalar=0),
         [{"status": "succeeded", "jobs": 21}],
         jobs,
         [],
-        _audit_totals(0, None, None),
-        _Result(scalar=None),
-        _Result(scalar=None),
+        _Result(),
+        _audit_row(AuditRow(0, None, None, first_prev=None)),
     )
 
     summary = await deletion_service.get_evidence_deletions(session, _args(), now=NOW)

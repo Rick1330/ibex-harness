@@ -44,9 +44,15 @@ async def _seed_agent(session: AsyncSession, org_id: UUID, agent_id: UUID) -> No
     )
 
 
-async def _seed_memory(
-    session: AsyncSession, org_id: UUID, agent_id: UUID, memory_id: UUID, tombstoned: bool
-) -> None:
+@dataclass(frozen=True)
+class SeedMemory:
+    org_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+    tombstoned: bool
+
+
+async def _seed_memory(session: AsyncSession, seed: SeedMemory) -> None:
     await session.execute(
         text(
             """
@@ -64,19 +70,25 @@ async def _seed_memory(
             """
         ),
         {
-            "id": str(memory_id),
-            "org_id": str(org_id),
-            "agent_id": str(agent_id),
-            "content_hash": f"hash-{memory_id.hex}",
-            "tombstoned": tombstoned,
+            "id": str(seed.memory_id),
+            "org_id": str(seed.org_id),
+            "agent_id": str(seed.agent_id),
+            "content_hash": f"hash-{seed.memory_id.hex}",
+            "tombstoned": seed.tombstoned,
             "created_at": START,
         },
     )
 
 
-async def _seed_lifecycle_event(
-    session: AsyncSession, org_id: UUID, memory_id: UUID, event_type: str, delivered: bool
-) -> None:
+@dataclass(frozen=True)
+class SeedLifecycleEvent:
+    org_id: UUID
+    memory_id: UUID
+    event_type: str
+    delivered: bool
+
+
+async def _seed_lifecycle_event(session: AsyncSession, seed: SeedLifecycleEvent) -> None:
     await session.execute(
         text(
             """
@@ -89,11 +101,11 @@ async def _seed_lifecycle_event(
             """
         ),
         {
-            "org_id": str(org_id),
-            "memory_id": str(memory_id),
-            "event_type": event_type,
+            "org_id": str(seed.org_id),
+            "memory_id": str(seed.memory_id),
+            "event_type": seed.event_type,
             "occurred_at": START,
-            "delivered_at": START if delivered else None,
+            "delivered_at": START if seed.delivered else None,
         },
     )
 
@@ -200,17 +212,22 @@ async def _seed_fixture(session_factory: async_sessionmaker[AsyncSession], ids: 
         await _seed_agent(admin, ids.org_b, ids.agent_b)
 
         tombstoned_a = uuid4()
-        await _seed_memory(admin, ids.org_a, ids.agent_a, tombstoned_a, tombstoned=True)
-        await _seed_memory(admin, ids.org_a, ids.agent_a, uuid4(), tombstoned=False)
-        await _seed_memory(admin, ids.org_b, ids.agent_b, uuid4(), tombstoned=True)
-        await _seed_lifecycle_event(admin, ids.org_a, tombstoned_a, "forgotten", delivered=False)
+        await _seed_memory(admin, SeedMemory(ids.org_a, ids.agent_a, tombstoned_a, True))
+        await _seed_memory(admin, SeedMemory(ids.org_a, ids.agent_a, uuid4(), False))
+        await _seed_memory(admin, SeedMemory(ids.org_b, ids.agent_b, uuid4(), True))
+        await _seed_lifecycle_event(
+            admin, SeedLifecycleEvent(ids.org_a, tombstoned_a, "forgotten", False)
+        )
         await _seed_deletion_job(admin, ids.org_a)
         await _seed_deletion_job(admin, ids.org_b)
         # Org A: 1 -> 2 is intact, 3 breaks the link.
+        genesis = "0" * 64
         await _seed_ledger(
-            admin, ids.org_a, [(1, "genesis", "hash-1"), (2, "hash-1", "hash-2"), (3, "hash-x", "hash-3")]
+            admin,
+            ids.org_a,
+            [(1, genesis, "hash-1"), (2, "hash-1", "hash-2"), (3, "hash-x", "hash-3")],
         )
-        await _seed_ledger(admin, ids.org_b, [(1, "genesis", "hash-1"), (2, "hash-1", "hash-2")])
+        await _seed_ledger(admin, ids.org_b, [(1, genesis, "hash-1"), (2, "hash-1", "hash-2")])
 
 
 @pytest.mark.asyncio
