@@ -44,6 +44,13 @@ import {
 const route = useRoute()
 const traceId = computed(() => String(route.params.traceId ?? ""))
 const returnTo = computed(() => safeExploreReturn(route.query.return))
+// The trace page can be entered from a session or a memory, not only from the
+// Explore list, so the back target has to name its real destination.
+const returnLabel = computed(() => {
+  if (returnTo.value.startsWith("/sessions/")) return "Session"
+  if (returnTo.value.startsWith("/memories/")) return "Memory"
+  return "Explore"
+})
 
 // Keyed on the id alone: a new trace must re-read rather than re-label the previous payload,
 // while a status change only rewrites the query.
@@ -194,7 +201,7 @@ const shortcutGroups = [
           class="inline-flex items-center gap-1 text-xs text-fg-3 transition-colors hover:text-fg-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <ArrowLeft :size="12" :stroke-width="1.9" aria-hidden="true" />
-          Explore
+          {{ returnLabel }}
         </NuxtLink>
       </template>
 
@@ -250,7 +257,7 @@ const shortcutGroups = [
         :title="`No trace record for ${traceId.length > 20 ? `${traceId.slice(0, 20)}…` : traceId}`"
         reason="The identifier resolved to nothing inside your organization. Another organization's trace is reported the same way, so existence is not leaked."
         next-step="Check the identifier against the query that produced it."
-        action-label="Back to Explore"
+        :action-label="`Back to ${returnLabel}`"
         @action="backToList"
       />
 
@@ -266,7 +273,7 @@ const shortcutGroups = [
         title="No runs returned for this trace"
         reason="The trace identifier resolved, but no run metadata came back. An empty trace is a valid answer, not a successful run."
         next-step="Open Explore and search by session or request id to see whether the work was captured under another grouping."
-        action-label="Back to Explore"
+        :action-label="`Back to ${returnLabel}`"
         @action="backToList"
       />
 

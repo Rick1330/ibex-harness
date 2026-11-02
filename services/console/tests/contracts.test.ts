@@ -362,8 +362,8 @@ const sessionPage = {
   })
 
   it("accepts the model-name bound the proxy enforces", () => {
-    // services/proxy validation.MaxModelNameLength is 256 and the saved value is
-    // passed through unchanged, so the projection must not be narrower.
+    // services/proxy validation.MaxModelNameLength is 256 bytes and the saved
+    // value is passed through unchanged, so the projection must not be narrower.
     const model = "m".repeat(256)
     expect(OperatorSessionRecordSchema.parse({ ...operatorSession, model }).model).toHaveLength(256)
     expect(() => OperatorSessionRecordSchema.parse({ ...operatorSession, model: "m".repeat(257) })).toThrow()
@@ -373,5 +373,21 @@ const sessionPage = {
         turns: [{ ...sessionTurn, model }],
       }),
     ).not.toThrow()
+  })
+
+  it("counts model-name length in code points, like the API", () => {
+    // 256 code points outside the BMP are 512 UTF-16 units; the API accepts them
+    // and a naive .max(256) would turn the session read into a 502.
+    const model = "🧠".repeat(256)
+    expect(OperatorSessionRecordSchema.parse({ ...operatorSession, model }).model).toBe(model)
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({
+        ...sessionDetail,
+        turns: [{ ...sessionTurn, model }],
+      }),
+    ).not.toThrow()
+    expect(() =>
+      OperatorSessionRecordSchema.parse({ ...operatorSession, model: "🧠".repeat(257) }),
+    ).toThrow()
   })
 })

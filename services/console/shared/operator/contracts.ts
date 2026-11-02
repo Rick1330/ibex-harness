@@ -351,6 +351,14 @@ export const SessionTurnEvidenceSchema = z
   })
   .strict()
 
+// API: `Field(min_length=1, max_length=256)`, which Pydantic counts in code
+// points. The proxy bounds the stored name at 256 bytes, so counting code
+// points here can never be narrower than a name the proxy actually saves.
+const OperatorModelNameSchema = z
+  .string()
+  .min(1)
+  .refine((value) => codePointLength(value) <= 256, "model must be at most 256 characters")
+
 export const OperatorSessionTurnSchema = z
   .object({
     id: z.string().uuid(),
@@ -358,7 +366,7 @@ export const OperatorSessionTurnSchema = z
     request_id: z.string().min(1).max(256),
     input_tokens: z.number().int().nonnegative(),
     output_tokens: z.number().int().nonnegative(),
-    model: z.string().min(1).max(256),
+    model: OperatorModelNameSchema,
     provider: z.string().min(1).max(64),
     latency_ms: z.number().int().nonnegative(),
     is_streaming: z.boolean(),
@@ -375,7 +383,7 @@ export const OperatorSessionRecordSchema = z
     agent_id: z.string().uuid(),
     external_id: z.string().max(128).nullable(),
     status: SessionStatusSchema,
-    model: z.string().min(1).max(256),
+    model: OperatorModelNameSchema,
     provider: z.string().min(1).max(64),
     directive_version_id: z.string().uuid().nullable(),
     turn_count: z.number().int().nonnegative(),
