@@ -6,7 +6,7 @@ import GovernDecisionPill from "@/components/console/govern/primitives/GovernDec
 import GovernEmptyState from "@/components/console/govern/primitives/GovernEmptyState.vue"
 import GovernEmptyValue from "@/components/console/govern/primitives/GovernEmptyValue.vue"
 import GovernSparkline from "@/components/console/govern/primitives/GovernSparkline.vue"
-import { formatGovernNumber, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernNumber, formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   POLICY_DECISION_ORDER,
   policyDecisionLabel,
@@ -114,7 +114,7 @@ function runHref(runId: string): string {
           <tbody>
             <tr v-for="run in rows" :key="run.runId">
               <td>
-                <span class="text-xs text-fg-2" :title="formatGovernStamp(run.at)">{{ formatGovernRelative(run.at) }}</span>
+                <span class="text-xs text-fg-2" :title="formatGovernStamp(run.at)">{{ formatGovernRelative(run.at, GOVERN_NOW) }}</span>
               </td>
               <td>
                 <NuxtLink :to="runHref(run.runId)" class="font-mono text-[0.6875rem] text-fg-1 underline-offset-3 hover:text-accent-memory hover:underline">

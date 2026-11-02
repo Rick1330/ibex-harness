@@ -14,19 +14,25 @@ function toTime(value: string | null | undefined): number | null {
 /**
  * Relative age for a recorded timestamp.
  *
- * Fixtures are measured against the fixed `GOVERN_NOW` so server and client
- * render the same string. A live surface passes its own reference (the
- * observation time it just read) — measuring live data against a fixed clock
- * would report a record from today as "just now" for as long as the constant
- * is not moved.
+ * The reference is **required** because there is no correct default:
+ *
+ * - a fixture passes `GOVERN_NOW`, so server and client render the same string;
+ * - a live surface passes the observation time it just read (an ISO string), so
+ *   ages are measured against the snapshot the data came from;
+ * - a live wall-clock surface passes its ticking `nowMs`, so "last active 12s
+ *   ago" keeps moving.
+ *
+ * Measuring live data against the fixture clock is the defect this signature
+ * removes: the compiler now forces every call site to say which clock it means.
  */
 export function formatGovernRelative(
   value: string | null | undefined,
-  reference: string | null | undefined = null,
+  reference: string | number | null,
 ): string {
   const time = toTime(value)
   if (time === null) return "Not recorded"
-  const referenceTime = reference ? (toTime(reference) ?? GOVERN_NOW) : GOVERN_NOW
+  const referenceTime = typeof reference === "number" ? reference : toTime(reference)
+  if (referenceTime === null) return "Not recorded"
   const delta = referenceTime - time
   if (delta < 0) return "after the read window"
   if (delta < MINUTE) return "just now"

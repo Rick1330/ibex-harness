@@ -29,7 +29,7 @@ const tiles = computed(() => [
   {
     label: "Started",
     value: formatGovernStampSeconds(detail.value.started_at),
-    helper: `${formatGovernRelative(detail.value.started_at)} · as recorded by the proxy.`,
+    helper: `${formatGovernRelative(detail.value.started_at, detail.value.evidence.observed_at)} · as recorded by the proxy.`,
     tone: "default" as const,
   },
   {
@@ -37,13 +37,13 @@ const tiles = computed(() => [
     value: detail.value.ended_at === null ? "Not recorded" : formatGovernStampSeconds(detail.value.ended_at),
     helper: detail.value.ended_at === null
       ? "No end was written for this run."
-      : `${formatGovernRelative(detail.value.ended_at)} · the duration above is the proxy's own figure, not this minus the start.`,
+      : `${formatGovernRelative(detail.value.ended_at, detail.value.evidence.observed_at)} · the duration above is the proxy's own figure, not this minus the start.`,
     tone: detail.value.ended_at === null ? ("warning" as const) : ("default" as const),
   },
   {
     label: "Evidence observed",
     value: formatGovernStampSeconds(detail.value.evidence.observed_at),
-    helper: `${formatGovernRelative(detail.value.evidence.observed_at)} · when this read saw the evidence row.`,
+    helper: "When the platform read this evidence row.",
     tone: "default" as const,
   },
 ])

@@ -28,6 +28,7 @@ import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
 import {
   formatGovernRelative,
   formatGovernStamp,
+  GOVERN_NOW,
 } from "@/lib/govern-format"
 import {
   INCIDENT_DEFAULT_SORT_DIRECTION,
@@ -179,7 +180,7 @@ function ageOf(incident: Incident): string {
 }
 
 function lastUpdate(incident: Incident): string {
-  return formatGovernRelative(incident.updatedAt)
+  return formatGovernRelative(incident.updatedAt, GOVERN_NOW)
 }
 
 // ---- detail drawer -------------------------------------------------------
@@ -587,7 +588,7 @@ const aboutNotes = [
               <span aria-hidden="true">·</span>
               <span>{{ selected.env }}</span>
               <span aria-hidden="true">·</span>
-              <span>opened {{ formatGovernRelative(selected.startedAt) }}</span>
+              <span>opened {{ formatGovernRelative(selected.startedAt, GOVERN_NOW) }}</span>
             </SheetDescription>
           </SheetHeader>
 
@@ -601,7 +602,7 @@ const aboutNotes = [
                   </p>
                 </div>
                 <p class="font-mono text-xs text-fg-3" :title="formatGovernStamp(selected.updatedAt)">
-                  updated {{ formatGovernRelative(selected.updatedAt) }}
+                  updated {{ formatGovernRelative(selected.updatedAt, GOVERN_NOW) }}
                 </p>
               </div>
               <dl class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-line-subtle pt-3 text-xs sm:grid-cols-3">

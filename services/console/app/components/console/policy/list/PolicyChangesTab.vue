@@ -3,7 +3,7 @@ import { computed } from "vue"
 import { ArrowRight, ChevronRight } from "@lucide/vue"
 import GovernCopyId from "@/components/console/govern/primitives/GovernCopyId.vue"
 import GovernEffectTag from "@/components/console/govern/primitives/GovernEffectTag.vue"
-import { formatGovernDate, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernDate, formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import { policyChangeFeed } from "@/lib/policy-preview"
 import { policyRuleDetailHref, policySnapshotHref } from "@/lib/govern-query"
 
@@ -35,7 +35,7 @@ const groups = computed(() => {
       <ol class="divide-y divide-line-subtle overflow-hidden rounded-lg border border-line-subtle bg-surface-1">
         <li v-for="change in group.items" :key="change.id" class="flex min-w-0 flex-wrap items-start gap-x-4 gap-y-2 px-4 py-3">
           <div class="w-24 shrink-0">
-            <span class="block text-xs text-fg-2" :title="formatGovernStamp(change.at)">{{ formatGovernRelative(change.at) }}</span>
+            <span class="block text-xs text-fg-2" :title="formatGovernStamp(change.at)">{{ formatGovernRelative(change.at, GOVERN_NOW) }}</span>
             <span class="mt-0.5 block font-mono text-[0.625rem] text-fg-3">{{ change.snapshotId }}</span>
           </div>
 

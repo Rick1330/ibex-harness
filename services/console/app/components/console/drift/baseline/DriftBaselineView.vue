@@ -8,7 +8,7 @@ import GovernLockedAction from "@/components/console/govern/primitives/GovernLoc
 import GovernSeverityChip from "@/components/console/govern/primitives/GovernSeverityChip.vue"
 import GovernStateChip from "@/components/console/govern/primitives/GovernStateChip.vue"
 import GovernMonitorStatusChip from "@/components/console/drift/GovernMonitorStatusChip.vue"
-import { formatGovernDate, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernDate, formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   driftBaselineAge,
   driftBaselineTone,
@@ -212,7 +212,7 @@ function signalHrefFor(metricName: string): string {
                   <GovernStateChip :state="signal.state" />
                 </span>
               </div>
-              <p class="mt-1 text-[0.625rem] text-fg-3">Opened {{ formatGovernRelative(signal.openedAt) }} · {{ signal.owner ?? "No owner" }}</p>
+              <p class="mt-1 text-[0.625rem] text-fg-3">Opened {{ formatGovernRelative(signal.openedAt, GOVERN_NOW) }} · {{ signal.owner ?? "No owner" }}</p>
             </li>
           </ul>
           <p v-else class="px-4 py-4 text-xs leading-5 text-fg-3">No signal from this baseline is open or acknowledged.</p>
@@ -239,7 +239,7 @@ function signalHrefFor(metricName: string): string {
           </ul>
           <p v-else class="px-4 py-4 text-xs text-fg-3">No monitor applies to this agent version.</p>
           <p v-if="monitors.length" class="border-t border-line-subtle px-4 py-1.5 text-[0.6875rem] leading-4 text-fg-3">
-            Last evaluated {{ formatGovernRelative(monitors[0]?.lastEvaluated) }}.
+            Last evaluated {{ formatGovernRelative(monitors[0]?.lastEvaluated, GOVERN_NOW) }}.
           </p>
         </section>
 

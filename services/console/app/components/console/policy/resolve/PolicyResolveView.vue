@@ -11,7 +11,7 @@ import GovernEffectTag from "@/components/console/govern/primitives/GovernEffect
 import GovernModeTag from "@/components/console/govern/primitives/GovernModeTag.vue"
 import GovernShortcutsDialog from "@/components/console/govern/primitives/GovernShortcutsDialog.vue"
 import GovernTimeTravelPicker from "@/components/console/govern/primitives/GovernTimeTravelPicker.vue"
-import { formatGovernNumber, formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernNumber, formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   POLICY_DECISION_LABELS,
   policyResolveAt,
@@ -216,7 +216,7 @@ const { helpOpen } = useGovernShortcuts({
             <GovernCopyId :id="runResult.runId" label="Run ID" />
             <span class="text-fg-3" aria-hidden="true">·</span>
             <span class="text-xs text-fg-2" :title="formatGovernStamp(runResult.decision.at)">
-              {{ formatGovernRelative(runResult.decision.at) }}
+              {{ formatGovernRelative(runResult.decision.at, GOVERN_NOW) }}
             </span>
             <span class="text-fg-3" aria-hidden="true">·</span>
             <NuxtLink :to="policySnapshotHref(runResult.snapshot.id)" class="ix-link font-mono text-[0.6875rem]">

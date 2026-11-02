@@ -28,7 +28,7 @@ import GovernShortcutsDialog from "@/components/console/govern/primitives/Govern
 import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
 import KeyHint from "@/components/console/primitives/KeyHint.vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
-import { formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   TOOL_APPROVAL_LABELS,
   TOOL_DEFAULT_SORT_DIRECTION,
@@ -459,7 +459,7 @@ const groupedTools = computed(() =>
                 </span>
               </td>
               <td class="text-right font-mono text-xs text-fg-2 tabular-nums">{{ invocationLatency(row.latencyMs) }}</td>
-              <td class="text-right font-mono text-[0.6875rem] text-fg-3" :title="formatGovernStamp(row.at)">{{ formatGovernRelative(row.at) }}</td>
+              <td class="text-right font-mono text-[0.6875rem] text-fg-3" :title="formatGovernStamp(row.at)">{{ formatGovernRelative(row.at, GOVERN_NOW) }}</td>
             </tr>
           </tbody>
         </table>

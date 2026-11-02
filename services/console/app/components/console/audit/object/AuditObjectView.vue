@@ -12,7 +12,7 @@ import GovernFilterSelect from "@/components/console/govern/primitives/GovernFil
 import GovernIdChip from "@/components/console/govern/primitives/GovernIdChip.vue"
 import GovernLockedAction from "@/components/console/govern/primitives/GovernLockedAction.vue"
 import GovernResultChip from "@/components/console/govern/primitives/GovernResultChip.vue"
-import { formatGovernRelative, formatGovernStamp, formatGovernStampMillis } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, formatGovernStampMillis, GOVERN_NOW } from "@/lib/govern-format"
 import { auditEventHref, type AuditObjectState } from "@/lib/govern-query"
 import {
   AUDIT_TARGET_TYPE_LABELS,
@@ -219,7 +219,7 @@ function idempotency(event: AuditEvent): string {
                   size="sm"
                 />
                 <span class="font-mono text-[0.6875rem] text-fg-3" :title="formatGovernStampMillis(event.at)">
-                  {{ formatGovernRelative(event.at) }}
+                  {{ formatGovernRelative(event.at, GOVERN_NOW) }}
                 </span>
                 <GovernResultChip :result="event.result" />
                 <GovernEvidenceChip :evidence="event.evidence" />

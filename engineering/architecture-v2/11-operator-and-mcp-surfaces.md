@@ -31,6 +31,21 @@ The console reads directives through one pointer and one history, and the two ar
 The surface reports the two facts separately ("live now" versus "served sessions in the window") so a rollback is
 visible instead of being smoothed into a single "current version" number.
 
+### Time reference in the console (two clocks, one boundary)
+
+The console renders relative ages from two different references, and mixing them is a correctness defect, not a style
+choice:
+
+- **Preview fixtures** are measured against the fixed `GOVERN_NOW`. A fixture must render the same string on the server
+  and the client, and it must not drift as the repository ages.
+- **Live surfaces** are measured against a reference they own: the `observed_at` the read returned (stable across SSR and
+  immune to client clock skew), or a ticking `nowMs` where the age must keep moving ("last active 12s ago").
+
+`formatGovernRelative` therefore takes a **required** reference, and `RelativeTime` a required `now`. There is no default
+because there is no correct one: inheriting the fixture clock on a live page reports a record from today as "just now"
+once the constant is behind real time. `tests/clock-boundary.test.ts` enforces the boundary by rejecting `GOVERN_NOW` in
+any file that is not under a preview surface or the fixture library.
+
 ## MCP surface
 
 MCP is an external resource/tool boundary. It derives scope from authenticated principal, uses versioned tool descriptors and hashes, caps input/output, validates arguments, supports deadlines/cancellation, requires idempotency for writes, and records policy/evidence IDs. Tool descriptions and results are untrusted data.

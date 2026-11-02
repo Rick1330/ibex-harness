@@ -12,7 +12,7 @@ import GovernStateChip from "@/components/console/govern/primitives/GovernStateC
 import DriftListHeader from "./DriftListHeader.vue"
 import { useGovernShortcuts } from "@/composables/useGovernShortcuts"
 import { useTriageTable } from "@/composables/useTriageTable"
-import { formatGovernDate, formatGovernStamp, formatGovernRelative } from "@/lib/govern-format"
+import { formatGovernDate, formatGovernStamp, formatGovernRelative, GOVERN_NOW } from "@/lib/govern-format"
 import {
   DRIFT_LIST_DEFAULT,
   DRIFT_SEVERITY_FILTERS,
@@ -350,7 +350,7 @@ function causeTitle(signal: DriftSignal): string | null {
             <td><GovernSeverityChip :severity="signal.severity" /></td>
             <td>
               <span class="text-xs text-fg-2" :title="formatGovernStamp(signal.openedAt)">
-                {{ formatGovernRelative(signal.openedAt) }}
+                {{ formatGovernRelative(signal.openedAt, GOVERN_NOW) }}
               </span>
             </td>
             <td>

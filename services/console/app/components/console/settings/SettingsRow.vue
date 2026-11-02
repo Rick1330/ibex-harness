@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Lock } from "@lucide/vue"
 import RelativeTime from "@/components/console/RelativeTime.vue"
+import { GOVERN_NOW } from "@/lib/govern-format"
 
 withDefaults(
   defineProps<{
@@ -36,7 +37,7 @@ withDefaults(
         <span v-if="owner">{{ owner }}</span>
         <template v-if="changedAt">
           <span v-if="owner" aria-hidden="true">·</span>
-          <span>changed <RelativeTime :value="changedAt" absolute /></span>
+          <span>changed <RelativeTime :value="changedAt" absolute :now="GOVERN_NOW" /></span>
         </template>
         <template v-if="audit">
           <span aria-hidden="true">·</span>

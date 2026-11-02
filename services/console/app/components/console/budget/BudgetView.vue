@@ -8,7 +8,7 @@ import GovernFilterSelect from "@/components/console/govern/primitives/GovernFil
 import GovernShortcutsDialog from "@/components/console/govern/primitives/GovernShortcutsDialog.vue"
 import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vue"
 import { useGovernShortcuts } from "@/composables/useGovernShortcuts"
-import { formatGovernRelative } from "@/lib/govern-format"
+import { formatGovernRelative, GOVERN_NOW } from "@/lib/govern-format"
 import {
   BUDGET_LIST_DEFAULT,
   BUDGET_TAB_LABELS,
@@ -155,7 +155,7 @@ const shortcutGroups = [
 
     <p v-else class="text-[0.6875rem] leading-4 text-fg-3">
       Every scope has headroom in this window.
-      <span v-if="newestHold">Newest hold {{ formatGovernRelative(newestHold) }}.</span>
+      <span v-if="newestHold">Newest hold {{ formatGovernRelative(newestHold, GOVERN_NOW) }}.</span>
     </p>
 
     <GovernTabBar

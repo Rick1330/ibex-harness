@@ -6,7 +6,7 @@ import GovernPeekSheet from "@/components/console/govern/primitives/GovernPeekSh
 import GovernPendingData from "@/components/console/govern/primitives/GovernPendingData.vue"
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
 import CompositionBar from "@/components/console/CompositionBar.vue"
-import { formatGovernRelative, formatGovernStamp } from "@/lib/govern-format"
+import { formatGovernRelative, formatGovernStamp, GOVERN_NOW } from "@/lib/govern-format"
 import {
   BUDGET_RESERVATIONS_CONTRACT,
   BUDGET_STATE_LABELS,
@@ -147,7 +147,7 @@ const selectedEvents = computed(() => (selected.value ? lifecycleFor(selected.va
             </td>
             <td>
               <span v-if="row.watermarkAt" class="font-mono text-[0.6875rem] whitespace-nowrap text-fg-2" :title="formatGovernStamp(row.watermarkAt)">
-                {{ formatGovernRelative(row.watermarkAt) }}
+                {{ formatGovernRelative(row.watermarkAt, GOVERN_NOW) }}
               </span>
               <span v-else class="text-xs text-warn" :title="BUDGET_WATERMARK_PENDING">Never</span>
             </td>
@@ -190,13 +190,13 @@ const selectedEvents = computed(() => (selected.value ? lifecycleFor(selected.va
           <div class="bg-surface-1 px-3 py-2">
             <dt class="text-[0.6875rem] text-fg-3">Window</dt>
             <dd class="mt-0.5 text-xs text-fg-2">
-              {{ formatGovernRelative(selected.windowStart) }} → {{ formatGovernRelative(selected.windowEnd) }}
+              {{ formatGovernRelative(selected.windowStart, GOVERN_NOW) }} → {{ formatGovernRelative(selected.windowEnd, GOVERN_NOW) }}
             </dd>
           </div>
           <div class="bg-surface-1 px-3 py-2">
             <dt class="text-[0.6875rem] text-fg-3">Last hold</dt>
             <dd class="mt-0.5 font-mono text-[0.6875rem] text-fg-2">
-              {{ selected.lastReservationAt ? formatGovernRelative(selected.lastReservationAt) : "Not recorded" }}
+              {{ selected.lastReservationAt ? formatGovernRelative(selected.lastReservationAt, GOVERN_NOW) : "Not recorded" }}
             </dd>
           </div>
         </dl>
@@ -205,7 +205,7 @@ const selectedEvents = computed(() => (selected.value ? lifecycleFor(selected.va
           <p class="text-[0.6875rem] font-medium tracking-wide text-fg-3 uppercase">Recorded lifecycle</p>
           <ol v-if="selectedEvents.length" class="mt-1.5 flex flex-col gap-1.5">
             <li v-for="event in selectedEvents" :key="event.id" class="text-xs leading-5 text-fg-2">
-              <span class="font-mono text-[0.6875rem] text-fg-3">{{ formatGovernRelative(event.at) }}</span>
+              <span class="font-mono text-[0.6875rem] text-fg-3">{{ formatGovernRelative(event.at, GOVERN_NOW) }}</span>
               · {{ event.detail }}
             </li>
           </ol>
