@@ -346,4 +346,32 @@ const sessionPage = {
       OperatorSessionRecordDetailSchema.parse({ ...sessionDetail, turns_truncated: "no" }),
     ).toThrow()
   })
+
+  it("measures tag length in code points, like the API", () => {
+    // Python len() and Pydantic max_length count code points; a 64-code-point
+    // emoji tag is 128 UTF-16 units, so a naive .max(64) would reject a value
+    // the API accepts and turn the list into a 502.
+    const emojiTag = "🧠".repeat(64)
+    expect(OperatorMemorySchema.parse({ ...memory, tags: [emojiTag] }).tags).toEqual([emojiTag])
+    expect(() =>
+      OperatorMemorySchema.parse({ ...memory, tags: ["🧠".repeat(65)] }),
+    ).toThrow()
+    expect(() =>
+      OperatorMemorySchema.parse({ ...memory, tags: Array.from({ length: 33 }, () => "tag") }),
+    ).toThrow()
+  })
+
+  it("accepts the model-name bound the proxy enforces", () => {
+    // services/proxy validation.MaxModelNameLength is 256 and the saved value is
+    // passed through unchanged, so the projection must not be narrower.
+    const model = "m".repeat(256)
+    expect(OperatorSessionRecordSchema.parse({ ...operatorSession, model }).model).toHaveLength(256)
+    expect(() => OperatorSessionRecordSchema.parse({ ...operatorSession, model: "m".repeat(257) })).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({
+        ...sessionDetail,
+        turns: [{ ...sessionTurn, model }],
+      }),
+    ).not.toThrow()
+  })
 })

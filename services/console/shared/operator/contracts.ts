@@ -261,7 +261,16 @@ export const MemoryCategorySchema = z.enum([
 ])
 
 /**
- * Metadata-only operator memory projection. Content, content hashes,
+ * Count Unicode code points, not UTF-16 units. Python's `len()` and Pydantic's
+ * `max_length` both count code points, so a Zod `.max()` on a string would
+ * reject values the API accepts as soon as a character is outside the BMP
+ * (one emoji is two UTF-16 units). Keep both sides on the same measure.
+ */
+export function codePointLength(value: string): number {
+  return Array.from(value).length
+}
+
+/** Metadata-only operator memory projection. Content, content hashes,
  * embeddings, org_id, and free-form metadata are deliberately absent.
  */
 export const OperatorMemorySchema = z
@@ -281,7 +290,15 @@ export const OperatorMemorySchema = z
     pii_redacted: z.boolean(),
     visibility: z.enum(["agent", "org", "session"]),
     pinned: z.boolean(),
-    tags: z.array(z.string().min(1).max(64)).max(32),
+    // API: MemoryTag = StringConstraints(min_length=1, max_length=64), code points.
+    tags: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .refine((tag) => codePointLength(tag) <= 64, "tag must be at most 64 characters"),
+      )
+      .max(32),
     lifecycle_revision: z.number().int().positive(),
     tombstoned: z.boolean(),
     expires_at: z.string().datetime({ offset: true }).nullable(),
@@ -341,7 +358,7 @@ export const OperatorSessionTurnSchema = z
     request_id: z.string().min(1).max(256),
     input_tokens: z.number().int().nonnegative(),
     output_tokens: z.number().int().nonnegative(),
-    model: z.string().min(1).max(128),
+    model: z.string().min(1).max(256),
     provider: z.string().min(1).max(64),
     latency_ms: z.number().int().nonnegative(),
     is_streaming: z.boolean(),
@@ -358,7 +375,7 @@ export const OperatorSessionRecordSchema = z
     agent_id: z.string().uuid(),
     external_id: z.string().max(128).nullable(),
     status: SessionStatusSchema,
-    model: z.string().min(1).max(128),
+    model: z.string().min(1).max(256),
     provider: z.string().min(1).max(64),
     directive_version_id: z.string().uuid().nullable(),
     turn_count: z.number().int().nonnegative(),

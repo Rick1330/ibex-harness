@@ -181,6 +181,20 @@ async def test_persisted_metadata_is_normalized_to_the_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tag_length_is_counted_in_code_points() -> None:
+    # Pydantic max_length counts code points, and so does the Console contract
+    # (services/console/shared/operator/contracts.ts). A 64-code-point emoji tag
+    # is 128 UTF-16 units; both sides must accept it or the list 502s.
+    emoji_tag = "🧠" * 64
+    row = memory_row(tags=[emoji_tag])
+    session = _session([row])
+
+    page = await memory_service.list_operator_memories(session, _args())
+
+    assert page.data[0].tags == [emoji_tag]
+
+
+@pytest.mark.asyncio
 async def test_malformed_tag_payload_becomes_empty() -> None:
     session = _session([memory_row(tags="[not-json")])
 
