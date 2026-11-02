@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -12,8 +11,7 @@ from apierror_py import NOT_FOUND
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.config import Settings
-from app.db import create_engine, create_session_factory, session_with_org
+from app.db import session_with_org
 from app.errors import ApiError
 from app.services.operator_memories import (
     ListMemoriesArgs,
@@ -24,31 +22,7 @@ from app.services.operator_memories import (
 
 pytestmark = pytest.mark.integration
 
-CURSOR_SECRET = "cursor-secret-32-bytes-minimum!!"
 START = datetime(2026, 11, 2, 8, tzinfo=UTC)
-
-
-def _require_dsn() -> str:
-    dsn = os.environ.get("IBEX_API_DATABASE_URL") or os.environ.get("POSTGRES_TEST_DSN")
-    if not dsn:
-        pytest.skip("IBEX_API_DATABASE_URL or POSTGRES_TEST_DSN not set")
-    return dsn
-
-
-@pytest.fixture
-async def session_factory() -> async_sessionmaker[AsyncSession]:
-    engine = create_engine(
-        Settings(database_url=_require_dsn(), operator_cursor_secret=CURSOR_SECRET)
-    )
-    factory = create_session_factory(engine)
-    try:
-        yield factory
-    finally:
-        await engine.dispose()
-
-
-def _settings() -> Settings:
-    return Settings(database_url=_require_dsn(), operator_cursor_secret=CURSOR_SECRET)
 
 
 async def _seed_org(session: AsyncSession, org_id: UUID, name: str) -> None:

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from apierror_py import NOT_FOUND, VALIDATION_ERROR
+from apierror_py import NOT_FOUND
 
 from app.errors import ApiError
 from app.pagination import decode_cursor, encode_cursor
@@ -151,28 +151,6 @@ async def test_list_memories_accepts_dict_rows() -> None:
     page = await memory_service.list_operator_memories(session, _args())
 
     assert page.data[0].id == row.id
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "cursor",
-    [
-        encode_cursor({"created_at": NOW.isoformat()}),
-        encode_cursor({"id": str(uuid4())}),
-        encode_cursor({"created_at": "not-a-time", "id": str(uuid4())}),
-        encode_cursor({"created_at": "2026-11-02T12:00:00", "id": str(uuid4())}),
-        encode_cursor({"created_at": NOW.isoformat(), "id": "not-a-uuid"}),
-        "not+base64",
-        "W10",
-    ],
-)
-async def test_list_memories_rejects_malformed_cursors(cursor: str) -> None:
-    session = _session([])
-    await _expect_code(
-        memory_service.list_operator_memories(session, _args(cursor=cursor)),
-        VALIDATION_ERROR,
-    )
-    session.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

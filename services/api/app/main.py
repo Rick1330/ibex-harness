@@ -63,6 +63,7 @@ from app.routers.operator_agents import router as operator_agents_router
 from app.routers.operator_events import router as operator_events_router
 from app.routers.operator_memories import router as operator_memories_router
 from app.routers.operator_overview import router as operator_overview_router
+from app.routers.operator_sessions import router as operator_sessions_router
 from app.routers.operator_traces import router as operator_traces_router
 from app.routers.organizations import router as organizations_router
 from app.routers.platform import router as platform_router
@@ -182,6 +183,7 @@ def _mount_routers(application: FastAPI) -> None:
         operator_events_router,
         operator_agents_router,
         operator_memories_router,
+        operator_sessions_router,
         operator_overview_router,
         operator_traces_router,
         platform_router,

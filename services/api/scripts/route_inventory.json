@@ -351,6 +351,34 @@
     "source": "services/api/app/routers/session.py"
   },
   {
+    "endpoint": "app.routers.operator_sessions.operator_session_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_session_list",
+    "path": "/v1/operator/sessions",
+    "response_model": "<class 'app.pagination.CursorPage[OperatorSession]'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_sessions.py"
+  },
+  {
+    "endpoint": "app.routers.operator_sessions.operator_session_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_session_detail",
+    "path": "/v1/operator/sessions/{session_id}",
+    "response_model": "<class 'app.schemas.operator_sessions.OperatorSessionDetail'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_sessions.py"
+  },
+  {
     "endpoint": "app.routers.operator_traces.operator_trace_list",
     "methods": [
       "GET"
