@@ -13,6 +13,8 @@ const OPERATOR_PATHS = {
   agents: "/v1/operator/agents",
   agentDetail: "/v1/operator/agents/",
   evidenceSummary: "/v1/operator/evidence/summary",
+  directives: "/v1/operator/directives",
+  directiveDetail: "/v1/operator/directives/",
   memories: "/v1/operator/memories",
   memoryDetail: "/v1/operator/memories/",
   sessions: "/v1/operator/sessions",
@@ -27,6 +29,7 @@ const SUFFIX_PATHS = new Set<OperatorPath>([
   "agentDetail",
   "memoryDetail",
   "sessionDetail",
+  "directiveDetail",
 ])
 
 export type OperatorPath = keyof typeof OPERATOR_PATHS
@@ -93,16 +96,25 @@ export function operatorTarget(
     throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
   }
   if (suffix) {
-    const pattern =
-      path === "agentDetail" || path === "memoryDetail" || path === "sessionDetail"
-        ? UUID_RE
-        : TRACE_ID_RE
+    // Record-detail routes take UUIDs. Keeping directiveDetail on TRACE_ID_RE
+    // would accept "." and "..", and `new URL()` would resolve the suffix away
+    // from the intended upstream path while still carrying the session cookie.
+    const uuidSuffix =
+      path === "agentDetail" ||
+      path === "memoryDetail" ||
+      path === "sessionDetail" ||
+      path === "directiveDetail"
+    const pattern = uuidSuffix ? UUID_RE : TRACE_ID_RE
     if (!pattern.test(suffix)) {
       throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
     }
   }
 
   const target = new URL(`${OPERATOR_PATHS[path]}${encodeURIComponent(suffix)}`, origin)
+  // Defense in depth: no suffix may move the request to a different upstream path.
+  if (suffix && !target.pathname.startsWith(OPERATOR_PATHS[path])) {
+    throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
+  }
   if (query) target.search = query.toString()
   if (target.origin !== origin.origin) {
     throw new OperatorUpstreamError(

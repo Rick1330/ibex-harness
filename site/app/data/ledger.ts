@@ -117,13 +117,13 @@ export const capabilities: Capability[] = [
   {
     name: 'Operator Console · live reads',
     status: 'PROVISIONAL',
-    detail: 'Canonical shell plus live overview, platform health, metadata-only trace exploration, the agent inventory, the memory index, the session ledger, and the evidence summary: 7 of 10 core surfaces (ADR-0089). Browser exposure is limited to the non-secret NUXT_PUBLIC_IBEX_ENV label; credentials and upstream origins stay in the server-only BFF. No login, token issuance, mutations, or hosted two-tenant evidence.',
+    detail: 'Canonical shell plus live overview, platform health, metadata-only trace exploration, the agent inventory, the memory index, the session ledger, the evidence summary, and the directive version timeline: 8 of 10 core surfaces (ADR-0089). Browser exposure is limited to the non-secret NUXT_PUBLIC_IBEX_ENV label; credentials and upstream origins stay in the server-only BFF. No login, token issuance, mutations, or hosted two-tenant evidence.',
     href: '/docs/operations/console',
   },
   {
     name: 'Operator Console · preview tiers',
     status: 'DEFERRED',
-    detail: '3 core surfaces and 8 platform-tier surfaces remain preview designs. Labelled illustrative fixtures are permitted under ADR-0089 §4; no live claim is made.',
+    detail: '2 core surfaces and 8 platform-tier surfaces remain preview designs. Labelled illustrative fixtures are permitted under ADR-0089 §4; no live claim is made.',
     href: '/docs/operations/console',
   },
   {

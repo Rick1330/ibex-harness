@@ -1,52 +1,57 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue"
-import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router"
-import DirectiveListView from "@/components/console/directive/list/DirectiveListView.vue"
+import { useRoute, useRouter } from "vue-router"
+import DirectiveListView from "@/components/console/directive/live/DirectiveListView.vue"
 import {
-  parseDirectiveListQuery,
-  serializeDirectiveListQuery,
-  type DirectiveListState,
-} from "@/lib/govern-query"
-
-const SNAPSHOT_KEY = "ibex:directive-list:return"
-
-type Snapshot = { path: string; scrollY: number }
+  parseLiveDirectiveListQuery,
+  parseLiveDirectiveListQueryLenient,
+  serializeLiveDirectiveListQuery,
+  type LiveDirectiveListQuery,
+} from "~~/shared/operator/directive-query"
 
 const route = useRoute()
 const router = useRouter()
-const state = ref<DirectiveListState>(parseDirectiveListQuery(route.query))
+const state = ref<LiveDirectiveListQuery>(stateFromQuery(route.query))
 const returnTo = ref(route.fullPath)
 
 useHead({ title: "Directives · IBEX Console" })
 
-function serialized(value: DirectiveListState): string {
-  return serializeDirectiveListQuery(value).toString()
+function strictStateFromQuery(query: Record<string, unknown>): LiveDirectiveListQuery | null {
+  try {
+    return parseLiveDirectiveListQuery(query)
+  } catch {
+    return null
+  }
 }
 
-function queryFrom(value: DirectiveListState): Record<string, string> {
-  return Object.fromEntries(serializeDirectiveListQuery(value))
+function stateFromQuery(query: Record<string, unknown>): LiveDirectiveListQuery {
+  return strictStateFromQuery(query) ?? parseLiveDirectiveListQueryLenient(query)
 }
 
-function isSearchOnly(next: DirectiveListState): boolean {
-  const current = parseDirectiveListQuery(route.query)
-  const withoutSearch = (value: DirectiveListState) => serialized({ ...value, q: "" })
-  return withoutSearch(next) === withoutSearch(current) && next.q !== current.q
+function serialized(value: LiveDirectiveListQuery): string {
+  return serializeLiveDirectiveListQuery(value).toString()
 }
 
-function update(next: DirectiveListState): void {
-  state.value = next
+function normalizeUrl(): void {
+  if (strictStateFromQuery(route.query)) return
+  void router
+    .replace({ query: Object.fromEntries(serializeLiveDirectiveListQuery(state.value)) })
+    .catch(() => undefined)
 }
+
+onMounted(normalizeUrl)
 
 watch(
   state,
   (next) => {
     if (!import.meta.client) return
-    if (serialized(next) === serialized(parseDirectiveListQuery(route.query))) {
+    const current = strictStateFromQuery(route.query)
+    if (current && serialized(next) === serialized(current)) {
       returnTo.value = route.fullPath
       return
     }
     void router
-      .replace({ query: queryFrom(next) })
+      .replace({ query: Object.fromEntries(serializeLiveDirectiveListQuery(next)) })
       .then(() => {
         returnTo.value = route.fullPath
       })
@@ -59,50 +64,18 @@ watch(
   () => route.query,
   () => {
     if (route.path !== "/directives") return
-    const parsed = parseDirectiveListQuery(route.query)
-    if (serialized(parsed) === serialized(state.value)) {
+    const strict = strictStateFromQuery(route.query)
+    const parsed = strict ?? parseLiveDirectiveListQueryLenient(route.query)
+    if (strict && serialized(parsed) === serialized(state.value)) {
       returnTo.value = route.fullPath
       return
     }
-    if (!isSearchOnly(parsed)) state.value = parsed
+    state.value = parsed
     returnTo.value = route.fullPath
   },
 )
-
-function saveSnapshot(): void {
-  if (!import.meta.client) return
-  try {
-    const snapshot: Snapshot = { path: route.fullPath, scrollY: window.scrollY }
-    sessionStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot))
-  } catch {
-    /* session storage is optional */
-  }
-}
-
-function restoreSnapshot(): void {
-  if (!import.meta.client) return
-  let stored: Snapshot | null = null
-  try {
-    const raw = sessionStorage.getItem(SNAPSHOT_KEY)
-    sessionStorage.removeItem(SNAPSHOT_KEY)
-    stored = raw ? (JSON.parse(raw) as Snapshot) : null
-  } catch {
-    stored = null
-  }
-  if (!stored || stored.path !== route.fullPath) return
-  requestAnimationFrame(() => window.scrollTo({ top: stored!.scrollY, behavior: "instant" }))
-}
-
-onBeforeRouteLeave(() => {
-  saveSnapshot()
-  return true
-})
-
-onMounted(() => {
-  restoreSnapshot()
-})
 </script>
 
 <template>
-  <DirectiveListView :state="state" :return-to="returnTo" @update="update" />
+  <DirectiveListView :state="state" :return-to="returnTo" @update="state = $event" />
 </template>

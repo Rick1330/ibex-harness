@@ -231,6 +231,34 @@
     "source": "services/api/app/routers/operator_overview.py"
   },
   {
+    "endpoint": "app.routers.operator_directives.operator_directive_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_directive_list",
+    "path": "/v1/operator/directives",
+    "response_model": "<class 'app.schemas.operator_directives.OperatorDirectivePage'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_directives.py"
+  },
+  {
+    "endpoint": "app.routers.operator_directives.operator_directive_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_directive_detail",
+    "path": "/v1/operator/directives/{directive_id}",
+    "response_model": "<class 'app.schemas.operator_directives.OperatorDirectiveDetail'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_directives.py"
+  },
+  {
     "endpoint": "app.routers.operator_events.stream_events",
     "methods": [
       "GET"

@@ -1409,6 +1409,336 @@
         "title": "OperatorContextResponse",
         "type": "object"
       },
+      "OperatorDirectiveDetail": {
+        "description": "`version_count` is the true total, not the size of `versions`.\n\nThe list carries the newest `VERSIONS_LIMIT` versions plus the pointed\nversion when it is older than that window, so a rollback stays visible on a\nlong history. `versions_truncated` says the timeline is partial.",
+        "properties": {
+          "active_version_missing": {
+            "default": false,
+            "title": "Active Version Missing",
+            "type": "boolean"
+          },
+          "active_version_num": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version Num"
+          },
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_name": {
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "agent_slug": {
+            "title": "Agent Slug",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "injection_mode": {
+            "enum": [
+              "system_first",
+              "system_append",
+              "user_prepend"
+            ],
+            "title": "Injection Mode",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "last_version_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Version At"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "usage": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorDirectiveUsage"
+            },
+            "title": "Usage",
+            "type": "array"
+          },
+          "usage_range": {
+            "enum": [
+              "24h",
+              "7d",
+              "30d"
+            ],
+            "title": "Usage Range",
+            "type": "string"
+          },
+          "usage_total_sessions": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Usage Total Sessions",
+            "type": "integer"
+          },
+          "usage_truncated": {
+            "default": false,
+            "title": "Usage Truncated",
+            "type": "boolean"
+          },
+          "usage_window_start": {
+            "format": "date-time",
+            "title": "Usage Window Start",
+            "type": "string"
+          },
+          "version_count": {
+            "minimum": 0.0,
+            "title": "Version Count",
+            "type": "integer"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorDirectiveVersion"
+            },
+            "title": "Versions",
+            "type": "array"
+          },
+          "versions_truncated": {
+            "default": false,
+            "title": "Versions Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "agent_name",
+          "agent_slug",
+          "is_active",
+          "injection_mode",
+          "version_count",
+          "updated_at",
+          "usage_range",
+          "usage_window_start",
+          "observed_at"
+        ],
+        "title": "OperatorDirectiveDetail",
+        "type": "object"
+      },
+      "OperatorDirectivePage": {
+        "description": "One keyset page plus the read time relative ages are measured against.",
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorDirectiveSummary"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMeta"
+          }
+        },
+        "required": [
+          "data",
+          "pagination",
+          "observed_at"
+        ],
+        "title": "OperatorDirectivePage",
+        "type": "object"
+      },
+      "OperatorDirectiveSummary": {
+        "description": "One row per agent directive; `active_version_num` is the live pointer.",
+        "properties": {
+          "active_version_num": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Version Num"
+          },
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_name": {
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "agent_slug": {
+            "title": "Agent Slug",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "injection_mode": {
+            "enum": [
+              "system_first",
+              "system_append",
+              "user_prepend"
+            ],
+            "title": "Injection Mode",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "last_version_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Version At"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version_count": {
+            "minimum": 0.0,
+            "title": "Version Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "agent_name",
+          "agent_slug",
+          "is_active",
+          "injection_mode",
+          "version_count",
+          "updated_at"
+        ],
+        "title": "OperatorDirectiveSummary",
+        "type": "object"
+      },
+      "OperatorDirectiveUsage": {
+        "description": "Sessions that resolved to a version in the window, from the evidence snapshot.",
+        "properties": {
+          "last_session_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Session At"
+          },
+          "sessions": {
+            "minimum": 0.0,
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "version_num": {
+            "minimum": 1.0,
+            "title": "Version Num",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_num",
+          "sessions"
+        ],
+        "title": "OperatorDirectiveUsage",
+        "type": "object"
+      },
+      "OperatorDirectiveVersion": {
+        "description": "A version's identity, never its instruction text.\n\n`content_digest` is a 12-character prefix of the stored SHA-256: enough to\nsee that two versions differ, not a verifier for the content itself.",
+        "properties": {
+          "content_bytes": {
+            "minimum": 1.0,
+            "title": "Content Bytes",
+            "type": "integer"
+          },
+          "content_digest": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Content Digest",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "is_live": {
+            "title": "Is Live",
+            "type": "boolean"
+          },
+          "version_num": {
+            "minimum": 1.0,
+            "title": "Version Num",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_num",
+          "content_digest",
+          "content_bytes",
+          "created_at",
+          "is_live"
+        ],
+        "title": "OperatorDirectiveVersion",
+        "type": "object"
+      },
       "OperatorEvidenceSummary": {
         "description": "`operator.evidence.summary.v1`.\n\nEvery field states a fact this service can read. Nothing here is a verdict:\nthe contract deliberately does not call a run \"certified\", because a run row\nholds no digest of its own \u2014 the only digest in the plane is\n`evidence_outbox.payload_digest`, per event.",
         "properties": {
@@ -5065,6 +5395,158 @@
         "summary": "Operator Context",
         "tags": [
           "operator-overview"
+        ]
+      }
+    },
+    "/v1/operator/directives": {
+      "get": {
+        "operationId": "operator_directive_list_v1_operator_directives_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "active",
+                "inactive"
+              ],
+              "title": "State",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorDirectivePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Directive List",
+        "tags": [
+          "operator-directives"
+        ]
+      }
+    },
+    "/v1/operator/directives/{directive_id}": {
+      "get": {
+        "operationId": "operator_directive_detail_v1_operator_directives__directive_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "directive_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Directive Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "7d",
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorDirectiveDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Directive Detail",
+        "tags": [
+          "operator-directives"
         ]
       }
     },

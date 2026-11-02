@@ -21,6 +21,8 @@ def _auth_source(path: str, public_paths: frozenset[str], method: str = "GET") -
         "/v1/operator/overview",
         "/v1/operator/agents",
         "/v1/operator/agents/{agent_id}",
+        "/v1/operator/directives",
+        "/v1/operator/directives/{directive_id}",
         "/v1/operator/evidence/summary",
         "/v1/operator/memories",
         "/v1/operator/memories/{memory_id}",

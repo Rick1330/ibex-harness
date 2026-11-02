@@ -22,7 +22,6 @@ export const FIXTURE_MODULES: FixtureModule[] = [
   { file: "audit-preview.ts", surface: "audit", kind: "preview" },
   { file: "budget-preview.ts", surface: "budgets", kind: "preview" },
   { file: "console-demo.ts", surface: "overview", kind: "demo" },
-  { file: "directive-preview.ts", surface: "directives", kind: "preview" },
   { file: "drift-preview.ts", surface: "drift", kind: "preview" },
   { file: "incident-preview.ts", surface: "incidents", kind: "preview" },
   { file: "policy-preview.ts", surface: "policies", kind: "preview" },
