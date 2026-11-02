@@ -50,4 +50,15 @@ while IFS= read -r f; do
   fi
 done < <(git ls-files '*.md')
 
+# Local-only operator files must never be tracked, even if a developer
+# force-adds them. `.gitignore` is advisory; this check is the backstop.
+while IFS= read -r f; do
+  case "$f" in
+    opencode.json|LOOP.md|STATE.md|loop-budget.md|loop-constraints.md|loop-run-log.md|safety.md|gate.yaml|MODEL-POLICY.md)
+      echo "Local-only file must not be tracked: $f"
+      fail=1
+      ;;
+  esac
+done < <(git ls-files)
+
 exit "$fail"
