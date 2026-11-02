@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from apierror_py import NOT_FOUND, VALIDATION_ERROR
@@ -99,8 +99,9 @@ async def test_get_memory_returns_not_found_and_scopes_the_query() -> None:
 
     assert error.message == "Memory not found"
     statement, params = session.execute.call_args.args[0], session.execute.call_args.args[1]
-    assert "org_id = CAST(:org_id AS uuid)" in str(statement)
-    assert params == {"memory_id": str(memory_id), "org_id": str(org_id)}
+    assert "ibex_core.memories" in str(statement)
+    assert "org_id" in str(statement)
+    assert params == {"org_id": org_id, "memory_id": memory_id}
 
 
 @pytest.mark.asyncio
@@ -151,14 +152,14 @@ async def test_list_memories_forwards_filters_and_builds_the_next_cursor() -> No
         "id": str(first.id),
     }
     params = session.execute.call_args.args[1]
-    assert params["org_id"] == str(args.org_id)
+    assert params["org_id"] == args.org_id
     assert params["limit"] == 2
-    assert params["agent_id"] == str(args.filters.agent_id)
-    assert params["session_id"] == str(args.filters.session_id)
+    assert params["agent_id"] == args.filters.agent_id
+    assert params["session_id"] == args.filters.session_id
     assert params["status"] == "archived"
     assert params["category"] == "behavioral"
-    assert params["cursor_created_at"] is None
-    assert params["cursor_id"] is None
+    assert "cursor_created_at" not in params
+    assert "cursor_id" not in params
 
 
 @pytest.mark.asyncio
@@ -172,8 +173,8 @@ async def test_list_memories_applies_a_decoded_cursor_and_reports_no_next_page()
     assert page.pagination.has_more is False
     assert page.pagination.next_cursor is None
     params = session.execute.call_args.args[1]
-    assert params["cursor_created_at"] == NOW.isoformat()
-    assert params["cursor_id"] == decode_cursor(cursor)["id"]
+    assert params["cursor_created_at"] == NOW
+    assert params["cursor_id"] == UUID(decode_cursor(cursor)["id"])
 
 
 @pytest.mark.asyncio
@@ -192,6 +193,8 @@ async def test_list_memories_accepts_dict_rows() -> None:
     [
         encode_cursor({"created_at": NOW.isoformat()}),
         encode_cursor({"id": str(uuid4())}),
+        encode_cursor({"created_at": "not-a-time", "id": str(uuid4())}),
+        encode_cursor({"created_at": NOW.isoformat(), "id": "not-a-uuid"}),
         "not+base64",
         "W10",
     ],
