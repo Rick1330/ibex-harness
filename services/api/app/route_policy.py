@@ -81,6 +81,7 @@ def _operator_session_dependencies() -> dict[tuple[str, str], object]:
         ("GET", "/v1/operator/overview"): require_operator_metadata_session,
         ("GET", "/v1/operator/agents"): require_operator_metadata_session,
         ("GET", "/v1/operator/agents/{agent_id}"): require_operator_metadata_session,
+        ("GET", "/v1/operator/evidence/summary"): require_operator_metadata_session,
         ("GET", "/v1/operator/memories"): require_operator_metadata_session,
         ("GET", "/v1/operator/memories/{memory_id}"): require_operator_metadata_session,
         ("GET", "/v1/operator/sessions"): require_operator_metadata_session,
