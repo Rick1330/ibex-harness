@@ -174,7 +174,7 @@ class MemoryReadRepository:
         ranked = rank_hydrated_hits(admitted, hydrated, rank_opts)
         remaining = fused[query.limit :]
         if not remaining or len(ranked) >= query.limit:
-            return ranked
+            return ranked[: query.limit]
         hydrated.update(
             await self._hydrate_hits(
                 org_id=query.org_id,
@@ -182,7 +182,8 @@ class MemoryReadRepository:
                 min_confidence=query.min_confidence,
             )
         )
-        return rank_hydrated_hits(fused, hydrated, rank_opts)
+        # Refilling replaces the dropped slots; it does not widen the page.
+        return rank_hydrated_hits(fused, hydrated, rank_opts)[: query.limit]
 
     async def _find_similar_fallback(
         self, query: FindSimilarQuery

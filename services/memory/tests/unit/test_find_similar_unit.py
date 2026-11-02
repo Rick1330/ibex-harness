@@ -543,3 +543,41 @@ async def test_hybrid_refills_the_page_when_an_admitted_candidate_is_dropped() -
 
     assert [item.id for item in results] == [fts_id]
     assert hydrations == [[vector_id], [fts_id]]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_refill_does_not_widen_the_page_past_limit() -> None:
+    # Six distinct candidates, limit 3: the lowest id wins the rank-1 tie, so it is
+    # in the admitted window and drops out there. The refill then hydrates the rest
+    # and must still return three, not five.
+    vector_ids = [UUID(int=1), uuid4(), uuid4()]
+    fts_ids = [uuid4() for _ in range(3)]
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in vector_ids]
+    )
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+
+    async def _hydrate(**kwargs: object) -> dict[UUID, HydratedHit]:
+        ids = [item.memory_id for item in kwargs["candidates"]]  # type: ignore[union-attr]
+        # The first vector id never hydrates; everything else does.
+        return _hydrated_map(
+            [
+                _result(mid, confidence=0.9, source="full_text")
+                for mid in ids
+                if mid != vector_ids[0]
+            ]
+        )
+
+    repo._hydrate_hits = AsyncMock(side_effect=_hydrate)  # type: ignore[method-assign]
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=mid, rank=0.4) for mid in fts_ids]),
+    ):
+        results = await repo.find_similar(_query(query_text="dark mode", limit=3))
+
+    # Two hydration batches: the admitted window, then the refill.
+    assert repo._hydrate_hits.await_count == 2
+    assert len(results) == 3
+    assert len({item.id for item in results}) == 3
