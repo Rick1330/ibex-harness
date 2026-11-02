@@ -192,12 +192,15 @@ async def test_detail_marks_the_pointer_version_live_and_never_selects_content()
         ],
         2,
         [{"directive_version_id": live_id, "sessions": 7, "last_session_at": NOW}],
+        7,
     )
 
     detail = await directive_service.get_operator_directive(
         session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="7d"), now=NOW
     )
 
+    assert detail.usage_total_sessions == 7
+    assert detail.usage_truncated is False
     assert detail.active_version_num == 2
     assert [version.version_num for version in detail.versions] == [5, 2]
     assert [version.is_live for version in detail.versions] == [False, True]
@@ -221,6 +224,7 @@ async def test_detail_flags_a_pointer_that_names_a_missing_version() -> None:
         1,
         [],
         [],
+        0,
     )
 
     detail = await directive_service.get_operator_directive(
@@ -257,6 +261,7 @@ async def test_detail_usage_only_counts_versions_of_this_directive() -> None:
             {"directive_version_id": live_id, "sessions": 2, "last_session_at": NOW},
             {"directive_version_id": foreign_version, "sessions": 99, "last_session_at": NOW},
         ],
+        101,
     )
 
     detail = await directive_service.get_operator_directive(
@@ -264,6 +269,8 @@ async def test_detail_usage_only_counts_versions_of_this_directive() -> None:
     )
 
     assert [(row.version_num, row.sessions) for row in detail.usage] == [(1, 2)]
+    # The total is exact even when the table only lists known versions.
+    assert detail.usage_total_sessions == 101
 
 
 @pytest.mark.asyncio
@@ -278,6 +285,7 @@ async def test_a_rolled_back_pointer_is_fetched_even_when_it_falls_outside_the_p
         250,
         [_version_row(3, live_id)],
         [{"directive_version_id": live_id, "sessions": 4, "last_session_at": NOW}],
+        4,
     )
 
     detail = await directive_service.get_operator_directive(
@@ -295,7 +303,9 @@ async def test_a_rolled_back_pointer_is_fetched_even_when_it_falls_outside_the_p
 @pytest.mark.asyncio
 async def test_a_short_history_is_not_marked_truncated() -> None:
     live_id = uuid4()
-    session = _session([_header_row(active_version_id=live_id)], [_version_row(1, live_id)], 1, [])
+    session = _session(
+        [_header_row(active_version_id=live_id)], [_version_row(1, live_id)], 1, [], 0
+    )
 
     detail = await directive_service.get_operator_directive(
         session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="24h"), now=NOW

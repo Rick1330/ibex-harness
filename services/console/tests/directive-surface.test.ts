@@ -44,6 +44,8 @@ const detail = {
     { version_num: 2, sessions: 120, last_session_at: "2026-11-02T11:00:00.000Z" },
   ],
   versions_truncated: false,
+  usage_truncated: false,
+  usage_total_sessions: 160,
   usage_range: "7d",
   usage_window_start: "2026-10-26T12:00:00.000Z",
   observed_at: "2026-11-02T12:00:00.000Z",

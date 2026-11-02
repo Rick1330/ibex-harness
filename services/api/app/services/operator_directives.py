@@ -52,6 +52,7 @@ _DIRECTIVE_NOT_FOUND = "Directive not found"
 # The newest N versions are returned, and the pointer target is always included
 # even when it is older, so a rollback stays visible on a long history.
 VERSIONS_LIMIT = 200
+USAGE_LIMIT = 200
 
 _DIRECTIVES = table(
     "directives",
@@ -412,6 +413,8 @@ async def _fetch_usage(
             _SESSIONS.c.created_at >= bindparam("window_start"),
         )
         .group_by(_SESSIONS.c.directive_version_id)
+        .order_by(func.count().desc())
+        .limit(USAGE_LIMIT + 1)
     )
     rows = (
         await session.execute(
@@ -435,6 +438,35 @@ async def _fetch_usage(
     return sorted(usage, key=lambda item: item.sessions, reverse=True)
 
 
+async def _count_usage_total(
+    session: AsyncSession, args: DirectiveDetailArgs, window_start: datetime
+) -> int:
+    """Exact sessions in the window, independent of how many versions are listed."""
+    statement = (
+        select(func.count())
+        .select_from(_SESSIONS)
+        .where(
+            _SESSIONS.c.org_id == bindparam("org_id"),
+            _SESSIONS.c.directive_version_id.in_(
+                select(_VERSIONS.c.id).where(
+                    _VERSIONS.c.org_id == bindparam("org_id"),
+                    _VERSIONS.c.directive_id == bindparam("directive_id"),
+                )
+            ),
+            _SESSIONS.c.created_at >= bindparam("window_start"),
+        )
+    )
+    result = await session.execute(
+        statement,
+        {
+            "org_id": args.org_id,
+            "directive_id": args.directive_id,
+            "window_start": window_start,
+        },
+    )
+    return int(result.scalar_one())
+
+
 async def get_operator_directive(
     session: AsyncSession,
     args: DirectiveDetailArgs,
@@ -447,6 +479,7 @@ async def get_operator_directive(
     versions, number_by_id = _version_projection(version_rows, live_version_id)
     window_start, window_end = usage_window(args.usage_range, now=now)
     usage = await _fetch_usage(session, args, number_by_id, window_start)
+    usage_total = await _count_usage_total(session, args, window_start)
     live_version_num = number_by_id.get(live_version_id) if live_version_id else None
     return OperatorDirectiveDetail(
         id=header.id,
@@ -461,7 +494,9 @@ async def get_operator_directive(
         updated_at=header.updated_at,
         versions=versions,
         versions_truncated=total_versions > len(versions),
-        usage=usage,
+        usage=usage[:USAGE_LIMIT],
+        usage_truncated=len(usage) > USAGE_LIMIT,
+        usage_total_sessions=usage_total,
         usage_range=args.usage_range,
         usage_window_start=window_start,
         observed_at=window_end,

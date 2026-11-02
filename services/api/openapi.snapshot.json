@@ -1497,6 +1497,17 @@
             "title": "Usage Range",
             "type": "string"
           },
+          "usage_total_sessions": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Usage Total Sessions",
+            "type": "integer"
+          },
+          "usage_truncated": {
+            "default": false,
+            "title": "Usage Truncated",
+            "type": "boolean"
+          },
           "usage_window_start": {
             "format": "date-time",
             "title": "Usage Window Start",

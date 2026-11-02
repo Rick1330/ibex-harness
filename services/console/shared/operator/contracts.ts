@@ -590,6 +590,8 @@ export const OperatorDirectiveDetailSchema = OperatorDirectiveSummarySchema.exte
   versions: z.array(OperatorDirectiveVersionSchema).max(201),
   versions_truncated: z.boolean(),
   usage: z.array(OperatorDirectiveUsageSchema).max(201),
+  usage_truncated: z.boolean(),
+  usage_total_sessions: z.number().int().nonnegative(),
   usage_range: DirectiveUsageRangeSchema,
   usage_window_start: z.string().datetime({ offset: true }),
   observed_at: z.string().datetime({ offset: true }),

@@ -81,9 +81,8 @@ const liveVersion = computed(() =>
 )
 const busiest = computed(() => (detail.value ? mostUsedVersion(detail.value) : null))
 const offPointer = computed(() => (detail.value ? sessionsOffPointer(detail.value) : 0))
-const servedSessions = computed(() =>
-  detail.value ? detail.value.usage.reduce((sum, row) => sum + row.sessions, 0) : 0,
-)
+// Exact sessions in the window; the table may list only the busiest versions.
+const servedSessions = computed(() => detail.value?.usage_total_sessions ?? 0)
 
 const verdict = computed(() => {
   if (loading.value) return "Reading the directive and its versions…"
@@ -351,6 +350,11 @@ function copyLink(): void {
             </tbody>
           </table>
         </div>
+
+        <GovernCaveat v-if="detail.usage_truncated" tone="info" title="The table lists the busiest versions">
+          This directive has more versions in use than fit here. The session total above is exact; the table shows the
+          {{ detail.usage.length }} versions with the most sessions in the window.
+        </GovernCaveat>
 
         <GovernCaveat tone="info" title="Usage comes from the session record">
           Each session stores the version it resolved when it started, so an older version can still serve traffic after

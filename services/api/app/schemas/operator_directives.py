@@ -70,6 +70,10 @@ class OperatorDirectiveDetail(OperatorDirectiveSummary):
     versions: list[OperatorDirectiveVersion] = Field(default_factory=list)
     versions_truncated: bool = False
     usage: list[OperatorDirectiveUsage] = Field(default_factory=list)
+    # The table lists at most USAGE_LIMIT versions by session count; the total is
+    # exact, so a truncated table never understates the window.
+    usage_truncated: bool = False
+    usage_total_sessions: int = Field(default=0, ge=0)
     usage_range: DirectiveUsageRange
     usage_window_start: datetime
     observed_at: datetime

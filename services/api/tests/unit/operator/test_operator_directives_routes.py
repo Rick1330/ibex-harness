@@ -68,6 +68,8 @@ def _detail() -> OperatorDirectiveDetail:
             )
         ],
         versions_truncated=False,
+        usage_truncated=False,
+        usage_total_sessions=12,
         usage=[
             OperatorDirectiveUsage(
                 version_num=4, sessions=12, last_session_at=NOW - timedelta(hours=1)

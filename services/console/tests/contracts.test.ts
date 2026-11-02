@@ -438,6 +438,8 @@ const evidenceSummary = {
       ],
       usage: [{ version_num: 2, sessions: 12, last_session_at: null }],
       versions_truncated: false,
+      usage_truncated: false,
+      usage_total_sessions: 12,
       usage_range: "7d",
       usage_window_start: "2026-10-26T12:00:00.000Z",
       observed_at: "2026-11-02T12:00:00.000Z",
