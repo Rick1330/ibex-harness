@@ -14,7 +14,12 @@ const turns = computed<OperatorSessionTurn[]>(() => props.session.turns)
 
 function traceHref(turn: OperatorSessionTurn): string | null {
   if (!turn.trace) return null
-  const back = `/sessions/${encodeURIComponent(props.session.id)}`
+  // Carry the list the operator came from, so Explore's back action returns to
+  // this session and the session's own back action still returns to the list.
+  const session = `/sessions/${encodeURIComponent(props.session.id)}`
+  const back = props.returnTo && props.returnTo !== session
+    ? `${session}?return=${encodeURIComponent(props.returnTo)}`
+    : session
   return `/explore/t/${encodeURIComponent(turn.trace.trace_id)}?return=${encodeURIComponent(back)}`
 }
 
