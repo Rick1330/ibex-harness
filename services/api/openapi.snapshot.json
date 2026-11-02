@@ -1583,7 +1583,7 @@
             "type": "integer"
           },
           "model": {
-            "maxLength": 128,
+            "maxLength": 256,
             "minLength": 1,
             "title": "Model",
             "type": "string"
@@ -1718,7 +1718,7 @@
             "type": "integer"
           },
           "model": {
-            "maxLength": 128,
+            "maxLength": 256,
             "minLength": 1,
             "title": "Model",
             "type": "string"
@@ -1828,7 +1828,7 @@
             "type": "integer"
           },
           "model": {
-            "maxLength": 128,
+            "maxLength": 256,
             "minLength": 1,
             "title": "Model",
             "type": "string"
@@ -4065,6 +4065,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 2048,
                   "type": "string"
                 },
                 {
@@ -4613,6 +4614,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 2048,
                   "type": "string"
                 },
                 {
@@ -4899,6 +4901,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 2048,
                   "type": "string"
                 },
                 {
@@ -5195,6 +5198,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "maxLength": 2048,
                   "type": "string"
                 },
                 {
