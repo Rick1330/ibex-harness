@@ -146,100 +146,128 @@ async def _cleanup(
         )
 
 
+@dataclass(frozen=True)
+class SeedIds:
+    org_a: UUID
+    org_b: UUID
+    agent_a: UUID
+    agent_b: UUID
+    memory_a1: UUID
+    memory_a2: UUID
+    memory_b: UUID
+
+
+async def _seed_fixture(
+    session_factory: async_sessionmaker[AsyncSession], ids: SeedIds
+) -> None:
+    async with session_factory() as admin, admin.begin():
+        await admin.execute(
+            text("SELECT set_config('app.is_service_account', 'true', true)")
+        )
+        await _seed_org(admin, ids.org_a, "Memory RLS A")
+        await _seed_org(admin, ids.org_b, "Memory RLS B")
+        await _seed_agent(admin, ids.org_a, ids.agent_a, "Agent A")
+        await _seed_agent(admin, ids.org_b, ids.agent_b, "Agent B")
+        await _seed_memory(
+            admin,
+            SeedMemory(ids.org_a, ids.agent_a, ids.memory_a1, "A one", created_at=START),
+        )
+        await _seed_memory(
+            admin,
+            SeedMemory(
+                ids.org_a,
+                ids.agent_a,
+                ids.memory_a2,
+                "A two",
+                status="archived",
+                created_at=START + timedelta(minutes=1),
+            ),
+        )
+        await _seed_memory(
+            admin, SeedMemory(ids.org_b, ids.agent_b, ids.memory_b, "B one")
+        )
+
+
+async def _assert_projection(session: AsyncSession, ids: SeedIds) -> None:
+    listed = await list_operator_memories(
+        session,
+        ListMemoriesArgs(
+            org_id=ids.org_a,
+            cursor=None,
+            limit=50,
+            filters=MemoryListFilters(),
+        ),
+    )
+    assert [item.id for item in listed.data] == [ids.memory_a2, ids.memory_a1]
+    dumped = listed.data[0].model_dump()
+    assert "content" not in dumped
+    assert "content_hash" not in dumped
+    assert "embedding" not in dumped
+    assert "metadata" not in dumped
+    assert dumped["tags"] == ["support"]
+
+    detail = await get_operator_memory(session, ids.org_a, ids.memory_a1)
+    assert detail.id == ids.memory_a1
+    with pytest.raises(ApiError) as err:
+        await get_operator_memory(session, ids.org_a, ids.memory_b)
+    assert err.value.code == NOT_FOUND
+
+
+async def _assert_status_filter(session: AsyncSession, ids: SeedIds) -> None:
+    archived = await list_operator_memories(
+        session,
+        ListMemoriesArgs(
+            org_id=ids.org_a,
+            cursor=None,
+            limit=50,
+            filters=MemoryListFilters(status="archived"),
+        ),
+    )
+    assert [item.id for item in archived.data] == [ids.memory_a2]
+
+
+async def _assert_cursor(session: AsyncSession, ids: SeedIds) -> None:
+    first = await list_operator_memories(
+        session,
+        ListMemoriesArgs(
+            org_id=ids.org_a,
+            cursor=None,
+            limit=1,
+            filters=MemoryListFilters(),
+        ),
+    )
+    assert first.pagination.has_more is True
+    assert first.pagination.next_cursor is not None
+    second = await list_operator_memories(
+        session,
+        ListMemoriesArgs(
+            org_id=ids.org_a,
+            cursor=first.pagination.next_cursor,
+            limit=1,
+            filters=MemoryListFilters(),
+        ),
+    )
+    assert [item.id for item in second.data] == [ids.memory_a1]
+
+
 @pytest.mark.asyncio
 async def test_operator_memories_are_tenant_scoped_and_exclude_content(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    org_a = uuid4()
-    org_b = uuid4()
-    agent_a = uuid4()
-    agent_b = uuid4()
-    memory_a1 = uuid4()
-    memory_a2 = uuid4()
-    memory_b = uuid4()
+    ids = SeedIds(
+        org_a=uuid4(),
+        org_b=uuid4(),
+        agent_a=uuid4(),
+        agent_b=uuid4(),
+        memory_a1=uuid4(),
+        memory_a2=uuid4(),
+        memory_b=uuid4(),
+    )
     try:
-        async with session_factory() as admin, admin.begin():
-            await admin.execute(
-                text("SELECT set_config('app.is_service_account', 'true', true)")
-            )
-            await _seed_org(admin, org_a, "Memory RLS A")
-            await _seed_org(admin, org_b, "Memory RLS B")
-            await _seed_agent(admin, org_a, agent_a, "Agent A")
-            await _seed_agent(admin, org_b, agent_b, "Agent B")
-            await _seed_memory(
-                admin,
-                SeedMemory(org_a, agent_a, memory_a1, "A one", created_at=START),
-            )
-            await _seed_memory(
-                admin,
-                SeedMemory(
-                    org_a,
-                    agent_a,
-                    memory_a2,
-                    "A two",
-                    status="archived",
-                    created_at=START + timedelta(minutes=1),
-                ),
-            )
-            await _seed_memory(
-                admin, SeedMemory(org_b, agent_b, memory_b, "B one")
-            )
-
-        async with session_with_org(session_factory, str(org_a)) as session:
-            listed = await list_operator_memories(
-                session,
-                ListMemoriesArgs(
-                    org_id=org_a,
-                    cursor=None,
-                    limit=50,
-                    filters=MemoryListFilters(),
-                ),
-            )
-            assert [item.id for item in listed.data] == [memory_a2, memory_a1]
-            dumped = listed.data[0].model_dump()
-            assert "content" not in dumped
-            assert "content_hash" not in dumped
-            assert "embedding" not in dumped
-            assert "metadata" not in dumped
-            assert dumped["tags"] == ["support"]
-
-            archived = await list_operator_memories(
-                session,
-                ListMemoriesArgs(
-                    org_id=org_a,
-                    cursor=None,
-                    limit=50,
-                    filters=MemoryListFilters(status="archived"),
-                ),
-            )
-            assert [item.id for item in archived.data] == [memory_a2]
-
-            first = await list_operator_memories(
-                session,
-                ListMemoriesArgs(
-                    org_id=org_a,
-                    cursor=None,
-                    limit=1,
-                    filters=MemoryListFilters(),
-                ),
-            )
-            assert first.pagination.has_more is True
-            assert first.pagination.next_cursor is not None
-            second = await list_operator_memories(
-                session,
-                ListMemoriesArgs(
-                    org_id=org_a,
-                    cursor=first.pagination.next_cursor,
-                    limit=1,
-                    filters=MemoryListFilters(),
-                ),
-            )
-            assert [item.id for item in second.data] == [memory_a1]
-
-            detail = await get_operator_memory(session, org_a, memory_a1)
-            assert detail.id == memory_a1
-            with pytest.raises(ApiError) as err:
-                await get_operator_memory(session, org_a, memory_b)
-            assert err.value.code == NOT_FOUND
+        await _seed_fixture(session_factory, ids)
+        async with session_with_org(session_factory, str(ids.org_a)) as session:
+            await _assert_projection(session, ids)
+            await _assert_status_filter(session, ids)
+            await _assert_cursor(session, ids)
     finally:
-        await _cleanup(session_factory, org_a, org_b)
+        await _cleanup(session_factory, ids.org_a, ids.org_b)
