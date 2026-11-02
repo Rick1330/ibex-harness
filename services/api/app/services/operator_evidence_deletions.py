@@ -218,6 +218,7 @@ def _jobs_statement() -> Any:
 
 
 def _receipts_statement(job_ids: list[Any]) -> Any:
+    """Receipts carry no org column, so the tenant predicate comes from the job."""
     return (
         select(
             _RECEIPTS.c.job_id,
@@ -225,8 +226,13 @@ def _receipts_statement(job_ids: list[Any]) -> Any:
             _RECEIPTS.c.status,
             _RECEIPTS.c.verified_absent_at,
         )
-        .select_from(_RECEIPTS)
-        .where(_RECEIPTS.c.job_id.in_(job_ids))
+        .select_from(
+            _RECEIPTS.join(_DELETION_JOBS, _DELETION_JOBS.c.id == _RECEIPTS.c.job_id)
+        )
+        .where(
+            _RECEIPTS.c.job_id.in_(job_ids),
+            _DELETION_JOBS.c.org_id == bindparam("org_id"),
+        )
         .order_by(_RECEIPTS.c.store.asc())
     )
 
@@ -387,7 +393,13 @@ async def get_evidence_deletions(
     job_rows = list((await session.execute(_jobs_statement(), params)).mappings().all())
     job_ids = [row_value(row, "id") for row in job_rows[:JOBS_LIMIT]]
     receipt_rows = (
-        (await session.execute(_receipts_statement(job_ids))).mappings().all() if job_ids else []
+        (
+            await session.execute(
+                _receipts_statement(job_ids), {"org_id": args.org_id}
+            )
+        ).mappings().all()
+        if job_ids
+        else []
     )
     jobs, jobs_truncated = _erasure_jobs(job_rows, receipt_rows)
     audit = await _audit_summary(session, args.org_id)

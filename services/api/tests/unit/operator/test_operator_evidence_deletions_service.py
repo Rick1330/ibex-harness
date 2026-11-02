@@ -149,6 +149,8 @@ async def test_summary_projects_tombstones_fence_erasures_and_audit() -> None:
         ("postgres", "verified"),
         ("redis", "pending"),
     ]
+    receipts_call = session.execute.await_args_list[5]
+    assert receipts_call.args[1]["org_id"] == session.execute.await_args_list[0].args[1]["org_id"]
     assert summary.audit.continuity_ok is True
     assert summary.audit.entries == 4
     assert summary.audit.last_row_hash == "deadbeef"

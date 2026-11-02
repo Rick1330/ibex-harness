@@ -41,8 +41,9 @@ collected; incompleteness is either intentional sampling or a collection error, 
 extrapolated) and in-toto's attestation validation (completeness is checked against declared requirements, never
 assumed). Both are recorded here as design precedent, not as a compliance claim.
 
-Out of scope until separate read models exist: tombstone chains, downstream deletion receipts, and field-level
-redaction detail. The Console renders those tabs as explicitly unavailable rather than with fixtures.
+Out of scope until a separate read model exists: field-level redaction detail. The Console renders the Redaction tab as
+explicitly unavailable rather than with fixtures; tombstones, deletion receipts, and audit continuity are covered by
+`operator.evidence.deletions.v1`.
 
 ## Deletion evidence (operator read model)
 
