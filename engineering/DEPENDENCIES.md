@@ -405,6 +405,19 @@ Also extend golangci-lint paths for new Go services (see [AGENTS.md](../AGENTS.m
 
 **Pre-release:** No tagged release ships with open CRITICAL dependency findings in required scans. Waivers require a linked issue and expiry date in `DEPENDENCIES.md` or an ADR.
 
+### 9.0.1a Active SCA waivers
+
+Every entry needs a linked issue (`#1077`) and an expiry date. Re-check on expiry; do not extend silently.
+
+| Advisory | Package | Severity | Reachability | Disposition | Expires |
+| --- | --- | --- | --- | --- | --- |
+| GHSA-g3hv-75wg-m249 (globparts amplification) | `minimatch` 10.2.6 / 5.1.9 | Moderate | Build and lint toolchain only (`eslint`, `@typescript-eslint`, `@nuxt/content`); never in a served request path | A patched `minimatch` is `>=11.0.1`. Forcing it breaks `eslint-plugin-import-x`, which imports `makeRe` from `minimatch` (verified: `pnpm --filter @ibex/console lint` fails with a module-export error). Wait for the upstream range bumps. The attack needs an attacker-chosen glob pattern; every pattern in the build comes from repository configuration. | 2027-02-01 |
+| GHSA-gcqx-w48m-w2h4 (prototype poisoning) | `deepmerge` 4.3.1 | Low | Build only (`@rollup/plugin-node-resolve` merging repo-owned rollup config) | No patched release exists (`patched_versions: <0.0.0`). Not reachable with untrusted input: the merged objects are the repository's own build config. Track upstream. | 2027-02-01 |
+| GHSA-mrhx-c7xc-m3w5 (memory exhaustion) | `zod` 3.25.76 | High | Build only, via `docus → @nuxt/content` | Patched `zod` is `>=4.6.6`; `@nuxt/content` 3.x pins zod 3. Adoption requires a `docus`/`@nuxt/content` major. Not reachable at runtime: the public site is static output and has no request-time validation path. | 2027-02-01 |
+
+`glob` (GHSA-3g3m-2fjr-6pw4) is **fixed**, not waived: `pnpm.overrides` in the root `package.json` pins
+`>=14.0.2` (resolves to 14.0.3), and the site and console builds are verified against it.
+
 ### 9.0.2 SAST remediation thresholds (OSPS-VM-06.01–06.02)
 
 | Tool | Block merge when | Suppressions |
