@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from uuid import UUID
 
@@ -117,15 +118,18 @@ class MemoryReadRepository:
         meaning. The admitted window is the page size, so hydration stays bounded
         by ``limit`` no matter how much either channel returns.
         """
-        vector_candidates = await self._vector_candidates(query)
-        fts_hits = await full_text_search(
-            self._session_factory,
-            FullTextSearchQuery(
-                org_id=query.org_id,
-                agent_id=query.agent_id,
-                query_text=query.query_text,
-                limit=query.limit,
-                min_confidence=query.min_confidence,
+        # Independent sessions, so the two channels overlap instead of adding up.
+        vector_candidates, fts_hits = await asyncio.gather(
+            self._vector_candidates(query),
+            full_text_search(
+                self._session_factory,
+                FullTextSearchQuery(
+                    org_id=query.org_id,
+                    agent_id=query.agent_id,
+                    query_text=query.query_text,
+                    limit=query.limit,
+                    min_confidence=query.min_confidence,
+                ),
             ),
         )
         fts_candidates = _fts_candidates(fts_hits, cap=query.limit)
@@ -133,14 +137,6 @@ class MemoryReadRepository:
             vector_candidates,
             fts_candidates,
             k=self._settings.search_rrf_k,
-        )
-        # Admission is the fused window; the union is at most 2 x limit because each
-        # channel is capped, and this slice keeps hydration at the page size.
-        admitted = fused[: query.limit]
-        hydrated = await self._hydrate_hits(
-            org_id=query.org_id,
-            candidates=admitted,
-            min_confidence=query.min_confidence,
         )
         rank_opts = RankOptions(
             relevance_floor=self._settings.composite_relevance_floor,
@@ -151,8 +147,42 @@ class MemoryReadRepository:
             full_text=str(bool(fts_candidates)).lower(),
         ).inc()
         return filter_pii_blocked_results(
-            rank_hydrated_hits(admitted, hydrated, rank_opts)[: query.limit]
+            await self._rank_fused_window(query, fused, rank_opts)
         )
+
+    async def _rank_fused_window(
+        self,
+        query: FindSimilarQuery,
+        fused: list[RankedCandidate],
+        rank_opts: RankOptions,
+    ) -> list[MemorySearchResult]:
+        """Hydrate the fused window, then refill only if the page came up short.
+
+        Admission is the window, so hydration normally costs the page size. A
+        candidate can still be dropped after admission -- below the confidence
+        floor, below the relevance floor, or by the PII re-check -- and dropping
+        it must not shorten the page while eligible fused candidates wait behind
+        it. The union is bounded by ``2 * limit``, so the refill is one extra
+        batch at most.
+        """
+        admitted = fused[: query.limit]
+        hydrated = await self._hydrate_hits(
+            org_id=query.org_id,
+            candidates=admitted,
+            min_confidence=query.min_confidence,
+        )
+        ranked = rank_hydrated_hits(admitted, hydrated, rank_opts)
+        remaining = fused[query.limit :]
+        if not remaining or len(ranked) >= query.limit:
+            return ranked
+        hydrated.update(
+            await self._hydrate_hits(
+                org_id=query.org_id,
+                candidates=remaining,
+                min_confidence=query.min_confidence,
+            )
+        )
+        return rank_hydrated_hits(fused, hydrated, rank_opts)
 
     async def _find_similar_fallback(
         self, query: FindSimilarQuery

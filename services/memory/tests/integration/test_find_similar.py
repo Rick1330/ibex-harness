@@ -28,21 +28,26 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hybrid", [False, True], ids=["fallback", "hybrid"])
 async def test_find_similar_cross_org_isolation(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store: PgVectorStore,
+    hybrid: bool,
 ) -> None:
-    org_a, agent_a, mem_a = await seed_org_agent_memory(
-        session_factory, content="org a prefers concise technical summaries"
-    )
-    org_b, _agent_b, mem_b = await seed_org_agent_memory(
-        session_factory, content="org b prefers concise technical summaries"
-    )
+    # Identical content, so the full-text channel matches both tenants lexically
+    # and only the org predicate can keep them apart.
+    content = "prefers concise technical summaries"
+    org_a, agent_a, mem_a = await seed_org_agent_memory(session_factory, content=content)
+    org_b, _agent_b, mem_b = await seed_org_agent_memory(session_factory, content=content)
     query_vec = await upsert_embedding(store, session_factory, org_id=org_a, memory_id=mem_a, hotspot=1)
     await upsert_embedding(store, session_factory, org_id=org_b, memory_id=mem_b, hotspot=1)
 
-    repo = build_read_repository(session_factory, store, settings)
+    repo = build_read_repository(
+        session_factory,
+        store,
+        settings.model_copy(update={"search_hybrid_enabled": hybrid}),
+    )
     results = await repo.find_similar(
         FindSimilarQuery(
             org_id=org_a,

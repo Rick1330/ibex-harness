@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -477,3 +478,68 @@ async def test_hybrid_admission_is_the_fused_window_bounded_by_limit() -> None:
     admitted = repo._hydrate_hits.await_args.kwargs["candidates"]
     assert len(admitted) == 3
     assert {item.memory_id for item in admitted} <= {*vector_ids, fts_id}
+
+
+@pytest.mark.asyncio
+async def test_hybrid_channels_run_concurrently() -> None:
+    """Both channels must be in flight at once, not one after the other.
+
+    Each side waits on a two-party barrier, so a sequential implementation
+    deadlocks and the timeout turns it into a failure.
+    """
+    barrier = asyncio.Barrier(2)
+    vector_id = uuid4()
+
+    async def _vector_search(_request: object) -> list[SearchHit]:
+        await barrier.wait()
+        return [SearchHit(memory_id=vector_id, similarity=0.9)]
+
+    async def _full_text(_factory: object, _query: object) -> list[FullTextHit]:
+        await barrier.wait()
+        return []
+
+    store = MagicMock()
+    store.search = AsyncMock(side_effect=_vector_search)
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(vector_id)])
+    )
+
+    with patch("app.read.repository.full_text_search", _full_text):
+        results = await asyncio.wait_for(
+            repo.find_similar(_query(query_text="dark mode", limit=3)),
+            timeout=5,
+        )
+
+    assert [item.id for item in results] == [vector_id]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_refills_the_page_when_an_admitted_candidate_is_dropped() -> None:
+    # limit=1: the vector id wins the fused rank-1 tie on id order, then hydration
+    # drops it below min_confidence. The eligible full-text hit behind it must still
+    # fill the page instead of the request returning nothing.
+    vector_id = UUID(int=1)
+    fts_id = UUID(int=2)
+    store = MagicMock()
+    store.search = AsyncMock(return_value=[SearchHit(memory_id=vector_id, similarity=0.9)])
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+    hydrations: list[list[UUID]] = []
+
+    async def _hydrate(**kwargs: object) -> dict[UUID, HydratedHit]:
+        ids = [item.memory_id for item in kwargs["candidates"]]  # type: ignore[union-attr]
+        hydrations.append(ids)
+        if fts_id in ids:
+            return _hydrated_map([_result(fts_id, source="full_text")])
+        return {}
+
+    repo._hydrate_hits = AsyncMock(side_effect=_hydrate)  # type: ignore[method-assign]
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=fts_id, rank=0.4)]),
+    ):
+        results = await repo.find_similar(_query(query_text="dark mode", limit=1))
+
+    assert [item.id for item in results] == [fts_id]
+    assert hydrations == [[vector_id], [fts_id]]

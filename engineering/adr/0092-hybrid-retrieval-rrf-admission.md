@@ -44,7 +44,9 @@ the scales do not meet.
    `IBEX_MEMORY_SEARCH_RRF_K` in the range 1..1000. Ties break on memory id so identical inputs produce identical order.
 3. **Fusion decides admission; composite scoring decides presentation.** Only the top `limit` fused candidates are
    hydrated, so hydration is bounded by the page size. ADR-0068 composite scoring then orders that window unchanged,
-   including its weights, its relevance floor, and the full-text `0.5` relevance sentinel.
+   including its weights, its relevance floor, and the full-text `0.5` relevance sentinel. If admission produces a short
+   page — a candidate dropped by the confidence floor, the relevance floor, or the PII re-check — the remaining fused
+   candidates refill it, because a dropped slot must not hide an eligible memory that fusion already ranked.
 4. **A candidate keeps its own channel score** — cosine for a vector hit, clamped `ts_rank_cd` for a full-text hit — and
    a duplicate keeps the vector candidate. Fusion reorders ids; it does not invent scores.
 5. **Rollout is a flag, not a default.** `IBEX_MEMORY_SEARCH_HYBRID_ENABLED` ships `false`; the previous path is intact
