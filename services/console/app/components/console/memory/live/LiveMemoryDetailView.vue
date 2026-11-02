@@ -235,7 +235,7 @@ function piiLabel(): string {
               </dd>
             </div>
             <div>
-              <dt class="ix-label">Current head of the chain</dt>
+              <dt class="ix-label">Resolved head (up to 5 links)</dt>
               <dd class="mt-0.5 text-xs">
                 <NuxtLink
                   v-if="lineage.tip && lineage.tip.id !== memory.id && isLinkable(lineage.tip)"
@@ -297,8 +297,9 @@ function piiLabel(): string {
         </template>
 
         <p class="mt-3 text-[0.6875rem] leading-4 text-fg-3">
-          Lineage is metadata: relationship type, confidence, and the other record's state. Resolution notes and memory
-          content are not part of this contract.
+          Lineage is metadata: relationship type, confidence, and the other record's state. The resolved head stops after
+          five links, so a longer chain reports its last reachable step rather than the true end. Resolution notes and
+          memory content are not part of this contract.
         </p>
       </div>
     </section>
