@@ -4,6 +4,8 @@ import {
   OperatorAgentPageSchema,
   OperatorAgentSchema,
   OperatorContextSchema,
+  OperatorMemoryPageSchema,
+  OperatorMemorySchema,
   OperatorOverviewSchema,
   OperatorTraceDetailSchema,
   OperatorTraceListSchema,
@@ -136,6 +138,38 @@ const agentPage = {
   pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
 }
 
+const memory = {
+  id: "44444444-4444-4444-8444-444444444444",
+  agent_id: "33333333-3333-4333-8333-333333333333",
+  session_id: null,
+  category: "factual" as const,
+  status: "active" as const,
+  source: "extracted" as const,
+  confidence: 0.8,
+  usefulness_score: 0.5,
+  content_tokens: 12,
+  retrieval_count: 3,
+  last_retrieved_at: null,
+  pii_detected: false,
+  pii_redacted: false,
+  visibility: "agent" as const,
+  pinned: false,
+  tags: ["support"],
+  lifecycle_revision: 1,
+  tombstoned: false,
+  expires_at: null,
+  valid_from: "2026-11-02T12:00:00.000Z",
+  valid_until: null,
+  observed_at: "2026-11-02T12:00:00.000Z",
+  created_at: "2026-11-02T12:00:00.000Z",
+  updated_at: "2026-11-02T12:00:00.000Z",
+}
+
+const memoryPage = {
+  data: [memory],
+  pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+}
+
 describe("operator response contracts", () => {
   it("accepts the stable session and health shapes", () => {
     expect(parseOperatorSession(session).org_id).toBe(session.org_id)
@@ -198,5 +232,18 @@ describe("operator response contracts", () => {
         pagination: { ...agentPage.pagination, cursor: "x" },
       }),
     ).toThrow()
+  })
+
+  it("accepts the metadata-only operator memory projection", () => {
+    expect(OperatorMemorySchema.parse(memory).content_tokens).toBe(12)
+    expect(OperatorMemoryPageSchema.parse(memoryPage).data[0]?.tags).toEqual(["support"])
+  })
+
+  it("rejects content, tenant authority, and malformed memory fields", () => {
+    expect(() => OperatorMemorySchema.parse({ ...memory, content: "leak" })).toThrow()
+    expect(() => OperatorMemorySchema.parse({ ...memory, org_id: session.org_id })).toThrow()
+    expect(() => OperatorMemorySchema.parse({ ...memory, metadata: {} })).toThrow()
+    expect(() => OperatorMemorySchema.parse({ ...memory, status: "draining" })).toThrow()
+    expect(() => OperatorMemorySchema.parse({ ...memory, confidence: 1.5 })).toThrow()
   })
 })

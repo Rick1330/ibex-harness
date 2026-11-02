@@ -12,11 +12,13 @@ const OPERATOR_PATHS = {
   runDetail: "/v1/operator/traces/runs/",
   agents: "/v1/operator/agents",
   agentDetail: "/v1/operator/agents/",
+  memories: "/v1/operator/memories",
+  memoryDetail: "/v1/operator/memories/",
 } as const
 
 const TRACE_ID_RE = /^[A-Za-z0-9._~-]{1,256}$/
-const AGENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const SUFFIX_PATHS = new Set<OperatorPath>(["traceDetail", "runDetail", "agentDetail"])
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const SUFFIX_PATHS = new Set<OperatorPath>(["traceDetail", "runDetail", "agentDetail", "memoryDetail"])
 
 export type OperatorPath = keyof typeof OPERATOR_PATHS
 
@@ -82,7 +84,7 @@ export function operatorTarget(
     throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
   }
   if (suffix) {
-    const pattern = path === "agentDetail" ? AGENT_ID_RE : TRACE_ID_RE
+    const pattern = path === "agentDetail" || path === "memoryDetail" ? UUID_RE : TRACE_ID_RE
     if (!pattern.test(suffix)) {
       throw new OperatorUpstreamError(404, "NOT_FOUND", "Not found")
     }

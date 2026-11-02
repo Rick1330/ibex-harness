@@ -16,6 +16,7 @@ const orgId = "bfc3f97b-7a61-498d-9faa-96f34fbd4f2f"
 const observedAt = "2026-09-26T17:00:00Z"
 const runId = "11111111-1111-4111-8111-111111111111"
 const agentId = "33333333-3333-4333-8333-333333333333"
+const memoryId = "44444444-4444-4444-8444-444444444444"
 const requests = []
 let eventStreams = 0
 let closing = false
@@ -188,7 +189,38 @@ function fixtureBodies() {
     created_at: observedAt,
     updated_at: observedAt,
   }
+  const memory = {
+    id: memoryId,
+    agent_id: agentId,
+    session_id: null,
+    category: "factual",
+    status: "active",
+    source: "extracted",
+    confidence: 0.8,
+    usefulness_score: 0.5,
+    content_tokens: 12,
+    retrieval_count: 3,
+    last_retrieved_at: observedAt,
+    pii_detected: false,
+    pii_redacted: false,
+    visibility: "agent",
+    pinned: false,
+    tags: ["support"],
+    lifecycle_revision: 1,
+    tombstoned: false,
+    expires_at: null,
+    valid_from: observedAt,
+    valid_until: null,
+    observed_at: observedAt,
+    created_at: observedAt,
+    updated_at: observedAt,
+  }
   return {
+    memories: {
+      data: [memory],
+      pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+    },
+    memory,
     agents: {
       data: [agent],
       pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
@@ -232,6 +264,13 @@ function fixtureBodies() {
 
 function resolveFixtureBody(pathname) {
   const bodies = fixtureBodies()
+  if (pathname === "/v1/operator/memories") return { status: 200, payload: bodies.memories }
+  if (pathname === `/v1/operator/memories/${memoryId}`) {
+    return { status: 200, payload: bodies.memory }
+  }
+  if (pathname.startsWith("/v1/operator/memories/")) {
+    return { status: 404, payload: { error: { code: "NOT_FOUND", message: "Memory not found" } } }
+  }
   if (pathname === "/v1/operator/agents") return { status: 200, payload: bodies.agents }
   if (pathname === `/v1/operator/agents/${agentId}`) {
     return { status: 200, payload: bodies.agent }

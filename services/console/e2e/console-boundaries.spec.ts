@@ -239,77 +239,6 @@ test("session detail opens the inspector as a full-screen sheet on mobile", asyn
   await expectNoAxeViolations(page)
 })
 
-test("memories keep safety state explicit and filter locally", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/memories")
-  await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "About this data: illustrative" })).toBeVisible()
-  await page.locator("summary[aria-label='About this data']").click()
-  const aboutData = page.getByRole("dialog", { name: "About this data" })
-  await expect(aboutData).toBeVisible()
-  await expect(aboutData.getByText(/26 illustrative memories across 9 agents/)).toBeVisible()
-  await page.locator("summary[aria-label='About this data']").click()
-  await expect(aboutData).toBeHidden()
-  const table = page.locator('[aria-label="Memory table"]')
-  await expect(table.getByText("Quarantined", { exact: true }).first()).toBeVisible()
-  const dimensions = await table.evaluate((element) => ({
-    client: element.clientWidth,
-    scroll: element.scrollWidth,
-  }))
-  // The redesigned table fits its card at the reference viewport (rounding tolerance).
-  expect(dimensions.scroll - dimensions.client).toBeLessThanOrEqual(2)
-
-  await waitForHydration(page)
-  const searchbox = page.getByRole("searchbox", { name: "Search memories" })
-  await expect(async () => {
-    await searchbox.fill("Europe/Berlin")
-    await expect(page.getByText("Showing 1 of 26")).toBeVisible({ timeout: 500 })
-  }).toPass({ timeout: 10_000 })
-  await expect(searchbox).toHaveValue("Europe/Berlin")
-  await expect(table.getByRole("link", { name: "Open mem_d2f79fa2" })).toBeVisible()
-  await expect(table.getByRole("link", { name: "Open mem_77b031" })).toHaveCount(0)
-
-  const pageDimensions = await page.evaluate(() => ({
-    client: document.documentElement.clientWidth,
-    scroll: document.documentElement.scrollWidth,
-  }))
-  expect(pageDimensions.scroll, JSON.stringify(pageDimensions)).toBeLessThanOrEqual(pageDimensions.client)
-  await expectNoAxeViolations(page)
-})
-
-test("memory detail preserves list filters, gates content, and exposes history", async ({ page }) => {
-  test.setTimeout(60_000)
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/memories?view=review&status=quarantined")
-  await waitForHydration(page)
-  const row = page.getByRole("link", { name: "Open mem_9c02a741" })
-  await expect(row).toBeVisible()
-  await row.click()
-  await expect(page).toHaveURL(/\/memories\/mem_9c02a741\?return=/)
-  await expect(page.getByRole("heading", { name: "Quarantined refund instruction", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "About this data: illustrative" })).toBeVisible()
-  await expect(page.getByText("Quarantined · human review required").first()).toBeVisible()
-  await expect(page.getByText("Privileged content gated", { exact: true })).toBeVisible()
-  await page.getByRole("tab", { name: "History" }).click()
-  await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true")
-  await expect(page.getByText("History timeline", { exact: true })).toBeVisible()
-  await expect(page.getByText("Danger zone", { exact: true })).toBeVisible()
-  const back = page.getByRole("link", { name: "Back to memories" })
-  await expect(back).toHaveAttribute("href", "/memories?view=review&status=quarantined")
-  await expectNoAxeViolations(page)
-
-  await back.click()
-  await expect(page).toHaveURL(/\/memories\?view=review&status=quarantined$/)
-  await expect(page.getByText("Showing 2 of 26")).toBeVisible()
-
-  await page.goto("/memories/mem_3f71d2aa")
-  await expect(page.getByRole("heading", { name: "Tombstoned deletion record", exact: true })).toBeVisible()
-  await expect(page.getByText("Content removed under a deletion request").first()).toBeVisible()
-  await expect(page.getByText("Deletion receipt", { exact: true })).toBeVisible()
-  await expect(page.getByText(/del_01J9Z6P2K8Q4V7M3/).first()).toBeVisible()
-  await expectNoAxeViolations(page)
-})
-
 test("explore keeps an invalid query explicit and does not fetch data", async ({ page }) => {
   await page.goto("/explore?unknown=1")
   await expect(page.getByText("Invalid query")).toBeVisible()
@@ -628,20 +557,6 @@ test("govern surfaces stay readable without horizontal overflow on mobile", asyn
   await expectNoAxeViolations(page)
 })
 
-test("memory evidence exposes thresholded PII findings and redaction state", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/memories/mem_9e13c2ab")
-  await waitForHydration(page)
-
-  await page.getByRole("tab", { name: /Evidence/ }).click()
-  await expect(page.getByRole("heading", { name: "PII detection and redaction", exact: true })).toBeVisible()
-  await expect(page.getByText("Redacted before storage", { exact: true })).toBeVisible()
-  await expect(page.getByRole("cell", { name: "Credit Card", exact: true })).toBeVisible()
-  await expect(page.getByRole("cell", { name: "Phone Number", exact: true })).toBeVisible()
-  await expect(page.getByRole("link", { name: /content\.pii/ })).toBeVisible()
-  await expectNoAxeViolations(page)
-})
-
 test("session privacy tab reports capture mode, redaction proof, and removed fields", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto("/sessions/ses_18bd3e09?turn=1&panel=privacy")
@@ -749,5 +664,20 @@ test("agents fail closed without an operator API and never render fixtures", asy
   await page.getByRole("searchbox", { name: "Search" }).fill("support")
   await expect(page).toHaveURL(/search=support/)
   await expect(page).not.toHaveURL(/demo=0/)
+  await expectNoAxeViolations(page)
+})
+
+test("memories fail closed without an operator API and never render fixtures", async ({ page }) => {
+  await page.goto("/memories?demo=0")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Memory index unavailable" })).toBeVisible()
+  await expect(page.getByText(/mem_d2f79fa2/)).toHaveCount(0)
+  await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  await page.goto("/memories/00000000-0000-4000-8000-000000000000?demo=0")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Memory record unavailable" })).toBeVisible()
   await expectNoAxeViolations(page)
 })
