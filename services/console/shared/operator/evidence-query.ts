@@ -116,3 +116,8 @@ export function liveEvidenceQueryKey(query: LiveEvidenceQuery): string {
 export function evidenceSummaryParams(range: EvidenceRange): URLSearchParams {
   return new URLSearchParams({ range })
 }
+
+/** The deletion record behind a tombstone uses the same window as the summary. */
+export function evidenceDeletionsParams(range: EvidenceRange): URLSearchParams {
+  return new URLSearchParams({ range })
+}

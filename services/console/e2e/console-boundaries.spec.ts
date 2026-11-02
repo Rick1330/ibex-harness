@@ -413,7 +413,10 @@ test("evidence tabs without a contract say so instead of showing fixtures", asyn
 
   await page.goto("/evidence?tab=tombstones")
   await waitForHydration(page)
-  await expect(page.getByText("Tombstone history is not part of this contract", { exact: true })).toBeVisible()
+  // No operator API: the deletion record fails closed with an explanation, and
+  // never falls back to fixtures.
+  await expect(page.getByText(/not connected to an operator API/)).toBeVisible()
+  await expect(page.getByText("Tombstoned in window")).toHaveCount(0)
   await expectNoAxeViolations(page)
 })
 
