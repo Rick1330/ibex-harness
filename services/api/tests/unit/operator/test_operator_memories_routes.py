@@ -13,7 +13,12 @@ from app.auth.client import StaticTokenValidator, ValidateResult
 from app.deps import operator_org_session
 from app.errors import ApiError
 from app.pagination import CursorPage, PaginationMeta
-from app.schemas.operator_memories import OperatorMemory
+from app.schemas.operator_memories import (
+    OperatorMemory,
+    OperatorMemoryDetail,
+    OperatorMemoryLineage,
+    OperatorMemoryLineageEdge,
+)
 from tests.unit.operator.conftest import create_operator_app
 from tests.unit.operator.memory_fixtures import memory_record
 
@@ -96,13 +101,31 @@ def test_operator_memory_detail_projects_metadata(
 ) -> None:
     org_id = uuid4()
     memory = memory_record()
+    replacement = uuid4()
+    detail = OperatorMemoryDetail(
+        **memory.model_dump(),
+        lineage=OperatorMemoryLineage(
+            superseded_by=replacement,
+            tip=replacement,
+            replaced_by=[
+                OperatorMemoryLineageEdge(
+                    memory_id=replacement,
+                    relationship_type="supersedes",
+                    confidence=0.9,
+                    created_at=memory.created_at,
+                    status="active",
+                    tombstoned=False,
+                )
+            ],
+        ),
+    )
 
     async def fake_get(
         _session: object, requested_org: object, memory_id: object
-    ) -> OperatorMemory:
+    ) -> OperatorMemoryDetail:
         assert requested_org == org_id
         assert memory_id == memory.id
-        return memory
+        return detail
 
     monkeypatch.setattr(
         "app.routers.operator_memories.memory_service.get_operator_memory",
@@ -120,6 +143,11 @@ def test_operator_memory_detail_projects_metadata(
     assert "org_id" not in body
     assert "content" not in body
     assert "metadata" not in body
+    assert body["lineage"]["superseded_by"] == str(replacement)
+    assert body["lineage"]["tip"] == str(replacement)
+    assert body["lineage"]["replaced_by"][0]["relationship_type"] == "supersedes"
+    # Resolution notes are free text next to content and are not in the contract.
+    assert "resolution_notes" not in body["lineage"]["replaced_by"][0]
 
 
 def test_operator_memory_detail_returns_not_found_for_another_tenant(

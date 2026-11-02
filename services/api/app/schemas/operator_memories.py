@@ -59,6 +59,54 @@ class OperatorMemory(BaseModel):
     updated_at: datetime
 
 
+MemoryRelationshipType = Literal[
+    "supersedes",
+    "contradicts",
+    "specializes",
+    "generalizes",
+    "merged_from",
+    "derived_from",
+]
+
+
+class OperatorMemoryLineageEdge(BaseModel):
+    """One typed edge, with the other end's current state.
+
+    `resolution_notes` is deliberately absent: it is free text adjacent to
+    content, and the metadata projection does not read it.
+    """
+
+    memory_id: UUID
+    relationship_type: MemoryRelationshipType
+    confidence: float = Field(ge=0, le=1)
+    created_at: datetime
+    status: MemoryStatus
+    tombstoned: bool
+
+
+class OperatorMemoryLineage(BaseModel):
+    """Why this memory is no longer current, and what replaced it.
+
+    `tip` is the head of the supersession chain, walked by
+    `resolve_supersession_tip` with a depth cap and a cycle break in SQL. It
+    equals this memory when nothing superseded it, so a reader can always show a
+    head rather than an empty link.
+    """
+
+    superseded_by: UUID | None = None
+    merged_into: UUID | None = None
+    tip: UUID | None = None
+    # Out-edges: what this memory replaced (it is the `source` of `supersedes`).
+    replaces: list[OperatorMemoryLineageEdge] = Field(default_factory=list)
+    # In-edges: what replaced this memory (it is the `target` of `supersedes`).
+    replaced_by: list[OperatorMemoryLineageEdge] = Field(default_factory=list)
+    edges_truncated: bool = False
+
+
+class OperatorMemoryDetail(OperatorMemory):
+    lineage: OperatorMemoryLineage
+
+
 class OperatorMemoryListQuery(BaseModel):
     agent_id: UUID | None = None
     session_id: UUID | None = None

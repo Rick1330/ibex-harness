@@ -16,8 +16,9 @@ from tests.unit.operator.memory_fixtures import NOW, memory_row
 
 
 class _MapResult:
-    def __init__(self, rows: list[object] | None = None) -> None:
+    def __init__(self, rows: list[object] | None = None, scalar: object = None) -> None:
         self._rows = rows or []
+        self._scalar = scalar
 
     def mappings(self) -> _MapResult:
         return self
@@ -28,10 +29,15 @@ class _MapResult:
     def all(self) -> list[object]:
         return list(self._rows)
 
+    def scalar_one_or_none(self) -> object:
+        return self._scalar
 
-def _session(rows: list[object]) -> AsyncMock:
+
+def _session(rows: list[object], *extra: _MapResult) -> AsyncMock:
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=_MapResult(rows))
+    session.execute = AsyncMock(
+        side_effect=[_MapResult(rows), *(extra or (_MapResult(), _MapResult(), _MapResult()))]
+    )
     return session
 
 
@@ -79,11 +85,20 @@ async def test_get_memory_projects_metadata_and_parses_tags() -> None:
         confidence="0.90",
         content_tokens="21",
     )
-    session = _session([row])
+    replacement = uuid4()
+    session = _session(
+        [row],
+        _MapResult(scalar=str(replacement)),
+        _MapResult(),
+        _MapResult(),
+    )
 
     memory = await memory_service.get_operator_memory(session, uuid4(), row.id)
 
     assert memory.id == row.id
+    assert memory.lineage.tip == replacement
+    assert memory.lineage.replaces == []
+    assert memory.lineage.edges_truncated is False
     assert memory.tags == ["support", "billing"]
     assert memory.confidence == 0.9
     assert memory.content_tokens == 21
@@ -211,3 +226,46 @@ async def test_non_list_tags_become_empty() -> None:
     page = await memory_service.list_operator_memories(session, _args())
 
     assert page.data[0].tags == []
+
+
+@pytest.mark.asyncio
+async def test_lineage_maps_edges_and_truncates_over_the_cap() -> None:
+    row = memory_row(status="superseded", superseded_by=uuid4())
+    successors = [
+        {
+            "memory_id": uuid4(),
+            "relationship_type": "supersedes",
+            "confidence": 0.9,
+            "created_at": NOW,
+            "status": "active",
+            "tombstoned": False,
+        }
+        for _ in range(21)
+    ]
+    predecessors = [
+        {
+            "memory_id": uuid4(),
+            "relationship_type": "merged_from",
+            "confidence": 0.7,
+            "created_at": NOW,
+            "status": "deleted",
+            "tombstoned": True,
+        }
+    ]
+    session = _session(
+        [row],
+        _MapResult(scalar=None),
+        _MapResult(successors),
+        _MapResult(predecessors),
+    )
+
+    memory = await memory_service.get_operator_memory(session, uuid4(), row.id)
+
+    assert memory.lineage.superseded_by == row.superseded_by
+    assert memory.lineage.merged_into is None
+    assert len(memory.lineage.replaces) == 20
+    assert memory.lineage.edges_truncated is True
+    assert memory.lineage.replaced_by[0].relationship_type == "merged_from"
+    # A deleted replacement stays visible as deleted rather than as a live link.
+    assert memory.lineage.replaced_by[0].status == "deleted"
+    assert memory.lineage.replaced_by[0].tombstoned is True

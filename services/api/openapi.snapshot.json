@@ -2251,6 +2251,318 @@
         "title": "OperatorMemory",
         "type": "object"
       },
+      "OperatorMemoryDetail": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "factual",
+              "preference",
+              "behavioral",
+              "episodic",
+              "procedural"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "content_tokens": {
+            "title": "Content Tokens",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_retrieved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Retrieved At"
+          },
+          "lifecycle_revision": {
+            "title": "Lifecycle Revision",
+            "type": "integer"
+          },
+          "lineage": {
+            "$ref": "#/components/schemas/OperatorMemoryLineage"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "pii_detected": {
+            "title": "Pii Detected",
+            "type": "boolean"
+          },
+          "pii_redacted": {
+            "title": "Pii Redacted",
+            "type": "boolean"
+          },
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "retrieval_count": {
+            "title": "Retrieval Count",
+            "type": "integer"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "superseded",
+              "merged_into",
+              "archived",
+              "quarantined",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Tags",
+            "type": "array"
+          },
+          "tombstoned": {
+            "title": "Tombstoned",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "usefulness_score": {
+            "title": "Usefulness Score",
+            "type": "number"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "visibility": {
+            "enum": [
+              "agent",
+              "org",
+              "session"
+            ],
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "category",
+          "status",
+          "source",
+          "confidence",
+          "usefulness_score",
+          "content_tokens",
+          "retrieval_count",
+          "pii_detected",
+          "pii_redacted",
+          "visibility",
+          "pinned",
+          "lifecycle_revision",
+          "tombstoned",
+          "valid_from",
+          "observed_at",
+          "created_at",
+          "updated_at",
+          "lineage"
+        ],
+        "title": "OperatorMemoryDetail",
+        "type": "object"
+      },
+      "OperatorMemoryLineage": {
+        "description": "Why this memory is no longer current, and what replaced it.\n\n`tip` is the head of the supersession chain, walked by\n`resolve_supersession_tip` with a depth cap and a cycle break in SQL. It\nequals this memory when nothing superseded it, so a reader can always show a\nhead rather than an empty link.",
+        "properties": {
+          "edges_truncated": {
+            "default": false,
+            "title": "Edges Truncated",
+            "type": "boolean"
+          },
+          "merged_into": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into"
+          },
+          "replaced_by": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorMemoryLineageEdge"
+            },
+            "title": "Replaced By",
+            "type": "array"
+          },
+          "replaces": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorMemoryLineageEdge"
+            },
+            "title": "Replaces",
+            "type": "array"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
+          },
+          "tip": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tip"
+          }
+        },
+        "title": "OperatorMemoryLineage",
+        "type": "object"
+      },
+      "OperatorMemoryLineageEdge": {
+        "description": "One typed edge, with the other end's current state.\n\n`resolution_notes` is deliberately absent: it is free text adjacent to\ncontent, and the metadata projection does not read it.",
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "memory_id": {
+            "format": "uuid",
+            "title": "Memory Id",
+            "type": "string"
+          },
+          "relationship_type": {
+            "enum": [
+              "supersedes",
+              "contradicts",
+              "specializes",
+              "generalizes",
+              "merged_from",
+              "derived_from"
+            ],
+            "title": "Relationship Type",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "superseded",
+              "merged_into",
+              "archived",
+              "quarantined",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tombstoned": {
+            "title": "Tombstoned",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "memory_id",
+          "relationship_type",
+          "confidence",
+          "created_at",
+          "status",
+          "tombstoned"
+        ],
+        "title": "OperatorMemoryLineageEdge",
+        "type": "object"
+      },
       "OperatorOverviewCounts": {
         "additionalProperties": false,
         "properties": {
@@ -6157,7 +6469,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OperatorMemory"
+                  "$ref": "#/components/schemas/OperatorMemoryDetail"
                 }
               }
             },

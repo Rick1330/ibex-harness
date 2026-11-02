@@ -12,7 +12,11 @@ from app.authz import require_operator_metadata_session
 from app.deps import operator_org_session
 from app.operator_session_auth import OperatorSessionAuthorization
 from app.pagination import CursorPage
-from app.schemas.operator_memories import OperatorMemory, OperatorMemoryListQuery
+from app.schemas.operator_memories import (
+    OperatorMemory,
+    OperatorMemoryDetail,
+    OperatorMemoryListQuery,
+)
 from app.services import operator_memories as memory_service
 from app.services.operator_memories import ListMemoriesArgs, MemoryListFilters
 
@@ -56,7 +60,7 @@ async def operator_memory_detail(
     memory_id: UUID,
     operator: OperatorSession,
     session: OperatorSessionDatabase,
-) -> OperatorMemory:
+) -> OperatorMemoryDetail:
     return await memory_service.get_operator_memory(
         session, operator.org_id, memory_id
     )
