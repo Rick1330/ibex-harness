@@ -10,6 +10,25 @@ Privileged actions—policy/directive promotion, token/key changes, provider cre
 
 Readiness and diagnostics distinguish healthy, degraded, blocked, and uncertified. They do not expose secrets or cross-tenant existence.
 
+### Directive version semantics (`operator.directives.versions.v1`)
+
+The console reads directives through one pointer and one history, and the two are never merged:
+
+- **The pointer.** `directives.active_version_id` names the version a *new* session resolves to. A rollback moves the
+  pointer; it does not create a version, so the live version may be older than the newest one. This is the same model
+  Langfuse uses for prompt labels and OpenAI uses for a published prompt ID: one mutable reference at immutable
+  versions.
+- **The history.** `directive_versions` is append-only (a trigger rejects `UPDATE`), numbered monotonically per
+  directive, and each row carries a content hash and size. `sessions.directive_version_id` records the version a
+  session actually resolved when it started, so an older version can keep serving traffic after a rollback. That is the
+  expected shape, not drift.
+- **What is not in the contract.** Instruction text, diffs, and promotion history. Text is the operator's instruction
+  payload; exposing it needs its own contract behind `OPERATOR_REDACTED_READ`. Promotion history needs a write path
+  with step-up, CSRF, and an audit record, and the console has none.
+
+The surface reports the two facts separately ("live now" versus "served sessions in the window") so a rollback is
+visible instead of being smoothed into a single "current version" number.
+
 ## MCP surface
 
 MCP is an external resource/tool boundary. It derives scope from authenticated principal, uses versioned tool descriptors and hashes, caps input/output, validates arguments, supports deadlines/cancellation, requires idempotency for writes, and records policy/evidence IDs. Tool descriptions and results are untrusted data.
