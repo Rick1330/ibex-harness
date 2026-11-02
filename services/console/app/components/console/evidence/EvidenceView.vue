@@ -9,6 +9,7 @@ import GovernTabBar from "@/components/console/govern/primitives/GovernTabBar.vu
 import IxVerdict from "@/components/console/IxVerdict.vue"
 import EvidenceCoveragePanel from "./EvidenceCoveragePanel.vue"
 import EvidenceDeliveryPanel from "./EvidenceDeliveryPanel.vue"
+import EvidenceTombstonesPanel from "./EvidenceTombstonesPanel.vue"
 import EvidenceUnavailablePanel from "./EvidenceUnavailablePanel.vue"
 import { useOperatorEvidenceSummary } from "@/composables/useOperatorData"
 import { formatGovernNumber, formatGovernRelative } from "@/lib/govern-format"
@@ -143,14 +144,7 @@ function update(patch: Partial<LiveEvidenceQuery>): void {
 
     <!-- Tabs without a contract explain themselves regardless of the read state;
          they never depend on the summary and never substitute fixtures. -->
-    <EvidenceUnavailablePanel
-      v-if="state.tab === 'tombstones'"
-      title="Tombstone history is not part of this contract"
-      reason="operator.evidence.summary.v1 reports capture completeness and relay delivery. Deletion chains, downstream receipts, and hold scope need their own read model, so this tab renders nothing rather than fixtures."
-      next-step="Use the memory and session records for a specific subject, or open the privacy governance contract once it exists."
-      action-label="Open memories"
-      action-to="/memories"
-    />
+    <EvidenceTombstonesPanel v-if="state.tab === 'tombstones'" :range="state.range" />
     <EvidenceUnavailablePanel
       v-else-if="state.tab === 'redaction'"
       title="Redaction detail is not part of this contract"

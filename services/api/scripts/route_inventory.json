@@ -272,6 +272,20 @@
     "source": "services/api/app/routers/operator_events.py"
   },
   {
+    "endpoint": "app.routers.operator_evidence_deletions.operator_evidence_deletions",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_evidence_deletions",
+    "path": "/v1/operator/evidence/deletions",
+    "response_model": "<class 'app.schemas.operator_evidence_deletions.OperatorEvidenceDeletions'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_evidence_deletions.py"
+  },
+  {
     "endpoint": "app.routers.operator_evidence.operator_evidence_summary",
     "methods": [
       "GET"

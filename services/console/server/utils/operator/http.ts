@@ -13,6 +13,7 @@ const OPERATOR_PATHS = {
   agents: "/v1/operator/agents",
   agentDetail: "/v1/operator/agents/",
   evidenceSummary: "/v1/operator/evidence/summary",
+  evidenceDeletions: "/v1/operator/evidence/deletions",
   directives: "/v1/operator/directives",
   directiveDetail: "/v1/operator/directives/",
   memories: "/v1/operator/memories",

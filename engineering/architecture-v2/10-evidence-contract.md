@@ -41,5 +41,30 @@ collected; incompleteness is either intentional sampling or a collection error, 
 extrapolated) and in-toto's attestation validation (completeness is checked against declared requirements, never
 assumed). Both are recorded here as design precedent, not as a compliance claim.
 
-Out of scope until separate read models exist: tombstone chains, downstream deletion receipts, and field-level
-redaction detail. The Console renders those tabs as explicitly unavailable rather than with fixtures.
+Out of scope until a separate read model exists: field-level redaction detail. The Console renders the Redaction tab as
+explicitly unavailable rather than with fixtures; tombstones, deletion receipts, and audit continuity are covered by
+`operator.evidence.deletions.v1`.
+
+## Deletion evidence (operator read model)
+
+`operator.evidence.deletions.v1` answers the three questions a deletion record exists for, and keeps them apart:
+
+- **What was tombstoned.** `memory_lifecycle_outbox` deletion events (`forgotten`, `expired`, `purged`) in the window,
+  and whether each was delivered. `memories.tombstoned` is the terminal visibility fence — tombstones win in every
+  retrieval mode — and is reported as a current count, not a window count.
+- **Did every store confirm the erasure.** `org_deletion_jobs` plus `deletion_store_receipts`: one receipt per deployed
+  store, `verified` only when the worker proved absence. A `hold_blocked` job is a legal hold doing its job, not a
+  failure. Erasure is a distributed transaction, not a `DELETE`, and a deletion you cannot evidence is, to an auditor, a
+  deletion that did not happen.
+- **Is the audit chain intact.** `privacy_audit_ledger` continuity: `seq` has no gaps and every `prev_hash` equals the
+  previous `row_hash`. This is the append-only property only. Re-deriving `row_hash` from the payload is the
+  `privacy-audit-verify` CLI's job; duplicating the canonicalisation in the API would create a second, divergent
+  implementation. Verifiable logs draw the same line between consistency and inclusion proofs (Trillian).
+
+Ledger payload, hold reasons, and memory content are never projected: the contract is counts, statuses, timestamps, and
+hashes.
+
+Tombstone background: a delete can race an offline replica, which is why stores keep a timestamped marker and a grace
+window (Cassandra's `gc_grace_seconds`) so a returning replica cannot resurrect “zombie” data. Our `tombstoned` flag and
+`lifecycle_revision` are that fence; the outbox is how the fence reaches every sink, and this contract reports whether it
+did.

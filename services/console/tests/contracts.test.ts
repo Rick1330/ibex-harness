@@ -6,6 +6,7 @@ import {
   OperatorContextSchema,
   OperatorDirectiveDetailSchema,
   OperatorDirectivePageSchema,
+  OperatorEvidenceDeletionsSchema,
   OperatorEvidenceSummarySchema,
   OperatorMemoryPageSchema,
   OperatorMemorySchema,
@@ -416,6 +417,62 @@ const evidenceSummary = {
         turns: [{ ...sessionTurn, model }],
       }),
     ).not.toThrow()
+  })
+
+  it("accepts the deletion evidence contract and rejects payloads", () => {
+    const deletions = {
+      schema_version: "operator.evidence.deletions.v1" as const,
+      range: "7d" as const,
+      window_start: "2026-10-26T12:00:00.000Z",
+      window_end: "2026-11-02T12:00:00.000Z",
+      observed_at: "2026-11-02T12:00:00.000Z",
+      tombstones: {
+        events: { forgotten: 3, expired: 1, purged: 0 },
+        pending: 2,
+        oldest_pending_at: "2026-11-02T10:00:00.000Z",
+        last_event_at: "2026-11-02T11:00:00.000Z",
+        tombstoned_memories: 9,
+      },
+      erasures: { pending: 0, running: 0, succeeded: 1, failed: 0, hold_blocked: 1 },
+      jobs: [
+        {
+          id: "11111111-1111-4111-8111-111111111111",
+          status: "hold_blocked" as const,
+          created_at: "2026-11-02T09:00:00.000Z",
+          finished_at: null,
+          receipts: [
+            { store: "postgres" as const, status: "verified" as const, verified_absent_at: "2026-11-02T09:30:00.000Z" },
+            { store: "redis" as const, status: "pending" as const, verified_absent_at: null },
+          ],
+        },
+      ],
+      jobs_truncated: false,
+      audit: {
+        entries: 4,
+        first_seq: 1,
+        last_seq: 4,
+        continuity_ok: true,
+        broken_at_seq: null,
+        last_row_hash: "a".repeat(64),
+      },
+    }
+
+    const parsed = OperatorEvidenceDeletionsSchema.parse(deletions)
+    expect(parsed.tombstones.events.forgotten).toBe(3)
+    expect(parsed.audit.continuity_ok).toBe(true)
+    // A ledger payload, a hold reason, or an unknown store must not pass.
+    expect(() =>
+      OperatorEvidenceDeletionsSchema.parse({ ...deletions, audit: { ...deletions.audit, payload: {} } }),
+    ).toThrow()
+    expect(() =>
+      OperatorEvidenceDeletionsSchema.parse({ ...deletions, legal_hold: { reason: "litigation" } }),
+    ).toThrow()
+    expect(() =>
+      OperatorEvidenceDeletionsSchema.parse({
+        ...deletions,
+        jobs: [{ ...deletions.jobs[0], receipts: [{ store: "s3", status: "verified", verified_absent_at: null }] }],
+      }),
+    ).toThrow()
   })
 
   it("accepts the directive contract and rejects instruction text", () => {

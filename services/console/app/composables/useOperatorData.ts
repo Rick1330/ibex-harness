@@ -5,6 +5,7 @@ import type {
   PublicOperatorContext,
   PublicOperatorDirectiveDetail,
   PublicOperatorDirectivePage,
+  PublicOperatorEvidenceDeletions,
   PublicOperatorEvidenceSummary,
   PublicOperatorMemory,
   PublicOperatorMemoryPage,
@@ -94,6 +95,14 @@ export function useOperatorDirective(directiveId: () => string, params: () => UR
     return `/api/operator/directives/${encodeURIComponent(directiveId())}${query ? `?${query}` : ""}`
   })
   return useFetch<PublicOperatorDirectiveDetail>(url, { key: url, watch: [url] })
+}
+
+export function useOperatorEvidenceDeletions(params: () => URLSearchParams) {
+  const url = computed(() => {
+    const query = params().toString()
+    return `/api/operator/evidence/deletions${query ? `?${query}` : ""}`
+  })
+  return useFetch<PublicOperatorEvidenceDeletions>(url, { key: url, watch: [url] })
 }
 
 export function useOperatorEvidenceSummary(params: () => URLSearchParams) {

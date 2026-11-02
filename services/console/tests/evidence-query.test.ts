@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   defaultLiveEvidenceQuery,
+  evidenceDeletionsParams,
   evidenceSummaryParams,
   LiveEvidenceQueryError,
   parseLiveEvidenceQuery,
@@ -31,6 +32,7 @@ describe("live evidence query codec", () => {
   it("sends only the range to the summary endpoint", () => {
     // The tab is presentation: forwarding it would key an identical fetch per tab.
     expect(evidenceSummaryParams("30d").toString()).toBe("range=30d")
+    expect(evidenceDeletionsParams("7d").toString()).toBe("range=7d")
   })
 
   it("rejects unknown fields and an unknown range", () => {

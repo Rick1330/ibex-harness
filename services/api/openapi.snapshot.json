@@ -387,6 +387,68 @@
         "title": "AgentResponse",
         "type": "object"
       },
+      "AuditChainSummary": {
+        "description": "Structural continuity of `privacy_audit_ledger`, not content verification.\n\n`continuity_ok` means `seq` has no gaps and every `prev_hash` equals the\nprevious `row_hash`. Re-deriving `row_hash` from the payload is the CLI\nverifier's job; doing it here would duplicate the canonicalisation.",
+        "properties": {
+          "broken_at_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broken At Seq"
+          },
+          "continuity_ok": {
+            "default": true,
+            "title": "Continuity Ok",
+            "type": "boolean"
+          },
+          "entries": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Entries",
+            "type": "integer"
+          },
+          "first_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seq"
+          },
+          "last_row_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Row Hash"
+          },
+          "last_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seq"
+          }
+        },
+        "title": "AuditChainSummary",
+        "type": "object"
+      },
       "BudgetPeriodCreate": {
         "properties": {
           "cap_cents": {
@@ -797,6 +859,92 @@
           "pagination"
         ],
         "title": "CursorPage[UserResponse]",
+        "type": "object"
+      },
+      "ErasureJob": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/components/schemas/StoreReceipt"
+            },
+            "title": "Receipts",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "hold_blocked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "created_at"
+        ],
+        "title": "ErasureJob",
+        "type": "object"
+      },
+      "ErasureStatusCounts": {
+        "properties": {
+          "failed": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "hold_blocked": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Hold Blocked",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "running": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Running",
+            "type": "integer"
+          },
+          "succeeded": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "title": "ErasureStatusCounts",
         "type": "object"
       },
       "EvidenceCapturePolicy": {
@@ -1737,6 +1885,72 @@
           "is_live"
         ],
         "title": "OperatorDirectiveVersion",
+        "type": "object"
+      },
+      "OperatorEvidenceDeletions": {
+        "properties": {
+          "audit": {
+            "$ref": "#/components/schemas/AuditChainSummary"
+          },
+          "erasures": {
+            "$ref": "#/components/schemas/ErasureStatusCounts"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureJob"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "jobs_truncated": {
+            "default": false,
+            "title": "Jobs Truncated",
+            "type": "boolean"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "range": {
+            "enum": [
+              "24h",
+              "7d",
+              "30d"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "operator.evidence.deletions.v1",
+            "default": "operator.evidence.deletions.v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "tombstones": {
+            "$ref": "#/components/schemas/TombstoneSummary"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "range",
+          "window_start",
+          "window_end",
+          "observed_at",
+          "tombstones",
+          "erasures",
+          "audit"
+        ],
+        "title": "OperatorEvidenceDeletions",
         "type": "object"
       },
       "OperatorEvidenceSummary": {
@@ -3984,6 +4198,48 @@
         "title": "SessionTurnEvidence",
         "type": "object"
       },
+      "StoreReceipt": {
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "verified",
+              "failed",
+              "not_applicable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "store": {
+            "enum": [
+              "postgres",
+              "clickhouse",
+              "redis",
+              "objectstore"
+            ],
+            "title": "Store",
+            "type": "string"
+          },
+          "verified_absent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified Absent At"
+          }
+        },
+        "required": [
+          "store",
+          "status"
+        ],
+        "title": "StoreReceipt",
+        "type": "object"
+      },
       "TokenCreateRequest": {
         "properties": {
           "agent_id": {
@@ -4166,6 +4422,79 @@
           "created_at"
         ],
         "title": "TokenResponse",
+        "type": "object"
+      },
+      "TombstoneEventCounts": {
+        "properties": {
+          "expired": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Expired",
+            "type": "integer"
+          },
+          "forgotten": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Forgotten",
+            "type": "integer"
+          },
+          "purged": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Purged",
+            "type": "integer"
+          }
+        },
+        "title": "TombstoneEventCounts",
+        "type": "object"
+      },
+      "TombstoneSummary": {
+        "description": "What was tombstoned in the window, and whether propagation finished.",
+        "properties": {
+          "events": {
+            "$ref": "#/components/schemas/TombstoneEventCounts"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event At"
+          },
+          "oldest_pending_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Pending At"
+          },
+          "pending": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "tombstoned_memories": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Tombstoned Memories",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "TombstoneSummary",
         "type": "object"
       },
       "TraceEvidenceState": {
@@ -5566,6 +5895,54 @@
         "summary": "Stream Events",
         "tags": [
           "operator-events"
+        ]
+      }
+    },
+    "/v1/operator/evidence/deletions": {
+      "get": {
+        "operationId": "operator_evidence_deletions_v1_operator_evidence_deletions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "24h",
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorEvidenceDeletions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Evidence Deletions",
+        "tags": [
+          "operator-evidence"
         ]
       }
     },

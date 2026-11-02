@@ -5,6 +5,7 @@ import type {
   OperatorDirectiveDetail,
   OperatorDirectivePage,
   OperatorDirectiveSummary,
+  OperatorEvidenceDeletions,
   OperatorEvidenceSummary,
   OperatorMemory,
   OperatorMemoryPage,
@@ -33,6 +34,7 @@ export type PublicOperatorSessionRecord = OperatorSessionRecord
 export type PublicOperatorSessionRecordDetail = OperatorSessionRecordDetail
 export type PublicOperatorSessionRecordPage = OperatorSessionRecordPage
 export type PublicOperatorEvidenceSummary = OperatorEvidenceSummary
+export type PublicOperatorEvidenceDeletions = OperatorEvidenceDeletions
 export type PublicOperatorDirectiveSummary = OperatorDirectiveSummary
 export type PublicOperatorDirectiveDetail = OperatorDirectiveDetail
 export type PublicOperatorDirectivePage = OperatorDirectivePage

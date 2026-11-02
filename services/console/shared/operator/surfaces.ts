@@ -86,7 +86,7 @@ export const SURFACES = {
     phase: "B2",
     group: "Lifecycle",
     question: "Which runs hold a complete capture, which do not, and did the delivery chain settle?",
-    description: "Capture completeness and relay delivery from operator.evidence.summary.v1; tombstones and redaction need their own contracts.",
+    description: "Capture completeness and relay delivery from operator.evidence.summary.v1, deletion evidence and audit continuity from operator.evidence.deletions.v1; field-level redaction needs its own contract.",
     contract: "operator.evidence.summary.v1",
   },
   directives: {

@@ -619,3 +619,94 @@ export type OperatorDirectiveUsage = z.infer<typeof OperatorDirectiveUsageSchema
 export type OperatorDirectiveDetail = z.infer<typeof OperatorDirectiveDetailSchema>
 export type OperatorDirectivePage = z.infer<typeof OperatorDirectivePageSchema>
 export type DirectiveUsageRange = z.infer<typeof DirectiveUsageRangeSchema>
+
+export const DeletionRangeSchema = z.enum(["24h", "7d", "30d"])
+export const DeletionStoreSchema = z.enum(["postgres", "clickhouse", "redis", "objectstore"])
+export const ReceiptStatusSchema = z.enum(["pending", "verified", "failed", "not_applicable"])
+export const ErasureStatusSchema = z.enum([
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "hold_blocked",
+])
+
+/**
+ * `operator.evidence.deletions.v1`.
+ *
+ * Metadata only: no ledger payload, hold reason, or memory content is in the
+ * contract. `audit.continuity_ok` is structural (no gaps, links match); content
+ * verification belongs to the `privacy-audit-verify` CLI.
+ */
+export const OperatorEvidenceDeletionsSchema = z
+  .object({
+    schema_version: z.literal("operator.evidence.deletions.v1"),
+    range: DeletionRangeSchema,
+    window_start: z.string().datetime({ offset: true }),
+    window_end: z.string().datetime({ offset: true }),
+    observed_at: z.string().datetime({ offset: true }),
+    tombstones: z
+      .object({
+        events: z
+          .object({
+            forgotten: z.number().int().nonnegative(),
+            expired: z.number().int().nonnegative(),
+            purged: z.number().int().nonnegative(),
+          })
+          .strict(),
+        pending: z.number().int().nonnegative(),
+        oldest_pending_at: z.string().datetime({ offset: true }).nullable(),
+        last_event_at: z.string().datetime({ offset: true }).nullable(),
+        tombstoned_memories: z.number().int().nonnegative(),
+      })
+      .strict(),
+    erasures: z
+      .object({
+        pending: z.number().int().nonnegative(),
+        running: z.number().int().nonnegative(),
+        succeeded: z.number().int().nonnegative(),
+        failed: z.number().int().nonnegative(),
+        hold_blocked: z.number().int().nonnegative(),
+      })
+      .strict(),
+    jobs: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1),
+            status: ErasureStatusSchema,
+            created_at: z.string().datetime({ offset: true }),
+            finished_at: z.string().datetime({ offset: true }).nullable(),
+            receipts: z
+              .array(
+                z
+                  .object({
+                    store: DeletionStoreSchema,
+                    status: ReceiptStatusSchema,
+                    verified_absent_at: z.string().datetime({ offset: true }).nullable(),
+                  })
+                  .strict(),
+              )
+              .max(8),
+          })
+          .strict(),
+      )
+      .max(20),
+    jobs_truncated: z.boolean(),
+    audit: z
+      .object({
+        entries: z.number().int().nonnegative(),
+        first_seq: z.number().int().positive().nullable(),
+        last_seq: z.number().int().positive().nullable(),
+        continuity_ok: z.boolean(),
+        broken_at_seq: z.number().int().positive().nullable(),
+        last_row_hash: z.string().min(1).nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+
+export type OperatorEvidenceDeletions = z.infer<typeof OperatorEvidenceDeletionsSchema>
+export type DeletionStore = z.infer<typeof DeletionStoreSchema>
+export type ReceiptStatus = z.infer<typeof ReceiptStatusSchema>
+export type ErasureStatus = z.infer<typeof ErasureStatusSchema>
