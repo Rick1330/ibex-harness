@@ -60,7 +60,7 @@ COPY --from=deps /app/services/api/.venv ./.venv
 
 COPY services/api/app ./app
 
-USER ibex
+USER 10001:10001
 
 EXPOSE 8010
 

@@ -65,7 +65,7 @@ COPY --from=deps /app/.venv ./.venv
 # Copy application source last (cache busting only when code changes).
 COPY services/embedder/app ./app
 
-USER ibex
+USER 10001:10001
 
 EXPOSE 8004
 

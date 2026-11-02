@@ -60,7 +60,7 @@ COPY --from=deps /app/.venv ./.venv
 
 COPY services/memory/app ./app
 
-USER ibex
+USER 10001:10001
 
 EXPOSE 8005
 

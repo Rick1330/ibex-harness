@@ -72,7 +72,7 @@ WORKDIR /app
 COPY --from=deps /app/.venv ./.venv
 COPY services/mcp-memory/app ./app
 
-USER ibex
+USER 10001:10001
 
 EXPOSE 8090
 

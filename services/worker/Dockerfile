@@ -62,7 +62,7 @@ COPY services/worker/scripts ./scripts
 
 RUN chmod +x scripts/healthcheck.sh
 
-USER ibex
+USER 10001:10001
 
 HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=3 \
     CMD ["./scripts/healthcheck.sh"]
