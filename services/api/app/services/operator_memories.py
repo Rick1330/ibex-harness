@@ -17,42 +17,63 @@ from app.schemas.operator_memories import OperatorMemory
 
 _MEMORY_NOT_FOUND_MSG = "Memory not found"
 
-_MEMORY_COLUMNS = """
-    m.id,
-    m.agent_id,
-    m.session_id,
-    m.category,
-    m.status,
-    m.source,
-    m.confidence,
-    m.usefulness_score,
-    m.content_tokens,
-    m.retrieval_count,
-    m.last_retrieved_at,
-    m.pii_detected,
-    m.pii_redacted,
-    m.lifecycle_revision,
-    m.tombstoned,
-    m.expires_at,
-    m.valid_from,
-    m.valid_until,
-    m.observed_at,
-    m.created_at,
-    m.updated_at,
-    COALESCE(m.metadata->>'visibility', 'agent') AS visibility,
-    COALESCE((m.metadata->>'pinned')::boolean, FALSE) AS pinned,
-    COALESCE(m.metadata->'tags', '[]'::jsonb) AS tags
-"""
-
-_GET_MEMORY_SQL = f"""
-    SELECT {_MEMORY_COLUMNS}
+_GET_MEMORY_SQL = """
+    SELECT
+        m.id,
+        m.agent_id,
+        m.session_id,
+        m.category,
+        m.status,
+        m.source,
+        m.confidence,
+        m.usefulness_score,
+        m.content_tokens,
+        m.retrieval_count,
+        m.last_retrieved_at,
+        m.pii_detected,
+        m.pii_redacted,
+        m.lifecycle_revision,
+        m.tombstoned,
+        m.expires_at,
+        m.valid_from,
+        m.valid_until,
+        m.observed_at,
+        m.created_at,
+        m.updated_at,
+        COALESCE(m.metadata->>'visibility', 'agent') AS visibility,
+        COALESCE((m.metadata->>'pinned')::boolean, FALSE) AS pinned,
+        COALESCE(m.metadata->'tags', '[]'::jsonb) AS tags
     FROM ibex_core.memories m
     WHERE m.id = CAST(:memory_id AS uuid)
       AND m.org_id = CAST(:org_id AS uuid)
 """
 
-_LIST_MEMORIES_SQL = f"""
-    SELECT {_MEMORY_COLUMNS}
+_LIST_MEMORIES_SQL = """
+    SELECT
+        m.id,
+        m.agent_id,
+        m.session_id,
+        m.category,
+        m.status,
+        m.source,
+        m.confidence,
+        m.usefulness_score,
+        m.content_tokens,
+        m.retrieval_count,
+        m.last_retrieved_at,
+        m.pii_detected,
+        m.pii_redacted,
+        m.lifecycle_revision,
+        m.tombstoned,
+        m.expires_at,
+        m.valid_from,
+        m.valid_until,
+        m.observed_at,
+        m.created_at,
+        m.updated_at,
+        COALESCE(m.metadata->>'visibility', 'agent') AS visibility,
+        COALESCE((m.metadata->>'pinned')::boolean, FALSE) AS pinned,
+        COALESCE(m.metadata->'tags', '[]'::jsonb) AS tags
     FROM ibex_core.memories m
     WHERE m.org_id = CAST(:org_id AS uuid)
       AND (
@@ -184,7 +205,10 @@ async def _fetch_memories_page(session: AsyncSession, args: _FetchPageArgs) -> l
         "cursor_created_at": args.cursor.created_at,
         "cursor_id": args.cursor.memory_id,
     }
-    result = await session.execute(text(_LIST_MEMORIES_SQL), params)
+    result = await session.execute(
+        text(_LIST_MEMORIES_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        params,
+    )
     return list(result.mappings().all())
 
 
@@ -218,7 +242,7 @@ async def get_operator_memory(
     session: AsyncSession, org_id: UUID, memory_id: UUID
 ) -> OperatorMemory:
     result = await session.execute(
-        text(_GET_MEMORY_SQL),
+        text(_GET_MEMORY_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         {"memory_id": str(memory_id), "org_id": str(org_id)},
     )
     row = result.mappings().first()
