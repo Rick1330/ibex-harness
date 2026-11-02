@@ -133,6 +133,28 @@ async def _run_sparse_fts_fallback(case: SparseFtsFallbackCase) -> list[MemorySe
     return results
 
 
+async def _assert_full_text_skipped(
+    *,
+    ids: list[UUID],
+    limit: int,
+    query_text: str = "query",
+    settings: Settings | None = None,
+) -> list[MemorySearchResult]:
+    """Run find_similar and assert the full-text channel never ran."""
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[SearchHit(memory_id=mid, similarity=0.88) for mid in ids]
+    )
+    repo = _repo(store, settings)
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(mid) for mid in ids])
+    )
+    with patch("app.read.repository.full_text_search", AsyncMock()) as fts_mock:
+        results = await repo.find_similar(_query(query_text=query_text, limit=limit))
+    fts_mock.assert_not_awaited()
+    return results
+
+
 @pytest.mark.asyncio
 async def test_find_similar_vector_only_at_limit() -> None:
     org_id = uuid4()
@@ -208,23 +230,8 @@ def test_fts_candidates_clamp_unbounded_ts_rank_to_unit_similarity() -> None:
 
 @pytest.mark.asyncio
 async def test_find_similar_no_fallback_at_exact_limit() -> None:
-    ids = [uuid4(), uuid4()]
-    store = MagicMock()
-    store.search = AsyncMock(
-        return_value=[SearchHit(memory_id=mid, similarity=0.88) for mid in ids]
-    )
-    repo = _repo(store)
-    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
-        return_value=_hydrated_map([_result(mid) for mid in ids])
-    )
+    results = await _assert_full_text_skipped(ids=[uuid4(), uuid4()], limit=2)
 
-    with patch(
-        "app.read.repository.full_text_search",
-        AsyncMock(),
-    ) as fts_mock:
-        results = await repo.find_similar(_query(query_text="query", limit=2))
-
-    fts_mock.assert_not_awaited()
     assert len(results) == 2
 
 
@@ -284,8 +291,10 @@ async def test_find_similar_skips_fts_for_blank_query() -> None:
 @pytest.mark.asyncio
 async def test_find_similar_rejects_bad_limit() -> None:
     repo = _repo()
+    invalid = _query(limit=0)
+
     with pytest.raises(ValueError, match="limit"):
-        await repo.find_similar(_query(limit=0))
+        await repo.find_similar(invalid)
 
 
 @pytest.mark.asyncio
@@ -311,18 +320,13 @@ async def test_find_similar_min_confidence_boundary() -> None:
 
 @pytest.mark.asyncio
 async def test_find_similar_fallback_disabled() -> None:
-    vector_id = uuid4()
-    store = MagicMock()
-    store.search = AsyncMock(return_value=[SearchHit(memory_id=vector_id, similarity=0.9)])
-    repo = _repo(store, settings=_settings(search_fallback_enabled=False))
-    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
-        return_value=_hydrated_map([_result(vector_id)])
+    results = await _assert_full_text_skipped(
+        ids=[uuid4()],
+        limit=3,
+        query_text="dark mode",
+        settings=_settings(search_fallback_enabled=False),
     )
 
-    with patch("app.read.repository.full_text_search", AsyncMock()) as fts_mock:
-        results = await repo.find_similar(_query(query_text="dark mode"))
-
-    fts_mock.assert_not_awaited()
     assert len(results) == 1
 
 
@@ -330,8 +334,10 @@ async def test_find_similar_fallback_disabled() -> None:
 @pytest.mark.parametrize("min_confidence", [-0.1, 1.1])
 async def test_find_similar_rejects_bad_min_confidence(min_confidence: float) -> None:
     repo = _repo()
+    invalid = _query(limit=1, min_confidence=min_confidence)
+
     with pytest.raises(ValueError, match="min_confidence"):
-        await repo.find_similar(_query(limit=1, min_confidence=min_confidence))
+        await repo.find_similar(invalid)
 
 
 @pytest.mark.asyncio
@@ -357,3 +363,117 @@ async def test_find_similar_drops_unhydrated_candidates() -> None:
     repo._hydrate_hits.assert_awaited_once()
     assert len(results) == 1
     assert results[0].id == vector_id
+
+
+@dataclass(frozen=True, slots=True)
+class HybridCase:
+    vector_ids: list[UUID]
+    fts_id: UUID
+    limit: int
+    fts_rank: float = 0.42
+    query_text: str = "dark mode preference"
+
+
+async def _run_hybrid(case: HybridCase, *, similarity: float = 0.9) -> list[MemorySearchResult]:
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[SearchHit(memory_id=mid, similarity=similarity) for mid in case.vector_ids]
+    )
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+    fts_result = _result(case.fts_id, source="full_text")
+    # One hydrate call: the fused union is hydrated together.
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map(
+            [
+                *[_result(mid, confidence=0.9) for mid in case.vector_ids],
+                fts_result,
+            ]
+        )
+    )
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=case.fts_id, rank=case.fts_rank)]),
+    ) as fts_mock:
+        results = await repo.find_similar(_query(query_text=case.query_text, limit=case.limit))
+    fts_mock.assert_awaited_once()
+    return results
+
+
+@pytest.mark.asyncio
+async def test_hybrid_admits_an_exact_match_into_a_full_vector_page() -> None:
+    # The defect the fallback gate had: vector fills the page, so the exact-token
+    # match never entered the candidate set even though it was retrieved.
+    vector_ids = [uuid4() for _ in range(3)]
+    fts_id = uuid4()
+
+    # Weak vector matches: an exact-token hit must be able to displace one. The
+    # FTS candidate still scores through the 0.5 composite sentinel, which is why
+    # the scoring half of 5.A.2 (real ts_rank) is a follow-up.
+    results = await _run_hybrid(
+        HybridCase(vector_ids=vector_ids, fts_id=fts_id, limit=3), similarity=0.3
+    )
+
+    assert any(item.id == fts_id for item in results)
+    assert len(results) == 3
+
+
+@pytest.mark.asyncio
+async def test_hybrid_keeps_the_vector_score_when_both_channels_match() -> None:
+    shared = uuid4()
+    store = MagicMock()
+    store.search = AsyncMock(return_value=[SearchHit(memory_id=shared, similarity=0.77)])
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(shared, source="vector")])
+    )
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=shared, rank=0.2)]),
+    ):
+        results = await repo.find_similar(_query(query_text="shared", limit=3))
+
+    assert [item.id for item in results] == [shared]
+    assert results[0].source == "vector"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_is_off_by_default_and_keeps_the_fallback_gate() -> None:
+    # Default settings keep the previous behaviour: no full-text call at a full page.
+    await _assert_full_text_skipped(ids=[uuid4(), uuid4()], limit=2)
+
+
+@pytest.mark.asyncio
+async def test_hybrid_skips_full_text_for_an_unsearchable_query() -> None:
+    await _assert_full_text_skipped(
+        ids=[uuid4()],
+        limit=3,
+        query_text="   ",
+        settings=_settings(search_hybrid_enabled=True),
+    )
+
+
+@pytest.mark.asyncio
+async def test_hybrid_admission_is_the_fused_window_bounded_by_limit() -> None:
+    # Both channels return a full page; the fused window, not the union, is what
+    # gets hydrated, so hydration cost stays at the page size.
+    vector_ids = [uuid4() for _ in range(4)]
+    fts_id = uuid4()
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[SearchHit(memory_id=mid, similarity=0.8) for mid in vector_ids]
+    )
+    repo = _repo(store, _settings(search_hybrid_enabled=True))
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(mid, confidence=0.9) for mid in [*vector_ids, fts_id]])
+    )
+
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=fts_id, rank=0.4)]),
+    ):
+        await repo.find_similar(_query(query_text="dark mode", limit=3))
+
+    admitted = repo._hydrate_hits.await_args.kwargs["candidates"]
+    assert len(admitted) == 3
+    assert {item.memory_id for item in admitted} <= {*vector_ids, fts_id}

@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.read.metrics import SEARCH_FALLBACK
+from app.read.metrics import SEARCH_FALLBACK, SEARCH_HYBRID
 from app.read.models import FindSimilarQuery
 from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.conftest import seed_org_agent_memory, with_service_org
@@ -381,3 +381,58 @@ async def test_schema_indexes_exist(
         rows = {row.relname: row.amname for row in result}
     assert rows["idx_memories_embedding_hnsw"] == "hnsw"
     assert rows["idx_memories_search_vector"] == "gin"
+
+
+def _hybrid_metric_value() -> float:
+    return SEARCH_HYBRID.labels(vector="true", full_text="true")._value.get()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_runs_the_full_text_channel_on_a_full_vector_page(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    store: PgVectorStore,
+) -> None:
+    """The parallel channel ignores how full the vector page is.
+
+    This is the behaviour change of 5.A.1: the old gate skipped full text at a
+    full page, which is exactly when an exact-token match went missing.
+    """
+    seeded, _memory_ids, query_vec = await seed_agent_with_memories(
+        session_factory,
+        store,
+        SeedAgentMemoriesParams(
+            count=5,
+            content_prefix="hybrid gate dark mode preference",
+            hotspot=4,
+        ),
+    )
+    await insert_active_memory(
+        session_factory,
+        InsertActiveMemoryParams(
+            org_id=seeded.org_id,
+            agent_id=seeded.agent_id,
+            content="lexical-only hybrid marker zzz9 dark mode",
+        ),
+    )
+    before = _hybrid_metric_value()
+    repo = build_read_repository(
+        session_factory,
+        store,
+        settings.model_copy(update={"search_hybrid_enabled": True}),
+    )
+
+    results = await repo.find_similar(
+        FindSimilarQuery(
+            org_id=seeded.org_id,
+            agent_id=seeded.agent_id,
+            query_embedding=query_vec,
+            query_text="zzz9 dark mode",
+            limit=3,
+            min_similarity=0.0,
+        )
+    )
+
+    assert _hybrid_metric_value() > before
+    assert len(results) == 3
+    assert len({item.id for item in results}) == 3

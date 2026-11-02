@@ -472,7 +472,9 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_NEAR_DUPLICATE_CANDIDATE_LIMIT` | No | `10` | Max near-dup candidates from `VectorStore.search` | |
 | `IBEX_MEMORY_CONFLICT_DETECTION_ENABLED` | No | `true` | Run temporal conflict stage after near-dup (ADR-0056) | |
 | `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
-| `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` | No | `true` | Supplement sparse vector hits with GIN full-text search (m3.D.1) | Metric: `ibex_memory_search_fallback_total{triggered}` |
+| `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` | No | `true` | Supplement sparse vector hits with GIN full-text search when the vector page is short (m3.D.1) | Ignored for searchable queries when hybrid is on; metric `ibex_memory_search_fallback_total{triggered}` |
+| `IBEX_MEMORY_SEARCH_HYBRID_ENABLED` | No | `false` | Run the GIN full-text channel in parallel with vector ANN for every searchable query and fuse by reciprocal rank fusion (5.A.1/5.A.2) | Metric: `ibex_memory_search_hybrid_total{vector,full_text}`; default-on waits for the 5.C.1 gold set |
+| `IBEX_MEMORY_SEARCH_RRF_K` | No | `60` | Reciprocal rank fusion constant, `1..1000`; `score(d) = Σ 1/(k + rank)` (Cormack et al. 2009; Elasticsearch `rank_constant` default) | Only read when hybrid is enabled |
 | `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
 | `IBEX_HNSW_EF_SEARCH` | No | `64` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
 | `IBEX_MEMORY_EMBEDDING_BASE_URL` | No | `http://127.0.0.1:8004` | Embedder service base URL | Client: `app/clients/embedding.py` |

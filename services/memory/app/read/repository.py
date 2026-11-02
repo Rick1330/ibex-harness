@@ -16,13 +16,14 @@ from app.read.full_text import (
     full_text_search,
     is_searchable_query,
 )
-from app.read.metrics import SEARCH_FALLBACK
+from app.read.metrics import SEARCH_FALLBACK, SEARCH_HYBRID
 from app.read.models import FindSimilarQuery, MemorySearchResult
 from app.read.pii_guard import filter_pii_blocked_results
 from app.read.ranking import (
     HydratedHit,
     RankedCandidate,
     RankOptions,
+    fuse_candidates,
     merge_candidates,
     rank_hydrated_hits,
 )
@@ -76,6 +77,15 @@ def _fts_fallback_enabled(
     )
 
 
+def _hybrid_enabled(settings: Settings, *, query_text: str) -> bool:
+    """The parallel channel ignores how full the vector page is.
+
+    The old gate skipped full-text whenever the vector page was already full,
+    which is exactly when an exact-token match was most likely to be missing.
+    """
+    return settings.search_hybrid_enabled and is_searchable_query(query_text)
+
+
 class MemoryReadRepository:
     """Tenant-scoped semantic search; vector primary, GIN supplemental."""
 
@@ -91,6 +101,62 @@ class MemoryReadRepository:
 
     async def find_similar(self, query: FindSimilarQuery) -> list[MemorySearchResult]:
         _validate_find_similar_query(query)
+        if _hybrid_enabled(self._settings, query_text=query.query_text):
+            return await self._find_similar_hybrid(query)
+        return await self._find_similar_fallback(query)
+
+    async def _find_similar_hybrid(
+        self, query: FindSimilarQuery
+    ) -> list[MemorySearchResult]:
+        """Both channels run; RRF picks the window composite scoring then orders.
+
+        Two stages, deliberately: reciprocal rank fusion decides *which* candidates
+        enter the page — it is the only stage that can weigh a cosine rank against
+        a ``ts_rank_cd`` rank — and ADR-0068 composite scoring still decides the
+        order inside that window, so recency, confidence, and usefulness keep their
+        meaning. The admitted window is the page size, so hydration stays bounded
+        by ``limit`` no matter how much either channel returns.
+        """
+        vector_candidates = await self._vector_candidates(query)
+        fts_hits = await full_text_search(
+            self._session_factory,
+            FullTextSearchQuery(
+                org_id=query.org_id,
+                agent_id=query.agent_id,
+                query_text=query.query_text,
+                limit=query.limit,
+                min_confidence=query.min_confidence,
+            ),
+        )
+        fts_candidates = _fts_candidates(fts_hits, cap=query.limit)
+        fused = fuse_candidates(
+            vector_candidates,
+            fts_candidates,
+            k=self._settings.search_rrf_k,
+        )
+        # Admission is the fused window; the union is at most 2 x limit because each
+        # channel is capped, and this slice keeps hydration at the page size.
+        admitted = fused[: query.limit]
+        hydrated = await self._hydrate_hits(
+            org_id=query.org_id,
+            candidates=admitted,
+            min_confidence=query.min_confidence,
+        )
+        rank_opts = RankOptions(
+            relevance_floor=self._settings.composite_relevance_floor,
+            weights=self._settings.rank_weights(),
+        )
+        SEARCH_HYBRID.labels(
+            vector=str(bool(vector_candidates)).lower(),
+            full_text=str(bool(fts_candidates)).lower(),
+        ).inc()
+        return filter_pii_blocked_results(
+            rank_hydrated_hits(admitted, hydrated, rank_opts)[: query.limit]
+        )
+
+    async def _find_similar_fallback(
+        self, query: FindSimilarQuery
+    ) -> list[MemorySearchResult]:
         vector_candidates = await self._vector_candidates(query)
         vector_hydrated = await self._hydrate_hits(
             org_id=query.org_id,
