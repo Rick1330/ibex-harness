@@ -12,6 +12,7 @@ Decision records are not implementation evidence. A record can be **Proposed**, 
 
 Notable records:
 
+- [ADR-0092](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0092-hybrid-retrieval-rrf-admission.md) — hybrid retrieval: RRF decides admission, composite scoring decides presentation, default off.
 - [ADR-0089](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0089-product-shape-and-console-scope.md) — memory/context product shape, Console core/platform tiers, preview policy, and packaging.
 - [ADR-0088](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0088-console-nuxt-shadcn-vue-migration.md) — Console migration to Nuxt 4 + shadcn-vue with a same-origin BFF.
 - [ADR-0087](https://github.com/Rick1330/ibex-harness/blob/main/engineering/adr/0087-public-site-nuxt-docus-migration.md) — public site migration to Nuxt 4 + Docus.
