@@ -390,29 +390,39 @@ def _version_projection(
 
 
 async def _fetch_usage(
-    session: AsyncSession,
-    args: DirectiveDetailArgs,
-    version_numbers: dict[Any, int],
-    window_start: datetime,
+    session: AsyncSession, args: DirectiveDetailArgs, window_start: datetime
 ) -> list[OperatorDirectiveUsage]:
+    """Usage is independent of the version timeline limit.
+
+    The join resolves the version number from `directive_versions` directly, so a
+    session that ran on a version outside the newest 200 is still counted and
+    still named. Only the table is capped, by session count.
+    """
+    directive_versions = (
+        select(_VERSIONS.c.id, _VERSIONS.c.version_num)
+        .where(
+            _VERSIONS.c.org_id == bindparam("org_id"),
+            _VERSIONS.c.directive_id == bindparam("directive_id"),
+        )
+        .subquery("directive_versions")
+    )
     statement = (
         select(
-            _SESSIONS.c.directive_version_id,
+            directive_versions.c.version_num,
             func.count().label("sessions"),
             func.max(_SESSIONS.c.created_at).label("last_session_at"),
         )
-        .select_from(_SESSIONS)
+        .select_from(
+            _SESSIONS.join(
+                directive_versions,
+                directive_versions.c.id == _SESSIONS.c.directive_version_id,
+            )
+        )
         .where(
             _SESSIONS.c.org_id == bindparam("org_id"),
-            _SESSIONS.c.directive_version_id.in_(
-                select(_VERSIONS.c.id).where(
-                    _VERSIONS.c.org_id == bindparam("org_id"),
-                    _VERSIONS.c.directive_id == bindparam("directive_id"),
-                )
-            ),
             _SESSIONS.c.created_at >= bindparam("window_start"),
         )
-        .group_by(_SESSIONS.c.directive_version_id)
+        .group_by(directive_versions.c.version_num)
         .order_by(func.count().desc())
         .limit(USAGE_LIMIT + 1)
     )
@@ -428,13 +438,14 @@ async def _fetch_usage(
     ).mappings().all()
     usage = [
         OperatorDirectiveUsage(
-            version_num=version_numbers[row_value(row, "directive_version_id")],
+            version_num=int(row_value(row, "version_num")),
             sessions=int(row_value(row, "sessions")),
             last_session_at=row_value(row, "last_session_at"),
         )
         for row in rows
-        if row_value(row, "directive_version_id") in version_numbers
     ]
+    # The statement orders by count, but keep the projection deterministic if a
+    # driver returns rows unordered.
     return sorted(usage, key=lambda item: item.sessions, reverse=True)
 
 
@@ -478,7 +489,7 @@ async def get_operator_directive(
     version_rows, total_versions = await _fetch_versions(session, args, live_version_id)
     versions, number_by_id = _version_projection(version_rows, live_version_id)
     window_start, window_end = usage_window(args.usage_range, now=now)
-    usage = await _fetch_usage(session, args, number_by_id, window_start)
+    usage = await _fetch_usage(session, args, window_start)
     usage_total = await _count_usage_total(session, args, window_start)
     live_version_num = number_by_id.get(live_version_id) if live_version_id else None
     return OperatorDirectiveDetail(

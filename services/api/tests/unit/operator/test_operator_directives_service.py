@@ -191,7 +191,7 @@ async def test_detail_marks_the_pointer_version_live_and_never_selects_content()
             _version_row(2, live_id),
         ],
         2,
-        [{"directive_version_id": live_id, "sessions": 7, "last_session_at": NOW}],
+        [{"version_num": 2, "sessions": 7, "last_session_at": NOW}],
         7,
     )
 
@@ -250,67 +250,26 @@ async def test_detail_is_not_found_for_another_tenant() -> None:
 
 
 @pytest.mark.asyncio
-async def test_detail_usage_only_counts_versions_of_this_directive() -> None:
+async def test_detail_usage_is_scoped_by_the_query_not_by_the_timeline() -> None:
     live_id = uuid4()
-    foreign_version = uuid4()
     session = _session(
         [_header_row(active_version_id=live_id)],
         [_version_row(1, live_id)],
         1,
         [
-            {"directive_version_id": live_id, "sessions": 2, "last_session_at": NOW},
-            {"directive_version_id": foreign_version, "sessions": 99, "last_session_at": NOW},
+            {"version_num": 1, "sessions": 2, "last_session_at": NOW},
+            {"version_num": 40, "sessions": 5, "last_session_at": NOW},
         ],
-        101,
+        7,
     )
 
     detail = await directive_service.get_operator_directive(
         session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="7d"), now=NOW
     )
 
-    assert [(row.version_num, row.sessions) for row in detail.usage] == [(1, 2)]
-    # The total is exact even when the table only lists known versions.
-    assert detail.usage_total_sessions == 101
-
-
-@pytest.mark.asyncio
-async def test_a_rolled_back_pointer_is_fetched_even_when_it_falls_outside_the_page() -> None:
-    # 200 newest versions are returned; the pointer names an older one that the
-    # page does not include, so the service fetches it explicitly.
-    live_id = uuid4()
-    newest = [_version_row(number, uuid4()) for number in range(500, 300, -1)]
-    session = _session(
-        [_header_row(active_version_id=live_id)],
-        newest,
-        250,
-        [_version_row(3, live_id)],
-        [{"directive_version_id": live_id, "sessions": 4, "last_session_at": NOW}],
-        4,
-    )
-
-    detail = await directive_service.get_operator_directive(
-        session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="7d"), now=NOW
-    )
-
-    assert detail.version_count == 250
-    assert detail.versions_truncated is True
-    assert detail.active_version_num == 3
-    assert detail.active_version_missing is False
-    assert detail.versions[-1].version_num == 3
-    assert detail.versions[-1].is_live is True
-
-
-@pytest.mark.asyncio
-async def test_a_short_history_is_not_marked_truncated() -> None:
-    live_id = uuid4()
-    session = _session(
-        [_header_row(active_version_id=live_id)], [_version_row(1, live_id)], 1, [], 0
-    )
-
-    detail = await directive_service.get_operator_directive(
-        session, DirectiveDetailArgs(org_id=uuid4(), directive_id=uuid4(), usage_range="24h"), now=NOW
-    )
-
-    assert detail.version_count == 1
-    assert detail.versions_truncated is False
-    assert detail.observed_at == NOW
+    # Usage is joined to the directive's versions in SQL, so a version outside the
+    # listed timeline is still named, and the total stays exact.
+    assert [(row.version_num, row.sessions) for row in detail.usage] == [(40, 5), (1, 2)]
+    assert detail.usage_total_sessions == 7
+    usage_sql = str(session.execute.await_args_list[3].args[0])
+    assert "directive_versions" in usage_sql

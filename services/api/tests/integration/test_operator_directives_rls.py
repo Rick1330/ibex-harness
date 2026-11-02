@@ -251,6 +251,7 @@ async def test_directive_reads_are_tenant_scoped_and_follow_the_pointer(
         assert [version.version_num for version in detail.versions] == [2, 1]
         assert [version.is_live for version in detail.versions] == [False, True]
         assert [(row.version_num, row.sessions) for row in detail.usage] == [(1, 2)]
+        assert detail.usage_total_sessions == 2
         assert detail.active_version_missing is False
         assert detail.version_count == 2
         assert detail.versions_truncated is False
