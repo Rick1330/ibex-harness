@@ -33,16 +33,15 @@ func seedTokenRow(t testing.TB, db *sql.DB, opts tokenSeedOpts) string {
 	if err != nil {
 		t.Fatalf("hash token: %v", err)
 	}
-	expiresClause := "NULL"
-	if opts.expired {
-		expiresClause = "NOW() - INTERVAL '1 hour'"
-	}
 	ctx := context.Background()
-	query := fmt.Sprintf(`
+	// The expiry is a bound parameter, not interpolated SQL: the statement text
+	// stays constant so it is prepared identically for both variants.
+	const query = `
 		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
-		VALUES ($1::uuid, 'pat', $2, $3, $4, $5, $6, %s)`, expiresClause)
+		VALUES ($1::uuid, 'pat', $2, $3, $4, $5, $6,
+			CASE WHEN $7 THEN NOW() - INTERVAL '1 hour' ELSE NULL END)`
 	err = WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, query, opts.orgID, hash, prefix, opts.name, opts.permissions, opts.revoked)
+		_, err := tx.ExecContext(ctx, query, opts.orgID, hash, prefix, opts.name, opts.permissions, opts.revoked, opts.expired)
 		return err
 	})
 	if err != nil {
