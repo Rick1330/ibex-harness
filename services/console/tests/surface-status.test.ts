@@ -37,7 +37,7 @@ describe("surface status parity", () => {
 
       expect(rows, `${surface.label} must have exactly one README row`).toHaveLength(1)
 
-      const claimsLive = /Live D[12]/.test(rows[0] ?? "")
+      const claimsLive = /Live D[1-3]/.test(rows[0] ?? "")
       expect(claimsLive, `${surface.label} status does not match SURFACES`).toBe(surface.availability === "live")
     }
   })
@@ -58,9 +58,9 @@ describe("surface status parity", () => {
     }
   })
 
-  it("keeps live claims inside the D1/D2 evidence boundary", () => {
+  it("keeps live claims inside the D1/D2/D3 evidence boundary", () => {
     const liveDomains = [...new Set(SURFACE_LIST.filter((surface) => surface.availability === "live").map((s) => s.domain))]
-    expect(liveDomains.sort()).toEqual(["D1", "D2"])
+    expect(liveDomains.sort()).toEqual(["D1", "D2", "D3"])
   })
 
   it("keeps the ledgers aligned with the tier counts in SURFACES", () => {

@@ -43,7 +43,7 @@ The API origin must be HTTPS whenever an operator session cookie is present. The
 | --- | --- | --- | --- |
 | Overview | `/` | Live D1 | Tenant-scoped organization snapshot; no fixture fallback. |
 | Agents | `/agents` | Live D2 | Tenant-scoped inventory and detail from `operator.agents.v1`; no fixture fallback. |
-| Sessions | `/sessions` | Preview | Session timeline and inspector; no session read model or turn-to-trace join is connected. |
+| Sessions | `/sessions` | Live D3 | Metadata-only session index and turn-to-trace ledger from `operator.sessions.v1`. |
 | Memories | `/memories` | Live D2 | Metadata-only index from `operator.memories.v1`; content is not exposed. |
 | Evidence | `/evidence` | Preview | Certification coverage, tombstones, and relay chain; no summary contract is connected. |
 | Directives | `/directives` | Preview (deferred) | Version timeline and diff; no owning API router exists. |

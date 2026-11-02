@@ -7,9 +7,12 @@ import {
   OperatorMemoryPageSchema,
   OperatorMemorySchema,
   OperatorOverviewSchema,
+  OperatorSessionRecordDetailSchema,
+  OperatorSessionRecordPageSchema,
+  OperatorSessionRecordSchema,
+  OperatorSessionSchema,
   OperatorTraceDetailSchema,
   OperatorTraceListSchema,
-  OperatorSessionSchema,
   PlatformHealthSchema,
   parseOperatorSession,
 } from "../shared/operator/contracts"
@@ -171,6 +174,60 @@ const memoryPage = {
 }
 
 describe("operator response contracts", () => {
+const sessionTurn = {
+  id: "55555555-5555-4555-8555-555555555555",
+  turn_index: 0,
+  request_id: "req-1",
+  input_tokens: 10,
+  output_tokens: 20,
+  model: "gpt-4.1",
+  provider: "openai",
+  latency_ms: 100,
+  is_streaming: false,
+  is_complete: true,
+  created_at: "2026-11-02T12:00:00.000Z",
+  trace: {
+    trace_id: "4bf92f3577b34da6a3ce929d0e0e4736",
+    run_id: "66666666-6666-4666-8666-666666666666",
+    completeness: "complete" as const,
+    status: "ok" as const,
+    error_code: null,
+    started_at: "2026-11-02T12:00:00.000Z",
+    ended_at: "2026-11-02T12:00:01.000Z",
+  },
+}
+
+const operatorSession = {
+  id: "77777777-7777-4777-8777-777777777777",
+  agent_id: "33333333-3333-4333-8333-333333333333",
+  external_id: "ext-1",
+  status: "active" as const,
+  model: "gpt-4.1",
+  provider: "openai",
+  directive_version_id: null,
+  turn_count: 1,
+  total_input_tokens: 10,
+  total_output_tokens: 20,
+  total_latency_ms: 100,
+  last_extracted_turn: 0,
+  lifecycle_revision: 1,
+  evidence_fence_version: 1,
+  created_at: "2026-11-02T12:00:00.000Z",
+  updated_at: "2026-11-02T12:00:01.000Z",
+  completed_at: null,
+}
+
+const sessionDetail = {
+  ...operatorSession,
+  turns: [sessionTurn],
+  turns_truncated: false,
+}
+
+const sessionPage = {
+  data: [operatorSession],
+  pagination: { has_more: false, next_cursor: null, prev_cursor: null, total_count: 1 },
+}
+
   it("accepts the stable session and health shapes", () => {
     expect(parseOperatorSession(session).org_id).toBe(session.org_id)
     expect(PlatformHealthSchema.parse(health).dependency_health.redis).toBe("ok")
@@ -245,5 +302,48 @@ describe("operator response contracts", () => {
     expect(() => OperatorMemorySchema.parse({ ...memory, metadata: {} })).toThrow()
     expect(() => OperatorMemorySchema.parse({ ...memory, status: "draining" })).toThrow()
     expect(() => OperatorMemorySchema.parse({ ...memory, confidence: 1.5 })).toThrow()
+  })
+
+  it("accepts the metadata-only session projection, page, and turn trace", () => {
+    expect(OperatorSessionRecordSchema.parse(operatorSession).turn_count).toBe(1)
+    expect(OperatorSessionRecordPageSchema.parse(sessionPage).data).toHaveLength(1)
+    const detail = OperatorSessionRecordDetailSchema.parse(sessionDetail)
+    expect(detail.turns[0]?.trace?.trace_id).toBe(sessionTurn.trace.trace_id)
+  })
+
+  it("accepts a turn without evidence and rejects content or hashes", () => {
+    const untraced = { ...sessionDetail, turns: [{ ...sessionTurn, trace: null }] }
+    expect(OperatorSessionRecordDetailSchema.parse(untraced).turns[0]?.trace).toBeNull()
+    expect(() => OperatorSessionRecordDetailSchema.parse({ ...sessionDetail, content: "leak" })).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({ ...sessionDetail, messages_hash: "hash" }),
+    ).toThrow()
+    expect(() =>
+      OperatorSessionRecordSchema.parse({ ...operatorSession, org_id: session.org_id }),
+    ).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({ ...sessionDetail, status: "deleted" }),
+    ).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({
+        ...sessionDetail,
+        turns: Array.from({ length: 501 }, () => sessionTurn),
+      }),
+    ).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({
+        ...sessionDetail,
+        turns: [{ ...sessionTurn, trace: { ...sessionTurn.trace, status: "pending" } }],
+      }),
+    ).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({
+        ...sessionDetail,
+        turns: [{ ...sessionTurn, request_id: "" }],
+      }),
+    ).toThrow()
+    expect(() =>
+      OperatorSessionRecordDetailSchema.parse({ ...sessionDetail, turns_truncated: "no" }),
+    ).toThrow()
   })
 })

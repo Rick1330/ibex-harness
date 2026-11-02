@@ -23,7 +23,7 @@ import GovernFilterSelect from "@/components/console/govern/primitives/GovernFil
 import GovernLockedAction from "@/components/console/govern/primitives/GovernLockedAction.vue"
 import GovernShortcutsDialog from "@/components/console/govern/primitives/GovernShortcutsDialog.vue"
 import GovernStatTile from "@/components/console/govern/primitives/GovernStatTile.vue"
-import MemoryKbd from "@/components/console/memory/list/primitives/MemoryKbd.vue"
+import KeyHint from "@/components/console/primitives/KeyHint.vue"
 import ConsolePageHeader from "@/components/console/ConsolePageHeader.vue"
 import {
   formatGovernRelative,
@@ -397,7 +397,7 @@ const aboutNotes = [
             @input="onSearchInput(($event.target as HTMLInputElement).value)"
             @keydown.enter.prevent="update({ search: searchDraft })"
           >
-          <span class="pointer-events-none absolute inset-y-0 right-2 flex items-center"><MemoryKbd>/</MemoryKbd></span>
+          <span class="pointer-events-none absolute inset-y-0 right-2 flex items-center"><KeyHint>/</KeyHint></span>
         </div>
 
         <AgentMultiFilter

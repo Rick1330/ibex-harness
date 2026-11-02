@@ -143,7 +143,7 @@ Open `http://127.0.0.1:3000`. The Console is read-only and fails closed without 
 | [`mcp-memory/`](services/mcp-memory/README.md) | Python | Shipped/partial; logging-only audit by default |
 | [`mcp-operator/`](services/mcp-operator/README.md) | Python | Shipped locally, default-off |
 | [`relay/`](services/relay/README.md) | Go | Implemented locally, default-off; no production sink |
-| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 5 of 10 core surfaces have a live read path |
+| [`console/`](services/console/README.md) | Nuxt 4 + Nitro | Provisional; 6 of 10 core surfaces have a live read path |
 
 The full inventory, shared packages, and local infrastructure are in [`services/README.md`](services/README.md),
 [`packages/README.md`](packages/README.md), and [`infra/README.md`](infra/README.md).

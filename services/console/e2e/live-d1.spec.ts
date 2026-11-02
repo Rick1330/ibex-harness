@@ -270,3 +270,29 @@ test("live Memories renders the metadata index and detail with axe coverage", as
   await expect(page.getByText("Content tokens")).toBeVisible()
   await expectNoAxeViolations(page)
 })
+
+test("live Sessions renders the turn ledger and trace link with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/sessions")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible()
+  await expect(page.getByRole("link", { name: /88888888/ })).toBeVisible()
+  await expect(page.locator("tr[data-session-row]").getByText("Completed", { exact: true })).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  const listRequests = await fetchFixtureRequests(page)
+  expect(listRequests.some((request) => request.path === "/v1/operator/sessions")).toBe(true)
+  for (const request of listRequests.filter((entry) => entry.path === "/v1/operator/sessions")) {
+    expect(request.cookieNames).toEqual(["ibex_session"])
+  }
+
+  await page.getByRole("link", { name: /88888888/ }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /Session 88888888/ })).toBeVisible()
+  await expect(page.getByRole("link", { name: /trace-live-1/ })).toBeVisible()
+  await expect(page.getByText("No evidence")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+})

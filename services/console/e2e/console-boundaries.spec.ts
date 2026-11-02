@@ -104,141 +104,6 @@ test("unknown legacy dashboard paths fail closed with 404", async ({ page }) => 
   expect(overview?.status()).toBe(404)
 })
 
-test("sessions list uses one provenance chip and one About contract", async ({ page }) => {
-  await page.goto("/sessions")
-  await waitForHydration(page)
-  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible()
-  await expect(
-    page.getByText("What happened across an agent session, turn by turn, and how complete the recorded evidence is."),
-  ).toBeVisible()
-  await expect(page.getByRole("button", { name: "About this data: illustrative" })).toHaveCount(1)
-  await expect(page.getByText("Illustrative data below is not live organization data.")).toHaveCount(0)
-
-  await page.getByRole("button", { name: "About this data: illustrative" }).click()
-  const about = page.getByRole("dialog", { name: "About this data" })
-  await expect(about).toBeVisible()
-  await expect(about).toContainText("Read-only console")
-  await expect(about).toContainText("operator.sessions.list.v1")
-  await page.keyboard.press("Escape")
-  await expect(about).toBeHidden()
-  await expectNoAxeViolations(page)
-})
-
-test("session detail aggregates every turn and keeps the trace evidence intact", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/sessions/ses_2481f0a2?turn=1&panel=trace")
-  await waitForHydration(page)
-
-  await expect(page.getByRole("heading", { name: "Refund policy escalation", exact: true })).toBeVisible()
-
-  const totals = page.getByRole("region", { name: "Session totals" })
-  await expect(totals.getByText("Agent time")).toBeVisible()
-  await expect(totals.getByText("1.18 s")).toBeVisible()
-  await expect(totals.getByText("Wall time")).toBeVisible()
-  await expect(totals.getByText("14.05 s")).toBeVisible()
-  await expect(totals.getByText("2,966 in · 441 out")).toBeVisible()
-  await expect(totals.getByText("$0.090")).toBeVisible()
-
-  const inspector = page.getByRole("complementary", { name: "Turn inspector" })
-  await expect(inspector.getByText("Turn 1 of 4")).toBeVisible()
-  await expect(inspector.getByRole("tab", { name: /^Trace/ })).toHaveAttribute("aria-selected", "true")
-  await expect(inspector.getByText("60 ms in tools")).toBeVisible()
-  await expect(inspector.getByText("tool.refund.preview", { exact: true }).first()).toBeVisible()
-
-  const dimensions = await page.evaluate(() => ({
-    client: document.documentElement.clientWidth,
-    scroll: document.documentElement.scrollWidth,
-  }))
-  expect(dimensions.scroll, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.client)
-
-  await expectNoAxeViolations(page)
-})
-
-test("session detail keeps turn and panel state in the URL and on reload", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/sessions/ses_2481f0a2?turn=2&panel=policy")
-  await waitForHydration(page)
-
-  const inspector = page.getByRole("complementary", { name: "Turn inspector" })
-  await expect(inspector.getByText("Turn 2 of 4")).toBeVisible()
-  await expect(inspector.getByRole("tab", { name: /^Policy/ })).toHaveAttribute("aria-selected", "true")
-
-  await page.reload()
-  await waitForHydration(page)
-  await expect(inspector.getByText("Turn 2 of 4")).toBeVisible()
-  await expect(inspector.getByRole("tab", { name: /^Policy/ })).toHaveAttribute("aria-selected", "true")
-
-  await page.keyboard.press("j")
-  await expect(page).toHaveURL(/turn=3/)
-  await expect(page).toHaveURL(/panel=policy/)
-  await expect(inspector.getByText("Turn 3 of 4")).toBeVisible()
-
-  await page.keyboard.press("5")
-  await expect(page).toHaveURL(/panel=drift/)
-  await expect(inspector.getByRole("tab", { name: /^Drift/ })).toHaveAttribute("aria-selected", "true")
-  await expect(inspector.getByText(/Drift advisory on this turn/)).toBeVisible()
-
-  await page.keyboard.press("?")
-  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible()
-  await page.keyboard.press("?")
-  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeHidden()
-})
-
-test("session detail first turn starts near the content top at the reference viewport", async ({ page }) => {
-  await page.setViewportSize({ width: 1757, height: 1410 })
-  await page.goto("/sessions/ses_2481f0a2?turn=1&panel=trace")
-  await waitForHydration(page)
-
-  const offset = await page.evaluate(() => {
-    const turn = document.querySelector('[data-turn-index="1"]')
-    const content = document.querySelector("#console-main")?.firstElementChild
-    if (!turn || !content) return Number.POSITIVE_INFINITY
-    return turn.getBoundingClientRect().top - content.getBoundingClientRect().top
-  })
-  expect(offset).toBeLessThanOrEqual(300)
-
-  await page.evaluate(() => window.scrollTo(0, 1400))
-  await page.waitForTimeout(300)
-  const sticky = await page.evaluate(() => {
-    const outline = document.querySelector(".ix-outline-full")
-    const inspector = document.querySelector("aside.ix-inspector")
-    return {
-      outlineTop: outline?.getBoundingClientRect().top ?? -1,
-      inspectorTop: inspector?.getBoundingClientRect().top ?? -1,
-    }
-  })
-  expect(sticky.outlineTop).toBeGreaterThan(48)
-  expect(sticky.outlineTop).toBeLessThan(96)
-  expect(sticky.inspectorTop).toBeLessThanOrEqual(sticky.outlineTop + 1)
-})
-
-test("session detail opens the inspector as a full-screen sheet on mobile", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto("/sessions/ses_2481f0a2?turn=1&panel=trace")
-  await waitForHydration(page)
-
-  const fab = page.locator(".ix-inspect-fab")
-  await expect(fab).toBeVisible()
-  await fab.click()
-
-  const sheet = page.getByRole("dialog", { name: "Turn inspector" })
-  await expect(sheet).toBeVisible()
-  await expect(sheet.getByRole("tab")).toHaveCount(6)
-  for (const label of ["Trace", "Memories", "Directive", "Policy", "Drift", "Privacy"]) {
-    await expect(sheet.getByRole("tab", { name: new RegExp(`^${label}`) })).toBeVisible()
-  }
-
-  const dimensions = await page.evaluate(() => ({
-    client: document.documentElement.clientWidth,
-    scroll: document.documentElement.scrollWidth,
-  }))
-  expect(dimensions.scroll, JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.client)
-
-  await sheet.getByRole("button", { name: "Close inspector" }).click()
-  await expect(sheet).toBeHidden()
-  await expectNoAxeViolations(page)
-})
-
 test("explore keeps an invalid query explicit and does not fetch data", async ({ page }) => {
   await page.goto("/explore?unknown=1")
   await expect(page.getByText("Invalid query")).toBeVisible()
@@ -557,19 +422,6 @@ test("govern surfaces stay readable without horizontal overflow on mobile", asyn
   await expectNoAxeViolations(page)
 })
 
-test("session privacy tab reports capture mode, redaction proof, and removed fields", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/sessions/ses_18bd3e09?turn=1&panel=privacy")
-  await waitForHydration(page)
-
-  await expect(page.getByRole("heading", { name: "PII redaction review", exact: true })).toBeVisible()
-  await expect(page.getByText("PII findings", { exact: true })).toBeVisible()
-  await expect(page.getByText("Removed before storage", { exact: true })).toBeVisible()
-  await expect(page.getByText("session-metadata-allowlist/v1", { exact: true })).toBeVisible()
-  await expect(page.getByText("Redacted is not the same as complete.")).toBeVisible()
-  await expectNoAxeViolations(page)
-})
-
 test("evidence redaction tab lists sanitizers, proof versions, and removed fields", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto("/evidence?tab=redaction")
@@ -617,7 +469,7 @@ test("sidebar shows the core lifecycle and hides the platform tier by default", 
 
 test("preview surfaces carry a persistent illustrative banner and live surfaces do not", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.goto("/sessions")
+  await page.goto("/evidence")
   await waitForHydration(page)
 
   const banner = page.getByRole("note", { name: "Illustrative preview" })
@@ -679,5 +531,20 @@ test("memories fail closed without an operator API and never render fixtures", a
   await page.goto("/memories/00000000-0000-4000-8000-000000000000?demo=0")
   await waitForHydration(page)
   await expect(page.getByRole("heading", { name: "Memory record unavailable" })).toBeVisible()
+  await expectNoAxeViolations(page)
+})
+
+test("sessions fail closed without an operator API and never render fixtures", async ({ page }) => {
+  await page.goto("/sessions?demo=0")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Session index unavailable" })).toBeVisible()
+  await expect(page.getByText(/ses_2481f0a2/)).toHaveCount(0)
+  await expect(page.getByText(/Illustrative preview/)).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  await page.goto("/sessions/00000000-0000-4000-8000-000000000000?demo=0")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Session record unavailable" })).toBeVisible()
   await expectNoAxeViolations(page)
 })
