@@ -70,13 +70,34 @@ _MEMORY_PROJECTION = (
     _MEMORIES.c.observed_at,
     _MEMORIES.c.created_at,
     _MEMORIES.c.updated_at,
-    literal_column("COALESCE(memories.metadata->>'visibility', 'agent')").label("visibility"),
-    literal_column("COALESCE((memories.metadata->>'pinned')::boolean, FALSE)").label("pinned"),
-    literal_column("COALESCE(memories.metadata->'tags', '[]'::jsonb)").label("tags"),
+    literal_column("""
+        CASE
+            WHEN memories.metadata->>'visibility' IN ('agent', 'org', 'session')
+            THEN memories.metadata->>'visibility'
+            ELSE 'agent'
+        END
+    """).label("visibility"),
+    literal_column("""
+        CASE
+            WHEN jsonb_typeof(memories.metadata->'pinned') = 'boolean'
+            THEN (memories.metadata->>'pinned')::boolean
+            ELSE FALSE
+        END
+    """).label("pinned"),
+    literal_column("""
+        CASE
+            WHEN jsonb_typeof(memories.metadata->'tags') = 'array'
+            THEN memories.metadata->'tags'
+            ELSE '[]'::jsonb
+        END
+    """).label("tags"),
 )
 
 _MEMORY_ORDER = (_MEMORIES.c.created_at.desc(), _MEMORIES.c.id.desc())
 _FILTER_FIELDS = ("agent_id", "session_id", "status", "category")
+_VISIBILITIES = frozenset({"agent", "org", "session"})
+_MAX_TAGS = 32
+_MAX_TAG_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -111,10 +132,19 @@ def _row_get(row: Any, key: str) -> Any:
 def _tags_from_row(row: Any) -> list[str]:
     raw = _row_get(row, "tags") or []
     if isinstance(raw, str):
-        raw = json.loads(raw)
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
     if not isinstance(raw, list):
         return []
-    return [str(tag) for tag in raw if isinstance(tag, str) and tag]
+    tags = [tag for tag in raw if isinstance(tag, str) and tag]
+    return [tag[:_MAX_TAG_LENGTH] for tag in tags[:_MAX_TAGS]]
+
+
+def _visibility_from_row(row: Any) -> str:
+    value = str(_row_get(row, "visibility"))
+    return value if value in _VISIBILITIES else "agent"
 
 
 def _memory_from_row(row: Any) -> OperatorMemory:
@@ -132,7 +162,7 @@ def _memory_from_row(row: Any) -> OperatorMemory:
         last_retrieved_at=_row_get(row, "last_retrieved_at"),
         pii_detected=bool(_row_get(row, "pii_detected")),
         pii_redacted=bool(_row_get(row, "pii_redacted")),
-        visibility=str(_row_get(row, "visibility")),
+        visibility=_visibility_from_row(row),
         pinned=bool(_row_get(row, "pinned")),
         tags=_tags_from_row(row),
         lifecycle_revision=int(_row_get(row, "lifecycle_revision")),
@@ -158,6 +188,8 @@ def _parse_list_cursor(cursor: str | None) -> _MemoryListCursor:
         memory_id = UUID(str(payload["id"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor") from exc
+    if created_at.tzinfo is None:
+        raise ApiError(code=VALIDATION_ERROR, message="Invalid cursor")
     return _MemoryListCursor(created_at, memory_id)
 
 

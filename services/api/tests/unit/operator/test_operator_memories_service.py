@@ -160,6 +160,7 @@ async def test_list_memories_accepts_dict_rows() -> None:
         encode_cursor({"created_at": NOW.isoformat()}),
         encode_cursor({"id": str(uuid4())}),
         encode_cursor({"created_at": "not-a-time", "id": str(uuid4())}),
+        encode_cursor({"created_at": "2026-11-02T12:00:00", "id": str(uuid4())}),
         encode_cursor({"created_at": NOW.isoformat(), "id": "not-a-uuid"}),
         "not+base64",
         "W10",
@@ -182,6 +183,32 @@ async def test_tags_are_sanitized_and_non_list_values_are_ignored() -> None:
     page = await memory_service.list_operator_memories(session, _args())
 
     assert page.data[0].tags == ["support", "billing"]
+
+
+@pytest.mark.asyncio
+async def test_persisted_metadata_is_normalized_to_the_contract() -> None:
+    row = memory_row(
+        visibility="public",
+        tags=["support", "x" * 80, *(f"tag-{index}" for index in range(40))],
+    )
+    session = _session([row])
+
+    page = await memory_service.list_operator_memories(session, _args())
+
+    projected = page.data[0]
+    assert projected.visibility == "agent"
+    assert len(projected.tags) == 32
+    assert projected.tags[1] == "x" * 64
+    assert all(len(tag) <= 64 for tag in projected.tags)
+
+
+@pytest.mark.asyncio
+async def test_malformed_tag_payload_becomes_empty() -> None:
+    session = _session([memory_row(tags="[not-json")])
+
+    page = await memory_service.list_operator_memories(session, _args())
+
+    assert page.data[0].tags == []
 
 
 @pytest.mark.asyncio

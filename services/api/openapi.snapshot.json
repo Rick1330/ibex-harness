@@ -1337,8 +1337,11 @@
           },
           "tags": {
             "items": {
+              "maxLength": 64,
+              "minLength": 1,
               "type": "string"
             },
+            "maxItems": 32,
             "title": "Tags",
             "type": "array"
           },
@@ -1373,6 +1376,11 @@
             "title": "Valid Until"
           },
           "visibility": {
+            "enum": [
+              "agent",
+              "org",
+              "session"
+            ],
             "title": "Visibility",
             "type": "string"
           }

@@ -8,10 +8,10 @@ contract; the metadata session used by these routes does not grant it.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 MemoryStatus = Literal[
     "active",
@@ -28,6 +28,8 @@ MemoryCategory = Literal[
     "episodic",
     "procedural",
 ]
+MemoryVisibility = Literal["agent", "org", "session"]
+MemoryTag = Annotated[str, StringConstraints(min_length=1, max_length=64)]
 
 
 class OperatorMemory(BaseModel):
@@ -44,9 +46,9 @@ class OperatorMemory(BaseModel):
     last_retrieved_at: datetime | None = None
     pii_detected: bool
     pii_redacted: bool
-    visibility: str
+    visibility: MemoryVisibility
     pinned: bool
-    tags: list[str] = Field(default_factory=list)
+    tags: list[MemoryTag] = Field(default_factory=list, max_length=32)
     lifecycle_revision: int
     tombstoned: bool
     expires_at: datetime | None = None

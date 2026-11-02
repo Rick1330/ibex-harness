@@ -85,6 +85,7 @@ class SeedMemory:
     category: str = "factual"
     status: str = "active"
     created_at: datetime = START
+    metadata: str = '{"visibility":"agent","pinned":false,"tags":["support"]}'
 
 
 async def _seed_memory(session: AsyncSession, seed: SeedMemory) -> None:
@@ -114,7 +115,7 @@ async def _seed_memory(session: AsyncSession, seed: SeedMemory) -> None:
             "category": seed.category,
             "status": seed.status,
             "created_at": seed.created_at,
-            "metadata": '{"visibility":"agent","pinned":false,"tags":["support"]}',
+            "metadata": seed.metadata,
         },
     )
 
@@ -155,6 +156,7 @@ class SeedIds:
     memory_a1: UUID
     memory_a2: UUID
     memory_b: UUID
+    memory_malformed: UUID
 
 
 async def _seed_fixture(
@@ -184,6 +186,17 @@ async def _seed_fixture(
             ),
         )
         await _seed_memory(
+            admin,
+            SeedMemory(
+                ids.org_a,
+                ids.agent_a,
+                ids.memory_malformed,
+                "A malformed metadata",
+                created_at=START - timedelta(minutes=1),
+                metadata='{"visibility":"public","pinned":"yes","tags":"not-an-array"}',
+            ),
+        )
+        await _seed_memory(
             admin, SeedMemory(ids.org_b, ids.agent_b, ids.memory_b, "B one")
         )
 
@@ -198,13 +211,22 @@ async def _assert_projection(session: AsyncSession, ids: SeedIds) -> None:
             filters=MemoryListFilters(),
         ),
     )
-    assert [item.id for item in listed.data] == [ids.memory_a2, ids.memory_a1]
+    assert [item.id for item in listed.data] == [
+        ids.memory_a2,
+        ids.memory_a1,
+        ids.memory_malformed,
+    ]
     dumped = listed.data[0].model_dump()
     assert "content" not in dumped
     assert "content_hash" not in dumped
     assert "embedding" not in dumped
     assert "metadata" not in dumped
     assert dumped["tags"] == ["support"]
+
+    malformed = next(item for item in listed.data if item.id == ids.memory_malformed)
+    assert malformed.visibility == "agent"
+    assert malformed.pinned is False
+    assert malformed.tags == []
 
     detail = await get_operator_memory(session, ids.org_a, ids.memory_a1)
     assert detail.id == ids.memory_a1
@@ -262,6 +284,7 @@ async def test_operator_memories_are_tenant_scoped_and_exclude_content(
         memory_a1=uuid4(),
         memory_a2=uuid4(),
         memory_b=uuid4(),
+        memory_malformed=uuid4(),
     )
     try:
         await _seed_fixture(session_factory, ids)
