@@ -244,6 +244,34 @@
     "source": "services/api/app/routers/operator_events.py"
   },
   {
+    "endpoint": "app.routers.operator_memories.operator_memory_list",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_memory_list",
+    "path": "/v1/operator/memories",
+    "response_model": "<class 'app.pagination.CursorPage[OperatorMemory]'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_memories.py"
+  },
+  {
+    "endpoint": "app.routers.operator_memories.operator_memory_detail",
+    "methods": [
+      "GET"
+    ],
+    "name": "operator_memory_detail",
+    "path": "/v1/operator/memories/{memory_id}",
+    "response_model": "<class 'app.schemas.operator_memories.OperatorMemory'>",
+    "security": [
+      "app.authz.require_operator_metadata_session",
+      "app.deps.operator_org_session"
+    ],
+    "source": "services/api/app/routers/operator_memories.py"
+  },
+  {
     "endpoint": "app.routers.operator_overview.operator_overview",
     "methods": [
       "GET"

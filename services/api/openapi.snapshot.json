@@ -699,6 +699,26 @@
         "title": "CursorPage[OperatorAgent]",
         "type": "object"
       },
+      "CursorPage_OperatorMemory_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/OperatorMemory"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMeta"
+          }
+        },
+        "required": [
+          "data",
+          "pagination"
+        ],
+        "title": "CursorPage[OperatorMemory]",
+        "type": "object"
+      },
       "CursorPage_RateCardResponse_": {
         "properties": {
           "data": {
@@ -1200,6 +1220,185 @@
           "observed_at"
         ],
         "title": "OperatorContextResponse",
+        "type": "object"
+      },
+      "OperatorMemory": {
+        "properties": {
+          "agent_id": {
+            "format": "uuid",
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "factual",
+              "preference",
+              "behavioral",
+              "episodic",
+              "procedural"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "content_tokens": {
+            "title": "Content Tokens",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_retrieved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Retrieved At"
+          },
+          "lifecycle_revision": {
+            "title": "Lifecycle Revision",
+            "type": "integer"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "pii_detected": {
+            "title": "Pii Detected",
+            "type": "boolean"
+          },
+          "pii_redacted": {
+            "title": "Pii Redacted",
+            "type": "boolean"
+          },
+          "pinned": {
+            "title": "Pinned",
+            "type": "boolean"
+          },
+          "retrieval_count": {
+            "title": "Retrieval Count",
+            "type": "integer"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "superseded",
+              "merged_into",
+              "archived",
+              "quarantined",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "tombstoned": {
+            "title": "Tombstoned",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "usefulness_score": {
+            "title": "Usefulness Score",
+            "type": "number"
+          },
+          "valid_from": {
+            "format": "date-time",
+            "title": "Valid From",
+            "type": "string"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          },
+          "visibility": {
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "category",
+          "status",
+          "source",
+          "confidence",
+          "usefulness_score",
+          "content_tokens",
+          "retrieval_count",
+          "pii_detected",
+          "pii_redacted",
+          "visibility",
+          "pinned",
+          "lifecycle_revision",
+          "tombstoned",
+          "valid_from",
+          "observed_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OperatorMemory",
         "type": "object"
       },
       "OperatorOverviewCounts": {
@@ -4134,6 +4333,191 @@
         "summary": "Stream Events",
         "tags": [
           "operator-events"
+        ]
+      }
+    },
+    "/v1/operator/memories": {
+      "get": {
+        "operationId": "operator_memory_list_v1_operator_memories_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "active",
+                    "superseded",
+                    "merged_into",
+                    "archived",
+                    "quarantined",
+                    "deleted"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "factual",
+                    "preference",
+                    "behavioral",
+                    "episodic",
+                    "procedural"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_OperatorMemory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Memory List",
+        "tags": [
+          "operator-memories"
+        ]
+      }
+    },
+    "/v1/operator/memories/{memory_id}": {
+      "get": {
+        "operationId": "operator_memory_detail_v1_operator_memories__memory_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Memory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorMemory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operator Memory Detail",
+        "tags": [
+          "operator-memories"
         ]
       }
     },
