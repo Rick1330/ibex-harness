@@ -482,7 +482,6 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_EMBEDDING_TIMEOUT_SECONDS` | No | `30.0` | Embedder read timeout | |
 | `IBEX_MEMORY_EMBEDDING_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Embedder connect timeout | |
 | `IBEX_MEMORY_EMBEDDING_MAX_RETRIES` | No | `2` | Retries for 429/502/503 + transport | |
-| `IBEX_MEMORY_HYBRID_ENABLED` | Planned **5** | `false` | Enable dense+sparse hybrid retrieval | Feature flag |
 | `IBEX_MEMORY_RERANK_ENABLED` | Planned **5** | `false` | Cross-encoder rerank on fused top-K | Degrade if TEI unavailable |
 
 ### Worker service (Celery — m3.5.A.1+)
