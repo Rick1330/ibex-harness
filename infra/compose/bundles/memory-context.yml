@@ -92,6 +92,10 @@ services:
       IBEX_MEMORY_AUTH_TIMEOUT_MS: "2000"
       IBEX_MEMORY_EMBEDDING_BASE_URL: http://embedder:8004
       IBEX_EMBEDDING_API_TOKEN: dev-embed-token
+      # Phase 5.A.1/5.A.2: keep both retrieval channels live in the dev stack so
+      # the hybrid path is exercised locally. Shipped default is off until the
+      # 5.C.1 gold-set comparison.
+      IBEX_MEMORY_SEARCH_HYBRID_ENABLED: "true"
     healthcheck:
       test:
         - CMD-SHELL

@@ -10,6 +10,12 @@ SEARCH_FALLBACK = Counter(
     ["triggered"],
 )
 
+SEARCH_HYBRID = Counter(
+    "ibex_memory_search_hybrid_total",
+    "Hybrid retrieval invocations on find_similar, by channel that returned hits",
+    ["vector", "full_text"],
+)
+
 HOT_CACHE_READ = Counter(
     "ibex_memory_hot_cache_read_total",
     "Hot cache read invocations via get_hot_memories",

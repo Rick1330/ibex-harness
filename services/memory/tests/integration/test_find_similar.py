@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.read.metrics import SEARCH_FALLBACK
+from app.read.metrics import SEARCH_FALLBACK, SEARCH_HYBRID
 from app.read.models import FindSimilarQuery
 from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.conftest import seed_org_agent_memory, with_service_org
@@ -28,21 +28,26 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hybrid", [False, True], ids=["fallback", "hybrid"])
 async def test_find_similar_cross_org_isolation(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store: PgVectorStore,
+    hybrid: bool,
 ) -> None:
-    org_a, agent_a, mem_a = await seed_org_agent_memory(
-        session_factory, content="org a prefers concise technical summaries"
-    )
-    org_b, _agent_b, mem_b = await seed_org_agent_memory(
-        session_factory, content="org b prefers concise technical summaries"
-    )
+    # Identical content, so the full-text channel matches both tenants lexically
+    # and only the org predicate can keep them apart.
+    content = "prefers concise technical summaries"
+    org_a, agent_a, mem_a = await seed_org_agent_memory(session_factory, content=content)
+    org_b, _agent_b, mem_b = await seed_org_agent_memory(session_factory, content=content)
     query_vec = await upsert_embedding(store, session_factory, org_id=org_a, memory_id=mem_a, hotspot=1)
     await upsert_embedding(store, session_factory, org_id=org_b, memory_id=mem_b, hotspot=1)
 
-    repo = build_read_repository(session_factory, store, settings)
+    repo = build_read_repository(
+        session_factory,
+        store,
+        settings.model_copy(update={"search_hybrid_enabled": hybrid}),
+    )
     results = await repo.find_similar(
         FindSimilarQuery(
             org_id=org_a,
@@ -381,3 +386,58 @@ async def test_schema_indexes_exist(
         rows = {row.relname: row.amname for row in result}
     assert rows["idx_memories_embedding_hnsw"] == "hnsw"
     assert rows["idx_memories_search_vector"] == "gin"
+
+
+def _hybrid_metric_value() -> float:
+    return SEARCH_HYBRID.labels(vector="true", full_text="true")._value.get()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_runs_the_full_text_channel_on_a_full_vector_page(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    store: PgVectorStore,
+) -> None:
+    """The parallel channel ignores how full the vector page is.
+
+    This is the behaviour change of 5.A.1: the old gate skipped full text at a
+    full page, which is exactly when an exact-token match went missing.
+    """
+    seeded, _memory_ids, query_vec = await seed_agent_with_memories(
+        session_factory,
+        store,
+        SeedAgentMemoriesParams(
+            count=5,
+            content_prefix="hybrid gate dark mode preference",
+            hotspot=4,
+        ),
+    )
+    await insert_active_memory(
+        session_factory,
+        InsertActiveMemoryParams(
+            org_id=seeded.org_id,
+            agent_id=seeded.agent_id,
+            content="lexical-only hybrid marker zzz9 dark mode",
+        ),
+    )
+    before = _hybrid_metric_value()
+    repo = build_read_repository(
+        session_factory,
+        store,
+        settings.model_copy(update={"search_hybrid_enabled": True}),
+    )
+
+    results = await repo.find_similar(
+        FindSimilarQuery(
+            org_id=seeded.org_id,
+            agent_id=seeded.agent_id,
+            query_embedding=query_vec,
+            query_text="zzz9 dark mode",
+            limit=3,
+            min_similarity=0.0,
+        )
+    )
+
+    assert _hybrid_metric_value() > before
+    assert len(results) == 3
+    assert len({item.id for item in results}) == 3

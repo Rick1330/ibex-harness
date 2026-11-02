@@ -194,6 +194,19 @@ class Settings(BaseSettings):
         default=True,
         description="Supplement sparse vector hits with GIN full-text search (3.D.1)",
     )
+    # Hybrid retrieval (phase 5.A.1 + 5.A.2). Off by default until the gold-set
+    # comparison in 5.C.1 reads the change as an improvement; the code path is
+    # exercised by unit and integration tests and enabled in the dev stack.
+    search_hybrid_enabled: bool = Field(
+        default=False,
+        description="Run the full-text channel in parallel with vector search and fuse by RRF",
+    )
+    search_rrf_k: int = Field(
+        default=60,
+        ge=1,
+        le=1000,
+        description="Reciprocal rank fusion constant (Cormack et al. 2009; Elasticsearch default)",
+    )
 
     @field_validator("database_url", mode="before")
     @classmethod
