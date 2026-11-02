@@ -83,6 +83,31 @@ export function parseLiveSessionQuery(params: QueryParams): LiveSessionQuery {
   }
 }
 
+/**
+ * Best-effort parse for a URL the operator did not construct, such as a stale
+ * bookmark or a hand-edited link. The strict parser throws on the first bad
+ * field, which would force the page to fall back to an unfiltered first page
+ * while the address bar still shows the filter. Keep every field that parses
+ * and drop the rest, so the page can rewrite the URL to match what it actually
+ * fetches instead of widening the list silently.
+ */
+export function parseLiveSessionQueryLenient(params: QueryParams): LiveSessionQuery {
+  const field = <T>(read: () => T, fallback: T): T => {
+    try {
+      return read()
+    } catch {
+      return fallback
+    }
+  }
+  const defaults = defaultLiveSessionQuery()
+  return {
+    agentId: field(() => parseUuid(paramGet(params, "agent_id")), defaults.agentId),
+    status: field(() => parseStatus(paramGet(params, "status")), defaults.status),
+    cursor: field(() => parseCursor(paramGet(params, "cursor")), defaults.cursor),
+    limit: field(() => parseLimit(paramGet(params, "limit")), defaults.limit),
+  }
+}
+
 export function serializeLiveSessionQuery(query: LiveSessionQuery): URLSearchParams {
   const params = new URLSearchParams()
   params.set("limit", String(query.limit))

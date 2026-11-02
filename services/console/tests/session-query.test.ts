@@ -4,6 +4,7 @@ import {
   defaultLiveSessionQuery,
   LiveSessionQueryError,
   parseLiveSessionQuery,
+  parseLiveSessionQueryLenient,
   serializeLiveSessionQuery,
   type LiveSessionQuery,
 } from "../shared/operator/session-query"
@@ -65,5 +66,18 @@ describe("live session query codec", () => {
       expect(() => parseLiveSessionQuery({ limit }), limit).toThrow(LiveSessionQueryError)
     }
     expect(() => parseLiveSessionQuery({ cursor: "has space" })).toThrow(LiveSessionQueryError)
+  })
+
+  it("keeps the filters that parse and drops the ones that do not", () => {
+    // `/sessions?status=error&limit=101` used to fetch every status at the
+    // default limit while the address bar still said status=error.
+    expect(parseLiveSessionQueryLenient({ status: "error", limit: "101" })).toEqual({
+      ...defaultLiveSessionQuery(),
+      status: "error",
+    })
+    expect(parseLiveSessionQueryLenient({ agent_id: "nope", view: "timeline" })).toEqual(
+      defaultLiveSessionQuery(),
+    )
+    expect(parseLiveSessionQueryLenient(serializeLiveSessionQuery(full))).toEqual(full)
   })
 })

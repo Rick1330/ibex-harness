@@ -534,6 +534,27 @@ test("memories fail closed without an operator API and never render fixtures", a
   await expectNoAxeViolations(page)
 })
 
+test("a stale memory filter link keeps its valid filters and drops the rest", async ({ page }) => {
+  // The read must not widen: `quarantined` still filters, and the unsupported
+  // field and the out-of-range limit leave the address bar instead of silently
+  // becoming an unfiltered first page.
+  await page.goto("/memories?status=quarantined&demo=0&limit=101")
+  await waitForHydration(page)
+  await expect(page).toHaveURL(/status=quarantined/)
+  await expect(page).toHaveURL(/limit=50/)
+  await expect(page).not.toHaveURL(/demo=0/)
+  await expectNoAxeViolations(page)
+})
+
+test("a stale session filter link keeps its valid filters and drops the rest", async ({ page }) => {
+  await page.goto("/sessions?status=error&limit=101&demo=0")
+  await waitForHydration(page)
+  await expect(page).toHaveURL(/status=error/)
+  await expect(page).toHaveURL(/limit=50/)
+  await expect(page).not.toHaveURL(/demo=0/)
+  await expectNoAxeViolations(page)
+})
+
 test("sessions fail closed without an operator API and never render fixtures", async ({ page }) => {
   await page.goto("/sessions?demo=0")
   await waitForHydration(page)
