@@ -243,6 +243,70 @@ export const OperatorAgentPageSchema = z
   })
   .strict()
 
+export const MemoryStatusSchema = z.enum([
+  "active",
+  "superseded",
+  "merged_into",
+  "archived",
+  "quarantined",
+  "deleted",
+])
+
+export const MemoryCategorySchema = z.enum([
+  "factual",
+  "preference",
+  "behavioral",
+  "episodic",
+  "procedural",
+])
+
+/**
+ * Metadata-only operator memory projection. Content, content hashes,
+ * embeddings, org_id, and free-form metadata are deliberately absent.
+ */
+export const OperatorMemorySchema = z
+  .object({
+    id: z.string().uuid(),
+    agent_id: z.string().uuid(),
+    session_id: z.string().uuid().nullable(),
+    category: MemoryCategorySchema,
+    status: MemoryStatusSchema,
+    source: z.enum(["extracted", "user_provided", "imported", "inferred"]),
+    confidence: z.number().min(0).max(1),
+    usefulness_score: z.number().min(0).max(1),
+    content_tokens: z.number().int().nonnegative(),
+    retrieval_count: z.number().int().nonnegative(),
+    last_retrieved_at: z.string().datetime({ offset: true }).nullable(),
+    pii_detected: z.boolean(),
+    pii_redacted: z.boolean(),
+    visibility: z.enum(["agent", "org", "session"]),
+    pinned: z.boolean(),
+    tags: z.array(z.string().min(1).max(64)).max(32),
+    lifecycle_revision: z.number().int().positive(),
+    tombstoned: z.boolean(),
+    expires_at: z.string().datetime({ offset: true }).nullable(),
+    valid_from: z.string().datetime({ offset: true }),
+    valid_until: z.string().datetime({ offset: true }).nullable(),
+    observed_at: z.string().datetime({ offset: true }),
+    created_at: z.string().datetime({ offset: true }),
+    updated_at: z.string().datetime({ offset: true }),
+  })
+  .strict()
+
+export const OperatorMemoryPageSchema = z
+  .object({
+    data: z.array(OperatorMemorySchema).max(100),
+    pagination: z
+      .object({
+        has_more: z.boolean(),
+        next_cursor: z.string().max(2048).nullable(),
+        prev_cursor: z.string().max(2048).nullable(),
+        total_count: z.number().int().nonnegative().nullable(),
+      })
+      .strict(),
+  })
+  .strict()
+
 export type OperatorSession = z.infer<typeof OperatorSessionSchema>
 export type PlatformHealth = z.infer<typeof PlatformHealthSchema>
 export type OperatorContext = z.infer<typeof OperatorContextSchema>
@@ -253,6 +317,10 @@ export type OperatorTraceDetail = z.infer<typeof OperatorTraceDetailSchema>
 export type AgentStatus = z.infer<typeof AgentStatusSchema>
 export type OperatorAgent = z.infer<typeof OperatorAgentSchema>
 export type OperatorAgentPage = z.infer<typeof OperatorAgentPageSchema>
+export type MemoryStatus = z.infer<typeof MemoryStatusSchema>
+export type MemoryCategory = z.infer<typeof MemoryCategorySchema>
+export type OperatorMemory = z.infer<typeof OperatorMemorySchema>
+export type OperatorMemoryPage = z.infer<typeof OperatorMemoryPageSchema>
 export type UnavailableSection = z.infer<typeof UnavailableSectionSchema>
 
 export function parseOperatorSession(value: unknown): OperatorSession {

@@ -241,3 +241,32 @@ test("live Agents renders the operator inventory and detail with axe coverage", 
   await expect(page.getByText("901,234")).toBeVisible()
   await expectNoAxeViolations(page)
 })
+
+test("live Memories renders the metadata index and detail with axe coverage", async ({ page }) => {
+  await resetFixtureApi(page)
+  await seedOperatorCookies(page)
+
+  await page.goto("/memories")
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: "Memories", exact: true })).toBeVisible()
+  await expect(page.getByRole("link", { name: /44444444/ })).toBeVisible()
+  await expect(page.getByText("factual", { exact: true })).toBeVisible()
+  await expect(page.getByText("12", { exact: true })).toBeVisible()
+  await expect(page.getByText("Acme Corp")).toHaveCount(0)
+  await expectNoAxeViolations(page)
+
+  const listRequests = await fetchFixtureRequests(page)
+  expect(listRequests.some((request) => request.path === "/v1/operator/memories")).toBe(true)
+  for (const request of listRequests.filter((entry) => entry.path === "/v1/operator/memories")) {
+    expect(request.cookieNames).toEqual(["ibex_session"])
+  }
+
+  await page.getByRole("link", { name: /44444444/ }).click()
+  await waitForHydration(page)
+  await expect(page.getByRole("heading", { name: /Memory 44444444/ })).toBeVisible()
+  await expect(
+    page.locator("dd").filter({ hasText: "33333333-3333-4333-8333-333333333333" }),
+  ).toBeVisible()
+  await expect(page.getByText("Content tokens")).toBeVisible()
+  await expectNoAxeViolations(page)
+})
