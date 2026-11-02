@@ -57,6 +57,14 @@ engines:
       - "site/app/composables/useMermaidDiagram.ts"
       - "site/app/pages/benchmarks.vue"
       - "site/app/utils/series.ts"
+      # security/detect-unsafe-regex flags the string alternative in the syntax
+      # tokenizer. Measured, not assumed: the escape branch and the literal
+      # branch are mutually exclusive per character, so an unterminated quote
+      # backtracks linearly (128k adversarial characters match in 1.9 ms, and
+      # 21,688 lines of site content tokenize identically with an explicitly
+      # expanded alternative). Rewriting it to satisfy the heuristic raised
+      # Sonar typescript:S5843 on the same line, so the heuristic loses.
+      - "site/app/utils/code.ts"
   # Mermaid sanitises the SVG it generates with its own bundled DOMPurify, and
   # both components initialise it with `securityLevel: 'strict'`, which encodes
   # HTML in labels and disables click handlers (mermaid docs: config/usage).
