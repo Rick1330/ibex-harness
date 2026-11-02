@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -14,8 +12,7 @@ from app.errors import ApiError
 from app.pagination import decode_cursor, encode_cursor
 from app.services import operator_memories as memory_service
 from app.services.operator_memories import ListMemoriesArgs, MemoryListFilters
-
-NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+from tests.unit.operator.memory_fixtures import NOW, memory_row
 
 
 class _MapResult:
@@ -30,37 +27,6 @@ class _MapResult:
 
     def all(self) -> list[object]:
         return list(self._rows)
-
-
-def _row(**overrides: object) -> SimpleNamespace:
-    base: dict[str, object] = {
-        "id": uuid4(),
-        "agent_id": uuid4(),
-        "session_id": None,
-        "category": "factual",
-        "status": "active",
-        "source": "extracted",
-        "confidence": 0.8,
-        "usefulness_score": 0.5,
-        "content_tokens": 12,
-        "retrieval_count": 3,
-        "last_retrieved_at": NOW,
-        "pii_detected": False,
-        "pii_redacted": False,
-        "visibility": "agent",
-        "pinned": False,
-        "tags": ["support"],
-        "lifecycle_revision": 1,
-        "tombstoned": False,
-        "expires_at": None,
-        "valid_from": NOW,
-        "valid_until": None,
-        "observed_at": NOW,
-        "created_at": NOW,
-        "updated_at": NOW,
-    }
-    base.update(overrides)
-    return SimpleNamespace(**base)
 
 
 def _session(rows: list[object]) -> AsyncMock:
@@ -106,7 +72,7 @@ async def test_get_memory_returns_not_found_and_scopes_the_query() -> None:
 
 @pytest.mark.asyncio
 async def test_get_memory_projects_metadata_and_parses_tags() -> None:
-    row = _row(
+    row = memory_row(
         tags='["support","billing"]',
         pii_detected=True,
         pii_redacted=True,
@@ -130,7 +96,7 @@ async def test_get_memory_projects_metadata_and_parses_tags() -> None:
 
 @pytest.mark.asyncio
 async def test_list_memories_forwards_filters_and_builds_the_next_cursor() -> None:
-    first, second = _row(), _row(created_at=NOW)
+    first, second = memory_row(), memory_row(created_at=NOW)
     session = _session([first, second])
     args = _args(
         limit=1,
@@ -164,7 +130,7 @@ async def test_list_memories_forwards_filters_and_builds_the_next_cursor() -> No
 
 @pytest.mark.asyncio
 async def test_list_memories_applies_a_decoded_cursor_and_reports_no_next_page() -> None:
-    row = _row()
+    row = memory_row()
     cursor = encode_cursor({"created_at": NOW.isoformat(), "id": str(uuid4())})
     session = _session([row])
 
@@ -179,7 +145,7 @@ async def test_list_memories_applies_a_decoded_cursor_and_reports_no_next_page()
 
 @pytest.mark.asyncio
 async def test_list_memories_accepts_dict_rows() -> None:
-    row = _row()
+    row = memory_row()
     session = _session([row.__dict__])
 
     page = await memory_service.list_operator_memories(session, _args())
@@ -210,7 +176,7 @@ async def test_list_memories_rejects_malformed_cursors(cursor: str) -> None:
 
 @pytest.mark.asyncio
 async def test_tags_are_sanitized_and_non_list_values_are_ignored() -> None:
-    row = _row(tags=["support", "", 7, "billing"])
+    row = memory_row(tags=["support", "", 7, "billing"])
     session = _session([row])
 
     page = await memory_service.list_operator_memories(session, _args())
@@ -220,7 +186,7 @@ async def test_tags_are_sanitized_and_non_list_values_are_ignored() -> None:
 
 @pytest.mark.asyncio
 async def test_non_list_tags_become_empty() -> None:
-    row = _row(tags={"unexpected": True})
+    row = memory_row(tags={"unexpected": True})
     session = _session([row])
 
     page = await memory_service.list_operator_memories(session, _args())

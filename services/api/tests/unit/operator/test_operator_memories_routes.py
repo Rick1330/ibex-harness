@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -16,40 +15,9 @@ from app.errors import ApiError
 from app.pagination import CursorPage, PaginationMeta
 from app.schemas.operator_memories import OperatorMemory
 from tests.unit.operator.conftest import create_operator_app
+from tests.unit.operator.memory_fixtures import memory_record
 
-NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
 PAT = "ibex_pat_operator_memories"
-
-
-def _memory(org_id: object, **overrides: object) -> OperatorMemory:
-    data: dict[str, object] = {
-        "id": uuid4(),
-        "agent_id": uuid4(),
-        "session_id": None,
-        "category": "factual",
-        "status": "active",
-        "source": "extracted",
-        "confidence": 0.8,
-        "usefulness_score": 0.5,
-        "content_tokens": 12,
-        "retrieval_count": 3,
-        "last_retrieved_at": NOW,
-        "pii_detected": False,
-        "pii_redacted": False,
-        "visibility": "agent",
-        "pinned": False,
-        "tags": ["support"],
-        "lifecycle_revision": 1,
-        "tombstoned": False,
-        "expires_at": None,
-        "valid_from": NOW,
-        "valid_until": None,
-        "observed_at": NOW,
-        "created_at": NOW,
-        "updated_at": NOW,
-    }
-    data.update(overrides)
-    return OperatorMemory.model_validate(data)
 
 
 def _validator(org_id: object, permissions: int = OPERATOR_METADATA_READ) -> StaticTokenValidator:
@@ -80,7 +48,7 @@ def test_operator_memory_list_projects_metadata_and_forwards_filters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     org_id = uuid4()
-    memory = _memory(org_id)
+    memory = memory_record()
     seen: dict[str, object] = {}
 
     async def fake_list(_session: object, args: object) -> CursorPage[OperatorMemory]:
@@ -127,7 +95,7 @@ def test_operator_memory_detail_projects_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     org_id = uuid4()
-    memory = _memory(org_id)
+    memory = memory_record()
 
     async def fake_get(
         _session: object, requested_org: object, memory_id: object
