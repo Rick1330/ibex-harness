@@ -56,6 +56,11 @@ function walk(dir: string): string[] {
   })
 }
 
+/** POSIX separators, so the slash-separated allowlist matches on Windows too. */
+function toPosix(relative: string): string {
+  return relative.split(path.sep).join("/")
+}
+
 function isPreviewFile(relative: string): boolean {
   return PREVIEW_ROOTS.some((prefix) => relative === prefix || relative.startsWith(`${prefix}/`))
 }
@@ -64,7 +69,7 @@ describe("console clock boundary", () => {
   it("keeps the fixture clock out of live components and pages", () => {
     const offenders = walk(appDir)
       .filter((file) => file.endsWith(".vue") || file.endsWith(".ts"))
-      .map((file) => path.relative(appDir, file))
+      .map((file) => toPosix(path.relative(appDir, file)))
       .filter((relative) => !isPreviewFile(relative))
       .filter((relative) => readFileSync(path.join(appDir, relative), "utf8").includes("GOVERN_NOW"))
 
