@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from apierror_py import NOT_FOUND
+from apierror_py import NOT_FOUND, VALIDATION_ERROR
 from authclient.permissions import OPERATOR_METADATA_READ
 
 from app.auth.client import StaticTokenValidator, ValidateResult
@@ -148,3 +148,46 @@ def test_operator_session_detail_returns_not_found_for_another_tenant(
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == NOT_FOUND
+
+
+def test_operator_session_list_rejects_an_oversized_cursor() -> None:
+    # AGENTS.md §5.2 requires a length bound on every string input; a direct
+    # caller must be capped here, not only in the Console.
+    with create_operator_app(validator=_validator(uuid4())) as (app, client):
+        app.dependency_overrides[operator_org_session] = lambda: AsyncMock()
+        _login(client)
+        response = client.get("/v1/operator/sessions", params={"cursor": "c" * 2049})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == VALIDATION_ERROR
+
+
+def test_operator_session_detail_accepts_the_proxy_model_name_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # services/proxy validation.MaxModelNameLength is 256 and the proxy stores
+    # the model unchanged, so a longer saved name must not turn a read into a 500.
+    org_id = uuid4()
+    model = "m" * 256
+    detail = session_detail_record(
+        model=model, turns=[turn_record(model=model)]
+    )
+
+    async def fake_get(
+        _session: object, _org: object, _session_id: object
+    ) -> OperatorSessionDetail:
+        return detail
+
+    monkeypatch.setattr(
+        "app.routers.operator_sessions.session_service.get_operator_session",
+        fake_get,
+    )
+
+    with create_operator_app(validator=_validator(org_id)) as (app, client):
+        app.dependency_overrides[operator_org_session] = lambda: AsyncMock()
+        _login(client)
+        response = client.get(f"/v1/operator/sessions/{detail.id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == model
+    assert body["turns"][0]["model"] == model

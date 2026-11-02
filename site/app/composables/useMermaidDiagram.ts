@@ -1,4 +1,5 @@
 import type { MermaidConfig } from 'mermaid'
+import { assertInertSvg } from '~/utils/svg-safety'
 
 type Mermaid = (typeof import('mermaid'))['default']
 
@@ -170,6 +171,7 @@ const SVG_VIEWBOX = /<svg\b[^>]*\bviewBox="([^"]+)"/i
 const SVG_WIDTH = /<svg\b[^>]*\bwidth="([\d.]+)"/i
 const SVG_HEIGHT = /<svg\b[^>]*\bheight="([\d.]+)"/i
 
+
 function viewBoxSize(svg: string): { width: number, height: number } | null {
   const viewBox = SVG_VIEWBOX.exec(svg)?.[1]
   if (!viewBox) return null
@@ -221,6 +223,7 @@ export function useMermaidDiagram() {
       mermaid.initialize(buildConfig(dark, htmlLabels))
       const id = nextDiagramId(prefix)
       const result = await withDeadline(mermaid.render(id, code), 'Diagram rendering timed out')
+      assertInertSvg(result.svg)
       return {
         ...measure(result.svg),
         svg: result.svg,

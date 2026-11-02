@@ -107,6 +107,33 @@ export function parseLiveMemoryQuery(params: QueryParams): LiveMemoryQuery {
   }
 }
 
+/**
+ * Best-effort parse for a URL the operator did not construct, such as a stale
+ * bookmark or a hand-edited link. The strict parser throws on the first bad
+ * field, which would force the page to fall back to an unfiltered first page
+ * while the address bar still shows the filter. Keep every field that parses
+ * and drop the rest, so the page can rewrite the URL to match what it actually
+ * fetches instead of widening the list silently.
+ */
+export function parseLiveMemoryQueryLenient(params: QueryParams): LiveMemoryQuery {
+  const field = <T>(read: () => T, fallback: T): T => {
+    try {
+      return read()
+    } catch {
+      return fallback
+    }
+  }
+  const defaults = defaultLiveMemoryQuery()
+  return {
+    agentId: field(() => parseUuid(paramGet(params, "agent_id"), "agent_id"), defaults.agentId),
+    sessionId: field(() => parseUuid(paramGet(params, "session_id"), "session_id"), defaults.sessionId),
+    status: field(() => parseStatus(paramGet(params, "status")), defaults.status),
+    category: field(() => parseCategory(paramGet(params, "category")), defaults.category),
+    cursor: field(() => parseCursor(paramGet(params, "cursor")), defaults.cursor),
+    limit: field(() => parseLimit(paramGet(params, "limit")), defaults.limit),
+  }
+}
+
 export function serializeLiveMemoryQuery(query: LiveMemoryQuery): URLSearchParams {
   const params = new URLSearchParams()
   params.set("limit", String(query.limit))

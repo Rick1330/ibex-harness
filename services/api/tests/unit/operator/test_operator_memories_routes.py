@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from apierror_py import NOT_FOUND
+from apierror_py import NOT_FOUND, VALIDATION_ERROR
 from authclient.permissions import OPERATOR_METADATA_READ
 
 from app.auth.client import StaticTokenValidator, ValidateResult
@@ -144,3 +144,40 @@ def test_operator_memory_detail_returns_not_found_for_another_tenant(
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == NOT_FOUND
+
+
+def test_operator_memory_list_rejects_an_oversized_cursor() -> None:
+    # AGENTS.md §5.2 requires a length bound on every string input. The Console
+    # caps at 2048 before it sends; a direct caller must be capped here too.
+    with create_operator_app(validator=_validator(uuid4())) as (app, client):
+        app.dependency_overrides[operator_org_session] = lambda: AsyncMock()
+        _login(client)
+        response = client.get("/v1/operator/memories", params={"cursor": "c" * 2049})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == VALIDATION_ERROR
+
+
+def test_operator_memory_list_accepts_a_cursor_at_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    org_id = uuid4()
+    seen: dict[str, object] = {}
+
+    async def fake_list(_session: object, args: object) -> CursorPage[OperatorMemory]:
+        seen["cursor"] = args.cursor  # type: ignore[attr-defined]
+        return CursorPage[OperatorMemory](
+            data=[], pagination=PaginationMeta(has_more=False)
+        )
+
+    monkeypatch.setattr(
+        "app.routers.operator_memories.memory_service.list_operator_memories",
+        fake_list,
+    )
+
+    with create_operator_app(validator=_validator(org_id)) as (app, client):
+        app.dependency_overrides[operator_org_session] = lambda: AsyncMock()
+        _login(client)
+        response = client.get("/v1/operator/memories", params={"cursor": "c" * 2048})
+
+    assert response.status_code == 200
+    assert seen["cursor"] == "c" * 2048

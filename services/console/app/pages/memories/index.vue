@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, watch } from "vue"
+import { onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import MemoryListView from "@/components/console/memory/live/LiveMemoryListView.vue"
 import {
-  defaultLiveMemoryQuery,
   parseLiveMemoryQuery,
+  parseLiveMemoryQueryLenient,
   serializeLiveMemoryQuery,
   type LiveMemoryQuery,
 } from "~~/shared/operator/memory-query"
@@ -16,23 +16,43 @@ const returnTo = ref(route.fullPath)
 
 useHead({ title: "Memories · IBEX Console" })
 
-function stateFromQuery(query: Record<string, unknown>): LiveMemoryQuery {
+function strictStateFromQuery(query: Record<string, unknown>): LiveMemoryQuery | null {
   try {
     return parseLiveMemoryQuery(query)
   } catch {
-    return defaultLiveMemoryQuery()
+    return null
   }
+}
+
+// A stale or hand-edited link must not widen the read: keep the filters that
+// parse, and let `normalizeUrl` drop the rest from the address bar so it always
+// describes the list on screen.
+function stateFromQuery(query: Record<string, unknown>): LiveMemoryQuery {
+  return strictStateFromQuery(query) ?? parseLiveMemoryQueryLenient(query)
 }
 
 function serialized(value: LiveMemoryQuery): string {
   return serializeLiveMemoryQuery(value).toString()
 }
 
+function normalizeUrl(): void {
+  if (strictStateFromQuery(route.query)) return
+  void router
+    .replace({ query: Object.fromEntries(serializeLiveMemoryQuery(state.value)) })
+    .then(() => {
+      returnTo.value = route.fullPath
+    })
+    .catch(() => undefined)
+}
+
+onMounted(normalizeUrl)
+
 watch(
   state,
   (next) => {
     if (!import.meta.client) return
-    if (serialized(next) === serialized(stateFromQuery(route.query))) {
+    const current = strictStateFromQuery(route.query)
+    if (current && serialized(next) === serialized(current)) {
       returnTo.value = route.fullPath
       return
     }
@@ -50,8 +70,12 @@ watch(
   () => route.query,
   () => {
     if (route.path !== "/memories") return
-    const parsed = stateFromQuery(route.query)
-    if (serialized(parsed) === serialized(state.value)) {
+    const strict = strictStateFromQuery(route.query)
+    const parsed = strict ?? parseLiveMemoryQueryLenient(route.query)
+    // Assigning a fresh object also fires the state watcher, which rewrites the
+    // address bar. Returning early on an equal parse would leave a URL that
+    // still claims a field the read ignores.
+    if (strict && serialized(parsed) === serialized(state.value)) {
       returnTo.value = route.fullPath
       return
     }

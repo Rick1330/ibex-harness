@@ -20,13 +20,20 @@ exclude_paths:
   # Plan-gate / benchmark helpers use static parameterized SQL outside app/ hot paths
   # (see benchmarks/memory/README.md — not production request handlers).
   - "benchmarks/memory/**"
-  # Go test files. Every site below is already gated locally by golangci-lint and
-  # .semgrep/rules/, and most carry inline `// nosemgrep` that Codacy's Opengrep
-  # ignores. The open findings were all false positives on test scaffolding: an
-  # in-process gRPC server without TLS, parameterised fixture SQL, a re-exec of
-  # the test binary, and an httptest body write. Test files never ship in a
-  # runtime image. This replaces the per-file list that had grown here.
-  - "**/*_test.go"
+  # Go test files: every open finding was a false positive on test scaffolding
+  # (an in-process gRPC server without TLS, parameterised fixture SQL, a re-exec
+  # of the test binary, an httptest body write), already gated by golangci-lint
+  # and .semgrep/rules/ locally. Listed one by one rather than as `**/*_test.go`
+  # so a future real finding in an unrelated test file is still reported.
+  - "packages/proto/context_contract_test.go"
+  - "packages/proto/auth_grpc_contract_test.go"
+  - "packages/proto/auth_contract_integration_test.go"
+  - "services/auth/cmd/auth/main_test.go"
+  - "services/auth/validate_agent_integration_test.go"
+  - "services/proxy/proxy_auth_integration_helpers_test.go"
+  - "services/proxy/internal/http/agent_middleware_test.go"
+  - "packages/config/config_test.go"
+  - "packages/session/abandon_idle_integration_test.go"
   # `//go:build integration` fixtures only; seeded rows and SQL-file runners.
   - "infra/testing/**"
   # ClickHouse / Postgres migrations are not T-SQL. Codacy still runs TSQLLint
@@ -58,19 +65,24 @@ engines:
       - "site/app/pages/benchmarks.vue"
       - "site/app/utils/series.ts"
       # security/detect-unsafe-regex flags the string alternative in the syntax
-      # tokenizer. Measured, not assumed: the escape branch and the literal
-      # branch are mutually exclusive per character, so an unterminated quote
-      # backtracks linearly (128k adversarial characters match in 1.9 ms, and
-      # 21,688 lines of site content tokenize identically with an explicitly
-      # expanded alternative). Rewriting it to satisfy the heuristic raised
-      # Sonar typescript:S5843 on the same line, so the heuristic loses.
+      # tokenizer. It is not linear: a line of an opening quote followed by
+      # escaped quotes retries the closing delimiter from every later quote, and
+      # measured 115 ms at 8 KB and 8.1 s at 64 KB. It is unreachable, not
+      # harmless: the input is one line of repository-authored content rendered
+      # at build time, never a request body, and no line in the corpus is near
+      # 8 KB. Expanding the pattern to satisfy the rule raised Sonar
+      # typescript:S5843 on the same line (and stayed quadratic), so the finding
+      # is recorded here instead of traded for another one.
       - "site/app/utils/code.ts"
-  # Mermaid sanitises the SVG it generates with its own bundled DOMPurify, and
+  # Mermaid sanitises the SVG it generates with its own bundled DOMPurify and
   # both components initialise it with `securityLevel: 'strict'`, which encodes
   # HTML in labels and disables click handlers (mermaid docs: config/usage).
-  # The diagram source is repository-authored content, never user input, so the
-  # v-html sink receives already-sanitised markup. Adding DOMPurify here would
-  # sanitise the same string twice for no gain.
+  # `useMermaidDiagram.render()` also refuses an SVG containing script/iframe/
+  # object/embed, an inline event handler, or a javascript: URL, so the v-html
+  # sink fails closed. The diagram source is repository-authored content, never
+  # user input. Codacy can only exclude a whole file, not one finding, so these
+  # two presentational components are excluded rather than the sink lines alone;
+  # a second sanitiser would sanitise the same string twice for no gain.
   opengrep:
     exclude_paths:
       - "site/app/components/content/MermaidDiagram.vue"

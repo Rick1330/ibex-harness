@@ -4,6 +4,7 @@ import {
   defaultLiveMemoryQuery,
   LiveMemoryQueryError,
   parseLiveMemoryQuery,
+  parseLiveMemoryQueryLenient,
   serializeLiveMemoryQuery,
   type LiveMemoryQuery,
 } from "../shared/operator/memory-query"
@@ -75,5 +76,20 @@ describe("live memory query codec", () => {
       expect(() => parseLiveMemoryQuery({ limit }), limit).toThrow(LiveMemoryQueryError)
     }
     expect(() => parseLiveMemoryQuery({ cursor: "has space" })).toThrow(LiveMemoryQueryError)
+  })
+
+  it("keeps the filters that parse and drops the ones that do not", () => {
+    // A stale link must not widen the read: `quarantined` survives and the page
+    // rewrites the address bar, so the unsupported field cannot masquerade as a
+    // filter that is still applied.
+    expect(parseLiveMemoryQueryLenient({ status: "quarantined", demo: "0" })).toEqual({
+      ...defaultLiveMemoryQuery(),
+      status: "quarantined",
+    })
+    // One bad field must not discard its valid neighbours.
+    expect(
+      parseLiveMemoryQueryLenient({ status: "active", agent_id: "nope", limit: "101" }),
+    ).toEqual({ ...defaultLiveMemoryQuery(), status: "active" })
+    expect(parseLiveMemoryQueryLenient(serializeLiveMemoryQuery(full))).toEqual(full)
   })
 })
