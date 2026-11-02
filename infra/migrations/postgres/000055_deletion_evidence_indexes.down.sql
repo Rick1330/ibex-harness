@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS ibex_core.idx_memory_lifecycle_outbox_org_occurred;
