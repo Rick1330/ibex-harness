@@ -31,7 +31,15 @@ export class CodeToken {
 
 // A quoted string of any of the three quote flavors, a shell-style variable,
 // or a decimal number.
-const TOKEN_PATTERN = /(["'`])(?:\\.|(?!\1)[^\\])*\1|\$[A-Za-z_]\w*|\b\d+(?:\.\d+)?\b/g
+//
+// Each quote flavor is spelled out instead of using a backreference to the
+// opening delimiter. Inside a string the two alternatives are mutually
+// exclusive per character (an escape starts with a backslash, a literal does
+// not), so an unterminated quote fails at the first mismatch and matching
+// stays linear in the line length. The input is always one source line from
+// the public site's own content, but the pattern must not depend on that.
+const TOKEN_PATTERN =
+  /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\$[A-Za-z_]\w*|\b\d+(?:\.\d+)?\b/g
 
 const TS_KEYWORDS = new Set([
   'as', 'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
