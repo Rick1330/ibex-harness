@@ -215,6 +215,14 @@ function fixtureBodies() {
     observed_at: observedAt,
     created_at: observedAt,
     updated_at: observedAt,
+    lineage: {
+      superseded_by: null,
+      merged_into: null,
+      tip: memoryId,
+      replaces: [],
+      replaced_by: [],
+      edges_truncated: false,
+    },
   }
   const sessionTurn = {
     id: "99999999-9999-4999-8999-999999999999",
