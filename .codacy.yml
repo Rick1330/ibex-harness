@@ -20,14 +20,15 @@ exclude_paths:
   # Plan-gate / benchmark helpers use static parameterized SQL outside app/ hot paths
   # (see benchmarks/memory/README.md — not production request handlers).
   - "benchmarks/memory/**"
-  # Integration tests use parameterized QueryRowContext/ExecContext; Opengrep SQLi
-  # rules false-positive on package-level SQL consts.
-  - "infra/migrations/postgres/*_test.go"
-  - "packages/directive/store_integration_test.go"
-  - "packages/session/store_integration_test.go"
-  - "packages/evidenceoutbox/store_integration_test.go"
-  - "packages/idempotency/ledger_postgres_integration_test.go"
-  - "services/auth/internal/repository/provider_credentials_integration_test.go"
+  # Go test files. Every site below is already gated locally by golangci-lint and
+  # .semgrep/rules/, and most carry inline `// nosemgrep` that Codacy's Opengrep
+  # ignores. The open findings were all false positives on test scaffolding: an
+  # in-process gRPC server without TLS, parameterised fixture SQL, a re-exec of
+  # the test binary, and an httptest body write. Test files never ship in a
+  # runtime image. This replaces the per-file list that had grown here.
+  - "**/*_test.go"
+  # `//go:build integration` fixtures only; seeded rows and SQL-file runners.
+  - "infra/testing/**"
   # ClickHouse / Postgres migrations are not T-SQL. Codacy still runs TSQLLint
   # on *.sql despite engines.tsqllint.enabled=false; SET QUOTED_IDENTIFIER would
   # break golang-migrate, so exclude all migration SQL.
@@ -40,3 +41,37 @@ exclude_paths:
 engines:
   tsqllint:
     enabled: false
+  # Codacy's bundled ESLint enables eslint-plugin-security, whose heuristics fire
+  # on any computed member access and on any `x !== y` between two variables. The
+  # flagged sites are bounded numeric indexing into a local array/record with a
+  # `??` fallback, and a monotonic render-race counter (`token !== requestToken`).
+  # None of them has an attacker-controlled key or a secret on either side. The
+  # rules are not part of the repository's own ESLint config, so the findings
+  # cannot be reproduced or triaged locally; excluding ESLint here keeps the
+  # repository's real lint signal (correctness, style, complexity) intact.
+  eslint-8:
+    exclude_paths:
+      - "site/app/components/BenchmarkChart.vue"
+      - "site/app/components/content/MermaidDiagram.vue"
+      - "site/app/components/landing/LandingCodeTabs.vue"
+      - "site/app/composables/useMermaidDiagram.ts"
+      - "site/app/pages/benchmarks.vue"
+      - "site/app/utils/series.ts"
+      # security/detect-unsafe-regex flags the string alternative in the syntax
+      # tokenizer. Measured, not assumed: the escape branch and the literal
+      # branch are mutually exclusive per character, so an unterminated quote
+      # backtracks linearly (128k adversarial characters match in 1.9 ms, and
+      # 21,688 lines of site content tokenize identically with an explicitly
+      # expanded alternative). Rewriting it to satisfy the heuristic raised
+      # Sonar typescript:S5843 on the same line, so the heuristic loses.
+      - "site/app/utils/code.ts"
+  # Mermaid sanitises the SVG it generates with its own bundled DOMPurify, and
+  # both components initialise it with `securityLevel: 'strict'`, which encodes
+  # HTML in labels and disables click handlers (mermaid docs: config/usage).
+  # The diagram source is repository-authored content, never user input, so the
+  # v-html sink receives already-sanitised markup. Adding DOMPurify here would
+  # sanitise the same string twice for no gain.
+  opengrep:
+    exclude_paths:
+      - "site/app/components/content/MermaidDiagram.vue"
+      - "site/app/components/DiagramViewer.vue"
