@@ -149,11 +149,12 @@ seed_second_tenant() {
 
 create_memory() {
   local status
+  local idempotency_key="bundle-smoke-create-1"
   status="$(curl -sS -o "$TMP_DIR/create.json" -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories" \
     --oauth2-bearer "$PAT" \
     -H "$JSON_CONTENT_TYPE" \
-    -H "X-Idempotency-Key: bundle-smoke-create-1" \
+    -H "X-Idempotency-Key: $idempotency_key" \
     -d "{\"agent_id\":\"$AGENT_A\",\"content\":\"The bundle smoke sentence is benign and retrievable.\",\"category\":\"factual\"}")"
   [[ "$status" == "201" ]] || fail "create returned $status"
   python3 - "$TMP_DIR/create.json" <<'PY'
@@ -189,11 +190,12 @@ PY
 
 assert_duplicate() {
   local status
+  local idempotency_key="bundle-smoke-create-2"
   status="$(curl -sS -o "$TMP_DIR/duplicate.json" -w "$HTTP_STATUS_FORMAT" \
     -X POST "$BASE_URL/v1/memories" \
     --oauth2-bearer "$PAT" \
     -H "$JSON_CONTENT_TYPE" \
-    -H "X-Idempotency-Key: bundle-smoke-create-2" \
+    -H "X-Idempotency-Key: $idempotency_key" \
     -d "{\"agent_id\":\"$AGENT_A\",\"content\":\"The bundle smoke sentence is benign and retrievable.\",\"category\":\"factual\"}")"
   [[ "$status" == "409" ]] || fail "duplicate create returned $status"
   python3 - "$TMP_DIR/duplicate.json" <<'PY'
