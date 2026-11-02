@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
 
-import { SURFACES } from "../shared/operator/surfaces"
+import { SURFACES, type SurfaceKey } from "../shared/operator/surfaces"
 
 /**
  * The console has two clocks, and they must not be mixed:
@@ -19,25 +19,35 @@ import { SURFACES } from "../shared/operator/surfaces"
 const root = path.resolve(import.meta.dirname, "..")
 const appDir = path.join(root, "app")
 
-/** Component directories that back a `preview` surface in the ADR-0089 registry. */
-const PREVIEW_ROOTS = [
-  "components/console/access",
-  "components/console/analytics",
-  "components/console/audit",
-  "components/console/budget",
-  "components/console/drift",
-  "components/console/incident",
-  "components/console/policy",
-  "components/console/provider",
-  "components/console/settings",
-  "components/console/tool",
-  // The fixture library itself and the shared relative-time component, whose
-  // callers must pass an explicit clock.
+/**
+ * Component directories that back a surface, mapped to the surface they serve.
+ *
+ * The mapping is the point: if a surface flips to `live`, the test below fails
+ * until its components leave this list, so a leftover fixture clock cannot ride
+ * along with a live claim.
+ */
+const PREVIEW_DIRECTORIES: Array<{ root: string; surface: SurfaceKey }> = [
+  { root: "components/console/access", surface: "access" },
+  { root: "components/console/analytics", surface: "analytics" },
+  { root: "components/console/audit", surface: "audit" },
+  { root: "components/console/budget", surface: "budgets" },
+  { root: "components/console/drift", surface: "drift" },
+  { root: "components/console/incident", surface: "incidents" },
+  { root: "components/console/policy", surface: "policies" },
+  { root: "components/console/provider", surface: "providers" },
+  { root: "components/console/settings", surface: "settings" },
+  { root: "components/console/tool", surface: "mcp-tools" },
+]
+
+/** The fixture library itself, plus the shared component whose callers pass a clock. */
+const FIXTURE_LIBRARY = [
   "lib/access-preview.ts",
   "lib/audit-preview.ts",
   "lib/govern-format.ts",
   "components/console/RelativeTime.vue",
 ]
+
+const PREVIEW_ROOTS = [...PREVIEW_DIRECTORIES.map((entry) => entry.root), ...FIXTURE_LIBRARY]
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -61,19 +71,13 @@ describe("console clock boundary", () => {
     expect(offenders, `these live files measure ages against the fixture clock: ${offenders.join(", ")}`).toEqual([])
   })
 
-  it("maps every preview root to a preview surface or the fixture library", () => {
-    // A surface that goes live must move its components out of the preview list,
-    // or this test would keep allowing the fixture clock on a live page.
-    const livePaths = new Set(
-      Object.values(SURFACES)
-        .filter((surface) => surface.availability === "live")
-        .map((surface) => surface.path),
-    )
-    const liveComponentRoots = ["components/console/evidence", "components/console/directive", "components/console/explore"]
-    for (const root of liveComponentRoots) {
-      expect(PREVIEW_ROOTS, `${root} backs a live surface`).not.toContain(root)
+  it("maps every fixture-clock directory to a surface that is still preview", () => {
+    for (const { root, surface } of PREVIEW_DIRECTORIES) {
+      expect(
+        SURFACES[surface].availability,
+        `${root} is allowed the fixture clock, but ${surface} is no longer preview`,
+      ).toBe("preview")
     }
-    expect(livePaths.size).toBeGreaterThan(0)
   })
 
   it("requires an explicit clock in the shared relative-time component", () => {
