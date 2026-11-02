@@ -17,7 +17,7 @@ import {
   EVIDENCE_RANGES,
   EVIDENCE_RANGE_LABELS,
   EVIDENCE_TAB_LABELS,
-  serializeLiveEvidenceQuery,
+  evidenceSummaryParams,
   type EvidenceTab,
   type LiveEvidenceQuery,
 } from "~~/shared/operator/evidence-query"
@@ -26,7 +26,7 @@ import { deliveryTotal, unsettledDelivery } from "@/lib/evidence-summary"
 const props = defineProps<{ state: LiveEvidenceQuery }>()
 const emit = defineEmits<{ update: [state: LiveEvidenceQuery] }>()
 
-const summaryState = useOperatorEvidenceSummary(() => serializeLiveEvidenceQuery(props.state))
+const summaryState = useOperatorEvidenceSummary(() => evidenceSummaryParams(props.state.range))
 const summary = computed(() => summaryState.data.value ?? null)
 const error = computed(() => summaryState.error.value)
 const authIssue = computed(() => isOperatorAuthError(error.value))

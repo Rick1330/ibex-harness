@@ -107,3 +107,12 @@ export function serializeLiveEvidenceQuery(query: LiveEvidenceQuery): URLSearchP
 export function liveEvidenceQueryKey(query: LiveEvidenceQuery): string {
   return serializeLiveEvidenceQuery(query).toString()
 }
+
+/**
+ * The summary is window-scoped only. `tab` is presentation, so it must not
+ * reach the upstream query model nor key the fetch — otherwise every tab switch
+ * refetches an identical summary.
+ */
+export function evidenceSummaryParams(range: EvidenceRange): URLSearchParams {
+  return new URLSearchParams({ range })
+}

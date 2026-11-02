@@ -250,9 +250,9 @@ const evidenceSummary = {
   statuses: { ok: 16, error: 2 },
   last_run_at: "2026-11-02T11:55:00.000Z",
   delivery: { pending: 2, in_flight: 0, delivered: 15, failed: 0, poison: 1 },
-  oldest_pending_at: "2026-11-02T11:30:00.000Z",
+  oldest_unsettled_at: "2026-11-02T11:30:00.000Z",
   last_delivered_at: "2026-11-02T11:58:00.000Z",
-  capture_policy: { mode: "metadata_only" as const, scope: "org" as const, agent_overrides: 0 },
+  capture_policy: { mode: "metadata_only" as const, agent_overrides: 0 },
   legal_hold: { active: false, since: null },
 }
 
@@ -424,7 +424,7 @@ const evidenceSummary = {
     expect(() =>
       OperatorEvidenceSummarySchema.parse({
         ...evidenceSummary,
-        capture_policy: { mode: "everything", scope: "org", agent_overrides: 0 },
+        capture_policy: { mode: "everything", agent_overrides: 0 },
       }),
     ).toThrow()
   })

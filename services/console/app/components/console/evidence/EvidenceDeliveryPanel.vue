@@ -17,8 +17,11 @@ const props = defineProps<{ summary: OperatorEvidenceSummary }>()
 
 const total = computed(() => deliveryTotal(props.summary.delivery))
 const unsettled = computed(() => unsettledDelivery(props.summary.delivery))
-const needingAttention = computed(() => props.summary.delivery.failed + props.summary.delivery.poison)
-const oldest = computed(() => props.summary.oldest_pending_at)
+// The relay retries `failed` after backoff; only `poison` stops being claimed.
+const needingAttention = computed(() => props.summary.delivery.poison)
+const retrying = computed(() => props.summary.delivery.failed)
+const oldest = computed(() => props.summary.oldest_unsettled_at)
+const reference = computed(() => props.summary.observed_at)
 </script>
 
 <template>
@@ -32,7 +35,7 @@ const oldest = computed(() => props.summary.oldest_pending_at)
       <GovernStatTile
         label="Delivered"
         :value="formatGovernNumber(summary.delivery.delivered)"
-        :helper="summary.last_delivered_at ? `Last ${formatGovernRelative(summary.last_delivered_at)}` : 'Nothing delivered in range'"
+        :helper="summary.last_delivered_at ? `Last ${formatGovernRelative(summary.last_delivered_at, reference)}` : 'Nothing delivered in range'"
         tone="success"
       />
       <GovernStatTile
@@ -42,9 +45,9 @@ const oldest = computed(() => props.summary.oldest_pending_at)
         :tone="unsettled > 0 ? 'warning' : 'default'"
       />
       <GovernStatTile
-        label="Needs a decision"
+        label="Poisoned"
         :value="formatGovernNumber(needingAttention)"
-        helper="Failed or poisoned: the relay will not settle these alone"
+        helper="Stopped being claimed: needs an operator decision"
         :tone="needingAttention > 0 ? 'critical' : 'default'"
       />
     </div>
@@ -60,8 +63,14 @@ const oldest = computed(() => props.summary.oldest_pending_at)
         </li>
       </ul>
       <p class="mt-2 text-[0.6875rem] leading-4 text-fg-3">
-        <span v-if="oldest">Oldest unsettled row {{ formatGovernRelative(oldest) }} ({{ formatGovernStamp(oldest) }}).</span>
-        <span v-else>Every row in the window is settled.</span>
+        <span v-if="oldest">
+          Oldest unsettled row {{ formatGovernRelative(oldest, reference) }} ({{ formatGovernStamp(oldest) }}).
+        </span>
+        <span v-else-if="unsettled === 0">Every row in the window is settled.</span>
+        <span v-else>No undelivered row has a timestamp yet; the unsettled count above is not zero.</span>
+        <span v-if="retrying > 0">
+          {{ formatGovernNumber(retrying) }} failed row(s) are retried by the relay after backoff.
+        </span>
       </p>
     </div>
 

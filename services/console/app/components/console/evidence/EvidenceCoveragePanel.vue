@@ -20,11 +20,12 @@ const completePercent = computed(() =>
 )
 const counted = computed(() => completenessTotal(props.summary.completeness))
 const policyMode = computed(() => props.summary.capture_policy.mode ?? "Deployment default")
-const policyScope = computed(() => {
-  const policy = props.summary.capture_policy
-  if (policy.scope === null) return "No organization policy row"
-  return policy.scope === "agent" ? "Highest-priority agent override" : "Organization-wide"
-})
+const policyScope = computed(() =>
+  props.summary.capture_policy.mode === null
+    ? "No organization-wide policy row"
+    : "Organization-wide policy",
+)
+const reference = computed(() => props.summary.observed_at)
 const holdText = computed(() => {
   const hold = props.summary.legal_hold
   if (!hold.active) return "None active"
@@ -59,7 +60,7 @@ function tierPercent(key: (typeof COMPLETENESS_ORDER)[number]): number {
       />
       <GovernStatTile
         label="Last run captured"
-        :value="summary.last_run_at ? formatGovernRelative(summary.last_run_at) : 'None in window'"
+        :value="summary.last_run_at ? formatGovernRelative(summary.last_run_at, reference) : 'None in window'"
         :helper="summary.last_run_at ? formatGovernStamp(summary.last_run_at) : 'No run was recorded for this range'"
       />
     </div>

@@ -1,8 +1,8 @@
 import { OperatorEvidenceSummarySchema } from "~~/shared/operator/contracts"
 import {
+  evidenceSummaryParams,
   LiveEvidenceQueryError,
   parseLiveEvidenceQuery,
-  serializeLiveEvidenceQuery,
 } from "~~/shared/operator/evidence-query"
 import { noStore, fetchOperatorJson, toHttpError } from "~~/server/utils/operator/http"
 
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
       event,
       "evidenceSummary",
       (value) => OperatorEvidenceSummarySchema.parse(value),
-      { query: serializeLiveEvidenceQuery(query) },
+      { query: evidenceSummaryParams(query.range) },
     )
   } catch (error) {
     if (error instanceof LiveEvidenceQueryError) {

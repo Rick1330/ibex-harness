@@ -11,10 +11,24 @@ function toTime(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-export function formatGovernRelative(value: string | null | undefined): string {
+/**
+ * Relative age for a recorded timestamp.
+ *
+ * Fixtures are measured against the fixed `GOVERN_NOW` so server and client
+ * render the same string. A live surface passes its own reference (the
+ * observation time it just read) — measuring live data against a fixed clock
+ * would report a record from today as "just now" for as long as the constant
+ * is not moved.
+ */
+export function formatGovernRelative(
+  value: string | null | undefined,
+  reference: string | null | undefined = null,
+): string {
   const time = toTime(value)
   if (time === null) return "Not recorded"
-  const delta = GOVERN_NOW - time
+  const referenceTime = reference ? (toTime(reference) ?? GOVERN_NOW) : GOVERN_NOW
+  const delta = referenceTime - time
+  if (delta < 0) return "after the read window"
   if (delta < MINUTE) return "just now"
   if (delta < HOUR) return `${Math.floor(delta / MINUTE)}m ago`
   if (delta < DAY) return `${Math.floor(delta / HOUR)}h ago`

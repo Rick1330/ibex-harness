@@ -489,10 +489,13 @@ export const EvidenceDeliveryCountsSchema = z
   })
   .strict()
 
+/**
+ * The organization-wide capture policy plus a count of agent overrides. Agent
+ * rows resolve per agent, so no single agent mode describes the organization.
+ */
 export const EvidenceCapturePolicySchema = z
   .object({
     mode: z.enum(["none", "metadata_only", "redacted", "full"]).nullable(),
-    scope: z.enum(["org", "agent"]).nullable(),
     agent_overrides: z.number().int().nonnegative(),
   })
   .strict()
@@ -517,7 +520,7 @@ export const OperatorEvidenceSummarySchema = z
     statuses: EvidenceStatusCountsSchema,
     last_run_at: z.string().datetime({ offset: true }).nullable(),
     delivery: EvidenceDeliveryCountsSchema,
-    oldest_pending_at: z.string().datetime({ offset: true }).nullable(),
+    oldest_unsettled_at: z.string().datetime({ offset: true }).nullable(),
     last_delivered_at: z.string().datetime({ offset: true }).nullable(),
     capture_policy: EvidenceCapturePolicySchema,
     legal_hold: EvidenceLegalHoldSchema,
