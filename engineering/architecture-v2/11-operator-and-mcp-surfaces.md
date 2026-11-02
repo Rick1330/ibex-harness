@@ -22,6 +22,8 @@ The console reads directives through one pointer and one history, and the two ar
   directive, and each row carries a content hash and size. `sessions.directive_version_id` records the version a
   session actually resolved when it started, so an older version can keep serving traffic after a rollback. That is the
   expected shape, not drift.
+- **One directive per agent.** `directives` is unique on `agent_id`, so the surface is an agent-to-instruction view, not a library of
+  named prompts. A second instruction for the same agent is a new version, not a second directive.
 - **What is not in the contract.** Instruction text, diffs, and promotion history. Text is the operator's instruction
   payload; exposing it needs its own contract behind `OPERATOR_REDACTED_READ`. Promotion history needs a write path
   with step-up, CSRF, and an audit record, and the console has none.
