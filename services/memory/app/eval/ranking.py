@@ -75,25 +75,26 @@ def rbo(
     at depth ``k`` continues" — makes identical rankings score exactly ``1.0`` and disjoint
     rankings ``0.0``, which is what a divergence number has to mean.
 
-    ``k`` defaults to the shorter ranking and must not exceed it: overlap past the shorter
-    page is not defined, so a larger ``k`` is a caller error rather than a silent clamp.
+    ``k`` defaults to the shorter ranking and must not exceed it — including when a page is
+    empty, where ``k >= 1`` is still a caller error: overlap past the shorter page is not
+    defined, so a larger ``k`` is rejected rather than silently clamped.
     Rankings must be duplicate-free. Empty pages are normal read-path outcomes: two empty
     pages agree (``1.0``), and one empty page disagrees (``0.0``).
     """
     _require_persistence(p)
     _require_unique(ranking_a, "ranking_a")
     _require_unique(ranking_b, "ranking_b")
+    shortest = min(len(ranking_a), len(ranking_b))
     if k is not None:
         _require_depth(k, "k")
+        if k > shortest:
+            msg = f"k={k} exceeds the shorter ranking ({shortest})"
+            raise ValueError(msg)
     if not ranking_a and not ranking_b:
         return 1.0
     if not ranking_a or not ranking_b:
         return 0.0
-    shortest = min(len(ranking_a), len(ranking_b))
     depth = shortest if k is None else k
-    if depth > shortest:
-        msg = f"k={depth} exceeds the shorter ranking ({shortest})"
-        raise ValueError(msg)
     return _prefix_weighted_agreement(ranking_a, ranking_b, depth, p)
 
 

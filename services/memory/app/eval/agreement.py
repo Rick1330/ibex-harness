@@ -54,21 +54,23 @@ def cohen_kappa(
     """Cohen's kappa for two labelings of the same items.
 
     ``categories`` fixes the label universe. Pass it explicitly when exporting a report so
-    that a category nobody used still appears in the matrix; otherwise the union of the two
-    labelings is used, which keeps the arithmetic identical for the observed data.
+    that a category nobody used still appears in the matrix — every declared pair is present,
+    with count ``0`` where nothing landed — and so the arithmetic is stable against a future
+    labeling that starts using it. Otherwise the union of the two labelings is used.
     """
     universe = _validated_universe(labels_a, labels_b, categories)
     counts = _confusion(labels_a, labels_b)
+    matrix = _full_matrix(counts, universe)
     total = len(labels_a)
-    observed = _observed(counts, total)
-    expected = _expected(counts, universe, total)
+    observed = _observed(matrix, total)
+    expected = _expected(matrix, universe, total)
     return KappaResult(
         kappa=_kappa(observed, expected),
         observed_agreement=observed,
         expected_agreement=expected,
         item_count=total,
         categories=universe,
-        confusion=dict(counts),
+        confusion=matrix,
     )
 
 
@@ -152,6 +154,15 @@ def _expected(counts: ConfusionCounts, universe: tuple[str, ...], total: int) ->
     # A declared category nobody used contributes 0 to the marginals.
     product = sum(row.get(label, 0) * column.get(label, 0) for label in universe)
     return product / (total * total)
+
+
+def _full_matrix(counts: ConfusionCounts, universe: tuple[str, ...]) -> ConfusionCounts:
+    """Every declared pair, including the cells nobody used.
+
+    A report writer iterating ``categories`` must find a cell for each pair; a sparse
+    matrix would either drop a category or raise ``KeyError`` in their renderer.
+    """
+    return {(left, right): counts.get((left, right), 0) for left in universe for right in universe}
 
 
 def _confusion(labels_a: Sequence[str], labels_b: Sequence[str]) -> ConfusionCounts:

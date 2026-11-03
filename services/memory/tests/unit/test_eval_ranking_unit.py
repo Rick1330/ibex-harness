@@ -185,6 +185,15 @@ class TestRbo:
         with pytest.raises(ValueError, match="k must be"):
             rbo(page_a, page_b, k=0)
 
+    @pytest.mark.parametrize(("page_a", "page_b"), [([], []), ([], ["a"]), (["a"], [])])
+    def test_a_depth_deeper_than_an_empty_page_is_rejected(
+        self, page_a: list[str], page_b: list[str]
+    ) -> None:
+        # A positive k against a zero-length page is still a caller error: there is no
+        # depth-1 agreement to extrapolate from, so returning 0.0 (or 1.0) would invent one.
+        with pytest.raises(ValueError, match="exceeds the shorter ranking"):
+            rbo(page_a, page_b, k=1)
+
 
 class TestTop1Agreement:
     def test_same_top_hit(self) -> None:

@@ -61,7 +61,8 @@ class TestCohenKappa:
         assert result.observed_agreement == pytest.approx(0.96)
         assert result.expected_agreement == pytest.approx(0.9608)
         assert result.kappa == pytest.approx((0.96 - 0.9608) / (1 - 0.9608))
-        assert result.kappa is not None and result.kappa < 0.0
+        assert result.kappa is not None
+        assert result.kappa < 0.0
 
     def test_declared_categories_do_not_change_the_number(self) -> None:
         a = _labels(("x", 25), ("y", 25))
@@ -73,6 +74,20 @@ class TestCohenKappa:
         assert declared.kappa == pytest.approx(inferred.kappa)
         assert declared.categories == ("x", "y", "z")
         assert inferred.categories == ("x", "y")
+
+    def test_an_unused_declared_category_still_gets_its_matrix_cells(self) -> None:
+        # A report writer iterating the categories must find a cell for every pair; a
+        # sparse matrix would drop "z" or raise KeyError in their renderer.
+        a = _labels(("x", 2), ("y", 1))
+        b = _labels(("x", 2), ("y", 1))
+
+        result = cohen_kappa(a, b, categories=("x", "y", "z"))
+
+        assert len(result.confusion) == 9
+        assert result.confusion[("z", "z")] == 0
+        assert result.confusion[("z", "x")] == 0
+        assert result.confusion[("x", "z")] == 0
+        assert result.confusion[("x", "x")] == 2
 
     def test_label_outside_the_declared_categories_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="outside the declared categories"):
