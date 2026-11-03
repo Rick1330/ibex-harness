@@ -8,14 +8,11 @@ when a fact changes.
 
 Layout, fixed by the validator's thresholds:
 
-===========  =========  =========  =====================================================
-pool         topics     memories   what the query asks for
-===========  =========  =========  =====================================================
-dense        0–29       300        the memory with the strongest cosine to the query
-lexical      30–39      100        a memory orthogonal to the query that carries a `DEC-` token
-graph        40–49      100        the newer side of a pending conflict, which must outrank
-                                  its twin so suppression keeps it
-===========  =========  =========  =====================================================
+| pool    | topics | memories | what the query asks for                                             |
+|---------|--------|----------|---------------------------------------------------------------------|
+| dense   | 0-29   | 300      | the memory with the strongest cosine to the query                    |
+| lexical | 30-39  | 100      | an orthogonal memory carrying a `DEC-` token, reachable only by BM25 |
+| graph   | 40-49  | 100      | the newer side of a pending conflict, which must outrank its twin    |
 
 Topic pools are disjoint, so a memory from one pool can never outrank another pool's answer.
 Each profile is `{topic: weight, filler_i: sqrt(1 - weight^2)}` with a filler basis unique to
