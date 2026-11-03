@@ -593,7 +593,7 @@ def _validate_suppression_winner(
 def _composite_rank(query: Mapping[str, Any], row: Mapping[str, Any]) -> float:
     return composite_score(
         CompositeInputs(
-            relevance=profile_cosine(query["embedding_profile"], row["embedding_profile"]),
+            relevance=min(1.0, max(0.0, profile_cosine(query["embedding_profile"], row["embedding_profile"]))),
             age_days=float(row["valid_from_days_ago"]),
             categories=(row["category"],),
             usefulness=float(row["usefulness_score"]),
