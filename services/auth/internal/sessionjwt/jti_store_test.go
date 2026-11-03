@@ -303,25 +303,38 @@ func TestMemoryJTIStore_EmptyAccessRevokedIsFalse(t *testing.T) {
 	}
 }
 
-func TestMemoryJTIStore_FamilyRevokeMarkerIsReadable(t *testing.T) {
-	store := &sessionjwt.MemoryJTIStore{}
-	ctx := context.Background()
-	if err := store.RevokeFamily(ctx, "family", time.Millisecond); err != nil {
-		t.Fatal(err)
+// The readable-marker cases use a realistic TTL on purpose. With a 1 ms TTL the
+// assertion raced the scheduler: on a loaded runner the read happened after the
+// marker had already expired, so a correct store failed. Expiry is already covered
+// by TestMemoryJTIStore_RevocationMarkersExpire, which sleeps longer than its TTL.
+func TestMemoryJTIStore_RevokeMarkerIsReadable(t *testing.T) {
+	t.Parallel()
+	// Method expressions take the receiver, so both sides share one store.
+	tests := map[string]struct {
+		revoke  func(*sessionjwt.MemoryJTIStore, context.Context, string, time.Duration) error
+		revoked func(*sessionjwt.MemoryJTIStore, context.Context, string) (bool, error)
+	}{
+		"session family": {
+			revoke:  (*sessionjwt.MemoryJTIStore).RevokeFamily,
+			revoked: (*sessionjwt.MemoryJTIStore).FamilyRevoked,
+		},
+		"access jti": {
+			revoke:  (*sessionjwt.MemoryJTIStore).RevokeAccess,
+			revoked: (*sessionjwt.MemoryJTIStore).AccessRevoked,
+		},
 	}
-	if revoked, err := store.FamilyRevoked(ctx, "family"); err != nil || !revoked {
-		t.Fatalf("family marker: revoked=%v err=%v", revoked, err)
-	}
-}
-
-func TestMemoryJTIStore_AccessRevokeMarkerIsReadable(t *testing.T) {
-	store := &sessionjwt.MemoryJTIStore{}
-	ctx := context.Background()
-	if err := store.RevokeAccess(ctx, "access", time.Millisecond); err != nil {
-		t.Fatal(err)
-	}
-	if revoked, err := store.AccessRevoked(ctx, "access"); err != nil || !revoked {
-		t.Fatalf("access marker: revoked=%v err=%v", revoked, err)
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := &sessionjwt.MemoryJTIStore{}
+			ctx := context.Background()
+			if err := tc.revoke(store, ctx, "marker", time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			if revoked, err := tc.revoked(store, ctx, "marker"); err != nil || !revoked {
+				t.Fatalf("marker: revoked=%v err=%v", revoked, err)
+			}
+		})
 	}
 }
 
