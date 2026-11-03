@@ -608,6 +608,24 @@ class TestSecondReviewRound:
 
         assert _has(validate_gold_set_v2(corpus), "does not isolate the sparse channel")
 
+    def test_expected_answer_must_outrank_its_twin(self, corpus: dict[str, Any]) -> None:
+        # Fresh but weakly supported: newer than the twin, yet composite scoring ranks it
+        # below, and suppression keeps the higher-ranked row.
+        query = _query(corpus, "graph")
+        topic = next(iter(query["embedding_profile"]))
+        answer = _memory_row(corpus, query["expected_content_keys"][0])
+        twin = _memory_row(corpus, answer["conflicts_with"][0])
+        answer["embedding_profile"] = _profile_at(topic, "topic-0", 0.8)
+        answer["valid_from_days_ago"] = 7
+        answer["confidence"] = 0.1
+        answer["usefulness_score"] = 0.0
+        twin["embedding_profile"] = {topic: 1.0}
+        twin["valid_from_days_ago"] = 8
+        twin["confidence"] = 1.0
+        twin["usefulness_score"] = 1.0
+
+        assert _has(validate_gold_set_v2(corpus), "would be dropped")
+
     def test_stale_expected_answer_is_rejected(self, corpus: dict[str, Any]) -> None:
         query = _query(corpus, "graph")
         answer = _memory_row(corpus, query["expected_content_keys"][0])

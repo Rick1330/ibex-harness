@@ -33,10 +33,12 @@ from typing import Any
 
 _RANK_DIR = Path(__file__).resolve().parent
 _BENCH_MEMORY = _RANK_DIR.parent
-for _path in (_BENCH_MEMORY, _RANK_DIR):
+_MEMORY_DIR = _RANK_DIR.parents[2] / "services" / "memory"
+for _path in (_MEMORY_DIR, _BENCH_MEMORY, _RANK_DIR):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
+from app.scoring.composite import CompositeInputs, composite_score
 from path_guard import UnsafePathError, resolve_bench_input_path
 from profiles import ProfileError, profile_cosine, validate_topics
 
@@ -528,6 +530,7 @@ def _validate_conflict_pair(
     errors.extend(_validate_window(corpus, query, twin))
     errors.extend(_validate_floor(corpus, query, row))
     errors.extend(_validate_recency(query, row, twin))
+    errors.extend(_validate_suppression_winner(query, row, twin))
     twin_similarity = profile_cosine(row["embedding_profile"], twin["embedding_profile"])
     if twin_similarity < GRAPH_PAIR_MIN_COSINE:
         errors.append(
@@ -559,6 +562,45 @@ def _validate_recency(
             "against an existing one, so the corpus should not ask for the stale side"
         )
     ]
+
+
+def _validate_suppression_winner(
+    query: Mapping[str, Any],
+    row: Mapping[str, Any],
+    twin: Mapping[str, Any],
+) -> list[str]:
+    """The expected side must outrank its twin, because suppression keeps the higher rank.
+
+    Being newer is not the rule and is not sufficient: composite scoring weighs relevance,
+    recency, usefulness, confidence, and access frequency, so a fresher answer with lower
+    confidence can lose to an older, better-supported twin. If it does, suppression removes
+    the row this query is asking for and the subset fails for a corpus reason.
+    """
+    expected = _composite_rank(query, row)
+    competing = _composite_rank(query, twin)
+    if expected > competing:
+        return []
+    return [
+        (
+            f"queries[{query['query_id']}] expected {row['content_key']!r} scores "
+            f"{expected:.4f} against its conflict twin {twin['content_key']!r} at "
+            f"{competing:.4f}; suppression keeps the higher-ranked row, so the expected "
+            "answer would be dropped"
+        )
+    ]
+
+
+def _composite_rank(query: Mapping[str, Any], row: Mapping[str, Any]) -> float:
+    return composite_score(
+        CompositeInputs(
+            relevance=profile_cosine(query["embedding_profile"], row["embedding_profile"]),
+            age_days=float(row["valid_from_days_ago"]),
+            categories=(row["category"],),
+            usefulness=float(row["usefulness_score"]),
+            confidence=float(row["confidence"]),
+            access_frequency=0.0,
+        )
+    )
 
 
 def _validate_floor(corpus: Corpus, query: Mapping[str, Any], row: Mapping[str, Any]) -> list[str]:
