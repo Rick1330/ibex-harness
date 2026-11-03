@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from uuid import UUID
 
@@ -82,6 +82,11 @@ def _fts_fallback_enabled(
         and vector_count < limit
         and is_searchable_query(query_text)
     )
+
+
+def _pii_allowed(hits: Iterable[HydratedHit]) -> set[UUID]:
+    """Ids the read-path Tier-1 guard would return for this window."""
+    return {item.id for item in filter_pii_blocked_results([hit.result for hit in hits])}
 
 
 def _hybrid_enabled(settings: Settings, *, query_text: str) -> bool:
@@ -193,13 +198,17 @@ class MemoryReadRepository:
             candidates=window,
             min_confidence=query.min_confidence,
         )
-        overrides = await self._rerank_scores(client, query, window, hydrated)
+        overrides, allowed = await self._rerank_scores(client, query, window, hydrated)
         if overrides is None:
             return await self._rank_fused_window(
                 query, fused, rank_opts, hydrated=hydrated
             )
+        # Blocked rows are excluded from ranking as well as from the rerank call: a
+        # blocked row holding its retrieval relevance could keep `ranked` non-empty
+        # while the caller's final PII filter removes the only entry, turning a
+        # recoverable page into an empty one.
         ranked = rank_hydrated_hits(
-            window,
+            [item for item in window if item.memory_id in allowed],
             hydrated,
             replace(rank_opts, relevance_overrides=overrides),
         )[: query.limit]
@@ -218,15 +227,14 @@ class MemoryReadRepository:
         query: FindSimilarQuery,
         window: list[RankedCandidate],
         hydrated: Mapping[UUID, HydratedHit],
-    ) -> dict[UUID, float] | None:
-        # Content the read guard would block must not reach a third-party inference
-        # endpoint, so the same Tier-1 filter runs before the documents are built.
-        allowed = {
-            item.id
-            for item in filter_pii_blocked_results(
-                [hit.result for hit in hydrated.values()]
-            )
-        }
+    ) -> tuple[dict[UUID, float] | None, set[UUID]]:
+        """Score the window, returning the overrides and the rows the guard allows.
+
+        Content the read guard would block must not reach a third-party inference
+        endpoint, so the same Tier-1 filter runs before the documents are built. The
+        caller reuses the allowed set so blocked rows are also excluded from ranking.
+        """
+        allowed = _pii_allowed(hydrated.values())
         ids = [
             item.memory_id
             for item in window
@@ -235,7 +243,7 @@ class MemoryReadRepository:
         if len(ids) < 2:
             # Nothing to reorder: a single candidate already holds the page.
             RERANK.labels(result="skipped").inc()
-            return None
+            return None, allowed
         documents = [hydrated[memory_id].result.content for memory_id in ids]
         started = time.monotonic()
         try:
@@ -251,11 +259,11 @@ class MemoryReadRepository:
                 len(ids),
                 self._settings.rerank_timeout_ms,
             )
-            return None
+            return None, allowed
         finally:
             # A timed-out call is the slow call the latency panel must show.
             RERANK_LATENCY.observe(time.monotonic() - started)
-        return dict(zip(ids, scores, strict=True))
+        return dict(zip(ids, scores, strict=True)), allowed
 
     async def _rank_fused_window(
         self,

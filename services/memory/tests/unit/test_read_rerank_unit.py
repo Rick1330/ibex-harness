@@ -224,3 +224,25 @@ async def test_hybrid_rerank_observes_latency_on_degrade() -> None:
     await _run_rerank([UUID(int=1), UUID(int=2)], scores=RerankTimeoutError("slow"))
 
     assert _observations() == before + 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_rerank_does_not_let_a_blocked_row_mask_an_emptied_page() -> None:
+    # One blocked row keeps its retrieval relevance; the two allowed rows are all
+    # below the rerank floor. The page must fall back to the fused order instead of
+    # returning only the blocked row, which the caller's PII filter would drop.
+    blocked, allowed_a, allowed_b = UUID(int=1), UUID(int=2), UUID(int=3)
+    repo, _ = _reranking_repo([blocked, allowed_a, allowed_b], scores=[0.02, 0.01])
+    blocked_hit = replace(_result(blocked), content="mail me at a@b.co")
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map(
+            [blocked_hit, _result(allowed_a), _result(allowed_b)]
+        )
+    )
+
+    with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])):
+        results = await repo.find_similar(_query(limit=3))
+
+    # Fused fallback ran, and the caller still sees a non-empty allowed page.
+    assert results
+    assert blocked not in {item.id for item in results}
